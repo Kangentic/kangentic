@@ -371,6 +371,19 @@ describe('resolveSpawnCwd', () => {
     expect(result.cwdFixupCommand).toBe('pushd "\\\\server\\share\\project"');
   });
 
+  it('breaks each % out of the quotes in the pushd fixup, so cmd cannot expand it', () => {
+    // Measured over \\localhost\C$, the raw form failed with "The system cannot
+    // find the path specified", and this form mapped the drive and landed in
+    // the folder. Windows collapses the doubled backslash before the %.
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: '\\\\server\\share\\%TEMP%',
+      shellName: 'cmd.exe',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand).toBe('pushd "\\\\server\\share\\\\"^%"TEMP"^%""');
+  });
+
   it('does NOT emit a pushd fixup for UNC paths under PowerShell', () => {
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
     const result = resolveSpawnCwd({
@@ -435,6 +448,21 @@ describe('resolveSpawnCwd', () => {
       platform: 'win32',
     });
     expect(result.cwdFixupCommand).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[o''brien]\\bar'");
+  });
+
+  it('doubles a curly apostrophe too, which also ends a PowerShell single-quoted string', () => {
+    // Measured on pwsh 7.6.6 and Windows PowerShell 5.1.26100, doubling only
+    // the ASCII quote left this fixup as a parse error ("The string is missing
+    // the terminator"), so the agent ran in the wrong folder.
+    const rightSingleQuote = String.fromCodePoint(0x2019);
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: `C:\\Users\\dev\\[Bob${rightSingleQuote}s]\\bar`,
+      shellName: 'powershell',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand)
+      .toBe(`Set-Location -LiteralPath 'C:\\Users\\dev\\[Bob${rightSingleQuote}${rightSingleQuote}s]\\bar'`);
   });
 
   it('emits the Set-Location fixup for a bracketed UNC path under PowerShell', () => {

@@ -11,6 +11,18 @@
  * never decided here and never decided by an adapter.
  */
 
+import { POWERSHELL_CURLY_DOUBLE_QUOTE_CHARACTERS } from './shell-quote';
+
+/**
+ * What `stripShellMetacharacters` removes. The curly double quotes come from
+ * `./shell-quote`, so the source holds no curly quote characters and the set
+ * stays the one `escapeForDoubleQuotedShell` doubles.
+ */
+const SHELL_METACHARACTERS = new RegExp(
+  `[\`$%\\\\!"&|;<>(){}[\\]\\r\\n${POWERSHELL_CURLY_DOUBLE_QUOTE_CHARACTERS}]`,
+  'g',
+);
+
 /**
  * Remove the characters that can break out of a quote or chain a command.
  *
@@ -37,9 +49,16 @@
  *
  * This is the same treatment `resolveShortcutCommand` has always given
  * `{{taskTitle}}`; it lives here so the two systems share one definition.
+ *
+ * The curly double quotes U+201C, U+201D and U+201E are stripped with `"`,
+ * because PowerShell ends a double-quoted string at each of them (measured on
+ * pwsh 7.6.6 and Windows PowerShell 5.1.26100). Left in, a title could close
+ * the string a script template put it in and add parameters to the command.
+ * `'` and the curly single quotes stay, so a substituted value belongs inside
+ * double quotes. Inside single quotes, one of them closes the string.
  */
 export function stripShellMetacharacters(value: string): string {
-  return value.replace(/[`$%\\!"&|;<>(){}[\]\r\n]/g, '');
+  return value.replace(SHELL_METACHARACTERS, '');
 }
 
 /**

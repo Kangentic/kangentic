@@ -81,7 +81,7 @@ Runs a script as an ordinary child process, in the task's worktree when it has o
 
 Not a PTY. An interactive shell runs the script and then returns to its prompt and lives forever, so completion is unobservable and the exit code unobtainable; this adapter awaits the exit and records the code. The timeout kills the process TREE, because a bare kill reaches the shell only and leaves whatever it spawned running. No retry: a half-run script is not safe to repeat.
 
-Every variable also arrives as a `KANGENTIC_*` environment variable, which is the lossless path: `"$KANGENTIC_TITLE"` gets the exact value on every shell, where substituted text is stripped of shell metacharacters.
+Every variable also arrives as a `KANGENTIC_*` environment variable, which is the lossless path: `"$KANGENTIC_TITLE"` gets the exact value on a POSIX shell or PowerShell, where substituted text is stripped of shell metacharacters (including the curly double quotes, which PowerShell ends a string at). Not on cmd.exe, which expands `%KANGENTIC_TITLE%` and then re-parses the value for metacharacters.
 
 ### `webhook` -- Call webhook
 

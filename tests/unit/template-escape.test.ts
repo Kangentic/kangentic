@@ -47,6 +47,20 @@ describe('stripShellMetacharacters', () => {
     expect(stripShellMetacharacters('%PATH%')).toBe('PATH');
   });
 
+  it('strips the curly double quotes, which PowerShell ends a "..." string at', () => {
+    // Measured on pwsh 7.6.6 and Windows PowerShell 5.1.26100. Left in, a title
+    // could close the string a script template wrapped it in and add
+    // parameters to the command. Curly single quotes stay, like the ASCII `'`.
+    const leftDoubleQuote = String.fromCodePoint(0x201c);
+    const rightDoubleQuote = String.fromCodePoint(0x201d);
+    const lowDoubleQuote = String.fromCodePoint(0x201e);
+    const rightSingleQuote = String.fromCodePoint(0x2019);
+    expect(stripShellMetacharacters(`x${leftDoubleQuote} -Recurse -Force ${rightDoubleQuote}C:`))
+      .toBe('x -Recurse -Force C:');
+    expect(stripShellMetacharacters(`${lowDoubleQuote}low`)).toBe('low');
+    expect(stripShellMetacharacters(`Don${rightSingleQuote}t crash`)).toBe(`Don${rightSingleQuote}t crash`);
+  });
+
   it('is the same on every platform, which is the reason it strips rather than quotes', () => {
     // Correct quoting differs per shell and SessionManager caches one shell for
     // the focused project, so a quoting scheme is right on the machine that

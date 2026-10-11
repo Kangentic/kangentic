@@ -14,19 +14,20 @@
 import path from 'node:path';
 import {
   escapeForDoubleQuotedShell,
+  escapePercentForCmd,
   isCmdShell,
   isPowerShellShell,
   isUnixLikeShell,
   sanitizeForPty,
 } from './shell-quote';
 
-// The shell predicates, `sanitizeForPty`, and the double-quote escaper live in
+// The shell predicates, `sanitizeForPty`, and the double-quote escapers live in
 // `./shell-quote`, which has no Node imports so the renderer can share them.
 // The predicates and `sanitizeForPty` are re-exported because this module is the
 // documented single source of truth for path/shell interop and 40-odd call sites
-// import them by this path. `escapeForDoubleQuotedShell` is NOT: `quoteArg` is
-// the only main-process caller and the renderer imports it from `./shell-quote`
-// directly, so a re-export here would just add a second name for it.
+// import them by this path. The escapers are NOT: each has one or two callers
+// that import it from `./shell-quote` directly, so a re-export here would just
+// add a second name for it.
 export {
   isCmdShell,
   isPowerShellShell,
@@ -215,10 +216,11 @@ export function adaptCommandForShell(
  * When `shell` is provided, quoting style is chosen by shell type:
  *  - Unix-like shells (bash, zsh, fish, WSL): single-quotes (no expansion)
  *  - PowerShell: double-quotes, backtick escaping, backslash left alone
- *  - cmd.exe: double-quotes, C-runtime backslash escaping, backtick left alone
+ *  - cmd.exe: double-quotes, C-runtime backslash escaping, backtick left alone,
+ *    and each `%` broken out of the quotes so cmd cannot expand `%NAME%`
  *
  * The two Windows branches are NOT interchangeable; `escapeForDoubleQuotedShell`
- * in `./shell-quote` carries the measured round-trips.
+ * and `escapePercentForCmd` in `./shell-quote` carry the measured round-trips.
  *
  * When `shell` is omitted, falls back to platform detection:
  *  - Windows: the PowerShell branch
@@ -276,6 +278,12 @@ export function quoteArg(
     // backslash: see escapeForDoubleQuotedShell for the measured round-trips.
     const source = preserveNewlines ? arg : sanitizeForPty(arg);
     let escaped = escapeForDoubleQuotedShell(source, isCmd);
+    if (isCmd) {
+      // cmd expands %NAME% even inside the quotes. Running this after the
+      // quote and trailing-backslash escapes is safe, because a trailing run
+      // is never followed by `%` and the rewrite never ends in a backslash.
+      escaped = escapePercentForCmd(escaped);
+    }
     if (preserveNewlines) {
       // Convert real newlines/tabs to PowerShell escape sequences. These are
       // NEW backticks (not literal content), so the parser interprets them as
