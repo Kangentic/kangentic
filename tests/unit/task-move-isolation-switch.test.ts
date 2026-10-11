@@ -116,6 +116,10 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
   autoSpawnForTask: vi.fn(async () => {}),
+  // Every move runs the source column's exit group and reports its summary.
+  // Without this the call throws, the move's catch logs it, and every test
+  // here carried a spurious "Exit automations failed" error.
+  reportAutomationFailures: vi.fn(),
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: vi.fn(),
@@ -493,22 +497,39 @@ describe('handleTaskMove session switch', () => {
   // with the approved plan. A session switch always lands in a different
   // conversation from the one that approved it, so the continuation must not
   // reach Phase 3. On a force-fresh entry spawnAgent would otherwise hand it to
-  // a brand-new session as its only prompt. Red-green: forwarding
-  // options.continuationPrompt from the session-switch return fails both.
+  // a brand-new session as its only prompt. Leaving an isolated column resumes
+  // the main conversation, which never saw the plan either, so it is covered
+  // too. All three go through the one session-switch return, so a single
+  // revert (forwarding options.continuationPrompt there) fails every row.
   const PLAN_EXIT_CONTINUATION = "The session restarted to apply the Target column's settings. Proceed with implementing the approved plan.";
 
   it.each([
-    { label: 'an always_spawn_new main column', targetLane: makeSwimlane('lane-target', { session_target: 'main', session_spawn_strategy: 'always_spawn_new' }) },
-    { label: 'an isolated column', targetLane: makeSwimlane('lane-target', { session_target: 'isolated' }) },
-  ])('drops a plan-exit continuation on a session switch into $label', async ({ targetLane }) => {
-    const planningLane = makeSwimlane('lane-planning', { session_target: 'main' });
+    {
+      label: 'into an always_spawn_new main column',
+      planningLane: makeSwimlane('lane-planning', { session_target: 'main' }),
+      activeIsolatedSwimlaneId: null,
+      targetLane: makeSwimlane('lane-target', { session_target: 'main', session_spawn_strategy: 'always_spawn_new' }),
+    },
+    {
+      label: 'into an isolated column',
+      planningLane: makeSwimlane('lane-planning', { session_target: 'main' }),
+      activeIsolatedSwimlaneId: null,
+      targetLane: makeSwimlane('lane-target', { session_target: 'isolated' }),
+    },
+    {
+      label: 'out of an isolated column back to a main column',
+      planningLane: makeSwimlane('lane-planning', { session_target: 'isolated' }),
+      activeIsolatedSwimlaneId: 'lane-planning',
+      targetLane: makeSwimlane('lane-target', { session_target: 'main', session_spawn_strategy: 'create_or_resume' }),
+    },
+  ])('drops a plan-exit continuation on a session switch $label', async ({ planningLane, activeIsolatedSwimlaneId, targetLane }) => {
     const swimlaneRepo = {
       getById: vi.fn((id: string) => (id === 'lane-planning' ? planningLane : id === 'lane-target' ? targetLane : null)),
       list: vi.fn(() => [planningLane, targetLane]),
     };
 
     hoisted.activeRecord = {
-      id: 'rec-main', task_id: 'task-aaa00001', isolated_swimlane_id: null,
+      id: 'rec-live', task_id: 'task-aaa00001', isolated_swimlane_id: activeIsolatedSwimlaneId,
       agent_session_id: 'agent-A', status: 'running',
       started_at: '2026-01-01T00:00:00Z', session_type: 'claude_agent',
     };
