@@ -21,7 +21,7 @@ vi.mock('../../src/main/db/database', () => ({
   },
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
-vi.mock('../../src/main/ipc/handlers/sessions', () => ({ pauseTaskSession: vi.fn(), resumeTaskSession: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 vi.mock('../../src/main/agent/agent-list', () => ({ listAgents: async () => harness.agents }));
 

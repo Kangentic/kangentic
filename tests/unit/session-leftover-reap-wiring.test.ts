@@ -534,14 +534,13 @@ describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
   });
 
   it('SESSION_SUSPEND (the Pause toggle) never references reapTaskLeftovers / reapTaskProcesses', () => {
-    // The handler delegates to `pauseTaskSession`, which Pause workflow calls
-    // for each of its tasks too, so the body to check is that function's.
+    // The handler delegates to `pauseTaskSession` (session-pause.ts), checked below.
     const handlerRegion = extractHandlerBody(sessionsSource, 'SESSION_SUSPEND');
     expect(handlerRegion).toContain('pauseTaskSession');
     expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
   });
 
-  it("pauseTaskSession (the desktop Pause's and the phone's pause-session's shared path) never references reapTaskLeftovers / reapTaskProcesses", () => {
+  it("pauseTaskSession (the desktop Pause's, the phone's pause-session's and Pause workflow's shared path) never references reapTaskLeftovers / reapTaskProcesses", () => {
     const pauseSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/session-pause.ts'), 'utf8');
     expect(pauseSource).toContain('applySuspendDbWrites');
     expect(pauseSource).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
@@ -550,6 +549,12 @@ describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
     const phoneSource = fs.readFileSync(path.join(__dirname, '../../src/main/mobile-bridge/handlers/pause-session.ts'), 'utf8');
     expect(phoneSource).toContain('pauseTaskSession');
     expect(phoneSource).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
+
+    // Pause workflow pauses each task through the same path, and reaps nothing either.
+    const workflowSource = fs.readFileSync(path.join(__dirname, '../../src/main/workflows/workflow-service.ts'), 'utf8');
+    expect(workflowSource).toContain("import { pauseTaskSession } from '../ipc/handlers/session-pause';");
+    const pauseWorkflow = workflowSource.slice(workflowSource.indexOf('export async function pauseWorkflow('));
+    expect(pauseWorkflow.slice(0, pauseWorkflow.indexOf('\nexport '))).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
   });
 });
 

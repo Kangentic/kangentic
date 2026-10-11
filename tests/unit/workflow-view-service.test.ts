@@ -15,7 +15,7 @@ vi.mock('../../src/main/db/database', () => ({
   },
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
-vi.mock('../../src/main/ipc/handlers/sessions', () => ({ pauseTaskSession: vi.fn(), resumeTaskSession: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({
   sendToRenderer: (_window: unknown, channel: string, payload: unknown) => harness.sent.push({ channel, payload }),
 }));

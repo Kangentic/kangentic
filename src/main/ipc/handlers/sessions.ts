@@ -104,9 +104,9 @@ export function registerSessionHandlers(context: IpcContext): void {
 
   // === Session Suspend / Resume ===
   // The Pause button. The whole path lives in pauseTaskSession
-  // (session-pause.ts), shared with the phone's pause-session verb, so a
-  // desktop and a phone Pause cannot drift. A task with no live session is a
-  // silent no-op here, as it always was.
+  // (session-pause.ts), shared with the phone's pause-session verb and with
+  // Pause workflow, so the three cannot drift. A task with no live session is
+  // a silent no-op here, as it always was.
   ipcMain.handle(IPC.SESSION_SUSPEND, async (_, taskId: string, projectId?: string | null): Promise<void> => {
     await pauseTaskSession(context, taskId, { projectId });
   });
