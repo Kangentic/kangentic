@@ -537,9 +537,10 @@ When a suspended task moves to an active column:
   merely invokes it), passes a continuation prompt
   ("The session restarted to apply the <column> column's settings. Proceed
   with implementing the approved plan.", naming the destination column)
-  delivered as the resumed session's first message when the destination
-  column has no `auto_command`; the `auto_command` wins when present. It
-  names the restart because the suspend lands right after approval and Claude
+  delivered as the resumed session's first message only when neither the
+  destination column's message (its first enabled `send_message` enter
+  automation) nor the task's own `auto_command` is set. Either one takes the
+  prompt slot instead. It names the restart because the suspend lands right after approval and Claude
   Code records it as `[Request interrupted by user]`. Without the reason, the
   resumed turn reads as the user stopping the agent and typing a new
   instruction. A plan exit that switches session track (into an isolated
