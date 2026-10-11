@@ -429,6 +429,51 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  test('the overlay draws a link as the canvas draws a selected task\'s: flowing, in its colors, and under the header row', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openMenu(page, 't414');
+      await byTestId(page, 'context-show-workflow-links').click();
+      const overlay = byTestId(page, 'workflow-links-overlay');
+      await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+      const line = overlay.locator('[data-link="out:t417"] path.workflow-link-flow');
+      const look = () => line.evaluate((element) => ({ dash: getComputedStyle(element).strokeDasharray, animation: getComputedStyle(element).animationName }));
+      // The canvas's flow (index.css, WorkflowEdge): 7 on, 4 off, moving toward the arrow.
+      await expect.poll(look).toEqual({ dash: '7px, 4px', animation: 'workflow-link-flow' });
+      await expect(line).toHaveAttribute('stroke', 'var(--color-accent-fg)');
+
+      // The lines are clipped to the lanes below the header row, so a line to a
+      // card out of view leaves under the headers. Red: a line drawn over them.
+      const clip = await page.evaluate(() => {
+        const svg = document.querySelector('[data-testid="workflow-links-overlay"]')!;
+        const rect = svg.querySelector('[data-testid="workflow-links-clip"]')!;
+        const list = document.querySelector('[data-board-lanes] [data-swimlane-task-list]')!;
+        return {
+          top: Number(rect.getAttribute('y')),
+          headerBottom: Math.round(list.getBoundingClientRect().top - svg.getBoundingClientRect().top),
+          applied: svg.querySelector('g[clip-path]')?.getAttribute('clip-path') ?? null,
+          linesInside: svg.querySelectorAll('g[clip-path] [data-testid="workflow-link-line"]').length,
+        };
+      });
+      expect(clip.top).toBe(clip.headerBottom);
+      expect(clip.applied).toBe('url(#workflow-links-overlay-clip)');
+      expect(clip.linesInside).toBeGreaterThan(0);
+
+      // A blocker not done yet is the canvas's muted grey: #418 waits on #417 in To Do.
+      await page.keyboard.press('Escape');
+      await expect(overlay).toHaveCount(0);
+      await openMenu(page, 't418');
+      await byTestId(page, 'context-show-workflow-links').click();
+      await expect(overlay.locator('[data-link="in:t417"] path.workflow-link-flow')).toHaveAttribute('stroke', 'var(--color-fg-muted)');
+
+      // With reduced motion the dashes hold still, as on the canvas.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await expect.poll(() => overlay.locator('[data-link="in:t417"] path.workflow-link-flow').evaluate((element) => getComputedStyle(element).animationName)).toBe('none');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a board drag clears the overlay as it starts', async () => {
     const { browser, page } = await launch();
     try {

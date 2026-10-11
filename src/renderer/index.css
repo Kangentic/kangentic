@@ -575,13 +575,21 @@
 /* The selected task's own links flow from blocker to dependent (sign-off,
    2026-10-07; WorkflowEdge.tsx): the dashes travel toward the arrow, so which
    way the work goes reads at a glance. They hold still under reduced motion
-   or with the Animations setting off. */
+   or with the Animations setting off. The board's links overlay
+   (WorkflowLinksOverlay.tsx) draws its lines the same way, so a link looks
+   the same on the board as on the canvas. */
 @keyframes workflow-link-flow {
   to { stroke-dashoffset: -22; }
 }
-.workflow-canvas .workflow-link-flow {
+.workflow-canvas .workflow-link-flow,
+.workflow-links-overlay .workflow-link-flow {
   stroke-dasharray: 7 4;
   animation: workflow-link-flow 0.9s linear infinite;
+}
+/* The overlay is one <svg> over the whole board; its own layer keeps the
+   flow's repaint off the lanes, as the canvas's edge layer does below. */
+.workflow-links-overlay {
+  will-change: transform;
 }
 /* A dash offset is not a composited property, so each frame repaints the
    link. React Flow draws each edge in its own <svg>; giving a flowing one its
@@ -593,17 +601,21 @@
 .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
   will-change: transform;
 }
-.no-motion .workflow-canvas .workflow-link-flow {
+.no-motion .workflow-canvas .workflow-link-flow,
+.no-motion .workflow-links-overlay .workflow-link-flow {
   animation: none;
 }
-.no-motion .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
+.no-motion .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow),
+.no-motion .workflow-links-overlay {
   will-change: auto;
 }
 @media (prefers-reduced-motion: reduce) {
-  .workflow-canvas .workflow-link-flow {
+  .workflow-canvas .workflow-link-flow,
+  .workflow-links-overlay .workflow-link-flow {
     animation: none;
   }
-  .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
+  .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow),
+  .workflow-links-overlay {
     will-change: auto;
   }
 }

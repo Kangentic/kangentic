@@ -6,6 +6,7 @@ import { ARROWHEAD_PATH, ARROWHEAD_STROKES, arrowheadLength, linkPaths, type Car
 
 /** The colored line's width; its halo is wider. */
 const LINE_WIDTH = 2;
+const CLIP_ID = 'workflow-links-overlay-clip';
 
 /**
  * The board's links overlay for one workflow card (#732 board 8): lines from
@@ -19,7 +20,15 @@ const LINE_WIDTH = 2;
  * drag overlay, the flying card and task windows carry the attribute too). A
  * related card that is not rendered (pushed out of the Done column's list)
  * draws no line. The lines are measured on the frame the overlay opens, then
- * at most once per animation frame on a scroll, a resize or a board change.
+ * at most once per animation frame on a scroll, a resize, a card changing
+ * height, or a board change.
+ *
+ * The lines read as the Workflows canvas draws a selected task's links: the
+ * same colors, arrowheads and flowing dashes (`workflow-link-flow` in
+ * index.css), so a link looks the same on both. A line to a card scrolled out
+ * of view keeps running toward it, and is clipped to the lanes below the
+ * header row: it leaves view under the headers, the way a scrolled card does,
+ * and never paints over a column's name, the toolbar or the panel below.
  * A board drag clears it (`useBoardDragDrop`), so a refused drop never leaves
  * it measuring under the next drag. Escape or a pointer press on empty board
  * space clears it too, from the moment its load starts.
@@ -36,13 +45,26 @@ interface Segment {
   marker: 'done' | 'pending' | 'dependent';
 }
 
+/** A selected task's link colors on the canvas (`WorkflowEdge`'s `lookOf`). */
 const COLORS = {
   done: 'var(--color-active)',
-  pending: 'var(--color-fg-faint)',
+  pending: 'var(--color-fg-muted)',
   dependent: 'var(--color-accent-fg)',
 } as const;
 
 const NO_SEGMENTS: Segment[] = [];
+
+/** Where the lines may paint, in the board's coordinates: the lanes below the header row. */
+interface ClipArea {
+  top: number;
+  height: number;
+  width: number;
+}
+
+function sameClip(previous: ClipArea | null, next: ClipArea | null): boolean {
+  return previous === next || (previous !== null && next !== null
+    && previous.top === next.top && previous.height === next.height && previous.width === next.width);
+}
 
 function sameSegments(previous: readonly Segment[], next: readonly Segment[]): boolean {
   return previous.length === next.length
@@ -105,6 +127,7 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
   const linkFocus = useWorkflowStore((state) => state.linkFocus);
   const linkFocusLoading = useWorkflowStore((state) => state.linkFocusLoading);
   const [segments, setSegments] = useState<Segment[]>(NO_SEGMENTS);
+  const [clip, setClip] = useState<ClipArea | null>(null);
 
   const relations = useMemo(
     () => (linkFocus ? relationsOf(linkFocus.taskId, linkFocus.detail) : null),
@@ -148,6 +171,17 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
     }
     const next = linkPaths(requests, arrowheadLength(LINE_WIDTH)).map(({ key, path }, index): Segment => ({ key, path, ...looks[index] }));
     setSegments((previous) => (sameSegments(previous, next) ? previous : next));
+
+    // Every lane's card list starts at the bottom of the header row.
+    const list = lanes?.querySelector('[data-swimlane-task-list]');
+    const nextClip: ClipArea | null = lanes && list
+      ? {
+          top: Math.round(list.getBoundingClientRect().top - origin.top),
+          height: Math.round(lanes.getBoundingClientRect().bottom - list.getBoundingClientRect().top),
+          width: Math.round(origin.width),
+        }
+      : null;
+    setClip((previous) => (sameClip(previous, nextClip) ? previous : nextClip));
   }, [boardRef, relations]);
 
   // The first measure is synchronous, so the lines appear on the frame the
@@ -167,15 +201,29 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
       if (frame) return;
       frame = requestAnimationFrame(() => { frame = 0; measure(); });
     };
+    // A card that grows or shrinks (an agent's trail updating under it) moves
+    // every card below it with no scroll and no board change, so each card on
+    // the board is watched for its size while the overlay is open.
+    const resizeObserver = new ResizeObserver(schedule);
+    const observeCards = () => {
+      resizeObserver.disconnect();
+      for (const card of board.querySelectorAll('[data-board-lanes] [data-task-id]')) resizeObserver.observe(card);
+    };
+    observeCards();
     board.addEventListener('scroll', schedule, true);
     window.addEventListener('resize', schedule);
     const unsubscribe = useBoardStore.subscribe((state, previous) => {
-      if (state.tasks !== previous.tasks || state.swimlanes !== previous.swimlanes || state.archivedTasks !== previous.archivedTasks) schedule();
+      if (state.tasks !== previous.tasks || state.swimlanes !== previous.swimlanes || state.archivedTasks !== previous.archivedTasks) {
+        // The cards just re-rendered: watch the ones on the board now.
+        requestAnimationFrame(observeCards);
+        schedule();
+      }
     });
     return () => {
       board.removeEventListener('scroll', schedule, true);
       window.removeEventListener('resize', schedule);
       unsubscribe();
+      resizeObserver.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
   }, [boardRef, relations, measure]);
@@ -215,7 +263,7 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
     <>
       <style data-testid="workflow-links-style">{focusStyle(relations)}</style>
       <svg
-        className="absolute inset-0 w-full h-full pointer-events-none z-[1] overflow-visible"
+        className="workflow-links-overlay absolute inset-0 w-full h-full pointer-events-none z-[1] overflow-visible"
         aria-hidden="true"
         data-testid="workflow-links-overlay"
         data-focus-task-id={relations.focusId}
@@ -226,13 +274,21 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
               <path d={ARROWHEAD_PATH} fill={COLORS[kind]} />
             </marker>
           ))}
+          {clip && (
+            <clipPath id={CLIP_ID}>
+              <rect data-testid="workflow-links-clip" x={0} y={clip.top} width={clip.width} height={clip.height} />
+            </clipPath>
+          )}
         </defs>
-        {segments.map((segment) => (
-          <g key={segment.key} data-testid="workflow-link-line" data-link={segment.key}>
-            <path d={segment.path} fill="none" stroke="var(--color-surface)" strokeWidth={6} strokeLinecap="round" opacity={0.85} />
-            <path d={segment.path} fill="none" stroke={segment.color} strokeWidth={LINE_WIDTH} strokeLinecap="round" markerEnd={`url(#workflow-link-${segment.marker})`} />
-          </g>
-        ))}
+        <g clipPath={clip ? `url(#${CLIP_ID})` : undefined}>
+          {segments.map((segment) => (
+            <g key={segment.key} data-testid="workflow-link-line" data-link={segment.key}>
+              {/* The halo is the board's own: these lines cross cards, which the canvas's never do. */}
+              <path d={segment.path} fill="none" stroke="var(--color-surface)" strokeWidth={6} strokeLinecap="round" opacity={0.85} />
+              <path d={segment.path} className="workflow-link-flow" fill="none" stroke={segment.color} strokeWidth={LINE_WIDTH} strokeLinecap="round" markerEnd={`url(#workflow-link-${segment.marker})`} />
+            </g>
+          ))}
+        </g>
       </svg>
     </>
   );

@@ -1109,7 +1109,7 @@ src/renderer/components/workflows/
   workflow-layout.ts       # pure: the layered auto layout
 src/renderer/components/board/
   WorkflowTaskCardBody.tsx # a workflow task's board card: the strip, and the To Do footer
-  WorkflowLinksOverlay.tsx # Show workflow links: lines measured on scroll and resize, rings, dimming
+  WorkflowLinksOverlay.tsx # Show workflow links: the canvas's flowing lines, clipped below the header row, re-measured on scroll, resize and card height; rings, dimming
   workflow-menu-items.tsx  # Open workflow and Show workflow links, in the card menu's leading slot
   DeleteTaskDialog.tsx     # the Delete task confirm, shared by the board card and the canvas menu
 src/renderer/utils/
