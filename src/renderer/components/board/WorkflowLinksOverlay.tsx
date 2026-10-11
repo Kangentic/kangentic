@@ -2,7 +2,10 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } fro
 import { useBoardStore } from '../../stores/board-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import type { WorkflowDetail } from '../../../shared/types';
-import { linkPaths, type CardBox, type LinkRequest } from './workflow-links-geometry';
+import { ARROWHEAD_PATH, ARROWHEAD_STROKES, arrowheadLength, linkPaths, type CardBox, type LinkRequest } from './workflow-links-geometry';
+
+/** The colored line's width; its halo is wider. */
+const LINE_WIDTH = 2;
 
 /**
  * The board's links overlay for one workflow card (#732 board 8): lines from
@@ -143,7 +146,7 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
       requests.push({ key: `out:${id}`, fromId: relations.focusId, from: focusBox, toId: id, to: box });
       looks.push({ color: COLORS.dependent, marker: 'dependent' });
     }
-    const next = linkPaths(requests).map(({ key, path }, index): Segment => ({ key, path, ...looks[index] }));
+    const next = linkPaths(requests, arrowheadLength(LINE_WIDTH)).map(({ key, path }, index): Segment => ({ key, path, ...looks[index] }));
     setSegments((previous) => (sameSegments(previous, next) ? previous : next));
   }, [boardRef, relations]);
 
@@ -219,15 +222,15 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
       >
         <defs>
           {(Object.keys(COLORS) as Array<keyof typeof COLORS>).map((kind) => (
-            <marker key={kind} id={`workflow-link-${kind}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-              <path d="M0 1 L9 5 L0 9 z" fill={COLORS[kind]} />
+            <marker key={kind} id={`workflow-link-${kind}`} viewBox="0 0 10 10" refX="0" refY="5" markerWidth={ARROWHEAD_STROKES} markerHeight={ARROWHEAD_STROKES} orient="auto">
+              <path d={ARROWHEAD_PATH} fill={COLORS[kind]} />
             </marker>
           ))}
         </defs>
         {segments.map((segment) => (
           <g key={segment.key} data-testid="workflow-link-line" data-link={segment.key}>
             <path d={segment.path} fill="none" stroke="var(--color-surface)" strokeWidth={6} strokeLinecap="round" opacity={0.85} />
-            <path d={segment.path} fill="none" stroke={segment.color} strokeWidth={2} strokeLinecap="round" markerEnd={`url(#workflow-link-${segment.marker})`} />
+            <path d={segment.path} fill="none" stroke={segment.color} strokeWidth={LINE_WIDTH} strokeLinecap="round" markerEnd={`url(#workflow-link-${segment.marker})`} />
           </g>
         ))}
       </svg>

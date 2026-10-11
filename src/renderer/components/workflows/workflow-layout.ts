@@ -297,13 +297,23 @@ export function layoutWorkflow(tasks: readonly LayoutTask[], links: readonly Lay
  * A smooth line through `points`, leaving and arriving horizontally: each hop
  * is a cubic curve whose handles sit half the hop's width along the
  * horizontal, so a line crossing a column's lane is a straight run.
+ *
+ * `endInset` stops the line that far short of its last point, back along the
+ * horizontal it arrives on, so an arrowhead whose base sits on the line's end
+ * puts its tip on that point with no line running under it.
  */
-export function smoothPath(points: readonly Point[]): string {
+export function smoothPath(points: readonly Point[], endInset = 0): string {
   if (points.length === 0) return '';
   let path = `M ${points[0].x},${points[0].y}`;
   for (let index = 1; index < points.length; index++) {
     const from = points[index - 1];
-    const to = points[index];
+    let to = points[index];
+    if (index === points.length - 1 && endInset > 0) {
+      // A curve always arrives moving right (its last handle sits left of its
+      // end); a straight run arrives the way it runs.
+      const arrival = from.y === to.y ? Math.sign(to.x - from.x) : 1;
+      to = { x: to.x - arrival * endInset, y: to.y };
+    }
     if (from.y === to.y) {
       path += ` L ${to.x},${to.y}`;
       continue;

@@ -1,13 +1,15 @@
 import React from 'react';
 import { BaseEdge, Position, getBezierPath, type ConnectionLineComponentProps, type Edge, type EdgeProps } from '@xyflow/react';
 import { PORT_OFFSET_Y, smoothPath, type Point } from './workflow-layout';
+import { ARROWHEAD_PATH, ARROWHEAD_STROKES, arrowheadLength } from '../board/workflow-links-geometry';
 import type { WorkflowFlowNode } from './WorkflowTaskNode';
 
 /**
  * A link on the canvas: from the blocker's port to the waiting task's,
  * through the lanes of any column it crosses, leaving and arriving
  * horizontally. Every link of a card leaves and arrives at its port's center,
- * and its arrow's tip lands on the port circle's edge.
+ * and its arrow's tip lands on the port circle's edge. The line stops at the
+ * arrow's base, so none of it shows under or past the arrowhead.
  *
  * How it reads follows the selection (sign-off, 2026-10-07), in the board
  * links overlay's colors (`WorkflowLinksOverlay.tsx`):
@@ -39,7 +41,7 @@ export interface WorkflowEdgeData extends Record<string, unknown> {
 
 export type WorkflowFlowEdge = Edge<WorkflowEdgeData, 'workflowLink'>;
 
-/** One arrowhead per color a link is drawn in; its tip (x 9) is the path's end. */
+/** One arrowhead per color a link is drawn in; its base is the line's end. */
 const MARKER_COLORS = {
   active: 'var(--color-active)',
   faint: 'var(--color-fg-faint)',
@@ -52,8 +54,8 @@ export const WORKFLOW_EDGE_MARKERS = (
   <svg width="0" height="0" className="absolute" aria-hidden="true">
     <defs>
       {(Object.keys(MARKER_COLORS) as MarkerColor[]).map((name) => (
-        <marker key={name} id={`workflow-link-${name}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-          <path d="M0 1 L9 5 L0 9 z" fill={MARKER_COLORS[name]} />
+        <marker key={name} id={`workflow-link-${name}`} viewBox="0 0 10 10" refX="0" refY="5" markerWidth={ARROWHEAD_STROKES} markerHeight={ARROWHEAD_STROKES} orient="auto">
+          <path d={ARROWHEAD_PATH} fill={MARKER_COLORS[name]} />
         </marker>
       ))}
     </defs>
@@ -89,7 +91,7 @@ export const WorkflowEdge = React.memo(function WorkflowEdge({ id, sourceX, sour
   return (
     <BaseEdge
       id={id}
-      path={smoothPath(points)}
+      path={smoothPath(points, arrowheadLength(look.width))}
       className={look.flowing ? 'workflow-link-flow' : undefined}
       markerEnd={`url(#workflow-link-${look.color})`}
       data-link-state={fresh ? 'fresh' : satisfied ? 'satisfied' : 'pending'}

@@ -5,7 +5,7 @@
  * cross itself. A lone line keeps the plain anchor.
  */
 import { describe, expect, it } from 'vitest';
-import { FAN_SPACING, linkPaths, type CardBox, type LinkRequest } from '../../src/renderer/components/board/workflow-links-geometry';
+import { FAN_SPACING, arrowheadLength, linkPaths, type CardBox, type LinkRequest } from '../../src/renderer/components/board/workflow-links-geometry';
 
 function box(left: number, top: number): CardBox {
   return { left, right: left + 240, top, height: 120 };
@@ -59,6 +59,27 @@ describe('the links overlay geometry', () => {
     expect(blockerEnd.x).toBe(dependentStart.x);
     // The dependent sits higher on the board, so its line takes the upper slot.
     expect(blockerEnd.y - dependentStart.y).toBe(FAN_SPACING);
+  });
+
+  it('stops each line one arrowhead short of the card it points at, whichever way it arrives', () => {
+    // The arrowhead is 9 units of its 10-unit box, drawn 5 stroke widths wide.
+    expect(arrowheadLength(2)).toBe(9);
+    expect(arrowheadLength(1.5)).toBe(6.75);
+    const inset = arrowheadLength(2);
+    const links: LinkRequest[] = [
+      // Arrives moving right, on the dependent's left edge.
+      { key: 'out:right', fromId: 'focus', from: FOCUS, toId: 'right', to: box(1000, 300) },
+      // Arrives moving left, on the dependent's right edge.
+      { key: 'out:left', fromId: 'focus', from: FOCUS, toId: 'left', to: box(100, 300) },
+      // Same column: bows out past both right edges and arrives moving left.
+      { key: 'out:below', fromId: 'focus', from: FOCUS, toId: 'below', to: box(600, 500) },
+    ];
+    const paths = new Map(linkPaths(links, inset).map((link) => [link.key, ends(link.path)]));
+    expect(paths.get('out:right')!.end.x).toBe(1000 - 2 - inset);
+    expect(paths.get('out:left')!.end.x).toBe(100 + 240 + 2 + inset);
+    expect(paths.get('out:below')!.end.x).toBe(600 + 240 + 2 + inset);
+    // The start never moves.
+    expect(paths.get('out:right')!.start.x).toBe(842);
   });
 
   it('keeps lines on opposite sides of a card apart from each other', () => {

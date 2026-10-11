@@ -186,4 +186,16 @@ describe('workflow layout', () => {
     expect(smoothPath([{ x: 0, y: 10 }, { x: 100, y: 10 }])).toBe('M 0,10 L 100,10');
     expect(smoothPath([{ x: 0, y: 0 }, { x: 100, y: 50 }])).toMatch(/^M 0,0 C /);
   });
+
+  it('stops the line short of its end for the arrowhead, still arriving horizontally', () => {
+    // A straight run stops back along the way it runs, either way.
+    expect(smoothPath([{ x: 0, y: 10 }, { x: 100, y: 10 }], 9)).toBe('M 0,10 L 91,10');
+    expect(smoothPath([{ x: 100, y: 10 }, { x: 0, y: 10 }], 9)).toBe('M 100,10 L 9,10');
+    // A curve arrives moving right: it ends 9 short, its last handle level with that end.
+    const curve = smoothPath([{ x: 0, y: 0 }, { x: 40, y: 60 }, { x: 200, y: 50 }], 9);
+    expect(curve).toMatch(/ 191,50$/);
+    expect(curve).toMatch(/ C [\d.]+,60 [\d.]+,50 191,50$/);
+    // Only the last point moves: the waypoint before it is reached as it was.
+    expect(curve).toContain(' 40,60 C ');
+  });
 });
