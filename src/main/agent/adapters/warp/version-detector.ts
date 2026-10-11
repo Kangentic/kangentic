@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
+import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 
 
 /**
@@ -37,7 +38,7 @@ export async function execWarpVersion(candidatePath: string, timeout = 5000): Pr
       if (/["&|^%<>\n\r`$]/.test(candidatePath)) return null;
       // windowsHide: true prevents the cmd.exe shell from briefly flashing
       // a console window during the probe (visible in E2E test runs).
-      const { stdout, stderr } = await execAsync(`"${candidatePath}" dump-debug-info`, { timeout, windowsHide: true });
+      const { stdout, stderr } = await execAsync(`${quoteCmdExecutable(candidatePath)} dump-debug-info`, { timeout, windowsHide: true });
       return parseWarpVersion(stdout || stderr || '');
     }
     const { stdout, stderr } = await execFileAsync(candidatePath, ['dump-debug-info'], { timeout });

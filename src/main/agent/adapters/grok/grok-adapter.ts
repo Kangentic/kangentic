@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
+import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import { GrokDetector } from './detector';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from './command-builder';
 import { removeHooksFile } from './hook-manager';
@@ -335,7 +336,7 @@ export class GrokAdapter implements AgentAdapter {
     if (!info.found || !info.path) return null;
     try {
       const output = process.platform === 'win32'
-        ? (await execAsync(`"${info.path}" models`, { timeout: 5000, windowsHide: true })).stdout
+        ? (await execAsync(`${quoteCmdExecutable(info.path)} models`, { timeout: 5000, windowsHide: true })).stdout
         : (await execFileAsync(info.path, ['models'], { timeout: 5000 })).stdout;
       return !/not authenticated/i.test(output);
     } catch {

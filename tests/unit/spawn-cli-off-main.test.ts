@@ -65,6 +65,36 @@ describe('spawnCli with a pty host registered', () => {
     expect(Object.keys(calls[0].options.env).length).toBeGreaterThan(1);
   });
 
+  it('hands a Windows .cmd shim to the host as one cmd command line with every % broken out of the quotes', () => {
+    // The shim's head is quoted by quoteCmdExecutable and each arg by
+    // quoteForCmdShell, so cmd never expands a %NAME% in the path or the text.
+    // This pins the head on Linux CI: cliRunsThroughShell reads process.platform
+    // at call time, so stubbing it reaches the Windows branch without cmd.exe.
+    const calls: Array<{ command: string; args: string[]; options: OffMainCliOptions }> = [];
+    setOffMainCliSpawner((command, args, options) => {
+      calls.push({ command, args, options });
+      return fakeRemoteChild();
+    });
+
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      spawnCli('C:\\Users\\dev\\%KNG_PROBE%dir\\agent.cmd', ['--print', '100% done'], '/work');
+    } finally {
+      Object.defineProperty(process, 'platform', platformDescriptor);
+    }
+
+    expect(calls).toHaveLength(1);
+    // Head: the backslash before the first % is doubled, then "^%" breaks the
+    // % out. Args: `--print` needs no quoting, `100% done` gets the same escape.
+    expect(calls[0].command).toBe('"C:\\Users\\dev\\\\"^%"KNG_PROBE"^%"dir\\agent.cmd" --print "100"^%" done"');
+    // The args are inside the command string, so none travel separately.
+    expect(calls[0].args).toEqual([]);
+    expect(calls[0].options.shell).toBe(true);
+    // Windows never leads a process group.
+    expect(calls[0].options.detached).toBe(false);
+  });
+
   it('stops a host run through the host, and the quit path reaches it', () => {
     const remote = fakeRemoteChild();
     setOffMainCliSpawner(() => remote);

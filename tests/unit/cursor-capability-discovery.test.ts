@@ -285,6 +285,24 @@ describe('discoverCursorCapabilities', () => {
       }
     });
 
+    it('breaks a %NAME% in the .CMD path out of the quotes on win32, so cmd cannot expand it', async () => {
+      // exec runs the line through cmd.exe, which expands %NAME% inside double
+      // quotes and then cannot find the expanded path. quoteCmdExecutable writes
+      // each % as "^%" and doubles the backslash run before it.
+      const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+      try {
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+        setCliResponses({ help: HELP_WITH_MODEL, listModels: LIST_MODELS_OUTPUT });
+        await discoverCursorCapabilities('C:\\Users\\dev\\%KNG_PROBE%\\cursor-agent.CMD');
+        expect(execFileMock).not.toHaveBeenCalled();
+        expect(execMock.mock.calls.at(-1)?.[0]).toBe(
+          '"C:\\Users\\dev\\\\"^%"KNG_PROBE"^%"\\cursor-agent.CMD" --list-models',
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', platformDescriptor);
+      }
+    });
+
     it('passes an argv array to execFile on POSIX, never a shell string', async () => {
       const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
       try {
