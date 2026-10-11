@@ -8,9 +8,10 @@ Kangentic injects a column's message to its agent into a live agent session when
 transition or a column/profile edit must restart the live session, by diffing a **source** against
 a **target** for model and effort. It returns `restartReason`: `'model'` when the target model is
 concrete and differs, else `'effort'` when the target effort is concrete and differs, else `null`.
-A caller with a reason suspends the session and resumes it with `--model` / `--effort` as launch
-flags (phase label `switching-model` or `applying-settings`), carrying the column message or
-plan-exit continuation as the resume prompt. A null target is the "Default" column and never
+A column move with a reason suspends the session and resumes it with `--model` / `--effort` as
+launch flags (phase label `switching-model` or `applying-settings`), carrying the column message or
+plan-exit continuation as the resume prompt. A restart from a ContextBar pick or a column or Board
+Profile edit resumes idle instead. A null target is the "Default" column and never
 restarts: `--resume` keeps whatever the session runs at.
 
 A column or Board Profile edit (`propagateStrategyToLiveSessions`) restarts every running session
