@@ -1,14 +1,15 @@
 /**
- * The links overlay's line geometry (#732 board 8): several lines meeting one
- * side of one card fan 10px apart around the title row instead of landing on
- * one point, ordered by where each line's other end sits so a fan does not
- * cross itself. A lone line keeps the plain anchor.
+ * The links overlay's line geometry (#732 board 8): a card meets its lines as
+ * a Workflows canvas card does, at one port per side, a 10px ring centred on
+ * its facing edge at the middle of its title row. Every line on that side
+ * leaves from or arrives at that port: it starts at the ring's outer edge,
+ * and stops one arrowhead short of it so the arrow's tip lands on the ring.
  */
 import { describe, expect, it } from 'vitest';
-import { FAN_SPACING, arrowheadLength, linkPaths, type CardBox, type LinkRequest } from '../../src/renderer/components/board/workflow-links-geometry';
+import { PORT_RADIUS, arrowheadLength, linkPaths, linkPorts, type CardBox, type LinkRequest } from '../../src/renderer/components/board/workflow-links-geometry';
 
-function box(left: number, top: number): CardBox {
-  return { left, right: left + 240, top, height: 120 };
+function box(left: number, top: number, portY?: number): CardBox {
+  return { left, right: left + 240, top, height: 120, portY };
 }
 
 /** The path's start and end points, read back out of its `M x y C ..., x y` form. */
@@ -17,76 +18,64 @@ function ends(path: string): { start: { x: number; y: number }; end: { x: number
   return { start: { x: numbers[0], y: numbers[1] }, end: { x: numbers[numbers.length - 2], y: numbers[numbers.length - 1] } };
 }
 
-const FOCUS = box(600, 100);
-const TITLE_ROW = 100 + 44;
+/** The focus card, its title row's middle measured at 147. */
+const FOCUS = box(600, 100, 147);
 
 describe('the links overlay geometry', () => {
-  it('lands a lone line on the facing edge at the title row', () => {
-    const [only] = linkPaths([{ key: 'out:a', fromId: 'focus', from: FOCUS, toId: 'a', to: box(1000, 300) }]);
+  it('runs a line from the blocker\'s port to the dependent\'s, each at its title row, ring edge to ring edge', () => {
+    const [only] = linkPaths([{ key: 'out:a', fromId: 'focus', from: FOCUS, toId: 'a', to: box(1000, 300, 349) }]);
     const { start, end } = ends(only.path);
-    expect(start).toEqual({ x: 842, y: TITLE_ROW });
-    expect(end).toEqual({ x: 998, y: 344 });
+    expect(start).toEqual({ x: 840 + PORT_RADIUS, y: 147 });
+    expect(end).toEqual({ x: 1000 - PORT_RADIUS, y: 349 });
   });
 
-  it('fans the lines that meet one side of one card 10px apart, upper other end on the upper slot', () => {
+  it('leaves every line on one side of a card from the same port, as the canvas does', () => {
     const links: LinkRequest[] = [
       { key: 'out:lower', fromId: 'focus', from: FOCUS, toId: 'lower', to: box(100, 700) },
       { key: 'out:upper', fromId: 'focus', from: FOCUS, toId: 'upper', to: box(100, 500) },
     ];
-    const paths = new Map(linkPaths(links).map((link) => [link.key, ends(link.path)]));
-    const upper = paths.get('out:upper')!;
-    const lower = paths.get('out:lower')!;
-    // Both leave the focus card's left edge, spread around the title row.
-    expect(upper.start.x).toBe(FOCUS.left - 2);
-    expect(lower.start.x).toBe(FOCUS.left - 2);
-    expect(lower.start.y - upper.start.y).toBe(FAN_SPACING);
-    expect((upper.start.y + lower.start.y) / 2).toBe(TITLE_ROW);
-    // Each far end meets a card of its own, so it is not fanned.
-    expect(upper.end.y).toBe(544);
-    expect(lower.end.y).toBe(744);
+    const paths = linkPaths(links).map((link) => ends(link.path).start);
+    expect(paths).toEqual([{ x: 600 - PORT_RADIUS, y: 147 }, { x: 600 - PORT_RADIUS, y: 147 }]);
   });
 
-  it('fans incoming and outgoing lines together when they share a side', () => {
+  it('draws one port per side of a card, however many lines meet it', () => {
     const links: LinkRequest[] = [
-      // A blocker to the right comes in on the focus card's right edge.
+      // Two dependents to the left leave from the focus card's left port.
+      { key: 'out:left-a', fromId: 'focus', from: FOCUS, toId: 'left-a', to: box(100, 300) },
+      { key: 'out:left-b', fromId: 'focus', from: FOCUS, toId: 'left-b', to: box(100, 500) },
+      // A blocker to the right comes in on its right port.
       { key: 'in:blocker', fromId: 'blocker', from: box(1200, 400), toId: 'focus', to: FOCUS },
-      // A dependent to the right leaves from that same edge.
-      { key: 'out:dependent', fromId: 'focus', from: FOCUS, toId: 'dependent', to: box(1200, 0) },
     ];
-    const paths = new Map(linkPaths(links).map((link) => [link.key, ends(link.path)]));
-    const blockerEnd = paths.get('in:blocker')!.end;
-    const dependentStart = paths.get('out:dependent')!.start;
-    expect(blockerEnd.x).toBe(dependentStart.x);
-    // The dependent sits higher on the board, so its line takes the upper slot.
-    expect(blockerEnd.y - dependentStart.y).toBe(FAN_SPACING);
+    const ports = linkPorts(links);
+    expect(ports.map((port) => port.key).sort()).toEqual(['blocker:left', 'focus:left', 'focus:right', 'left-a:right', 'left-b:right']);
+    // Centred on the edge, at the title row.
+    expect(ports.find((port) => port.key === 'focus:left')).toEqual({ key: 'focus:left', x: 600, y: 147 });
+    expect(ports.find((port) => port.key === 'focus:right')).toEqual({ key: 'focus:right', x: 840, y: 147 });
   });
 
-  it('stops each line one arrowhead short of the card it points at, whichever way it arrives', () => {
+  it('stops each line one arrowhead short of the port it points at, whichever way it arrives', () => {
     // The arrowhead is 9 units of its 10-unit box, drawn 5 stroke widths wide.
     expect(arrowheadLength(2)).toBe(9);
     expect(arrowheadLength(1.5)).toBe(6.75);
     const inset = arrowheadLength(2);
     const links: LinkRequest[] = [
-      // Arrives moving right, on the dependent's left edge.
+      // Arrives moving right, on the dependent's left port.
       { key: 'out:right', fromId: 'focus', from: FOCUS, toId: 'right', to: box(1000, 300) },
-      // Arrives moving left, on the dependent's right edge.
+      // Arrives moving left, on the dependent's right port.
       { key: 'out:left', fromId: 'focus', from: FOCUS, toId: 'left', to: box(100, 300) },
       // Same column: bows out past both right edges and arrives moving left.
       { key: 'out:below', fromId: 'focus', from: FOCUS, toId: 'below', to: box(600, 500) },
     ];
     const paths = new Map(linkPaths(links, inset).map((link) => [link.key, ends(link.path)]));
-    expect(paths.get('out:right')!.end.x).toBe(1000 - 2 - inset);
-    expect(paths.get('out:left')!.end.x).toBe(100 + 240 + 2 + inset);
-    expect(paths.get('out:below')!.end.x).toBe(600 + 240 + 2 + inset);
+    expect(paths.get('out:right')!.end.x).toBe(1000 - PORT_RADIUS - inset);
+    expect(paths.get('out:left')!.end.x).toBe(100 + 240 + PORT_RADIUS + inset);
+    expect(paths.get('out:below')!.end.x).toBe(600 + 240 + PORT_RADIUS + inset);
     // The start never moves.
-    expect(paths.get('out:right')!.start.x).toBe(842);
+    expect(paths.get('out:right')!.start.x).toBe(840 + PORT_RADIUS);
   });
 
-  it('keeps lines on opposite sides of a card apart from each other', () => {
-    const links: LinkRequest[] = [
-      { key: 'out:left', fromId: 'focus', from: FOCUS, toId: 'left', to: box(100, 100) },
-      { key: 'out:right', fromId: 'focus', from: FOCUS, toId: 'right', to: box(1200, 100) },
-    ];
-    for (const link of linkPaths(links)) expect(ends(link.path).start.y).toBe(TITLE_ROW);
+  it('puts a card with no measured title row\'s port near its top', () => {
+    const [only] = linkPaths([{ key: 'out:a', fromId: 'focus', from: box(600, 100), toId: 'a', to: box(1000, 300) }]);
+    expect(ends(only.path).start.y).toBe(100 + 44);
   });
 });

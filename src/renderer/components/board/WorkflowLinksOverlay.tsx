@@ -3,7 +3,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import type { WorkflowDetail } from '../../../shared/types';
 import { motionReduced } from '../../utils/motion-reduced';
-import { ARROWHEAD_PATH, ARROWHEAD_STROKES, arrowheadLength, linkPaths, type CardBox, type LinkRequest } from './workflow-links-geometry';
+import { ARROWHEAD_PATH, ARROWHEAD_STROKES, PORT_RADIUS, arrowheadLength, linkPaths, linkPorts, type CardBox, type LinkRequest, type Port } from './workflow-links-geometry';
 
 /** The colored line's width; its halo is wider. */
 const LINE_WIDTH = 2;
@@ -27,7 +27,9 @@ const CLIP_ID = 'workflow-links-overlay-clip';
  *
  * The lines read as the Workflows canvas draws a selected task's links: the
  * same colors, arrowheads and flowing dashes (`workflow-link-flow` in
- * index.css), so a link looks the same on both. A line to a card scrolled out
+ * index.css), and the same ports: one ring per side of a card at its title
+ * row, which every line on that side leaves or reaches, so a link looks the
+ * same on both. A line to a card scrolled out
  * of view keeps running toward it, and is clipped to the lanes below the
  * header row: it leaves view under the headers, the way a scrolled card does,
  * and never paints over a column's name, the toolbar or the panel below.
@@ -55,6 +57,7 @@ const COLORS = {
 } as const;
 
 const NO_SEGMENTS: Segment[] = [];
+const NO_PORTS: Port[] = [];
 
 /** Where the lines may paint, in the board's coordinates: the lanes below the header row. */
 interface ClipArea {
@@ -66,6 +69,11 @@ interface ClipArea {
 function sameClip(previous: ClipArea | null, next: ClipArea | null): boolean {
   return previous === next || (previous !== null && next !== null
     && previous.top === next.top && previous.height === next.height && previous.width === next.width);
+}
+
+function samePorts(previous: readonly Port[], next: readonly Port[]): boolean {
+  return previous.length === next.length
+    && previous.every((port, index) => port.key === next[index].key && port.x === next[index].x && port.y === next[index].y);
 }
 
 function sameSegments(previous: readonly Segment[], next: readonly Segment[]): boolean {
@@ -94,9 +102,22 @@ function relationsOf(focusId: string, detail: WorkflowDetail): Relations {
   };
 }
 
-/** A card's box relative to the board, which the overlay's SVG fills. */
-function boxIn(rect: DOMRect, origin: DOMRect): CardBox {
-  return { left: rect.left - origin.left, right: rect.right - origin.left, top: rect.top - origin.top, height: rect.height };
+/**
+ * A card's box relative to the board, which the overlay's SVG fills, with its
+ * ports at the middle of its title row (`data-card-title-row`), where a
+ * Workflows canvas card has them. A compact Done card has no such row, and
+ * keeps the point near its top.
+ */
+function boxOf(card: Element, origin: DOMRect): CardBox {
+  const rect = card.getBoundingClientRect();
+  const titleRow = card.querySelector('[data-card-title-row]')?.getBoundingClientRect();
+  return {
+    left: rect.left - origin.left,
+    right: rect.right - origin.left,
+    top: rect.top - origin.top,
+    height: rect.height,
+    portY: titleRow ? titleRow.top + titleRow.height / 2 - origin.top : undefined,
+  };
 }
 
 /**
@@ -163,6 +184,7 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
   const focusDetail = useWorkflowStore((state) => state.linkFocus?.detail ?? null);
   const linkFocusLoading = useWorkflowStore((state) => state.linkFocusLoading);
   const [segments, setSegments] = useState<Segment[]>(NO_SEGMENTS);
+  const [ports, setPorts] = useState<Port[]>(NO_PORTS);
   const [clip, setClip] = useState<ClipArea | null>(null);
 
   const relations = useMemo(
@@ -201,36 +223,40 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
     const relations = drawnRelations;
     if (!relations || !board) {
       setSegments(NO_SEGMENTS);
+      setPorts(NO_PORTS);
       return;
     }
     const lanes = board.querySelector('[data-board-lanes]');
     const origin = board.getBoundingClientRect();
-    const boxOf = (id: string): CardBox | null => {
+    const cardBox = (id: string): CardBox | null => {
       const card = lanes?.querySelector(`[data-task-id="${CSS.escape(id)}"]`);
-      return card ? boxIn(card.getBoundingClientRect(), origin) : null;
+      return card ? boxOf(card, origin) : null;
     };
-    const focusBox = boxOf(relations.focusId);
+    const focusBox = cardBox(relations.focusId);
     if (!focusBox) {
       setSegments(NO_SEGMENTS);
+      setPorts(NO_PORTS);
       return;
     }
     // A related card that is not rendered (out of the Done column's list) has no box, and no line.
     const requests: LinkRequest[] = [];
     const looks: Array<Pick<Segment, 'color' | 'marker'>> = [];
     for (const blocker of relations.blockers) {
-      const box = boxOf(blocker.id);
+      const box = cardBox(blocker.id);
       if (!box) continue;
       requests.push({ key: `in:${blocker.id}`, fromId: blocker.id, from: box, toId: relations.focusId, to: focusBox });
       looks.push(blocker.done ? { color: COLORS.done, marker: 'done' } : { color: COLORS.pending, marker: 'pending' });
     }
     for (const id of relations.dependents) {
-      const box = boxOf(id);
+      const box = cardBox(id);
       if (!box) continue;
       requests.push({ key: `out:${id}`, fromId: relations.focusId, from: focusBox, toId: id, to: box });
       looks.push({ color: COLORS.dependent, marker: 'dependent' });
     }
     const next = linkPaths(requests, arrowheadLength(LINE_WIDTH)).map(({ key, path }, index): Segment => ({ key, path, ...looks[index] }));
     setSegments((previous) => (sameSegments(previous, next) ? previous : next));
+    const nextPorts = linkPorts(requests);
+    setPorts((previous) => (samePorts(previous, nextPorts) ? previous : nextPorts));
 
     // Every lane's card list starts at the bottom of the header row.
     const list = lanes?.querySelector('[data-swimlane-task-list]');
@@ -381,6 +407,20 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
               <path d={segment.path} fill="none" stroke="var(--color-surface)" strokeWidth={6} strokeLinecap="round" opacity={0.85} />
               <path d={segment.path} className="workflow-link-flow" fill="none" stroke={segment.color} strokeWidth={LINE_WIDTH} strokeLinecap="round" markerEnd={`url(#workflow-link-${segment.marker})`} />
             </g>
+          ))}
+          {/* The canvas's port: a 10px ring in the accent on the surface, over the lines it joins. */}
+          {ports.map((port) => (
+            <circle
+              key={port.key}
+              data-testid="workflow-link-port"
+              data-port={port.key}
+              cx={port.x}
+              cy={port.y}
+              r={PORT_RADIUS - 1}
+              fill="var(--color-surface)"
+              stroke="var(--color-accent-fg)"
+              strokeWidth={2}
+            />
           ))}
         </g>
       </svg>

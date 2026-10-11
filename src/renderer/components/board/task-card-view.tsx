@@ -253,7 +253,8 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
 
   return (
     <>
-      <div className="flex items-center gap-1.5">
+      {/* `data-card-title-row`: the board's links overlay puts a card's ports on this row. */}
+      <div className="flex items-center gap-1.5" data-card-title-row>
         {/* ONE slot, not two conditional siblings.
             These were `{isIdle && <ActivityMark .../>}{isThinking && <ActivityMark .../>}`,
             which React reconciles positionally: idle owned child index 0 and working index 1,

@@ -1110,7 +1110,7 @@ src/renderer/components/workflows/
 src/renderer/components/board/
   WorkflowTaskCardBody.tsx # a workflow task's board card: the strip, and the To Do footer
   WorkflowLinksButton.tsx  # the strip's links: a 400ms rest on it previews them, its button keeps them
-  WorkflowLinksOverlay.tsx # Show workflow links: the canvas's flowing lines, clipped below the header row, re-measured on scroll, resize, card height and every frame of its card's drag; rings, dimming, faded in and out
+  WorkflowLinksOverlay.tsx # Show workflow links: the canvas's flowing lines and title-row ports, clipped below the header row, re-measured on scroll, resize, card height and every frame of its card's drag; rings, dimming, faded in and out
   workflow-menu-items.tsx  # Open workflow and Show workflow links, in the card menu's leading slot
   DeleteTaskDialog.tsx     # the Delete task confirm, shared by the board card and the canvas menu
 src/renderer/utils/

@@ -556,6 +556,23 @@ test.describe('Workflow tasks on the board', () => {
       expect(clip.applied).toBe('url(#workflow-links-overlay-clip)');
       expect(clip.linesInside).toBeGreaterThan(0);
 
+      // Ports, as the canvas draws them: one ring per side of a card, at the
+      // middle of its title row, which every line on that side shares.
+      const portCheck = await page.evaluate(() => {
+        const svg = document.querySelector('[data-testid="workflow-links-overlay"]')!;
+        const origin = svg.getBoundingClientRect();
+        const row = document.querySelector('[data-board-lanes] [data-task-id="t414"] [data-card-title-row]')!.getBoundingClientRect();
+        return {
+          rowMiddle: row.top + row.height / 2 - origin.top,
+          ports: Array.from(svg.querySelectorAll('[data-testid="workflow-link-port"]'))
+            .map((port) => ({ key: port.getAttribute('data-port') ?? '', cy: Number(port.getAttribute('cy')) })),
+        };
+      });
+      const focusPorts = portCheck.ports.filter((port) => port.key.startsWith('t414:'));
+      expect(focusPorts.length).toBeGreaterThan(0);
+      for (const port of focusPorts) expect(Math.abs(port.cy - portCheck.rowMiddle)).toBeLessThan(1);
+      expect(new Set(portCheck.ports.map((port) => port.key)).size).toBe(portCheck.ports.length);
+
       // A blocker not done yet is the canvas's muted grey: #418 waits on #417 in To Do.
       await page.keyboard.press('Escape');
       await expect(overlay).toHaveCount(0);

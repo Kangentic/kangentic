@@ -1,12 +1,12 @@
 /**
  * Where the links overlay's lines run (#732 board 8), as pure geometry over
  * card boxes already measured relative to the board. Free of the DOM, so the
- * fan is pinned by a unit test rather than by reading pixels.
+ * ports are pinned by a unit test rather than by reading pixels.
  *
- * A line meets a card on its facing edge, at the title row. Several lines
- * meeting one side of one card fan out 10px apart around that point instead
- * of landing on it together, ordered by where each line's other end is, so
- * the lines in a fan do not cross each other.
+ * A card meets its lines as a Workflows canvas card does: at a port, a 10px
+ * ring centred on its facing edge at the middle of its title row. Every line
+ * on that side of the card leaves from or arrives at that one port: a line
+ * starts at the ring's outer edge and arrives with its arrowhead's tip on it.
  */
 
 export interface CardBox {
@@ -14,6 +14,8 @@ export interface CardBox {
   right: number;
   top: number;
   height: number;
+  /** The middle of the card's title row, where its ports sit; absent, a point near the top. */
+  portY?: number;
 }
 
 export interface LinkRequest {
@@ -24,8 +26,8 @@ export interface LinkRequest {
   to: CardBox;
 }
 
-/** Between two lines that meet the same side of the same card. */
-export const FAN_SPACING = 10;
+/** Half a port's 10px ring, the canvas's port (`WorkflowTaskNode`). */
+export const PORT_RADIUS = 5;
 
 /**
  * The arrowhead both link drawings put on a line's end, this overlay and the
@@ -57,12 +59,23 @@ interface Point {
   y: number;
 }
 
-/** The facing edge, at the title row, before any fan offset. */
-function anchor(box: CardBox, side: Side): Point {
+/** A port: its card, the side it is on, and its centre. */
+export interface Port extends Point {
+  key: string;
+}
+
+/** A card's port on one side: centred on that edge, at the title row. */
+function portOf(box: CardBox, side: Side): Point {
   return {
-    x: side === 'left' ? box.left - 2 : box.right + 2,
-    y: box.top + Math.min(box.height / 2, 44),
+    x: side === 'left' ? box.left : box.right,
+    y: box.portY ?? box.top + Math.min(box.height / 2, 44),
   };
+}
+
+/** The port's outer edge on that side, where a line meets it. */
+function rimOf(box: CardBox, side: Side): Point {
+  const port = portOf(box, side);
+  return { x: port.x + (side === 'left' ? -PORT_RADIUS : PORT_RADIUS), y: port.y };
 }
 
 function sidesOf(from: CardBox, to: CardBox): { fromSide: Side; toSide: Side; sameColumn: boolean } {
@@ -71,62 +84,45 @@ function sidesOf(from: CardBox, to: CardBox): { fromSide: Side; toSide: Side; sa
   return { fromSide: rightward ? 'right' : 'left', toSide: rightward ? 'left' : 'right', sameColumn: false };
 }
 
-interface Endpoint {
-  linkIndex: number;
-  end: 'from' | 'to';
-  base: Point;
-  /** Where the line's other end is, which orders the fan. */
-  otherY: number;
-}
-
 /**
- * Each link's SVG path, its ends fanned where several meet one side of one
- * card. `endInset` stops each line that far short of the card it points at,
- * back along the horizontal it arrives on, for the arrowhead to fill.
+ * Each link's SVG path, from its blocker's port to its dependent's.
+ * `endInset` stops each line that far short of the port it points at, back
+ * along the horizontal it arrives on, for the arrowhead to fill.
  */
 export function linkPaths(links: readonly LinkRequest[], endInset = 0): Array<{ key: string; path: string }> {
-  const plans = links.map((link) => {
+  return links.map((link) => {
     const sides = sidesOf(link.from, link.to);
-    return { link, sides, start: anchor(link.from, sides.fromSide), end: anchor(link.to, sides.toSide) };
-  });
-
-  const groups = new Map<string, Endpoint[]>();
-  const join = (groupKey: string, endpoint: Endpoint) => {
-    const group = groups.get(groupKey);
-    if (group) group.push(endpoint);
-    else groups.set(groupKey, [endpoint]);
-  };
-  plans.forEach((plan, linkIndex) => {
-    join(`${plan.link.fromId}:${plan.sides.fromSide}`, { linkIndex, end: 'from', base: plan.start, otherY: plan.end.y });
-    join(`${plan.link.toId}:${plan.sides.toSide}`, { linkIndex, end: 'to', base: plan.end, otherY: plan.start.y });
-  });
-
-  const offsets = plans.map(() => ({ from: 0, to: 0 }));
-  for (const group of groups.values()) {
-    if (group.length < 2) continue;
-    const ordered = [...group].sort((first, second) => first.otherY - second.otherY || first.linkIndex - second.linkIndex);
-    ordered.forEach((endpoint, index) => {
-      offsets[endpoint.linkIndex][endpoint.end] = (index - (ordered.length - 1) / 2) * FAN_SPACING;
-    });
-  }
-
-  return plans.map((plan, linkIndex) => {
-    const start = { x: plan.start.x, y: plan.start.y + offsets[linkIndex].from };
-    const endY = plan.end.y + offsets[linkIndex].to;
-    if (plan.sides.sameColumn) {
+    const start = rimOf(link.from, sides.fromSide);
+    const rim = rimOf(link.to, sides.toSide);
+    if (sides.sameColumn) {
       // It bows out past both right edges, so it arrives moving left.
-      const end = { x: plan.end.x + endInset, y: endY };
+      const end = { x: rim.x + endInset, y: rim.y };
       return {
-        key: plan.link.key,
+        key: link.key,
         path: `M ${start.x} ${start.y} C ${start.x + SAME_COLUMN_BOW} ${start.y}, ${end.x + SAME_COLUMN_BOW} ${end.y}, ${end.x} ${end.y}`,
       };
     }
-    const direction = plan.sides.fromSide === 'right' ? 1 : -1;
-    const end = { x: plan.end.x - direction * endInset, y: endY };
+    const direction = sides.fromSide === 'right' ? 1 : -1;
+    const end = { x: rim.x - direction * endInset, y: rim.y };
     const handle = Math.max(48, Math.abs(end.x - start.x) * 0.5) * direction;
     return {
-      key: plan.link.key,
+      key: link.key,
       path: `M ${start.x} ${start.y} C ${start.x + handle} ${start.y}, ${end.x - handle} ${end.y}, ${end.x} ${end.y}`,
     };
   });
+}
+
+/** The ports these links meet, one per side of a card however many lines share it. */
+export function linkPorts(links: readonly LinkRequest[]): Port[] {
+  const ports = new Map<string, Port>();
+  const add = (cardId: string, box: CardBox, side: Side) => {
+    const key = `${cardId}:${side}`;
+    if (!ports.has(key)) ports.set(key, { key, ...portOf(box, side) });
+  };
+  for (const link of links) {
+    const sides = sidesOf(link.from, link.to);
+    add(link.fromId, link.from, sides.fromSide);
+    add(link.toId, link.to, sides.toSide);
+  }
+  return [...ports.values()];
 }
