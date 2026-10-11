@@ -921,7 +921,13 @@ export async function handleTaskMove(
             skipPromptTemplate,
             resolvedProjectId,
             resolvedProjectPath,
-            continuationPrompt: options?.continuationPrompt,
+            // Never forwarded here. A switch always lands in a different
+            // conversation from the live one (another track, or a fresh
+            // session), so it never saw the plan the continuation asks the
+            // agent to proceed with. spawnAgent's resume check does not read
+            // forceFresh, so on a force-fresh entry the continuation would
+            // become a brand-new session's only prompt.
+            continuationPrompt: undefined,
             suppressAutoCommand,
           };
         }

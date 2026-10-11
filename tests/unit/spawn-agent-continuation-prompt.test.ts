@@ -2,11 +2,12 @@
  * Tests for continuationPrompt delivery through the real spawnAgent fallback
  * (src/main/ipc/helpers/agent-spawn.ts).
  *
- * The plan-exit auto-move respawns a session whose permission mode changed
- * (Planning -> Executing). The ExitPlanMode approval dialog dies with the
- * suspended PTY, so the listener passes a continuation prompt ("Your plan was
- * approved...") that must be delivered as the resumed session's next message.
- * Contract under test:
+ * The plan-exit auto-move respawns a session whose model or effort changed
+ * (Planning -> Executing). A bare --resume idles, so the listener passes a
+ * continuation prompt naming the restart ("The session restarted to apply
+ * the Executing column's settings...") that must be delivered as the resumed
+ * session's next message. The prompt is opaque here; its wording is pinned by
+ * plan-exit-continuation-prompt.test.ts. Contract under test:
  *
  *   - The destination column's auto_command always wins over the continuation
  *     (it is the user's explicit per-column automation).
@@ -14,6 +15,10 @@
  *     conversation for "proceed" to refer to.
  *   - Without a continuation (user drag), a resumed session with no
  *     auto_command resumes idle - pins the pre-existing respawn behavior.
+ *   - The continuation is also SAME-AGENT-only: on a cross-agent handoff with
+ *     handoff_context off, the resume check finds the target agent's own older
+ *     conversation, which never saw the plan, so no continuation is delivered.
+ *     A column message on such a handoff still takes the prompt slot.
  *
  * Harness mirrors spawn-agent-isolated-auto-command.test.ts: the real
  * spawnAgent runs end to end with injected engine/repos/context mocks, and
@@ -32,11 +37,13 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 }));
 
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
+import { resolveTargetAgent } from '../../src/main/transition-engine/agent-resolver';
+import { agentRegistry } from '../../src/main/agent/agent-registry';
 
 const TASK_ID = 'task-aaa00001';
 const EXECUTING_LANE_ID = 'lane-executing';
 const FRESH_PTY_SESSION_ID = 'pty-fresh-1';
-const CONTINUATION = 'Proceed with implementing the approved plan.';
+const CONTINUATION = "The session restarted to apply the Executing column's settings. Proceed with implementing the approved plan.";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -211,10 +218,25 @@ function resumePromptArg(engine: ReturnType<typeof makeDeps>['engine']): unknown
   return engine.resumeSuspendedSession.mock.calls[0]?.[3];
 }
 
+/**
+ * Resolves the destination to a DIFFERENT agent than the task's current one
+ * (`makeTask` has `agent: 'claude'`), which is what `resolveTargetAgent`
+ * reports as a handoff. The registry hands back the target agent's session
+ * type, so the resume check is scoped to the target agent's own conversation.
+ */
+function mockHandoffToCodex(): void {
+  vi.mocked(resolveTargetAgent).mockImplementation(() => ({ agent: 'codex', isHandoff: true }));
+  vi.mocked(agentRegistry.get).mockImplementation(() => ({ sessionType: 'codex_agent' }) as never);
+}
+
 describe('spawnAgent continuationPrompt delivery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     columnMessages.clear();
+    // clearAllMocks keeps an implementation set by a test, so the same-agent
+    // defaults are restored here and a handoff override cannot leak forward.
+    vi.mocked(resolveTargetAgent).mockImplementation(() => ({ agent: 'claude', isHandoff: false }));
+    vi.mocked(agentRegistry.get).mockImplementation(() => ({ sessionType: 'claude_agent' }) as never);
   });
 
   it('resume with no auto_command: the continuation becomes the resume prompt', async () => {
@@ -274,5 +296,40 @@ describe('spawnAgent continuationPrompt delivery', () => {
     await runSpawn(executingLane, deps, undefined);
 
     expect(resumePromptArg(deps.engine)).toBe('/task-command');
+  });
+
+  it('handoff with handoff_context off: the target agent\'s older conversation does NOT get the continuation', async () => {
+    // The resume check is scoped to the TARGET agent's session type, so on a
+    // cross-agent handoff it finds that agent's own older conversation for the
+    // task. That conversation never saw the plan, so "proceed with the approved
+    // plan" would refer to nothing. Red-green: reverting agent-spawn.ts to
+    // `canResumeDestination ? options.continuationPrompt : undefined` delivers
+    // CONTINUATION here and fails.
+    mockHandoffToCodex();
+    const executingLane = makeSwimlane(EXECUTING_LANE_ID, { handoff_context: false });
+    const olderCodexConversation = makeRecord({ id: 'rec-codex-older', session_type: 'codex_agent' });
+    const deps = makeDeps({ resumeRecord: olderCodexConversation });
+
+    await runSpawn(executingLane, deps, CONTINUATION);
+
+    expect(deps.sessionRepo.getLatestForTaskByTypeAndIsolation).toHaveBeenCalledWith(TASK_ID, 'codex_agent', null);
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(resumePromptArg(deps.engine)).toBeUndefined();
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  it('handoff with handoff_context off: a column message still takes the prompt slot', async () => {
+    // The drop is scoped to the continuation. A column message is the user's
+    // own automation and is delivered to the resumed session as before.
+    mockHandoffToCodex();
+    const executingLane = makeSwimlane(EXECUTING_LANE_ID, { handoff_context: false, auto_command: '/implement' });
+    const olderCodexConversation = makeRecord({ id: 'rec-codex-older', session_type: 'codex_agent' });
+    const deps = makeDeps({ resumeRecord: olderCodexConversation });
+
+    await runSpawn(executingLane, deps, CONTINUATION);
+
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(resumePromptArg(deps.engine)).toBe('/implement');
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 });

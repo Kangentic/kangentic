@@ -497,7 +497,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       restartReason: 'effort',
     });
 
-    const continuation = 'Proceed with implementing the approved plan.';
+    const continuation = "The session restarted to apply the Executing column's settings. Proceed with implementing the approved plan.";
     await handleTaskMove(
       context as never,
       { taskId: 'task-aaa00001', targetSwimlaneId: EXECUTING_LANE_ID, targetPosition: 0 },
@@ -594,7 +594,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       restartReason: 'model',
     });
 
-    const continuation = 'Proceed with implementing the approved plan.';
+    const continuation = "The session restarted to apply the Executing column's settings. Proceed with implementing the approved plan.";
     await handleTaskMove(
       context as never,
       { taskId: 'task-aaa00001', targetSwimlaneId: EXECUTING_LANE_ID, targetPosition: 0 },
