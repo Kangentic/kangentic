@@ -97,17 +97,22 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+  // "Kangentic" is on screen before the boot has finished. Two things still land
+  // after it, and the steps below would otherwise race them: the current project
+  // (the board renders only once it is set, and the settings panel lists its
+  // Project tabs only from then on), and the first-run backfill of
+  // `onboardedProjectIds` (a config write plus a store refresh). Wait for each by
+  // what it leaves behind.
+  await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+  await expect.poll(() => page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { config: { getState: () => { globalConfig: { onboardedProjectIds?: string[] } } } };
+    }).__zustandStores;
+    return Array.isArray(stores?.config.getState().globalConfig.onboardedProjectIds);
+  })).toBe(true);
   // Turn the Knowledge Graph on in config (the dropdown + rows are gated on it) via
   // the same config.set + store-reload path the settings UI uses.
-  await page.evaluate(() =>
-    window.electronAPI.config.set({ knowledgeGraph: { indexingEnabled: true, enabled: true, localModel: 'bge-small' } }),
-  );
-  await page.evaluate(() => {
-    const stores = (window as unknown as {
-      __zustandStores?: { config: { getState: () => { loadConfig: () => Promise<void> } } };
-    }).__zustandStores;
-    return stores?.config.getState().loadConfig();
-  });
+  await setKnowledgeGraph(page, { indexingEnabled: true, enabled: true, localModel: 'bge-small' });
   return { browser, page };
 }
 
@@ -150,14 +155,36 @@ function warningPlacementProblems(row: Locator): Promise<string[]> {
   });
 }
 
+/**
+ * Open Settings on the Knowledge Graph tab and return once the tab's own card is
+ * mounted, which is what every caller needs next.
+ *
+ * Two waits the bare click chain used to skip. The tab list is final only once the
+ * Project tabs are in it (General is the first), because a list that grows above
+ * the Knowledge Graph button while the pointer is pressed on it moves the button
+ * out from under the click. And a click that did not take is detected by the card
+ * never mounting, so the whole open is retried as a unit: a tab click is
+ * idempotent, and the gear is pressed only while the panel is closed (it toggles).
+ */
 async function openKnowledgeGraphTab(page: Page) {
-  await page.locator('[data-testid="settings-button"]').click();
-  await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
-  // By id: the id is what deep links and saved last-tab state address.
-  await page.getByTestId('settings-tab-knowledgeGraph').click();
+  const panel = page.getByTestId('settings-panel');
+  const knowledgeGraphCard = page.getByTestId('knowledge-graph-card');
+  await expect(async () => {
+    if (!(await panel.isVisible())) await page.getByTestId('settings-button').click();
+    await expect(panel).toBeVisible({ timeout: 2000 });
+    await expect(page.getByTestId('settings-tab-general')).toBeVisible({ timeout: 2000 });
+    // By id: the id is what deep links and saved last-tab state address.
+    await page.getByTestId('settings-tab-knowledgeGraph').click({ timeout: 2000 });
+    await expect(knowledgeGraphCard).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 12_000 });
 }
 
-/** Write Knowledge Graph settings through the path the settings UI uses, then reload the store. */
+/**
+ * Write Knowledge Graph settings through the path the settings UI uses, reload the
+ * store, and return once the store holds what was written. The reload is awaited
+ * in the page, but the poll is what keeps a later read from racing a refresh that
+ * began before the write.
+ */
 async function setKnowledgeGraph(page: Page, knowledgeGraph: Record<string, unknown>) {
   await page.evaluate((partial) => window.electronAPI.config.set({ knowledgeGraph: partial }), knowledgeGraph);
   await page.evaluate(() => {
@@ -166,6 +193,13 @@ async function setKnowledgeGraph(page: Page, knowledgeGraph: Record<string, unkn
     }).__zustandStores;
     return stores?.config.getState().loadConfig();
   });
+  await expect.poll(() => page.evaluate((partial) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { config: { getState: () => { globalConfig: { knowledgeGraph?: Record<string, unknown> } } } };
+    }).__zustandStores;
+    const held = stores?.config.getState().globalConfig.knowledgeGraph;
+    return Object.entries(partial).every(([key, value]) => held?.[key] === value);
+  }, knowledgeGraph)).toBe(true);
 }
 
 test.describe('Embedding model picker', () => {
