@@ -121,6 +121,14 @@ function seedScript(options: Options): string {
       // An ordinary task beside them, in To Do.
       state.tasks.push(row(500, 'Split the settings search index', 0, null));
       if (${options.unlinkedTask ? 'true' : 'false'}) state.tasks.push(row(420, 'Rate limit the budgets API', 0, 'wf-usage'));
+      // Number each column's cards from zero in task-number order, as the app
+      // does: the mock's reorder shifts positions as if they run 0, 1, 2.
+      var lanes = {};
+      state.tasks.forEach(function (task) { (lanes[task.swimlane_id] = lanes[task.swimlane_id] || []).push(task); });
+      Object.keys(lanes).forEach(function (laneId) {
+        lanes[laneId].sort(function (first, second) { return first.display_id - second.display_id; })
+          .forEach(function (task, index) { task.position = index; });
+      });
       // The To Do task the workflow was made from, closed into Done at Start.
       if (supersededSource) state.archivedTasks.push(row(409, 'Usage budgets and a hard cap', 6, null));
       if (${options.session414 ? 'true' : 'false'}) {
@@ -672,6 +680,55 @@ test.describe('Workflow tasks on the board', () => {
         await page.mouse.up();
         await expect(overlay).toHaveCount(0);
         await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a card dragged in its column keeps its links all the way through, and after the drop while the pointer stays on it', async () => {
+      const { browser, page } = await launch();
+      try {
+        // #415 waits in To Do: locked, so it reorders within its column.
+        await restOnCard(page, 't415');
+        const overlay = overlayOf(page);
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't415');
+
+        const from = await boardCard(page, 't415').boundingBox();
+        const to = await boardCard(page, 't416').boundingBox();
+        const planning = await page.locator('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="Planning"]').boundingBox();
+        if (!from || !to || !planning) throw new Error('No box for the drag');
+        await page.mouse.down();
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height * 0.6 + 12, { steps: 3 });
+        await expect(page.locator('.drag-overlay')).toBeVisible({ timeout: 2000 });
+
+        // Off the card and out of its column while the button is held: the
+        // lines stay. A leave event that reports no button held, as Electron
+        // can send mid-drag, does not end them either: the card knows its own press.
+        await page.mouse.move(planning.x + planning.width / 2, to.y + to.height / 2, { steps: 12 });
+        await boardCard(page, 't415').evaluate((card) => card.dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'mouse', buttons: 0 })));
+        await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 400)));
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't415');
+        await expect(overlay).toHaveAttribute('data-phase', 'shown');
+
+        // Back over #416's place and let go: #415 lands there, under a pointer
+        // that has not moved since.
+        await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
+        // Intentional fixed wait, as drag-and-drop.spec.ts's within-column reorder
+        // has it: no DOM signal says the target card is hovered before the release.
+        await page.waitForTimeout(400);
+        await page.mouse.up();
+        await expect(page.locator('.drag-overlay')).toHaveCount(0);
+        await expect.poll(() => page.locator('[data-board-lanes] [data-swimlane-name="To Do"] [data-task-id]')
+          .evaluateAll((cards) => cards.map((card) => card.getAttribute('data-task-id')).slice(0, 2))).toEqual(['t416', 't415']);
+
+        // The links stay while the pointer rests on it, read past the landing and any fade.
+        await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 800)));
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't415');
+        await expect(overlay).toHaveAttribute('data-phase', 'shown');
+
+        // Off the card: they go.
+        await page.mouse.move(2, 2, { steps: 4 });
+        await expect(overlay).toHaveCount(0);
       } finally {
         await browser.close();
       }

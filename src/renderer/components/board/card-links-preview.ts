@@ -21,16 +21,21 @@ import type { BoardWorkflow } from '../../utils/board-workflow';
  */
 export const LINKS_PREVIEW_DWELL_MS = 400;
 
+/** How long after the button comes up a drop has landed: dnd-kit's drop animation and the column's settle. */
+const DROP_LANDING_MS = 300;
+
 /**
  * Preview the links of the card that holds `anchorRef`. Mouse only (touch has
  * no hover), never starting with a button held, and nothing for a card with no
  * links. Kept links (the menu, a refused move) win over a preview, which the
  * store decides.
  *
- * A press that slides off the card is a drag starting, or a click wandering:
- * the preview holds until the button comes up, so a dragged card keeps its
- * lines (the overlay follows it), and ends then unless the pointer is back on
- * the card.
+ * A press on the card holds the preview until the button comes up, wherever
+ * the pointer goes meanwhile, so a dragged card keeps its lines all the way
+ * through the drag (the overlay follows it). The card tracks its own press
+ * rather than trusting a leave event's `buttons`, which is not reliable during
+ * a drag. When the button comes up, the preview stays while the pointer is on
+ * the card where it landed, and ends when the pointer moves off it.
  */
 export function useCardLinksPreview(anchorRef: RefObject<HTMLElement | null>, taskId: string, workflow: BoardWorkflow | null, enabled: boolean): void {
   const hasLinks = workflow?.hasLinks ?? false;
@@ -41,7 +46,9 @@ export function useCardLinksPreview(anchorRef: RefObject<HTMLElement | null>, ta
     const card = anchorRef.current?.closest<HTMLElement>('[data-task-id]');
     if (!enabled || !card || !hasLinks || !homeProjectId || !workflowId) return undefined;
     let timer: number | null = null;
+    let landing: number | null = null;
     let hovering = false;
+    let pressed = false;
     const cancelTimer = () => {
       if (timer === null) return;
       window.clearTimeout(timer);
@@ -52,14 +59,31 @@ export function useCardLinksPreview(anchorRef: RefObject<HTMLElement | null>, ta
       hovering = false;
       useWorkflowStore.getState().endPreview(taskId);
     };
-    // After the button comes up, a tick later so the hover state is current.
-    const release = () => {
-      window.setTimeout(() => {
-        if (!card.isConnected || !card.matches(':hover')) end();
-      }, 0);
+    // The button came up. Where the pointer is is read once the drop has
+    // landed: a reordered card moves under a pointer that has not moved, which
+    // the hover state does not report until the pointer moves again.
+    const onUp = (event: PointerEvent) => {
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+      pressed = false;
+      if (!hovering) return;
+      const { clientX, clientY } = event;
+      landing = window.setTimeout(() => {
+        landing = null;
+        const under = document.elementFromPoint(clientX, clientY);
+        if (!card.isConnected || !under || !card.contains(under)) end();
+      }, DROP_LANDING_MS);
+    };
+    const onDown = (event: PointerEvent) => {
+      cancelTimer();
+      if (event.button !== 0) return;
+      pressed = true;
+      // Capture, on the window: the drag's own listeners must not keep it from us.
+      window.addEventListener('pointerup', onUp, true);
+      window.addEventListener('pointercancel', onUp, true);
     };
     const onEnter = (event: PointerEvent) => {
-      if (event.pointerType !== 'mouse' || event.buttons !== 0) return;
+      if (event.pointerType !== 'mouse' || pressed || event.buttons !== 0) return;
       hovering = true;
       cancelTimer();
       timer = window.setTimeout(() => {
@@ -67,26 +91,24 @@ export function useCardLinksPreview(anchorRef: RefObject<HTMLElement | null>, ta
         void useWorkflowStore.getState().previewLinks(taskId, homeProjectId, workflowId);
       }, LINKS_PREVIEW_DWELL_MS);
     };
-    const onLeave = (event: PointerEvent) => {
+    const onLeave = () => {
       cancelTimer();
-      if (!hovering) return;
-      if (event.buttons !== 0) {
-        document.addEventListener('pointerup', release, { once: true });
-        return;
-      }
+      if (!hovering || pressed) return;
       end();
     };
     card.addEventListener('pointerenter', onEnter);
     card.addEventListener('pointerleave', onLeave);
-    card.addEventListener('pointerdown', cancelTimer);
+    card.addEventListener('pointerdown', onDown);
     // A card that moves lanes on its own re-mounts with no pointerleave, so its
     // pending preview and any preview it showed end with it.
     return () => {
       card.removeEventListener('pointerenter', onEnter);
       card.removeEventListener('pointerleave', onLeave);
-      card.removeEventListener('pointerdown', cancelTimer);
-      document.removeEventListener('pointerup', release);
+      card.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
       cancelTimer();
+      if (landing !== null) window.clearTimeout(landing);
       end();
     };
   }, [anchorRef, taskId, enabled, hasLinks, homeProjectId, workflowId]);
