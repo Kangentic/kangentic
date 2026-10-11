@@ -69,9 +69,8 @@ window in about 4 seconds. `/clear` also fires SessionEnd, but its process stays
 process tree keeps the terminal. Every end, a desktop Stop included, goes through
 `SessionManager.endCommandTerminal`, which refuses a task's session.
 
-Two gaps remain. The sweep never judges a WSL shell, since its agent is not a Win32 descendant of
-`wsl.exe`, so a WSL terminal outlives its agent as a bare shell until the PTY exits. The same holds
-with the background-shell watcher turned off, since the sweep is the watcher's. A suspend (the
+One gap remains. The sweep never judges a WSL shell, since its agent is not a Win32 descendant of
+`wsl.exe`, so a WSL terminal outlives its agent as a bare shell until the PTY exits. A suspend (the
 idle timeout, a project relocate) ends a terminal outright, since there is no record to resume.
 
 Nothing in the renderer used to close a window when main ended its session, since `App.tsx`
