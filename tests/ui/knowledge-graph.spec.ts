@@ -3502,6 +3502,103 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  /** A scene point and the camera, as far as the framing probe below touches them. */
+  interface ProjectablePoint extends PointProbe {
+    clone(): ProjectablePoint;
+    copy(other: PointProbe): ProjectablePoint;
+    project(camera: unknown): ProjectablePoint;
+  }
+  interface ProbeCamera {
+    position: ProjectablePoint;
+    clone(): ProbeCamera;
+    lookAt(x: number, y: number, z: number): void;
+    updateMatrixWorld(force?: boolean): void;
+  }
+  interface FramingControlsProbe {
+    camera: ProbeCamera;
+    setOrbitPoint: unknown;
+    getPosition(out: ProjectablePoint, receiveEndValue?: boolean): ProjectablePoint;
+    getTarget(out: ProjectablePoint, receiveEndValue?: boolean): ProjectablePoint;
+  }
+
+  /**
+   * How much of the canvas each group of nodes spans on screen once the camera
+   * has FINISHED its current move, as fractions of the canvas's height and width.
+   *
+   * The destination is read from the controls' END values and projected through
+   * a clone of the camera placed there, so it does not wait for the fly. The fly
+   * is not a fixed duration: the frame loop clamps each step to 100 ms of camera
+   * time (`useKnowledgeGraphScene`), so on a loaded software-GL runner a frame
+   * can take several hundred ms and the same fly needs many seconds of wall
+   * clock. It also does not read the title chips, whose count and extremes depend
+   * on label collision culling against real font metrics.
+   *
+   * Like the orbit-pivot test above, this reaches the controls through React's
+   * fiber (they live in a ref inside `useKnowledgeGraphScene`, with no seam for a
+   * test) and fails loudly when it cannot find exactly one controls ref and one
+   * scene ref.
+   */
+  async function endViewSpans(
+    page: Page,
+    groups: ReadonlyArray<ReadonlyArray<number>>,
+  ): Promise<Array<{ height: number; width: number }>> {
+    return page.evaluate((nodeGroups) => {
+      const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+      const canvasContainer = document.querySelector('[data-testid="knowledge-graph-canvas"]');
+      const canvas = canvasContainer?.querySelector('canvas');
+      if (!canvasContainer || !canvas) throw new Error('the map canvas is not on the page');
+      const fiberKey = Object.keys(canvas).find((key) => key.startsWith('__reactFiber$'));
+      if (!fiberKey) throw new Error('the canvas carries no React fiber, so the camera controls cannot be reached');
+      let fiber: FiberProbe | null = (canvas as unknown as Record<string, FiberProbe>)[fiberKey];
+      while (fiber && !(typeof fiber.type === 'function' && (fiber.type as { name?: string }).name === 'KnowledgeGraphCanvas')) {
+        fiber = fiber.return;
+      }
+      if (!fiber) throw new Error('no KnowledgeGraphCanvas fiber above the canvas');
+
+      const controlsRefs: Array<{ current: FramingControlsProbe }> = [];
+      const sceneRefs: Array<{ current: { positions: ProjectablePoint[] } }> = [];
+      for (let hook = fiber.memoizedState; hook; hook = hook.next) {
+        const state = hook.memoizedState;
+        if (isRecord(state) && 'current' in state && isRecord(state.current)) {
+          if (typeof state.current.setOrbitPoint === 'function') controlsRefs.push(state as { current: FramingControlsProbe });
+          else if (Array.isArray(state.current.positions)) sceneRefs.push(state as { current: { positions: ProjectablePoint[] } });
+        }
+      }
+      if (controlsRefs.length !== 1 || sceneRefs.length !== 1) {
+        throw new Error(`expected one controls ref and one scene ref, found ${controlsRefs.length} and ${sceneRefs.length}`);
+      }
+      const controls = controlsRefs[0].current;
+      const positions = sceneRefs[0].current.positions;
+
+      // A camera standing where the controls are headed. The clone keeps the
+      // projection, including the view offset that keeps the map clear of the panels.
+      const endCamera = controls.camera.clone();
+      const PointClass = (controls.camera.position as { constructor: unknown }).constructor as new () => ProjectablePoint;
+      const endPosition = controls.getPosition(new PointClass(), true);
+      const endTarget = controls.getTarget(new PointClass(), true);
+      endCamera.position.copy(endPosition);
+      endCamera.lookAt(endTarget.x, endTarget.y, endTarget.z);
+      endCamera.updateMatrixWorld(true);
+
+      const box = canvas.getBoundingClientRect();
+      return nodeGroups.map((indices) => {
+        const screenX: number[] = [];
+        const screenY: number[] = [];
+        for (const index of indices) {
+          const point = positions[index];
+          if (!point) throw new Error(`node ${index} is not in the scene`);
+          const projected = point.clone().project(endCamera);
+          screenX.push((projected.x + 1) / 2 * box.width);
+          screenY.push((1 - projected.y) / 2 * box.height);
+        }
+        return {
+          width: (Math.max(...screenX) - Math.min(...screenX)) / box.width,
+          height: (Math.max(...screenY) - Math.min(...screenY)) / box.height,
+        };
+      });
+    }, groups);
+  }
+
   test('reset view frames the regions still on the map, not the ones filtered out', async () => {
     // A facet exclusion re-scopes what the map IS, so the map's canonical
     // framing has to move with it. Framing every node the projection holds put
@@ -3513,6 +3610,13 @@ test.describe('knowledge graph', () => {
     // Two well-separated blocks, because the fixture's own regions are
     // contiguous slices of a 20-column grid that sit side by side, so hiding
     // one there barely moves the extent and the assertion could hardly fail.
+    //
+    // Asserted on the camera's destination, not on the title chips on screen. An
+    // earlier version compared the chips' extent after the fly with the extent
+    // before it, and failed once on CI at 0.83 against a 0.85 bar. The chips are
+    // a poor ruler: which ones are drawn depends on label collision culling
+    // against real font metrics, and the fly itself is paced per frame, so it can
+    // still be under way when a poll gives up on a slow runner.
     const separated = `(function () {
       var base = ${projectionLiteral(40)};
       base.nodes.forEach(function (node, i) {
@@ -3527,47 +3631,33 @@ test.describe('knowledge graph', () => {
     const { browser, page } = await launchWithState(snapshotScript({ projection: separated }));
     try {
       await openKnowledgeGraph(page);
-      // The titles are the only thing in the DOM that carries where the camera
-      // put the map: they are positioned by projecting each node through it on
-      // every rendered frame.
-      const titleExtent = async () => page.evaluate(() => {
-        const boxes = Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
-          .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0)
-          .map((element) => element.getBoundingClientRect());
-        if (boxes.length === 0) return { width: 0, height: 0, count: 0 };
-        return {
-          width: Math.max(...boxes.map((box) => box.right)) - Math.min(...boxes.map((box) => box.left)),
-          height: Math.max(...boxes.map((box) => box.bottom)) - Math.min(...boxes.map((box) => box.top)),
-          count: boxes.length,
-        };
-      });
+      // The map is on screen: some title is drawn, so the scene and its camera exist.
+      await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
 
-      await expect.poll(async () => (await titleExtent()).count).toBeGreaterThan(0);
-      const whole = await titleExtent();
+      // Nodes 0 to 19 are the near block and 20 to 39 the far one (see the
+      // fixture above). Read where the near block stands in the framing of the
+      // WHOLE map. This also guards the fixture: if the near block already filled
+      // the view here, hiding the far one could not move it and the assertion
+      // below could hardly fail.
+      const nearBlock = Array.from({ length: 20 }, (_, index) => index);
+      const [nearInWholeMap] = await endViewSpans(page, [nearBlock]);
+      expect(nearInWholeMap.height).toBeLessThan(0.3);
 
       // Hide the far block, then ask for the default view back.
       await page.locator('[data-testid="knowledge-graph-region-row"]').nth(1).click();
       await page.locator('[data-testid="knowledge-graph-reset-view"]').click();
 
-      // Polled rather than waited out: Reset view is an animated fly, so this
-      // retries until the camera settles instead of guessing how long it takes.
-      // Measured on this fixture: 632 x 560 across 19 titles with the fit scoped
-      // to the visible region, against 230 x 136 across 6 when it framed all
-      // forty nodes - so 0.85 of the unfiltered extent sits far from both.
-      await expect.poll(
-        async () => (await titleExtent()).height / whole.height,
-        { timeout: 10_000 },
-      ).toBeGreaterThan(0.85);
-      const scoped = await titleExtent();
-      expect(scoped.width).toBeGreaterThan(whole.width * 0.85);
-      // An independent signal on the same framing: nodes pushed into the
-      // distance lose their titles to the label distance cap, so a map framed
-      // for regions that are no longer drawn also draws fewer names. Held to a
-      // looser ratio than the extents on purpose - how many titles survive
-      // collision culling depends on the label width estimate against real font
-      // metrics, which differ on the headless Linux runner. Measured here: 19
-      // against the whole map's 15 with the fit scoped, 6 without it.
-      expect(scoped.count).toBeGreaterThan(whole.count * 0.6);
+      // Where the camera is HEADED, read at once: Reset view is an animated fly
+      // whose length depends on how fast the runner draws frames, so this never
+      // waits for it. Measured on this fixture, the near block spans 0.17 of the
+      // canvas's height and 0.10 of its width in the whole map's framing, and
+      // 0.62 by 0.34 once the fit is scoped to it, about 3.6 times as much on
+      // both axes. Framed for all forty nodes, it would span what it did before.
+      // So 2.5 times, and over half the canvas's height, sit far from both.
+      const [nearAfterReset] = await endViewSpans(page, [nearBlock]);
+      expect(nearAfterReset.height / nearInWholeMap.height).toBeGreaterThan(2.5);
+      expect(nearAfterReset.width / nearInWholeMap.width).toBeGreaterThan(2.5);
+      expect(nearAfterReset.height).toBeGreaterThan(0.5);
     } finally {
       await browser.close();
     }
