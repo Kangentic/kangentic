@@ -532,6 +532,20 @@
   z-index: 2000 !important;
 }
 
+/* A card is something to click: a click selects it and a double-click opens
+   it, so it shows the pointer. React Flow gives a draggable node `grab`, the
+   pannable background's own cursor, which made a card read as empty canvas.
+   The background keeps `grab`; a card being moved shows `grabbing`. React
+   Flow's stylesheet loads after this one with the Workflows view, so these
+   outrank its `.react-flow__node.draggable` rules instead of relying on
+   order. */
+.workflow-canvas .react-flow__node.draggable {
+  cursor: pointer;
+}
+.workflow-canvas .react-flow__node.draggable.dragging {
+  cursor: grabbing;
+}
+
 /* A card takes focus for React Flow's keyboard moves. React Flow clears the
    browser's focus ring only on its own node types, so ours drew the OS one
    (the Windows accent color), which read as a second selection and could sit

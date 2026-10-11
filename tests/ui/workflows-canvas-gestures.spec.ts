@@ -245,6 +245,12 @@ test.describe('Workflows canvas gestures', () => {
   test('a card being moved lifts, and settles when it is let go', async () => {
     const { browser, page } = await launch('draft');
     try {
+      // A card is something to click, so it shows the pointer; the empty
+      // canvas around it keeps the pan's grab. React Flow gives both grab.
+      await expect(node(page, 'task-3')).toHaveCSS('cursor', 'pointer');
+      await expect(card(page, 'task-3')).toHaveCSS('cursor', 'pointer');
+      await expect(page.locator('.workflow-canvas .react-flow__pane')).toHaveCSS('cursor', 'grab');
+
       const box = await card(page, 'task-3').boundingBox();
       if (!box) throw new Error('no card to move');
       await page.mouse.move(box.x + box.width / 2, box.y + 60);
@@ -253,9 +259,11 @@ test.describe('Workflows canvas gestures', () => {
       await expect(page.locator('.react-flow__node.dragging')).toHaveCount(1);
       await expect(node(page, 'task-3')).toHaveClass(/\bdragging\b/);
       await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('box-shadow', /0px 18px 40px/);
+      await expect(node(page, 'task-3')).toHaveCSS('cursor', 'grabbing');
       await page.mouse.up();
       await expect(page.locator('.react-flow__node.dragging')).toHaveCount(0);
       await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('box-shadow', 'none');
+      await expect(node(page, 'task-3')).toHaveCSS('cursor', 'pointer');
     } finally {
       await browser.close();
     }
