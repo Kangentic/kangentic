@@ -2,6 +2,7 @@ import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec
 import { AgentDetector } from '../../shared/agent-detector';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import { CursorStreamParser } from './stream-parser';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
@@ -35,7 +36,7 @@ import { ActivityDetection } from '../../../../shared/types';
  */
 async function runAgentAbout(cursorPath: string): Promise<string> {
   if (process.platform === 'win32') {
-    const { stdout } = await execAsync(`"${cursorPath}" about --format json`, {
+    const { stdout } = await execAsync(`${quoteCmdExecutable(cursorPath)} about --format json`, {
       timeout: 5000,
       windowsHide: true,
     });

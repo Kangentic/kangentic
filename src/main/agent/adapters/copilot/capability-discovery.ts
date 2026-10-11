@@ -9,6 +9,7 @@
  */
 
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
+import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -27,7 +28,7 @@ const HELP_TIMEOUT_MS = 5000;
  */
 async function readHelpText(cliPath: string): Promise<string> {
   if (process.platform === 'win32') {
-    const { stdout } = await execAsync(`"${cliPath}" --help`, {
+    const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
       timeout: HELP_TIMEOUT_MS,
       windowsHide: true,
       maxBuffer: 1024 * 1024,
