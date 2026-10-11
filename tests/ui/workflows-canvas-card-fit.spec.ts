@@ -10,7 +10,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -93,7 +93,7 @@ async function launch(density: 'compact' | 'default' | 'comfortable'): Promise<{
     win.__windowErrors = [];
     window.addEventListener('error', (event) => { win.__windowErrors.push(event.message); });
   });
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   await page.waitForFunction(() => typeof (window as unknown as { __mockFireUsage?: unknown }).__mockFireUsage === 'function');
   // Each running session's context bar.

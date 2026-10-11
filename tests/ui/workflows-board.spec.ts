@@ -12,7 +12,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -141,7 +141,7 @@ async function launch(options: Options = {}): Promise<{ browser: Browser; page: 
   const page = await (await browser.newContext({ viewport: options.viewport ?? { width: 1700, height: 950 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(seedScript(options));
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   if (options.state === 'done') {
     // A finished workflow leaves the list, so no card carries its strip: wait for Done's list instead.

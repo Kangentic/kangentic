@@ -15,7 +15,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -130,7 +130,7 @@ async function launch(seed: Seed, options: { width?: number; sidebarWidth?: numb
   const page = await (await browser.newContext({ viewport: { width: options.width ?? 1600, height: 950 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(seedScript(seed, options.sidebarWidth ?? 240, options.iconlessColumn ?? null));
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('[data-testid="view-toggle-workflows"]').click();
   await page.locator('[data-testid="workflows-view"]').waitFor({ state: 'visible', timeout: 15000 });

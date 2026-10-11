@@ -9,7 +9,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -101,7 +101,7 @@ async function launch(seed: boolean | 'started' | 'acrossBoards'): Promise<{ bro
   const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(seed === 'started' ? startedSeedScript() : seed === 'acrossBoards' ? seedScript(true, true) : seedScript(seed));
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   return { browser, page };
 }
