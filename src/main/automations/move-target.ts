@@ -11,13 +11,16 @@ import { nextOnRoute, type RouteFields } from '../../shared/workflow-route';
  * the next one on its route, which can be Done; outside a workflow it is the
  * next column on the board, by position.
  *
- * Archived and ghost columns are never a destination: neither is on the board
- * a person sees.
+ * A column a user archived and a ghost column are never a destination: neither
+ * is on the board a person sees. Done is, although it is stored archived (the
+ * board draws it as its own lane), so a row can move a task there by name, and
+ * "next" from the last column before it lands there, as `isBoardColumn`
+ * (agent/commands/column-resolver.ts) decides for kangentic_move_task.
  */
 export type MoveTargetResult = { ok: true; column: Swimlane } | { ok: false; reason: string };
 
 function onBoard(column: Swimlane): boolean {
-  return !column.is_archived && !column.is_ghost;
+  return (!column.is_archived || column.role === 'done') && !column.is_ghost;
 }
 
 export function resolveMoveTarget(

@@ -99,6 +99,22 @@ describe('resolveMoveTarget', () => {
     expect(missing.ok).toBe(false);
     expect(missing.ok ? '' : missing.reason).toContain('No column named "Testing"');
   });
+
+  it('reaches Done, which is stored archived, but never a column a user archived', () => {
+    // A real board stores its Done lane archived: the board draws it as its own lane.
+    const board = [
+      column('todo', 'To Do', 0, { role: 'todo' }),
+      column('exec', 'Executing', 1),
+      column('retired', 'Retired', 2, { is_archived: true }),
+      column('merge', 'Merge', 3),
+      column('done', 'Done', 4, { role: 'done', is_archived: true }),
+    ];
+    expect(resolveMoveTarget(board, 'exec', 'Done')).toMatchObject({ ok: true, column: { id: 'done' } });
+    expect(resolveMoveTarget(board, 'merge', null)).toMatchObject({ ok: true, column: { id: 'done' } });
+    expect(resolveMoveTarget(board, 'exec', 'next')).toMatchObject({ ok: true, column: { id: 'merge' } });
+    const retired = resolveMoveTarget(board, 'exec', 'Retired');
+    expect(retired.ok ? '' : retired.reason).toContain('No column named "Retired"');
+  });
 });
 
 describe('routeOf', () => {
