@@ -772,7 +772,7 @@ export class PtyHostCore {
   }
 
   private async runOrphanCleanup(entry: PtyEntry, exitedAtMs: number, loadOrphanApi: () => Promise<DeadRootOrphanApi>): Promise<void> {
-    const session = entry.sessionId.slice(0, 8);
+    const shortSessionId = entry.sessionId.slice(0, 8);
     try {
       const result = await endDeadRootOrphans(
         await loadOrphanApi(),
@@ -794,15 +794,15 @@ export class PtyHostCore {
       );
       if (result.found.length === 0) return;
       console.log(
-        `[pty-host] session ${session}'s shell exited on its own, leaving ${result.found.join(', ')} running;`
+        `[pty-host] session ${shortSessionId}'s shell exited on its own, leaving ${result.found.join(', ')} running;`
         + ` ${result.asked ? 'asked it to exit' : 'could not ask it to exit'}; exited by themselves: ${result.exitedByThemselves.length};`
         + ` terminated after the grace: ${result.terminated.length}${result.terminated.length > 0 ? ` (${result.terminated.join(', ')})` : ''}`,
       );
       if (result.notTerminated > 0) {
-        console.warn(`[pty-host] session ${session}: ${result.notTerminated} process(es) its exited shell left running could not be terminated`);
+        console.warn(`[pty-host] session ${shortSessionId}: ${result.notTerminated} process(es) its exited shell left running could not be terminated`);
       }
     } catch (error) {
-      console.warn(`[pty-host] could not end what session ${session}'s exited shell left running:`, error instanceof Error ? error.message : String(error));
+      console.warn(`[pty-host] could not end what session ${shortSessionId}'s exited shell left running:`, error instanceof Error ? error.message : String(error));
     }
   }
 

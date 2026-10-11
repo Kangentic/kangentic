@@ -466,7 +466,7 @@ export interface BoardTaskWire {
 /**
  * One live Command Terminal of a project (protocol 0.20.0): an agent the
  * desktop runs at the project root with no task, started from the desktop's
- * Ctrl+Shift+P layer or by a phone's `command-terminal` start. It listed
+ * Ctrl+Shift+P layer or by a phone's `command-terminal` start. It is listed
  * beside a project's tasks in a read-board snapshot (`commandTerminals`), and
  * the Agents feed draws it with a "Command Terminal" pill.
  *

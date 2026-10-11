@@ -22,6 +22,8 @@ interface ConsoleInput {
   readonly writable?: boolean;
   readonly destroyed?: boolean;
   write(data: string): boolean;
+  listenerCount?(eventName: 'error'): number;
+  on?(eventName: 'error', listener: (error: Error) => void): unknown;
 }
 
 interface ConptyTerminalInternals {
@@ -32,6 +34,14 @@ interface ConptyTerminalInternals {
 export function writeToExitedConsole(pty: unknown, parts: readonly string[]): boolean {
   const input = (pty as ConptyTerminalInternals | null)?._agent?.inSocket;
   if (!input || input.destroyed === true || input.writable === false) return false;
+  // A write the console can no longer take fails later, as an 'error' event on
+  // this socket, and node-pty attaches no listener to it. Unheard, that event
+  // would throw in the pty host and end every PTY it holds.
+  if (typeof input.on === 'function' && (input.listenerCount?.('error') ?? 0) === 0) {
+    input.on('error', () => {
+      // Best-effort ask: the grace and the terminate that follow still run.
+    });
+  }
   try {
     for (const part of parts) input.write(part);
     return true;

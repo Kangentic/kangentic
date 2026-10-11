@@ -12,7 +12,11 @@ import {
   type CommandTerminalStartResponsePayload,
   type CommandTerminalStopResponsePayload,
 } from '@kangentic/protocol';
-import { CommandTerminalStartError, startCommandTerminal } from '../../ipc/handlers/transient-sessions';
+import {
+  CommandTerminalStartError,
+  startCommandTerminal,
+  type CommandTerminalStartErrorCode,
+} from '../../ipc/handlers/transient-sessions';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { commandTerminalDisplayName, commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
 import type { IpcContext } from '../../ipc/ipc-context';
@@ -27,6 +31,18 @@ import { toWireJson } from './wire-mappers';
 function refuseWithCode(request: CapabilityRequestMessage, code: CapabilityErrorCode, error: string): CapabilityResponseMessage {
   return { type: 'capability-response', requestId: request.requestId, ok: false, error, code };
 }
+
+/**
+ * The code a phone reads for each start refusal. A Record, so a refusal added
+ * to `CommandTerminalStartErrorCode` fails typecheck here until it is mapped.
+ * `slot-taken` cannot reach a phone (its start asks for no slot) and maps to
+ * the generic failure.
+ */
+const START_REFUSAL_CODES: Record<CommandTerminalStartErrorCode, CapabilityErrorCode> = {
+  'unknown-project': UNKNOWN_PROJECT_ERROR_CODE,
+  'command-terminal-limit': COMMAND_TERMINAL_LIMIT_ERROR_CODE,
+  'slot-taken': COMMAND_TERMINAL_START_FAILED_ERROR_CODE,
+};
 
 /**
  * `command-terminal`: a phone starts or stops a Command Terminal, the agent the
@@ -79,10 +95,7 @@ export async function handleCommandTerminal(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[mobile-bridge] Command Terminal start refused in ${payload.projectId.slice(0, 8)}: ${message}`);
-    if (error instanceof CommandTerminalStartError) {
-      if (error.code === 'unknown-project') return refuseWithCode(request, UNKNOWN_PROJECT_ERROR_CODE, message);
-      if (error.code === 'command-terminal-limit') return refuseWithCode(request, COMMAND_TERMINAL_LIMIT_ERROR_CODE, message);
-    }
+    if (error instanceof CommandTerminalStartError) return refuseWithCode(request, START_REFUSAL_CODES[error.code], message);
     if (error instanceof AgentCliNotFoundError) return refuseWithCode(request, AGENT_UNAVAILABLE_ERROR_CODE, message);
     return refuseWithCode(request, COMMAND_TERMINAL_START_FAILED_ERROR_CODE, message);
   }

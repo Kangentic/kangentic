@@ -1453,12 +1453,12 @@ phone needs and reads the rest by request.
 
 ## Transient Sessions
 
-Transient sessions are ephemeral Claude Code terminals spawned from the command bar (Ctrl+Shift+P). They differ from task-bound sessions in several ways:
+Transient sessions are ephemeral agent terminals spawned from the command bar (Ctrl+Shift+P) or by a paired phone's `command-terminal` start. They differ from task-bound sessions in several ways:
 
 - **No task association** - run at the project root with no Kanban task
 - **No DB persistence** - no session record in the database
-- **No resume capability** - killed on close, not suspendable
-- **No queue** - spawned immediately regardless of concurrency limits
+- **No resume capability** - killed on close; a suspend ends the terminal, since there is nothing to resume
+- **Queued like any spawn** - at the concurrency limit the row starts `queued` and already holds its slot
 
 ### Identity survives a renderer reload
 
@@ -1475,8 +1475,8 @@ session row. `planTransientRecovery`
 (`src/renderer/stores/session-store/transient-recovery.ts`) rebuilds the map from that on every
 `syncSessions`, for every project:
 
-1. An entry already pointing at a running session is kept verbatim, which preserves the
-   first-prompt-wins label.
+1. An entry already pointing at a running session is kept verbatim, which preserves the branch
+   the HEAD tracker corrected. The name needs no recovery: main holds it on the session row.
 2. Every other survivor claims the slot main recorded for it.
 3. A survivor whose slot is taken, or that carries none, takes the lowest free slot, so no live
    PTY is left unreachable.
@@ -1486,7 +1486,14 @@ Step 3 is the one case where a terminal is renumbered; see
 mounts before recovery runs adopts an unpaired live PTY for its slot rather than spawning
 (`findAdoptableTransientSession`), so the duplicate cannot be recreated by a race.
 
-### Spawn Flow (`SESSION_SPAWN_TRANSIENT`)
+### Spawn Flow (`startCommandTerminal`)
+
+`SESSION_SPAWN_TRANSIENT` and the phone's `command-terminal` start both run `startCommandTerminal`
+(`src/main/ipc/handlers/transient-sessions.ts`). It first claims a slot: the window's requested
+one (`slot-1` to `slot-4`) when it is free, else the lowest free one. The project's non-exited
+transient rows and every in-flight start's reservation count as occupied, and a start past
+`MAX_COMMAND_TERMINALS` is refused (`command-terminal-limit`). The reservation is taken before the
+first await and released once the spawn has registered its row or the start has failed.
 
 1. Resolve the target branch: the picker's choice, else the project default base
    (`resolveProjectDefaultBaseBranch`: board default for the path, then `git.defaultBaseBranch`,
@@ -1503,13 +1510,21 @@ mounts before recovery runs adopts an unpaired live PTY for its slot rather than
    [Global Config Writes](agent-integration.md#global-config-writes-claudejson)). The Command
    Terminal bypasses the two spawn chokepoints, but not this: every path that builds an agent
    command applies the adapter's pre-spawn global-config state first
-4. Build Claude CLI command via `CommandBuilder` (with MCP server if enabled)
-5. Call `SessionManager.spawn()` with `transient: true`
+4. Build the agent command (with MCP server if enabled), passing `capturePromptText` so the
+   prompt hook reports the first prompt's text for `CommandTerminalNamer`, and the terminal's own
+   made-up task id as `taskProcessTag`
+5. Call `SessionManager.spawn()` with `transient: true` and the claimed slot
+
+An unattended (phone) start runs the same steps with a non-interactive 5 s fetch, one 6 s git
+budget, and no checkout while another running or queued session's cwd is the project root.
 
 ### Kill Flow (`SESSION_KILL_TRANSIENT`)
 
-1. `kill()` the session (a young one gets its exit sequence and the 1500 ms grace), capture `awaitExit`, then `remove()` it from `SessionManager`; the handler returns at once, so the window closes immediately
-2. Once the process has exited, delete the session directory from disk (best-effort cleanup). Deleting it under a still-exiting Claude made its SessionEnd hook write into a missing directory
+The handler calls `SessionManager.endCommandTerminal`, as a phone's stop and the agent-absence
+sweep do, and throws for a session that is not a Command Terminal.
+
+1. `kill()` the session (a young one gets its exit sequence and the 1500 ms grace), capture `awaitExit`, then `remove()` it from `SessionManager`, which announces `session-removed`; the handler returns at once, so the window closes immediately
+2. Once the process has exited, delete the session directory from disk again (best-effort cleanup)
 
 Transient sessions are counted by the `session_spawn` analytics event with `isTransient: true`
 (volume) and by `feature_used: command_terminal` (adoption); see [analytics.md](analytics.md).

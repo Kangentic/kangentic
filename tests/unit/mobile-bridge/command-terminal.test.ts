@@ -81,6 +81,20 @@ describe('command-terminal: start', () => {
     });
   });
 
+  it('answers the terminal\'s own name rather than the slot title once main has named it', async () => {
+    startCommandTerminalMock.mockResolvedValue(startedSession('slot-3', 'Fix the flaky login test'));
+    const { context } = fakeContext();
+
+    const response = await handleCommandTerminal(fakeRequest({ action: 'start', projectId: 'proj-1' }), context);
+
+    expect(response).toEqual({
+      type: 'capability-response',
+      requestId: 'req-1',
+      ok: true,
+      payload: { ok: true, sessionId: 'term-9', slot: 3, name: 'Fix the flaky login test' },
+    });
+  });
+
   it('never forwards a branch, model or effort the phone tried to send', async () => {
     startCommandTerminalMock.mockResolvedValue(startedSession('slot-1'));
     const { context } = fakeContext();
@@ -102,6 +116,8 @@ describe('command-terminal: start', () => {
   it.each([
     ['command-terminal-limit', 'command-terminal-limit'],
     ['unknown-project', 'unknown-project'],
+    // A phone's start asks for no slot, so this cannot reach it; it still maps to the generic failure rather than going unmapped.
+    ['slot-taken', 'command-terminal-start-failed'],
   ])('maps a %s refusal from the start to the %s code', async (startCode, wireCode) => {
     startCommandTerminalMock.mockRejectedValue(new CommandTerminalStartErrorStub(startCode, 'refused'));
     const { context } = fakeContext();

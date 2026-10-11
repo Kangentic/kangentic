@@ -600,6 +600,85 @@ async function injectRunningTerminal(
   });
 }
 
+/** Push main's `session-removed` for a Command Terminal: the second push of an
+ *  end main started (a phone's Stop, the agent exiting), sent once the row is
+ *  gone from main's registry. The payload is the row's last snapshot. */
+async function fireTerminalRemoved(
+  page: Page,
+  session: { id: string; projectId: string; slot: string },
+): Promise<void> {
+  await page.evaluate((session) => {
+    const win = window as unknown as { __mockFireRemoved: (id: string, session: unknown, projectId: string) => void };
+    win.__mockFireRemoved(
+      session.id,
+      { id: session.id, projectId: session.projectId, transient: true, commandTerminalSlot: session.slot },
+      session.projectId,
+    );
+  }, session);
+}
+
+/** Push main's PTY exit for a session (`session-exit`), the first push of an end
+ *  main started. Runs App.tsx's real exit handler through the mock's listeners. */
+async function fireTerminalExit(
+  page: Page,
+  exit: { sessionId: string; projectId: string; exitCode: number; intentional: boolean },
+): Promise<void> {
+  await page.evaluate((exit) => {
+    const win = window as unknown as {
+      __mockFireExit: (sessionId: string, exitCode: number, projectId: string, intentional: boolean) => void;
+    };
+    win.__mockFireExit(exit.sessionId, exit.exitCode, exit.projectId, exit.intentional);
+  }, exit);
+}
+
+/** The session replica's row for an id, narrowed to what these tests read, or null
+ *  when the replica holds none. */
+async function replicaSessionRow(
+  page: Page,
+  sessionId: string,
+): Promise<{ status: string; exitCode: number | null; transient: boolean } | null> {
+  return page.evaluate((sessionId) => {
+    const stores = (window as unknown as {
+      __zustandStores?: {
+        session?: {
+          getState: () => {
+            sessions: Array<{ id: string; status: string; exitCode: number | null; transient?: boolean }>;
+          };
+        };
+      };
+    }).__zustandStores;
+    const row = stores?.session?.getState().sessions.find((candidate) => candidate.id === sessionId);
+    return row ? { status: row.status, exitCode: row.exitCode, transient: row.transient === true } : null;
+  }, sessionId);
+}
+
+/** Push a `session-changed` status for a live Command Terminal that carries the
+ *  name main derived for it (`commandTerminalLabel`), the way main stamps it. */
+async function fireTerminalLabel(
+  page: Page,
+  session: { id: string; projectId: string; slot: string; label: string },
+): Promise<void> {
+  await page.evaluate((session) => {
+    const win = window as unknown as { __mockFireStatus: (sessionId: string, session: unknown) => void };
+    win.__mockFireStatus(session.id, {
+      id: session.id,
+      taskId: session.id,
+      projectId: session.projectId,
+      pid: null,
+      status: 'running',
+      shell: '/bin/bash',
+      cwd: '/mock/multi-terminal',
+      startedAt: new Date().toISOString(),
+      exitCode: null,
+      resuming: false,
+      transient: true,
+      commandTerminalSlot: session.slot,
+      commandTerminalBranch: 'main',
+      commandTerminalLabel: session.label,
+    });
+  }, session);
+}
+
 /** The count the sidebar's per-project Command Terminal indicator is printing, or
  *  0 when it is absent (the indicator hides itself at zero). */
 async function sidebarTerminalCount(page: Page, projectId: string): Promise<number> {
@@ -1268,6 +1347,46 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    test('a window titles itself from its own terminal\'s name once main pushes one', async () => {
+      // Main derives a terminal's name from its first prompt and stamps it on the
+      // session row (`commandTerminalLabel`), then pushes the row. The title
+      // reads it from the replica, so no renderer-side label can drift from the
+      // Monitor row and the phone. Until then the slot title stands in, and a
+      // sibling terminal with no name keeps its own.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await page.getByTestId('quick-session-new-terminal').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(2);
+
+        const firstWindowTitle = page
+          .locator('[data-testid="command-terminal-window"][data-command-slot="slot-1"]')
+          .getByTestId('command-bar-label');
+        const secondWindowTitle = page
+          .locator('[data-testid="command-terminal-window"][data-command-slot="slot-2"]')
+          .getByTestId('command-bar-label');
+        await expect(firstWindowTitle).toHaveText('Command Terminal 1');
+        await expect(secondWindowTitle).toHaveText('Command Terminal 2');
+
+        const firstEntry = (await transientEntriesFor(page, MULTI_PROJECT_ID)).find((entry) => entry.slot === 'slot-1')!;
+        await fireTerminalLabel(page, {
+          id: firstEntry.sessionId,
+          projectId: MULTI_PROJECT_ID,
+          slot: 'slot-1',
+          label: 'Fix the login redirect',
+        });
+
+        await expect(firstWindowTitle).toHaveText('Fix the login redirect', { timeout: 3000 });
+        // Only the named terminal's window changes: the lookup is per session.
+        await expect(secondWindowTitle).toHaveText('Command Terminal 2');
+      } finally {
+        await browser.close();
+      }
+    });
+
     test('stopping one of two terminals leaves the other visible and the layer open', async () => {
       // Per-window Stop closes THAT window only. With two windows, stopping one
       // leaves count=1 and the layer stays open.
@@ -1367,6 +1486,88 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    test('a terminal whose agent exits keeps its window until main announces the removal', async () => {
+      // Main ends a terminal in two pushes: the PTY exit, then session-removed once
+      // the row is gone. The exit handler must leave the (project, slot) entry in
+      // place for the removal subscriber to find. Dropping it on the exit leaves
+      // that subscriber with nothing to match, so the window outlives a dead
+      // terminal for good.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(1);
+
+        const [ended] = await transientEntriesFor(page, MULTI_PROJECT_ID);
+        // The exit handler takes its transient branch only for a row the replica
+        // knows as a live transient terminal.
+        expect(await replicaSessionRow(page, ended.sessionId)).toEqual({ status: 'running', exitCode: null, transient: true });
+
+        await fireTerminalExit(page, { sessionId: ended.sessionId, projectId: MULTI_PROJECT_ID, exitCode: 1, intentional: false });
+
+        // The exit handler runs synchronously inside the push, so these reads need
+        // no wait. The window and its pairing both survive the exit.
+        expect(await transientPairingFor(page, MULTI_PROJECT_ID)).toEqual({ 'slot-1': ended.sessionId });
+        expect(await commandWindowAnchors(page)).toEqual(['slot-1']);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        // Proof the exit really ran: the replica row now reads exited with that code.
+        expect(await replicaSessionRow(page, ended.sessionId)).toEqual({ status: 'exited', exitCode: 1, transient: true });
+
+        await fireTerminalRemoved(page, { id: ended.sessionId, projectId: MULTI_PROJECT_ID, slot: 'slot-1' });
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+        expect(await commandWindowAnchors(page)).toEqual([]);
+        expect(await transientEntriesFor(page, MULTI_PROJECT_ID)).toEqual([]);
+        await expect.poll(() => replicaSessionRow(page, ended.sessionId)).toBeNull();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a removal push for another project\'s terminal closes none of this project\'s windows', async () => {
+      // A slot is only unique within a project, so another project's terminal can
+      // hold the same slot id as one of this project's open windows. The removal
+      // subscriber drops the other project's pairing, and must not close the
+      // current project's window that happens to sit at that slot.
+      const { browser, page } = await launchWithState(backgroundProjectPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        // The background project's surviving PTY holds slot-2 and is re-paired
+        // while the foreground project is open.
+        await expect
+          .poll(() => transientPairingFor(page, BACKGROUND_PROJECT_ID), { timeout: 8000, intervals: [100, 200, 500] })
+          .toEqual({ 'slot-2': 'bg-sess-1' });
+
+        // Give the foreground project windows at slot-1 AND slot-2, so a removal
+        // for the background project's slot-2 terminal has a window to wrongly close.
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await page.getByTestId('quick-session-new-terminal').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect
+          .poll(async () => (await transientEntriesFor(page, BACKGROUND_FOREGROUND_PROJECT_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(2);
+        const foregroundPairing = await transientPairingFor(page, BACKGROUND_FOREGROUND_PROJECT_ID);
+        expect(Object.keys(foregroundPairing).sort()).toEqual(['slot-1', 'slot-2']);
+        expect(Object.values(foregroundPairing)).not.toContain('bg-sess-1');
+
+        await fireTerminalRemoved(page, { id: 'bg-sess-1', projectId: BACKGROUND_PROJECT_ID, slot: 'slot-2' });
+
+        // The subscriber ran: the background project's pairing is dropped. Its
+        // window close (if any) is part of the same synchronous handler, so the
+        // reads below need no further wait.
+        await expect
+          .poll(() => transientPairingFor(page, BACKGROUND_PROJECT_ID), { timeout: 5000, intervals: [100, 200, 500] })
+          .toEqual({});
+        expect(await commandWindowAnchors(page)).toEqual(['slot-1', 'slot-2']);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2);
+        expect(await transientPairingFor(page, BACKGROUND_FOREGROUND_PROJECT_ID)).toEqual(foregroundPairing);
+      } finally {
+        await browser.close();
+      }
+    });
+
     test('a desktop Stop closes exactly its own window, even with main\'s removal push arriving mid-kill', async () => {
       // Real main announces the removal while the kill IPC is in flight. The
       // window let go of its entry first, so the push is not read as an end
@@ -1414,6 +1615,45 @@ test.describe('Command Terminal', () => {
 
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
         expect(await commandWindowAnchors(page)).toEqual(['slot-1', 'slot-3']);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('New terminal disables when phone-started terminals fill the slots, with one window open', async () => {
+      // Main caps a project at MAX_COMMAND_TERMINALS counting EVERY live terminal,
+      // and a phone's terminals have no window here. A button that counted windows
+      // alone would stay enabled at one window while main refuses the next start.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        const newTerminalButton = page.getByTestId('quick-session-new-terminal');
+        await expect(newTerminalButton).toBeEnabled();
+
+        // Three phone-started terminals on slots 2 to 4, none with a window.
+        for (const slotNumber of [2, 3, 4]) {
+          await injectRunningTerminal(page, {
+            id: `phone-started-terminal-${slotNumber}`,
+            projectId: MULTI_PROJECT_ID,
+            slot: `slot-${slotNumber}`,
+          });
+        }
+        await expect
+          .poll(async () => (await runningSessionIds(page, [
+            'phone-started-terminal-2', 'phone-started-terminal-3', 'phone-started-terminal-4',
+          ])).length, { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(3);
+
+        // Four slots are held (one window plus three phone terminals), so the button
+        // is disabled even though only ONE window is open.
+        await expect(newTerminalButton).toBeDisabled({ timeout: 3000 });
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+
+        // A phone's Stop frees its slot, and the button follows.
+        await fireTerminalRemoved(page, { id: 'phone-started-terminal-3', projectId: MULTI_PROJECT_ID, slot: 'slot-3' });
+        await expect(newTerminalButton).toBeEnabled({ timeout: 3000 });
       } finally {
         await browser.close();
       }

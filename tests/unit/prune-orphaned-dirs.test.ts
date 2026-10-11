@@ -286,6 +286,27 @@ describe('pruneStaleResources -- async background cleanup', () => {
     logSpy.mockRestore();
   });
 
+  it('preserves a live Command Terminal\'s directory, which is named by its made-up task id', async () => {
+    // startCommandTerminal names the directory after the terminal's own task
+    // id, not its session id, and no task row holds that id. A phone can start
+    // one in a project the desktop cold-opens later. Red without the live
+    // sessions' task ids in the referenced set.
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionMgr = makeMockSessionManager();
+    (sessionMgr as unknown as { listSessions: ReturnType<typeof vi.fn> })
+      .listSessions.mockReturnValue([{ id: 'terminal-session-uuid', taskId: 'terminal-task-uuid', status: 'running', transient: true }]);
+
+    setupReaddir({
+      [SESSIONS_DIR]: [dirEntry('terminal-task-uuid')],
+    });
+
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await runWithTimers();
+
+    expect(mockRm).not.toHaveBeenCalled();
+  });
+
   it('preserves a session directory whose id is only in listAllSessionIds (DB regression)', async () => {
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo(['db-only-session-uuid']);

@@ -543,11 +543,16 @@ export async function pruneOrphanedDirectories(
     true, // has junctions
   );
 
-  // Session directories: match by directory name (UUID)
+  // Session directories: match by directory name (UUID). A live session's task
+  // id counts too: a Command Terminal's directory is named by its made-up task
+  // id, which no task row holds, and a terminal can run in a project before the
+  // desktop cold-opens it (a phone started it).
+  const liveSessions = sessionManager.listSessions();
   const referencedSessionIds = new Set([
     ...allTasks.map(task => task.id),
     ...allTasks.map(task => task.session_id).filter((sessionId): sessionId is string => Boolean(sessionId)),
-    ...sessionManager.listSessions().map(session => session.id),
+    ...liveSessions.map(session => session.id),
+    ...liveSessions.map(session => session.taskId),
     ...sessionRepo.listAllSessionIds(),
   ]);
   await pruneDirectory(

@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
@@ -32,6 +33,15 @@ vi.mock('../../src/main/activity-engine/session-telemetry', () => {
   class MockSessionTelemetry {
     removeSession(): void {}
     requestAgentAbsenceCheck(): void {}
+    cancelAgentAbsenceCheck(): void {}
+    // The members below are what a real spawn and the exit that follows reach
+    // through the spawn flow (the describe that spawns through a real manager).
+    initSession(): void {}
+    emitSessionEnd(): void {}
+    hasAgentSessionId(): boolean { return false; }
+    hasPendingPRCommand(): boolean { return false; }
+    clearPendingPRCommand(): void {}
+    takePendingPushedBranch(): string | null { return null; }
   }
   return { SessionTelemetry: MockSessionTelemetry };
 });
@@ -41,6 +51,7 @@ vi.mock('../../src/main/shutdown-state', () => ({
   isShuttingDown: () => shuttingDown.value,
 }));
 
+import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 
@@ -217,5 +228,114 @@ describe('a Command Terminal whose PTY exits on its own', () => {
 
     expect(manager.getSession('term-1')).toBeDefined();
     expect(rmSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('a session spawned through a real SessionManager whose PTY exits', () => {
+  // The two describes above reach the end through a seeded row and a direct
+  // call to `endCommandTerminalAfterPtyExit`, and session-spawn-flow.test.ts
+  // injects its own `onPtyExited`. Nothing else pins that SessionManager hands
+  // the spawn flow that hook at all. Without it a Command Terminal whose PTY
+  // died stays as an exited row: its window never closes, its slot never
+  // frees, and its session directory is never deleted.
+  //
+  // This drives the real wiring: manager.spawn -> the in-process pty host over
+  // a mocked node-pty -> the PTY's own exit callback.
+  //
+  // Red-green: deleting the `onPtyExited:` line in
+  // SessionManager.performTrackedSpawn turns the Command Terminal test red
+  // (the exit lands, but no session-removed follows and the row stays).
+  //
+  // Tier: Unit - the host is the in-process core over a mocked node-pty.
+
+  let manager: SessionManager;
+  let rmSpy: ReturnType<typeof vi.spyOn>;
+  let projectDirectory: string;
+
+  beforeEach(() => {
+    shuttingDown.value = false;
+    projectDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-command-terminal-exit-'));
+    manager = new SessionManager();
+    rmSpy = vi.spyOn(fs.promises, 'rm').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    manager.killAll();
+    rmSpy.mockRestore();
+    fs.rmSync(projectDirectory, { recursive: true, force: true });
+  });
+
+  /** A node-pty stand-in whose exit the test fires, as the shell ending would. */
+  function createMockPty() {
+    let exitHandler: ((exitEvent: { exitCode: number }) => void) | null = null;
+    const mockPty = {
+      pid: 12345,
+      cols: 120,
+      rows: 30,
+      onData: vi.fn(),
+      onExit: vi.fn((callback: (exitEvent: { exitCode: number }) => void) => {
+        exitHandler = callback;
+      }),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    };
+    return {
+      mockPty,
+      triggerExit: (exitCode: number) => exitHandler!({ exitCode }),
+    };
+  }
+
+  /**
+   * Spawn a session through the manager and record the two pushes that matter
+   * to a window or a phone, in the order they were emitted.
+   */
+  async function spawnAndRecord(options: { taskId: string; transient: boolean }) {
+    const { mockPty, triggerExit } = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: options.taskId,
+      command: '',
+      cwd: projectDirectory,
+      transient: options.transient,
+      commandTerminalSlot: options.transient ? 'slot-1' : undefined,
+    });
+    const timeline: string[] = [];
+    manager.on('exit', (sessionId: string) => { timeline.push(`exit:${sessionId}`); });
+    manager.on('session-removed', (sessionId: string) => { timeline.push(`session-removed:${sessionId}`); });
+    return { session, timeline, triggerExit };
+  }
+
+  it('ends a Command Terminal: removal follows the exit, the row goes, and its directory is deleted', async () => {
+    const { session, timeline, triggerExit } = await spawnAndRecord({ taskId: 'made-up-uuid', transient: true });
+    expect(manager.getSession(session.id)?.status).toBe('running');
+
+    triggerExit(1);
+
+    await vi.waitFor(() => expect(timeline).toContain(`exit:${session.id}`));
+    // The exit is announced first, so every exit listener has read the row
+    // before the removal takes it.
+    expect(timeline).toEqual([`exit:${session.id}`, `session-removed:${session.id}`]);
+    expect(manager.getSession(session.id)).toBeUndefined();
+    await vi.waitFor(() => expect(rmSpy).toHaveBeenCalledWith(
+      path.join(session.cwd, '.kangentic', 'sessions', 'made-up-uuid'),
+      { recursive: true, force: true },
+    ));
+  });
+
+  it('keeps a task session\'s exited row, which its resume and record still need', async () => {
+    const { session, timeline, triggerExit } = await spawnAndRecord({ taskId: 'task-001', transient: false });
+
+    triggerExit(1);
+
+    // The exit is the anchor: only once it has landed is "nothing followed it"
+    // a statement about the wiring rather than about timing.
+    await vi.waitFor(() => expect(timeline).toContain(`exit:${session.id}`));
+    expect(timeline).toEqual([`exit:${session.id}`]);
+    expect(manager.getSession(session.id)?.status).toBe('exited');
+    expect(rmSpy).not.toHaveBeenCalledWith(
+      path.join(session.cwd, '.kangentic', 'sessions', 'task-001'),
+      expect.anything(),
+    );
   });
 });

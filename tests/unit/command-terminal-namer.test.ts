@@ -98,6 +98,9 @@ describe('CommandTerminalNamer', () => {
     sessionManager.emit('event', 'term-1', prompt(PromptReason.PtyActivity));
     sessionManager.emit('event', 'term-1', prompt('   '));
     sessionManager.emit('event', 'term-1', { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
+    // The naming work begins synchronously with the adapter lookup, so a
+    // skipped event is proven skipped here, before any await.
+    expect(getAdapter).not.toHaveBeenCalled();
     await Promise.resolve();
     expect(summarize).not.toHaveBeenCalled();
 
@@ -108,8 +111,11 @@ describe('CommandTerminalNamer', () => {
 
   it('never names a task\'s agent', async () => {
     sessionManager.sessions.set('task-session', terminal({ id: 'task-session', transient: false }));
+    // An agent the namer could use, so only the transient check can stop it.
+    sessionManager.agentNames.set('task-session', 'codex');
 
     sessionManager.emit('event', 'task-session', prompt('a task prompt'));
+    expect(getAdapter).not.toHaveBeenCalled();
     await Promise.resolve();
 
     expect(summarize).not.toHaveBeenCalled();
@@ -119,6 +125,7 @@ describe('CommandTerminalNamer', () => {
     sessionManager.sessions.set('term-1', terminal({ commandTerminalLabel: 'Named Already' }));
 
     sessionManager.emit('event', 'term-1', prompt('hello'));
+    expect(getAdapter).not.toHaveBeenCalled();
     await Promise.resolve();
 
     expect(summarize).not.toHaveBeenCalled();

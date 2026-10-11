@@ -65,6 +65,7 @@ let capturedCallbacks: {
   onEvent?: (sessionId: string, event: { ts: number; type: string; detail?: string }) => void;
 } | null = null;
 const requestAgentAbsenceCheck = vi.fn();
+const cancelAgentAbsenceCheck = vi.fn();
 
 vi.mock('../../src/main/activity-engine/session-telemetry', () => {
   class MockSessionTelemetry {
@@ -74,6 +75,9 @@ vi.mock('../../src/main/activity-engine/session-telemetry', () => {
     removeSession(): void {}
     requestAgentAbsenceCheck(sessionId: string): void {
       requestAgentAbsenceCheck(sessionId);
+    }
+    cancelAgentAbsenceCheck(sessionId: string): void {
+      cancelAgentAbsenceCheck(sessionId);
     }
   }
   return { SessionTelemetry: MockSessionTelemetry };
@@ -93,6 +97,7 @@ describe('SessionManager agent-absence wiring', () => {
     capturedCallbacks = null;
     killedPtys = [];
     requestAgentAbsenceCheck.mockClear();
+    cancelAgentAbsenceCheck.mockClear();
     manager = new SessionManager();
   });
 
@@ -283,13 +288,19 @@ describe('SessionManager agent-absence wiring', () => {
     it('ENDS a transient Command Terminal: kills its shell and removes the row, with no exited stamp or exit-code override', () => {
       const session = seedSession({ transient: true });
       const removed: string[] = [];
+      const changed: string[] = [];
       manager.on('session-removed', (id: string) => { removed.push(id); });
+      manager.on('session-changed', (id: string) => { changed.push(id); });
 
       retire();
 
       expect(killedPtys).toEqual([4242]);
       expect(session.intentionalExit).toBe(true);
       expect(session.overrideExitCode).toBeUndefined();
+      // The removal is the only announcement: no exited status was stamped
+      // and pushed before it.
+      expect(session.status).toBe('running');
+      expect(changed).toEqual([]);
       expect(removed).toEqual(['session-1']);
       expect(manager.getSession('session-1')).toBeUndefined();
     });
@@ -406,6 +417,9 @@ describe('SessionManager agent-absence wiring', () => {
       expect(session.agentEndSignaledAt).toBeNull();
       // Back inside the grace: nothing waives it any more.
       expect(isCandidate()).toBe(false);
+      // And the fast looks the SessionEnd asked for are withdrawn: each one
+      // lists every process on the machine to find a live agent.
+      expect(cancelAgentAbsenceCheck).toHaveBeenCalledWith('session-1');
     });
 
     it('ignores a task session\'s SessionEnd: its row only needs the ordinary sweep', () => {

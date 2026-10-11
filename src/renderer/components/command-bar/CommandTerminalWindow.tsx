@@ -258,7 +258,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // makes two terminals tellable apart, since every other fact in this header
   // (agent, model, branch, cwd) is identical across a project's terminals by
   // construction. `commandTerminalDisplayName` is shared with the Agent Monitor,
-  // a phone's snapshot and the push alert, so every surface prints the same name.
+  // a phone's snapshot and the push alert, so all four print the same name.
   const windowTitle = commandTerminalDisplayName(transientLabel, slot);
   // The branch is read from the pairing map, never held here: every path that
   // used to set it locally (spawn, adopt, a picker switch) already writes the
@@ -376,10 +376,11 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     const grid = gridGetterRef.current?.() ?? undefined;
     try {
       // Act on the outcome here too, not just in handleTerminate: this path scrubs the
-      // slot and immediately spawns a replacement on it, so a kill that failed leaves the
-      // old PTY running and unreachable while a new one starts under a fresh checkout.
-      // Warn rather than abort - the user asked for the branch switch, and the respawn is
-      // still the useful half of it.
+      // slot and immediately spawns a replacement on it, so a kill that failed may leave
+      // the old PTY running and unreachable. Warn, then still try the respawn: if the old
+      // row is gone it succeeds, and if it lives main refuses its slot (`slot-taken`) and
+      // the catch below says so. The kill handler's only refusal (a task's session)
+      // cannot reach this path, so 'failed' means the invoke itself failed.
       const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
       if (killOutcome === 'failed') {
         useToastStore.getState().addToast({

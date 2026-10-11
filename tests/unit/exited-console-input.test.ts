@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { writeToExitedConsole } from '../../src/main/pty/spawn/exited-console-input';
 
 function fakeTerminal(input: { writable?: boolean; destroyed?: boolean; throws?: boolean } = {}) {
@@ -39,6 +40,25 @@ describe('writeToExitedConsole', () => {
     expect(writeToExitedConsole(null, ['/exit\r'])).toBe(false);
     const failing = fakeTerminal({ throws: true });
     expect(writeToExitedConsole(failing.terminal, ['/exit\r'])).toBe(false);
+  });
+
+  it('listens for a late write error on the pipe, which node-pty leaves unheard', () => {
+    // A real socket: an 'error' emitted with no listener throws, which in the
+    // pty host would end every PTY it holds. Red without the listener.
+    class FakeInputSocket extends EventEmitter {
+      writable = true;
+      destroyed = false;
+      write(_data: string): boolean { return true; }
+    }
+    const inSocket = new FakeInputSocket();
+    const terminal = { _agent: { inSocket } };
+
+    expect(writeToExitedConsole(terminal, ['\x03'])).toBe(true);
+    expect(() => inSocket.emit('error', new Error('EPIPE'))).not.toThrow();
+
+    // A second ask on the same pipe adds no second listener.
+    writeToExitedConsole(terminal, ['/exit\r']);
+    expect(inSocket.listenerCount('error')).toBe(1);
   });
 
   it('matches the private fields of the installed node-pty', () => {

@@ -65,6 +65,10 @@ if (!fs.existsSync(probeCwd)) throw new Error(`--cwd ${probeCwd} does not exist;
 const MATURE_WAIT_MS = 16000; // the canary record is withdrawn 10 s after the first frame
 const ANSWER_WAIT_MS = 25000;
 
+// Run in reverse when a run throws, so a failed run leaves no shell, no Claude
+// session and no temp folder behind.
+const cleanupOnFailure = [];
+
 const nodePtyDir = path.dirname(require.resolve('node-pty/package.json'));
 const pty = require(nodePtyDir);
 const { WindowsPtyAgent } = require(path.join(nodePtyDir, 'lib', 'windowsPtyAgent'));
@@ -131,6 +135,7 @@ function canaryRecordFor(pid) {
 
 async function main() {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-exit-probe-'));
+  cleanupOnFailure.push(() => fs.rmSync(runDir, { recursive: true, force: true }));
   const markerPath = path.join(runDir, 'hooks.log');
   const hookScript = path.join(runDir, 'hook-marker.js');
   fs.writeFileSync(hookScript, [
@@ -163,6 +168,7 @@ async function main() {
   let shellExitedAt = null;
   shell.onData((data) => { output += data; });
   shell.onExit(() => { shellExitedAt = Date.now(); });
+  cleanupOnFailure.push(() => { if (shellExitedAt === null) shell.kill(); });
 
   await sleep(2000);
   shell.write(`& "${claudeExe}" --settings "${settingsPath}" --model haiku\r`);
@@ -174,6 +180,7 @@ async function main() {
   const claude = childrenOf(shell.pid).find((child) => /^claude(\.exe)?$/i.test(child.Name) || child.Name.toLowerCase() === path.basename(claudeExe).toLowerCase());
   if (!claude) throw new Error('Claude did not start under the shell');
   const claudePid = claude.ProcessId;
+  cleanupOnFailure.push(() => { if (isAlive(claudePid)) process.kill(claudePid); });
 
   shell.write('Reply with the single word OK.');
   await sleep(400);
@@ -248,5 +255,12 @@ async function main() {
 
 main().catch((error) => {
   console.error(error);
+  for (const undo of cleanupOnFailure.reverse()) {
+    try {
+      undo();
+    } catch {
+      // Best-effort: the rest still run.
+    }
+  }
   process.exit(1);
 });

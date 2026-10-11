@@ -5,7 +5,12 @@ import { v4 as uuidv4 } from 'uuid';
 import simpleGit, { type SimpleGit } from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
-import { MAX_COMMAND_TERMINALS, commandTerminalSlotId, commandTerminalTitle } from '../../../shared/command-terminal-name';
+import {
+  MAX_COMMAND_TERMINALS,
+  commandTerminalSlotId,
+  commandTerminalSlotNumber,
+  commandTerminalTitle,
+} from '../../../shared/command-terminal-name';
 import { fetchIfStale } from '../../git/fetch-throttle';
 import { resolveProjectDefaultBaseBranch } from '../helpers/default-base-branch';
 import { trackFeatureUsed } from '../../analytics/usage';
@@ -81,9 +86,28 @@ export function clearCommandTerminalReservations(): void {
   reservedSlotsByProject.clear();
 }
 
+/**
+ * A path as `projectRootIsShared` compares it. Not run through
+ * `resolveProjectRoot`: that maps a task's worktree to the project root, and a
+ * worktree has its own HEAD, so its agent never shares the root's checkout.
+ */
 function normalizeComparablePath(rawPath: string): string {
-  const resolved = path.resolve(resolveProjectRoot(rawPath));
+  const resolved = path.resolve(rawPath);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function commandTerminalLimitError(): CommandTerminalStartError {
+  return new CommandTerminalStartError(
+    'command-terminal-limit',
+    `This project already has ${MAX_COMMAND_TERMINALS} Command Terminals running.`,
+  );
+}
+
+function gitTookTooLong(currentBranch: string, targetBranch: string): { branch: string; checkoutError: string } {
+  return {
+    branch: currentBranch,
+    checkoutError: `Staying on "${currentBranch}": git took too long, so this terminal did not switch to "${targetBranch}".`,
+  };
 }
 
 /**
@@ -91,29 +115,37 @@ function normalizeComparablePath(rawPath: string): string {
  *
  * Occupied means a live transient row of the project (main removes a terminal's
  * row when it ends, so every row is live) or another start's reservation. The
- * cap counts the same set, so a crashed terminal never holds a phone at the cap.
- * Returns the claimed slot and the function that releases the reservation.
+ * cap counts the same set, so a crashed terminal never holds a phone at the cap,
+ * and a start whose row has registered but whose reservation is not yet
+ * released counts once. Returns the claimed slot and the function that releases
+ * the reservation.
  */
 function reserveCommandTerminalSlot(
   context: IpcContext,
   projectId: string,
   requestedSlot: string | undefined,
 ): { slot: string; release: () => void } {
+  if (requestedSlot) {
+    const requestedNumber = commandTerminalSlotNumber(requestedSlot);
+    if (
+      requestedNumber === null
+      || requestedNumber < 1
+      || requestedNumber > MAX_COMMAND_TERMINALS
+      || requestedSlot !== commandTerminalSlotId(requestedNumber)
+    ) {
+      throw new Error(`Not a Command Terminal slot: ${requestedSlot}`);
+    }
+  }
   const reserved = reservedSlotsByProject.get(projectId) ?? new Set<string>();
   const occupied = new Set<string>(reserved);
-  let liveCount = 0;
+  let unslottedLiveCount = 0;
   for (const session of context.sessionManager.listSessions()) {
     if (!session.transient || session.projectId !== projectId || session.status === 'exited') continue;
-    liveCount += 1;
     if (session.commandTerminalSlot) occupied.add(session.commandTerminalSlot);
+    else unslottedLiveCount += 1;
   }
 
-  if (liveCount + reserved.size >= MAX_COMMAND_TERMINALS) {
-    throw new CommandTerminalStartError(
-      'command-terminal-limit',
-      `This project already has ${MAX_COMMAND_TERMINALS} Command Terminals running.`,
-    );
-  }
+  if (occupied.size + unslottedLiveCount >= MAX_COMMAND_TERMINALS) throw commandTerminalLimitError();
 
   let slot: string | null = null;
   if (requestedSlot) {
@@ -130,12 +162,7 @@ function reserveCommandTerminalSlot(
       }
     }
   }
-  if (!slot) {
-    throw new CommandTerminalStartError(
-      'command-terminal-limit',
-      `This project already has ${MAX_COMMAND_TERMINALS} Command Terminals running.`,
-    );
-  }
+  if (!slot) throw commandTerminalLimitError();
 
   reserved.add(slot);
   reservedSlotsByProject.set(projectId, reserved);
@@ -347,12 +374,7 @@ async function checkOutStartBranch(
 
   try {
     const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-    if (currentBranch !== targetBranch && pastDeadline()) {
-      return {
-        branch: currentBranch,
-        checkoutError: `Staying on "${currentBranch}": git took too long, so this terminal did not switch to "${targetBranch}".`,
-      };
-    }
+    if (currentBranch !== targetBranch && pastDeadline()) return gitTookTooLong(currentBranch, targetBranch);
     // An AUTO checkout (no branch picked) has no user gesture behind it beyond
     // opening a terminal, and a plain `git checkout` carries non-conflicting
     // uncommitted changes onto the base branch silently, so someone with work
@@ -369,12 +391,7 @@ async function checkOutStartBranch(
       };
     }
     if (currentBranch !== targetBranch) {
-      if (pastDeadline()) {
-        return {
-          branch: currentBranch,
-          checkoutError: `Staying on "${currentBranch}": git took too long, so this terminal did not switch to "${targetBranch}".`,
-        };
-      }
+      if (pastDeadline()) return gitTookTooLong(currentBranch, targetBranch);
       await git.checkout(targetBranch);
     }
 
