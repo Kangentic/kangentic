@@ -652,9 +652,9 @@ export class TerminalSubmitScheduler {
   /**
    * Wait for the right moment, then start the burst.
    *
-   * Fresh spawn / queued: wait for the CLI's first `'thinking'` event (it is
-   * alive and rendering), with a 30s fallback for adapters that have no
-   * thinking hook and a hard timeout for a genuinely hung startup.
+   * Fresh spawn / queued: wait for the CLI's first `'thinking'` or `'idle'`
+   * event (it is alive), with a 30s fallback for adapters that report neither
+   * and a hard timeout for a genuinely hung startup.
    */
   private scheduleDeferred(taskId: string, burst: QueuedBurst, isQueued: boolean): void {
     const { sessionId, opts } = burst;
@@ -704,10 +704,16 @@ export class TerminalSubmitScheduler {
       this.startBurst(taskId, burst);
     };
 
+    // Alive is a thinking edge, or the first idle. A fresh spawn that carries a
+    // prompt is seeded thinking when it boots (`initSession`), before this
+    // listener exists, so its only edge here is the idle its first turn ends
+    // on; waiting for a thinking edge alone left a column's message on the 30s
+    // fallback. A permission prompt is not alive enough: typed keys would
+    // answer it.
     const onActivity = (evtSessionId: string, activityState: string): void => {
       if (evtSessionId !== sessionId) return;
       if (!isCurrent()) return;
-      if (state === 'waiting' && activityState === 'thinking') detachAndDeliver();
+      if (state === 'waiting' && (activityState === 'thinking' || activityState === 'idle')) detachAndDeliver();
     };
 
     const onSessionChanged = (evtSessionId: string, evtSession: { status: string }): void => {

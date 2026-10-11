@@ -289,6 +289,35 @@ describe('TerminalSubmitScheduler', () => {
       expect(terminalSubmit.calls).toHaveLength(1);
     });
 
+    it('delivers at the first idle when the spawn was seeded thinking and shows no thinking edge', async () => {
+      // A fresh spawn with a prompt is seeded thinking at boot, before the
+      // scheduler listens, so its first event here is the idle its first turn
+      // ends on. Red: waiting for thinking alone held the message 30s.
+      sessionManager.registry.set('s1', { status: 'running' });
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], { freshlySpawned: true });
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+    });
+
+    it('never delivers into a permission prompt, where the keys would answer it', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], { freshlySpawned: true });
+      await tick();
+      sessionManager.emitActivity('s1', 'permission');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitActivity('s1', 'thinking');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+    });
+
     it('30s fallback delivers anyway when thinking never fires', async () => {
       sessionManager.registry.set('s1', { status: 'running' });
 
