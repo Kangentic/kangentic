@@ -386,9 +386,9 @@ export const AGENT_ABSENCE_CONFIRM_CYCLES = 2;
  * for its session. Several, not one: the request follows the agent's own
  * SessionEnd hook, which fires as the CLI BEGINS to exit, so the first look
  * can still see the process. At the 2 s base cadence this is about 10 s of
- * looking, after which the session waits for the ordinary 60 s sweep again
- * (an agent that ended and started again, as `/clear` does, is simply seen
- * alive on every one of these cycles).
+ * looking, after which the session waits for the ordinary 60 s sweep again.
+ * An agent that ends and starts again, as `/clear` does, withdraws the request
+ * with its SessionStart (`cancelAgentAbsenceCheck`), so it spends none of them.
  */
 export const AGENT_ABSENCE_REQUEST_CYCLES = 5;
 

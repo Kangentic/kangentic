@@ -401,8 +401,9 @@ fast path. The agent's SessionEnd hook (`onEvent` in `session-manager.ts`) stamp
 enumerate for that session on its next base-cadence cycles regardless of the sweep interval, and
 the stamp waives the 30s spawn grace. The process tree still decides and the two-observation
 confirm still holds, so the end lands about 4s after `/exit`. `/clear` fires SessionEnd too, but its
-process stays alive, so the sweep sees a descendant and keeps the terminal; the following
-SessionStart clears the stamp. An agent with no SessionEnd hook falls back to the plain sweep.
+process stays alive, and the SessionStart that follows clears the stamp and withdraws the request
+(`cancelAgentAbsenceCheck`), so the terminal is kept and the remaining fast looks are not spent. An
+agent with no SessionEnd hook falls back to the plain sweep.
 
 A Command Terminal whose PTY exits on its own (a crash, or the shell killed) also ends: after the
 `exit` emit, the spawn flow's `onPtyExited` hook removes the row and deletes the directory, so a
