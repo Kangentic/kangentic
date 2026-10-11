@@ -66,8 +66,8 @@ export function commandTerminalTitle(slot: string | null | undefined): string {
 }
 
 /**
- * What every surface calls a Command Terminal: its own name once main has
- * derived one from the first prompt, else the slot title. Shared by the window
+ * What a Command Terminal is called: its own name once main has derived one
+ * from the first prompt, else the slot title. Shared by the window
  * title bar, the Agent Monitor row, a phone's snapshot and start answer, and the
  * push notification, so all of them print the same words.
  */

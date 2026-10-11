@@ -69,6 +69,11 @@ window in about 4 seconds. `/clear` also fires SessionEnd, but its process stays
 process tree keeps the terminal. Every end, a desktop Stop included, goes through
 `SessionManager.endCommandTerminal`, which refuses a task's session.
 
+Two gaps remain. The sweep never judges a WSL shell, since its agent is not a Win32 descendant of
+`wsl.exe`, so a WSL terminal outlives its agent as a bare shell until the PTY exits. The same holds
+with the background-shell watcher turned off, since the sweep is the watcher's. A suspend (the
+idle timeout, a project relocate) ends a terminal outright, since there is no record to resume.
+
 Nothing in the renderer used to close a window when main ended its session, since `App.tsx`
 ignores an intentional exit. `useCloseCommandWindowOnRemoval` (`CommandTerminalLayer.tsx`, mounted
 in `AppLayout` so it runs while the layer is hidden) is its own `session-removed` subscriber: when a
@@ -107,7 +112,8 @@ slow fetch, so an unattended start keeps the desktop's steps and makes each one 
 - the fetch is non-interactive (`fetchIfStale`'s `nonInteractive` option) and aborts after 5 s;
 - the whole git phase has one 6 s budget, after which the remaining steps are skipped;
 - it never checks out under another live session in the project folder (a sibling terminal, or a
-  task with no worktree), comparing paths after `resolveProjectRoot` and case-folded on Windows;
+  task with no worktree), comparing resolved paths, case-folded on Windows. A task in its own
+  worktree does not count: a worktree has its own HEAD;
 - every failure falls back to the branch already checked out, as the dirty-tree stay-put does.
 
 It needs no project open on the desktop. A terminal a phone starts in the project the desktop has
@@ -123,7 +129,9 @@ running after the terminal ended, and nothing reported it. So each terminal's PT
 when the terminal ends: it honors "Stop leftover processes" and reports under the terminal's name.
 It runs 12 s after the terminal ends, longer than the pty host gives an agent to exit by itself,
 so it never force-kills Claude while Claude is still shutting down. Nothing is reaped during a
-quit.
+quit. That host step, which asks the agent a dead shell left running to exit and terminates it
+after the grace (`dead-root-orphans.ts`), runs on Windows only. On macOS and Linux nothing asks
+such an agent to exit, and this reap is the only cleanup.
 
 ## A reattach never touches HEAD
 

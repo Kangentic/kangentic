@@ -67,9 +67,9 @@ export interface ManagedSession {
    *
    * Derived here in main (`CommandTerminalNamer`, through the session's own
    * agent's `summarize`), so a terminal a phone started, or one in a project
-   * the desktop does not have open, is named too. First write wins. Every
-   * surface reads it from here: the window title, the Agent Monitor row, a
-   * phone's snapshot, and the push notification.
+   * the desktop does not have open, is named too. First write wins. The window
+   * title, the Agent Monitor row, a phone's snapshot, and the push notification
+   * all read it from here.
    */
   commandTerminalLabel?: string | null;
   /**

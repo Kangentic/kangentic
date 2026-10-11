@@ -250,7 +250,7 @@ describe('planTransientRecovery', () => {
 
   it('leaves other projects\' entries untouched', () => {
     const existing = transientMap([
-      { projectId: PROJECT_B, slot: 'slot-1', sessionId: 'b-1', branch: 'main', label: 'B work' },
+      { projectId: PROJECT_B, slot: 'slot-1', sessionId: 'b-1', branch: 'main' },
     ]);
     const recovered = planTransientRecovery({
       sessions: [

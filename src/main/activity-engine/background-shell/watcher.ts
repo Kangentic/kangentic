@@ -484,6 +484,16 @@ export class BgShellWatcher {
   }
 
   /**
+   * Withdraw a `requestAgentAbsenceCheck`: the agent started again (a
+   * `/clear` ends and starts in one go), so the remaining looks would each
+   * list every process on the machine to find it alive. The ordinary sweep
+   * still judges the session on its own interval.
+   */
+  cancelAgentAbsenceCheck(sessionId: string): void {
+    this.absenceCheckRequests.delete(sessionId);
+  }
+
+  /**
    * Subsystem C entry point: a hook directive extracted a real OS PID
    * for a tracked shell. Adds to Tier A tracking.
    */

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
@@ -11,10 +12,10 @@ import { TerminalPanel } from '../terminal/TerminalPanel';
 import { SettingsPanel } from '../settings/SettingsPanel';
 import {
   CommandTerminalLayer,
-  MAX_COMMAND_TERMINALS,
   spawnAdditionalCommandTerminal,
   useCloseCommandWindowOnRemoval,
 } from '../command-bar/CommandTerminalLayer';
+import { MAX_COMMAND_TERMINALS } from '../../../shared/command-terminal-name';
 import { selectLiveCommandTerminalSlots } from '../../stores/session-store/transient-session-slice';
 import { commandWindowManager } from '../../window-manager';
 import { SearchPalette } from '../search/SearchPalette';
@@ -155,17 +156,16 @@ export function AppLayout() {
   // Slots in use for the current project: the Command Terminal windows (the store
   // is a module singleton that outlives the layer's mount) plus the project's live
   // terminals, which include any a phone started with the layer closed. The
-  // title-bar "New terminal" button disables at the cap main enforces. Each read
-  // is one joined string, so `Object.is` re-renders this root only on a real change.
-  const commandWindowSlotKey = commandWindowManager.store((state) =>
-    Object.values(state.windows).map((managedWindow) => managedWindow.anchor).sort().join('|'));
-  const liveCommandTerminalSlotKey = useSessionStore((s) =>
-    [...selectLiveCommandTerminalSlots(s.sessions, currentProjectId)].sort().join('|'));
-  const commandTerminalSlotsInUse = useMemo(() => {
-    const slots = new Set<string>();
-    for (const slot of `${commandWindowSlotKey}|${liveCommandTerminalSlotKey}`.split('|')) if (slot) slots.add(slot);
-    return slots.size;
-  }, [commandWindowSlotKey, liveCommandTerminalSlotKey]);
+  // title-bar "New terminal" button disables at the cap main enforces. Both reads
+  // compare shallowly, so this root re-renders only when a slot changes.
+  const commandWindowSlots = commandWindowManager.store(useShallow((state) =>
+    Object.values(state.windows).map((managedWindow) => managedWindow.anchor)));
+  const liveCommandTerminalSlots = useSessionStore(useShallow((state) =>
+    [...selectLiveCommandTerminalSlots(state.sessions, currentProjectId)]));
+  const commandTerminalSlotsInUse = useMemo(
+    () => new Set([...commandWindowSlots, ...liveCommandTerminalSlots]).size,
+    [commandWindowSlots, liveCommandTerminalSlots],
+  );
   // Closes a terminal's window when main ends it (a phone's Stop, the agent
   // exiting), mounted here so it runs while the layer is hidden.
   useCloseCommandWindowOnRemoval();

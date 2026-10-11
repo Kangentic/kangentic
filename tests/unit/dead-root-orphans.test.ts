@@ -53,22 +53,50 @@ class FakeProcessTable {
     for (const process of processes) this.alive.set(process.pid, process);
   }
 
+  /** A pid changing hands that `terminate` will see, armed per pid by `reusePidBeforeTerminate`. */
+  private readonly reuseOnTerminate = new Map<number, FakeProcess>();
+
   exit(pid: number): void {
     this.alive.delete(pid);
   }
 
+  /** Puts a process in the table, as the kernel does when it hands an exited process's pid to a new one. */
+  start(process: FakeProcess): void {
+    this.alive.set(process.pid, process);
+  }
+
+  /**
+   * Arms the race a terminate can lose: the pid changes hands after the last
+   * poll and before the terminate opens its handle. `endDeadRootOrphans` runs
+   * from its last poll to its terminate loop with no await in between, so a
+   * timer cannot land in that gap and the terminate call itself is the seam.
+   */
+  reusePidBeforeTerminate(replacement: FakeProcess): void {
+    this.reuseOnTerminate.set(replacement.pid, replacement);
+  }
+
+  /** Every terminate call, in order, whether or not it ended a process. */
   readonly terminated: number[] = [];
+
+  private identity(pid: number): OrphanIdentity | null {
+    const process = this.alive.get(pid);
+    if (!process || process.startedAtMs === undefined) return null;
+    return { startKey: `key-${pid}-${process.startedAtMs}`, startedAtMs: process.startedAtMs };
+  }
 
   readonly api: DeadRootOrphanApi = {
     listProcesses: async () => [...this.alive.values()],
-    identityOf: (pid) => {
-      const process = this.alive.get(pid);
-      if (!process || process.startedAtMs === undefined) return null;
-      return { startKey: `key-${pid}-${process.startedAtMs}`, startedAtMs: process.startedAtMs };
-    },
+    identityOf: (pid) => this.identity(pid),
     terminate: (target) => {
       this.terminated.push(target.pid);
-      if (!this.alive.has(target.pid)) return false;
+      const replacement = this.reuseOnTerminate.get(target.pid);
+      if (replacement) {
+        this.reuseOnTerminate.delete(target.pid);
+        this.alive.set(target.pid, replacement);
+      }
+      // The real terminate re-reads the creation time on the handle it opened
+      // and refuses a process that is not the one that was planned.
+      if (this.identity(target.pid)?.startKey !== target.startKey) return false;
       this.alive.delete(target.pid);
       return true;
     },
@@ -182,6 +210,75 @@ describe('endDeadRootOrphans', () => {
 
     expect(result.exitedByThemselves).toEqual(['claude.exe']);
     expect(result.terminated).toEqual(['node.exe']);
+    expect(table.terminated).toEqual([610]);
+  });
+
+  it('counts a planned process whose pid was taken by an unrelated new process as exited, and never terminates the newcomer', async () => {
+    const table = new FakeProcessTable(agentTree);
+    // claude.exe exits during the grace and the kernel hands pid 600 to a process created later.
+    // node.exe stays alive, so the terminate loop does run and is the positive control.
+    const recorder = steps(table, () => setTimeout(() => {
+      table.exit(600);
+      table.start({ pid: 600, ppid: 1, image: 'unrelated.exe', startedAtMs: EXITED_AT + 5_000 });
+    }, 600));
+    const done = endDeadRootOrphans(table.api, params(), recorder);
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS + DEAD_ROOT_ORPHAN_POLL_MS * 2);
+    const result = await done;
+
+    expect(result.found).toEqual(['claude.exe', 'node.exe']);
+    expect(result.exitedByThemselves).toEqual(['claude.exe']);
+    expect(result.terminated).toEqual(['node.exe']);
+    expect(result.notTerminated).toBe(0);
+    // Terminate was never even called for the reused pid, and the newcomer is still running.
+    expect(table.terminated).toEqual([610]);
+    expect(table.api.identityOf(600)?.startedAtMs).toBe(EXITED_AT + 5_000);
+  });
+
+  it('counts a process whose pid changed hands just before its terminate as not terminated, and leaves the newcomer running', async () => {
+    const table = new FakeProcessTable(agentTree);
+    // Nothing exits, so both processes are still the planned ones at the last poll. Then pid 600 is
+    // reused before the terminate can open it, so the creation time no longer matches and it is refused.
+    table.reusePidBeforeTerminate({ pid: 600, ppid: 1, image: 'unrelated.exe', startedAtMs: EXITED_AT + 5_000 });
+    const recorder = steps(table, () => undefined);
+    const done = endDeadRootOrphans(table.api, params(), recorder);
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS + DEAD_ROOT_ORPHAN_POLL_MS * 2);
+    const result = await done;
+
+    expect(result.exitedByThemselves).toEqual([]);
+    expect(result.terminated).toEqual(['node.exe']);
+    expect(result.notTerminated).toBe(1);
+    // Parents first: the refused terminate was attempted, then the one that took effect.
+    expect(table.terminated).toEqual([600, 610]);
+    expect(table.api.identityOf(600)?.startedAtMs).toBe(EXITED_AT + 5_000);
+    expect(table.api.identityOf(610)).toBeNull();
+  });
+
+  it('still waits out the grace and terminates what is left when the exit sequence could not be written', async () => {
+    const table = new FakeProcessTable(agentTree);
+    // The console pipe is gone, so nothing is written and nothing exits because of the ask. claude.exe
+    // ends on its own partway through the grace; node.exe never does.
+    setTimeout(() => table.exit(600), 5_000);
+    let askCalls = 0;
+    const recorder = steps(table, () => undefined, {
+      askToExit: () => {
+        askCalls += 1;
+        return false;
+      },
+    });
+    const done = endDeadRootOrphans(table.api, params(), recorder);
+
+    // A failed ask does not cut the grace short: node.exe is still alive, and untouched, one poll before it ends.
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS - DEAD_ROOT_ORPHAN_POLL_MS);
+    expect(table.terminated).toEqual([]);
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_POLL_MS * 2);
+    const result = await done;
+
+    expect(askCalls).toBe(1);
+    expect(result.asked).toBe(false);
+    expect(result.found).toEqual(['claude.exe', 'node.exe']);
+    expect(result.exitedByThemselves).toEqual(['claude.exe']);
+    expect(result.terminated).toEqual(['node.exe']);
+    expect(result.notTerminated).toBe(0);
     expect(table.terminated).toEqual([610]);
   });
 

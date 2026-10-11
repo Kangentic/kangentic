@@ -2026,6 +2026,10 @@ export class SessionManager extends EventEmitter {
    * emitted, so every exit listener (the crash push, a phone's
    * `session-ended`, the renderer's status patch) has already read the row.
    *
+   * A suspend (the idle timeout, a project relocate) ends it the same way: a
+   * Command Terminal has no record to resume from, so a suspended row would
+   * only hold its slot and a window on a dead PTY.
+   *
    * Skipped during quit: `killAll()` exits every terminal, and its bounded
    * drain (synchronous-shutdown.md) is no place for removals and broadcasts.
    * A row a Stop already removed is not found and costs nothing.
@@ -2189,16 +2193,20 @@ export class SessionManager extends EventEmitter {
    * May the bg-shell watcher's agent-absence sweep judge this session?
    *
    * The watcher owns only the process-tree question ("is anything running under
-   * this PTY?"); every session-shaped arm lives here. Each one excludes a case
-   * where "no agent process under the shell" is NOT a fault:
+   * this PTY?"); every session-shaped arm lives here.
    *
    * A Command Terminal IS judged. It runs the project's agent CLI typed into its
-   *   shell exactly as a task session does (`startCommandTerminal`), so "no agent
-   *   under the shell" means its agent exited and only a bare shell is left. Its
-   *   retirement ENDS the terminal (`endCommandTerminal`) rather than keeping an
-   *   exited row: a phone must never be left typing into that shell. A transient
-   *   session whose agent signalled its own end (`agentEndSignaledAt`) skips the
-   *   spawn grace below, so a `/exit` inside the first 30 s still ends promptly.
+   * shell exactly as a task session does (`startCommandTerminal`), so "no agent
+   * under the shell" means its agent exited and only a bare shell is left. Its
+   * retirement ENDS the terminal (`endCommandTerminal`) rather than keeping an
+   * exited row: a phone must never be left typing into that shell. A transient
+   * session whose agent signalled its own end (`agentEndSignaledAt`) skips the
+   * spawn grace below, so a `/exit` inside the first 30 s still ends promptly.
+   * The WSL arm below still applies to it, so a WSL Command Terminal is never
+   * judged and outlives its agent as a bare shell until its PTY exits.
+   *
+   * Each arm below excludes a case where "no agent process under the shell" is
+   * NOT a fault:
    *
    * - no `agentParser`: nothing was ever meant to run an agent CLI under this
    *   PTY (a `run_script` session, a bare-shell spawn).
@@ -2244,9 +2252,9 @@ export class SessionManager extends EventEmitter {
    * A Command Terminal's agent hooks report its own lifecycle. A SessionEnd
    * (a `/exit`) asks the agent-absence sweep to look now rather than at its
    * next 60 s turn, so the terminal ends within seconds of the agent leaving
-   * and no bare shell lingers. A SessionStart clears the stamp: `/clear` sends
-   * both, with the agent still running, and the sweep's process-tree check is
-   * what keeps such a terminal alive either way.
+   * and no bare shell lingers. A SessionStart clears the stamp and withdraws
+   * the request: `/clear` sends both, with the agent still running, and the
+   * sweep's process-tree check is what keeps such a terminal alive either way.
    *
    * Task sessions are untouched: the sweep's slower cadence is fine for a row
    * that only needs its status corrected.
@@ -2257,6 +2265,7 @@ export class SessionManager extends EventEmitter {
     if (!session?.transient) return;
     if (event.type === EventType.SessionStart) {
       session.agentEndSignaledAt = null;
+      this.telemetry.cancelAgentAbsenceCheck(sessionId);
       return;
     }
     // The synthetic SessionEnd a kill emits finds no live PTY and is no

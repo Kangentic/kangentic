@@ -118,7 +118,7 @@ describe('selectLiveCommandTerminalSlots', () => {
     };
   }
 
-  it('collects the running terminal slots of one project only', () => {
+  it('collects the live terminal slots of one project only, leaving out exited rows and task sessions', () => {
     const slots = selectLiveCommandTerminalSlots([
       row({ id: 'phone-started', commandTerminalSlot: 'slot-1' }),
       row({ id: 'desktop', commandTerminalSlot: 'slot-3' }),
@@ -128,6 +128,21 @@ describe('selectLiveCommandTerminalSlots', () => {
     ], 'proj-1');
 
     expect([...slots].sort()).toEqual(['slot-1', 'slot-3']);
+  });
+
+  it('counts a queued terminal as holding its slot, the way main reserves it', () => {
+    // Main's reserveCommandTerminalSlot counts every non-exited transient row, a
+    // queued one included. A selector that only counted `running` rows would offer
+    // a slot a queued phone terminal already holds, and main would refuse the
+    // spawn with slot-taken.
+    const slots = selectLiveCommandTerminalSlots([
+      row({ id: 'queued-phone-started', commandTerminalSlot: 'slot-2', status: 'queued' }),
+      row({ id: 'running-desktop', commandTerminalSlot: 'slot-1' }),
+      row({ id: 'ended', commandTerminalSlot: 'slot-3', status: 'exited' }),
+      row({ id: 'queued-other-project', commandTerminalSlot: 'slot-4', status: 'queued', projectId: 'proj-2' }),
+    ], 'proj-1');
+
+    expect([...slots].sort()).toEqual(['slot-1', 'slot-2']);
   });
 
   it('is empty with no project open', () => {

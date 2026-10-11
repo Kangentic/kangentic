@@ -1102,4 +1102,37 @@ describe('loadWin32OrphanApi: what a dead shell left running', () => {
     await expect(loadWin32OrphanApi(async () => fake.api)).rejects.toThrow('could not read its own session');
     expect(fake.openedPids()).toEqual([]);
   });
+
+  it('fails to load, opening no process, when its own user cannot be read', async () => {
+    // Positive control: with its own user readable, the same table loads and reads the caller's process.
+    const control = new FakeWin32([{ pid: 700 }]);
+    const controlApi = await loadWin32OrphanApi(async () => control.api);
+    expect(controlApi.identityOf(700)).not.toBeNull();
+    expect(control.openedPids()).toEqual([700]);
+
+    const fake = new FakeWin32([{ pid: 700 }]);
+    fake.ownTokenReadable = false;
+    // Without its own user no process can be told apart as the caller's, so the load fails instead of handing out an API that cannot compare owners.
+    await expect(loadWin32OrphanApi(async () => fake.api)).rejects.toThrow('could not read its own user');
+    // The own session was read first and passed, so this is the user gate and not the session gate.
+    expect(fake.sessionLookups).toContain(process.pid);
+    expect(fake.opens).toEqual([]);
+    // The token never opened, so no handle was ever created to leak.
+    expect(fake.createdHandleIds).toEqual([]);
+  });
+
+  // The other ways its own user comes back null: its token OPENS, then
+  // GetTokenInformation fails, or the TOKEN_USER it fills is not a SID.
+  it.each(['query', 'revision', 'truncated', 'overrun', 'too-many-sub-authorities'] as const)(
+    'fails to load, opening no process and closing the token it did open, when its own token user is unreadable (%s)',
+    async (fault) => {
+      const fake = new FakeWin32([{ pid: 700 }]);
+      fake.ownTokenFault = fault;
+      await expect(loadWin32OrphanApi(async () => fake.api)).rejects.toThrow('could not read its own user');
+      expect(fake.opens).toEqual([]);
+      // Unlike an unopenable token, this one was created: it is the load's only handle, and it was closed.
+      expect(fake.createdHandleIds).toHaveLength(1);
+      expect(fake.leakedHandleIds()).toEqual([]);
+    },
+  );
 });

@@ -416,6 +416,11 @@ export class SessionTelemetry {
     this.bgShellWatcher?.requestAgentAbsenceCheck(sessionId);
   }
 
+  /** Withdraw that request (see BgShellWatcher.cancelAgentAbsenceCheck). */
+  cancelAgentAbsenceCheck(sessionId: string): void {
+    this.bgShellWatcher?.cancelAgentAbsenceCheck(sessionId);
+  }
+
   // ==== Idle-timeout sweep ====
 
   get idleTimeoutMinutes(): number {

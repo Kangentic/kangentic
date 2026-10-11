@@ -1532,6 +1532,47 @@ describe('performSpawn - onPtyExited runs after every exit listener', () => {
   });
 });
 
+describe('performSpawn - exit sequence handed to the host', () => {
+  // The host writes the session's exit sequence into a shell that exited on
+  // its own, to ask the agent it left running to exit (pty-teardown-grace.md,
+  // dead-root-orphans.ts). It only knows the sequence from the spawn params,
+  // so a spawn flow that drops the field leaves the host to its own default
+  // and an agent with a custom exit command (`/exit`) is terminated instead of
+  // asked.
+  //
+  // Asserted on the params performSpawn gives host.spawn, not on the registry
+  // row: the row's exitSequence is a separate line with the same expression,
+  // and the host core applies its own default, so neither would notice the
+  // spawn flow dropping the field.
+  //
+  // Red-green: hardcoding ['\x03'] in the host spawn params fails the custom
+  // sequence test; dropping the field (leaving `input.exitSequence`) fails
+  // both.
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('passes the input\'s exit sequence through to the host spawn', async () => {
+    const context = makeContext();
+    const exitSequence = ['\x03', '/exit\r'];
+
+    await performSpawn(makeInput({ exitSequence }), context);
+
+    expect(lastSpawnParams(context).exitSequence).toEqual(exitSequence);
+  });
+
+  it('gives the host Ctrl+C when the input has no exit sequence', async () => {
+    const context = makeContext();
+
+    await performSpawn(makeInput({ exitSequence: undefined }), context);
+
+    expect(lastSpawnParams(context).exitSequence).toEqual(['\x03']);
+  });
+});
+
 describe('performSpawn - shutdown begins during the host round trip', () => {
   // The quit can start while `host.spawn` is in flight. killAll() ran before the
   // registry had a row for this session, so nothing else would end the PTY the

@@ -75,7 +75,7 @@ export class CommandTerminalLeftoverReaper {
     const task: CommandTerminalLeftoverTask = {
       id: session.taskId,
       worktree_path: null,
-      title: commandTerminalDisplayName(session.commandTerminalLabel ?? null, session.commandTerminalSlot ?? null),
+      title: commandTerminalDisplayName(session.commandTerminalLabel, session.commandTerminalSlot),
     };
     const timer = setTimeout(() => {
       this.timers.delete(timer);

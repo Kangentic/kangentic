@@ -53,7 +53,7 @@ function settingsLocalPath(dir: string): string {
 export interface BuildHooksOptions {
   /**
    * Copy UserPromptSubmit's `prompt` into the Prompt event's `detail` (the
-   * bridge caps it at 200 characters). Only a Command Terminal asks for it, to
+   * bridge caps it at `FIELD_CAP`, 2000 characters). Only a Command Terminal asks for it, to
    * name itself; task sessions keep prompt text out of their events file.
    */
   capturePromptText?: boolean;

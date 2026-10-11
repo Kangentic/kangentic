@@ -417,7 +417,7 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge:
 | `PreToolUse` (blank) | `tool_start` | Agent began using a tool |
 | `PostToolUse` (blank) | `tool_end` | Tool execution completed (remaps to `background_shell_start` when the `tool_response` carries an id-shaped detail: a backgrounded or auto-backgrounded Bash's shell id, or a `Monitor` wait's `taskId`) |
 | `PostToolUseFailure` (blank) | `tool_end` | Tool execution failed (remaps to `interrupted` when `is_interrupt` is true) |
-| `UserPromptSubmit` | `prompt` | User submitted a prompt. A Command Terminal's settings also copy the payload's `prompt` into `detail` (capped at 200 characters, `capturePromptText`), which is what names the terminal; a task session's events carry no prompt text |
+| `UserPromptSubmit` | `prompt` | User submitted a prompt. A Command Terminal's settings also copy the payload's `prompt` into `detail` (capped at the bridge's `FIELD_CAP`, 2000 characters, `capturePromptText`), which is what names the terminal; a task session's events carry no prompt text |
 | `Stop` | `idle` | Agent stopped naturally |
 | `StopFailure` | `turn_failed` or `turn_retrying` | Fires instead of `Stop` on a service/API error; carries the error type in `detail`. A TERMINAL error stays `turn_failed` (routed through the Interrupted bypass to reset stale counters and idle at once); a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error) is reclassified to `turn_retrying`, which holds the session thinking through a live retry instead of force-idling it - see [Activity Detection](activity-detection.md) |
 | `PermissionRequest` | `idle` | Agent hit a permission wall |

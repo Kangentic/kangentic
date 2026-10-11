@@ -36,9 +36,6 @@ import { MAX_COMMAND_TERMINALS, commandTerminalSlotId, commandTerminalTitle } fr
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { selectLiveCommandTerminalSlots } from '../../stores/session-store/transient-session-slice';
 
-/** Re-exported for the title bar; the cap itself is main's (command-terminal-name.ts). */
-export { MAX_COMMAND_TERMINALS };
-
 /** The single command-terminal slot anchor (Phase 1 is one window; Phase 2 adds
  *  more slots). The on-disk layout is anchored by this stable id, not a task. */
 const COMMAND_SLOT_ID = 'slot-1';

@@ -137,7 +137,10 @@ vi.mock('../../../src/main/mobile-bridge/transport/transport-factory', () => ({
 // the matching field, so every other case in this file runs unchanged.
 const attachCapture = vi.hoisted(() => ({
   /** The options attachContext() built its PushNotifier from. */
-  pushNotifierOptions: null as { resolveTaskContextByTaskId: (taskId: string) => { projectId: string; taskId: string; taskTitle: string } | null } | null,
+  pushNotifierOptions: null as {
+    resolveTaskContext: (sessionId: string) => { projectId: string; taskId: string; taskTitle: string; sessionKind?: string } | null;
+    resolveTaskContextByTaskId: (taskId: string) => { projectId: string; taskId: string; taskTitle: string } | null;
+  } | null,
   /** The deps attachContext() registered the capability handlers with. */
   handlerDeps: null as { spawnProgressFeed: { onTaskSpawnProgressChanged: (listener: (projectId: string, taskId: string) => void) => () => void } } | null,
   /** Stands in for getProjectRepos when set: the fake repos of one project, or a throw. */
@@ -1013,5 +1016,111 @@ describe('MobileBridgeService.attachContext() task-owner and spawn-progress wiri
     // with the feed still attached.
     emitSpawnProgress(fakeWindow(), 'task-2', 'starting-agent');
     expect(onProgressChanged).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The resolver attachContext() hands the PushNotifier to say what a session's
+ * alert is about. A Command Terminal has no task row: the notifier's own tests
+ * inject a resolver, so only this drives the real one, through the options the
+ * service built the notifier with.
+ */
+describe('MobileBridgeService.attachContext() push task-context resolver', () => {
+  interface FakeSessionRow {
+    projectId: string;
+    taskId: string;
+    transient?: boolean;
+    commandTerminalLabel?: string | null;
+    commandTerminalSlot?: string | null;
+  }
+
+  const servicesToDispose: Array<InstanceType<typeof MobileBridgeService>> = [];
+  /** Project ids the service asked for task repos of. A Command Terminal must leave it empty. */
+  const taskRepoReads: string[] = [];
+
+  /** attachContext() over a session manager that knows only `rows`, then the real push resolver. */
+  function resolveSessionContext(rows: Record<string, FakeSessionRow>, sessionId: string) {
+    attachCapture.projectRepos = (projectId) => {
+      taskRepoReads.push(projectId);
+      return { tasks: { getById: (taskId: string) => ({ id: taskId, title: 'Title from the task row' }) } };
+    };
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    servicesToDispose.push(service);
+    const sessionManager = Object.assign(new EventEmitter(), {
+      setMobileTerminalProbe: vi.fn(),
+      getSessionProjectId: (id: string) => rows[id]?.projectId,
+      getSessionTaskId: (id: string) => rows[id]?.taskId,
+      getSession: (id: string) => rows[id],
+    });
+    service.attachContext({ sessionManager, boardEvents: { emitBoardChanged: vi.fn() }, projectRepo: { list: () => [] } } as never);
+    const options = attachCapture.pushNotifierOptions;
+    if (!options) throw new Error('attachContext() did not build a PushNotifier');
+    return options.resolveTaskContext(sessionId);
+  }
+
+  beforeEach(() => {
+    attachCapture.pushNotifierOptions = null;
+    attachCapture.projectRepos = null;
+    taskRepoReads.length = 0;
+  });
+
+  afterEach(() => {
+    for (const service of servicesToDispose) service.dispose();
+    servicesToDispose.length = 0;
+    attachCapture.projectRepos = null;
+  });
+
+  it('a Command Terminal with a name is titled by that name and tagged command-terminal, without reading the task repos', () => {
+    const context = resolveSessionContext({
+      'terminal-1': {
+        projectId: 'proj-1',
+        taskId: 'transient-task-1',
+        transient: true,
+        commandTerminalLabel: 'Fix the flaky login test',
+        commandTerminalSlot: 'slot-2',
+      },
+    }, 'terminal-1');
+
+    expect(context).toEqual({
+      projectId: 'proj-1',
+      taskId: 'transient-task-1',
+      taskTitle: 'Fix the flaky login test',
+      sessionKind: 'command-terminal',
+    });
+    expect(taskRepoReads).toEqual([]);
+  });
+
+  it('a Command Terminal with no name yet is titled by its slot number, without reading the task repos', () => {
+    const context = resolveSessionContext({
+      'terminal-3': {
+        projectId: 'proj-1',
+        taskId: 'transient-task-3',
+        transient: true,
+        commandTerminalLabel: null,
+        commandTerminalSlot: 'slot-3',
+      },
+    }, 'terminal-3');
+
+    expect(context).toEqual({
+      projectId: 'proj-1',
+      taskId: 'transient-task-3',
+      taskTitle: 'Command Terminal 3',
+      sessionKind: 'command-terminal',
+    });
+    expect(taskRepoReads).toEqual([]);
+  });
+
+  it('a task session is titled from its task row and carries no sessionKind', () => {
+    const context = resolveSessionContext({
+      'task-session-1': { projectId: 'proj-1', taskId: 'task-1' },
+    }, 'task-session-1');
+
+    expect(context).toEqual({ projectId: 'proj-1', taskId: 'task-1', taskTitle: 'Title from the task row' });
+    expect(context).not.toHaveProperty('sessionKind');
+    expect(taskRepoReads).toEqual(['proj-1']);
+  });
+
+  it('a session the manager does not know resolves to null', () => {
+    expect(resolveSessionContext({}, 'gone')).toBeNull();
   });
 });

@@ -80,7 +80,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
-import { resetSummarizeRateLimit } from '../../src/main/agent/shared/summarize-rate-limit';
+import { resetSummarizeRateLimit, tryAcquireSummarizeSlot } from '../../src/main/agent/shared/summarize-rate-limit';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -337,6 +337,47 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
     if (!r4.ok) expect(r4.reason).toContain('rate limit');
   });
 
+  // `autoNameRateLimitPerHour` promises ONE combined cap for the task-name
+  // suggestion (this handler) and main's Command Terminal namer. The namer
+  // acquires through `tryAcquireSummarizeSlot` by default, so a slot taken
+  // there must count here, and the other way round. A handler with its own
+  // private window would let the two callers spend twice the cap.
+  it('refuses when a main-side caller (the namer path) already used the only slot', async () => {
+    const summarize = vi.fn(async () => 'Should Not Run');
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize })];
+    const context = makeContext({
+      rateLimit: 1,
+      currentProjectId: 'proj-1',
+      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
+    });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    // What CommandTerminalNamer.nameFromPrompt does with no injected acquirer.
+    expect(tryAcquireSummarizeSlot(1)).toBe(true);
+
+    const result = await invokeSummarize({ prompt: 'description' });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('rate limit');
+    expect(summarize).not.toHaveBeenCalled();
+  });
+
+  it('a slot the handler used is refused to a main-side caller (the namer path)', async () => {
+    const summarize = vi.fn(async () => 'A Title');
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize })];
+    const context = makeContext({
+      rateLimit: 1,
+      currentProjectId: 'proj-1',
+      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
+    });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    const result = await invokeSummarize({ prompt: 'description' });
+    expect(result.ok).toBe(true);
+
+    expect(tryAcquireSummarizeSlot(1)).toBe(false);
+  });
+
   it('does not rate-limit when limit is 0 (disabled)', async () => {
     mockRegistryAdapters = [
       makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'OK') }),
@@ -379,9 +420,10 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
   // ---------------------------------------------------------------------------
 
   it('evicts timestamps older than 1 hour from the rate-limit window before the cap check', async () => {
-    // This test must NOT re-use the capturedHandlers from a previous test because
-    // the rate-limit window array is closure-scoped inside registerSystemHandlers.
-    // We call capturedHandlers.clear() and re-register to get a fresh window.
+    // The rate-limit window is module-level (summarize-rate-limit.ts), shared
+    // with the Command Terminal namer, so a fresh window comes from the
+    // beforeEach reset, not from re-registering. Re-registering here only
+    // binds this test's context with its own limit of 2.
     capturedHandlers.clear();
     mockRegistryAdapters = [
       makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'Eviction Title') }),

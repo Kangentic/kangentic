@@ -44,7 +44,9 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   Terminals (do not reintroduce a transient exclusion in `isAgentAbsenceCandidate`), a SessionEnd
   hook fast-paths it, and a PTY that exits on its own removes its row in the spawn flow's
   `onPtyExited`. A Command Terminal must never be left as a bare shell a paired phone can type
-  into.
+  into. Known gap: the sweep never judges a WSL shell (its agent is not a Win32 descendant of
+  `wsl.exe`), and it does not run with the background-shell watcher off, so in either case a
+  terminal outlives its agent until its PTY exits.
 - **The desktop window follows a main-initiated end through ONE removal subscriber.**
   `useCloseCommandWindowOnRemoval` (mounted in `AppLayout`) closes the slot's window when a
   `session-removed` push names a session the `transientSessions` map still points at. A

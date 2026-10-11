@@ -3103,5 +3103,98 @@ describe('BgShellWatcher', () => {
       expect(probe.listAllCalls).toBe(0);
       watcher.dispose();
     });
+
+    it('a requested check snaps a backed-off poll back to the base cadence', async () => {
+      // A busy session (a pending tool keeps every cycle enumerating) backs the
+      // poll off to 2x after a run of tree cycles. The request follows the
+      // agent's own SessionEnd, so a Command Terminal must not wait out a
+      // stretched interval before its first look.
+      const baseIntervalMs = 100;
+      const { watcher, probe, pendingTools, log } = makeAbsenceSession(
+        [{ pid: 48848, ppid: 1234, comm: 'claude' }],
+        { pollIntervalMs: baseIntervalMs, agentAbsenceSweepIntervalMs: 10 * 60_000 },
+      );
+      pendingTools.set('s1', 1);
+      probe.listAllCalls = 0;
+
+      // Stage one reached: the next cycle is armed at 2x, 200ms out.
+      await vi.advanceTimersByTimeAsync(POLL_BACKOFF_STAGE_ONE_TREE_CYCLES * baseIntervalMs);
+      expect(probe.listAllCalls).toBe(POLL_BACKOFF_STAGE_ONE_TREE_CYCLES);
+
+      probe.trees.set(1234, []); // the agent exits
+      watcher.requestAgentAbsenceCheck('s1');
+
+      // The look comes one BASE interval later. Left stretched, it would not
+      // fire until 200ms had passed.
+      await vi.advanceTimersByTimeAsync(baseIntervalMs);
+      expect(probe.listAllCalls).toBe(POLL_BACKOFF_STAGE_ONE_TREE_CYCLES + 1);
+      expect(log.agentAbsent).toHaveLength(0); // absent #1
+
+      await vi.advanceTimersByTimeAsync(baseIntervalMs);
+      expect(log.agentAbsent).toEqual(['s1']); // absent #2 confirms, two base cycles after the request
+      watcher.dispose();
+    });
+
+    it('a cancelled request leaves no look due (a /clear ended the agent and started it again)', async () => {
+      const { watcher, probe, log } = makeAbsenceSession(
+        [{ pid: 48848, ppid: 1234, comm: 'claude' }],
+        { agentAbsenceSweepIntervalMs: 10 * 60_000 },
+      );
+      await watcher.pollNow(); // anchor, stamps the sweep
+      probe.listAllCalls = 0;
+
+      watcher.requestAgentAbsenceCheck('s1');
+      watcher.cancelAgentAbsenceCheck('s1');
+      for (let cycle = 0; cycle < AGENT_ABSENCE_REQUEST_CYCLES + 3; cycle += 1) await watcher.pollNow();
+
+      // Not one process listing: the session is back on the ordinary interval.
+      expect(probe.listAllCalls).toBe(0);
+      expect(log.agentAbsent).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('cancelling one session withdraws only its own looks', async () => {
+      const harness = makeAbsenceSession(
+        [{ pid: 48848, ppid: 1234, comm: 'claude' }],
+        { agentAbsenceSweepIntervalMs: 10 * 60_000 },
+      );
+      const { watcher, probe, rootPids, agentAbsenceCandidates } = harness;
+      rootPids.set('s2', 5678);
+      probe.alive.add(5678);
+      probe.trees.set(5678, [{ pid: 58848, ppid: 5678, comm: 'claude' }]);
+      agentAbsenceCandidates.add('s2');
+      watcher.registerSession('s2');
+      await watcher.pollNow(); // anchors both sessions and stamps the sweep
+      probe.listAllCalls = 0;
+
+      watcher.requestAgentAbsenceCheck('s1');
+      await watcher.pollNow();
+      await watcher.pollNow(); // s1 has spent two looks
+      watcher.requestAgentAbsenceCheck('s2'); // s2 starts with a full set
+      watcher.cancelAgentAbsenceCheck('s2');
+      for (let cycle = 0; cycle < AGENT_ABSENCE_REQUEST_CYCLES + 3; cycle += 1) await watcher.pollNow();
+
+      // s1 keeps its remaining three looks: two spent plus three is the full
+      // set. A cancel that did nothing would leave s2's five looks running
+      // (seven in all); one that cleared every request would stop s1 early (two).
+      expect(probe.listAllCalls).toBe(AGENT_ABSENCE_REQUEST_CYCLES);
+      watcher.dispose();
+    });
+
+    it('cancelling a session it does not watch is a no-op and leaves other requests alone', async () => {
+      const { watcher, probe } = makeAbsenceSession(
+        [{ pid: 48848, ppid: 1234, comm: 'claude' }],
+        { agentAbsenceSweepIntervalMs: 10 * 60_000 },
+      );
+      await watcher.pollNow(); // anchor
+      probe.listAllCalls = 0;
+
+      watcher.requestAgentAbsenceCheck('s1');
+      expect(() => watcher.cancelAgentAbsenceCheck('not-watched')).not.toThrow();
+      for (let cycle = 0; cycle < AGENT_ABSENCE_REQUEST_CYCLES + 3; cycle += 1) await watcher.pollNow();
+
+      expect(probe.listAllCalls).toBe(AGENT_ABSENCE_REQUEST_CYCLES);
+      watcher.dispose();
+    });
   });
 });

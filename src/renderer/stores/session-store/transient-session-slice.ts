@@ -73,12 +73,14 @@ export function buildTransientSessionEntry(
  * replica. A phone can start a terminal with the desktop layer closed, and main
  * gives it a slot, so the layer's "next free slot" must skip those as well as
  * its own windows' slots, or it would ask main for a slot main already gave out.
+ * Every row but an exited one holds its slot, a queued one included: the same
+ * set main's `reserveCommandTerminalSlot` counts.
  */
 export function selectLiveCommandTerminalSlots(sessions: readonly Session[], projectId: string | null): Set<string> {
   const slots = new Set<string>();
   if (!projectId) return slots;
   for (const session of sessions) {
-    if (!session.transient || session.projectId !== projectId || session.status !== 'running') continue;
+    if (!session.transient || session.projectId !== projectId || session.status === 'exited') continue;
     if (session.commandTerminalSlot) slots.add(session.commandTerminalSlot);
   }
   return slots;
