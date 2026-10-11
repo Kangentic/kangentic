@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   cleanSummarizeOutput,
   buildSummarizePrompt,
   extractFinalAssistantText,
 } from '../../src/main/agent/shared/auto-name';
-import { quoteForCmdShell } from '../../src/main/agent/shared/cli-print';
+import { quoteForCmdShell, spawnCli } from '../../src/main/agent/shared/cli-print';
+import { createShellArgvProbe, PROBE_ENVIRONMENT_OVERRIDES, type ShellArgvProbe } from './helpers/shell-argv-probe';
 
 describe('cleanSummarizeOutput', () => {
   it('returns the first non-empty line', () => {
@@ -117,19 +118,26 @@ describe('quoteForCmdShell', () => {
     expect(quoteForCmdShell('"quoted"')).toBe('"""quoted"""');
   });
 
-  it('doubles percent signs to prevent cmd.exe variable expansion', () => {
-    // A Windows path like %APPDATA% must become %%APPDATA%% inside cmd.exe
-    // strings even when double-quoted, because cmd expands %VAR% before the
-    // enclosing double-quotes are parsed.
-    const result = quoteForCmdShell('%APPDATA%');
-    expect(result).toBe('"%%APPDATA%%"');
+  it('breaks each percent out of the quotes, so cmd.exe cannot expand %VAR%', () => {
+    // This used to write %%APPDATA%%, which only a batch file collapses. node's
+    // shell: true runs cmd /d /s /c, a command line, and there it delivered
+    // %<value>% for a defined variable and a doubled %% for a lone percent
+    // (measured). See escapePercentForCmd for the "^%" form.
+    expect(quoteForCmdShell('%APPDATA%')).toBe('""^%"APPDATA"^%""');
+    expect(quoteForCmdShell('100% done')).toBe('"100"^%" done"');
   });
 
-  it('doubles both percent signs and embedded double-quotes together', () => {
-    const input = '%PATH% and "value"';
-    const result = quoteForCmdShell(input);
-    // Percents doubled, quotes doubled, whole thing wrapped
-    expect(result).toBe('"%%PATH%% and ""value"""');
+  it('breaks out percent signs and doubles embedded double-quotes together', () => {
+    expect(quoteForCmdShell('%PATH% and "value"')).toBe('""^%"PATH"^%" and ""value"""');
+  });
+
+  it('doubles the backslash run before a quote and the trailing run', () => {
+    // The C runtime reads a backslash run before a quote as an escape.
+    // Measured, "path\""x y" reached the agent as two arguments.
+    expect(quoteForCmdShell('path\\"x y')).toBe('"path\\\\""x y"');
+    expect(quoteForCmdShell('x C:\\dir\\')).toBe('"x C:\\dir\\\\"');
+    // Interior backslashes are not before a quote, so they stay single.
+    expect(quoteForCmdShell('C:\\dir\\ x')).toBe('"C:\\dir\\ x"');
   });
 
   it('wraps tokens with special cmd characters: & < > | ^ ( )', () => {
@@ -139,6 +147,64 @@ describe('quoteForCmdShell', () => {
     expect(quoteForCmdShell('a|b')).toBe('"a|b"');
     expect(quoteForCmdShell('a^b')).toBe('"a^b"');
     expect(quoteForCmdShell('(flag)')).toBe('"(flag)"');
+  });
+});
+
+/** Run the probe shim through the real spawnCli and return the argv it printed. */
+function argvThroughSpawnCli(cliPath: string, args: string[]): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const child = spawnCli(cliPath, args, process.cwd(), PROBE_ENVIRONMENT_OVERRIDES);
+    let stdout = '';
+    child.stdout.on('data', (chunk: Buffer | string) => { stdout += String(chunk); });
+    child.once('error', reject);
+    child.once('close', () => {
+      try {
+        resolve(JSON.parse(stdout.trim()) as string[]);
+      } catch {
+        reject(new Error(`probe printed no argv: ${JSON.stringify(stdout)}`));
+      }
+    });
+  });
+}
+
+// The headless route end to end: spawnCli runs a .cmd shim through node's
+// shell: true (cmd /d /s /c), and the shim's %* line parses the arguments
+// again. Windows only; CI's Linux runner skips it, and the quoteForCmdShell
+// pins above are what CI checks.
+describe.skipIf(process.platform !== 'win32')('spawnCli round trip through a .cmd shim', () => {
+  let probe: ShellArgvProbe;
+
+  beforeAll(() => {
+    probe = createShellArgvProbe();
+  });
+
+  afterAll(() => {
+    probe.dispose();
+  });
+
+  it('delivers each argument byte-identical, with no %NAME% expanded', async () => {
+    const inputs = [
+      'Fix %KNG_PROBE% handling',
+      '100% done',
+      '%KNG_PROBE%',
+      'a%%b',
+      'C:\\dir\\%KNG_PROBE%\\',
+      'a & %KNG_PROBE% | b',
+      'say "hi" %KNG_PROBE%',
+      '"%a b',
+      'path\\"x y',
+      'x C:\\dir\\',
+    ];
+    for (const input of inputs) {
+      expect(await argvThroughSpawnCli(probe.shimPath, ['--print', input])).toEqual(['--print', input]);
+    }
+  }, 30_000);
+
+  it('resolves a shim whose own path holds %NAME%', async () => {
+    // spawnCli wrote this head as a bare "<path>", and cmd expanded it into a
+    // path that does not exist. Measured, cmd reported "The system cannot find
+    // the path specified".
+    expect(await argvThroughSpawnCli(probe.percentShimPath, ['--print', 'ok'])).toEqual(['--print', 'ok']);
   });
 });
 

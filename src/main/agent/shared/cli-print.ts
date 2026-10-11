@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { spawnOffMainCli, toHostEnvironment, type CliChildProcess } from '../../utility-process/off-main-cli';
 import { childHasExited, killChildTreeByPid, stopChildTree } from '../../shared/child-tree-stop';
+import { escapePercentForCmd, quoteCmdExecutable } from '../../../shared/shell-quote';
 
 /**
  * One headless run of an agent CLI: prompt in, output out, no PTY and no
@@ -407,7 +408,9 @@ export function stopCli(child: CliChildProcess): void {
  *
  * A Windows `.cmd` or `.bat` shim (an npm-installed CLI) runs through cmd.exe,
  * so its args are interpolated into one command string and each is quoted for
- * cmd.exe (`quoteForCmdShell`). Everything else gets its args passed literally.
+ * cmd.exe (`quoteForCmdShell`). The shim's own path is quoted by
+ * `quoteCmdExecutable`, whose `%` escape keeps cmd from expanding a `%NAME%`
+ * in it. Everything else gets its args passed literally.
  *
  * On POSIX the CLI leads a process group of its own (`detached`), so `stopCli`
  * reaches whatever it started. Never on Windows, where `detached` opens a
@@ -419,7 +422,9 @@ export function stopCli(child: CliChildProcess): void {
  */
 export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Record<string, string>): CliChildProcess {
   const useShell = cliRunsThroughShell(cliPath);
-  const command = useShell ? `"${cliPath}" ${args.map(quoteForCmdShell).join(' ')}` : cliPath;
+  const command = useShell
+    ? `${quoteCmdExecutable(cliPath)} ${args.map(quoteForCmdShell).join(' ')}`
+    : cliPath;
   const commandArgs = useShell ? [] : args;
   const leadsGroup = process.platform !== 'win32';
   const childEnv = env ? { ...process.env, ...env } : process.env;
@@ -472,16 +477,26 @@ export function stderrExcerpt(stderr: string): string {
 /**
  * Quote an arbitrary argument for cmd.exe parsing when invoking via `shell: true` on
  * Windows. Wraps the value in double quotes and escapes:
- *   - embedded double quotes by doubling them ("" is the cmd convention)
- *   - percent signs by doubling them (cmd expands %VAR% inside any string, even
- *     inside double quotes; %% prevents expansion when the prompt contains
- *     env-var-like text such as a user pasting a Windows path with %APPDATA%)
+ *   - embedded double quotes by doubling them. `""` keeps cmd's own quote state
+ *     in step with the C runtime's, so `&` or `|` in the text stays quoted.
+ *     node, which every npm shim runs, reads `""` inside quotes as one quote.
+ *     CommandLineToArgvW splits the argument there instead (measured), so a
+ *     `.cmd` that runs a native program would hand it a split prompt.
+ *   - the backslash run before each quote and the trailing run, doubled. The C
+ *     runtime reads a backslash run before a quote as an escape, so
+ *     `"path\"x y"` reached the agent as two arguments (measured). This is the
+ *     rule `escapeForDoubleQuotedShell`'s cmd branch applies too. That branch
+ *     writes a content quote as `\"`, and this one as `""`.
+ *   - each `%` with `escapePercentForCmd`. `cmd /d /s /c` is a command line, not a
+ *     batch file, so the `%%` this used to write delivered `%%` for a lone
+ *     percent and `%<value>%` for a defined variable (measured, see that
+ *     function's table).
  * We never run our prompt through cmd-builtin redirection or pipes, so backticks
  * and `^` need no special handling.
  * @internal Exported for unit tests only; not part of the public API.
  */
 export function quoteForCmdShell(value: string): string {
   if (!/[\s"&<>|^()%]/.test(value) && value.length > 0) return value;
-  const escaped = value.replace(/"/g, '""').replace(/%/g, '%%');
-  return `"${escaped}"`;
+  const escaped = value.replace(/(\\*)"/g, '$1$1""').replace(/(\\+)$/, '$1$1');
+  return `"${escapePercentForCmd(escaped)}"`;
 }

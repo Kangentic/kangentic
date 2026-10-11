@@ -1,11 +1,26 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   escapeForDoubleQuotedShell,
+  escapeForPowerShellSingleQuoted,
+  escapePercentForCmd,
   isCmdShell,
   isPowerShellShell,
   isUnixLikeShell,
+  quoteCmdExecutable,
 } from '../../src/shared/shell-quote';
 import { convertPathForShell, quoteForShell } from '../../src/renderer/utils/terminal-clipboard';
+
+// Curly quotes, built from code points so no editor or formatter rewrites them.
+const LEFT_DOUBLE_QUOTE = String.fromCodePoint(0x201c);
+const RIGHT_DOUBLE_QUOTE = String.fromCodePoint(0x201d);
+const LOW_DOUBLE_QUOTE = String.fromCodePoint(0x201e);
+const REVERSED_DOUBLE_QUOTE = String.fromCodePoint(0x201f);
+const LEFT_SINGLE_QUOTE = String.fromCodePoint(0x2018);
+const RIGHT_SINGLE_QUOTE = String.fromCodePoint(0x2019);
+const LOW_SINGLE_QUOTE = String.fromCodePoint(0x201a);
+const REVERSED_SINGLE_QUOTE = String.fromCodePoint(0x201b);
 
 /**
  * The escaping rules pinned here were measured, not derived: every expectation
@@ -64,6 +79,136 @@ describe('escapeForDoubleQuotedShell', () => {
       expect(escapeForPowerShell('use `code` here')).toBe('use ``code`` here');
       expect(escapeForPowerShell('cost $5')).toBe('cost `$5');
     });
+
+    it('doubles the three curly double quotes PowerShell ends a string at', () => {
+      // Measured at a pwsh 7.6.6 ConPTY prompt. Left bare, one split the
+      // argument in two and let a `;` after it run a second command.
+      expect(escapeForPowerShell(`${LEFT_DOUBLE_QUOTE}a${RIGHT_DOUBLE_QUOTE} ${LOW_DOUBLE_QUOTE}b`))
+        .toBe(`${LEFT_DOUBLE_QUOTE}${LEFT_DOUBLE_QUOTE}a${RIGHT_DOUBLE_QUOTE}${RIGHT_DOUBLE_QUOTE} ${LOW_DOUBLE_QUOTE}${LOW_DOUBLE_QUOTE}b`);
+    });
+
+    it('doubles rather than backticks, so a quote dropped by Windows PowerShell 5.1 leaves no escape behind', () => {
+      // 5.1 at a ConPTY prompt drops a typed curly quote before parsing. The
+      // backtick form then left `t, which reached the agent as a tab in place
+      // of the letter (measured). A doubled pair just vanishes.
+      expect(escapeForPowerShell(`${LEFT_DOUBLE_QUOTE}tests`)).not.toContain('`');
+    });
+
+    it('leaves U+201F and the curly single quotes alone, which are literal inside "..."', () => {
+      const text = `${REVERSED_DOUBLE_QUOTE}x it${RIGHT_SINGLE_QUOTE}s`;
+      expect(escapeForPowerShell(text)).toBe(text);
+    });
+  });
+
+  it('leaves curly double quotes alone for cmd, which does not read them as quotes', () => {
+    const text = `say ${LEFT_DOUBLE_QUOTE}hi${RIGHT_DOUBLE_QUOTE}`;
+    expect(escapeForDoubleQuotedShell(text, true)).toBe(text);
+  });
+});
+
+describe('escapeForPowerShellSingleQuoted', () => {
+  it("doubles ' and each curly single quote, PowerShell's escape inside '...'", () => {
+    // Measured on both hosts, doubling only ' left a path holding a curly
+    // apostrophe as a parse error, and doubling all five reached the directory.
+    expect(escapeForPowerShellSingleQuoted("o'brien")).toBe("o''brien");
+    expect(escapeForPowerShellSingleQuoted(`Bob${RIGHT_SINGLE_QUOTE}s`)).toBe(`Bob${RIGHT_SINGLE_QUOTE}${RIGHT_SINGLE_QUOTE}s`);
+    expect(escapeForPowerShellSingleQuoted(`${LEFT_SINGLE_QUOTE}${LOW_SINGLE_QUOTE}${REVERSED_SINGLE_QUOTE}`))
+      .toBe(`${LEFT_SINGLE_QUOTE}${LEFT_SINGLE_QUOTE}${LOW_SINGLE_QUOTE}${LOW_SINGLE_QUOTE}${REVERSED_SINGLE_QUOTE}${REVERSED_SINGLE_QUOTE}`);
+  });
+
+  it('leaves the curly double quotes alone, which are literal inside a single-quoted string', () => {
+    const text = `${LEFT_DOUBLE_QUOTE}x${RIGHT_DOUBLE_QUOTE}`;
+    expect(escapeForPowerShellSingleQuoted(text)).toBe(text);
+  });
+});
+
+/**
+ * Measured on cmd.exe 10.0.26200 over piped stdin, a ConPTY prompt, node's
+ * `shell: true`, and an npm-style `.cmd` shim. Each output below, wrapped in
+ * quotes, reaches the agent as the input. The live round trip is in
+ * command-builder.test.ts and auto-name-clean.test.ts.
+ */
+describe('escapePercentForCmd', () => {
+  it('breaks each % out of the quotes as "^%"', () => {
+    expect(escapePercentForCmd('fix %PATH% now')).toBe('fix "^%"PATH"^%" now');
+    expect(escapePercentForCmd('100% done')).toBe('100"^%" done');
+    expect(escapePercentForCmd('a%%b')).toBe('a"^%""^%"b');
+  });
+
+  it('doubles the backslash run before a %, which the inserted quote would otherwise escape', () => {
+    expect(escapePercentForCmd('C:\\dir\\%X%')).toBe('C:\\dir\\\\"^%"X"^%"');
+    expect(escapePercentForCmd('a\\\\%b')).toBe('a\\\\\\\\"^%"b');
+  });
+
+  it('leaves text with no % untouched, interior backslashes included', () => {
+    expect(escapePercentForCmd('C:\\Program Files\\bin')).toBe('C:\\Program Files\\bin');
+  });
+});
+
+/** Every `.ts` file under a directory, as absolute paths. */
+function collectTypeScriptFiles(directory: string): string[] {
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectTypeScriptFiles(fullPath));
+    } else if (entry.name.endsWith('.ts')) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+/**
+ * An `execAsync` command head written as a bare `"${...}"`: the shape every
+ * site had before `quoteCmdExecutable`. `execAsync` runs `cmd /d /s /c` on
+ * Windows, which expands a `%NAME%` in that head and then cannot find the
+ * expanded path.
+ */
+const BARE_QUOTED_EXEC_HEAD = /execAsync\(\s*`"\$\{/;
+
+describe('quoteCmdExecutable', () => {
+  it('wraps a plain path in quotes and nothing else', () => {
+    expect(quoteCmdExecutable('C:\\Program Files\\cursor\\cursor-agent.CMD')).toBe(
+      '"C:\\Program Files\\cursor\\cursor-agent.CMD"',
+    );
+  });
+
+  it('breaks a %NAME% out of the quotes, doubling the backslash run before it', () => {
+    expect(quoteCmdExecutable('C:\\Users\\dev\\%KNG_PROBE%\\agent.cmd')).toBe(
+      '"C:\\Users\\dev\\\\"^%"KNG_PROBE"^%"\\agent.cmd"',
+    );
+    // A % that follows no backslash gets only the "^%" form.
+    expect(quoteCmdExecutable('C:\\tools\\100%\\agent.cmd')).toBe('"C:\\tools\\100"^%"\\agent.cmd"');
+  });
+
+  it('the scan pattern matches a bare quoted head on one line or two, and not the helper form', () => {
+    // Guards the regex itself, so the scan below cannot go quiet by matching nothing.
+    expect(BARE_QUOTED_EXEC_HEAD.test('execAsync(`"${cliPath}" --help`, {})')).toBe(true);
+    expect(BARE_QUOTED_EXEC_HEAD.test('execAsync(\n    `"${cliPath}" --help`, {})')).toBe(true);
+    expect(BARE_QUOTED_EXEC_HEAD.test('execAsync(`${quoteCmdExecutable(cliPath)} --help`, {})')).toBe(false);
+  });
+
+  it('no execAsync command head under src/main is a bare quoted path', () => {
+    const mainRoot = path.resolve(__dirname, '../../src/main');
+    const sourceFiles = collectTypeScriptFiles(mainRoot).map((file) => ({
+      relativePath: path.relative(mainRoot, file).replace(/\\/g, '/'),
+      text: fs.readFileSync(file, 'utf8'),
+    }));
+
+    // Not vacuous: the helper and execAsync are both really in use.
+    const filesUsingHelperWithExec = sourceFiles.filter(
+      (file) => file.text.includes('quoteCmdExecutable(') && file.text.includes('execAsync('),
+    );
+    expect(filesUsingHelperWithExec.length).toBeGreaterThan(0);
+
+    const offendingFiles = sourceFiles
+      .filter((file) => BARE_QUOTED_EXEC_HEAD.test(file.text))
+      .map((file) => file.relativePath);
+    expect(
+      offendingFiles,
+      `These files write an execAsync command head as a bare "\${...}". Use quoteCmdExecutable(...) from src/shared/shell-quote.ts so cmd.exe cannot expand a %NAME% in the path:\n${offendingFiles.join('\n')}`,
+    ).toEqual([]);
   });
 });
 
@@ -108,6 +253,20 @@ describe('quoteForShell', () => {
     // real drag-drop, unlike the double-quote case (illegal in a path).
     expect(quoteForShell('C:\\a`b\\note.txt', 'cmd.exe')).toBe('"C:\\a`b\\note.txt"');
     expect(quoteForShell('C:\\a`b\\note.txt', 'pwsh.exe')).toBe('"C:\\a``b\\note.txt"');
+  });
+
+  it('doubles a curly double quote in a path under PowerShell, as quoteArg does', () => {
+    // Legal in a Windows filename. Dropped at a PowerShell prompt bare, it
+    // would end the string partway through the path.
+    expect(quoteForShell(`C:\\a\\${LEFT_DOUBLE_QUOTE}x${RIGHT_DOUBLE_QUOTE}.txt`, 'pwsh.exe'))
+      .toBe(`"C:\\a\\${LEFT_DOUBLE_QUOTE}${LEFT_DOUBLE_QUOTE}x${RIGHT_DOUBLE_QUOTE}${RIGHT_DOUBLE_QUOTE}.txt"`);
+  });
+
+  it('leaves % alone under cmd, unlike quoteArg', () => {
+    // A dropped or pasted path usually lands in an agent's input box, not at
+    // the cmd prompt, so the "^%" escape quoteArg writes for cmd would arrive
+    // in the path as literal text.
+    expect(quoteForShell('C:\\a\\100%\\x.txt', 'cmd.exe')).toBe('"C:\\a\\100%\\x.txt"');
   });
 
   it('preserves consecutive spaces in a path', () => {

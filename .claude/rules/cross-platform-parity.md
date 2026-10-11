@@ -32,6 +32,9 @@ breaks on the next platform.
   `win32` / `darwin` / `linux`. Shell, PTY, and CLI-argument construction must account for
   PowerShell quoting, WSL exe/arg splitting, and POSIX shells (the patterns the `platform-guard`
   agent checks).
+- **A Windows exec command head is built with `quoteCmdExecutable`**
+  (`src/shared/shell-quote.ts`), never `"${path}"` by hand. cmd expands a `%NAME%` in the head,
+  then cannot find the path.
 - **File operations are Windows-aware:** `fs.rmSync` / `fs.rm` use `{ force: true }` (and
   `{ recursive: true }` for trees) because Windows locks open files. Do not assume an unlink
   succeeds while a handle is open.
@@ -99,6 +102,14 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   workflow that runs a packaged build (`package-smoke.yml`) redirects its output to a file, so each
   hands the app the valid stdout handle that hides it. Both tests ride the unit tier, so CI still
   runs them as a PR check.
+- **Test for exec heads:** `tests/unit/shell-quote.test.ts` scans `src/main` and fails on an
+  `execAsync` command head quoted by hand instead of through `quoteCmdExecutable`. Runs in CI via
+  `npm run test:unit`.
+- **Windows shell quoting:** `.github/workflows/shell-quoting-windows.yml` runs the live cmd.exe
+  and PowerShell round trips in `command-builder.test.ts` and `auto-name-clean.test.ts` on
+  `windows-latest` when the escapes or their tests change. The Linux unit tier skips those blocks,
+  and string pins alone stayed green for a `%%` escape cmd never honored. Path-filtered and not a
+  required check, like `task-reap-real-processes.yml`.
 - **Review for code:** the `platform-guard` agent audits `src/main/pty`, `src/main/agent`,
   `src/main/git`, and any `path` / `fs.rm` / `child_process` usage for the code rules above
   (hardcoded `C:\\Users\\`, missing platform guards, missing `{ force: true }`, em-dashes and

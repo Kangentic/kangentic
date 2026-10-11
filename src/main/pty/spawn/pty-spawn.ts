@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { isUncPath, isCmdShell, isPowerShellShell } from '../../../shared/paths';
+import { escapeForPowerShellSingleQuoted, escapePercentForCmd } from '../../../shared/shell-quote';
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
 
@@ -241,10 +242,12 @@ export function resolveSpawnCwd(input: {
   let cwdFixupCommand: string | null = null;
   if (input.platform === 'win32') {
     if (isUncPath(effectiveCwd) && isCmdShell(input.shellName)) {
-      cwdFixupCommand = `pushd "${effectiveCwd}"`;
+      // cmd expands a %NAME% in the path before pushd sees it, and the raw form
+      // failed with "The system cannot find the path specified" (measured).
+      cwdFixupCommand = `pushd "${escapePercentForCmd(effectiveCwd)}"`;
       effectiveCwd = os.homedir();
     } else if (isPowerShellShell(input.shellName) && /[[\]]/.test(effectiveCwd)) {
-      const escapedCwd = effectiveCwd.replace(/'/g, "''");
+      const escapedCwd = escapeForPowerShellSingleQuoted(effectiveCwd);
       cwdFixupCommand = `Set-Location -LiteralPath '${escapedCwd}'`;
     }
   }

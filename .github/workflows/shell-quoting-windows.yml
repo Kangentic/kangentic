@@ -1,0 +1,81 @@
+name: Shell quoting against real Windows shells
+
+# Runs the shell-quoting tests on Windows, the one place their live round trips
+# run at all. Each one types real command lines into cmd.exe (directly and
+# through an npm-style .cmd shim), Windows PowerShell 5.1 and pwsh, and reads
+# back the argv a node process received (tests/unit/helpers/shell-argv-probe.ts).
+# CI's unit tier runs the same files on Linux, which skips the live blocks and
+# checks only the string pins. A string pin can assert behavior a shell does not
+# have and stay green: quoteForCmdShell's %% escape was pinned that way for as
+# long as it existed and never worked under cmd /d /s /c.
+#
+# Path-filtered, and deliberately NOT a required check, like
+# task-reap-real-processes.yml: ci.yml runs at its 21-job concurrency ceiling
+# (see the note at the top of that file), and this only has something to say
+# when the escapes, the code that builds the quoted line, or these tests change.
+# The Claude command builder is in the filter because the cmd round trip types
+# its real output.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/shared/shell-quote.ts'
+      - 'src/shared/paths.ts'
+      - 'src/main/agent/shared/cli-print.ts'
+      - 'src/main/agent/adapters/claude/command-builder.ts'
+      - 'tests/unit/helpers/shell-argv-probe.ts'
+      - 'tests/unit/command-builder.test.ts'
+      - 'tests/unit/auto-name-clean.test.ts'
+      - 'tests/unit/shell-quote.test.ts'
+      - 'vitest.config.ts'
+      - '.github/workflows/shell-quoting-windows.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/shared/shell-quote.ts'
+      - 'src/shared/paths.ts'
+      - 'src/main/agent/shared/cli-print.ts'
+      - 'src/main/agent/adapters/claude/command-builder.ts'
+      - 'tests/unit/helpers/shell-argv-probe.ts'
+      - 'tests/unit/command-builder.test.ts'
+      - 'tests/unit/auto-name-clean.test.ts'
+      - 'tests/unit/shell-quote.test.ts'
+      - 'vitest.config.ts'
+      - '.github/workflows/shell-quoting-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shell-quoting-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-shells:
+    name: shell quoting against real Windows shells
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Says which shell builds this run measured.
+      - name: Report the shells under test
+        shell: pwsh
+        run: |
+          cmd.exe /d /c ver
+          powershell.exe -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+          pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+      # Plain npm ci, the same install ci.yml's unit tier runs these files under.
+      - name: Install dependencies (npm ci)
+        run: npm ci
+      - name: Round-trip the escapes through real shells
+        # pwsh missing from the runner fails the run instead of skipping half of it.
+        env:
+          KANGENTIC_SHELL_PROBE_REQUIRE_ALL_HOSTS: '1'
+        run: npx vitest run tests/unit/command-builder.test.ts tests/unit/auto-name-clean.test.ts tests/unit/shell-quote.test.ts
