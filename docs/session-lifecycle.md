@@ -535,9 +535,20 @@ When a suspended task moves to an active column:
 - A plan-exit auto-move (Planning -> Executing), triggered when the user
   approves the plan (the `ExitPlanMode` tool completes, not when the agent
   merely invokes it), passes a continuation prompt
-  ("Proceed with implementing the approved plan.") delivered as the resumed
-  session's first message when the destination column has no `auto_command`;
-  the `auto_command` wins when present.
+  ("The session restarted to apply the <column> column's settings. Proceed
+  with implementing the approved plan.", naming the destination column)
+  delivered as the resumed session's first message when the destination
+  column has no `auto_command`; the `auto_command` wins when present. It
+  names the restart because the suspend lands right after approval and Claude
+  Code records it as `[Request interrupted by user]`. Without the reason, the
+  resumed turn reads as the user stopping the agent and typing a new
+  instruction. A plan exit that switches session track (into an isolated
+  column, or out of one back to main) or lands in an always-new column sends
+  no continuation, and neither does one into a column that runs a different
+  agent. Each of those moves lands in a different conversation, which never
+  saw the plan. A handoff drops it whether or not the target agent has an
+  older conversation on the task; when it has one, `spawnAgent` resumes that
+  conversation.
 - The resume prompt is also how **auto_command escalation** lands. When a live
   session's keystroke injection cannot be confirmed in the agent's transcript,
   `restartSessionForSettingsChange` suspends and resumes with the command as the

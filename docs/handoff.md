@@ -95,7 +95,7 @@ Claude Code sessions can access handoff metadata via the `kangentic_get_handoff_
 
 ## Disabling Session History Passthrough
 
-Each column has a "Session history passthrough" toggle (default: **off**). When disabled, cross-agent transitions still detect the agent change and spawn the correct target agent, but no session history is passed - no file location, no handoff DB record. The new agent receives only the task title and description, starting with a clean slate.
+Each column has a "Session history passthrough" toggle (default: **off**). When disabled, cross-agent transitions still detect the agent change and spawn the correct target agent, but no session history is passed - no file location, no handoff DB record. The new agent receives only the task title and description. When it already has an earlier conversation on this task that can be resumed, it resumes that conversation instead.
 
 This is useful for workflows where independent review is desired. For example, a "Code Review" column with `agent_override` set to a different agent can disable passthrough so the reviewing agent assesses the code without being influenced by the previous agent's conversation or reasoning.
 

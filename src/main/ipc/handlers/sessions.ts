@@ -806,16 +806,19 @@ export function registerSessionHandlers(context: IpcContext): void {
   // the CLI emits solely on approval; a rejected plan emits no completion, so
   // this handler never runs and the task stays in Planning.
   //
-  // When the destination column changes the effective permission mode (the
-  // common Planning -> Executing pipeline), the move suspends the PTY and
-  // respawns it with --resume plus the destination's CLI flags. A bare
+  // When the destination column changes the model or effort (Planning at
+  // xhigh, Executing at high, for example), the move suspends the PTY and
+  // respawns it with --resume plus the destination's CLI flags. A
+  // permission-only move keeps the live session and sends nothing. So does a
+  // move that switches session track (into an isolated column, or out of one
+  // back to main), lands in an always-new column, or changes agent: that
+  // session is a different conversation, which never saw the plan. A bare
   // --resume leaves the CLI idle waiting for input, so the resumed session
-  // needs an explicit first message: this continuation. Because the move now
-  // happens only after genuine approval, the wording is factually accurate.
-  // Plain English, agent-agnostic. A destination auto_command takes
-  // precedence over it.
-  const PLAN_EXIT_CONTINUATION_PROMPT =
-    'Proceed with implementing the approved plan.';
+  // needs an explicit first message: this continuation. The suspend lands
+  // right after approval and the agent's transcript records it as the user
+  // interrupting, so the continuation says why the session restarted and
+  // names the column whose settings did it. Plain English, agent-agnostic.
+  // A destination column message takes precedence over it.
   context.sessionManager.on('plan-exit', async (sessionId: string) => {
     // Use the session's own projectId -- not the singleton, which may have
     // changed if the user switched projects while the agent was running.
@@ -858,7 +861,7 @@ export function registerSessionHandlers(context: IpcContext): void {
         'auto-move',
         resolvedProjectId,
         resolvedProjectPath,
-        { continuationPrompt: PLAN_EXIT_CONTINUATION_PROMPT },
+        { continuationPrompt: buildPlanExitContinuationPrompt(target.name) },
       );
 
       console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
@@ -866,4 +869,14 @@ export function registerSessionHandlers(context: IpcContext): void {
       console.error('[plan-exit] Auto-move failed:', err);
     }
   });
+}
+
+/**
+ * The first message of a session resumed by a plan-exit auto-move. Names the
+ * DESTINATION column, whose settings forced the restart. The column
+ * name stays bare: the command builder rewrites double quotes to single
+ * quotes on PowerShell and cmd, so a quoted name would differ by platform.
+ */
+function buildPlanExitContinuationPrompt(targetColumnName: string): string {
+  return `The session restarted to apply the ${targetColumnName} column's settings. Proceed with implementing the approved plan.`;
 }

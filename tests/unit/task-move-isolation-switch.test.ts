@@ -19,6 +19,9 @@
  * A third test pins the regression guard: a normal -> normal move of a main
  * session must NOT take the line-switch branch.
  *
+ * The last cases pin that a plan-exit continuation never rides a session
+ * switch: the destination conversation never saw the approved plan.
+ *
  * Harness modeled on task-move-rollback.test.ts; the SessionRepository mock
  * returns a configurable active record so Priority 3 is reachable.
  */
@@ -484,5 +487,58 @@ describe('handleTaskMove session switch', () => {
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { toLane: Swimlane };
     expect(spawnArg.toLane.id).toBe('lane-reset');
     expect(spawnArg.toLane.session_spawn_strategy).toBe('always_spawn_new');
+  });
+
+  // A plan-exit auto-move passes a continuation asking the agent to proceed
+  // with the approved plan. A session switch always lands in a different
+  // conversation from the one that approved it, so the continuation must not
+  // reach Phase 3. On a force-fresh entry spawnAgent would otherwise hand it to
+  // a brand-new session as its only prompt. Red-green: forwarding
+  // options.continuationPrompt from the session-switch return fails both.
+  const PLAN_EXIT_CONTINUATION = "The session restarted to apply the Target column's settings. Proceed with implementing the approved plan.";
+
+  it.each([
+    { label: 'an always_spawn_new main column', targetLane: makeSwimlane('lane-target', { session_target: 'main', session_spawn_strategy: 'always_spawn_new' }) },
+    { label: 'an isolated column', targetLane: makeSwimlane('lane-target', { session_target: 'isolated' }) },
+  ])('drops a plan-exit continuation on a session switch into $label', async ({ targetLane }) => {
+    const planningLane = makeSwimlane('lane-planning', { session_target: 'main' });
+    const swimlaneRepo = {
+      getById: vi.fn((id: string) => (id === 'lane-planning' ? planningLane : id === 'lane-target' ? targetLane : null)),
+      list: vi.fn(() => [planningLane, targetLane]),
+    };
+
+    hoisted.activeRecord = {
+      id: 'rec-main', task_id: 'task-aaa00001', isolated_swimlane_id: null,
+      agent_session_id: 'agent-A', status: 'running',
+      started_at: '2026-01-01T00:00:00Z', session_type: 'claude_agent',
+    };
+
+    const taskRepo = {
+      getById: vi.fn()
+        .mockReturnValueOnce(makeTask({ swimlane_id: 'lane-planning', session_id: 'active-session-1' }))
+        .mockReturnValue(makeTask({ swimlane_id: 'lane-target', session_id: null })),
+      move: vi.fn(),
+      update: vi.fn(),
+      list: vi.fn(() => [makeTask()]),
+      archive: vi.fn(),
+    };
+
+    const context = makeContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(
+      context as never,
+      { taskId: 'task-aaa00001', targetSwimlaneId: 'lane-target', targetPosition: 0 },
+      'renderer',
+      undefined,
+      undefined,
+      { continuationPrompt: PLAN_EXIT_CONTINUATION },
+    );
+
+    // The switch still happened: live session suspended, Phase 3 spawned.
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    const spawnArg = mockSpawnAgent.mock.calls[0][0] as { continuationPrompt?: string; toLane: Swimlane };
+    expect(spawnArg.toLane.id).toBe('lane-target');
+    expect(spawnArg.continuationPrompt).toBeUndefined();
   });
 });

@@ -157,10 +157,12 @@ export interface AgentSpawnOptions {
   attachments?: AttachmentRepository;
   /**
    * Fallback resume prompt when the destination column has no auto_command.
-   * Set by plan-exit auto-moves ("Your plan was approved...") so a respawned
-   * session continues instead of resuming idle. Only delivered on a RESUME of
-   * an existing conversation - a fresh session has no plan context to
-   * continue. The column's auto_command always wins when present.
+   * Set by plan-exit auto-moves so a respawned session continues instead of
+   * resuming idle; it names the column whose settings restarted the session
+   * and asks the agent to proceed with the approved plan. Only delivered on a
+   * RESUME of the same agent's conversation - a fresh session, or another
+   * agent's conversation on a handoff, has no plan context to continue. The
+   * column's auto_command always wins when present.
    */
   continuationPrompt?: string;
   /**
@@ -532,12 +534,16 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     const takesPromptSlot = message !== '' && (canResumeDestination || skipPromptTemplate === true);
     if (takesPromptSlot && pendingPrompt !== undefined) promptTakenFromRow = pendingPrompt;
 
-    // The continuation prompt (plan-exit auto-move) is a resume-only fallback:
+    // The continuation prompt (plan-exit auto-move) says why the session
+    // restarted and asks the agent to proceed. It is a resume-only fallback:
     // the column's message is the user's explicit automation and wins, and a
-    // fresh spawn has no prior conversation for "proceed" to refer to.
+    // fresh spawn has no prior conversation for "proceed" to refer to. A
+    // handoff drops it too. The resume check above is scoped to the TARGET
+    // agent, so on a handoff it finds that agent's older conversation, which
+    // never saw the plan. The handoff-context branch above already passes none.
     const resumePrompt = takesPromptSlot
       ? message
-      : (canResumeDestination ? options.continuationPrompt : undefined);
+      : (canResumeDestination && !isHandoff ? options.continuationPrompt : undefined);
 
     try {
       // Always pass targetAgent so the column's agent_override is respected.
