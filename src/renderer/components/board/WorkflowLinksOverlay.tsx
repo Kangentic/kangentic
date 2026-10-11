@@ -3,6 +3,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import type { WorkflowDetail } from '../../../shared/types';
 import { motionReduced } from '../../utils/motion-reduced';
+import { transitiveReduction } from '../workflows/workflow-layout';
 import { ARROWHEAD_PATH, ARROWHEAD_STROKES, PORT_RADIUS, arrowheadLength, linkPaths, linkPorts, type CardBox, type LinkRequest, type Port } from './workflow-links-geometry';
 
 /** The colored line's width; its halo is wider. */
@@ -91,14 +92,21 @@ interface Relations {
   dependents: string[];
 }
 
+/**
+ * The focus card's links as the Workflows canvas draws them: a link another
+ * path already covers (#9 to #12 when #12 waits for #10, which waits for #9)
+ * is left out on both, since it changes nothing about when the task starts.
+ * The card's footer and the inspector still count every blocker.
+ */
 function relationsOf(focusId: string, detail: WorkflowDetail): Relations {
   const placeOf = new Map(detail.tasks.map((task) => [task.key, task.place]));
+  const drawn = transitiveReduction(detail.tasks.map((task) => task.key), detail.links);
   return {
     focusId,
-    blockers: detail.links
+    blockers: drawn
       .filter((link) => link.blockedKey === focusId)
       .map((link) => ({ id: link.blockerKey, done: placeOf.get(link.blockerKey) === 'done' })),
-    dependents: detail.links.filter((link) => link.blockerKey === focusId).map((link) => link.blockedKey),
+    dependents: drawn.filter((link) => link.blockerKey === focusId).map((link) => link.blockedKey),
   };
 }
 

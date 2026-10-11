@@ -58,6 +58,8 @@ interface Options {
   homeElsewhere?: boolean;
   /** #420 joins the running workflow in To Do with no link either way, as a task just added to it would. */
   unlinkedTask?: boolean;
+  /** A link from #413 to #418, which #413 to #415 to #418 already covers. */
+  impliedLink?: boolean;
   viewport?: { width: number; height: number };
 }
 
@@ -74,7 +76,7 @@ function seedScript(options: Options): string {
     workflow: { id: 'wf-decoy', title: 'Decoy plan', state: 'draft', draft: { tasks: [], links: [] }, color_slot: 2 },
     projectId: HOME_PROJECT_ID,
   };
-  const links = LINKS.map(([blocker, blocked]) => ({ workflow_id: 'wf-usage', blocker_task_id: `t${blocker}`, blocked_task_id: `t${blocked}` }));
+  const links = [...LINKS, ...(options.impliedLink ? [[413, 418] as [number, number]] : [])].map(([blocker, blocked]) => ({ workflow_id: 'wf-usage', blocker_task_id: `t${blocker}`, blocked_task_id: `t${blocked}` }));
   const finished = options.state === 'done';
   const tasks = TASKS.map(([id, title, lane]) => [
     id,
@@ -932,6 +934,26 @@ test.describe('Workflow tasks on the board', () => {
         await browser.close();
       }
     });
+  });
+
+  test('a link another path already covers is left out, as the canvas leaves it out', async () => {
+    const { browser, page } = await launch({ impliedLink: true });
+    try {
+      await openMenu(page, 't413');
+      await byTestId(page, 'context-show-workflow-links').click();
+      const overlay = byTestId(page, 'workflow-links-overlay');
+      await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
+      await expect(overlay.locator('[data-link="out:t415"]')).toHaveCount(1);
+      await expect(overlay.locator('[data-link="out:t416"]')).toHaveCount(1);
+      // #418 already waits on #413 through #415, so the direct link is not drawn,
+      // and #418 is not lit as one of #413's.
+      await expect(overlay.locator('[data-link="out:t418"]')).toHaveCount(0);
+      await expect.poll(() => boardCard(page, 't418').evaluate((element) => getComputedStyle(element).opacity)).toBe('0.3');
+      // Its footer still counts every task it waits for.
+      await expect(boardCard(page, 't418').locator('[data-testid="workflow-status-bar"]')).toHaveText('Blocked by 5 tasks...');
+    } finally {
+      await browser.close();
+    }
   });
 
   test('a related card pushed out of the Done column\'s list draws no line', async () => {
