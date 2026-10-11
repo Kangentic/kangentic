@@ -600,26 +600,30 @@ that finishes a plan moves on when you approve the plan. Without an Automation a
 column with no agent, you drag the card on yourself.
 
 **On the board.** A workflow task's card carries a strip with its workflow's name, a step track
-and a lock while the workflow moves it (none while it waits in a column no agent works, for you to
-drag it on), and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
+and a links button, and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
 task's whole journey, one mark per stop: To Do, each column on its route, then Done, so it keeps
 one length for the task's whole life. The stops it has passed are grey, where it is now is wider
 and in its column's color, and the stops ahead are bars in their columns' colors, so even a task
 that has not started says which columns it will visit. On the Workflows canvas the strip names no
 column: where the task is shows as that column's icon on a tint of its color (a dot when the column
-has no icon), and hovering it names the column. The strip's left side names the task's project,
-and the lock follows the board's rule. Its
-right-click menu leads with Open workflow and Show
-workflow links, which draws lines from what the card waits for and to what waits for it; Escape or
-a click on empty board space clears them. Task detail has a Workflow panel (the linked-cards button
+has no icon), and hovering it names the column. The strip's left side names the task's project.
+
+**A card's links.** Rest the pointer on a board card's strip for a moment and lines fade in from
+what the card waits for and to what waits for it; move off the strip and they fade out. Click the
+strip's links button to keep them on screen while you scroll to follow a line; the button stays
+outlined until you click it again. While links are kept, resting on another strip shows nothing,
+and clicking another card's button moves them there. Show workflow links in the card's right-click
+menu keeps them too, after Open workflow. Escape or a click on empty board space clears them. A
+card with no links yet has its button and menu row disabled. Task detail has a Workflow panel (the linked-cards button
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the
 inspector.
 
-**Locked while it runs.** A running workflow's cards cannot be moved by hand. The exception is a
-card you move on yourself (no Automation agent, or a column with no agent), which you drag onto the
-next column of its route. No workflow task can be moved back to To Do. A refused move leaves the card where it is, says why with an Open workflow link, and
-shows the card's links. The menu keeps Move to, Backlog and Archive, disabled with the same
-reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after.
+**Locked while it runs.** A running workflow's cards cannot be moved to another column by hand: a
+drag stays in the card's own column, where you can still reorder it. The exception is a card you
+move on yourself (no Automation agent, or a column with no agent), which you drag onto the next
+column of its route. No workflow task can be moved back to To Do. A refused move leaves the card
+where it is, says why with an Open workflow link, and shows the card's links. The menu keeps Move
+to, Backlog and Archive, disabled with the same reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after.
 When every task is in Done, a Workflow complete notification says so (Settings > Notifications).
 
 ## Settings

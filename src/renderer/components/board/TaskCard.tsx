@@ -12,6 +12,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { taskDetailSurfaceFor } from '../../utils/task-progress';
 import type { Task } from '../../../shared/types';
+import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { TaskContextMenu } from './TaskContextMenu';
 import { ArchivedTaskContextMenu } from './ArchivedTaskContextMenu';
 import { TaskCardBody, TaskCardCompactBody, taskCardFrameClass, useTaskCardViewModel } from './task-card-view';
@@ -231,7 +232,8 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         className={`${taskCardFrameClass(view, boardDensity)} cursor-grab active:cursor-grabbing select-none transition-colors ${isDragOverlay ? 'shadow-xl' : ''}`}
       >
         {task.workflow_id
-          ? <WorkflowTaskCardBody task={task} view={view} density={boardDensity} />
+          // The drag overlay and the flying card are copies: their strip shows, and does nothing.
+          ? <WorkflowTaskCardBody task={task} view={view} density={boardDensity} interactive={!isDragOverlay} />
           : <TaskCardBody task={task} view={view} density={boardDensity} />}
       </div>
 
@@ -244,6 +246,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             <>
               <OpenWorkflowMenuItem workflow={menuWorkflow} onOpen={() => openTaskWorkflow(menuWorkflow)} onClose={() => setContextMenu(null)} />
               <ShowWorkflowLinksMenuItem
+                refusal={menuWorkflow.hasLinks ? null : WORKFLOW_REFUSALS.noLinks(`#${task.display_id}`)}
                 onShow={() => void useWorkflowStore.getState().showLinks(task.id, menuWorkflow.homeProjectId, menuWorkflow.workflowId)}
                 onClose={() => setContextMenu(null)}
               />

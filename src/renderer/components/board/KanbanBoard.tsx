@@ -310,6 +310,7 @@ export function KanbanBoard() {
   const {
     sensors,
     collisionDetection,
+    modifiers,
     handleDragStart,
     handleDragOver,
     handleDragEnd,
@@ -396,6 +397,7 @@ export function KanbanBoard() {
         key={hmrGeneration}
         sensors={sensors}
         collisionDetection={collisionDetection}
+        modifiers={modifiers}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
@@ -440,7 +442,7 @@ export function KanbanBoard() {
       </DndContext>
       <FlyingCard key={completingTaskId ?? 'idle'} />
       </div>
-      <WorkflowLinksOverlay boardRef={boardRootRef} />
+      <WorkflowLinksOverlay boardRef={boardRootRef} dragging={activeTask !== null} />
 
       {newTaskOpen && newTaskLaneId && (
         <NewTaskDialog swimlaneId={newTaskLaneId} onClose={dismissNewTask} />

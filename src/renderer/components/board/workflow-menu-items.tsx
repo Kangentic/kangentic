@@ -26,12 +26,22 @@ export function OpenWorkflowMenuItem({ workflow, onOpen, onClose }: { workflow: 
   );
 }
 
-export function ShowWorkflowLinksMenuItem({ onShow, onClose }: { onShow: () => void; onClose: () => void }) {
+/** A row that cannot act: in place, dimmed, its reason as the tooltip, as the menu's own disabled rows. */
+const DISABLED_ROW_CLASS = 'w-full px-3 py-1.5 text-sm text-fg-secondary text-left flex items-center gap-2 opacity-40 cursor-not-allowed';
+
+export function ShowWorkflowLinksMenuItem({ refusal, onShow, onClose }: {
+  /** Why it cannot show them (the card has no links yet), or null. */
+  refusal: string | null;
+  onShow: () => void;
+  onClose: () => void;
+}) {
   return (
     <button
       type="button"
-      onClick={() => { onShow(); onClose(); }}
-      className={ROW_CLASS}
+      onClick={() => { if (refusal) return; onShow(); onClose(); }}
+      aria-disabled={refusal ? true : undefined}
+      title={refusal ?? undefined}
+      className={refusal ? DISABLED_ROW_CLASS : ROW_CLASS}
       data-testid="context-show-workflow-links"
     >
       <Link2 size={14} className="text-fg-faint" />

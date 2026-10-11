@@ -29,26 +29,27 @@ function summary(id: string, state: Workflow['state'], boardTasks: WorkflowSumma
 function boardWorkflow(overrides: Partial<BoardWorkflow> = {}): BoardWorkflow {
   return {
     workflowId: 'w', homeProjectId: 'home', title: 'Usage budgets', colorSlot: 5, state: 'running',
-    waitingFor: [], humanGateTargetId: null, ...overrides,
+    waitingFor: [], humanGateTargetId: null, hasLinks: true, ...overrides,
   };
 }
 
 const TASK = { id: 't414', display_id: 414, swimlane_id: 'executing' };
 
 describe('boardWorkflowOf', () => {
-  const own = summary('w', 'running', { t414: { waitingFor: [], humanGateTargetId: 'review' } });
+  const own = summary('w', 'running', { t414: { waitingFor: [], humanGateTargetId: 'review', hasLinks: true } });
   const foreign = summary('w2', 'paused');
 
   it('reads a card on its home board from the board project\'s list', () => {
     const read = boardWorkflowOf([own], {}, { id: 't414', workflow_id: 'w', workflow_project_id: 'home' }, 'home');
-    expect(read).toMatchObject({ workflowId: 'w', homeProjectId: 'home', state: 'running', humanGateTargetId: 'review' });
+    expect(read).toMatchObject({ workflowId: 'w', homeProjectId: 'home', state: 'running', humanGateTargetId: 'review', hasLinks: true });
     // A home task may carry no project id of its own.
     expect(boardWorkflowOf([own], {}, { id: 't414', workflow_id: 'w', workflow_project_id: null }, 'home')?.workflowId).toBe('w');
   });
 
   it('reads a card whose workflow lives in another project from that project\'s list', () => {
     const read = boardWorkflowOf([own], { mobile: [foreign] }, { id: 't9', workflow_id: 'w2', workflow_project_id: 'mobile' }, 'home');
-    expect(read).toMatchObject({ workflowId: 'w2', homeProjectId: 'mobile', state: 'paused', waitingFor: [] });
+    // No facts for the card yet: no links to show until the summary says so.
+    expect(read).toMatchObject({ workflowId: 'w2', homeProjectId: 'mobile', state: 'paused', waitingFor: [], hasLinks: false });
   });
 
   it('names nothing for an ordinary task, or a workflow not in any list', () => {
@@ -70,6 +71,7 @@ describe('the footer of a card in To Do', () => {
 describe('the lock on the board', () => {
   it('refuses every move of a running workflow\'s card with the lock\'s sentence, To Do included', () => {
     const workflow = boardWorkflow();
+    // Locked: a drag of it stays in its own column.
     expect(isLockedOnBoard(workflow)).toBe(true);
     expect(boardMoveRefusal(workflow, TASK, { id: 'review', role: null })).toBe('#414 is locked while Usage budgets runs.');
     expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' })).toBe('#414 is locked while Usage budgets runs.');

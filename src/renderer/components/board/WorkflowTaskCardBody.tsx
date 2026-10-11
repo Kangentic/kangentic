@@ -6,15 +6,16 @@ import { boardEnds, routeSteps, taskPlace } from '../../../shared/workflow-route
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
-import { boardWaiting, boardWorkflowSource, isLockedOnBoard, toBoardWorkflow, type BoardWorkflow } from '../../utils/board-workflow';
+import { boardWaiting, boardWorkflowSource, toBoardWorkflow, type BoardWorkflow } from '../../utils/board-workflow';
 import { workflowColor } from '../workflows/workflow-graph';
 import { WorkflowCardStrip, WorkflowStripLabel } from '../workflows/WorkflowStrip';
 import { TaskCardBody, WorkflowWaitingBar, type TaskCardViewModel } from './task-card-view';
+import { useLinksPreview, WorkflowLinksButton } from './WorkflowLinksButton';
 
 /**
  * A workflow task's card content on the board: the workflow strip on top
  * (its workflow's icon in the workflow's color, the name, the step track, the
- * lock), then the board's own card, whose footer says what a task in To Do
+ * links button), then the board's own card, whose footer says what a task in To Do
  * waits for. The track's current step is a bar here, not the column's marker
  * the Workflows canvas draws: the lane the card sits in already names it. Mounted only for a task in a workflow, so an ordinary card pays
  * for none of these subscriptions.
@@ -44,8 +45,13 @@ export function useBoardWorkflow(task: Task): BoardWorkflow | null {
   );
 }
 
-const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, density }: { task: Task; density: AppConfig['cardDensity'] }) {
+const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, density, interactive }: {
+  task: Task;
+  density: AppConfig['cardDensity'];
+  interactive: boolean;
+}) {
   const workflow = useBoardWorkflow(task);
+  const hover = useLinksPreview(task.id, workflow, interactive);
   const swimlanes = useBoardStore((state) => state.swimlanes);
   // The board store keeps an unchanged task's object across reloads, so this
   // recomputes on a real change to the row or the board's columns only.
@@ -57,6 +63,7 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
     <div
       className={`${density === 'comfortable' ? '-mx-3 -mt-3' : '-mx-2.5 -mt-2.5'} mb-2 rounded-t-[5px] overflow-hidden`}
       data-workflow-id={workflow.workflowId}
+      {...hover}
     >
       <WorkflowCardStrip
         leading={(
@@ -74,7 +81,7 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
         place={place}
         // The lane the card sits in names its column, so the board keeps the bar.
         currentStep="bar"
-        lockedTitle={isLockedOnBoard(workflow) ? 'Moved by its workflow' : null}
+        trailing={<WorkflowLinksButton taskId={task.id} displayId={task.display_id} workflow={workflow} interactive={interactive} />}
       />
     </div>
   );
@@ -90,13 +97,15 @@ interface WorkflowTaskCardBodyProps {
   task: Task;
   view: TaskCardViewModel;
   density: AppConfig['cardDensity'];
+  /** False on the drag overlay's and the flying card's copies: the strip is drawn, and does nothing. */
+  interactive: boolean;
 }
 
-export function WorkflowTaskCardBody({ task, view, density }: WorkflowTaskCardBodyProps) {
+export function WorkflowTaskCardBody({ task, view, density, interactive }: WorkflowTaskCardBodyProps) {
   const inToDo = useBoardStore((state) => state.swimlanes.find((lane) => lane.id === task.swimlane_id)?.role === 'todo');
   return (
     <>
-      <BoardWorkflowStrip task={task} density={density} />
+      <BoardWorkflowStrip task={task} density={density} interactive={interactive} />
       <TaskCardBody task={task} view={view} density={density} idleFooter={inToDo ? <BoardWorkflowFooter task={task} /> : undefined} />
     </>
   );

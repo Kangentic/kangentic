@@ -4968,12 +4968,17 @@
         var created = createdTasks(workflow.id);
         var counts = { done: 0, working: 0, queued: 0, blocked: 0 };
         var boardTasks = {};
+        function hasLinks(taskId) {
+          return links.some(function (link) {
+            return link.workflow_id === workflow.id && (link.blocker_task_id === taskId || link.blocked_task_id === taskId);
+          });
+        }
         created.forEach(function (task) {
           var place = placeOf(task);
           if (place === 'done') { counts.done += 1; return; }
           if (place === 'working') {
             counts.working += 1;
-            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task) };
+            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task), hasLinks: hasLinks(task.id) };
             return;
           }
           var waitingFor = links.filter(function (link) {
@@ -4985,7 +4990,7 @@
             return blocker ? '#' + blocker.display_id : 'a removed task';
           });
           counts[waitingFor.length > 0 ? 'blocked' : 'queued'] += 1;
-          boardTasks[task.id] = { waitingFor: waitingFor, humanGateTargetId: null };
+          boardTasks[task.id] = { waitingFor: waitingFor, humanGateTargetId: null, hasLinks: hasLinks(task.id) };
         });
         return {
           workflow: JSON.parse(JSON.stringify(workflow)), taskCount: created.length, doneCount: counts.done,

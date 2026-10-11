@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useBoardStore } from '../../stores/board-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import type { WorkflowDetail } from '../../../shared/types';
+import { motionReduced } from '../../utils/motion-reduced';
 import { ARROWHEAD_PATH, ARROWHEAD_STROKES, arrowheadLength, linkPaths, type CardBox, type LinkRequest } from './workflow-links-geometry';
 
 /** The colored line's width; its halo is wider. */
@@ -12,9 +13,10 @@ const CLIP_ID = 'workflow-links-overlay-clip';
  * The board's links overlay for one workflow card (#732 board 8): lines from
  * what it waits for into it, and from it to what waits for it, with those
  * cards ringed and every other card dimmed, the Done drop zone and the
- * Completed header with them. It opens from Show workflow links in the card's
- * menu or from a refused move, never on hover, and the lines are the whole
- * overlay: nothing is added to the toolbar.
+ * Completed header with them. The pointer resting on a card's strip previews
+ * it until the pointer leaves; the strip's links button, Show workflow links in
+ * the card's menu and a refused move keep it (`WorkflowLinksButton`). The lines
+ * are the whole overlay: nothing is added to the toolbar.
  *
  * The cards are found by `data-task-id` inside the board's lanes only (the
  * drag overlay, the flying card and task windows carry the attribute too). A
@@ -97,48 +99,106 @@ function boxIn(rect: DOMRect, origin: DOMRect): CardBox {
   return { left: rect.left - origin.left, right: rect.right - origin.left, top: rect.top - origin.top, height: rect.height };
 }
 
-const DIM = 'opacity: 0.3 !important; transition: opacity 150ms ease-out;';
+/**
+ * The overlay fades in and out over this long, lines, rings and dimming
+ * together, so a look at a card's links eases onto the board rather than
+ * flashing it dark. Motion off, it switches at once.
+ */
+const FADE_MS = 180;
+
+/**
+ * Where the fade is. `enter` puts the rules in place with nothing visible yet
+ * (the rings transparent, the cards at their own opacity); a frame later
+ * `shown` sets the look, which the rules' transitions ease into. `exit` takes
+ * the look away under the same transitions, and the overlay unmounts after.
+ */
+type Phase = 'enter' | 'shown' | 'exit';
 
 /**
  * CSS that rings the focus and its relations and dims the rest of the board:
  * every other lane card, the Completed header, and the Done drop zone as one
  * piece. A drop zone holding a related card (one still flying into Done)
  * stays lit and dims its other cards one by one instead, so no card is dimmed
- * twice over.
+ * twice over. Outside `shown` the same rules carry only their transitions, so
+ * the look eases in and out: the rings go from and to transparent, and a
+ * dimmed card from and to its own opacity.
  */
-function focusStyle(relations: Relations): string {
+function focusStyle(relations: Relations, phase: Phase, motion: boolean): string {
+  const shown = phase === 'shown';
+  const ease = motion ? ` transition: opacity ${FADE_MS}ms ease-out, outline-color ${FADE_MS}ms ease-out;` : '';
+  const dim = `${shown ? 'opacity: 0.3 !important;' : ''}${ease}`;
+  const ring = (width: number, color: string) => `outline: ${width}px solid ${shown ? color : 'transparent'}; outline-offset: 1px;${ease}`;
   const related = [relations.focusId, ...relations.blockers.map((blocker) => blocker.id), ...relations.dependents];
   const quoted = (id: string) => `[data-task-id="${CSS.escape(id)}"]`;
   const keep = related.map((id) => `:not(${quoted(id)})`).join('');
   const anyRelated = related.map(quoted).join(', ');
   const dropZone = '[data-board-lanes] [data-done-drop-zone]';
   return [
-    `[data-board-lanes] [data-task-id]${keep}:not([data-done-drop-zone] *) { ${DIM} }`,
-    `${dropZone}:not(:has(${anyRelated})) { ${DIM} }`,
-    `${dropZone}:has(${anyRelated}) [data-task-id]${keep} { ${DIM} }`,
-    `[data-board-lanes] [data-done-completed-header] { ${DIM} }`,
-    `[data-board-lanes] ${quoted(relations.focusId)} { outline: 2px solid color-mix(in srgb, var(--color-fg-muted) 75%, transparent); outline-offset: 1px; }`,
-    ...relations.blockers.map((blocker) => `[data-board-lanes] ${quoted(blocker.id)} { outline: 1px solid color-mix(in srgb, ${blocker.done ? COLORS.done : COLORS.pending} 60%, transparent); outline-offset: 1px; }`),
-    ...relations.dependents.map((id) => `[data-board-lanes] ${quoted(id)} { outline: 1px solid color-mix(in srgb, ${COLORS.dependent} 55%, transparent); outline-offset: 1px; }`),
+    `[data-board-lanes] [data-task-id]${keep}:not([data-done-drop-zone] *) { ${dim} }`,
+    `${dropZone}:not(:has(${anyRelated})) { ${dim} }`,
+    `${dropZone}:has(${anyRelated}) [data-task-id]${keep} { ${dim} }`,
+    `[data-board-lanes] [data-done-completed-header] { ${dim} }`,
+    `[data-board-lanes] ${quoted(relations.focusId)} { ${ring(2, 'color-mix(in srgb, var(--color-fg-muted) 75%, transparent)')} }`,
+    ...relations.blockers.map((blocker) => `[data-board-lanes] ${quoted(blocker.id)} { ${ring(1, `color-mix(in srgb, ${blocker.done ? COLORS.done : COLORS.pending} 60%, transparent)`)} }`),
+    ...relations.dependents.map((id) => `[data-board-lanes] ${quoted(id)} { ${ring(1, `color-mix(in srgb, ${COLORS.dependent} 55%, transparent)`)} }`),
   ].join('\n');
 }
 
-export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<HTMLDivElement | null> }) {
-  const linkFocus = useWorkflowStore((state) => state.linkFocus);
+interface Drawn {
+  relations: Relations;
+  phase: Phase;
+}
+
+/** How long after a drop the lines keep following, while the cards settle into place. */
+const DROP_SETTLE_MS = 300;
+
+export function WorkflowLinksOverlay({ boardRef, dragging }: {
+  boardRef: React.RefObject<HTMLDivElement | null>;
+  /** A board drag is in flight. Only a drag of the focused card leaves the overlay up (`useBoardDragDrop`). */
+  dragging: boolean;
+}) {
+  // The card and its workflow, not the whole focus: keeping a previewed card's
+  // links changes only `kept`, and must not re-measure or redraw anything.
+  const focusTaskId = useWorkflowStore((state) => state.linkFocus?.taskId ?? null);
+  const focusDetail = useWorkflowStore((state) => state.linkFocus?.detail ?? null);
   const linkFocusLoading = useWorkflowStore((state) => state.linkFocusLoading);
   const [segments, setSegments] = useState<Segment[]>(NO_SEGMENTS);
   const [clip, setClip] = useState<ClipArea | null>(null);
 
   const relations = useMemo(
-    () => (linkFocus ? relationsOf(linkFocus.taskId, linkFocus.detail) : null),
-    [linkFocus],
+    () => (focusTaskId && focusDetail ? relationsOf(focusTaskId, focusDetail) : null),
+    [focusTaskId, focusDetail],
   );
+
+  // What is drawn, which outlives the focus for the fade out. A new focus over
+  // one already on screen (a kept card's reload, the keep moving to another
+  // card) swaps in place; only an overlay coming up from nothing fades in.
+  // Adjusted during render, React's pattern for state that follows a prop, so
+  // no frame commits with the old focus.
+  const motion = !motionReduced();
+  const [drawn, setDrawn] = useState<Drawn | null>(null);
+  if (relations && drawn?.relations !== relations) {
+    const phase: Phase = !motion ? 'shown' : drawn && drawn.phase !== 'exit' ? drawn.phase : 'enter';
+    setDrawn({ relations, phase });
+  } else if (!relations && drawn && drawn.phase !== 'exit') {
+    setDrawn(motion ? { relations: drawn.relations, phase: 'exit' } : null);
+  }
+  const drawnRelations = drawn?.relations ?? null;
+  const phase = drawn?.phase ?? null;
+
+  // `exit` unmounts once its fade is done.
+  useEffect(() => {
+    if (phase !== 'exit') return undefined;
+    const timer = window.setTimeout(() => setDrawn((current) => (current?.phase === 'exit' ? null : current)), FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [phase]);
 
   // Off the board, the overlay goes: a view or project switch ends it.
   useEffect(() => () => useWorkflowStore.getState().clearLinks(), []);
 
   const measure = useCallback(() => {
     const board = boardRef.current;
+    const relations = drawnRelations;
     if (!relations || !board) {
       setSegments(NO_SEGMENTS);
       return;
@@ -182,11 +242,23 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
         }
       : null;
     setClip((previous) => (sameClip(previous, nextClip) ? previous : nextClip));
-  }, [boardRef, relations]);
+  }, [boardRef, drawnRelations]);
 
   // The first measure is synchronous, so the lines appear on the frame the
   // overlay opens.
   useLayoutEffect(() => { measure(); }, [measure]);
+
+  // `enter` is in the DOM with nothing visible, and the measure above has read
+  // the layout, so the browser has computed it. Setting the look now renders
+  // again before the paint, and the transitions ease from what was computed. No
+  // animation frame is waited on: a hidden window gets none, and the overlay
+  // must not stay invisible there.
+  useLayoutEffect(() => {
+    if (phase !== 'enter') return;
+    boardRef.current?.getBoundingClientRect();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the second render before the paint is the point: a transition needs the computed `enter` look to start from.
+    setDrawn((current) => (current?.phase === 'enter' ? { ...current, phase: 'shown' } : current));
+  }, [boardRef, phase]);
 
   // Then re-measure when anything that moves a card on screen happens: a lane
   // or the board scrolls (capture, since scroll does not bubble), the window
@@ -195,7 +267,7 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
   // store is read through a subscription, so a closed overlay never re-renders.
   useEffect(() => {
     const board = boardRef.current;
-    if (!relations || !board) return undefined;
+    if (!drawnRelations || !board) return undefined;
     let frame = 0;
     const schedule = () => {
       if (frame) return;
@@ -226,7 +298,27 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
       resizeObserver.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [boardRef, relations, measure]);
+  }, [boardRef, drawnRelations, measure]);
+
+  // A drag slides the cards by transform, which no scroll, resize or board
+  // change reports, so while the focused card is reordered the lines are
+  // measured every frame, and for a moment after the drop while the cards
+  // settle. Outside a drag this costs nothing.
+  const followedDrag = useRef(false);
+  useEffect(() => {
+    if (!drawnRelations) return undefined;
+    if (dragging) followedDrag.current = true;
+    else if (!followedDrag.current) return undefined;
+    else followedDrag.current = false;
+    const until = dragging ? Number.POSITIVE_INFINITY : performance.now() + DROP_SETTLE_MS;
+    let frame = 0;
+    const follow = () => {
+      measure();
+      if (performance.now() < until) frame = requestAnimationFrame(follow);
+    };
+    frame = requestAnimationFrame(follow);
+    return () => cancelAnimationFrame(frame);
+  }, [dragging, drawnRelations, measure]);
 
   // Clear on a press on empty board space, or Escape. Escape here is the
   // structural kind (keybindings-registry.md): it acts only when nothing else
@@ -258,15 +350,17 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
     };
   }, [boardRef, listening]);
 
-  if (!relations) return null;
+  if (!drawn) return null;
   return (
     <>
-      <style data-testid="workflow-links-style">{focusStyle(relations)}</style>
+      <style data-testid="workflow-links-style">{focusStyle(drawn.relations, drawn.phase, motion)}</style>
       <svg
         className="workflow-links-overlay absolute inset-0 w-full h-full pointer-events-none z-[1] overflow-visible"
         aria-hidden="true"
         data-testid="workflow-links-overlay"
-        data-focus-task-id={relations.focusId}
+        data-focus-task-id={drawn.relations.focusId}
+        data-phase={drawn.phase}
+        style={{ opacity: drawn.phase === 'shown' ? 1 : 0, transition: motion ? `opacity ${FADE_MS}ms ease-out` : undefined }}
       >
         <defs>
           {(Object.keys(COLORS) as Array<keyof typeof COLORS>).map((kind) => (

@@ -182,6 +182,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
     displayIds.set(task.id, task.display_id);
   }
   const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflow.id);
+  const linked = new Set(links.flatMap((link) => [link.blocker_task_id, link.blocked_task_id]));
   let doneCount = 0;
   let inProgressCount = 0;
   let queuedCount = 0;
@@ -206,7 +207,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
       if (waitingFor.length > 0) blockedCount += 1;
       else queuedCount += 1;
     }
-    if (place !== 'done') boardTasks[task.id] = { waitingFor, humanGateTargetId };
+    if (place !== 'done') boardTasks[task.id] = { waitingFor, humanGateTargetId, hasLinks: linked.has(task.id) };
   }
   return {
     workflow,

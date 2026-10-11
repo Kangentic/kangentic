@@ -13,6 +13,7 @@ import {
   type CollisionDetection,
   type DropAnimation,
   type DropAnimationKeyframeResolver,
+  type Modifier,
 } from '@dnd-kit/core';
 import {
   sortableKeyboardCoordinates,
@@ -26,7 +27,8 @@ import { useConfigStore } from '../stores/config-store';
 import { useWorkflowStore } from '../stores/workflow-store';
 import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
 import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
-import { refusedBoardMove, showWorkflowRefusal } from '../utils/workflow-refusal';
+import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../utils/workflow-refusal';
+import { isLockedOnBoard } from '../utils/board-workflow';
 import type { Task, Swimlane as SwimlaneType } from '../../shared/types';
 
 interface UseBoardDragDropParams {
@@ -38,6 +40,8 @@ interface UseBoardDragDropParams {
 interface UseBoardDragDropResult {
   sensors: ReturnType<typeof useSensors>;
   collisionDetection: CollisionDetection;
+  /** The DndContext's modifiers: a locked workflow card stays over its own column. */
+  modifiers: Modifier[];
   handleDragStart: (event: DragStartEvent) => void;
   handleDragOver: (event: DragOverEvent) => void;
   handleDragEnd: (event: DragEndEvent) => Promise<void>;
@@ -157,6 +161,18 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
   // animation when dnd-kit's rect is gone.
   const dragStartRectRef = useRef<DOMRect | null>(null);
 
+  // The column a locked workflow card is held to for this drag (its workflow
+  // runs and only the workflow moves it, `isLockedOnBoard`), or null. The
+  // card can still be reordered there, so a person can regroup a column, but
+  // the drag never reaches another column: collisions see only this column's
+  // cards, and the card itself moves up and down only (`modifiers`). Set at
+  // the drag's start; main refuses a cross-column move on its own as well.
+  const lockedLaneRef = useRef<string | null>(null);
+
+  const modifiers = useMemo<Modifier[]>(() => [
+    ({ transform }) => (lockedLaneRef.current ? { ...transform, x: 0 } : transform),
+  ], []);
+
   // True between beginBoardDrag() and its paired endBoardDrag(). Read only by
   // the unmount cleanup below to recover the reload gate if the <DndContext>
   // unmounts mid-drag (dnd-kit fires no dragEnd/dragCancel in that case).
@@ -208,6 +224,20 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // Column drags: closestCorners (unchanged)
     if (String(args.active.id).startsWith('column:')) {
       return closestCorners(args);
+    }
+
+    // A locked workflow card reorders among its own column's cards and reaches
+    // nothing else. Held in Done (an archived card), it has nowhere to go.
+    const lockedLane = lockedLaneRef.current;
+    if (lockedLane) {
+      if (lockedLane === doneLaneId) return [];
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter((container) => {
+          const containerId = String(container.id);
+          return !containerId.startsWith('column:') && !swimlaneIds.has(containerId) && findSwimlane(containerId) === lockedLane;
+        }),
+      });
     }
 
     // Done column: check with pointerWithin first (docs' "trash bin" pattern).
@@ -319,12 +349,15 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // apply; only a full reload re-measures a lane). Flushed in handleDragEnd/Cancel.
     beginBoardDrag();
     dragInFlightRef.current = true;
-    // A drag ends the workflow links overlay, and a load of one still in flight.
-    // A refused drop leaves it on, and left on it re-measures its cards on every
-    // scroll frame of this drag.
-    const workflowState = useWorkflowStore.getState();
-    if (workflowState.linkFocus || workflowState.linkFocusLoading) workflowState.clearLinks();
     const id = event.active.id as string;
+    // A drag of another card ends the workflow links overlay, and a load of
+    // one still in flight. A drag of the card whose links are up keeps them:
+    // the overlay follows it every frame while it is reordered (KanbanBoard
+    // passes it `dragging`).
+    const workflowState = useWorkflowStore.getState();
+    const draggingFocus = workflowState.linkFocus?.taskId === id;
+    if (!draggingFocus && (workflowState.linkFocus || workflowState.linkFocusLoading)) workflowState.clearLinks();
+    lockedLaneRef.current = null;
     if (!id.startsWith('column:')) {
       const swimlaneId = taskToSwimlane.get(id);
       if (swimlaneId) {
@@ -332,6 +365,8 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
         const task = state.tasks.find((candidate) => candidate.id === id)
           ?? state.archivedTasks.find((candidate) => candidate.id === id);
         if (task) {
+          const workflow = task.workflow_id ? boardWorkflowNow(task) : null;
+          lockedLaneRef.current = workflow && isLockedOnBoard(workflow) ? task.swimlane_id : null;
           setActiveTask(task);
           dragOriginRef.current = task.swimlane_id;
           const sourceElement = document.querySelector(`[data-task-id="${id}"]`);
@@ -376,6 +411,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     const { active, over } = event;
     const originalSwimlane = dragOriginRef.current;
     const stashedStartRect = dragStartRectRef.current;
+    lockedLaneRef.current = null;
     dragOriginRef.current = null;
     dragStartRectRef.current = null;
     setActiveTask(null);
@@ -607,6 +643,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     endBoardDrag();
     setActiveTask(null);
     updateDropHighlight(null);
+    lockedLaneRef.current = null;
     dragOriginRef.current = null;
     dragStartRectRef.current = null;
     useBoardStore.getState().loadBoard();
@@ -615,6 +652,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
   return {
     sensors,
     collisionDetection,
+    modifiers,
     handleDragStart,
     handleDragOver,
     handleDragEnd,

@@ -21,6 +21,8 @@ export interface BoardWorkflow {
   waitingFor: readonly string[];
   /** While it runs and the task sits in a human gate: the column a person may drag it to. */
   humanGateTargetId: string | null;
+  /** It has a link, either way, so its strip can show the links. */
+  hasLinks: boolean;
 }
 
 const NOTHING: readonly string[] = [];
@@ -57,6 +59,7 @@ export function toBoardWorkflow(source: BoardWorkflowSource): BoardWorkflow {
     state: source.workflow.state,
     waitingFor: source.facts?.waitingFor ?? NOTHING,
     humanGateTargetId: source.facts?.humanGateTargetId ?? null,
+    hasLinks: source.facts?.hasLinks ?? false,
   };
 }
 
@@ -72,17 +75,12 @@ export function boardWorkflowOf(
 }
 
 /**
- * A workflow task is locked while its workflow runs, except in a human gate,
- * where a person drags it on. The board card and the canvas card both ask
- * this, so the lock means the same in both places.
+ * Only its workflow moves this card: the workflow runs and the card is not in
+ * a human gate, where a person drags it on. A drag of it stays in its own
+ * column, to reorder it there (`useBoardDragDrop`), and reaches no other.
  */
-export function isWorkflowTaskLocked(state: WorkflowState, humanGateTargetId: string | null): boolean {
-  return state === 'running' && humanGateTargetId === null;
-}
-
-/** The card shows the lock while only its workflow may move it. */
 export function isLockedOnBoard(workflow: BoardWorkflow): boolean {
-  return isWorkflowTaskLocked(workflow.state, workflow.humanGateTargetId);
+  return workflow.state === 'running' && workflow.humanGateTargetId === null;
 }
 
 /** Why a person may not move this card to that column, in main's own words; null allows it. */

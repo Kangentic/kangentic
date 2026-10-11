@@ -90,15 +90,29 @@ interface WorkflowStore {
   openWorkflow: (homeProjectId: string, workflowId: string, taskKey?: string | null) => void;
   pendingOpen: { projectId: string; workflowId: string; taskKey: string | null } | null;
 
-  /** The board's links overlay: the card it is on, and that card's workflow. */
-  linkFocus: { taskId: string; homeProjectId: string; detail: WorkflowDetail } | null;
+  /**
+   * The board's links overlay: the card it is on, that card's workflow, and
+   * whether the links are kept (the card's links button, its menu, a refused
+   * move) or only previewed while the pointer rests on the card's strip.
+   */
+  linkFocus: { taskId: string; homeProjectId: string; detail: WorkflowDetail; kept: boolean } | null;
   /**
    * A "Show workflow links" load is in flight. The overlay listens for Escape
    * and a press on empty board space from here, so a clear made before the
    * first answer lands still cancels it.
    */
   linkFocusLoading: boolean;
+  /** Keep a card's links on the board until they are cleared (its menu, a refused move). */
   showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
+  /**
+   * The card's links button: keep its links, or clear them when they are
+   * already kept. Previewed links are kept as they are, with no reload.
+   */
+  toggleKeptLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
+  /** The pointer rests on a card's strip: show its links until it leaves. Kept links win. */
+  previewLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
+  /** The pointer left that card's strip: its preview goes, kept links stay. */
+  endPreview: (taskId: string) => void;
   clearLinks: () => void;
 
   /**
@@ -140,6 +154,8 @@ let homeGeneration = 0; // hmr-safe: as above.
 let supersessionGeneration = 0; // hmr-safe: as above.
 /** The same, for the board's links overlay: a clear outranks a load still in flight. */
 let linkGeneration = 0; // hmr-safe: as above; the overlay is cleared on leaving the board.
+/** Whose links the load in flight is for, and whether they land kept. */
+let pendingLinks: { taskId: string; kept: boolean } | null = null; // hmr-safe: as above; a reset only drops a load in flight.
 /** The same, per watched workflow (a task detail's panel). */
 const watchedGenerations = new Map<string, number>(); // hmr-safe: as above; a reset only discards in-flight answers.
 
@@ -239,6 +255,32 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     } catch (error) {
       reportFailure(failure, error);
       return { ok: false };
+    }
+  }
+
+  /**
+   * Load a card's workflow for the links overlay. A clear (Escape, a click on
+   * empty board, the pointer leaving a previewed strip) or a newer load while
+   * this one waits wins: a late answer must not bring the overlay back. A
+   * superseded load returns without touching `linkFocusLoading`: whatever
+   * superseded it owns the flag now. A keep made while the load waits
+   * (`toggleKeptLinks` on a previewed card) lands it kept.
+   */
+  async function loadLinks(taskId: string, homeProjectId: string, workflowId: string, kept: boolean): Promise<void> {
+    const generation = ++linkGeneration;
+    pendingLinks = { taskId, kept };
+    if (!get().linkFocusLoading) set({ linkFocusLoading: true });
+    try {
+      const detail = await window.electronAPI.workflows.get(homeProjectId, workflowId);
+      if (generation !== linkGeneration) return;
+      const landsKept = pendingLinks?.kept ?? kept;
+      pendingLinks = null;
+      set({ linkFocus: { taskId, homeProjectId, detail, kept: landsKept }, linkFocusLoading: false });
+    } catch (error) {
+      console.warn('[workflow-store] Failed to load the workflow for its links:', describeIpcError(error));
+      if (generation !== linkGeneration) return;
+      pendingLinks = null;
+      set({ linkFocus: null, linkFocusLoading: false });
     }
   }
 
@@ -434,26 +476,44 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       void useProjectStore.getState().openProject(homeProjectId);
     },
 
-    showLinks: async (taskId, homeProjectId, workflowId) => {
-      // A clear (Escape, a click on empty board) or a newer show while this one
-      // loads wins: a late answer must not bring the overlay back.
-      // A superseded load returns without touching `linkFocusLoading`: whatever
-      // superseded it (a clear, or a newer show) owns the flag now.
-      const generation = ++linkGeneration;
-      if (!get().linkFocusLoading) set({ linkFocusLoading: true });
-      try {
-        const detail = await window.electronAPI.workflows.get(homeProjectId, workflowId);
-        if (generation !== linkGeneration) return;
-        set({ linkFocus: { taskId, homeProjectId, detail }, linkFocusLoading: false });
-      } catch (error) {
-        console.warn('[workflow-store] Failed to load the workflow for its links:', describeIpcError(error));
-        if (generation !== linkGeneration) return;
-        set({ linkFocus: null, linkFocusLoading: false });
+    showLinks: (taskId, homeProjectId, workflowId) => loadLinks(taskId, homeProjectId, workflowId, true),
+
+    toggleKeptLinks: async (taskId, homeProjectId, workflowId) => {
+      const { linkFocus, linkFocusLoading } = get();
+      const loadingHere = linkFocusLoading && pendingLinks?.taskId === taskId;
+      if ((linkFocus?.taskId === taskId && linkFocus.kept) || (loadingHere && pendingLinks?.kept)) {
+        get().clearLinks();
+        return;
       }
+      if (linkFocus?.taskId === taskId) {
+        // Its preview is on screen: keep it as it is. A reload of it in flight lands kept too.
+        if (loadingHere) pendingLinks = { taskId, kept: true };
+        set({ linkFocus: { ...linkFocus, kept: true } });
+        return;
+      }
+      await loadLinks(taskId, homeProjectId, workflowId, true);
+    },
+
+    previewLinks: async (taskId, homeProjectId, workflowId) => {
+      const { linkFocus, linkFocusLoading } = get();
+      if (linkFocus?.kept || (linkFocusLoading && pendingLinks?.kept)) return;
+      if (linkFocus?.taskId === taskId || (linkFocusLoading && pendingLinks?.taskId === taskId)) return;
+      await loadLinks(taskId, homeProjectId, workflowId, false);
+    },
+
+    endPreview: (taskId) => {
+      const { linkFocus, linkFocusLoading } = get();
+      if (linkFocusLoading && pendingLinks?.taskId === taskId && !pendingLinks.kept) {
+        get().clearLinks();
+        return;
+      }
+      // A load for another card under way is left to land.
+      if (linkFocus?.taskId === taskId && !linkFocus.kept) set({ linkFocus: null });
     },
 
     clearLinks: () => {
       linkGeneration += 1;
+      pendingLinks = null;
       set({ linkFocus: null, linkFocusLoading: false });
     },
 
@@ -517,7 +577,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         void get().loadHomeSummaries(Object.keys(homeSummaries));
       }
       if (linkFocus && linkFocus.detail.workflow.id === event.workflowId) {
-        void get().showLinks(linkFocus.taskId, linkFocus.homeProjectId, event.workflowId);
+        // Reload what is on screen, kept or previewed as it is, unless a load
+        // for another card is under way: that one replaces it anyway.
+        const loadingAnother = get().linkFocusLoading && pendingLinks !== null && pendingLinks.taskId !== linkFocus.taskId;
+        if (!loadingAnother) {
+          void loadLinks(linkFocus.taskId, linkFocus.homeProjectId, event.workflowId, pendingLinks?.kept ?? linkFocus.kept);
+        }
       }
       if (get().watchedDetails[event.workflowId]) void refreshWatched(event.workflowId);
     },

@@ -100,8 +100,6 @@ export function plannedAsTask(viewTask: WorkflowViewTask): Task {
 interface WorkflowCanvasCardProps {
   viewTask: WorkflowViewTask;
   selected: boolean;
-  /** The card moves by its workflow, not by hand: it runs, and the task is not in a human gate. */
-  locked: boolean;
   /** What the footer says while the task waits in To Do ("Blocked by #413...", "Queued...", "Paused"). */
   waiting: WorkflowWaiting | null;
   /** The task's board, named in its strip on every card. */
@@ -122,7 +120,7 @@ export interface WorkflowWaiting {
   paused: boolean;
 }
 
-export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, locked, waiting, projectName, doneColor, ends }: WorkflowCanvasCardProps) {
+export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, waiting, projectName, doneColor, ends }: WorkflowCanvasCardProps) {
   // The board's own live row when the board holds it (this project, not yet
   // archived): every writer keeps the board current, including the ones that
   // never announce a workflow change (an agent's rename, auto-naming, a PR
@@ -143,7 +141,6 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
       steps={viewTask.steps}
       ends={ends}
       place={viewTask.place}
-      lockedTitle={locked ? 'Moved by its workflow' : null}
     />
   );
 

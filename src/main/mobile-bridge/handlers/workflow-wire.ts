@@ -71,9 +71,10 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
       color_slot: workflow.color_slot,
       route: routeColumns(lanes, task).map((column) => column.id),
       waiting_for: boardTask?.waitingFor ?? [],
-      // The card is locked as the desktop board draws it (`isLockedOnBoard`):
-      // while the workflow runs, unless it waits in a human gate, where a hand
-      // may move it to the gate's target. A paused workflow's cards move by hand.
+      // The card is locked as the desktop board locks it (`isLockedOnBoard`,
+      // where a drag stays in its column): while the workflow runs, unless it
+      // waits in a human gate, where a hand may move it to the gate's target. A
+      // paused workflow's cards move by hand.
       lock_reason: workflow.state === 'running' && gateTargetId === null
         ? WORKFLOW_REFUSALS.locked(`#${task.display_id}`, workflow.title)
         : null,

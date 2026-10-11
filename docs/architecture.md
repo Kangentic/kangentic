@@ -1109,11 +1109,13 @@ src/renderer/components/workflows/
   workflow-layout.ts       # pure: the layered auto layout
 src/renderer/components/board/
   WorkflowTaskCardBody.tsx # a workflow task's board card: the strip, and the To Do footer
-  WorkflowLinksOverlay.tsx # Show workflow links: the canvas's flowing lines, clipped below the header row, re-measured on scroll, resize and card height; rings, dimming
+  WorkflowLinksButton.tsx  # the strip's links: a 400ms rest on it previews them, its button keeps them
+  WorkflowLinksOverlay.tsx # Show workflow links: the canvas's flowing lines, clipped below the header row, re-measured on scroll, resize, card height and every frame of its card's drag; rings, dimming, faded in and out
   workflow-menu-items.tsx  # Open workflow and Show workflow links, in the card menu's leading slot
   DeleteTaskDialog.tsx     # the Delete task confirm, shared by the board card and the canvas menu
 src/renderer/utils/
   board-workflow.ts        # a card's workflow facts from the summaries, and the lock asked on the board
+  motion-reduced.ts        # the Animations setting or the system's reduced motion, read when a motion starts
   workflow-refusal.ts      # a refused move: main's sentence, Open workflow, the links overlay
 ```
 
@@ -1125,7 +1127,10 @@ src/renderer/utils/
   (`shareUnchanged`, `shareSummaries`), so a move re-renders only the cards it changed.
 - **The lock on the board** is main's own predicate (`src/shared/workflow-lock.ts`), asked by the
   drop and by `moveTask` before the card moves, so a refused card never slides and snaps back.
-  Main still refuses on its own for every other path.
+  A card only its workflow moves (`isLockedOnBoard`) is held to its column for the whole drag
+  (`useBoardDragDrop`: its collisions see only that column's cards, and a modifier keeps it from
+  moving sideways), so it can be reordered there and never reaches another column. Main still
+  refuses on its own for every other path.
 - **An ordinary card pays nothing:** only a task with `workflow_id` mounts `WorkflowTaskCardBody`,
   which holds the workflow subscriptions.
 

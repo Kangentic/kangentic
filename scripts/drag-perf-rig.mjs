@@ -902,8 +902,9 @@ async function runWorkflowScenario(id, count, perColumn) {
 
   // The board with this workflow's cards on it: every card carries the
   // workflow strip, and a To Do card's footer says what it waits for. The
-  // drag is the lock's own case, refused at the drop, so Escape clears the
-  // links overlay the refusal shows before the next run.
+  // drag is the lock's own case: the card is held to its column while the
+  // pointer sweeps Executing, and settles back in To Do. Escape before the next
+  // run clears anything a stray hover left up.
   await page.locator('[data-testid="view-toggle-board"]').click();
   await page.locator('[data-board-lanes]').waitFor({ state: 'visible', timeout: 10000 });
   await sleep(1000);
@@ -916,7 +917,7 @@ async function runWorkflowScenario(id, count, perColumn) {
   });
   if (!boardTaskId) throw new Error('no workflow card in To Do on the board');
   for (let run = 0; run < RUNS; run++) {
-    const boardRun = () => heldDrag(boardTaskId, '[data-board-lanes] [data-swimlane-name="Executing"]', { holdMs: 1500, sweep: true, laneName: 'Executing', extra: { run, cards } });
+    const boardRun = () => heldDrag(boardTaskId, '[data-board-lanes] [data-swimlane-name="Executing"]', { holdMs: 1500, sweep: true, laneName: 'To Do', extra: { run, cards } });
     record(`${id}-board-drag`, await (run === 0 ? profiled(`${id}-board-drag`, boardRun) : boardRun()));
     await sleep(400);
     await page.keyboard.press('Escape');

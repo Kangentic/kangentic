@@ -56,6 +56,8 @@ interface Options {
    * lands on the wrong one. The workflow's tasks stay on this board.
    */
   homeElsewhere?: boolean;
+  /** #420 joins the running workflow in To Do with no link either way, as a task just added to it would. */
+  unlinkedTask?: boolean;
   viewport?: { width: number; height: number };
 }
 
@@ -116,6 +118,7 @@ function seedScript(options: Options): string {
       });
       // An ordinary task beside them, in To Do.
       state.tasks.push(row(500, 'Split the settings search index', 0, null));
+      if (${options.unlinkedTask ? 'true' : 'false'}) state.tasks.push(row(420, 'Rate limit the budgets API', 0, 'wf-usage'));
       // The To Do task the workflow was made from, closed into Done at Start.
       if (supersededSource) state.archivedTasks.push(row(409, 'Usage budgets and a hard cap', 6, null));
       if (${options.session414 ? 'true' : 'false'}) {
@@ -217,7 +220,7 @@ async function dragToColumn(page: Page, id: string, columnName: string): Promise
 }
 
 test.describe('Workflow tasks on the board', () => {
-  test('a workflow card carries the strip with its workflow, step track and lock; an ordinary card does not', async () => {
+  test('a workflow card carries the strip with its workflow, step track and links button; an ordinary card does not', async () => {
     const { browser, page } = await launch();
     try {
       const strip = boardCard(page, 't414').locator('[data-testid="workflow-card-strip"]');
@@ -256,7 +259,13 @@ test.describe('Workflow tasks on the board', () => {
       await expect(toDoTrack.locator('[data-step-state="current"]')).toHaveAttribute('data-step-end', 'todo');
       await expect(toDoTrack.locator('[data-step-state="ahead"]')).toHaveCount(6);
       await expect(toDoTrack.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
-      await expect(strip.locator('[data-testid="workflow-card-lock"]')).toHaveAttribute('title', 'Moved by its workflow');
+      // The links button ends the strip, where a lock once was (board 8c): the
+      // drag's refusal says a card is locked, so the strip no longer does.
+      const linksButton = strip.locator('[data-testid="workflow-links-button"]');
+      await expect(linksButton).toHaveAttribute('aria-label', 'Show workflow links');
+      await expect(linksButton).toHaveAttribute('aria-pressed', 'false');
+      await expect(linksButton).not.toHaveAttribute('aria-disabled', 'true');
+      await expect(page.locator('[data-testid="workflow-card-lock"]')).toHaveCount(0);
       await expect(strip.locator('[data-testid="workflow-card-paused"]')).toHaveCount(0);
       await expect(boardCard(page, 't500').locator('[data-testid="workflow-card-strip"]')).toHaveCount(0);
     } finally {
@@ -315,7 +324,6 @@ test.describe('Workflow tasks on the board', () => {
   test('a paused workflow\'s card moves by hand except to To Do, and Backlog and Archive say to remove it first', async () => {
     const { browser, page } = await launch({ state: 'paused' });
     try {
-      await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-lock"]')).toHaveCount(0);
       await expect(boardCard(page, 't419').locator('[data-testid="workflow-status-bar"]')).toHaveText('Paused');
       // The strip says so after the workflow's name (board 7).
       await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-strip"] [data-testid="workflow-card-paused"]')).toHaveCount(1);
@@ -334,7 +342,6 @@ test.describe('Workflow tasks on the board', () => {
     // Code Review starts no agent here, so no agent judges its work.
     const { browser, page } = await launch({ gateLanes: [3], lane414: 3 });
     try {
-      await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-lock"]')).toHaveCount(0);
       await openMenu(page, 't414');
       const rows = byTestId(page, 'task-context-menu').locator('[data-testid="context-move-to"]');
       await expect(rows.filter({ hasText: 'Testing' })).not.toHaveAttribute('aria-disabled', 'true');
@@ -344,27 +351,117 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  test('the canvas card drops the lock in a human gate too, as the board card does', async () => {
-    const { browser, page } = await launch({ gateLanes: [3], lane414: 3 });
+  test('a canvas card\'s strip has no lock and no links button: the canvas draws every link', async () => {
+    const { browser, page } = await launch();
     try {
       await byTestId(page, 'view-toggle-workflows').click();
-      const canvasLock = (id: number) => page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="t${id}"] [data-testid="workflow-card-lock"]`);
-      // #413 in Merge moves by its workflow; #414 waits in Code Review for a person to drag it on.
-      await expect(canvasLock(413)).toHaveCount(1);
-      await expect(canvasLock(414)).toHaveCount(0);
+      const strip = page.locator('[data-testid="workflow-canvas-card"][data-workflow-task-key="t414"] [data-testid="workflow-card-strip"]');
+      await expect(strip).toBeVisible();
+      await expect(strip.locator('[data-testid="workflow-step-track"]')).toHaveCount(1);
+      await expect(page.locator('[data-testid="workflow-canvas-card"] [data-testid="workflow-links-button"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="workflow-canvas-card"] [data-testid="workflow-card-lock"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a locked card drags only within its own column: it never reaches another, and its links stay with it', async () => {
+    const { browser, page } = await launch();
+    try {
+      // #414 runs in Executing, so only its workflow moves it. Its links are kept.
+      await boardCard(page, 't414').locator('[data-testid="workflow-links-button"]').click();
+      const overlay = byTestId(page, 'workflow-links-overlay');
+      await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+
+      const card = boardCard(page, 't414');
+      const box = await card.boundingBox();
+      const executing = await page.locator('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="Executing"]').boundingBox();
+      const codeReview = await page.locator('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="Code Review"]').boundingBox();
+      if (!box || !executing || !codeReview) throw new Error('No box for the drag');
+      const startX = box.x + box.width / 2;
+      const startY = box.y + box.height / 2;
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      await page.mouse.move(startX + 12, startY, { steps: 3 });
+      await expect(page.locator('.drag-overlay')).toBeVisible({ timeout: 2000 });
+      await page.mouse.move(codeReview.x + codeReview.width / 2, codeReview.y + 120, { steps: 15 });
+
+      // Over Code Review, the card is still over its own column, and Code Review is no target.
+      const ghost = await page.locator('.drag-overlay').boundingBox();
+      if (!ghost) throw new Error('No drag overlay');
+      const ghostCenter = ghost.x + ghost.width / 2;
+      expect(ghostCenter).toBeGreaterThan(executing.x);
+      expect(ghostCenter).toBeLessThan(executing.x + executing.width);
+      await expect(page.locator('[data-board-lanes] [data-swimlane-name="Code Review"].drop-highlight')).toHaveCount(0);
+      // Dragging the card whose links are up keeps them.
+      await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+      await page.mouse.up();
+
+      await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toBeVisible();
+      await expect(page.locator('[data-swimlane-name="Code Review"] [data-task-id="t414"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: LOCKED })).toHaveCount(0);
+      await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a locked card reorders within its column, so a person can regroup it', async () => {
+    const { browser, page } = await launch();
+    try {
+      const order = () => page.locator('[data-board-lanes] [data-swimlane-name="To Do"] [data-task-id]')
+        .evaluateAll((cards) => cards.map((card) => card.getAttribute('data-task-id')));
+      expect((await order()).slice(0, 3)).toEqual(['t415', 't416', 't417']);
+      // What the board asks main for. (The mock's reorder renumbers positions from
+      // zero, and this board seeds them by task number, so the order it reloads is
+      // not the board's to assert.)
+      await page.evaluate(() => {
+        const tasksApi = window.electronAPI.tasks as unknown as { move: (input: unknown, projectId: unknown) => Promise<unknown> };
+        const original = tasksApi.move;
+        const recorded: unknown[] = [];
+        (window as unknown as { __recordedMoves: unknown[] }).__recordedMoves = recorded;
+        tasksApi.move = (input, projectId) => {
+          recorded.push(input);
+          return original(input, projectId);
+        };
+      });
+
+      // #415 waits in To Do while its workflow runs: locked, but it can move down the column.
+      const from = await boardCard(page, 't415').boundingBox();
+      const to = await boardCard(page, 't417').boundingBox();
+      if (!from || !to) throw new Error('No box for the reorder');
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2 + 12, { steps: 3 });
+      await expect(page.locator('.drag-overlay')).toBeVisible({ timeout: 2000 });
+      await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 20 });
+      // Intentional fixed wait, as drag-and-drop.spec.ts's within-column reorder
+      // has it: no DOM signal says the target card is hovered before the release.
+      await page.waitForTimeout(400);
+      await page.mouse.up();
+
+      // A reorder in its own column, below where it was, and nothing refused.
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __recordedMoves: Array<{ taskId: string; targetSwimlaneId: string; targetPosition: number }> }).__recordedMoves))
+        .toEqual([expect.objectContaining({ taskId: 't415', targetSwimlaneId: 'lane-0' })]);
+      const [move] = await page.evaluate(() => (window as unknown as { __recordedMoves: Array<{ targetPosition: number }> }).__recordedMoves);
+      expect(move.targetPosition).toBeGreaterThan(0);
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'locked' })).toHaveCount(0);
+      await expect(page.locator('[data-board-lanes] [data-swimlane-name="To Do"] [data-task-id="t415"]')).toHaveCount(1);
     } finally {
       await browser.close();
     }
   });
 
   test('a refused drag stays in its column, says why with Open workflow, and shows the card\'s links', async () => {
-    const { browser, page } = await launch();
+    // #414 waits in a human gate (Code Review starts no agent), so a person may
+    // drag it on to Testing, the next column of its route, and nowhere else.
+    const { browser, page } = await launch({ gateLanes: [3], lane414: 3 });
     try {
-      await dragToColumn(page, 't414', 'Code Review');
+      await dragToColumn(page, 't414', 'Merge');
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: LOCKED });
       await expect(toast).toBeVisible();
       await expect(toast.getByRole('button', { name: 'Open workflow' })).toBeVisible();
-      await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toBeVisible();
+      await expect(page.locator('[data-swimlane-name="Code Review"] [data-task-id="t414"]')).toBeVisible();
 
       const overlay = byTestId(page, 'workflow-links-overlay');
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
@@ -472,6 +569,170 @@ test.describe('Workflow tasks on the board', () => {
     } finally {
       await browser.close();
     }
+  });
+
+  // Board 8c, option C: resting the pointer on a card's strip previews its
+  // links until the pointer leaves the strip, and the strip's links button
+  // keeps them. Each test asserts an end state, never that a crossing did not
+  // flash: under load a pointer can rest longer than the test meant it to.
+  test.describe('Show workflow links from the card\'s strip', () => {
+    const overlayOf = (page: Page) => byTestId(page, 'workflow-links-overlay');
+    const linksButton = (page: Page, id: string) => boardCard(page, id).locator('[data-testid="workflow-links-button"]');
+
+    /** Rest the pointer on a card's strip, over its workflow's name. */
+    async function restOnStrip(page: Page, id: string): Promise<void> {
+      const strip = boardCard(page, id).locator('[data-testid="workflow-card-strip"]');
+      await strip.scrollIntoViewIfNeeded();
+      const box = await strip.boundingBox();
+      if (!box) throw new Error(`No strip on #${id}`);
+      await page.mouse.move(box.x + 24, box.y + box.height / 2, { steps: 4 });
+    }
+
+    /** Past the strip's 400ms rest, so a preview that was going to show has shown. */
+    async function waitPastTheRest(page: Page): Promise<void> {
+      await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 800)));
+    }
+
+    async function colorOf(page: Page, token: string): Promise<string> {
+      return page.evaluate((value) => {
+        const probe = document.createElement('span');
+        probe.style.color = value;
+        document.body.appendChild(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      }, token);
+    }
+
+    test('resting on a strip previews the card\'s links with its button in the accent, and leaving hides them', async () => {
+      const { browser, page } = await launch();
+      try {
+        await restOnStrip(page, 't414');
+        const overlay = overlayOf(page);
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+        await expect(overlay).toHaveAttribute('data-phase', 'shown');
+        await expect(overlay.locator('[data-link="out:t417"]')).toHaveCount(1);
+        const button = linksButton(page, 't414');
+        await expect(button).toHaveAttribute('data-links-state', 'shown');
+        await expect(button).toHaveAttribute('aria-pressed', 'false');
+        await expect(button).toHaveCSS('color', await colorOf(page, 'var(--color-accent-fg)'));
+
+        // Off the strip, over the page's top corner: the preview goes.
+        await page.mouse.move(2, 2, { steps: 4 });
+        await expect(overlay).toHaveCount(0);
+        await expect(button).toHaveAttribute('data-links-state', 'off');
+        await expect(button).toHaveCSS('color', await colorOf(page, 'var(--color-fg-faint)'));
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the button keeps the links, pressed and outlined, through the pointer leaving; a second click hides them', async () => {
+      const { browser, page } = await launch();
+      try {
+        const button = linksButton(page, 't414');
+        await button.click();
+        const overlay = overlayOf(page);
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+        await expect(button).toHaveAttribute('aria-pressed', 'true');
+        await expect(button).toHaveAttribute('data-links-state', 'kept');
+        await expect(button).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)');
+        // The click is the button's own: the card did not open its task.
+        await expect(byTestId(page, 'task-detail-dialog')).toHaveCount(0);
+
+        await page.mouse.move(2, 2, { steps: 4 });
+        await waitPastTheRest(page);
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+        await expect(overlay).toHaveAttribute('data-phase', 'shown');
+
+        await button.click();
+        await expect(overlay).toHaveCount(0);
+        await expect(button).toHaveAttribute('aria-pressed', 'false');
+        // The pointer resting on the strip after the click brings no preview back.
+        await waitPastTheRest(page);
+        await expect(overlay).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('while links are kept, another strip previews nothing, and its button moves them there', async () => {
+      const { browser, page } = await launch();
+      try {
+        await linksButton(page, 't414').click();
+        const overlay = overlayOf(page);
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+
+        await restOnStrip(page, 't413');
+        await waitPastTheRest(page);
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+        await expect(linksButton(page, 't413')).toHaveAttribute('data-links-state', 'off');
+
+        await linksButton(page, 't413').click();
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
+        await expect(linksButton(page, 't413')).toHaveAttribute('aria-pressed', 'true');
+        await expect(linksButton(page, 't414')).toHaveAttribute('aria-pressed', 'false');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a card with no links yet keeps its button, disabled with the reason, and its menu row says the same', async () => {
+      const { browser, page } = await launch({ unlinkedTask: true });
+      try {
+        const button = linksButton(page, 't420');
+        await expect(button).toHaveAttribute('aria-disabled', 'true');
+        await expect(button).toHaveAttribute('title', '#420 has no links yet.');
+        await expect(button).toHaveCSS('cursor', 'not-allowed');
+        // `force`: Playwright will not click an aria-disabled control on its own.
+        await button.click({ force: true });
+        await restOnStrip(page, 't420');
+        await waitPastTheRest(page);
+        await expect(overlayOf(page)).toHaveCount(0);
+        await expect(byTestId(page, 'task-detail-dialog')).toHaveCount(0);
+
+        await openMenu(page, 't420');
+        const row = byTestId(page, 'context-show-workflow-links');
+        await expect(row).toHaveAttribute('aria-disabled', 'true');
+        await expect(row).toHaveAttribute('title', '#420 has no links yet.');
+        await row.click({ force: true });
+        await expect(byTestId(page, 'task-context-menu')).toBeVisible();
+        await expect(overlayOf(page)).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the overlay fades in and out, and switches at once with motion off', async () => {
+      const { browser, page } = await launch();
+      try {
+        const button = linksButton(page, 't414');
+        const overlay = overlayOf(page);
+        await button.click();
+        await expect(overlay).toHaveAttribute('data-phase', 'shown');
+        // The lines and a dimmed card ease, rather than switching in one frame.
+        await expect(overlay).toHaveCSS('transition-duration', '0.18s');
+        await expect.poll(() => boardCard(page, 't419').evaluate((element) => getComputedStyle(element).transitionProperty)).toContain('opacity');
+
+        // Hidden, it stays up, fading, then goes. Read in the click's own task:
+        // the fade lasts longer than that, so this is not a race.
+        const hide = () => button.evaluate(async (element) => {
+          (element as HTMLElement).click();
+          await Promise.resolve();
+          return document.querySelector('[data-testid="workflow-links-overlay"]')?.getAttribute('data-phase') ?? 'gone';
+        });
+        expect(await hide()).toBe('exit');
+        await expect(overlay).toHaveCount(0);
+
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await button.click();
+        await expect(overlay).toHaveAttribute('data-phase', 'shown');
+        await expect(overlay).toHaveCSS('transition-duration', '0s');
+        expect(await hide()).toBe('gone');
+      } finally {
+        await browser.close();
+      }
+    });
   });
 
   test('a board drag clears the overlay as it starts', async () => {

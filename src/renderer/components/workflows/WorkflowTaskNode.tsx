@@ -36,7 +36,6 @@ import { findTask, linkRefusal, taskLabel } from './workflow-graph';
  */
 export interface WorkflowNodeData extends Record<string, unknown> {
   viewTask: WorkflowViewTask;
-  locked: boolean;
   waiting: WorkflowWaiting | null;
   canWait: boolean;
   canBlock: boolean;
@@ -130,7 +129,6 @@ export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data,
       <WorkflowCanvasCard
         viewTask={data.viewTask}
         selected={selected ?? false}
-        locked={data.locked}
         waiting={data.waiting}
         projectName={data.projectName}
         doneColor={data.doneColor}

@@ -245,11 +245,12 @@ describe('the Workflows view operations', () => {
       expect(summary).toMatchObject({ taskCount: 3, doneCount: 0, inProgressCount: 0, queuedCount: 2, blockedCount: 1 });
     });
 
-    it('gives each board card what it waits for and where a hand may move it', async () => {
+    it('gives each board card what it waits for, where a hand may move it, and whether it has links', async () => {
       const { workflow, api, ui, docs } = await started();
       const [before] = view.listWorkflowSummaries(context, 'home');
-      expect(before.boardTasks[ui.id]).toEqual({ waitingFor: [`#${api.display_id}`], humanGateTargetId: null });
-      expect(before.boardTasks[docs.id]).toEqual({ waitingFor: [], humanGateTargetId: null });
+      expect(before.boardTasks[ui.id]).toEqual({ waitingFor: [`#${api.display_id}`], humanGateTargetId: null, hasLinks: true });
+      // Docs has no link either way, so its strip offers none to show.
+      expect(before.boardTasks[docs.id]).toEqual({ waitingFor: [], humanGateTargetId: null, hasLinks: false });
 
       // In a column whose work no agent can judge (here, none is chosen), a person drags it on.
       new TaskRepository(homeDb()).move(
@@ -257,7 +258,8 @@ describe('the Workflows view operations', () => {
         { origin: 'renderer' },
       );
       const [after] = view.listWorkflowSummaries(context, 'home');
-      expect(after.boardTasks[api.id]).toEqual({ waitingFor: [], humanGateTargetId: laneId('home', 'Code Review') });
+      // A blocker has links too: the link is read from either end.
+      expect(after.boardTasks[api.id]).toEqual({ waitingFor: [], humanGateTargetId: laneId('home', 'Code Review'), hasLinks: true });
       expect(after.workflow).toMatchObject({ id: workflow.id, state: 'running' });
     });
 

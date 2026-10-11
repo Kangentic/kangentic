@@ -264,6 +264,10 @@ plain run's variance. The taller cards' activation cost described in the M4 bull
 `releaseToSettle` reads 8,030ms for the workflow card because the lock refuses the drop and the
 card never lands in Executing, so the settle wait runs to its 8-second timeout.
 
+Since 2026-10-11 a locked card is held to its own column for the whole drag (it can be reordered
+there, never carried out), and the rig waits for it to settle back in To Do. `releaseToSettle` for
+the workflow card is a real settle from then on; the figures above include the timeout.
+
 ### The final tree (2026-10-04, #732 production-readiness pass)
 
 `W30` and `W100`, 5 runs each, on the production build of the branch as it stands after the

@@ -5105,6 +5105,8 @@ export interface WorkflowBoardTask {
    * work no agent can judge): the column a person may drag it to. Null otherwise.
    */
   humanGateTargetId: string | null;
+  /** It has a link, either way: the strip's links button and hover show them only then. */
+  hasLinks: boolean;
 }
 
 /**

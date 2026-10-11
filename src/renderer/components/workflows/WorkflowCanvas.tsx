@@ -16,9 +16,9 @@ import {
   type NodeMouseHandler,
   type OnNodeDrag,
 } from '@xyflow/react';
-import type { WorkflowBoardTask, WorkflowColumnEnd, WorkflowDetail } from '../../../shared/types';
+import type { WorkflowColumnEnd, WorkflowDetail } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
-import { isWorkflowTaskLocked } from '../../utils/board-workflow';
+import { motionReduced } from '../../utils/motion-reduced';
 import { layoutWorkflow } from './workflow-layout';
 import { canBlock, canWait, findTask, linkRefusal, otherBoardDoneColor, taskLabel, waitingOf } from './workflow-graph';
 import { NO_MEASURED_HEIGHTS, estimatedCardHeight, withMeasuredHeights } from './canvas-card-heights';
@@ -72,11 +72,6 @@ const CANVAS_MOTION_MS = 300;
 /** How long Auto layout waits for its new places before giving up: a refused save lands none. */
 const ARRANGE_WAIT_MS = 3000;
 
-/** The app's Animations setting is off, or the OS asks for less motion: the canvas jumps instead of gliding. */
-function motionReduced(): boolean {
-  return document.documentElement.classList.contains('no-motion')
-    || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
 /** The empty-canvas hint's offset from the pointer, clear of the cursor (board 10). */
 const POINTER_HINT_OFFSET = { x: 22, y: 16 };
 
@@ -88,7 +83,6 @@ function sameColumnEnd(previous: WorkflowColumnEnd | null, next: WorkflowColumnE
 
 function sameNodeData(previous: WorkflowNodeData, next: WorkflowNodeData): boolean {
   return previous.viewTask === next.viewTask
-    && previous.locked === next.locked
     && previous.canWait === next.canWait
     && previous.canBlock === next.canBlock
     && previous.editable === next.editable
@@ -155,12 +149,6 @@ interface WorkflowCanvasProps {
    * board's color itself (`otherBoardDoneColor`).
    */
   doneColumnColor: string;
-  /**
-   * Each started task's board facts, from the workflow's summary (null until
-   * it loads). The lock follows the board's rule from them: none while a task
-   * sits in a human gate, where a person drags it on.
-   */
-  boardFacts: Readonly<Record<string, WorkflowBoardTask>> | null;
 }
 
 export function WorkflowCanvas({
@@ -178,7 +166,6 @@ export function WorkflowCanvas({
   onAutoLayout,
   onCardContextMenu,
   doneColumnColor,
-  boardFacts,
 }: WorkflowCanvasProps) {
   const density = useConfigStore((state) => state.config.cardDensity);
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
@@ -217,8 +204,6 @@ export function WorkflowCanvas({
     connectable: editable && !planHeld,
     data: {
       viewTask: task,
-      locked: task.place !== 'done'
-        && isWorkflowTaskLocked(detail.workflow.state, (task.task ? boardFacts?.[task.task.id]?.humanGateTargetId : null) ?? null),
       waiting: waitingOf(detail, task),
       canWait: canWait(task),
       canBlock: canBlock(task),
@@ -229,7 +214,7 @@ export function WorkflowCanvas({
       doneColor: otherBoardDoneColor(detail, task),
       ends: detail.boardEnds[task.projectId] ?? null,
     },
-  })), [detail, layout, selectedTaskKey, editable, planHeld, boardFacts, visibleKeys]);
+  })), [detail, layout, selectedTaskKey, editable, planHeld, visibleKeys]);
 
   // Controlled nodes: React Flow writes positions during a drag through
   // `onNodesChange`, and the layout re-seeds them whenever the workflow

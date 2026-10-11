@@ -425,7 +425,6 @@ export function WorkflowsView() {
                 onAutoLayout={() => { void setPositions(null); }}
                 onCardContextMenu={handleCardContextMenu}
                 doneColumnColor={doneColumnColor}
-                boardFacts={selected && selected.workflow.id === detail.workflow.id ? selected.boardTasks : null}
               />
             </ReactFlowProvider>
           )}

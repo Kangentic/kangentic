@@ -70,12 +70,12 @@ describe('summary reload sharing', () => {
 
   it('keeps the workflow row and each card\'s facts that did not change', () => {
     const before = summary('Usage budgets', {
-      a: { waitingFor: [], humanGateTargetId: null },
-      b: { waitingFor: ['#1'], humanGateTargetId: null },
+      a: { waitingFor: [], humanGateTargetId: null, hasLinks: true },
+      b: { waitingFor: ['#1'], humanGateTargetId: null, hasLinks: true },
     });
     const [after] = shareSummaries([before], [summary('Usage budgets', {
-      a: { waitingFor: [], humanGateTargetId: 'lane-4' },
-      b: { waitingFor: ['#1'], humanGateTargetId: null },
+      a: { waitingFor: [], humanGateTargetId: 'lane-4', hasLinks: true },
+      b: { waitingFor: ['#1'], humanGateTargetId: null, hasLinks: true },
     })]);
     expect(after.workflow).toBe(before.workflow);
     expect(after.boardTasks.a).not.toBe(before.boardTasks.a);
