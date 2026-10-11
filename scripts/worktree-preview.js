@@ -12,12 +12,16 @@
  *
  * Usage: node scripts/worktree-preview.js [--fresh] [--env KEY=VALUE]...
  *
- * `--env` forwards a variable into the dev server's environment. It has to
- * be spliced into the terminal command itself: the launcher hands the command
- * to wt.exe (or the platform's terminal), and a new tab inherits the terminal
- * HOST's environment, not this process's, so a variable merely set here never
- * reaches dev.js. That is how the analytics rig (docs/analytics.md, "Local
- * verification") silently lost its variables before this flag existed.
+ * `--env` forwards a variable into the dev server's environment. It is
+ * spliced into the terminal command itself because the launcher hands the
+ * command to the platform's terminal, which decides what environment the new
+ * tab gets. Terminal.app and gnome-terminal start it from their own
+ * long-running process, so a variable merely set here does not reach dev.js
+ * there, and the analytics rig (docs/analytics.md, "Local verification")
+ * silently lost its variables before this flag existed. Windows Terminal 1.24
+ * does pass this process's environment into the new tab (measured: a variable
+ * set in the launching shell reached it), which is also how a task's
+ * KANGENTIC_TASK_ID reaches a preview launched from that task's terminal.
  */
 
 const { spawn, execSync } = require('child_process');
@@ -784,5 +788,17 @@ if (require.main === module) {
 // comment above openTerminalMac). ensureNodeModulesLink is exported for
 // tests/unit/worktree-preview-node-modules.test.ts, which pins that a branch
 // with its own dependencies keeps its own install. waitForOtherPreviews is
-// exported for tests/unit/preview-isolation.test.ts.
-module.exports = { buildCommand, envPrefix, parseEnvArgs, buildAppleScriptCommand, ensureNodeModulesLink, waitForOtherPreviews };
+// exported for tests/unit/preview-isolation.test.ts. pidFilePathFor and
+// stopFilePathFor are exported for tests/unit/worktree-preview-stop.test.ts,
+// which pins them against the dev-build Done stop
+// (src/devtools/main/worktree-preview-stop.ts) that speaks the same protocol.
+module.exports = {
+  buildCommand,
+  envPrefix,
+  parseEnvArgs,
+  buildAppleScriptCommand,
+  ensureNodeModulesLink,
+  waitForOtherPreviews,
+  pidFilePathFor,
+  stopFilePathFor,
+};

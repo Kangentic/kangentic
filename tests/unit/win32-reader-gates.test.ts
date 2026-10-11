@@ -23,6 +23,13 @@
  *   fails, the reader falls back to the native PEB and still closes every handle.
  * - `scan` marks a process with a visible window `visible-app` (ahead of its
  *   image name), and a `conhost.exe` or `OpenConsole.exe` row `console-host`.
+ *   Only a tagged process or one below it gets the window role, never an
+ *   ancestor (Windows Terminal, whose tabs' shells are its children), and a
+ *   zero-area window (the pseudo console window Terminal shows for each tab's
+ *   shell) is no visible app; a minimized one is. Fed to the real plan, a
+ *   Terminal tab's processes are reaped. `windowSize` and
+ *   `userVisibleWindowPids`, which decide "with area", are pinned directly too:
+ *   one zero dimension is no area, and an unreadable rect is no area.
  * - An environment read stops at 1 MiB however large a size the PEB claims,
  *   and a working directory longer than any Windows path is never read.
  * - An 8.3 working directory is expanded to its long form, and kept short
@@ -38,7 +45,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { Win32TaggedProcessReader } from '../../src/main/pty/process-tag/win32-reader';
+import {
+  Win32TaggedProcessReader,
+  userVisibleWindowPids,
+  windowSize,
+  type WindowRect,
+} from '../../src/main/pty/process-tag/win32-reader';
+import { planReapDetailed } from '../../src/main/pty/process-tag/reap-plan';
 import { TASK_PROCESS_TAG_ENV } from '../../src/main/pty/process-tag/task-process-tag';
 import type { ProcessScan, ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
 
@@ -95,8 +108,10 @@ interface FakeProcess {
    * address that holds nothing readable.
    */
   wow64WalkFails?: 'query' | 'memory';
-  /** The process owns a visible top-level window, as the reader's window enumeration reports it. */
+  /** The process owns one ordinary visible top-level window (800 by 600). */
   visible?: boolean;
+  /** Visible top-level windows of a given size, as `GetWindowRect` reports them, besides the one `visible` adds. */
+  windows?: Array<{ width: number; height: number }>;
   /** The EnvironmentSize its PEB claims, when not the block's real length. */
   claimedEnvironmentSize?: number;
   /** The byte length its CurrentDirectory claims, when not the text's real length. */
@@ -377,7 +392,10 @@ class FakeWin32 {
       buffer.write(`${long}\u0000`, 0, 'utf16le');
       return long.length;
     },
-    visibleWindowPids: () => new Set(this.processes.filter((fakeProcess) => fakeProcess.visible).map((fakeProcess) => fakeProcess.pid)),
+    visibleWindows: () => this.processes.flatMap((fakeProcess) => [
+      ...(fakeProcess.visible ? [{ width: 800, height: 600 }] : []),
+      ...(fakeProcess.windows ?? []),
+    ].map((size) => ({ pid: fakeProcess.pid, ...size }))),
     // NO_ERROR 0; ERROR_INSUFFICIENT_BUFFER 122 with the size it needs.
     getExtendedTcpTable: (table, size, _order, family, tableClass) => {
       this.tcpTableCalls.push({ family, tableClass, bufferBytes: table.length });
@@ -441,7 +459,8 @@ class FakeWin32 {
     const addresses = addressesOf(pid);
     const workingDirectory = Buffer.from(fakeProcess.workingDirectory ?? WORKING_DIRECTORY, 'utf16le');
     const entries = ['PATH=C:\\Windows'];
-    if (fakeProcess.tag) entries.push(`${TASK_PROCESS_TAG_ENV}=${fakeProcess.tag}`);
+    // An empty string is a cleared tag: the variable is there with no value.
+    if (typeof fakeProcess.tag === 'string') entries.push(`${TASK_PROCESS_TAG_ENV}=${fakeProcess.tag}`);
     const block = Buffer.from(`${entries.join('\u0000')}\u0000\u0000`, 'utf16le');
     const environmentSize = fakeProcess.claimedEnvironmentSize ?? block.length;
     // A region as long as the claim (up to the fake's limit), so a read the
@@ -772,12 +791,12 @@ describe('Win32TaggedProcessReader: a 32-bit (WOW64) process', () => {
 describe('Win32TaggedProcessReader.scan: the role of a process the reap must not read as shared', () => {
   it('marks a visible window and a console host, lets the window win, and marks nothing else', async () => {
     const fake = new FakeWin32([
-      { pid: 1000, image: 'chrome.exe', visible: true },
+      { pid: 1000, image: 'chrome.exe', tag: TASK, visible: true },
       { pid: 1010, image: 'conhost.exe' },
       // The mixed case is what the image match has to fold, since the set holds lower case.
       { pid: 1020, image: 'OpenConsole.exe' },
       // A console host that owns a visible window is reported as the window, whichever check runs first.
-      { pid: 1030, image: 'conhost.exe', visible: true },
+      { pid: 1030, image: 'conhost.exe', tag: TASK, visible: true },
       { pid: 1040, image: 'node.exe' },
     ]);
     const scan = await readerFor(fake).scan();
@@ -788,6 +807,114 @@ describe('Win32TaggedProcessReader.scan: the role of a process the reap must not
     expect(scanned(scan, 1030).role).toBe('visible-app');
     expect(scanned(scan, 1040).role).toBeUndefined();
     expectEveryHandleClosedOnce(fake);
+  });
+
+  // Measured on Windows 11 with Windows Terminal 1.24 (EnumWindows, IsWindowVisible,
+  // GetWindowRect, GetWindow, GetWindowLong) while a /preview survived a Done move:
+  // WindowsTerminal.exe owns a real window and is the parent of every tab's shell, and
+  // each tab's shell is attributed a visible `PseudoConsoleWindow` at 0,0,0,0, owned by
+  // Terminal's window, with WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE (0x8000080). Either read
+  // as a visible app protects everything the tab runs.
+  const WINDOWS_TERMINAL_TAB: FakeProcess[] = [
+    { pid: 1100, image: 'WindowsTerminal.exe', visible: true, workingDirectory: 'C:\\WINDOWS\\system32' },
+    { pid: 1110, ppid: 1100, image: 'cmd.exe', tag: TASK, windows: [{ width: 0, height: 0 }] },
+    { pid: 1120, ppid: 1110, image: 'PING.EXE', tag: TASK },
+  ];
+
+  it('never reads a Windows Terminal tab, its terminal or its zero-area pseudo console window as a visible app', async () => {
+    const fake = new FakeWin32([
+      ...WINDOWS_TERMINAL_TAB,
+      // A classic console window (ConsoleWindowClass) is a real window and still counts.
+      { pid: 1130, image: 'cmd.exe', tag: TASK, windows: [{ width: 993, height: 519 }] },
+      // A real window beside a zero-area one counts.
+      { pid: 1140, image: 'electron.exe', tag: TASK, windows: [{ width: 0, height: 0 }, { width: 1280, height: 800 }] },
+      // A minimized window keeps its area (measured: 160 by 28 at -32000,-32000).
+      { pid: 1150, image: 'charmap.exe', tag: TASK, windows: [{ width: 160, height: 28 }] },
+      // A node-pty shell: its pseudo console window is never shown, so it is never listed.
+      { pid: 1160, image: 'pwsh.exe', tag: TASK },
+    ]);
+    const scan = await readerFor(fake).scan();
+
+    // Positive controls: tagged windows with area are read, so the fake reports windows at all.
+    expect(scanned(scan, 1130).role).toBe('visible-app');
+    expect(scanned(scan, 1140).role).toBe('visible-app');
+    expect(scanned(scan, 1150).role).toBe('visible-app');
+
+    expect(scanned(scan, 1100).role).toBeUndefined();
+    expect(scanned(scan, 1110).role).toBeUndefined();
+    expect(scanned(scan, 1120).role).toBeUndefined();
+    expect(scanned(scan, 1160).role).toBeUndefined();
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('reads a window only for a tagged process and what runs under it, never for an ancestor or a stranger', async () => {
+    const fake = new FakeWin32([
+      // An untagged app with a window above a tagged process: a terminal, a desktop shell.
+      { pid: 1200, image: 'explorer.exe', visible: true },
+      { pid: 1210, ppid: 1200, image: 'node.exe', tag: TASK },
+      // An untagged child of a tagged process still counts: it runs under the task.
+      { pid: 1220, ppid: 1210, image: 'app.exe', tag: null, visible: true },
+      // An untagged window with no tagged process anywhere above it.
+      { pid: 1230, image: 'notepad.exe', visible: true },
+      // A cleared tag (the documented opt-out) is not a seed.
+      { pid: 1240, image: 'paint.exe', tag: '', visible: true },
+    ]);
+    const scan = await readerFor(fake).scan();
+
+    // Positive controls: a window under a tagged process is read, and the cleared tag was read as one.
+    expect(scanned(scan, 1220).role).toBe('visible-app');
+    expect(scanned(scan, 1240).tagValue).toBe('');
+    expect(scanned(scan, 1200).role).toBeUndefined();
+    expect(scanned(scan, 1210).role).toBeUndefined();
+    expect(scanned(scan, 1230).role).toBeUndefined();
+    expect(scanned(scan, 1240).role).toBeUndefined();
+  });
+
+  // The bug lived between the reader and the plan: each was right about its own
+  // fixtures, and together they protected the tab. So the scan feeds the real plan.
+  it('lets the plan reap what a Windows Terminal tab runs, and keep a window the agent opened', async () => {
+    const fake = new FakeWin32([
+      ...WINDOWS_TERMINAL_TAB,
+      { pid: 1300, image: 'notepad.exe', tag: TASK, visible: true },
+    ]);
+    const scan = await readerFor(fake).scan();
+    const plan = planReapDetailed({
+      processes: scan.processes,
+      tasks: new Map([[TASK, { directories: [WORKING_DIRECTORY], worktreePath: WORKING_DIRECTORY }]]),
+      mainPid: 1,
+      liveRootPids: [],
+      caseInsensitivePaths: true,
+    });
+
+    expect(plan.targets.map((target) => target.pid).sort((left, right) => left - right)).toEqual([1110, 1120]);
+    expect(plan.kept).toEqual([expect.objectContaining({ process: expect.objectContaining({ pid: 1300 }), reason: 'window' })]);
+  });
+});
+
+describe('the window helpers: what counts as a window with area', () => {
+  it('counts a window only when both its width and its height are positive', () => {
+    const visiblePids = userVisibleWindowPids([
+      { pid: 1, width: 0, height: 600 },
+      { pid: 2, width: 800, height: 0 },
+      { pid: 3, width: 0, height: 0 },
+      // Positive control: the smallest window with area is the only one counted.
+      { pid: 4, width: 1, height: 1 },
+    ]);
+
+    expect(visiblePids).toEqual(new Set([4]));
+  });
+
+  it('sizes a rect that could not be read as no area, whatever the out parameter holds', () => {
+    const largeRect: WindowRect = { left: 0, top: 0, right: 1280, bottom: 800 };
+
+    expect(windowSize(false, largeRect)).toEqual({ width: 0, height: 0 });
+    // Positive controls: the same rect read successfully is its real size, so the zero above
+    // comes from the guard and not from the rect.
+    expect(windowSize(true, largeRect)).toEqual({ width: 1280, height: 800 });
+    // A minimized window (measured: 160 by 28 at -32000,-32000) keeps its area.
+    expect(windowSize(true, { left: -32000, top: -32000, right: -31840, bottom: -31972 })).toEqual({ width: 160, height: 28 });
+    // A field koffi left unset reads as 0, so an empty rect is no area.
+    expect(windowSize(true, {})).toEqual({ width: 0, height: 0 });
   });
 });
 

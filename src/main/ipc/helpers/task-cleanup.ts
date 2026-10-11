@@ -11,6 +11,8 @@ import { leftoverProcessReports, publishLeftoverProcesses } from './leftover-pro
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { LeftoverSweepOptions } from '../../transition-engine/resource-cleanup';
+// Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
+import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-stop';
 
 /**
  * Kill what the given tasks left running: the processes carrying their
@@ -52,6 +54,13 @@ export async function reapTaskLeftovers(
   const releaseReport = leftoverProcessReports.beginReap();
   try {
     const stoppingEnabled = context.configManager.load().stopLeftoverProcesses !== false;
+    // A /preview of a task worktree stops through its own stop file first, so
+    // its Electron quits through the real quit path and its terminal tab
+    // closes. Killed by the reap, it would leave that window on a dead dev
+    // server, holding the worktree.
+    if (__KANGENTIC_DEV__ && stoppingEnabled) {
+      await stopWorktreePreviews(tasks.flatMap((task) => (task.worktree_path ? [task.worktree_path] : [])));
+    }
     const entries = await context.sessionManager.reapTaskProcesses(
       projectPath ?? null,
       tasks.map((task) => ({ id: task.id, worktreePath: task.worktree_path })),

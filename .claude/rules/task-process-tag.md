@@ -39,7 +39,10 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `handleTaskMove`, `cleanupTaskSession` (To Do, Backlog demote, task and bulk delete, unarchive
   into To Do), the MCP `onTaskDeleted` (any task, worktree or not), `PROJECT_DELETE` (archived
   tasks included), and the startup sweep for archived and To Do tasks. A new terminal transition
-  calls it too, with the project path and each task's `worktree_path`.
+  calls it too, with the project path and each task's `worktree_path`. In a dev build, with
+  stopping on, `reapTaskLeftovers` first stops a `/preview` running in each task worktree through
+  the launcher's stop file (`src/devtools/main/worktree-preview-stop.ts`), so its Electron quits
+  through the real quit path instead of outliving a terminate on a dead dev server.
 - **A kill needs the tag AND the task's directory, and nothing in `reap-plan.ts` may relax that.**
   In the host reap, a process is killed only when it carries the task's tag, works inside the task's project or
   worktree, nothing under it shows it is shared (a readable descendant without this task's tag, or
@@ -151,13 +154,26 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   every handle closed. It also walks a 32-bit (WOW64) PEB laid out
   from Windows' own offsets, caps an environment read at 1 MiB whatever size the PEB claims, and
   expands an 8.3 working directory. It reads a fake TCP table laid out from iphlpapi's headers,
-  opening no process, and fails as `connection_list` when the call fails.
+  opening no process, and fails as `connection_list` when the call fails. A window makes a visible
+  app only of a tagged process or one below it, never an ancestor, and only with area: the fixture
+  is a measured Windows Terminal tab (Terminal's real window above the tab's shell, whose 0 by 0
+  pseudo console window Terminal shows), beside a classic console window and a minimized one that
+  still count, and it feeds that scan through the real plan, which must reap the tab's processes.
+  Kangentic's own node-pty shells never show their pseudo console window, so only a real Windows
+  Terminal reproduces the tab; the behavior test below drives one.
+- **Test (preview stop):** `tests/unit/worktree-preview-stop.test.ts` runs the dev-build preview
+  stop against a real child speaking `dev.js`'s side of the stop file, pins the file names and
+  bounds against the scripts, and checks that `reapTaskLeftovers` calls it under
+  `__KANGENTIC_DEV__` before the host reap (a source check, since unit tests build with the flag
+  off).
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached
   processes and spares what it must (a live child, another task, a cleared tag, a process outside
   the project, an opt-out child's parent, a tmux server, a server another task holds a TCP
-  connection to, and under CI a visible app). `task-process-readers.test.ts` reads real loopback
-  connections, a dual-stack listener included, and checks them against `ss`, `lsof` and
-  `netstat`. CI's unit
+  connection to, and under CI a visible app), and reaps a tagged `cmd /c ping` in a Windows
+  Terminal tab when `KANGENTIC_WINDOWS_TERMINAL` names a portable Terminal, which the workflow
+  below unpacks (pinned to 1.24.12741.0, the version measured). `task-process-readers.test.ts`
+  reads real loopback connections, a dual-stack listener included, and checks them against `ss`,
+  `lsof` and `netstat`. CI's unit
   tier runs it on Linux; `.github/workflows/task-reap-real-processes.yml` runs it on Linux with a
   display, macOS on Apple silicon and Intel, and Windows whenever `process-tag/` changes (not a
   required check). GitHub's macOS runners run with SIP off, so the redaction itself is never

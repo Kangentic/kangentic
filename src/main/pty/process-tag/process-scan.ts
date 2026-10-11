@@ -50,9 +50,12 @@ export interface ScannedProcess {
   environmentUnreadable?: boolean;
   /**
    * What the process is, where that changes how the reap treats it:
-   * - `visible-app`: it shows UI (a visible top-level window on Windows, a
-   *   UI app registered with LaunchServices on macOS, a GUI toolkit mapped on
-   *   Linux). Never killed, nor anything under it.
+   * - `visible-app`: it shows UI (a visible top-level window with area on
+   *   Windows, a UI app registered with LaunchServices on macOS, a GUI toolkit
+   *   mapped on Linux). Never killed, nor anything under it. Read only for a
+   *   tagged process and what runs under it (`seedsAndDescendants`), so
+   *   neither a terminal emulator above the task's processes nor a Windows
+   *   Terminal tab's shell (its pseudo console window is 0 by 0) is one.
    * - `multiplexer`: a tmux server. tmux copies the environment it started
    *   with into every later session, so under it the tag stops naming a task.
    *   Never killed, nor anything under it.
@@ -111,12 +114,14 @@ export class ScanStepError extends Error {
 }
 
 /**
- * The processes `isSeed` picks and everything below them, by parent link. A
- * POSIX reader reads roles (and on macOS working directories) for these only,
- * since a reap can touch nothing else. Never their ancestors: a desktop shell
- * or a terminal emulator would read as a visible app and protect everything
- * under it. A process listed as its own parent is not its own child, so the
- * walk ends.
+ * The processes `isSeed` picks and everything below them, by parent link.
+ * Every reader reads the visible-app role for these only, since a reap can
+ * touch nothing else. The Linux and macOS readers read the tmux role (and on
+ * macOS working directories) for these only too. Never their ancestors: a
+ * desktop shell or a terminal emulator (Windows Terminal, whose tabs' shells
+ * are its children) would read as a visible app and protect everything under
+ * it. A process listed as its own parent is not its own child, so the walk
+ * ends.
  */
 export function seedsAndDescendants(
   processes: readonly ScannedProcess[],

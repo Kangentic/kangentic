@@ -6,9 +6,10 @@ name: Task reap against real processes
 # Windows PEB and Toolhelp listing through koffi, plus each platform's read of
 # the local TCP connections (checked against ss, lsof and netstat). CI's unit tier runs
 # the same test on Linux without a display, so this job is where the visible-app
-# case (Notepad, xterm under xvfb, Chrome) and the macOS and Windows readers run
-# at all; the team develops on Windows, and without it the macOS reader would
-# first run on a user's machine.
+# case (Character Map, xterm under xvfb, Chrome), the Windows Terminal tab case
+# (a portable Terminal), and the macOS and Windows readers run at all; the team
+# develops on Windows, and without it the macOS reader would first run on a
+# user's machine.
 #
 # What it stands in for rather than observes: XNU leaves the environment out of
 # KERN_PROCARGS2 when the target is CS_RESTRICT AND System Integrity Protection
@@ -101,6 +102,31 @@ jobs:
           sudo apt-get install -y -q tmux xterm xvfb
           Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
+      # The runner image has no Windows Terminal, and a program in one of its tabs is a
+      # shape the reap must get right: Terminal owns a window above every tab's shell and
+      # shows a zero-area one for each tab. The test drives this portable build, pinned
+      # to the version the shape was measured on, and closes it afterwards. The release
+      # is not immutable, so the archive is also pinned by the SHA-256 GitHub lists for it.
+      - name: Unpack a portable Windows Terminal (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINDOWS_TERMINAL_VERSION: '1.24.12741.0'
+          WINDOWS_TERMINAL_SHA256: '7aaa8321064c45d5af79205db13deb87f146f644bd8abdfae29f0155d7ce744e'
+        run: |
+          $archive = "Microsoft.WindowsTerminal_$($env:WINDOWS_TERMINAL_VERSION)_x64.zip"
+          gh release download "v$($env:WINDOWS_TERMINAL_VERSION)" --repo microsoft/terminal --pattern $archive --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::Could not download $archive from microsoft/terminal"; exit 1 }
+          $hash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $env:RUNNER_TEMP $archive)).Hash.ToLowerInvariant()
+          if ($hash -ne $env:WINDOWS_TERMINAL_SHA256) { Write-Output "::error::$archive has SHA-256 $hash, not the pinned $($env:WINDOWS_TERMINAL_SHA256)"; exit 1 }
+          Expand-Archive -Path (Join-Path $env:RUNNER_TEMP $archive) -DestinationPath (Join-Path $env:RUNNER_TEMP 'windows-terminal')
+          $wt = Join-Path $env:RUNNER_TEMP "windows-terminal\terminal-$($env:WINDOWS_TERMINAL_VERSION)\wt.exe"
+          if (-not (Test-Path $wt)) { Write-Output "::error::wt.exe is not at $wt in $archive"; exit 1 }
+          # Portable mode keeps its settings beside the binaries.
+          New-Item -ItemType File -Path (Join-Path (Split-Path $wt) '.portable') | Out-Null
+          "KANGENTIC_WINDOWS_TERMINAL=$wt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Output "Windows Terminal $($env:WINDOWS_TERMINAL_VERSION) unpacked at $wt"
       - name: Check out repository
         uses: actions/checkout@v7
       - name: Set up Node.js 24

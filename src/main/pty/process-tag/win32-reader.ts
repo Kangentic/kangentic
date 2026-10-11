@@ -25,7 +25,15 @@
  * including a 32-bit adb). A path in 8.3 form (`RUNNER~1`) is expanded with
  * `GetLongPathNameW`, since the task's directories are compared in long form.
  * The roles (`process-scan.ts`): `EnumWindows` once per scan for the pids that
- * own a visible top-level window, and the console hosts by image name.
+ * own a top-level window the user can see, and the console hosts by image name.
+ * A window makes a visible app only of a tagged process or one below it, as on
+ * Linux and macOS, and only when the user can see it: visible, with area.
+ * Windows Terminal breaks both otherwise. It owns a real window and every
+ * tab's shell is its child, and it shows a pseudo console window for each tab,
+ * attributed to the tab's shell, at 0 by 0 (measured on 1.24: owned by
+ * Terminal's window, `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Either one read
+ * as a visible app protects everything the tab runs. A minimized window keeps
+ * its area (160 by 28 at -32000), and so does a classic console window.
  *
  * `describe` reads `ImagePathName` and `CommandLine` (0x60 and 0x70 on 64-bit,
  * 0x38 and 0x40 on 32-bit) for the few processes a reap reports, splits the
@@ -54,7 +62,7 @@
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess, splitWindowsCommandLine } from './process-label';
 import { ipv4FromBytes, ipv6FromBytes, listeningPidsOf, pairLocalConnections, type SocketRow } from './local-connections';
-import { ScanStepError, type KillStrength, type LocalConnectionRead, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
+import { ScanStepError, seedsAndDescendants, type KillStrength, type LocalConnectionRead, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
 
 /** The part of koffi this reader uses. */
 type KoffiApi = Pick<typeof import('koffi'), 'load' | 'struct' | 'array' | 'sizeof' | 'address' | 'proto' | 'register' | 'unregister' | 'pointer'>;
@@ -108,10 +116,25 @@ interface Win32Api {
   getTokenInformation(token: NativeHandle, infoClass: number, buffer: Buffer, length: number, returnLength: number[]): number;
   queryInformationProcess(handle: NativeHandle, infoClass: number, buffer: Buffer, length: number, returnLength: number[]): number;
   getLongPathName(shortPath: string, buffer: Buffer, characters: number): number;
-  /** Pids that own a visible top-level window. */
-  visibleWindowPids(): Set<number>;
+  /** Every visible top-level window, with its owner's pid and its size. */
+  visibleWindows(): VisibleWindow[];
   /** `GetExtendedTcpTable`: fills `table`, or returns `ERROR_INSUFFICIENT_BUFFER` with the size it needs in `size[0]`. */
   getExtendedTcpTable(table: Buffer, size: number[], order: number, family: number, tableClass: number, reserved: number): number;
+}
+
+/** A top-level window `IsWindowVisible` reports, as `GetWindowRect` sizes it. */
+export interface VisibleWindow {
+  pid: number;
+  width: number;
+  height: number;
+}
+
+/** `GetWindowRect`'s out parameter, as koffi decodes it. */
+export interface WindowRect {
+  left?: number;
+  top?: number;
+  right?: number;
+  bottom?: number;
 }
 
 interface ProcessEntry {
@@ -146,17 +169,21 @@ async function loadWin32Api(): Promise<Win32Api> {
     dwFlags: 'uint32',
     szExeFile: koffi.array('char16_t', 260, 'String'),
   });
+  koffi.struct('KANGENTIC_RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' });
   const enumWindowsProc = koffi.proto('bool __stdcall KangenticEnumWindowsProc(void *hwnd, intptr_t lparam)');
   const enumWindows = user32.func('bool __stdcall EnumWindows(KangenticEnumWindowsProc *callback, intptr_t lparam)');
   const isWindowVisible = user32.func('bool __stdcall IsWindowVisible(void *hwnd)');
   const getWindowThreadProcessId = user32.func('uint32 __stdcall GetWindowThreadProcessId(void *hwnd, _Out_ uint32 *pid)');
-  const visibleWindowPids = (): Set<number> => {
-    const pids = new Set<number>();
+  const getWindowRect = user32.func('bool __stdcall GetWindowRect(void *hwnd, _Out_ KANGENTIC_RECT *rect)');
+  const visibleWindows = (): VisibleWindow[] => {
+    const windows: VisibleWindow[] = [];
     const callback = koffi.register((hwnd: unknown) => {
       if (isWindowVisible(hwnd)) {
         const pid = [0];
         getWindowThreadProcessId(hwnd, pid);
-        if (pid[0] > 0) pids.add(pid[0]);
+        const rect: WindowRect = {};
+        const sized = getWindowRect(hwnd, rect);
+        if (pid[0] > 0) windows.push({ pid: pid[0], ...windowSize(sized, rect) });
       }
       return true;
     }, koffi.pointer(enumWindowsProc));
@@ -165,7 +192,7 @@ async function loadWin32Api(): Promise<Win32Api> {
     } finally {
       koffi.unregister(callback);
     }
-    return pids;
+    return windows;
   };
   const createToolhelpSnapshot = kernel32.func('void *CreateToolhelp32Snapshot(uint32 flags, uint32 pid)');
   return {
@@ -191,9 +218,30 @@ async function loadWin32Api(): Promise<Win32Api> {
     getTokenInformation: advapi32.func('int GetTokenInformation(void *token, int32 infoClass, _Out_ uint8_t *buffer, uint32 length, _Out_ uint32 *returnLength)'),
     queryInformationProcess: ntdll.func('int32 NtQueryInformationProcess(void *handle, int32 infoClass, _Out_ uint8_t *buffer, uint32 length, _Out_ uint32 *returnLength)'),
     getLongPathName: kernel32.func('uint32 GetLongPathNameW(const char16_t *shortPath, _Out_ uint8_t *buffer, uint32 characters)'),
-    visibleWindowPids,
+    visibleWindows,
     getExtendedTcpTable: iphlpapi.func('uint32 __stdcall GetExtendedTcpTable(_Out_ uint8_t *table, _Inout_ uint32 *size, int order, uint32 family, int tableClass, uint32 reserved)'),
   };
+}
+
+/**
+ * A window's size from `GetWindowRect`. A rect that could not be read counts
+ * as no area, like the pseudo console window, whatever the out parameter holds.
+ */
+export function windowSize(sized: boolean, rect: WindowRect): { width: number; height: number } {
+  if (!sized) return { width: 0, height: 0 };
+  return { width: (rect.right ?? 0) - (rect.left ?? 0), height: (rect.bottom ?? 0) - (rect.top ?? 0) };
+}
+
+/**
+ * The pids that own a window the user can see: a visible one with area. A
+ * zero-area window is no evidence, whatever its class (see the header).
+ */
+export function userVisibleWindowPids(windows: readonly VisibleWindow[]): Set<number> {
+  const pids = new Set<number>();
+  for (const topLevelWindow of windows) {
+    if (topLevelWindow.width > 0 && topLevelWindow.height > 0) pids.add(topLevelWindow.pid);
+  }
+  return pids;
 }
 
 function isNullHandle(api: Win32Api, handle: NativeHandle): boolean {
@@ -509,15 +557,14 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     if (ownSid === null) throw new Error('the Windows reader could not read its own user');
 
     const rows = await enumerateProcesses(api);
-    const windowPids = api.visibleWindowPids();
+    const windowPids = userVisibleWindowPids(api.visibleWindows());
     const processes: ScannedProcess[] = [];
     let unreadableCount = 0;
     for (let index = 0; index < rows.length; index += 1) {
       if (index > 0 && index % YIELD_EVERY_PROCESSES === 0) await yieldToEventLoop();
       const row = rows[index];
       const scanned: ScannedProcess = { pid: row.pid, ppid: row.ppid, startKey: '', startedAtMs: null, tagValue: null };
-      if (windowPids.has(row.pid)) scanned.role = 'visible-app';
-      else if (CONSOLE_HOST_IMAGES.has(row.image.toLowerCase())) scanned.role = 'console-host';
+      if (CONSOLE_HOST_IMAGES.has(row.image.toLowerCase())) scanned.role = 'console-host';
       processes.push(scanned);
       if (row.pid <= 4) continue;
       // The session check needs no handle, so a process in another Windows
@@ -549,6 +596,14 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
       scanned.tagValue = tagValue;
       scanned.workingDirectory = workingDirectory;
     }
+    // A window makes a visible app only of a tagged process or one below it,
+    // as on Linux and macOS, never of an ancestor: Windows Terminal owns a real
+    // window and every tab's shell is its child, so reading it would protect
+    // everything a tab runs. The walk follows raw parent links, so a reused pid
+    // can only add a process here, which adds protection and removes none.
+    for (const scanned of seedsAndDescendants(processes, (candidate) => candidate.tagValue !== null && candidate.tagValue !== '')) {
+      if (windowPids.has(scanned.pid)) scanned.role = 'visible-app';
+    }
     return { processes, unreadableCount };
   }
 
@@ -563,6 +618,9 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     try {
       const creation = readCreationTime(api, handle);
       if (creation === null || creation.toString() !== target.startKey) return false;
+      // Exit code 1, as `taskkill /F`: a 0 would close a Windows Terminal tab
+      // (measured), but a reaped `a` in `cmd /c "a && b"` would then start `b`
+      // before its own kill landed, since a reap terminates a tree at once.
       return api.terminateProcess(handle, 1) !== 0;
     } finally {
       api.closeHandle(handle);
