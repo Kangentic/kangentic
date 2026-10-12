@@ -1084,7 +1084,8 @@ src/main/workflows/
   schedules no timer (`tests/unit/workflow-engine-boundary.test.ts`), so it can move to a utility
   process as a transport change.
 - **The engine reads only open databases, and opens only what a workflow touches.** A registered
-  project whose database main has not opened is looked at once, one per event-loop turn, through
+  project whose database main has not opened is looked at once, one per event-loop turn (again on
+  each pass while the look fails, see the retry below), through
   `probeWorkflowProject` (`src/main/workflows/workflow-project-probe.ts`): a throwaway connection
   (`peekProjectDb`), no migrations, two indexed reads. It is opened only when it homes a running or
   paused workflow, or holds a task of one. After that, "open" stays complete with nothing stored:
