@@ -52,9 +52,9 @@ function mapPermissionMode(mode: PermissionMode): string[] {
 
 /**
  * Prepare a prompt string for safe shell quoting.
- * On PowerShell/cmd, replaces double quotes with single quotes to prevent
- * quoting breakage (quoteArg wraps in "..." and escapes " as \" which
- * PowerShell misinterprets).
+ * On PowerShell/cmd, replaces double quotes with single quotes. quoteArg does
+ * the same for every value it quotes for those shells
+ * (escapeForDoubleQuotedShell).
  */
 function preparePrompt(prompt: string, shell?: string): string {
   const needsDoubleQuoteReplacement = shell

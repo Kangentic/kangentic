@@ -3,6 +3,7 @@ import { AgentDetector } from '../../shared/agent-detector';
 import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/paths';
+import { isBareShellToken } from '../../../../shared/shell-quote';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { AiderSessionHistoryParser } from './session-history-parser';
@@ -10,6 +11,54 @@ import { createAiderCommandInjectionVerifier } from './command-injection-verifie
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+
+/**
+ * Characters /bin/sh still reads inside `"`, so an inner `"` cannot hold them.
+ * A backslash is live there too, but both paths are forward-slashed first.
+ */
+const LIVE_IN_DOUBLE_QUOTES = /["$`]/;
+
+/**
+ * The idle command Aider runs through its own shell (`subprocess.run` with
+ * `shell=True`: cmd.exe on Windows, /bin/sh elsewhere), so it carries a quoting
+ * layer of its own inside the argument `quoteArg` builds around it.
+ *
+ * A path that is a bare shell token needs no inner quotes. Any other path is
+ * quoted for the inner shell in a form the outer shell can carry:
+ *  - A unix-like outer shell carries `"` inside its single quotes. An inner
+ *    `'` is not used there: nushell's single-quoted strings have no escapes,
+ *    so it cannot read the `'\''` quoteArg writes for one. A path holding `"`,
+ *    `$` or a backtick sends no command, since /bin/sh would expand or end on
+ *    it inside `"`.
+ *  - PowerShell off Windows carries `'` inside its double quotes, and /bin/sh
+ *    reads everything inside `'` literally.
+ *  - On Windows, PowerShell and cmd cannot carry the `"` that cmd needs: a
+ *    Windows double-quoted argument writes a content `"` as `'` (see
+ *    `escapeForDoubleQuotedShell`). Under cmd a C-runtime `\"` would carry a
+ *    path with a space, but cmd flips its quote state on that escape, so a `&`
+ *    in the path would start a second command.
+ *
+ * Where no form works this returns null and no command is sent. The prompt
+ * regex stays the idle signal, and `--notifications` alone would make Aider
+ * fall back to its own desktop notification.
+ */
+function buildNotificationsCommand(bridgePath: string, eventsPath: string, shell: string | undefined): string | null {
+  const outerShellIsUnixLike = shell ? isUnixLikeShell(shell) : process.platform !== 'win32';
+  const innerPaths: string[] = [];
+  for (const innerPath of [bridgePath, eventsPath]) {
+    if (isBareShellToken(innerPath)) {
+      innerPaths.push(innerPath);
+    } else if (outerShellIsUnixLike) {
+      if (LIVE_IN_DOUBLE_QUOTES.test(innerPath)) return null;
+      innerPaths.push(`"${innerPath}"`);
+    } else if (process.platform !== 'win32') {
+      innerPaths.push(`'${innerPath.replace(/'/g, "'\\''")}'`);
+    } else {
+      return null;
+    }
+  }
+  return `node ${innerPaths.join(' ')} idle`;
+}
 
 /**
  * Aider CLI adapter - integrates the Aider AI pair programming tool
@@ -102,11 +151,14 @@ export class AiderAdapter implements AgentAdapter {
     // Inject --notifications-command to write idle events via event-bridge.
     // Aider fires this when the LLM finishes generating and is waiting for input.
     if (options.eventsOutputPath) {
-      const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
-      const eventsPath = toForwardSlash(options.eventsOutputPath);
-      parts.push('--notifications');
-      parts.push('--notifications-command',
-        quoteArg(`node "${eventBridge}" "${eventsPath}" idle`, shell));
+      const notificationsCommand = buildNotificationsCommand(
+        toForwardSlash(resolveBridgeScript('event-bridge')),
+        toForwardSlash(options.eventsOutputPath),
+        shell,
+      );
+      if (notificationsCommand) {
+        parts.push('--notifications', '--notifications-command', quoteArg(notificationsCommand, shell));
+      }
     }
 
     return parts.join(' ');

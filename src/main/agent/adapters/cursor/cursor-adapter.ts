@@ -154,8 +154,8 @@ export class CursorAdapter implements AgentAdapter {
       return parts.join(' ');
     }
 
-    // Shell-safe prompt: PowerShell/cmd interpret \" differently from bash,
-    // so replace double quotes with single quotes before quoteArg wrapping.
+    // Shell-safe prompt: on PowerShell/cmd, replace double quotes with single
+    // quotes. quoteArg does the same for those shells.
     const quotedPrompt = options.prompt
       ? quoteArg(
           (shell ? !isUnixLikeShell(shell) : process.platform === 'win32')

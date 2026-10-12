@@ -24,6 +24,7 @@ import {
 import {
   createShellArgvProbe,
   installedPowerShellHosts,
+  lineWithPrinterHead,
   PROBE_EXPANSION,
   typeAtCmdPrompt,
   typeAtPowerShellPrompt,
@@ -261,12 +262,13 @@ describe('Command Builder Logic', () => {
     expect(quoteArg('cost $5 total', 'cmd')).toBe('"cost $5 total"');
   });
 
-  it('quoteArg escapes a quote for cmd by the C-runtime rule', () => {
-    // `\"` is an escaped quote to the target's CRT, and a backslash run before
-    // one has to be doubled or it eats the escape. Round-tripped through cmd:
-    // both inputs below arrive at the agent byte-identical.
-    expect(quoteArg('say "hi"', 'cmd')).toBe('"say \\"hi\\""');
-    expect(quoteArg('path\\"x', 'cmd')).toBe('"path\\\\\\"x"');
+  it('quoteArg writes a content quote as a single quote for cmd, so cmd never leaves the argument', () => {
+    // `\"` is an escaped quote to the target's C runtime, but cmd flips its own
+    // quote state on it, so a model of `x" & echo X & "` ran `echo X` (measured).
+    // `""` keeps cmd in step but CommandLineToArgvW splits it (measured).
+    expect(quoteArg('say "hi"', 'cmd')).toBe(`"say 'hi'"`);
+    expect(quoteArg('path\\"x', 'cmd')).toBe(`"path\\'x"`);
+    expect(quoteArg('x" & echo X & "', 'cmd.exe')).toBe(`"x' & echo X & '"`);
   });
 
   it('quoteArg breaks each % out of the quotes for cmd, so %NAME% is never expanded', () => {
@@ -314,30 +316,24 @@ describe('Command Builder Logic', () => {
       .toBe(`"say ${LEFT_DOUBLE_QUOTE}hi${RIGHT_DOUBLE_QUOTE}"`);
   });
 
-  it('quoteArg under cmd leaves stray carets after an odd count of quotes, which is unreachable and stays', () => {
-    // Named for what it is rather than pinned as correct. cmd also toggles its
-    // quote state on the `\"` content escape, so after one content quote the
-    // caret sits inside cmd's quotes and is delivered. Measured, the agent
-    // receives `say "hi ^%X^%`. Nothing expands either way. Unreachable,
-    // because every prompt builder replaces `"` with `'` for double-quote
-    // shells, and a Windows path cannot hold `"`.
-    expect(quoteArg('say "hi %X%', 'cmd')).toBe('"say \\"hi "^%"X"^%""');
+  it('quoteArg under cmd keeps every % broken out after a content quote', () => {
+    // A `\"` content escape flips cmd's quote state at the quote, the caret
+    // lands inside cmd's quotes, and the agent receives `say "hi ^%X^%`
+    // (measured). A single quote leaves cmd's quote state alone.
+    expect(quoteArg('say "hi %X%', 'cmd')).toBe(`"say 'hi "^%"X"^%""`);
   });
 
-  it('quoteArg emits a quote PowerShell cannot parse, which is unreachable and stays', () => {
-    // Named for what it is rather than pinned as correct. `"say \"hi\""` is a
-    // parse error on BOTH pwsh 7.6 and Windows PowerShell 5.1 (the string ends
-    // at the backslash-quote), and there is no form that works on both: pwsh
-    // 7.3+ native argument passing wants a backtick-quote, while 5.1's legacy
-    // passing drops that quote and wants backslash-backtick-quote. It is also
-    // unreachable - every prompt-carrying builder pre-replaces `"` with `'`
-    // for double-quote shells (claude/command-builder.ts and siblings), and no
-    // other quoteArg input can hold a quote on Windows, where `"` is illegal in
-    // a filename. Changing it would pick a losing host silently.
-    expect(quoteArg('say "hi"', 'pwsh')).toBe('"say \\"hi\\""');
-    // The backslash is NOT doubled here, unlike the cmd case above. That is the
-    // whole difference between the two branches, on the one input that shows it.
-    expect(quoteArg('path\\"x', 'powershell')).toBe('"path\\\\"x"');
+  it('quoteArg writes a content quote as a single quote for PowerShell', () => {
+    // `\"` is not an escape to PowerShell. A model of `x";Write-Output X;"` ran
+    // Write-Output on pwsh 7.6.6 and Windows PowerShell 5.1.26100 (measured),
+    // and a model is free text a committed kangentic.json can set. A doubled or
+    // backticked quote reaches the agent intact on 7.6 but 5.1 splits the value
+    // into extra arguments; the 5.1-correct `` \`" `` leaves a stray backslash
+    // on 7.6. Only `'` delivers the same text on both hosts.
+    expect(quoteArg('say "hi"', 'pwsh')).toBe(`"say 'hi'"`);
+    expect(quoteArg('x";Write-Output X;"', 'powershell')).toBe(`"x';Write-Output X;'"`);
+    // The backslash stays single here, unlike cmd's trailing run: it is literal.
+    expect(quoteArg('path\\"x', 'powershell')).toBe(`"path\\'x"`);
   });
 
   it('quoteArg with multiline: true falls back to sanitisation under cmd', () => {
@@ -862,6 +858,16 @@ describe('Windows Path Conversion for Shells (adaptCommandForShell)', () => {
     expect(adaptCommandForShell(cmd, 'wsl -d ubuntu', 'darwin')).toBe(cmd);
   });
 
+  it('gives pwsh the & prefix on macOS and Linux too, where it can be the login shell', () => {
+    // PowerShell's parser is the same on every platform: a quoted head followed
+    // by flags is a string expression and a parse error ("Unexpected token"),
+    // measured on pwsh 7.6.6. A CLI path outside the bare token set, such as a
+    // Homebrew `node@22` install, is quoted by quoteArg and so needs the `& `.
+    const cmd = '"/opt/homebrew/opt/node@22/bin/claude" --print "hello"';
+    expect(adaptCommandForShell(cmd, '/usr/local/bin/pwsh', 'darwin')).toBe('& ' + cmd);
+    expect(adaptCommandForShell(cmd, '/usr/bin/pwsh', 'linux')).toBe('& ' + cmd);
+  });
+
   it('treats a wsl.exe-prefixed shell spec (hand-edited config) as WSL, converting to /mnt/c/...', () => {
     // resolveShellArgs now accepts a hand-edited "wsl.exe -d <distro>" config
     // value in addition to the picker's "wsl -d <distro>". The same shell
@@ -1189,6 +1195,35 @@ describe('CommandBuilder buildClaudeCommand: curly quotes in the prompt under Po
   });
 });
 
+describe('CommandBuilder buildClaudeCommand: a quote in a model or effort override', () => {
+  // A model and an effort are free text a committed kangentic.json column
+  // override or an MCP call can set, and no builder replaces their quotes.
+  function buildWithOverrides(shell: string, model: string, effort: string): string {
+    return new CommandBuilder().buildClaudeCommand({
+      cliPath: 'claude',
+      taskId: 'task-1',
+      cwd: '/project',
+      permissionMode: 'default',
+      sessionId: 'sess-123',
+      shell,
+      model,
+      effort,
+    });
+  }
+
+  it('keeps each value one quoted argument under PowerShell', () => {
+    const command = buildWithOverrides('pwsh', 'x";Write-Output X;"', 'high";hostname;"');
+    expect(command).toContain(`--model "x';Write-Output X;'"`);
+    expect(command).toContain(`--effort "high';hostname;'"`);
+  });
+
+  it('keeps each value one quoted argument under cmd', () => {
+    const command = buildWithOverrides('cmd.exe', 'x" & echo X & "', 'high"&hostname&"');
+    expect(command).toContain(`--model "x' & echo X & '"`);
+    expect(command).toContain(`--effort "high'&hostname&'"`);
+  });
+});
+
 // The measurement itself, rerun as a test: real command lines typed at a real
 // cmd prompt, through an npm-style .cmd shim, read back as the argv node got.
 // Windows only; CI's Linux runner skips it, and the string pins above are what
@@ -1257,6 +1292,24 @@ describe.skipIf(process.platform !== 'win32')('cmd prompt round trip: % in an ag
     expect(printed).toHaveLength(1);
     expect(printed[0].at(-1)).toBe('Fix %KNG_PROBE% handling');
   });
+
+  it('delivers a model holding a quote as one argument, so its & starts nothing', () => {
+    // A `\"` escape lets cmd end the line at the first `&`: the agent receives
+    // a model of `x"` and `echo` runs after it (measured).
+    const command = new CommandBuilder().buildClaudeCommand({
+      cliPath: probe.shimPath,
+      taskId: 'task-1',
+      cwd: process.cwd(),
+      permissionMode: 'default',
+      sessionId: 'probe-model',
+      shell: 'cmd.exe',
+      model: 'x" & echo INJECTED_MARKER & "',
+    });
+
+    const printed = typeAtCmdPrompt([adaptCommandForShell(command, 'cmd.exe')]);
+
+    expect(printed).toEqual([['--session-id', 'probe-model', '--model', "x' & echo INJECTED_MARKER & '"]]);
+  });
 });
 
 // The curly-quote measurement rerun as a test, through every PowerShell host
@@ -1308,6 +1361,40 @@ describe.skipIf(process.platform !== 'win32')('PowerShell round trip: curly quot
       prompts.forEach((prompt, index) => {
         expect(run.printed.find((argv) => argv[0] === `probe-${index}`), host).toEqual([`probe-${index}`, prompt]);
       });
+    }
+  }, 60_000);
+});
+
+// The model-override injection rerun as a test, through every PowerShell host
+// installed here. A model is free text a committed kangentic.json can set, and
+// no builder replaces its quotes. Windows only, as above.
+describe.skipIf(process.platform !== 'win32')('PowerShell round trip: a quote in a model override', () => {
+  let probe: ShellArgvProbe;
+
+  beforeAll(() => {
+    probe = createShellArgvProbe();
+  });
+
+  afterAll(() => {
+    probe.dispose();
+  });
+
+  it('delivers the model as one argument and runs nothing else', () => {
+    for (const host of installedPowerShellHosts()) {
+      const command = new CommandBuilder().buildClaudeCommand({
+        cliPath: 'claude',
+        taskId: 'task-1',
+        cwd: process.cwd(),
+        permissionMode: 'default',
+        sessionId: 'probe-model',
+        shell: host,
+        model: 'x";Write-Output INJECTED_MARKER;"',
+      });
+
+      const run = typeAtPowerShellPrompt(probe, host, [lineWithPrinterHead(probe, host, command, 'claude')]);
+
+      expect(run.strayLines, host).toEqual([]);
+      expect(run.printed, host).toEqual([['--session-id', 'probe-model', '--model', "x';Write-Output INJECTED_MARKER;'"]]);
     }
   }, 60_000);
 });

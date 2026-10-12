@@ -484,9 +484,9 @@ export function stderrExcerpt(stderr: string): string {
  *     `.cmd` that runs a native program would hand it a split prompt.
  *   - the backslash run before each quote and the trailing run, doubled. The C
  *     runtime reads a backslash run before a quote as an escape, so
- *     `"path\"x y"` reached the agent as two arguments (measured). This is the
- *     rule `escapeForDoubleQuotedShell`'s cmd branch applies too. That branch
- *     writes a content quote as `\"`, and this one as `""`.
+ *     `"path\"x y"` reached the agent as two arguments (measured).
+ *     `escapeForDoubleQuotedShell`'s cmd branch doubles only the trailing run,
+ *     because it writes a content quote as `'` and so has no quote inside.
  *   - each `%` with `escapePercentForCmd`. `cmd /d /s /c` is a command line, not a
  *     batch file, so the `%%` this used to write delivered `%%` for a lone
  *     percent and `%<value>%` for a defined variable (measured, see that

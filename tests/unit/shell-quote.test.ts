@@ -5,6 +5,7 @@ import {
   escapeForDoubleQuotedShell,
   escapeForPowerShellSingleQuoted,
   escapePercentForCmd,
+  isBareShellToken,
   isCmdShell,
   isPowerShellShell,
   isUnixLikeShell,
@@ -45,9 +46,17 @@ describe('escapeForDoubleQuotedShell', () => {
       expect(escapeForCmd('C:\\Program Files\\bin')).toBe('C:\\Program Files\\bin');
     });
 
-    it('doubles the backslash run before an embedded quote as well', () => {
-      expect(escapeForCmd('a"b')).toBe('a\\"b');
-      expect(escapeForCmd('a\\"b')).toBe('a\\\\\\"b');
+    it('writes a content quote as a single quote, so cmd never leaves the argument', () => {
+      // cmd flips its quote state on every `"`, escaped or not, so a `\"` escape
+      // lets `x" & echo X & "` run `echo X` (measured). `""` keeps cmd in step
+      // but CommandLineToArgvW splits it into separate arguments (measured), so
+      // a native agent could be handed an extra flag.
+      expect(escapeForCmd('a"b')).toBe("a'b");
+      expect(escapeForCmd('x" & echo X & "')).toBe("x' & echo X & '");
+    });
+
+    it('leaves the backslash before a content quote single, since a single quote follows it', () => {
+      expect(escapeForCmd('a\\"b')).toBe("a\\'b");
     });
 
     it('leaves backtick and $ alone, which are literal to both cmd and the CRT', () => {
@@ -97,6 +106,19 @@ describe('escapeForDoubleQuotedShell', () => {
     it('leaves U+201F and the curly single quotes alone, which are literal inside "..."', () => {
       const text = `${REVERSED_DOUBLE_QUOTE}x it${RIGHT_SINGLE_QUOTE}s`;
       expect(escapeForPowerShell(text)).toBe(text);
+    });
+
+    it('writes a content quote as a single quote, the one form both hosts deliver the same', () => {
+      // `\"` is not an escape to PowerShell: the string ended at the quote, and
+      // a model of `x";Write-Output X;"` ran Write-Output on pwsh 7.6.6 and on
+      // Windows PowerShell 5.1.26100 (measured). A doubled or backticked quote
+      // reaches the agent intact on 7.6 but is split into extra arguments on 5.1.
+      expect(escapeForPowerShell('say "hi"')).toBe("say 'hi'");
+      expect(escapeForPowerShell('x";Write-Output X;"')).toBe("x';Write-Output X;'");
+    });
+
+    it('keeps the backslash before a former quote, since a backslash is literal here', () => {
+      expect(escapeForPowerShell('path\\"x')).toBe("path\\'x");
     });
   });
 
@@ -241,6 +263,20 @@ describe('shell predicates', () => {
   });
 });
 
+describe('isBareShellToken', () => {
+  it('accepts ids and forward-slash paths that no supported shell reads specially', () => {
+    for (const token of ['opus', 'claude-opus-5-5', 'C:/Users/dev/app/event-bridge.js', '/usr/bin/aider', 'a.b_c:d']) {
+      expect(isBareShellToken(token), token).toBe(true);
+    }
+  });
+
+  it('rejects a space, a backslash, a quote, a shell operator, and the empty string', () => {
+    for (const token of ['My Project', 'C:\\dir', 'a"b', "a'b", 'a;b', 'a&b', '$HOME', '']) {
+      expect(isBareShellToken(token), token).toBe(false);
+    }
+  });
+});
+
 /** The renderer consumer of the same escaping (drag-drop and image paste). */
 describe('quoteForShell', () => {
   it('doubles a trailing backslash run for cmd but not for PowerShell', () => {
@@ -260,6 +296,11 @@ describe('quoteForShell', () => {
     // would end the string partway through the path.
     expect(quoteForShell(`C:\\a\\${LEFT_DOUBLE_QUOTE}x${RIGHT_DOUBLE_QUOTE}.txt`, 'pwsh.exe'))
       .toBe(`"C:\\a\\${LEFT_DOUBLE_QUOTE}${LEFT_DOUBLE_QUOTE}x${RIGHT_DOUBLE_QUOTE}${RIGHT_DOUBLE_QUOTE}.txt"`);
+  });
+
+  it('turns a quote in a POSIX path into a single quote under pwsh, so a drop cannot run a command', () => {
+    // pwsh runs on macOS and Linux, where a file name can hold `"`.
+    expect(quoteForShell('/home/dev/a"; ls; "b.txt', 'pwsh')).toBe(`"/home/dev/a'; ls; 'b.txt"`);
   });
 
   it('leaves % alone under cmd, unlike quoteArg', () => {

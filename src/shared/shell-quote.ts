@@ -50,6 +50,15 @@ export function isUnixLikeShell(shellName: string): boolean {
 }
 
 /**
+ * True when every supported shell (POSIX sh, PowerShell, cmd) reads the text
+ * as one literal word with no quotes around it: letters, digits and `._/:-`
+ * only. A backslash is excluded because it is an escape in POSIX shells.
+ */
+export function isBareShellToken(text: string): boolean {
+  return /^[a-zA-Z0-9_./:-]+$/.test(text);
+}
+
+/**
  * Sanitise text before writing to a PTY.
  *
  * Newlines are interpreted as Enter (submit) by terminal emulators,
@@ -111,6 +120,26 @@ export function escapeForPowerShellSingleQuoted(text: string): string {
  * pwsh 7.6 correct twice beats 5.1 correct once, and the only reachable input
  * shape is a task prompt whose last character is a backslash.
  *
+ * A content `"` becomes `'` on both branches, because no escaped form is safe on
+ * all three shells. It does reach here: a model or effort override is free text
+ * that a committed kangentic.json, a board profile or an MCP call can set, and no
+ * builder replaces its quotes. Measured with the value `p " --yes " q`, where `|`
+ * separates the arguments it arrived as:
+ *
+ *   written as    pwsh 7.6                 PS 5.1
+ *   \"            p \ | --yes | \ q        split, mangled
+ *   "" or `"      p " --yes " q            p  | --yes |  q
+ *   \`"           p \" --yes \" q          p " --yes " q
+ *   '             p ' --yes ' q            p ' --yes ' q
+ *
+ * With a `;` in the value, the `\"` form also ran a second statement on both
+ * PowerShell hosts. cmd flips its quote state on every `"`, so its C-runtime
+ * `\"` let a `&` in the value start a second command. Writing `""` keeps cmd in
+ * step, but CommandLineToArgvW splits `"x"" & y"` into separate arguments where
+ * node's runtime reads one. Only `'` delivers the same text everywhere. The cost
+ * is that a literal `"` never reaches an agent through a Windows double-quoted
+ * argument, the same trade every prompt builder already makes.
+ *
  * Called from `quoteArg`, this runs BEFORE its backtick-n / backtick-t
  * conversion, which is why the backtick doubling belongs here: the escapes that
  * block injects afterwards are NEW backticks the parser must read as escapes,
@@ -125,25 +154,20 @@ export function escapeForPowerShellSingleQuoted(text: string): string {
  */
 export function escapeForDoubleQuotedShell(text: string, isCmd: boolean): string {
   if (isCmd) {
-    // cmd hands the raw command line to the target executable's C runtime,
-    // which reads `\` as an escape ONLY in a run immediately before a quote.
-    // Double each such run (interior quotes first, then the closing one), so a
-    // trailing backslash cannot swallow the quote that ends the argument.
-    // Interior backslashes are untouched, so a path is delivered unchanged.
-    // Backtick and `$` are literal to both cmd and the CRT: escaping them the
-    // PowerShell way delivers them DOUBLED to the agent.
-    return text.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1');
+    // A content quote becomes `'` (see above). cmd hands the raw command line to
+    // the target executable's C runtime, which reads `\` as an escape ONLY in a
+    // run immediately before a quote. With the content quotes gone, the only
+    // such run is the one before the closing quote. Double it, so a trailing
+    // backslash cannot swallow the quote that ends the argument. Interior
+    // backslashes are untouched, so a path is delivered unchanged. Backtick and
+    // `$` are literal to both cmd and the CRT: escaping them the PowerShell way
+    // delivers them DOUBLED to the agent.
+    return text.replace(/"/g, "'").replace(/(\\+)$/, '$1$1');
   }
   // PowerShell: ` is the escape character and $ starts an expansion. A
-  // backslash is NOT special inside "..." - `"C:\path\"` already reaches a
+  // backslash is NOT special inside "...". `"C:\path\"` already reaches a
   // native command as `C:\path\` on both hosts, and escaping it would deliver
-  // `C:\path\\`. The `\"` below is a cmd/CRT escape that PowerShell rejects as
-  // a parse error on both hosts. It is unreachable in production (every
-  // prompt-carrying builder pre-replaces `"` with `'` for double-quote shells,
-  // and no other quoteArg input can contain a quote on Windows), and no single
-  // form works on both hosts - pwsh 7.3+ native argument passing wants `` ` `` +
-  // quote, while 5.1's legacy passing drops that quote and wants `\` + backtick
-  // + quote. Changing it would pick a loser silently, so it stays as it is.
+  // `C:\path\\`. A content `"` becomes `'` (see above).
   //
   // PowerShell also reads the curly double quotes as string delimiters, so each
   // is doubled, the in-string escape PowerShell gives every double quote. Left
@@ -157,12 +181,14 @@ export function escapeForDoubleQuotedShell(text: string, isCmd: boolean): string
   // doubled pair vanishes exactly as a single one did. A backtick escape was
   // measured too and rejected: on 5.1 the dropped quote leaves the backtick
   // bare, and `t, `n or `b then reaches the agent as a tab, newline or
-  // backspace in place of the next letter.
+  // backspace in place of the next letter. Doubling is safe for a curly quote
+  // and not for `"` because the parsed value then holds a curly quote, which no
+  // C runtime reads as a quote, while a `"` in it is what 5.1 splits on.
   return text
     .replace(/`/g, '``')
     .replace(/\$/g, '`$')
     .replace(POWERSHELL_CURLY_DOUBLE_QUOTES, '$&$&')
-    .replace(/"/g, '\\"');
+    .replace(/"/g, "'");
 }
 
 /**
@@ -197,13 +223,12 @@ export function escapeForDoubleQuotedShell(text: string, isCmd: boolean): string
  * which is where the two parsers disagree.
  *
  * The input is text already escaped for the inside of `"..."`, and the caret
- * only works where cmd sees the quotes closed. cmd also toggles on the `\"`
- * content escape that `escapeForDoubleQuotedShell` writes for cmd, so an odd
- * number of content quotes delivers stray carets (`say "hi ^%X^%`), though
- * still unexpanded. That input is unreachable, because every prompt builder
- * replaces `"` with `'` for double-quote shells and a Windows path cannot hold
- * `"`. `quoteForCmdShell` writes content quotes as `""`, which keeps cmd's
- * quote state in step, so it has no such case.
+ * only works where cmd sees the quotes closed. That holds because the content
+ * holds no `"`: `escapeForDoubleQuotedShell` writes a content quote as `'` for
+ * cmd. cmd toggles its quote state on a `\"` escape, so after an odd number of
+ * those the agent receives stray carets (`say "hi ^%X^%`, measured).
+ * `quoteForCmdShell` writes content quotes as `""`, which keeps cmd's quote
+ * state in step.
  *
  * `escapeForDoubleQuotedShell` does not do this, because its other caller is
  * the renderer's `quoteForShell`. A dropped or pasted path usually lands in an
