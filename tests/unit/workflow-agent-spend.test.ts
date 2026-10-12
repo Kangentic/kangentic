@@ -49,6 +49,7 @@ vi.mock('../../src/main/db/database', () => ({
     if (!db) throw new Error(`No database for ${projectId}`);
     return db;
   },
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
 }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 // The agent CLI itself is out of reach of a unit test: the registry hands back a

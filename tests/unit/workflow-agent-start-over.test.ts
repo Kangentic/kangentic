@@ -42,6 +42,7 @@ vi.mock('../../src/main/db/database', () => ({
     if (!db) throw new Error(`No database for ${projectId}`);
     return db;
   },
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
 }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: () => harness.adapter, list: () => [] } }));
