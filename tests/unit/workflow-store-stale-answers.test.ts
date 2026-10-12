@@ -36,7 +36,7 @@ const { useWorkflowStore } = await import('../../src/renderer/stores/workflow-st
 function viewTask(key: string, canvasX: number | null = null, canvasY: number | null = null): WorkflowViewTask {
   return {
     key, projectId: 'p', task: null, planned: null, title: `Task ${key}`, displayId: null, place: 'planned',
-    swimlaneId: null, steps: [], canvasX, canvasY,
+    swimlaneId: null, steps: [], canvasX, canvasY, unnamedBlockerCount: 0,
   };
 }
 

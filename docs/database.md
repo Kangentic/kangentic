@@ -557,8 +557,10 @@ Index: `idx_workflows_state` on (state), so the engine's "anything running?" pro
 | created_at | TEXT | NOT NULL | |
 
 No foreign key to tasks: either end can be a task in another project's database. A task delete
-removes the links that name it in its own database (`TaskRepository.delete`), and the engine never
-counts a link whose blocker is gone as satisfied. Indexes: `idx_task_links_workflow`,
+removes the links that name it in its own database (`TaskRepository.delete`). When that removal
+failed, the engine drops a link whose end is provably gone (`linkEndState`): the task's row is
+missing, it moved to another workflow, or its project is no longer registered. A blocker whose
+project's database will not open still holds its task. Indexes: `idx_task_links_workflow`,
 `idx_task_links_blocker`, `idx_task_links_blocked`, and `idx_task_links_pair` UNIQUE on
 (blocker_task_id, blocked_task_id).
 
