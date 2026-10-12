@@ -40,6 +40,7 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { adaptCommandForShell, quoteArg } from '../../../src/shared/paths';
 
 /** The value KNG_PROBE holds in every probe run. */
 export const PROBE_EXPANSION = 'EXPANDED';
@@ -185,13 +186,17 @@ export function typeAtCmdPrompt(lines: readonly string[]): string[][] {
   return readProbeOutput(result.stdout).printed;
 }
 
+let cachedPowerShellHosts: string[] | undefined;
+
 /**
  * The PowerShell hosts installed here: Windows PowerShell always, pwsh when on
  * PATH. A developer machine without pwsh runs the 5.1 half only. The Windows
  * workflow sets KANGENTIC_SHELL_PROBE_REQUIRE_ALL_HOSTS, so a runner image that
- * lost pwsh fails there instead of quietly halving what it checks.
+ * lost pwsh fails there instead of quietly halving what it checks. The answer
+ * is kept for the test file, so pwsh starts once per file, not once per test.
  */
 export function installedPowerShellHosts(): string[] {
+  if (cachedPowerShellHosts) return cachedPowerShellHosts;
   const hosts = ['powershell.exe'];
   const pwsh = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], {
     windowsHide: true,
@@ -202,7 +207,22 @@ export function installedPowerShellHosts(): string[] {
   } else if (process.env.KANGENTIC_SHELL_PROBE_REQUIRE_ALL_HOSTS === '1') {
     throw new Error('pwsh is not on PATH, and KANGENTIC_SHELL_PROBE_REQUIRE_ALL_HOSTS requires it');
   }
+  cachedPowerShellHosts = hosts;
   return hosts;
+}
+
+/**
+ * The line a PowerShell host types for a built agent command, with the agent's
+ * head swapped for node and the argv printer so it runs here. Throws when the
+ * command does not start with `agentHead`, so a builder that changes its head
+ * fails here instead of typing the real agent.
+ */
+export function lineWithPrinterHead(probe: ShellArgvProbe, host: string, command: string, agentHead: string): string {
+  if (!command.startsWith(`${agentHead} `)) {
+    throw new Error(`The command does not start with ${agentHead}: ${command}`);
+  }
+  const printerHead = `${quoteArg(process.execPath, host)} ${quoteArg(probe.printerPath, host)}`;
+  return adaptCommandForShell(`${printerHead}${command.slice(agentHead.length)}`, host, 'win32');
 }
 
 /**

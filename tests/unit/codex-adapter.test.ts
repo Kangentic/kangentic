@@ -266,10 +266,10 @@ describe('Codex Adapter', () => {
     });
 
     // --- Shell portability. See command-builder.ts's QUOTING CONTRACT. ---
-    // These pin the exact regression that shipped as a PowerShell-only hard
-    // failure: quoteArg escapes embedded double quotes as \", which
-    // PowerShell splits into multiple argv tokens, so the natural TOML
-    // inline-table form made Codex exit 2 with
+    // These pin the quote-free payloads. quoteArg cannot deliver an embedded
+    // double quote on Windows (it writes one as '), so the natural TOML
+    // inline-table form cannot arrive as written. The regression these were
+    // added for made Codex exit 2 under PowerShell with
     // `error: unexpected argument 'http://...\' found`.
 
     it('emits -c payloads free of quote, brace, and whitespace characters', () => {
