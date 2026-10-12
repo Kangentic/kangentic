@@ -32,10 +32,10 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   transient PTYs to slots.
 - **MAIN owns the cap and the slot allocation.** `startCommandTerminal`
   (`transient-sessions.ts`) is the one start path, run by the desktop's `session:spawnTransient`
-  and the bridge's `command-terminal` verb alike. It counts the project's non-exited transient
-  rows plus a synchronous reservation map, so a phone start and a desktop New in flight together
-  cannot pass the cap or share a slot. The renderer proposes a slot only for a window it is
-  opening, from the union of window anchors and the replica's live transient rows, and handles a
+  and the bridge's `command-terminal` verb alike. It counts the project's non-exited Command
+  Terminal rows plus a synchronous reservation map, so a phone start and a desktop New in flight
+  together cannot pass the cap or share a slot. The renderer proposes a slot only for a window it
+  is opening, from the union of window anchors and the replica's live Command Terminal rows, and handles a
   `slot-taken` throw. Never pick or cap slots from the window store alone: a phone terminal has
   no window.
 - **A terminal ENDS when its agent exits, and every end goes through
@@ -118,8 +118,11 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   after a reload.
 - **Transient is not the same as Command Terminal.** A workflow's own agent is transient too (no
   task, no `sessions` row) and carries `workflowId`. Anything about the Command Terminal (the
-  count, the slot re-pairing, window reconciliation, the Monitor's terminal rows) asks
-  `isCommandTerminalSession` (`src/shared/session-owner.ts`), never `transient` alone.
+  count, the slot cap and re-pairing, window reconciliation, the Monitor's terminal rows, the end
+  on a PTY exit or suspend, `endCommandTerminal`, the namer, the leftover reap, and the phone's
+  terminal list, lifecycle feed and push context) asks `isCommandTerminalSession`
+  (`src/shared/session-owner.ts`), never `transient` alone. A workflow agent ended as a terminal
+  loses the row its Workflows pane reads, so its Pause turns into a restart.
 - **Arm the pending-open flag only once a project switch is CONFIRMED.** The sidebar indicator
   switches project and reopens the layer via the same `setPendingOpenCommandTerminal` flag the
   notification-click path uses. Awaiting `openProject` is not enough: it also RESOLVES without

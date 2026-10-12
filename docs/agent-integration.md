@@ -119,7 +119,7 @@ All implementations are best-effort and never throw: a help-read or history-scan
 
 `src/main/agent/agent-adapter.ts`
 
-Seven recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
+Eight recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -128,6 +128,7 @@ Seven recently-added optional fields drive per-spawn overrides. Adapters consume
 | `executionTarget?` | `ResolvedExecutionTarget` | Present only when this project's execution mode for the agent is `remote` (see [Remote Execution](#remote-execution) below and [configuration.md - Remote Execution](configuration.md#remote-execution)). Adapters that declare `remoteExecution` read this instead of spawning the CLI locally; `undefined` unambiguously means local. Resolved by `resolveExecutionTarget()` and populated at both spawn chokepoints (`transition-engine.ts`, `session-startup/prepare-spawn.ts`). |
 | `launchOptions?` | `Record<string, boolean>` | Fully-defaulted boolean launch-option values for this agent, keyed by `AgentLaunchOptionInfo.id` (e.g. Codex's `disableApps` -> `--disable apps`). `undefined` for adapters that declare no launch options. Resolved by `resolveLaunchOptions()` and populated at both spawn chokepoints (`transition-engine.ts`, `session-startup/prepare-spawn.ts`). |
 | `taskProcessTag?` | `string` | The task's `KANGENTIC_TASK_ID` value, the tag a terminal transition reaps by (see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree)). The PTY env already carries it; an adapter whose CLI can strip inherited variables from its tool shells re-injects it (Codex: `-c shell_environment_policy.set.KANGENTIC_TASK_ID=<id>`). Populated at both task spawn chokepoints, and by a Command Terminal's start with the terminal's own made-up task id. |
+| `capturePromptText?` | `boolean` | Carry the submitted prompt's text in the Prompt event's `detail`. Set only by a Command Terminal's start, whose namer (`command-terminal-namer.ts`) names the terminal from its first prompt; a task spawn never sets it, so task sessions' events keep no prompt text. An adapter whose prompt hook carries no text ignores it. |
 | `readOnly?` | `boolean` | Launch with no tool that edits a file or runs a shell command, and with Kangentic's MCP server as the only one. Set only for a workflow's own agent, and only on an adapter that declares `supportsReadOnlyLaunch`. Claude maps it to `--tools Read,Grep,Glob,ToolSearch`, `--strict-mcp-config` and `--no-chrome` (`READ_ONLY_TOOLS` in `adapters/claude/command-builder.ts`). |
 | `readableDirectories?` | `readonly string[]` | More directories the agent may read beyond its `cwd`: other projects' checkouts, for a workflow agent planning tasks on their boards. Set only on an adapter that declares `supportsReadableDirectories`. Claude emits one `--add-dir` per directory. |
 

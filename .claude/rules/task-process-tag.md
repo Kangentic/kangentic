@@ -14,7 +14,7 @@ paths:
 A user moved a task to Done and the processes its agent had started kept running. The old reap
 read a per-session snapshot of the PTY's descendant pids, and that snapshot was deleted at every
 suspend, never held a process whose launcher exited inside one 2 s watcher cycle (`nohup X &`,
-`Start-Process`), and died with the app. Every task session's PTY now carries
+`Start-Process`), and died with the app. Every session's PTY now carries
 `KANGENTIC_TASK_ID=<taskId>`, which every descendant inherits however it detached, and a terminal
 transition kills what the task left running (`src/main/pty/process-tag/`). The tag alone
 over-reaches: a tmux server, pm2's daemon, an editor or a browser the agent happened to start first

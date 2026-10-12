@@ -764,7 +764,7 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 4. Spawn the PTY in the pty host (a `spawn` request; node-pty runs there, and the reply carries the pid)
 5. Start two file watchers (status, events)
 6. The host runs the output handler (16ms batched flush)
-7. After 100ms delay, write the CLI command to PTY stdin (agent spawns are prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient Command Terminals are not)
+7. After 100ms delay, write the CLI command to PTY stdin (agent spawns are prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient sessions, Command Terminals and a workflow's agent, are not)
 
 ### Output Streaming
 
@@ -1031,8 +1031,15 @@ src/main/workflows/
 - **The workflow agent is a transient session carrying `workflowId`** (`src/shared/session-owner.ts`).
   Transient keeps it out of everything a task session drives: `sessions.task_id` is a foreign key to
   tasks, so its conversation is recorded on the workflow instead (`agent_name`, `agent_session_id`).
-  `isCommandTerminalSession` keeps it out of what a Command Terminal has: the title-bar count, slot
-  re-pairing, window reconciliation, the Monitor. It runs in the home project's checkout, read-only:
+  `isCommandTerminalSession` keeps it out of what a Command Terminal has: the title-bar count, the
+  slot cap and re-pairing, window reconciliation, the Monitor, the name from its first prompt, the
+  leftover reap, and the phone's terminal list, lifecycle feed and push. Main ends a Command
+  Terminal whose PTY exits or is suspended; the workflow agent keeps its row, as a task's agent
+  does, so its Pause leaves a paused pane and an exited row tells the pane to start it over. The
+  agent-absence sweep judges and retires it like a task's agent, and its processes carry its
+  workflow's id as their `KANGENTIC_TASK_ID`, which no task shares. While it runs it holds an agent
+  slot under Max Concurrent Sessions, as a Command Terminal does, and its Pause frees it. It runs in
+  the home project's checkout, read-only:
   Claude with `--tools Read,Grep,Glob,ToolSearch`, `--strict-mcp-config` and `--no-chrome`, and an
   MCP URL whose caller segment is `workflow-<id>`, for which the server registers only the
   read-only tools and the planning tools, bound to that workflow (`workflow-agent-scope.ts`). It is

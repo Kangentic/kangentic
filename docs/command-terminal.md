@@ -44,7 +44,8 @@ That broke once a paired phone could start a terminal: the phone has no window, 
 could pick a slot a phone terminal already held. `startCommandTerminal`
 (`src/main/ipc/handlers/transient-sessions.ts`), which both the desktop's `session:spawnTransient`
 and the bridge's `command-terminal` verb run, now allocates the lowest free slot and refuses a
-fifth terminal. The occupied set is the project's non-exited transient registry rows plus a
+fifth terminal. The occupied set is the project's non-exited Command Terminal rows
+(`isCommandTerminalSession`, so a workflow's own agent never takes a slot) plus a
 module-level reservation map filled synchronously on entry and released in a `finally`, so two
 starts in flight together cannot both pass the cap or share a slot across the spawn's awaits. A
 window that asks for a slot already taken gets a throw, which `CommandTerminalWindow` already toasts
@@ -172,7 +173,7 @@ measure against it.
 ## Geometry is global, population is per-project
 
 The window layout blob is shared across projects, but which slots get windows is reconciled to
-the current project's live transient sessions on open (`reconcileCommandTerminalWindows` and
+the current project's live Command Terminal sessions on open (`reconcileCommandTerminalWindows` and
 `planCommandWindowReconciliation` in `command-window-reconcile.ts`).
 
 Project switching keeps every slot's PTY alive in the map, with no stash or restore. The bar
@@ -251,7 +252,7 @@ on `CollapsedRail`'s 28px buttons, where an arc-bearing glyph would read as brok
 
 Both the toggle and the sidebar read one shared selector, `selectCommandTerminalSummary`
 (`transient-session-slice.ts`), which derives count and tone from the unscoped `sessions` list
-(`transient && projectId && status === 'running'`) rather than from the `transientSessions` map.
+(`isCommandTerminalSession && projectId && status === 'running'`) rather than from the `transientSessions` map.
 That map is renderer-owned window pairing whose hard-reload recovery only re-pairs the current
 project, so a map-based count reads zero for every background project after a reload.
 
