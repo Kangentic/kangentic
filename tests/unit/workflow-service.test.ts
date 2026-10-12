@@ -76,7 +76,7 @@ describe('workflow operations', () => {
   });
 
   afterEach(() => {
-    for (const database of harness.dbs.values()) (database as Database.Database).close();
+    for (const projectDatabase of harness.dbs.values()) (projectDatabase as Database.Database).close();
     harness.dbs.clear();
     vi.restoreAllMocks();
   });
@@ -594,6 +594,35 @@ describe('workflow operations', () => {
         routeLast: 'Code Review',
       });
       expect(storedRoute(created.id)).toEqual({ start: laneNamed('Planning').id, last: laneNamed('Code Review').id, skipped: [] });
+    });
+
+    it('refuses savePlan with a task whose route is reversed, and keeps the stored draft', () => {
+      // A draft is where a reversed route would otherwise sit unseen until Start.
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, plan());
+      const repository = new WorkflowRepository(harness.dbs.get('home') as Database.Database);
+      const stored = repository.getById(workflow.id)!;
+      expect(stored.draft?.tasks.map((task) => task.key)).toEqual(['api', 'ui', 'phone']);
+
+      expect(() => service.savePlan(context, 'home', workflow.id, plan({
+        title: 'Reversed budgets',
+        tasks: [{ key: 'api', title: 'Budgets API', routeStart: 'Code Review', routeLast: 'Planning' }],
+        links: [],
+      }))).toThrow(REVERSED);
+
+      const afterRefusal = repository.getById(workflow.id)!;
+      expect(afterRefusal.draft).toEqual(stored.draft);
+      expect(afterRefusal.title).toBe(stored.title);
+      expect(afterRefusal.revision).toBe(stored.revision);
+
+      // The same two columns in board order are saved, so the order is what was refused.
+      const saved = service.savePlan(context, 'home', workflow.id, plan({
+        tasks: [{ key: 'api', title: 'Budgets API', routeStart: 'Planning', routeLast: 'Code Review' }],
+        links: [],
+      }));
+      expect(saved.draft?.tasks).toHaveLength(1);
+      expect(saved.draft?.tasks[0].route_start_swimlane_id).toBe(laneNamed('Planning').id);
+      expect(saved.draft?.tasks[0].route_last_swimlane_id).toBe(laneNamed('Code Review').id);
     });
   });
 

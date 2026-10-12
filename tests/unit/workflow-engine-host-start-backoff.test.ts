@@ -177,7 +177,7 @@ describe('the workflow engine host', () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
-    for (const database of harness.dbs.values()) (database as Database.Database).close();
+    for (const projectDatabase of harness.dbs.values()) (projectDatabase as Database.Database).close();
     harness.dbs.clear();
   });
 

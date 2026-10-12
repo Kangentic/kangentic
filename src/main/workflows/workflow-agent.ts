@@ -177,10 +177,8 @@ function syncWorkflowAgentAccess(context: IpcContext, homeProjectId: string, wor
   const agentName = context.sessionManager.getSessionAgentName(session.id);
   const adapter = agentName ? agentRegistry.get(agentName) : undefined;
   if (!adapter?.supportsReadableDirectories) return 'unsupported';
-  const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId);
-  if (!workflow) return 'next-start';
-  const granted = grantedDirectories.get(workflowId) ?? new Set<string>();
-  const missing = readableProjectsOf(context, homeProjectId, workflow).filter((readable) => !granted.has(readable.path));
+  const missing = missingCheckouts(context, homeProjectId, workflowId);
+  if (!missing) return 'next-start';
   if (missing.length === 0) return 'already';
   const list = missing.map((readable) => `${readable.name} at ${readable.path}`).join(', ');
   pendingAccess.set(workflowId, {
@@ -190,6 +188,17 @@ function syncWorkflowAgentAccess(context: IpcContext, homeProjectId: string, wor
   if (isActive(context.sessionManager.getActivityCache()[session.id])) return 'next-turn';
   setImmediate(() => void restartWithAccess(context, workflowId));
   return 'now';
+}
+
+/**
+ * The checkouts the workflow's agent should read that its running process was
+ * not started with, or null when the workflow is gone.
+ */
+function missingCheckouts(context: IpcContext, homeProjectId: string, workflowId: string): ReadableProject[] | null {
+  const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId);
+  if (!workflow) return null;
+  const granted = grantedDirectories.get(workflowId) ?? new Set<string>();
+  return readableProjectsOf(context, homeProjectId, workflow).filter((readable) => !granted.has(readable.path));
 }
 
 /** Resume the agent on its conversation with the checkouts it is owed, and tell it so. */
@@ -207,6 +216,16 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
     pendingAccess.set(workflowId, pending);
     return;
   }
+  // A start since this was owed (a Resume after a Pause) read the grant from
+  // the workflow row, so the running agent may already have every checkout.
+  let missing: ReadableProject[] | null;
+  try {
+    missing = missingCheckouts(context, pending.homeProjectId, workflowId);
+  } catch {
+    // Its project's database is closing under a delete.
+    return;
+  }
+  if (!missing?.length) return;
   let suspended = false;
   try {
     captureSpend(context, session);
@@ -222,8 +241,9 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
     const restarted = await startOnce(context, pending.homeProjectId, workflowId, lastGrid.get(workflowId) ?? {}, pending.message);
     // A start that cannot run (the MCP server turned off, the CLI gone) leaves
     // the agent suspended, as a Pause would, and the pane offers Resume, which
-    // shows the same reason. Nothing is owed: that start reads the grant.
-    if (!restarted.session) {
+    // shows the same reason. Nothing is owed: that start reads the grant. A
+    // start a Pause stopped after the agent ended has no reason to give.
+    if (restarted.unavailable) {
       console.warn(`[WORKFLOW-AGENT] Stopped to read new project access, but could not start again: ${restarted.unavailable}`);
     }
   } catch (error) {

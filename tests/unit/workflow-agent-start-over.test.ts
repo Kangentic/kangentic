@@ -13,7 +13,8 @@
  *
  * The races around a start live here too, since they share the harness: a
  * start-over never replaces a session the user resumed while the dead one's
- * scrollback was read; the end of a workflow waits for an open still in flight
+ * scrollback was read; a Pause pressed in that same window stands for the
+ * session the start-over spawns; the end of a workflow waits for an open still in flight
  * and ends what it spawned; and a start reads its workflow again before it
  * spawns, so one deleted or finished while the CLI was being found spawns nothing.
  */
@@ -337,6 +338,37 @@ describe('a workflow\'s own agent starting over', () => {
     expect(agent.workflowAgentSummary(context, workflowId)).toMatchObject({ state: 'idle', startedOverSessionId: null });
     // The conversation the user resumed is still the workflow's.
     expect(new WorkflowRepository(harness.dbs.get('home') as Database.Database).getById(workflowId)!.agent_session_id).toBe('conv-gone');
+  });
+
+  it('suspends the session it starts over in when the user paused while the dead one\'s scrollback was being read', async () => {
+    const resumed = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+    let finishScrollback!: () => void;
+    const scrollbackGate = new Promise<void>((resolve) => {
+      finishScrollback = resolve;
+    });
+    manager.getRawScrollback.mockImplementationOnce(async () => {
+      await scrollbackGate;
+      return 'No conversation found with session ID: conv-gone';
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    manager.exitOnItsOwn(resumed.session!.id);
+    await vi.waitFor(() => expect(manager.getRawScrollback).toHaveBeenCalledTimes(1));
+
+    // The resumed session has exited and the start-over has not spawned: the
+    // Pause finds no live agent to stop, and only records itself.
+    await agent.pauseWorkflowAgent(context, workflowId);
+    expect(manager.suspend).not.toHaveBeenCalled();
+    expect(manager.spawn).toHaveBeenCalledTimes(1);
+
+    finishScrollback();
+    await vi.waitFor(() => expect(manager.suspend).toHaveBeenCalledWith('pty-spawned-2'));
+    // The summary names the start-over after this push.
+    await vi.waitFor(() => expect(harness.notifyWorkflowChanged).toHaveBeenCalledWith('home', workflowId));
+
+    expect(manager.spawn).toHaveBeenCalledTimes(2);
+    expect(manager.suspend).toHaveBeenCalledTimes(1);
+    expect(manager.getSession('pty-spawned-2')?.status).toBe('suspended');
+    expect(agent.workflowAgentSummary(context, workflowId)).toMatchObject({ state: 'paused', startedOverSessionId: 'pty-spawned-2' });
   });
 
   describe('the end of a workflow while its agent is still opening', () => {

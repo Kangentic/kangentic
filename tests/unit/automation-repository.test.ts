@@ -277,7 +277,7 @@ describe('AutomationRepository', () => {
     // lowercase do not, so the rename matches through the same function.
     it('points a row at the new name when its stored target is padded with a space only JavaScript trims, as resolveMoveTarget reads it', () => {
       const { lanes, automations, columnId, testing } = renamableSetup();
-      automations.replaceForColumn(columnId, [moveTo('No-break', 'Testing '), moveTo('Em space', ' testing')]);
+      automations.replaceForColumn(columnId, [moveTo('No-break', 'Testing\u00a0'), moveTo('Em space', '\u2003testing')]);
 
       lanes.update({ id: testing.id, name: 'Verify' });
 

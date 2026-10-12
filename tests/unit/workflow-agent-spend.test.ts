@@ -5,8 +5,9 @@
  * Spend. The agent has no `sessions` row, so its cost reaches Stats only through
  * a `usage_history` row written under its PTY session id. A stop clears the
  * session manager's live usage, so every stop that Kangentic makes (Pause, a
- * restart for new checkouts, the end of the workflow) has to write that row
- * first, and a stop the CLI makes (its exit) writes it from the exit listener.
+ * Pause that a start finds out about once its agent is spawned, a restart for
+ * new checkouts, the end of the workflow) has to write that row first, and a
+ * stop the CLI makes (its exit) writes it from the exit listener.
  * The agent-absence sweep is the third: it emits `agent-absent`, then kills the
  * session, so its exit arrives intentional and the exit listener skips it; the
  * `agent-absent` edge writes the spend instead.
@@ -327,6 +328,37 @@ describe('a workflow\'s own agent: spend and conversation', () => {
       await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(1));
       await new Promise((resolve) => setImmediate(resolve));
       expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it('on a Pause pressed while the agent was spawning, before the suspend of the new agent drops the live usage', async () => {
+      // A conversation to resume, so the row books under the id `expectBookedOnce` reads.
+      new WorkflowRepository(homeDb()).setAgentConversation(workflowId, { agentName: 'claude', agentSessionId: 'conv-1', cwd: paths.home });
+      let finishSpawn!: () => void;
+      const spawnGate = new Promise<void>((resolve) => {
+        finishSpawn = resolve;
+      });
+      const spawnImmediately = manager.spawn.getMockImplementation()!;
+      manager.spawn.mockImplementationOnce(async (options: SpawnOptions) => {
+        await spawnGate;
+        const spawned = await spawnImmediately(options);
+        // The new agent has spend on the meter from the moment it exists.
+        manager.usageCache[spawned.id] = LIVE_USAGE;
+        return spawned;
+      });
+
+      const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+      await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(1));
+      // No row exists yet, so the Pause finds no agent to stop and books nothing itself.
+      await agent.pauseWorkflowAgent(context, workflowId);
+      expect(manager.suspend).not.toHaveBeenCalled();
+      expect(ledgerRows('pty-spawned-1')).toHaveLength(0);
+
+      finishSpawn();
+      await opened;
+
+      // The start suspended the agent the Pause reached, and booked its spend first.
+      expect(manager.suspend).toHaveBeenCalledWith('pty-spawned-1');
+      expectBookedOnce('pty-spawned-1');
     });
 
     it('when the CLI exits on its own, from the exit listener', () => {

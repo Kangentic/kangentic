@@ -16,7 +16,12 @@
  *   Resume pressed after that Pause joins the start in flight and spawns it;
  * - a Pause pressed later still, while a start is spawning, finds no row or only
  *   the one the start replaces, so the start suspends the new agent once it
- *   exists (once, when the Pause reached its row first, and never an exited one);
+ *   exists (once, when the Pause reached its row first, and never an exited one),
+ *   even when the write that records its conversation throws, and only after
+ *   that write, so a Resume finds the conversation;
+ * - a restart owed to an agent that a Pause and a Resume since replaced leaves
+ *   the new agent alone when its start already read the checkout, and still
+ *   restarts one that lacks it;
  * - a restart whose suspend worked but whose start then threw, after the new
  *   agent was already running, owes nothing: the new agent has the access, and
  *   owing it again would stop and respawn a healthy agent at every idle edge.
@@ -771,6 +776,120 @@ describe('the workflow agent\'s reads across projects', () => {
         // The row stays running, as the real suspend leaves it when it fails: the start still has an agent to report.
         expect(status.unavailable).toBeNull();
         expect(status.session).toMatchObject({ id: 'session-restarted', status: 'running' });
+      });
+
+      it('still suspends the new agent when the write of its conversation throws, and the open rejects with that error', async () => {
+        const workflowId = workflowWithNoAgent();
+        const writeFailure = new Error('the conversation could not be recorded');
+        // Installed after the seed above, which writes through the same method.
+        spies.push(vi.spyOn(WorkflowRepository.prototype, 'setAgentConversation').mockImplementation(() => {
+          throw writeFailure;
+        }));
+        const { release } = holdNextSpawn();
+
+        const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        // No row exists yet, so the Pause finds no agent to stop.
+        await agent.pauseWorkflowAgent(context, workflowId);
+        expect(suspend).not.toHaveBeenCalled();
+
+        release();
+        await expect(opened).rejects.toBe(writeFailure);
+
+        // The Pause stands for the agent the failed start left running.
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(suspend).toHaveBeenCalledWith('session-restarted');
+        expect(sessions.map((session) => [session.id, session.status])).toEqual([['session-restarted', 'suspended']]);
+      });
+
+      it('records the conversation before it suspends the new agent, so a Resume finds it', async () => {
+        // A workflow with no conversation: this start makes one.
+        const workflowId = service.createWorkflow('home', {}).id;
+        expect(read(workflowId).agent_session_id).toBeNull();
+        // A start with no conversation builds the first message, which asks for the board's default branch.
+        Object.assign(context, { boardConfigManager: { getDefaultBaseBranchForPath: () => 'main' } });
+        // Reads the row at the moment the agent is stopped, then stops it as the fake does.
+        const conversationAtSuspend: Array<string | null> = [];
+        const stopAgent = suspend.getMockImplementation()!;
+        suspend.mockImplementation(async (sessionId: string) => {
+          conversationAtSuspend.push(read(workflowId).agent_session_id);
+          await stopAgent(sessionId);
+        });
+        const { release } = holdNextSpawn();
+
+        const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        await agent.pauseWorkflowAgent(context, workflowId);
+        expect(suspend).not.toHaveBeenCalled();
+
+        release();
+        const status = await opened;
+
+        const startedConversation = spawn.mock.calls[0][0].agentSessionId;
+        expect(startedConversation).toEqual(expect.any(String));
+        // Already set when the suspend ran, and still set afterwards.
+        expect(conversationAtSuspend).toEqual([startedConversation]);
+        expect(read(workflowId).agent_session_id).toBe(startedConversation);
+        expect(status.session).toMatchObject({ id: 'session-restarted', status: 'suspended' });
+      });
+    });
+
+    // A start since the restart was owed (a Resume after a Pause) read the grant
+    // from the workflow row, so the agent it spawned may already have every
+    // checkout. The restart looks again before it stops that agent.
+    describe('a restart owed to an agent that a later start already gave the checkout', () => {
+      beforeEach(() => {
+        makeStartsReachSpawn();
+      });
+
+      /** A conversation in a turn, asked for `mobile`'s checkout: the restart is owed at the turn's end. */
+      function midTurnAgentOwedMobile(): string {
+        const workflowId = idleAgent('session-mid-turn');
+        recordConversation(workflowId);
+        activity['session-mid-turn'] = 'thinking';
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('next-turn');
+        return workflowId;
+      }
+
+      /** The first message each command was built with; a resume built without one reads as an empty string. */
+      function builtPrompts(): string[] {
+        return buildCommand.mock.calls.map((call) => String(call[0].prompt ?? ''));
+      }
+
+      it('leaves the new agent running at its idle edge, and starts nothing', async () => {
+        const workflowId = midTurnAgentOwedMobile();
+        await agent.pauseWorkflowAgent(context, workflowId);
+        // The Resume's start reads the grant from the workflow row.
+        await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(buildCommand.mock.calls[0][0].readableDirectories).toEqual([paths.mobile]);
+        expect(suspend.mock.calls).toEqual([['session-mid-turn']]);
+
+        // The new agent finishes its first turn. The restart queued first has run by the time this resolves.
+        activity['session-restarted'] = 'idle';
+        manager.emit('activity', 'session-restarted', 'idle');
+        await nextTurn();
+        await nextTurn();
+
+        expect(suspend.mock.calls).toEqual([['session-mid-turn']]);
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(builtPrompts().some((prompt) => prompt.includes('Kangentic restarted you'))).toBe(false);
+        expect(sessions.map((session) => [session.id, session.status])).toEqual([['session-restarted', 'running']]);
+      });
+
+      it('restarts the agent at its idle edge when a checkout it was owed is still missing (the control)', async () => {
+        midTurnAgentOwedMobile();
+
+        activity['session-mid-turn'] = 'idle';
+        manager.emit('activity', 'session-mid-turn', 'idle');
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        // The start's last step after its spawn: one turn lets it end.
+        await nextTurn();
+
+        expect(suspend).toHaveBeenCalledWith('session-mid-turn');
+        expect(buildCommand.mock.calls[0][0].readableDirectories).toEqual([paths.mobile]);
+        expect(builtPrompts()[0]).toContain(`kangentic-mobile at ${paths.mobile}`);
+        expect(builtPrompts()[0]).toContain('Kangentic restarted you');
       });
     });
 
