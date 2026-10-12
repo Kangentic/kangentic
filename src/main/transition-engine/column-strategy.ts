@@ -21,6 +21,7 @@
  * an in-flight task.
  */
 
+import { hasCondition, hasFrequencyLimit } from '../automations/row-guards';
 import type {
   AutoCommandMode,
   BoardProfile,
@@ -268,8 +269,9 @@ export function resolveColumnMessage(
   //
   // `guarded` says the row carries a Condition or a Frequency limit. Only the
   // runner applies those, so a caller that delivers the message itself must
-  // leave a guarded row to the runner: delivering it would skip both.
-  const guarded = (typeof row.condition === 'string' && row.condition.trim() !== '') || typeof row.max_runs === 'number';
+  // leave a guarded row to the runner: delivering it would skip both. Asked
+  // through the runner's own predicates, so the two never disagree.
+  const guarded = hasCondition(row) || hasFrequencyLimit(row);
   return { id: row.id, message, mode: row.config.mode ?? 'immediate', guarded };
 }
 

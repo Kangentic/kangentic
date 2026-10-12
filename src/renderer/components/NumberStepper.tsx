@@ -26,10 +26,12 @@ export function NumberStepper({ value, onChange, min = 1, max = 999, disabled = 
   // What is being typed, while it is being typed. Null shows the committed value.
   const [typed, setTyped] = useState<string | null>(null);
   const clamp = (next: number): number => Math.min(max, Math.max(min, Math.round(next)));
+  // The typed text as a number; NaN when nothing, or nothing numeric, is typed.
+  const typedNumber = (): number => (typed === null ? Number.NaN : Number.parseInt(typed, 10));
 
   const commitTyped = (): void => {
     if (typed === null) return;
-    const parsed = Number.parseInt(typed, 10);
+    const parsed = typedNumber();
     setTyped(null);
     if (Number.isFinite(parsed)) onChange(clamp(parsed));
   };
@@ -38,7 +40,7 @@ export function NumberStepper({ value, onChange, min = 1, max = 999, disabled = 
   // stepping from the committed value would leave the typed text showing, and
   // the blur would then commit it over the step.
   const stepBy = (delta: number): void => {
-    const parsed = typed === null ? Number.NaN : Number.parseInt(typed, 10);
+    const parsed = typedNumber();
     setTyped(null);
     onChange(clamp((Number.isFinite(parsed) ? parsed : value) + delta));
   };

@@ -362,9 +362,10 @@ export function WorkflowCanvas({
 
   // A card moved with the arrow keys is saved the way a drag stop saves it,
   // once the keys rest. Each waiting place is kept per card, with the workflow
-  // it was made on, and is saved to that workflow: another workflow on the
-  // canvas and leaving the view both save them there, and a drag or Auto layout
-  // supersedes them. A workflow switch unmounts the canvas after the store has
+  // it was made on, and is saved to that workflow when the canvas unmounts, and
+  // a drag or Auto layout supersedes them. Every workflow switch unmounts the
+  // canvas: the store empties `detail` whenever the selection changes, and the
+  // view draws no canvas without one. That unmount comes after the store has
   // already selected the next workflow, so the save cannot ask the store whose
   // places these are.
   const pendingKeyMoves = useRef<PendingKeyMoves | null>(null);
@@ -385,9 +386,6 @@ export function WorkflowCanvas({
   }, [takeKeyMoves]);
   const workflowId = detail.workflow.id;
   const homeProjectId = detail.homeProjectId;
-  useEffect(() => {
-    if (pendingKeyMoves.current !== null && pendingKeyMoves.current.workflow.workflowId !== workflowId) saveKeyMoves();
-  }, [workflowId, saveKeyMoves]);
   useEffect(() => saveKeyMoves, [saveKeyMoves]);
 
   const handleDragStart = useCallback<OnNodeDrag<WorkflowFlowNode>>(() => {

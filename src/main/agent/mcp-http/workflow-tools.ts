@@ -157,7 +157,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
         routeStart: z.string().optional().describe(COLUMN_NAME_DESCRIPTION),
         routeLast: z.string().optional().describe(COLUMN_NAME_DESCRIPTION),
         skip: z.array(z.string()).optional().describe('Columns inside its route it skips.'),
-        waitsFor: z.array(z.string()).optional().describe('Task numbers or ids in this workflow it waits for.'),
+        waitsFor: z.array(z.string()).optional().describe('Tasks in this workflow it waits for: a task number on the workflow\'s own board, or the id of one on any of its boards.'),
         ...RUN_SETTINGS_SHAPE,
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),

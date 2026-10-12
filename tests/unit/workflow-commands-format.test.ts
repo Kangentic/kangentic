@@ -32,6 +32,7 @@ const service = await import('../../src/main/workflows/workflow-service');
 const { formatWorkflow } = await import('../../src/main/agent/commands/workflow-commands');
 
 import { openTestDatabase } from './helpers/test-database';
+import { planAcrossBoards, taskTitled } from './helpers/workflow-plans';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 describe('formatWorkflow: which board a task is on', () => {
@@ -64,21 +65,6 @@ describe('formatWorkflow: which board a task is on', () => {
     harness.dbs.clear();
   });
 
-  /** api and ui on the home board, phone on the mobile board. The phone task blocks api, and api blocks ui. */
-  function planAcrossBoards() {
-    const workflow = service.createWorkflow('home', {});
-    service.savePlan(context, 'home', workflow.id, {
-      title: 'Usage budgets',
-      tasks: [
-        { key: 'api', title: 'Budgets API' },
-        { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' },
-        { key: 'ui', title: 'Budgets UI' },
-      ],
-      links: [{ blocker: 'phone', blocked: 'api' }, { blocker: 'api', blocked: 'ui' }],
-    });
-    return workflow;
-  }
-
   /** The line `formatWorkflow` printed for the task with this title. */
   function lineOf(text: string, title: string): string {
     const line = text.split('\n').find((candidate) => candidate.startsWith('- ') && candidate.includes(` ${title}.`));
@@ -88,15 +74,15 @@ describe('formatWorkflow: which board a task is on', () => {
 
   describe('a started workflow', () => {
     async function started() {
-      const workflow = planAcrossBoards();
+      const workflow = planAcrossBoards(service, context);
       await service.startWorkflow(context, 'home', workflow.id);
       const view = service.readWorkflow(context, 'home', workflow.id);
-      const taskTitled = (title: string) => {
-        const task = view.tasks.find((candidate) => candidate.title === title);
-        if (!task) throw new Error(`No task "${title}" in the workflow.`);
-        return task;
+      return {
+        text: formatWorkflow(view),
+        api: taskTitled(view, 'Budgets API'),
+        phone: taskTitled(view, 'Budgets on the phone'),
+        ui: taskTitled(view, 'Budgets UI'),
       };
-      return { text: formatWorkflow(view), api: taskTitled('Budgets API'), phone: taskTitled('Budgets on the phone'), ui: taskTitled('Budgets UI') };
     }
 
     it('names the board of a task on another board, and no board for a task on the home board', async () => {
@@ -122,7 +108,7 @@ describe('formatWorkflow: which board a task is on', () => {
 
   describe('a draft', () => {
     it('puts a planned task\'s other project in its settings, as save_workflow\'s project, and no board in its In clause', () => {
-      const workflow = planAcrossBoards();
+      const workflow = planAcrossBoards(service, context);
       const text = formatWorkflow(service.readWorkflow(context, 'home', workflow.id));
 
       const phoneLine = lineOf(text, 'Budgets on the phone');
@@ -134,7 +120,7 @@ describe('formatWorkflow: which board a task is on', () => {
     });
 
     it('keeps the planned task\'s board when the plan is read and sent back: the printed project is one save_workflow takes', () => {
-      const workflow = planAcrossBoards();
+      const workflow = planAcrossBoards(service, context);
       const text = formatWorkflow(service.readWorkflow(context, 'home', workflow.id));
       const printedProject = /Settings: project "([^"]+)"/.exec(lineOf(text, 'Budgets on the phone'))?.[1];
       expect(printedProject).toBeDefined();

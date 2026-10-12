@@ -233,6 +233,65 @@ describe('AutomationRepository', () => {
     });
   });
 
+  // `resolveMoveTarget` reads a Move to column target trimmed and case-blind, so
+  // a stored " testing " moves a task to Testing today. A rename of that column
+  // has to carry such a row along, or the row quietly stops moving anything.
+  describe('a column rename (SwimlaneRepository.update)', () => {
+    function moveTo(name: string, targetColumn: string): AutomationWriteInput {
+      return { name, type: 'move_to_column', trigger: 'turn_end', enabled: true, config: { targetColumn } };
+    }
+
+    /** The seeded Testing column, and a different column to hold the automations. */
+    function renamableSetup() {
+      const context = setup();
+      const testing = context.lanes.list().find((lane) => lane.name === 'Testing');
+      if (!testing) throw new Error('expected a Testing column in the seeded board');
+      expect(context.columnId).not.toBe(testing.id);
+      return { ...context, testing };
+    }
+
+    const targetOf = (automations: AutomationRepository, columnId: string) => automations.listForColumn(columnId)[0].config.targetColumn;
+
+    it('points a row at the new name when its stored target has surrounding space and another case', () => {
+      const { database, lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('Hand off', ' testing ')]);
+      // What the engine reads back is the stored text: a write that tidied it would leave nothing to follow.
+      const stored = database.prepare("SELECT json_extract(config_json, '$.targetColumn') AS target FROM column_automations").get() as { target: string };
+      expect(stored.target).toBe(' testing ');
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(targetOf(automations, columnId)).toBe('Verify');
+    });
+
+    it('points a row at the new name when its stored target is wrapped in a tab or a line break, as resolveMoveTarget reads it', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('Tabbed', '\ttesting'), moveTo('Broken', 'Testing\r\n')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(automations.listForColumn(columnId).map((row) => row.config.targetColumn)).toEqual(['Verify', 'Verify']);
+    });
+
+    it('points a row at the new name when its stored target is the column\'s exact name (the control)', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('Hand off', 'Testing')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(targetOf(automations, columnId)).toBe('Verify');
+    });
+
+    it('leaves a row that names another column alone, however it is spaced', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('Back out', ' planning ')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(targetOf(automations, columnId)).toBe(' planning ');
+    });
+  });
+
   it('drops a column automations when the column is deleted', () => {
     const { database, lanes, automations } = setup();
     const created = lanes.create({ name: 'Temporary', position: 99 });

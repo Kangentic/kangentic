@@ -15,10 +15,10 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   runAutomations,
   frequencyLimitReason,
-  hasCondition,
   CONDITION_CHECK_WAIT_MS,
   type ConditionCheckResult,
 } from '../../src/main/automations/automation-runner';
+import { hasCondition } from '../../src/main/automations/row-guards';
 import { AutomationRegistry } from '../../src/main/automations/automation-registry';
 import type { ConditionCheckLimits } from '../../src/main/automations/condition-check/condition-check';
 import { AUTOMATION_MANIFEST, EXIT_GROUP_BUDGET_MS } from '../../src/shared/automation-manifest';

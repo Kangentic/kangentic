@@ -158,8 +158,19 @@ describe('onTurnEnded', () => {
   });
 
   it('never fires for a resume idle seed, with no turn behind it', () => {
+    // A resumed session is seeded idle. What reaches it before any prompt (a
+    // late Stop from the conversation it reloaded, an idle the PTY forces) is
+    // no turn of its own, so none of it ends one.
     const harness = createHarness();
+    harness.send(EventType.Idle);
+    harness.engine.forceIdle(SESSION_ID);
+    vi.advanceTimersByTime(5_000);
+    harness.send(EventType.Idle);
     expect(harness.turnEnds).toHaveLength(0);
+    // The control: the first real turn after the seed does end.
+    harness.send(EventType.Prompt);
+    harness.send(EventType.Idle);
+    expect(harness.turnEnds).toHaveLength(1);
     harness.engine.dispose();
   });
 

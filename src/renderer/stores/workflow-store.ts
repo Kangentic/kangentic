@@ -581,6 +581,9 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       if (!projectId) return null;
       try {
         const workflow = await window.electronAPI.workflows.create(projectId, sourceTaskId);
+        // A project switch while it was created: the view shows the new
+        // project, so the workflow is not selected over it.
+        if (currentProjectId() !== projectId) return workflow;
         set({ projectId, selectedWorkflowId: workflow.id, detail: null, selectedTaskKey: null });
         await get().loadWorkflows();
         return workflow;
@@ -595,10 +598,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         window.electronAPI.workflows.rename(projectId, workflowId, title))).ok,
 
     deleteWorkflow: async () => {
+      const deletedId = get().selectedWorkflowId;
       const result = await onSelected('Could not delete the workflow', (projectId, workflowId) =>
         window.electronAPI.workflows.delete(projectId, workflowId));
       if (result.ok) {
-        set({ selectedWorkflowId: null, detail: null, selectedTaskKey: null });
+        // Another workflow picked while the delete ran keeps its selection.
+        if (get().selectedWorkflowId === deletedId) set({ selectedWorkflowId: null, detail: null, selectedTaskKey: null });
         await get().loadWorkflows();
       }
       return result.ok;

@@ -1100,7 +1100,7 @@ Add a task to a started workflow. It lands in To Do and starts once nothing it w
 | `taskProject` | string | No | Another project's board to put it on. |
 | `routeStart` / `routeLast` | string | No | First and last columns it visits. |
 | `skip` | string[] | No | Columns inside its route it skips. |
-| `waitsFor` | string[] | No | Tasks in this workflow it waits for. |
+| `waitsFor` | string[] | No | Tasks in this workflow it waits for: a task number on the workflow's own board, or the id of a task on any of its boards. Numbers count per board, so a task on another board is named by its id. |
 | `baseBranch`, `useWorktree`, `runMode`, `profile`, `agentOverride`, `modelOverride`, `effortOverride`, `permissionMode` | | No | Its run settings, as [`kangentic_save_workflow`](#kangentic_save_workflow)'s planned tasks take them. The task is created with them. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 

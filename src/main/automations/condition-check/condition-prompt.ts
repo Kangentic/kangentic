@@ -164,14 +164,15 @@ export function buildConditionPrompt(input: ConditionPromptInput): string {
  * The answers a reply holds, by the condition's position. A label the reply
  * skipped is absent, so its row counts as not met. So is a label written
  * twice: one condition's own text, or the agent reply, can ask for a line under
- * a neighbour's label, and which of the two is genuine cannot be told.
+ * a neighbour's label, and which of the two is genuine cannot be told. A line
+ * written as a list item ("- C2: no") is read as the same answer.
  */
 export function parseConditionReply(reply: string, count: number): Map<number, ConditionAnswer> {
   const answers = new Map<number, ConditionAnswer>();
   const seen = new Set<number>();
   const writtenTwice = new Set<number>();
   for (const line of reply.split(/\r?\n/)) {
-    const match = line.match(/^\s*[*_`]*C(\d+)[*_`]*\s*[:.)-]\s*[*_`]*(yes|no)\b[*_`]*\s*(?:[-:,.]\s*)?(.*?)\s*$/i);
+    const match = line.match(/^\s*(?:[-*+]\s+)?[*_`]*C(\d+)[*_`]*\s*[:.)-]\s*[*_`]*(yes|no)\b[*_`]*\s*(?:[-:,.]\s*)?(.*?)\s*$/i);
     if (!match) continue;
     const position = Number(match[1]) - 1;
     if (position < 0 || position >= count) continue;

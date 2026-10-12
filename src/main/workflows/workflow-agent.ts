@@ -214,6 +214,8 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
     suspended = true;
     // A Pause pressed while it stopped is the user's, and stands. The resume
     // reads the grant from the workflow row; only this one line is not said.
+    // One pressed while the start below finds the CLI stands too: the start
+    // checks again before it spawns.
     if (userPaused.has(workflowId)) return;
     // An open already in flight (the user's Resume) starts it with the grant,
     // so this start joins that one, and the line is not said either.
@@ -515,6 +517,13 @@ async function startWorkflowAgent(
   // Read again after the awaits above: the workflow may have finished, or been
   // deleted with its project, while the CLI was being found.
   if (!workflowStillOpen(context, homeProjectId, workflowId)) return unavailable('This workflow no longer exists.');
+  // A `continuation` marks a start Kangentic made on its own, the restart for
+  // read access. A Pause pressed while it found the CLI reached an agent that
+  // already read suspended, so it stopped nothing, and it stands: the agent
+  // stays suspended, and its next start reads the grant from the workflow row.
+  if (continuation !== undefined && userPaused.has(workflowId)) {
+    return { session: findWorkflowAgentSession(context, workflowId), unavailable: null };
+  }
   // The rows this start replaces leave the registry with no removal push (the
   // spawn's sibling drain), so what is kept per session id goes with them here.
   const replacedSessionIds = context.sessionManager.listSessions()

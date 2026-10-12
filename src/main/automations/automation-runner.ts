@@ -5,6 +5,7 @@ import type { AutomationRunRepository, RunConditionAnswer } from '../db/reposito
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
 import type { ConditionCheckLimits } from './condition-check/condition-check';
 import { interpolateAutomationConfig } from './interpolate-config';
+import { hasCondition, hasFrequencyLimit } from './row-guards';
 import type { AutomationContext } from './shared/automation-adapter';
 import {
   AutomationTimeoutError,
@@ -138,19 +139,10 @@ export type ConditionCheckResult =
   | { ok: true; answers: ReadonlyMap<string, RunConditionAnswer> }
   | { ok: false; reason: string };
 
-/**
- * Whether a row has a Condition to check. A blank one is no Condition, and a
- * row read from somewhere that predates the column (an older fixture, a row
- * built by hand) has none, rather than an undefined one that reads as present.
- */
-export function hasCondition(automation: Pick<ColumnAutomation, 'condition'>): boolean {
-  return typeof automation.condition === 'string' && automation.condition.trim() !== '';
-}
-
 /** A row whose Frequency limit is spent on this task, with the reason, or null. */
 export function frequencyLimitReason(automation: ColumnAutomation, runs: AutomationRunRepository, taskId: string): string | null {
+  if (!hasFrequencyLimit(automation)) return null;
   const limit = automation.max_runs;
-  if (typeof limit !== 'number') return null;
   if (runs.countRuns(automation.id, taskId) < limit) return null;
   return limit === 1
     ? 'Already ran once on this task, its limit.'

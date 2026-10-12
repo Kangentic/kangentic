@@ -88,7 +88,9 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
     if (!outer || !paneElement) return;
     const handle = event.currentTarget;
     const startX = event.clientX;
-    const startWidth = workflowAgentPaneWidth(storedWidth);
+    // From the width on screen: a drag pressed while the last one's save is
+    // still on its way starts where that one left the pane.
+    const startWidth = workflowAgentPaneWidth(dragWidth ?? storedWidth);
     // Docked, the drag stops where the canvas would drop below its minimum, so
     // widening the pane never pushes the inspector out or turns it floating.
     const rowWidth = outer.parentElement?.getBoundingClientRect().width ?? Number.POSITIVE_INFINITY;
@@ -117,7 +119,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           .finally(() => setDragWidth(null));
       },
     });
-  }, [floating, storedWidth, updateConfig]);
+  }, [floating, dragWidth, storedWidth, updateConfig]);
   const session = useSessionStore((state) => selectAgentSession(state.sessions, workflowId));
   const activity = useSessionStore((state) => (session ? state.sessionActivity[session.id] : undefined));
   const unavailable = useWorkflowStore((state) => state.agentUnavailable[workflowId] ?? null);

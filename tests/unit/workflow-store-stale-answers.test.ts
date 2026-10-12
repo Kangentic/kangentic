@@ -13,12 +13,19 @@
  * `setPositions` draws the dropped places before it saves them. A save main
  * refuses writes nothing and sends no change push, so the store has to read the
  * workflow again itself or the cards stay where the refused save left them.
+ *
+ * `createWorkflow` and `deleteWorkflow` both wait on main, and the user can act
+ * meanwhile: a project switch must not have the new workflow selected over the
+ * project now on screen, and a workflow picked while a delete ran must keep its
+ * selection.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { WorkflowDetail, WorkflowViewTask } from '../../src/shared/types';
+import type { Workflow, WorkflowDetail, WorkflowSummary, WorkflowViewTask } from '../../src/shared/types';
 
+// The project on screen, which a test changes to switch projects mid-call.
+const projectHarness = vi.hoisted(() => ({ currentProjectId: 'p' }));
 vi.mock('../../src/renderer/stores/project-store', () => ({
-  useProjectStore: { getState: () => ({ currentProject: { id: 'p' } }) },
+  useProjectStore: { getState: () => ({ currentProject: { id: projectHarness.currentProjectId } }) },
 }));
 vi.mock('../../src/renderer/stores/toast-store', () => ({
   useToastStore: { getState: () => ({ addToast: vi.fn() }) },
@@ -59,13 +66,37 @@ function deferred<Value>(): Deferred<Value> {
   return { promise, resolve, reject };
 }
 
+function summaryOf(workflowId: string): WorkflowSummary {
+  return {
+    workflow: detailOf(workflowId).workflow,
+    taskCount: 0,
+    doneCount: 0,
+    inProgressCount: 0,
+    queuedCount: 0,
+    blockedCount: 0,
+    boardTasks: {},
+    agent: null,
+  };
+}
+
 interface WorkflowsBridge {
   get: ReturnType<typeof vi.fn>;
   setPositions: ReturnType<typeof vi.fn>;
+  create: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  list: ReturnType<typeof vi.fn>;
+  listSupersessions: ReturnType<typeof vi.fn>;
 }
 
 function installBridge(): WorkflowsBridge {
-  const workflows: WorkflowsBridge = { get: vi.fn(), setPositions: vi.fn() };
+  const workflows: WorkflowsBridge = {
+    get: vi.fn(),
+    setPositions: vi.fn(),
+    create: vi.fn(),
+    delete: vi.fn(),
+    list: vi.fn(),
+    listSupersessions: vi.fn().mockResolvedValue([]),
+  };
   (globalThis as unknown as { window: { electronAPI: { workflows: WorkflowsBridge } } }).window = {
     electronAPI: { workflows },
   };
@@ -73,6 +104,7 @@ function installBridge(): WorkflowsBridge {
 }
 
 beforeEach(() => {
+  projectHarness.currentProjectId = 'p';
   useWorkflowStore.getState().clearLinks();
   useWorkflowStore.setState({ projectId: null, selectedWorkflowId: null, detail: null, linkFocus: null });
 });
@@ -425,5 +457,113 @@ describe('setPositions', () => {
     expect(saved).toBe(true);
     expect(useWorkflowStore.getState().detail?.tasks[0]).toMatchObject({ canvasX: 40, canvasY: 81 });
     expect(bridge.get).not.toHaveBeenCalled();
+  });
+});
+
+// A delete is a round trip to main. The workflow it names is read when the user
+// acted, so what it clears afterwards is that workflow's selection and no other.
+describe('deleteWorkflow', () => {
+  const state = () => useWorkflowStore.getState();
+
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      projectId: 'p', summaries: [summaryOf('a')], selectedWorkflowId: 'a', detail: detailOf('a'), selectedTaskKey: null,
+    });
+  });
+
+  it('keeps the workflow the user picked while the delete was in flight', async () => {
+    const bridge = installBridge();
+    const deletion = deferred<void>();
+    const reload = deferred<WorkflowSummary[]>();
+    bridge.delete.mockReturnValue(deletion.promise);
+    bridge.list.mockReturnValue(reload.promise);
+    bridge.get.mockImplementation(async (_projectId: string, workflowId: string) => detailOf(workflowId));
+
+    const deleting = state().deleteWorkflow();
+    expect(bridge.delete).toHaveBeenCalledWith('p', 'a');
+    // The user picks another workflow while main deletes the first.
+    state().selectWorkflow('b');
+    deletion.resolve(undefined);
+    // The picker reload starts only after the delete's own bookkeeping ran.
+    await vi.waitFor(() => expect(bridge.list).toHaveBeenCalledTimes(1));
+    expect(state().selectedWorkflowId).toBe('b');
+
+    // The reload names another workflow first: were b's selection dropped, the picker would fall back to it.
+    reload.resolve([summaryOf('c'), summaryOf('b')]);
+    await expect(deleting).resolves.toBe(true);
+    expect(state().selectedWorkflowId).toBe('b');
+    expect(state().detail?.workflow.id).toBe('b');
+  });
+
+  it('clears the selection when the workflow deleted is still the one on screen, so the picker moves on (the control)', async () => {
+    const bridge = installBridge();
+    const reload = deferred<WorkflowSummary[]>();
+    bridge.delete.mockResolvedValue(undefined);
+    bridge.list.mockReturnValue(reload.promise);
+    bridge.get.mockImplementation(async (_projectId: string, workflowId: string) => detailOf(workflowId));
+
+    const deleting = state().deleteWorkflow();
+    await vi.waitFor(() => expect(bridge.list).toHaveBeenCalledTimes(1));
+    // The deleted workflow leaves the view at once, before the reload answers.
+    expect(state().selectedWorkflowId).toBeNull();
+    expect(state().detail).toBeNull();
+
+    reload.resolve([summaryOf('c')]);
+    await expect(deleting).resolves.toBe(true);
+    expect(state().selectedWorkflowId).toBe('c');
+  });
+});
+
+// A create is a round trip to main too, and the user can switch projects while
+// it runs. The view then shows the other project, so the new workflow is not
+// selected over it.
+describe('createWorkflow', () => {
+  const state = () => useWorkflowStore.getState();
+
+  it('selects the new workflow in the project it was created in (the control)', async () => {
+    const bridge = installBridge();
+    const creation = deferred<Workflow>();
+    bridge.create.mockReturnValue(creation.promise);
+    bridge.list.mockResolvedValue([summaryOf('created')]);
+    bridge.get.mockImplementation(async (_projectId: string, workflowId: string) => detailOf(workflowId));
+    useWorkflowStore.setState({ projectId: 'p', summaries: [], selectedWorkflowId: null, detail: null });
+
+    const creating = state().createWorkflow(null);
+    expect(bridge.create).toHaveBeenCalledWith('p', null);
+    creation.resolve(detailOf('created').workflow);
+    await expect(creating).resolves.toMatchObject({ id: 'created' });
+
+    expect(state().projectId).toBe('p');
+    expect(state().selectedWorkflowId).toBe('created');
+  });
+
+  it('leaves the project the user switched to alone: the new workflow is not selected over it, though it is still returned', async () => {
+    const bridge = installBridge();
+    const creation = deferred<Workflow>();
+    bridge.create.mockReturnValue(creation.promise);
+    bridge.list.mockResolvedValue([]);
+    bridge.get.mockImplementation(async (_projectId: string, workflowId: string) => detailOf(workflowId));
+    // The view already shows project q, loaded by the switch.
+    useWorkflowStore.setState({ projectId: 'q', summaries: [summaryOf('q-first')], selectedWorkflowId: 'q-first', detail: null });
+    // Every write the store makes from here is kept: a wrong one the switch's own
+    // load would overwrite a moment later still reaches the screen for a frame.
+    const writes: Array<{ projectId: string | null; selectedWorkflowId: string | null }> = [];
+    const unsubscribe = useWorkflowStore.subscribe((next) => {
+      writes.push({ projectId: next.projectId, selectedWorkflowId: next.selectedWorkflowId });
+    });
+    try {
+      const creating = state().createWorkflow(null);
+      expect(bridge.create).toHaveBeenCalledWith('p', null);
+      // The user switches projects while main creates the workflow in the first.
+      projectHarness.currentProjectId = 'q';
+      creation.resolve(detailOf('created').workflow);
+      await expect(creating).resolves.toMatchObject({ id: 'created' });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(writes.filter((write) => write.projectId === 'p' || write.selectedWorkflowId === 'created')).toEqual([]);
+    expect(state().projectId).toBe('q');
+    expect(state().selectedWorkflowId).toBe('q-first');
   });
 });

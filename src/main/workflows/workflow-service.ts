@@ -115,9 +115,18 @@ export { workflowTasks };
 
 export function readWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowView {
   const workflow = requireWorkflow(homeProjectId, workflowId);
-  const boardOf = (projectId: string): string | null => (
-    projectId === homeProjectId ? null : context.projectRepo.getById(projectId)?.name ?? projectId
-  );
+  // Asked once per task and once per link, of a few boards: each board's name
+  // is read from the projects table once.
+  const boardNames = new Map<string, string>();
+  const boardOf = (projectId: string): string | null => {
+    if (projectId === homeProjectId) return null;
+    let name = boardNames.get(projectId);
+    if (name === undefined) {
+      name = context.projectRepo.getById(projectId)?.name ?? projectId;
+      boardNames.set(projectId, name);
+    }
+    return name;
+  };
   if (workflow.state === 'draft') {
     const draft = workflow.draft ?? { tasks: [], links: [] };
     const tasks = draft.tasks.map((planned): WorkflowTaskView => {
@@ -942,6 +951,17 @@ function resolveWorkflowTask(context: IpcContext, homeProjectId: string, workflo
   return { projectId, task, lanes };
 }
 
+/**
+ * A task a new one waits for: a task id of the workflow's on any of its boards,
+ * else a number or id on the home board. A number alone cannot name a task on
+ * another board, since numbers count per board; its id can.
+ */
+function resolveBlocker(context: IpcContext, homeProjectId: string, workflow: Workflow, selector: string): ResolvedWorkflowTask {
+  const member = workflowTasks(context, homeProjectId, workflow.id).find((entry) => entry.task.id === selector);
+  if (!member) return resolveWorkflowTask(context, homeProjectId, workflow, selector);
+  return { projectId: member.projectId, task: member.task, lanes: projectRepos(member.projectId).lanes };
+}
+
 function placeOf(resolved: ResolvedWorkflowTask): 'todo' | 'working' | 'done' {
   const lane = resolved.lanes.find((candidate) => candidate.id === resolved.task.swimlane_id);
   if (resolved.task.archived_at || lane?.role === 'done') return 'done';
@@ -1121,7 +1141,7 @@ export function addWorkflowTask(
   refuseReversedRoute(lanes, membership.route_start_swimlane_id, membership.route_last_swimlane_id, label);
   const runSettings = input.runSettings ?? resolvePlannedRunSettings(context, projectId, input, `${label}: `);
   // Resolve the blockers before anything is written.
-  const blockers = (input.waitsFor ?? []).map((selector) => resolveWorkflowTask(context, homeProjectId, workflow, selector));
+  const blockers = (input.waitsFor ?? []).map((selector) => resolveBlocker(context, homeProjectId, workflow, selector));
   const created = writeTransaction(db, () => tasks.create({
     title: input.title.trim(),
     description: typeof input.description === 'string' ? input.description : '',

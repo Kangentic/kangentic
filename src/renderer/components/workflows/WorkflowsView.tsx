@@ -315,8 +315,11 @@ export function WorkflowsView() {
   }, [setPositions, setPositionsIn]);
 
   const link = useCallback((blockerKey: string, blockedKey: string) => {
+    const linkedIn = useWorkflowStore.getState().selectedWorkflowId;
     void setLink(blockerKey, blockedKey, true).then((ok) => {
-      if (ok) selectTask(blockedKey);
+      // A key names a task only in its own workflow: another one picked while
+      // the link was saved keeps its own selection.
+      if (ok && useWorkflowStore.getState().selectedWorkflowId === linkedIn) selectTask(blockedKey);
     });
   }, [setLink, selectTask]);
 

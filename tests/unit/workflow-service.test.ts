@@ -43,6 +43,7 @@ const service = await import('../../src/main/workflows/workflow-service');
 const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake');
 
 import { openTestDatabase } from './helpers/test-database';
+import { planAcrossBoards, taskTitled } from './helpers/workflow-plans';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 describe('workflow operations', () => {
@@ -198,29 +199,8 @@ describe('workflow operations', () => {
     // that is not on the home board, and of a blocker that is not, so the
     // agent-facing text can tell the two #1s apart.
 
-    /** api and ui on the home board, phone on the second. The phone task blocks api, and api blocks ui. */
-    function planAcrossBoards() {
-      const workflow = service.createWorkflow('home', {});
-      service.savePlan(context, 'home', workflow.id, {
-        title: 'Usage budgets',
-        tasks: [
-          { key: 'api', title: 'Budgets API' },
-          { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' },
-          { key: 'ui', title: 'Budgets UI' },
-        ],
-        links: [{ blocker: 'phone', blocked: 'api' }, { blocker: 'api', blocked: 'ui' }],
-      });
-      return workflow;
-    }
-
-    const taskTitled = (view: service.WorkflowView, title: string): service.WorkflowTaskView => {
-      const task = view.tasks.find((candidate) => candidate.title === title);
-      if (!task) throw new Error(`No task "${title}" in the workflow.`);
-      return task;
-    };
-
     it('names the project of a planned task on another board, and no project for one on the home board', () => {
-      const workflow = planAcrossBoards();
+      const workflow = planAcrossBoards(service, context);
 
       const view = service.readWorkflow(context, 'home', workflow.id);
 
@@ -230,7 +210,7 @@ describe('workflow operations', () => {
     });
 
     it('names the board of a started task on another board, and names a blocker there by it when its number matches a home task', async () => {
-      const workflow = planAcrossBoards();
+      const workflow = planAcrossBoards(service, context);
       await service.startWorkflow(context, 'home', workflow.id);
 
       const view = service.readWorkflow(context, 'home', workflow.id);
@@ -249,7 +229,7 @@ describe('workflow operations', () => {
     });
 
     it('falls back to the project id when the board\'s project is no longer registered', async () => {
-      const workflow = planAcrossBoards();
+      const workflow = planAcrossBoards(service, context);
       await service.startWorkflow(context, 'home', workflow.id);
       const registeredProject = context.projectRepo.getById.bind(context.projectRepo);
       vi.spyOn(context.projectRepo, 'getById').mockImplementation((projectId: string) => (
@@ -614,6 +594,84 @@ describe('workflow operations', () => {
         routeLast: 'Code Review',
       });
       expect(storedRoute(created.id)).toEqual({ start: laneNamed('Planning').id, last: laneNamed('Code Review').id, skipped: [] });
+    });
+  });
+
+  describe('the tasks an added task waits for', () => {
+    // Task numbers count per board, so api (home) and phone (kangentic-mobile) are
+    // both #1. A task id names one task of the workflow on any of its boards; a
+    // number can only name a task on the home board.
+
+    /** A started workflow whose api task is on the home board and whose phone task is on the mobile one, both still in To Do. */
+    async function startedAcrossBoards() {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const api = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets API')!;
+      const phone = tasksOf('mobile').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets on the phone')!;
+      expect(phone.display_id).toBe(api.display_id);
+      return { workflow, api, phone };
+    }
+
+    const linksInto = (workflowId: string, blockedTaskId: string) =>
+      new TaskLinkRepository(harness.dbs.get('home') as Database.Database)
+        .listForWorkflow(workflowId)
+        .filter((link) => link.blocked_task_id === blockedTaskId);
+
+    it('waits for a member task on another board named by its id, linked from that board', async () => {
+      const { workflow, phone } = await startedAcrossBoards();
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [phone.id] });
+
+      const links = linksInto(workflow.id, created.id);
+      expect(links).toHaveLength(1);
+      expect(links[0]).toMatchObject({
+        blocker_task_id: phone.id,
+        blocker_project_id: 'mobile',
+        blocked_task_id: created.id,
+        blocked_project_id: 'home',
+      });
+    });
+
+    it('reads a number as a task on the home board, though the other board has a task with that number', async () => {
+      const { workflow, api, phone } = await startedAcrossBoards();
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [String(api.display_id)] });
+
+      const links = linksInto(workflow.id, created.id);
+      expect(links).toHaveLength(1);
+      expect(links[0]).toMatchObject({ blocker_task_id: api.id, blocker_project_id: 'home' });
+      expect(links[0].blocker_task_id).not.toBe(phone.id);
+    });
+
+    it('waits for a task on each board in one call, by an id and by a number', async () => {
+      const { workflow, api, phone } = await startedAcrossBoards();
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [phone.id, String(api.display_id)] });
+
+      const links = linksInto(workflow.id, created.id);
+      expect(links.map((link) => [link.blocker_project_id, link.blocker_task_id]).sort()).toEqual(
+        [['home', api.id], ['mobile', phone.id]].sort(),
+      );
+    });
+
+    it('still names a member task on the home board by its id', async () => {
+      const { workflow, api } = await startedAcrossBoards();
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [api.id] });
+
+      expect(linksInto(workflow.id, created.id)).toMatchObject([{ blocker_task_id: api.id, blocker_project_id: 'home' }]);
+    });
+
+    it('refuses the id of a task on another board that is not in the workflow, creating no task', async () => {
+      const { workflow } = await startedAcrossBoards();
+      const mobileTodo = lanesOf('mobile').find((lane) => lane.role === 'todo')!;
+      const outsider = tasksOf('mobile').create({ title: 'Not in the workflow', description: '', swimlane_id: mobileTodo.id });
+      const titlesBefore = tasksOf('home').listByWorkflow(workflow.id).map((task) => task.title).sort();
+
+      expect(() => service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [outsider.id] }))
+        .toThrow(/No task/);
+
+      expect(tasksOf('home').listByWorkflow(workflow.id).map((task) => task.title).sort()).toEqual(titlesBefore);
     });
   });
 

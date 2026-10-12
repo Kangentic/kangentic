@@ -107,9 +107,16 @@ describe('parseConditionReply', () => {
   it('accepts the shapes models actually write', () => {
     const answers = parseConditionReply('**C1**: Yes, the tests pass\n- C2. NO: two failures', 2);
     expect(answers.get(0)?.met).toBe(true);
-    expect(answers.get(1)).toBeUndefined();
+    expect(answers.get(1)).toEqual({ met: false, reason: 'two failures' });
     const plain = parseConditionReply('C1) no', 1);
     expect(plain.get(0)).toEqual({ met: false, reason: null });
+    const bulleted = parseConditionReply('* C1: yes - green\n+ **C2**: no - red', 2);
+    expect(bulleted.get(0)).toEqual({ met: true, reason: 'green' });
+    expect(bulleted.get(1)).toEqual({ met: false, reason: 'red' });
+  });
+
+  it('reads no answer from a list item whose first word is not its label', () => {
+    expect(parseConditionReply('- the C1 check: yes', 1).has(0)).toBe(false);
   });
 
   it('keeps a quote that ends a reason, and unwraps one quoted whole', () => {
