@@ -144,8 +144,16 @@ at the Windows timer floor.
 Session PTYs and their output pipeline (`src/main/pty/**`), the host's fork and wiring in
 `register-all.ts`, one-shot child processes on main, the probes' raw PTYs (the Claude model
 picker, the Antigravity print runner spawn through `spawnOffMainPty`, `off-main-pty.ts`), the
-agent CLI runs (`spawnCli`, `off-main-cli.ts`), and the packaging. Still on main, by measurement:
-git. simple-git carries most git calls (about 60 call sites in 20 files) and has no spawn hook;
-`runGitWithTimeout` could ride `cliSpawn` and `cliStop`, but it is a handful of calls (fetch,
-prune, rev-parse), so moving it alone would move a fraction of the cost. Measured with three task
-starts: 28 git spawns in 281 s, event-driven, at most 32 ms, three at 16 ms or more.
+agent CLI runs (`spawnCli`, `off-main-cli.ts`), and the packaging.
+
+Git on a task's lifecycle runs in the host too (#732): a workflow runs up to eight lifecycles at
+once, and their git spawns stalled main 19 times over 75 ms in a 20-task run. A start, a respawning
+move and a move to Done go through `src/main/git/git-client.ts` (`gitAt`, `runGitCommand`, which
+keep simple-git's method names and results; simple-git has no spawn hook) and
+`spawn-with-abort.ts`, which routes a git command to `spawnOffMainCli`. Measured by
+`tests/unit/git-lifecycle-off-main.test.ts`: 37 git processes per modeled lifecycle, none on main,
+against 49 with 45 on main before. Still on main, because none runs in a lifecycle: the branch
+summary, the diff watcher, blame, file history, the commit graph, the worktree list, a task's branch
+switch and update from base, the Command Terminal's branch calls, and the Done drop's
+pending-changes probe. A new git call on the lifecycle path uses the git client; the lifecycle
+test fails when one lands on main.

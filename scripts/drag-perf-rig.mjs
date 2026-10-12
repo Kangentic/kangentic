@@ -14,9 +14,12 @@
  *
  * Usage (build first):
  *   npm run build
- *   node scripts/drag-perf-rig.mjs [--scenarios=S0,S1,S2,S3,S4a,S4b,S4c,S5,S6]
+ *   node scripts/drag-perf-rig.mjs [--scenarios=S0,S1,S2,S3,S4a,S4b,S4c,S5,S6,W30,W100]
  *                                  [--runs=5] [--label=name] [--out=path.json]
  *                                  [--push-hz=3] [--analyze=path.json]
+ *
+ * W30 and W100 measure the Workflows canvas (#732) at 30 and 100 real TaskCard
+ * nodes: idle with live sessions pushing, a card drag, a pan, and a link drag.
  *
  * Scenarios: S0 idle and mouse-move controls (the noise floor); S1 plain cross-column
  * drag; S6 drag-start latency; S4b same-column reorder; S5 autoscroll with the
@@ -57,6 +60,12 @@ const ONLY = (argv.scenarios ?? '').split(',').map((s) => s.trim()).filter(Boole
 const LABEL = argv.label ?? 'prod';
 const OUT = path.resolve(argv.out ?? path.join(repoRoot, 'tests', '.tmp', `drag-perf-${LABEL}.json`));
 const PUSH_HZ = argv['push-hz'] ?? '3';
+/** How long the Workflows scenarios wait after a start burst before measuring. */
+const SETTLE_MS = parseInt(argv['settle-ms'] ?? '10000', 10);
+/** Record a CPU profile of the first measured run of each Workflows gesture, and print where its time went. */
+const CPU_PROFILE = argv['cpu-profile'] === 'true';
+/** Record a Chrome trace of the same runs instead, and print the rendering phases per thread. */
+const TRACE = argv.trace === 'true';
 const wants = (id) => ONLY.length === 0 || ONLY.includes(id);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -628,6 +637,385 @@ async function scenarioS4c() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Workflows canvas (#732): real TaskCard nodes under React Flow, with live
+// sessions pushing activity, at 30 and 100 cards.
+// ---------------------------------------------------------------------------
+
+/**
+ * Plan and start a workflow of `count` tasks laid out `perColumn` to a column:
+ * each task waits for the one a column to its left, and every third also for
+ * that one's neighbour, so the canvas carries straight and lane-routed links.
+ * Start puts them in To Do; the engine starts the first column (up to the
+ * free agent slots), whose mock agents push live activity.
+ */
+async function seedWorkflow(count, perColumn) {
+  return page.evaluate(async (input) => {
+    const project = await window.electronAPI.projects.getCurrent();
+    const workflow = await window.electronAPI.workflows.create(project.id, null);
+    const keys = [];
+    for (let index = 0; index < input.count; index++) {
+      keys.push(await window.electronAPI.workflows.addTask(project.id, workflow.id, {
+        title: `Workflow perf task ${index + 1}`,
+        description: 'perf rig workflow card with a couple of lines of description text so the card body is realistic',
+      }));
+    }
+    for (let index = input.perColumn; index < input.count; index++) {
+      await window.electronAPI.workflows.setLink(project.id, workflow.id, keys[index - input.perColumn], keys[index], true);
+      if (index % 3 === 0 && index % input.perColumn !== 0) {
+        await window.electronAPI.workflows.setLink(project.id, workflow.id, keys[index - input.perColumn - 1], keys[index], true);
+      }
+    }
+    await window.electronAPI.workflows.rename(project.id, workflow.id, `Perf workflow ${input.count}`);
+    await window.electronAPI.workflows.start(project.id, workflow.id);
+    return { projectId: project.id, workflowId: workflow.id };
+  }, { count, perColumn });
+}
+
+/**
+ * Run `work` under the CPU profiler and print the self time by script and
+ * function, so a slow gesture names its cost (the bundle is minified, so the
+ * chunk name is the reliable half: xyflow, react-vendor, index, WorkflowsView).
+ */
+async function profiled(label, work) {
+  if (TRACE) return traced(label, work);
+  if (!CPU_PROFILE) return work();
+  const session = await page.context().newCDPSession(page);
+  await session.send('Profiler.enable');
+  await session.send('Profiler.setSamplingInterval', { interval: 100 });
+  await session.send('Profiler.start');
+  const result = await work();
+  const { profile } = await session.send('Profiler.stop');
+  await session.detach();
+  const file = path.join(path.dirname(OUT), `drag-perf-${LABEL}-${label}.cpuprofile`);
+  fs.writeFileSync(file, JSON.stringify(profile));
+  const byNode = new Map(profile.nodes.map((node) => [node.id, node]));
+  const selfMs = new Map();
+  const deltas = profile.timeDeltas;
+  profile.samples.forEach((nodeId, index) => {
+    const node = byNode.get(nodeId);
+    const frame = node.callFrame;
+    const script = String(frame.url ?? '').split('/').slice(-1)[0] || '(native)';
+    const key = `${script} | ${frame.functionName || '(anon)'}:${frame.lineNumber}:${frame.columnNumber}`;
+    selfMs.set(key, (selfMs.get(key) ?? 0) + (deltas[index] ?? 0) / 1000);
+  });
+  const byScript = new Map();
+  for (const [key, ms] of selfMs) {
+    const script = key.split(' | ')[0];
+    byScript.set(script, (byScript.get(script) ?? 0) + ms);
+  }
+  console.log(`[rig] cpu profile ${label}: ${file}`);
+  for (const [script, ms] of [...byScript].sort((a, b) => b[1] - a[1]).slice(0, 8)) console.log(`    ${ms.toFixed(0).padStart(6)}ms  ${script}`);
+  for (const [key, ms] of [...selfMs].sort((a, b) => b[1] - a[1]).slice(0, 25)) console.log(`    ${ms.toFixed(1).padStart(7)}ms  ${key}`);
+  return result;
+}
+
+/**
+ * Run `work` under a Chrome trace and print the total duration of each event
+ * name per thread (main, compositor, raster, GPU), so a missed frame that no
+ * script explains names its rendering phase. The .json loads in DevTools'
+ * Performance panel. Durations nest (a Paint sits inside its RunTask), so
+ * read the rows as a breakdown, not a sum.
+ */
+async function traced(label, work, options = {}) {
+  const session = await page.context().newCDPSession(page);
+  const events = [];
+  session.on('Tracing.dataCollected', (payload) => { events.push(...payload.value); });
+  const complete = new Promise((resolve) => session.once('Tracing.tracingComplete', resolve));
+  await session.send('Tracing.start', {
+    categories: 'devtools.timeline,disabled-by-default-devtools.timeline,disabled-by-default-devtools.timeline.frame,blink,cc,gpu,viz',
+    transferMode: 'ReportEvents',
+  });
+  const result = await work();
+  await session.send('Tracing.end');
+  await complete;
+  await session.detach();
+  const file = path.join(path.dirname(OUT), `drag-perf-${LABEL}-${label}.trace.json`);
+  fs.writeFileSync(file, JSON.stringify({ traceEvents: events }));
+  const threadNames = new Map();
+  for (const event of events) {
+    if (event.ph === 'M' && event.name === 'thread_name') threadNames.set(`${event.pid}:${event.tid}`, event.args.name);
+  }
+  const byThread = new Map();
+  for (const event of events) {
+    if (event.ph !== 'X' || typeof event.dur !== 'number') continue;
+    const thread = threadNames.get(`${event.pid}:${event.tid}`) ?? `${event.pid}:${event.tid}`;
+    const names = byThread.get(thread) ?? new Map();
+    const entry = names.get(event.name) ?? { ms: 0, count: 0 };
+    entry.ms += event.dur / 1000;
+    entry.count += 1;
+    names.set(event.name, entry);
+    byThread.set(thread, names);
+  }
+  const main = byThread.get('CrRendererMain') ?? new Map();
+  const frames = main.get('ProxyMain::BeginMainFrame')?.count ?? 0;
+  const perFrame = (name) => (frames ? Math.round(((main.get(name)?.ms ?? 0) / frames) * 100) / 100 : null);
+  const summary = {
+    mainFrames: frames,
+    beginMainFrameMs: perFrame('ProxyMain::BeginMainFrame'),
+    layerizeMs: perFrame('Layerize'),
+    paintMs: perFrame('LocalFrameView::RunPaintLifecyclePhase'),
+    prePaintMs: perFrame('PrePaint'),
+    styleLayoutMs: perFrame('LocalFrameView::RunStyleAndLayoutLifecyclePhases'),
+  };
+  if (options.quiet) return { result, summary };
+  console.log(`[rig] trace ${label}: ${file}`);
+  const threadTotal = (names) => names.get('ThreadControllerImpl::RunTask')?.ms ?? names.get('RunTask')?.ms ?? 0;
+  for (const [thread, names] of [...byThread].sort((a, b) => threadTotal(b[1]) - threadTotal(a[1])).slice(0, 6)) {
+    console.log(`  ${thread}`);
+    for (const [name, entry] of [...names].sort((a, b) => b[1].ms - a[1].ms).slice(0, 14)) {
+      console.log(`    ${entry.ms.toFixed(0).padStart(6)}ms ${String(entry.count).padStart(5)}x  ${name}`);
+    }
+  }
+  return result;
+}
+
+/** A trusted pointer drag from one point to another over `holdMs`, measured. */
+async function canvasDrag(from, to, holdMs, extra) {
+  const start = await nowInPage();
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  const steps = Math.max(10, Math.round(holdMs / 16));
+  for (let step = 1; step <= steps; step++) {
+    const t = step / steps;
+    await page.mouse.move(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t + Math.sin(t * Math.PI * 2) * 20);
+    await sleep(16);
+  }
+  const animationsAtHold = await page.evaluate(animationCensus);
+  const releaseAt = await nowInPage();
+  await page.mouse.up();
+  await sleep(400);
+  const end = await nowInPage();
+  return page.evaluate(summarizeWindow, {
+    start,
+    end,
+    extra: { ...extra, gestureMs: Math.round(releaseAt - start), releaseAt: Math.round(releaseAt), animationsAtHold },
+  });
+}
+
+/**
+ * A To Do card fully inside the canvas (no session, so nothing but the drag
+ * moves it), and a drop point 300px from it toward the canvas centre, so a
+ * drag never reaches the edge and auto-pans.
+ */
+async function visibleTodoCardDrag() {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('[data-testid="workflow-canvas"]').getBoundingClientRect();
+    const centre = { x: canvas.left + canvas.width / 2, y: canvas.top + canvas.height / 2 };
+    for (const card of document.querySelectorAll('[data-testid="workflow-canvas-card"]')) {
+      const box = card.getBoundingClientRect();
+      // A task in To Do: its track's marker, where the task is, is the To Do stop.
+      const toDoMarker = card.querySelector('[data-testid="workflow-card-strip"] [data-testid="workflow-step-marker"][data-step-end="todo"]');
+      const inView = box.left > canvas.left + 20 && box.right < canvas.right - 20 && box.top > canvas.top + 20 && box.bottom < canvas.bottom - 20;
+      if (!inView || !toDoMarker) continue;
+      const from = { x: box.left + box.width / 2, y: box.top + 40 };
+      const length = Math.hypot(centre.x - from.x, centre.y - from.y) || 1;
+      const reach = Math.min(300, length);
+      return { from, to: { x: from.x + ((centre.x - from.x) / length) * reach, y: from.y + ((centre.y - from.y) / length) * reach } };
+    }
+    return null;
+  });
+}
+
+/**
+ * A point on empty canvas (the pane itself, not a card, port or link) from
+ * which a drag of `vector` stays inside the canvas, so a pan never grabs a
+ * card instead and drifts the view between runs.
+ */
+async function emptyCanvasPoint(vector) {
+  return page.evaluate((delta) => {
+    const canvas = document.querySelector('[data-testid="workflow-canvas"]').getBoundingClientRect();
+    const inside = (x, y) => x > canvas.left + 12 && x < canvas.right - 12 && y > canvas.top + 12 && y < canvas.bottom - 12;
+    for (let y = canvas.bottom - 16; y > canvas.top + 16; y -= 20) {
+      for (let x = canvas.left + 16; x < canvas.right - 16; x += 20) {
+        if (!inside(x + delta.x, y + delta.y)) continue;
+        const element = document.elementFromPoint(x, y);
+        if (element && element.classList.contains('react-flow__pane')) return { x, y };
+      }
+    }
+    return null;
+  }, vector);
+}
+
+async function runWorkflowScenario(id, count, perColumn) {
+  if (lastWorkflow) {
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await page.evaluate(async (previous) => window.electronAPI.workflows.delete(previous.projectId, previous.workflowId), lastWorkflow);
+  }
+  lastWorkflow = await seedWorkflow(count, perColumn);
+  await page.locator('[data-testid="view-toggle-workflows"]').click();
+  await pollUntil(async () => (await page.locator('[data-testid="workflow-canvas-card"]').count()) >= count, 30000, 250);
+  await waitRunningCount(Math.min(4, perColumn), 90000);
+  // Let the start burst finish (every free slot spawning an agent) before
+  // measuring steady state; the burst is its own number, recorded below.
+  const burstStart = await nowInPage();
+  await sleep(4000);
+  record(`${id}-start-burst`, await page.evaluate(summarizeWindow, { start: burstStart, end: await nowInPage(), extra: { phase: 'after start' } }));
+  await sleep(SETTLE_MS);
+  const cards = await page.locator('[data-testid="workflow-canvas-card"]').count();
+  const running = (await runningTaskIds()).length;
+
+  // Warm-up: the first gestures after a mount run slow (JIT), as on the board.
+  for (let warm = 0; warm < 2; warm++) {
+    const drag = await visibleTodoCardDrag();
+    if (drag) await canvasDrag(drag.from, drag.to, 600, { warm });
+  }
+  if (argv.experiments) {
+    await runCssExperiments(id, JSON.parse(fs.readFileSync(path.resolve(argv.experiments), 'utf-8')));
+    return;
+  }
+  for (let run = 0; run < RUNS; run++) {
+    const idleStart = await nowInPage();
+    await (run === 0 ? profiled(`${id}-idle`, () => sleep(3000)) : sleep(3000));
+    const idleEnd = await nowInPage();
+    record(`${id}-idle`, await page.evaluate(summarizeWindow, { start: idleStart, end: idleEnd, extra: { run, cards, running } }));
+
+    const drag = await visibleTodoCardDrag();
+    if (!drag) throw new Error('no To Do card fully in view on the canvas');
+    const dragRun = () => canvasDrag(drag.from, drag.to, 1500, { run, cards, running });
+    record(`${id}-card-drag`, await (run === 0 ? profiled(`${id}-card-drag`, dragRun) : dragRun()));
+
+    const panVector = { x: 260, y: -160 };
+    const panFrom = await emptyCanvasPoint(panVector);
+    if (!panFrom) throw new Error('no empty canvas to pan from');
+    const panRun = () => canvasDrag(panFrom, { x: panFrom.x + panVector.x, y: panFrom.y + panVector.y }, 1200, { run, cards });
+    record(`${id}-pan`, await (run === 0 ? profiled(`${id}-pan`, panRun) : panRun()));
+    // Pan back, unmeasured, so the next run finds the same cards in view.
+    const backVector = { x: -panVector.x, y: -panVector.y };
+    const backFrom = await emptyCanvasPoint(backVector);
+    if (backFrom) await canvasDrag(backFrom, { x: backFrom.x + backVector.x, y: backFrom.y + backVector.y }, 300, { run, unmeasured: true });
+
+    // A link drag released on empty canvas, so it draws the connection the
+    // whole way and commits nothing.
+    const handle = await page.evaluate(() => {
+      const canvasBox = document.querySelector('[data-testid="workflow-canvas"]').getBoundingClientRect();
+      for (const element of document.querySelectorAll('.react-flow__handle-right.connectable')) {
+        const box = element.getBoundingClientRect();
+        if (box.left > canvasBox.left + 20 && box.right < canvasBox.right - 400 && box.top > canvasBox.top + 20 && box.bottom < canvasBox.bottom - 200) {
+          return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+        }
+      }
+      return null;
+    });
+    if (handle) record(`${id}-link-drag`, await canvasDrag(handle, { x: handle.x + 320, y: handle.y + 180 }, 1500, { run, cards }));
+  }
+
+  // The board with this workflow's cards on it: every card carries the
+  // workflow strip, and a To Do card's footer says what it waits for. The
+  // drag is the lock's own case: the card is held to its column while the
+  // pointer sweeps Executing, and settles back in To Do. Escape before the next
+  // run clears anything a stray hover left up.
+  await page.locator('[data-testid="view-toggle-board"]').click();
+  await page.locator('[data-board-lanes]').waitFor({ state: 'visible', timeout: 10000 });
+  await sleep(1000);
+  const boardTaskId = await page.evaluate(() => {
+    const cards = document.querySelectorAll('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="To Do"] [data-task-id]');
+    for (const card of cards) {
+      if (card.querySelector('[data-testid="workflow-card-strip"]')) return card.getAttribute('data-task-id');
+    }
+    return null;
+  });
+  if (!boardTaskId) throw new Error('no workflow card in To Do on the board');
+  for (let run = 0; run < RUNS; run++) {
+    const boardRun = () => heldDrag(boardTaskId, '[data-board-lanes] [data-swimlane-name="Executing"]', { holdMs: 1500, sweep: true, laneName: 'To Do', extra: { run, cards } });
+    record(`${id}-board-drag`, await (run === 0 ? profiled(`${id}-board-drag`, boardRun) : boardRun()));
+    await sleep(400);
+    await page.keyboard.press('Escape');
+    await sleep(400);
+  }
+
+  // The same board and the same cards with no workflow (a deleted workflow
+  // leaves its unfinished tasks as ordinary tasks): what the workflow strip
+  // and its subscriptions cost, apart from the number of cards.
+  await page.evaluate(async (previous) => window.electronAPI.workflows.delete(previous.projectId, previous.workflowId), lastWorkflow);
+  lastWorkflow = null;
+  await pollUntil(async () => (await page.locator('[data-board-lanes] [data-testid="workflow-card-strip"]').count()) === 0, 15000, 250);
+  await sleep(1000);
+  for (let run = 0; run < RUNS; run++) {
+    const plainRun = () => heldDrag(boardTaskId, '[data-board-lanes] [data-swimlane-name="Executing"]', { holdMs: 1500, sweep: true, laneName: 'Executing', extra: { run, cards } });
+    record(`${id}-board-drag-plain`, await (run === 0 ? profiled(`${id}-board-drag-plain`, plainRun) : plainRun()));
+    await resetToTodo(boardTaskId);
+  }
+}
+
+/**
+ * A/B rendering cost by stylesheet: for each `{ name, css }`, inject the CSS,
+ * then trace 2 s of idle and one card drag, and print the main thread's cost
+ * per frame. How a candidate fix was chosen, kept so the next one can be.
+ */
+async function runCssExperiments(id, experiments) {
+  const rows = [];
+  for (const experiment of experiments) {
+    await page.evaluate((css) => {
+      document.getElementById('rig-experiment')?.remove();
+      const style = document.createElement('style');
+      style.id = 'rig-experiment';
+      style.textContent = css;
+      document.head.appendChild(style);
+    }, experiment.css ?? '');
+    await sleep(1500);
+    // How many animations run under this stylesheet, so an experiment that
+    // switches one off shows it did.
+    const animations = await page.evaluate(() => document.getAnimations().filter((animation) => animation.playState === 'running').length);
+    if (experiment.zoomShot) {
+      // Zoom in over the canvas centre with the CSS already applied, so a layer
+      // that keeps its first raster scale shows up blurred in the shot. With
+      // `zoomAt`, over the first element that selector names inside the canvas.
+      const canvas = await page.locator('[data-testid="workflow-canvas"]').boundingBox();
+      const target = experiment.zoomAt ? await page.evaluate(({ selector, box }) => {
+        for (const element of document.querySelectorAll(selector)) {
+          const rect = element.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          if (x > box.x + 40 && x < box.x + box.width - 40 && y > box.y + 40 && y < box.y + box.height - 40) return { x, y };
+        }
+        return null;
+      }, { selector: experiment.zoomAt, box: canvas }) : null;
+      if (experiment.zoomAt && !target) console.log(`[rig] zoom shot ${experiment.name}: nothing matches ${experiment.zoomAt} inside the canvas; zooming at the centre`);
+      const centre = target ?? { x: canvas.x + canvas.width / 2, y: canvas.y + canvas.height / 2 };
+      await page.mouse.move(centre.x, centre.y);
+      await page.keyboard.down('Control');
+      for (let step = 0; step < 12; step++) { await page.mouse.wheel(0, -120); await sleep(40); }
+      await page.keyboard.up('Control');
+      await sleep(1200);
+      const shot = path.join(path.dirname(OUT), `drag-perf-${LABEL}-${experiment.name}.png`);
+      await page.screenshot({ path: shot, clip: { x: centre.x - 300, y: centre.y - 180, width: 600, height: 360 } });
+      console.log(`[rig] zoom shot ${experiment.name}: ${shot}`);
+      await page.keyboard.down('Control');
+      for (let step = 0; step < 12; step++) { await page.mouse.wheel(0, 120); await sleep(40); }
+      await page.keyboard.up('Control');
+      await sleep(800);
+      continue;
+    }
+    const idleStart = await nowInPage();
+    const idle = await traced(`${id}-${experiment.name}-idle`, () => sleep(2000), { quiet: true });
+    const idleFrames = await page.evaluate(summarizeWindow, { start: idleStart, end: await nowInPage() });
+    const drag = await visibleTodoCardDrag();
+    const dragged = drag ? await traced(`${id}-${experiment.name}-drag`, () => canvasDrag(drag.from, drag.to, 1200, {}), { quiet: true }) : null;
+    const panVector = { x: 260, y: -160 };
+    const panFrom = await emptyCanvasPoint(panVector);
+    const panned = panFrom ? await traced(`${id}-${experiment.name}-pan`, () => canvasDrag(panFrom, { x: panFrom.x + panVector.x, y: panFrom.y + panVector.y }, 1200, {}), { quiet: true }) : null;
+    const backFrom = await emptyCanvasPoint({ x: -panVector.x, y: -panVector.y });
+    if (backFrom) await canvasDrag(backFrom, { x: backFrom.x - panVector.x, y: backFrom.y - panVector.y }, 300, {});
+    rows.push({
+      name: experiment.name, css: experiment.css, animations, idle: idle.summary, idleMissed: idleFrames.missedVsync,
+      drag: dragged?.summary, dragMissed: dragged?.result.missedVsync, dragEventMax: dragged?.result.eventStats.maxProcessing,
+      pan: panned?.summary, panMissed: panned?.result.missedVsync, panP95: panned?.result.p95,
+    });
+  }
+  await page.evaluate(() => document.getElementById('rig-experiment')?.remove());
+  console.log('\n  experiment              anims | idle: layerize  frame  missed | drag: layerize  frame  missed  eventMax | pan: paint  frame  missed  p95');
+  for (const row of rows) {
+    if (!row.idle) continue;
+    console.log(`  ${row.name.padEnd(22)} ${String(row.animations).padStart(5)} | ${fmt(row.idle.layerizeMs).padStart(14)} ${fmt(row.idle.beginMainFrameMs).padStart(6)} ${fmt(row.idleMissed).padStart(7)} | ${fmt(row.drag?.layerizeMs).padStart(14)} ${fmt(row.drag?.beginMainFrameMs).padStart(6)} ${fmt(row.dragMissed).padStart(7)} ${fmt(row.dragEventMax).padStart(9)} | ${fmt(row.pan?.paintMs).padStart(10)} ${fmt(row.pan?.beginMainFrameMs).padStart(6)} ${fmt(row.panMissed).padStart(7)} ${fmt(row.panP95).padStart(5)}`);
+  }
+  record(`${id}-experiments`, rows);
+}
+
+let lastWorkflow = null;
+async function scenarioW30() { await runWorkflowScenario('W30', 30, 5); }
+async function scenarioW100() { await runWorkflowScenario('W100', 100, 10); }
+
 const SCENARIOS = [
   ['S0', scenarioS0],
   ['S1', scenarioS1],
@@ -638,6 +1026,8 @@ const SCENARIOS = [
   ['S2', scenarioS2],
   ['S4a', scenarioS4a],
   ['S4c', scenarioS4c],
+  ['W30', scenarioW30],
+  ['W100', scenarioW100],
 ];
 
 // ---------------------------------------------------------------------------
@@ -654,7 +1044,11 @@ function worst(values, direction = 'max') {
   if (nums.length === 0) return null;
   return direction === 'max' ? Math.max(...nums) : Math.min(...nums);
 }
-const fmt = (v) => (v === null || v === undefined ? '-' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v));
+// A declaration, not a const: `--analyze` calls analyze() at the top of the
+// file, before a const here would be initialized.
+function fmt(v) {
+  return v === null || v === undefined ? '-' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v);
+}
 
 function analyze(file) {
   const data = JSON.parse(fs.readFileSync(file, 'utf-8'));

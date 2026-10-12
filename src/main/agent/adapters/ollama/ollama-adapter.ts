@@ -130,6 +130,8 @@ export class OllamaAdapter implements AgentAdapter {
    *   session history files for `ollama run`.
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Only its prompt pattern says a turn ended.
+    reportsTurnEnd: false,
     activity: ActivityDetection.pty((data: string) => {
       const clean = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
       return /(?:^|\n)>>>\s*$/.test(clean);

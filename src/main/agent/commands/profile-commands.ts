@@ -60,9 +60,10 @@ const ENTRY_FIELDS = [
  *
  * Name match is case- and whitespace-insensitive, matching the Column Manager's
  * duplicate check, so an agent that read "Heavy" out of a listing can pass it
- * back verbatim or lowercased.
+ * back verbatim or lowercased. Shared with a workflow's planned task, which
+ * names its profile the same way.
  */
-function findProfile(profiles: BoardProfile[], selector: string): BoardProfile | null {
+export function findProfile(profiles: BoardProfile[], selector: string): BoardProfile | null {
   const trimmed = selector.trim();
   const byId = profiles.find((profile) => profile.id === trimmed);
   if (byId) return byId;

@@ -20,7 +20,10 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, Pencil, Trash2, X } from 'lucide-react';
+import { Check, Copy, Pencil, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { HeaderActionButton } from '../../components/HeaderActionButton';
+import { TaskWorkflowPanel } from '../../components/workflows/TaskWorkflowPanel';
+import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
 import { useSessionStore } from '../../stores/session-store';
 import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { closeBrowserForTask } from '../../components/browser/close-browser';
@@ -185,6 +188,11 @@ export function TaskDetailWindow({
   const [runMode, setRunMode] = useState<TaskRunMode>(task.run_mode);
   const [isEditing, setIsEditing] = useState(!!initialEdit);
   const [descriptionPeekOpen, setDescriptionPeekOpen] = useState(false);
+  // The workflow panel (#732 board 9), for a task in a workflow. It sits beside
+  // the whole body, so it is there in the edit form too (a To Do task opens in
+  // edit), and opening it never moves the split row's children.
+  const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false);
+  const canShowWorkflow = !!task.workflow_id;
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(task.id));
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
@@ -492,25 +500,46 @@ export function TaskDetailWindow({
     if (opening) {
       if (browserOpen) toggleBrowserOpen(task.id);
       if (changesOpen) toggleChangesOpen(task.id);
+      setWorkflowPanelOpen(false);
     }
     setDescriptionPeekOpen(opening);
-  }, [descriptionPeekOpen, browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
+  }, [descriptionPeekOpen, browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
 
   const handleToggleBrowser = useCallback(() => {
     if (!browserOpen) {
       if (changesOpen) toggleChangesOpen(task.id);
       if (descriptionPeekOpen) setDescriptionPeekOpen(false);
+      setWorkflowPanelOpen(false);
     }
     toggleBrowserOpen(task.id);
-  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
+  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
 
   const handleToggleChanges = useCallback(() => {
     if (!changesOpen) {
       if (browserOpen) toggleBrowserOpen(task.id);
       if (descriptionPeekOpen) setDescriptionPeekOpen(false);
+      setWorkflowPanelOpen(false);
     }
     toggleChangesOpen(task.id);
-  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
+  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
+
+  // The workflow panel is the fourth right-hand view, and as exclusive as the
+  // other three: opening it puts the others away.
+  const handleToggleWorkflow = useCallback(() => {
+    const opening = !workflowPanelOpen;
+    if (opening) {
+      if (browserOpen) toggleBrowserOpen(task.id);
+      if (changesOpen) toggleChangesOpen(task.id);
+      if (descriptionPeekOpen) setDescriptionPeekOpen(false);
+    }
+    setWorkflowPanelOpen(opening);
+  }, [workflowPanelOpen, browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
+
+  // Opening or closing the panel moves the terminal's right edge: refit before
+  // paint, as the body does for its own panels.
+  useLayoutEffect(() => {
+    scheduleWindowTerminalResize();
+  }, [workflowPanelOpen]);
 
   // The Browser pane binds to a session id, so it must not be offered while one
   // is being REPLACED: during a restore the outgoing session's id is still on
@@ -759,6 +788,9 @@ export function TaskDetailWindow({
       canShowDescription={canShowDescription}
       descriptionPeekOpen={descriptionPeekOpen}
       onToggleDescription={handleToggleDescription}
+      canShowWorkflow={canShowWorkflow}
+      workflowPanelOpen={workflowPanelOpen}
+      onToggleWorkflow={handleToggleWorkflow}
       isMaximized={isMaximized}
       onToggleMaximized={handleToggleMaximized}
       onUndock={isTiled ? handleUndock : undefined}
@@ -786,6 +818,22 @@ export function TaskDetailWindow({
         <PriorityBadge priority={task.priority ?? 0} />
       </h3>
       <div className="flex-1" />
+      {/* A To Do task opens here, in the form, and that is when its workflow
+          (what it waits for, its route) matters most. The divider after it is
+          the one the session header draws before its window controls. */}
+      {canShowWorkflow && (
+        <>
+          <HeaderActionButton
+            icon={WorkflowIcon}
+            onClick={handleToggleWorkflow}
+            active={workflowPanelOpen}
+            title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
+            ariaLabel="Toggle workflow"
+            testId="workflow-toggle"
+          />
+          <div className="w-px h-5 bg-surface-hover flex-shrink-0" data-testid="edit-titlebar-divider" />
+        </>
+      )}
       <MaximizeToggleButton
         isMaximized={isMaximized}
         onToggle={handleToggleMaximized}
@@ -817,7 +865,11 @@ export function TaskDetailWindow({
           {isEditing ? editTitleBar : viewTitleBar}
         </div>
 
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        {/* The row is always here, so opening the workflow panel only adds a
+            sibling AFTER the body: nothing above a retained Browser pane changes
+            shape (retained-pane-never-remounts.md). */}
+        <div className="flex-1 min-h-0 flex overflow-hidden">
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
           {isEditing ? (
             <>
               <div
@@ -906,6 +958,14 @@ export function TaskDetailWindow({
               parked={parked === true}
             />
           )}
+        </div>
+        {workflowPanelOpen && canShowWorkflow && !dormant && (
+          <TaskWorkflowPanel
+            task={task}
+            taskProjectId={retainedProjectId ?? hostProjectId ?? null}
+            onClose={() => setWorkflowPanelOpen(false)}
+          />
+        )}
         </div>
       </div>
 

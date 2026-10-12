@@ -20,18 +20,40 @@ export interface SidebarResizeState {
   onResizeStart: (event: React.MouseEvent) => void;
 }
 
-export function useSidebarResize(config: AppConfig): SidebarResizeState {
-  const [open, setOpen] = useState(config.sidebarVisible !== false);
+/**
+ * `viewCollapse`: a view that wants the room (Workflows, for its canvas and its
+ * agent's terminal) folds the sidebar to its strip on the way in, and the user's
+ * own choice comes back on the way out. It never writes the persisted
+ * preference. The user can still open the sidebar there: the toggle, or a drag
+ * on the divider, lifts the fold for the rest of that visit.
+ */
+export function useSidebarResize(config: AppConfig, viewCollapse = false): SidebarResizeState {
+  const [preferredOpen, setOpen] = useState(config.sidebarVisible !== false);
   const [width, setWidth] = useState(config.sidebar?.width ?? DEFAULT_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const [ready, setReady] = useState(false);
 
+  // Folded for the view: set on the way into a collapsing view, cleared on the
+  // way out or when the user opens the sidebar there. A render-time adjustment
+  // on the transition, so the first frame of the view is already folded.
+  const [viewFolded, setViewFolded] = useState(viewCollapse);
+  const [syncedViewCollapse, setSyncedViewCollapse] = useState(viewCollapse);
+  if (viewCollapse !== syncedViewCollapse) {
+    setSyncedViewCollapse(viewCollapse);
+    setViewFolded(viewCollapse);
+  }
+  const open = preferredOpen && !viewFolded;
+
   const latestWidthRef = useRef(width);
   const openRef = useRef(open);
+  const preferredOpenRef = useRef(preferredOpen);
+  const viewFoldedRef = useRef(viewFolded);
   // Written on commit (a layout effect, ahead of the handlers that read it),
   // never during render, which the compiler rules forbid.
   useLayoutEffect(() => {
     openRef.current = open;
+    preferredOpenRef.current = preferredOpen;
+    viewFoldedRef.current = viewFolded;
   });
 
   const collapsedByDragRef = useRef(false);
@@ -63,6 +85,12 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
   }, [config]);
 
   const toggle = useCallback(() => {
+    // Folded for the view over an open preference: opening it lifts the fold
+    // and leaves the saved preference as it was.
+    if (viewFoldedRef.current) {
+      setViewFolded(false);
+      if (openRef.current === false && preferredOpenRef.current) return;
+    }
     setOpen((prev) => {
       if (!prev) {
         const w = collapsedByDragRef.current ? MAX_WIDTH : latestWidthRef.current;
@@ -108,7 +136,10 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
           setWidth(newWidth);
           latestWidthRef.current = newWidth;
           didCollapse = false;
-          if (!openRef.current) setOpen(true);
+          if (!openRef.current) {
+            setViewFolded(false);
+            setOpen(true);
+          }
         }
       },
 
@@ -125,6 +156,7 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
 
         if (didCollapse) {
           collapsedByDragRef.current = true;
+          setViewFolded(false);
           window.electronAPI.config.set({ sidebarVisible: false });
           // Animate closed: transition is now active, so setting width to 0
           // triggers the CSS transition from MIN_WIDTH → 0

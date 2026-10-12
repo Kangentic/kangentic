@@ -59,6 +59,18 @@ vi.mock('../../src/main/db/database', () => ({
 }));
 
 /**
+ * A message with line breaks is pasted once the fresh agent's first turn ends
+ * (see the paste describe block at the end). Each wait parks here until a test
+ * ends it; the keystroke cases above never wait.
+ */
+const turnWaits = vi.hoisted(() => [] as Array<{ sessionId: string; resolve: (result: 'completed') => void }>);
+
+vi.mock('../../src/main/transition-engine/turn-completion', () => ({
+  waitForTurnCompletion: vi.fn((_sessionManager: unknown, sessionId: string) =>
+    new Promise<'completed'>((resolve) => { turnWaits.push({ sessionId, resolve }); })),
+}));
+
+/**
  * The column's message moved out of `swimlanes.auto_command` and into the
  * column's first enabled `send_message` enter automation, so `spawnAgent` reads
  * it through `AutomationRepository` now. The matrix these tests vary is
@@ -69,11 +81,22 @@ vi.mock('../../src/main/db/database', () => ({
  */
 const columnMessages = vi.hoisted(() => new Map<string, string>());
 
+/** A message row's Condition and Frequency limit, as the automations table holds them. */
+type MessageGuard = { condition: string | null; max_runs: number | null };
+
+/**
+ * The Condition and Frequency limit a column's seeded message row carries, per
+ * column. Absent means a plain row (null for both), which is every case outside
+ * the guarded-message describe at the end of the file.
+ */
+const columnMessageGuards = vi.hoisted(() => new Map<string, MessageGuard>());
+
 vi.mock('../../src/main/db/repositories/automation-repository', () => ({
   AutomationRepository: class {
     listForColumn(swimlaneId: string) {
       const message = columnMessages.get(swimlaneId);
       if (!message) return [];
+      const guard = columnMessageGuards.get(swimlaneId);
       return [{
         id: `automation-${swimlaneId}`,
         swimlane_id: swimlaneId,
@@ -83,6 +106,8 @@ vi.mock('../../src/main/db/repositories/automation-repository', () => ({
         position: 0,
         enabled: true,
         config: { message, mode: 'immediate' as const },
+        condition: guard?.condition ?? null,
+        max_runs: guard?.max_runs ?? null,
         created_at: '2025-01-01T00:00:00.000Z',
         updated_at: '2025-01-01T00:00:00.000Z',
       }];
@@ -92,6 +117,7 @@ vi.mock('../../src/main/db/repositories/automation-repository', () => ({
 
 beforeEach(() => {
   columnMessages.clear();
+  columnMessageGuards.clear();
 });
 
 vi.mock('../../src/main/db/repositories/handoff-repository', () => ({
@@ -265,11 +291,15 @@ function makeDeps(args: {
     resumeSuspendedSession: vi.fn(async () => { sessionStarted = true; }),
   };
   const scheduleKeystrokes = vi.fn();
+  const submitContent = vi.fn(async () => undefined);
   // mainWindow and projectRepo are only accessed when options.projectId is set
   // (handoff path). They are present here so the same `context` shape works for
   // both normal-path and handoff-path tests without requiring a cast.
   const context = {
-    terminalSubmitScheduler: { scheduleKeystrokes },
+    terminalSubmitScheduler: { scheduleKeystrokes, hasPending: vi.fn(() => false) },
+    // Read only by a pasted message: the session check and the paste itself.
+    sessionManager: { getSession: vi.fn((id: string) => ({ id, status: 'running' })) },
+    terminalSubmit: { submitContent },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     projectRepo: { getById: vi.fn(() => null) },
     configManager: {
@@ -289,6 +319,7 @@ function makeDeps(args: {
     sessionRepo,
     engine,
     scheduleKeystrokes,
+    submitContent,
     context,
     attachments: args.attachments,
     // The task spawnAgent is HANDED, not just the one `getById` returns. The
@@ -657,6 +688,198 @@ describe('spawnAgent auto_command suppression on recovery move out of Done (hand
       TASK_ID,
       FRESH_PTY_SESSION_ID,
       [{ text: '/merge-back', verify: 'submitted' }],
+      expect.objectContaining({ freshlySpawned: true }),
+    );
+  });
+});
+
+/**
+ * A column message with line breaks on the cold spawn path.
+ *
+ * Keystrokes flatten line breaks to spaces, so a multi-line message is pasted
+ * instead. A freshly spawned agent's TUI is not ready at once, so the paste
+ * waits for the agent's first turn to end, whatever the row's mode. The prompt
+ * slot is untouched: when the spawn takes the message as its opening prompt,
+ * nothing is typed or pasted after it.
+ */
+describe('spawnAgent: a multi-line column message is pasted after the first turn', () => {
+  const MULTI_LINE = 'Review the diff.\nList every finding.\nThen fix them.';
+
+  /** Let the background paste's awaits run. */
+  async function settle(): Promise<void> {
+    for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    turnWaits.length = 0;
+  });
+
+  it('MAIN + fresh from To Do: pastes the message once the first turn ends, never as keystrokes', async () => {
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: MULTI_LINE });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(normalLane, deps, false);
+
+    // Red: scheduling the message as keystrokes, as before, lands here.
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    await settle();
+    expect(turnWaits.map((wait) => wait.sessionId)).toEqual([FRESH_PTY_SESSION_ID]);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+
+    turnWaits[0].resolve('completed');
+    await settle();
+    expect(deps.submitContent).toHaveBeenCalledWith(FRESH_PTY_SESSION_ID, MULTI_LINE, expect.anything());
+  });
+
+  it('ISOLATED + fresh, no task prompt: the message still rides the spawn prompt slot, and is not pasted again', async () => {
+    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, { session_target: 'isolated', auto_command: MULTI_LINE });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(isolatedLane, deps, true);
+    await settle();
+
+    expect(resumePromptArg(deps.engine)).toBe(MULTI_LINE);
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(turnWaits).toHaveLength(0);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('handoff branch: pastes the destination message once the new agent finishes its first turn', async () => {
+    vi.mocked(agentRegistry.get).mockReturnValue(null as never);
+    const codexLane = makeSwimlane('lane-codex', {
+      session_target: 'main',
+      auto_command: MULTI_LINE,
+      handoff_context: true,
+      agent_override: 'codex',
+    });
+    const priorRecord = makeRecord({ id: 'rec-claude', isolated_swimlane_id: null, agent_session_id: 'claude-session-1' });
+    const deps = makeDeps({
+      manualPauseRecord: priorRecord,
+      resumeRecord: undefined,
+      taskFields: { session_id: FRESH_PTY_SESSION_ID },
+    });
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: 'codex', isHandoff: true });
+
+    await runSpawn(codexLane, deps, true, false, 'proj-handoff-test');
+
+    // Red: the handoff's own keystroke scheduling lands here.
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    await settle();
+    expect(turnWaits.map((wait) => wait.sessionId)).toEqual([FRESH_PTY_SESSION_ID]);
+
+    turnWaits[0].resolve('completed');
+    await settle();
+    expect(deps.submitContent).toHaveBeenCalledWith(FRESH_PTY_SESSION_ID, MULTI_LINE, expect.anything());
+  });
+});
+
+/**
+ * The cross-agent handoff delivers the destination column's message after the
+ * new agent starts, and it runs no enter group, so nothing on that path can
+ * check a row's Condition or Frequency limit. Delivering a guarded row would
+ * skip both, so the handoff leaves it unsent. A task's own command is a
+ * different tier with no row behind it, and still goes out.
+ */
+describe('spawnAgent handoff branch: a column message with a Condition or a Frequency limit', () => {
+  const PROJECT_ID = 'proj-handoff-guard';
+  const MULTI_LINE = 'Review the diff.\nList every finding.';
+
+  /** Let a background delivery's awaits run before asserting nothing happened. */
+  async function settle(): Promise<void> {
+    for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+  }
+
+  /** A codex destination column with the given message, and the guard its row carries. */
+  function makeHandoffLane(message: string, guard?: MessageGuard): Swimlane {
+    const lane = makeSwimlane('lane-codex', {
+      session_target: 'main',
+      auto_command: message,
+      handoff_context: true,
+      agent_override: 'codex',
+    });
+    if (guard) columnMessageGuards.set(lane.id, guard);
+    return lane;
+  }
+
+  function makeHandoffDeps(taskFields: Partial<Task> = {}) {
+    return makeDeps({
+      // Non-null satisfies hasHandoffContext's getLatestForTask check.
+      manualPauseRecord: makeRecord({ id: 'rec-claude', isolated_swimlane_id: null, agent_session_id: 'claude-session-1' }),
+      resumeRecord: undefined,
+      taskFields: { session_id: FRESH_PTY_SESSION_ID, ...taskFields },
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    turnWaits.length = 0;
+    vi.mocked(agentRegistry.get).mockReturnValue(null as never);
+  });
+
+  const GUARDED_CASES: Array<{ label: string; message: string; guard: MessageGuard }> = [
+    { label: 'a Condition', message: '/merge-back', guard: { condition: 'The PR is ready to merge.', max_runs: null } },
+    { label: 'a Frequency limit', message: '/merge-back', guard: { condition: null, max_runs: 1 } },
+    { label: 'a Frequency limit of zero', message: '/merge-back', guard: { condition: null, max_runs: 0 } },
+    { label: 'a Condition, with line breaks', message: MULTI_LINE, guard: { condition: 'The PR is ready to merge.', max_runs: null } },
+  ];
+
+  it.each(GUARDED_CASES)('delivers nothing for a first row with $label', async ({ message, guard }) => {
+    const deps = makeHandoffDeps();
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: 'codex', isHandoff: true });
+
+    await runSpawn(makeHandoffLane(message, guard), deps, true, false, PROJECT_ID);
+    await settle();
+
+    // The handoff did run: the new agent was started.
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    // Red before the fix: the guarded message went out as keystrokes (or, with
+    // line breaks, as a paste waiting on the first turn), skipping both checks.
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(turnWaits).toHaveLength(0);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+
+  const UNGUARDED_CASES: Array<{ label: string; guard?: MessageGuard }> = [
+    { label: 'no Condition and no Frequency limit' },
+    { label: 'a blank Condition and a null Frequency limit', guard: { condition: '   ', max_runs: null } },
+  ];
+
+  it.each(UNGUARDED_CASES)('still delivers a first row with $label', async ({ guard }) => {
+    const deps = makeHandoffDeps();
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: 'codex', isHandoff: true });
+
+    await runSpawn(makeHandoffLane('/merge-back', guard), deps, true, false, PROJECT_ID);
+
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
+    expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
+      TASK_ID,
+      FRESH_PTY_SESSION_ID,
+      [{ text: '/merge-back', verify: 'submitted' }],
+      expect.objectContaining({ freshlySpawned: true }),
+    );
+  });
+
+  it('still delivers the task\'s own auto_command when the column\'s first row is guarded', async () => {
+    const deps = makeHandoffDeps({ auto_command: '/task-command' });
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: 'codex', isHandoff: true });
+
+    await runSpawn(
+      makeHandoffLane('/merge-back', { condition: 'The PR is ready to merge.', max_runs: 1 }),
+      deps,
+      true,
+      false,
+      PROJECT_ID,
+    );
+
+    // The task's command has no row behind it and nothing to check, so it goes
+    // out; the column's guarded message does not ride along with it.
+    expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
+    expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
+      TASK_ID,
+      FRESH_PTY_SESSION_ID,
+      [{ text: '/task-command', verify: 'submitted' }],
       expect.objectContaining({ freshlySpawned: true }),
     );
   });

@@ -50,15 +50,14 @@ vi.mock('../../src/main/git/git-checks', () => ({
   isInsideWorktree: vi.fn(() => true),
 }));
 
-// The base-branch checkout arm now freshens the checkout (simple-git instance
-// plus a throttled fetch) before delegating to checkoutBranch. Neither belongs
-// to this file's subject, so both are stubbed inert: the real simpleGit throws
-// on this file's fictional '/project' cwd, and the fetch stub returns the bare
-// branch name (the failure shape), which keeps the fast-forward path dormant.
-vi.mock('simple-git', () => {
-  const gitFactory = vi.fn(() => ({ raw: vi.fn(async () => '') }));
-  return { simpleGit: gitFactory, default: gitFactory };
-});
+// The base-branch checkout arm now freshens the checkout (a git client plus a
+// throttled fetch) before delegating to checkoutBranch. Neither belongs to
+// this file's subject, so both are stubbed inert: the real gitAt throws on this
+// file's fictional '/project' cwd, and the fetch stub returns the bare branch
+// name (the failure shape), which keeps the fast-forward path dormant.
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: vi.fn(() => ({ raw: vi.fn(async () => '') })),
+}));
 
 vi.mock('../../src/main/git/fetch-throttle', () => ({
   fetchIfStale: vi.fn(async (_git: unknown, _path: string, branch: string) => branch),

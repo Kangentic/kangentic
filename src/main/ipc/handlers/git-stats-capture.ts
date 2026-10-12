@@ -1,4 +1,4 @@
-import { DiffService } from '../../git/diff-service';
+import { DiffService, type ChurnSummary } from '../../git/diff-service';
 import { viaGitRead, GitReadPriority } from '../../git/git-read-queue';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
@@ -16,6 +16,37 @@ export function resolveDefaultBaseBranch(context: IpcContext, projectPath: strin
   const boardDefaultBranch = context.boardConfigManager.getDefaultBaseBranch();
   const effectiveConfig = context.configManager.getEffectiveConfig(projectPath || undefined);
   return boardDefaultBranch || effectiveConfig.git.defaultBaseBranch || 'main';
+}
+
+const churnReadsInFlight = new Map<string, Promise<ChurnSummary>>();
+
+/**
+ * The churn read for one directory and base, shared while it is queued or
+ * running. A suspend fires two captures for the same stopped agent, one from
+ * the move or Done branch and one from the session's exit handler, and each
+ * read is six git processes. One asked for after the shared read settles runs
+ * again, so a result is never reused past the overlap. A capture that joins a
+ * read already running gets that read's figures, which can predate a change
+ * made while it ran; at worst a few lines of churn, and a stale empty result
+ * never overwrites a real capture (the zero-churn guard below).
+ */
+function readChurnShared(gitDir: string, baseBranch: string): Promise<ChurnSummary> {
+  const directoryKey = process.platform === 'win32' ? gitDir.toLowerCase() : gitDir;
+  const key = `${directoryKey}\0${baseBranch}`;
+  const inFlight = churnReadsInFlight.get(key);
+  if (inFlight) return inFlight;
+  // Global read-queue cap at BACKGROUND priority: every finalization branch
+  // fires one of these, and a batch Done-move used to fan out ~4 unqueued
+  // git children per task simultaneously. Stats capture yields to
+  // user-action reads (readWorktreeHead, PR linking).
+  const read = viaGitRead(
+    () => new DiffService(gitDir).getChurnSummary(baseBranch),
+    { priority: GitReadPriority.BACKGROUND },
+  ).finally(() => {
+    churnReadsInFlight.delete(key);
+  });
+  churnReadsInFlight.set(key, read);
+  return read;
 }
 
 /**
@@ -42,6 +73,8 @@ export function resolveDefaultBaseBranch(context: IpcContext, projectPath: strin
  *   flow, where the worktree is gone and HEAD is already past the merge-base)
  *   is treated as "nothing to report," not "the branch has 0 churn," so it
  *   can never wipe a real capture made earlier in the task's life.
+ * - Two captures that overlap share one git read (`readChurnShared`), and each
+ *   still writes its own record, in the order its read settled.
  *
  * Best-effort: returns early if there is no git directory; every failure is
  * swallowed so a git error never breaks the calling finalization flow.
@@ -61,14 +94,7 @@ export function captureGitChurn(
     const recordIds = sessionRepo.listForTaskNewestFirst(task.id).map((record) => record.id);
     const baseBranch = task.base_branch || defaultBaseBranch || 'main';
 
-    // Global read-queue cap at BACKGROUND priority: every finalization branch
-    // fires one of these, and a batch Done-move used to fan out ~4 unqueued
-    // git children per task simultaneously. Stats capture yields to
-    // user-action reads (readWorktreeHead, PR linking).
-    void viaGitRead(
-      () => new DiffService(gitDir).getChurnSummary(baseBranch),
-      { priority: GitReadPriority.BACKGROUND },
-    )
+    void readChurnShared(gitDir, baseBranch)
       .then((stats) => {
         if (stats.linesAdded === 0 && stats.linesRemoved === 0 && stats.filesChanged === 0) return;
         sessionRepo.setTaskGitStats(recordIds, canonicalRecordId, stats);

@@ -51,8 +51,14 @@ export function registerBoardHandlers(context: IpcContext): void {
   });
 
   // === Swimlanes ===
-  ipcMain.handle(IPC.SWIMLANE_LIST, () => {
-    const { swimlanes } = getProjectRepos(context);
+  // A read, so the open project by default. `projectId` reads another
+  // registered project's board, for a workflow's planned task on it: its To Do
+  // column is where the task's inherited agent and model come from. Checked
+  // against the registry first, since opening a database for an unknown id
+  // would create one.
+  ipcMain.handle(IPC.SWIMLANE_LIST, (_, projectId?: string | null) => {
+    if (projectId && projectId !== context.currentProjectId && !context.projectRepo.getById(projectId)) return [];
+    const { swimlanes } = getProjectRepos(context, projectId || null);
     return swimlanes.list();
   });
 
@@ -225,8 +231,12 @@ export function registerBoardHandlers(context: IpcContext): void {
     return context.boardConfigManager.getLastWarnings(projectId);
   });
 
-  ipcMain.handle(IPC.BOARD_CONFIG_GET_BOARD_PROFILES, () => {
-    return context.boardConfigManager.getBoardProfiles();
+  // The open board's profiles, or another registered project's for a
+  // workflow's planned task on that board (an unknown one has none).
+  ipcMain.handle(IPC.BOARD_CONFIG_GET_BOARD_PROFILES, (_, projectId?: string | null) => {
+    if (!projectId || projectId === context.currentProjectId) return context.boardConfigManager.getBoardProfiles();
+    const projectPath = context.projectRepo.getById(projectId)?.path;
+    return projectPath ? context.boardConfigManager.getBoardProfiles(projectPath) : [];
   });
 
   ipcMain.handle(IPC.BOARD_CONFIG_SET_BOARD_PROFILES, (_, profiles: BoardProfile[]) => {

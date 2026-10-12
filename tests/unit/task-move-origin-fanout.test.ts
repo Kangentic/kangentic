@@ -39,7 +39,7 @@
  *      answers the phone inside its 10s budget.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Task, Swimlane } from '../../src/shared/types';
@@ -140,6 +140,16 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
 const mockAutoLinkPRForTask = vi.fn();
 vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: (...args: unknown[]) => mockAutoLinkPRForTask(...args),
+}));
+
+// The workflow lock. Allows by default; the refused-move suite below drives it.
+const workflowLock = vi.hoisted(() => ({
+  check: vi.fn((): string | null => null),
+  precheckTask: vi.fn((): unknown => null),
+}));
+vi.mock('../../src/main/workflows/workflow-lock-check', () => ({
+  checkWorkflowMove: () => workflowLock.check(),
+  readTaskForWorkflowPrecheck: () => workflowLock.precheckTask(),
 }));
 
 import { handleTaskMove, type TaskMoveOrigin } from '../../src/main/ipc/handlers/task-move';
@@ -266,7 +276,7 @@ function pushedChannels(context: ReturnType<typeof makeContext>): string[] {
 }
 
 describe('the origin literal at each handleTaskMove call site', () => {
-  const ORIGINS: TaskMoveOrigin[] = ['renderer', 'agent', 'mobile', 'auto-move'];
+  const ORIGINS: TaskMoveOrigin[] = ['renderer', 'agent', 'mobile', 'auto-move', 'automation', 'workflow'];
 
   /** Top-level arguments of the call whose '(' is at openParen. */
   function argumentsOf(source: string, openParen: number): string[] {
@@ -344,6 +354,12 @@ describe('the origin literal at each handleTaskMove call site', () => {
     expect(byFile['src/main/ipc/handlers/sessions.ts']).toBe("'auto-move'");
     // The renderer already moved the card optimistically, so this one is silent.
     expect(byFile['src/main/ipc/handlers/task-move.ts']).toBe("'renderer'");
+    // A Move to column automation is Kangentic acting, not an agent: it must not
+    // toast "Task updated by agent".
+    expect(byFile['src/main/automations/turn-end/turn-end-runner.ts']).toBe("'automation'");
+    // A workflow starting a task, and its step moving one on.
+    expect(byFile['src/main/workflows/workflow-engine-host.ts']).toBe("'workflow'");
+    expect(byFile['src/main/workflows/workflow-step.ts']).toBe("'workflow'");
   });
 
   it('routes its pushes through sendToRenderer, never a raw webContents.send', () => {
@@ -443,6 +459,17 @@ describe('what each origin announces', () => {
     );
   });
 
+  it('sends the quiet automation channel, and never the agent one, for an automation or workflow move', async () => {
+    for (const origin of ['automation', 'workflow'] as TaskMoveOrigin[]) {
+      vi.clearAllMocks();
+      const context = await move(origin);
+      // Twice: at the commit point, so the card moves before a Done move's
+      // cleanup finishes, and again at settle. Both are the quiet reload.
+      expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_AUTOMATION, IPC.TASK_MOVED_BY_AUTOMATION]);
+      expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.TASK_MOVED_BY_AUTOMATION, 'proj-test');
+    }
+  });
+
   it('resolves the PR link for every origin, not just the two that used to', async () => {
     // This used to live at the call sites, so an agent's move and a phone's move
     // never linked a PR for the lane they landed in.
@@ -451,6 +478,63 @@ describe('what each origin announces', () => {
       await move(origin);
       expect(mockAutoLinkPRForTask).toHaveBeenCalledTimes(1);
     }
+  });
+});
+
+describe('a move the workflow lock refuses changes nothing', () => {
+  // The lock is asked twice: before handleTaskMove aborts anything in flight
+  // (so a refused drag cannot cancel the workflow's own move of the task), and
+  // inside the Phase 1 lock against the reconciled row. Phase 1 sits outside
+  // the Phase 2/3 rollback, so a refusal there must not reach the rollback's
+  // `removeByTaskId` either: that would kill a running workflow agent.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    workflowLock.check.mockReturnValue(null);
+    workflowLock.precheckTask.mockReturnValue(null);
+  });
+
+  // `clearAllMocks` keeps a return value, so a refusal set here would refuse
+  // every move in the suites after this one.
+  afterEach(() => {
+    workflowLock.check.mockReturnValue(null);
+    workflowLock.precheckTask.mockReturnValue(null);
+  });
+
+  async function refusedMove(): Promise<{ context: ReturnType<typeof makeContext>; error: unknown }> {
+    const task = makeTask({ session_id: 'live-session' });
+    const context = makeContext(task);
+    let error: unknown = null;
+    try {
+      await handleTaskMove(context as never, { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 }, 'renderer');
+    } catch (thrown) {
+      error = thrown;
+    }
+    return { context, error };
+  }
+
+  function expectUntouched(context: ReturnType<typeof makeContext>): void {
+    const repos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { move: ReturnType<typeof vi.fn> } } | undefined;
+    if (repos) expect(repos.tasks.move).not.toHaveBeenCalled();
+    expect(context.sessionManager.removeByTaskId).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+  }
+
+  it('refuses at the pre-check, before anything moves or stops', async () => {
+    workflowLock.precheckTask.mockReturnValue(makeTask());
+    workflowLock.check.mockReturnValue('#1 is locked while Usage budgets runs.');
+    const { context, error } = await refusedMove();
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('#1 is locked while Usage budgets runs.');
+    expect(mockGetProjectRepos).not.toHaveBeenCalled();
+    expectUntouched(context);
+  });
+
+  it('refuses inside the lock without the rollback killing the session', async () => {
+    workflowLock.check.mockReturnValue('#1 is locked while Usage budgets runs.');
+    const { context, error } = await refusedMove();
+    expect((error as Error).message).toBe('#1 is locked while Usage budgets runs.');
+    expectUntouched(context);
   });
 });
 

@@ -90,8 +90,8 @@ import type { CommandContext } from '../../src/main/agent/commands/types';
 // Board fixture
 // ---------------------------------------------------------------------------
 
-const TODO_LANE = { id: 'lane-todo', name: 'To Do', role: 'todo', is_archived: false };
-const REVIEW_LANE = { id: 'lane-review', name: 'Review', role: null, is_archived: false };
+const TODO_LANE = { id: 'lane-todo', name: 'To Do', role: 'todo', is_archived: false, position: 0 };
+const REVIEW_LANE = { id: 'lane-review', name: 'Review', role: null, is_archived: false, position: 1 };
 
 interface FixtureTask {
   id: string;
@@ -300,6 +300,43 @@ describe('handleMoveTask across columns', () => {
     const response = handleMoveTask({ taskId: 'uuid-a', column: 'Review', position: 1 }, context);
 
     expect(response.data).toMatchObject({ position: 1 });
+  });
+
+  it('moves to the column after the task\'s own for column "next"', () => {
+    const response = handleMoveTask({ taskId: 'uuid-a', column: 'next' }, context);
+
+    expect(response.success).toBe(true);
+    expect(context.onTaskMove).toHaveBeenCalledWith(expect.objectContaining({ targetSwimlaneId: REVIEW_LANE.id }));
+  });
+
+  it('refuses "next" from the last column, with the reason', () => {
+    const response = handleMoveTask({ taskId: 'uuid-r1', column: 'next' }, context);
+
+    expect(response).toMatchObject({ success: false, error: 'There is no column after Review.' });
+    expect(context.onTaskMove).not.toHaveBeenCalled();
+  });
+
+  it('hands a message to the move, and says the agent there will get it', () => {
+    const response = handleMoveTask({ taskId: 'uuid-a', column: 'Review', message: 'Back from review:\n- fix the cap' }, context);
+
+    expect(context.onTaskMove).toHaveBeenCalledWith(
+      expect.objectContaining({ targetSwimlaneId: REVIEW_LANE.id }),
+      { message: 'Back from review:\n- fix the cap' },
+    );
+    expect(response.message).toContain('Its agent there gets your message once it is ready.');
+  });
+
+  it('refuses a message on a move that stays in the column, since no agent arrives', () => {
+    const response = handleMoveTask({ taskId: 'uuid-c', column: 'To Do', message: 'hello' }, context);
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('kangentic_send_session_message');
+  });
+
+  it('refuses a message that is not a string, for the phone path that skips zod', () => {
+    const response = handleMoveTask({ taskId: 'uuid-a', column: 'Review', message: 42 }, context);
+
+    expect(response).toMatchObject({ success: false, error: 'message must be a string.' });
   });
 
   it('reports the "Moving ... at position N." message for an MCP caller to read', () => {

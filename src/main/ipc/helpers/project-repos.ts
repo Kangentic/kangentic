@@ -3,6 +3,9 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
+import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
+import { WorkflowRepository } from '../../db/repositories/workflow-repository';
+import { TaskLinkRepository } from '../../db/repositories/task-link-repository';
 import { getProjectDb } from '../../db/database';
 import type { IpcContext } from '../ipc-context';
 
@@ -12,6 +15,9 @@ export function getProjectRepos(context: IpcContext, projectId?: string | null):
   automations: AutomationRepository;
   automationRuns: AutomationRunRepository;
   attachments: AttachmentRepository;
+  taskMoves: TaskMoveRepository;
+  workflows: WorkflowRepository;
+  taskLinks: TaskLinkRepository;
 } {
   const resolvedProjectId = projectId ?? context.currentProjectId;
   if (!resolvedProjectId) throw new Error('No project is currently open');
@@ -22,6 +28,9 @@ export function getProjectRepos(context: IpcContext, projectId?: string | null):
     automations: new AutomationRepository(db),
     automationRuns: new AutomationRunRepository(db),
     attachments: new AttachmentRepository(db),
+    taskMoves: new TaskMoveRepository(db),
+    workflows: new WorkflowRepository(db),
+    taskLinks: new TaskLinkRepository(db),
   };
 }
 

@@ -1,6 +1,7 @@
 import {
   parseCapabilityRequestPayload,
   type BoardTaskWire,
+  type BoardTaskWorkflowWire,
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
   type CommandTerminalWire,
@@ -17,6 +18,7 @@ import type { IpcContext } from '../../ipc/ipc-context';
 import type { Task } from '../../../shared/types';
 import { isPauseOffered, isResumeOffered, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
 import { commandTerminalDisplayName, commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
@@ -26,6 +28,7 @@ import { sendEvent } from './send-event';
 import { deriveProjectAccentColor } from './project-color';
 import { resolveKnownProject } from './known-project';
 import { toActivityReasonWire, toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
+import { workflowWireFacts } from './workflow-wire';
 
 function subscriptionKeyFor(projectId: string): string {
   return `board:${projectId}`;
@@ -47,7 +50,7 @@ function listCommandTerminalWires(context: IpcContext, projectId: string): Comma
   const activityCache = context.sessionManager.getActivityCache();
   const terminals: CommandTerminalWire[] = [];
   for (const terminalSession of context.sessionManager.listSessions()) {
-    if (!terminalSession.transient || terminalSession.projectId !== projectId) continue;
+    if (!isCommandTerminalSession(terminalSession) || terminalSession.projectId !== projectId) continue;
     if (terminalSession.status !== 'running' && terminalSession.status !== 'queued') continue;
     const slotNumber = commandTerminalSlotNumber(terminalSession.commandTerminalSlot);
     if (slotNumber === null) continue;
@@ -127,14 +130,14 @@ export async function handleReadBoard(
   const swimlaneRows = repos.swimlanes.list();
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
   const { liveTaskIds, pausedTaskIds } = taskSessionStatesOf(context.sessionManager.listSessions());
-  const toTaskWire = (task: Task): BoardTaskWire => {
+  const toTaskWire = (task: Task, workflow: BoardTaskWorkflowWire | null): BoardTaskWire => {
     const paused = pausedTaskIds.has(task.id);
     const laneRole = laneRoleById.get(task.swimlane_id);
     return toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null, {
       paused,
       resumable: isResumeOffered({ hasPausedSession: paused, task, laneRole }),
       pausable: isPauseOffered({ hasLiveSession: liveTaskIds.has(task.id), laneRole }),
-    });
+    }, workflow);
   };
 
   // One-shot page of completed work. Deliberately NOT part of the snapshot
@@ -151,17 +154,20 @@ export async function handleReadBoard(
       // nothing to summarize, which is a normal state rather than an error.
       if (summary) summariesByTaskId[task.id] = toSessionSummaryWire(summary);
     }
+    const archivedWorkflows = workflowWireFacts(context, projectId, page.tasks);
     const archivedPayload: ReadBoardArchivedResponsePayload = {
       projectId,
       // A restore from Done labels the task ("Resuming session...") while
       // its row is still archived.
-      archivedTasks: page.tasks.map(toTaskWire),
+      archivedTasks: page.tasks.map((task) => toTaskWire(task, archivedWorkflows.get(task.id) ?? null)),
       archivedTotalCount: page.totalCount,
       summariesByTaskId,
     };
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(archivedPayload) };
   }
-  const allTasks = repos.tasks.list().map(toTaskWire);
+  const boardTasks = repos.tasks.list();
+  const workflows = workflowWireFacts(context, projectId, boardTasks);
+  const allTasks = boardTasks.map((task) => toTaskWire(task, workflows.get(task.id) ?? null));
 
   // A phone that names a `view` (protocol 0.9.0) gets only what it renders:
   // no backlog in either projection, and under 'sessions' only the tasks an

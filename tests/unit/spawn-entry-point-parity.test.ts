@@ -75,6 +75,11 @@ const ENGINE_SINK_FILES: Record<string, string> = {
     'AUTOMATION_RUN_AGAIN: re-runs ONE existing automation against the task\'s current state. Not a '
     + 'spawn either, and it cannot become one: executeSingleAutomation passes no startAgent, so a row '
     + 'that needs an agent and finds no session skips with that reason',
+  'src/main/automations/turn-end/turn-end-runner.ts':
+    "A column's On agent turn end rows, run when the agent that is working the task finishes a turn. "
+    + 'Not a spawn: it acts on the agent that just ended its turn, passes no startAgent, and runs '
+    + 'outside the task lock. A Move to column row moves through handleTaskMove, which spawns, if at '
+    + 'all, through spawnAgent like any move',
 };
 
 /**
@@ -95,6 +100,9 @@ const PTY_SINK_FILES: Record<string, string> = {
     'raw SESSION_SPAWN passthrough: renderer-supplied command, no task-agent resolution involved',
   'src/main/ipc/handlers/transient-sessions.ts':
     'transient Command Terminal sessions: not task agents, no overrides or lock apply',
+  'src/main/workflows/workflow-agent.ts':
+    'a workflow\'s own agent: no task, so no override lock or column resolution; it runs the project '
+    + 'default agent read-only, and runs ensureTrust and resolveShimLaunch before buildCommand (scanned below)',
 };
 
 function collectSourceFiles(directory: string): string[] {

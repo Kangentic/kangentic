@@ -299,7 +299,7 @@ Every scheduled injection ends in exactly one recorded outcome, persisted on the
 
 | Context | Caller | What gets verified | Latency |
 |---------|--------|-------------------|---------|
-| `'paste'` | `TerminalSubmit.submitContent` (browser captures, single auto-command paste) | "the agent acknowledged this prompt" | 100-500ms |
+| `'paste'` | `TerminalSubmit.submitContent` (browser captures, single auto-command paste, and a column message of more than one line or over 1,000 characters that is not a slash command) | "the agent acknowledged this prompt" | 100-500ms |
 | `'command-injection'` | `TerminalSubmit.submitKeystrokes` (chained slash commands) | "this exact command was processed as a discrete invocation" | 50-150ms typical, ~4s worst case (five 400ms windows plus the 2000ms grace) |
 
 The two contexts solve different problems: `'paste'` confirms one-shot paste submissions of arbitrary user prompts, while `'command-injection'` confirms each link in a multi-command chain landed cleanly. They share an interface (`getSubmissionVerifier`) so adapters declare what they support per context, and the renderer/IPC layer never has to branch on agent name.
@@ -554,6 +554,7 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 
 - `src/main/transition-engine/injection-plan.ts` - decides the `restartReason` (`'model'` / `'effort'` / null) for a column transition or column/profile edit, and builds the auto_command sequence (with its verify mode) + verifier; sources the effort delta from the agent's reported level ahead of the session record's `applied_effort`, counting a silent downgrade of the launch level as applied (`resolveReportedEffort` / `resolveSourceEffort`), and the model delta from `applied_model` alone. `resolveTargetSettings` resolves the target side for a move and a ContextBar pick alike.
 - `src/main/transition-engine/terminal-submit-scheduler.ts` - task-keyed lifecycle: the burst FIFO, fresh-spawn wait, deferred wait, escalation, and outcome reporting.
+- `src/main/automations/turn-end/agent-message-delivery.ts` - the one paste-or-type decision every column message path asks (`shouldPaste`: more than one line or over 1,000 characters, and not a slash command), and the paste after the agent's turn ends.
 - `src/main/transition-engine/turn-completion.ts` - the shared turn-completion predicate.
 - `src/main/pty/terminal-submit.ts` - byte-level engine: `submitContent` (bracketed paste) + `submitKeystrokes` (handshake chain, prompt-state policy, per-command verification).
 - `src/main/pty/output-settle.ts` - the settle primitive, shared with `paste-engine.ts`.

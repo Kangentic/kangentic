@@ -90,6 +90,17 @@ describe('deriveFocusedSessionIds', () => {
     expect(result).toEqual([]);
   });
 
+  it('focuses the workflow agent while the Workflows view shows its terminal, and only then', () => {
+    // The agent is transient but no Command Terminal, so no slot feeds it in;
+    // without this input its pane's terminal would get no bytes.
+    expect(deriveFocusedSessionIds(makeFocusedInput({ activeView: 'workflows', workflowAgentSessionId: 'sess-agent' })))
+      .toEqual(['sess-agent']);
+    expect(deriveFocusedSessionIds(makeFocusedInput({ activeView: 'board', workflowAgentSessionId: 'sess-agent' })))
+      .toEqual([]);
+    expect(deriveFocusedSessionIds(makeFocusedInput({ activeView: 'workflows', workflowAgentSessionId: null })))
+      .toEqual([]);
+  });
+
   it('focuses the window session AND the panel session together', () => {
     // The panel sheds only the tabs whose detail is open, so it keeps a live
     // terminal for another session while a window drives this one. Both have a

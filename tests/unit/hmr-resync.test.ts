@@ -290,6 +290,7 @@ describe('HMR store re-sync', () => {
       { file: 'monitor-store.ts', key: 'monitorStore', selfAccepts: true },
       { file: 'announcements-store.ts', key: 'announcementsStore', selfAccepts: true },
       { file: 'knowledge-graph-store.ts', key: 'knowledgeGraphStore', selfAccepts: true },
+      { file: 'workflow-store.ts', key: 'workflowStore', selfAccepts: true },
       { file: 'leftover-processes-store.ts', key: 'leftoverProcessesStore', selfAccepts: true },
       { file: 'config-store.ts', key: 'configStore', selfAccepts: true },
     ];

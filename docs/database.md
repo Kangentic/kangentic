@@ -263,11 +263,27 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | profile_id | TEXT | | NULL |
 | run_mode | TEXT | NOT NULL | 'column_settings' |
 | detail_view_state | TEXT | | NULL |
+| workflow_id | TEXT | | NULL |
+| workflow_project_id | TEXT | | NULL |
+| route_start_swimlane_id | TEXT | | NULL |
+| route_last_swimlane_id | TEXT | | NULL |
+| skipped_swimlane_ids | TEXT | | NULL |
+| canvas_x | REAL | | NULL |
+| canvas_y | REAL | | NULL |
 | archived_at | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
 
-Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_display_id` on (display_id) UNIQUE, `idx_tasks_session_id` on (session_id), `idx_tasks_external` on (external_source, external_id).
+Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_display_id` on (display_id) UNIQUE, `idx_tasks_session_id` on (session_id), `idx_tasks_external` on (external_source, external_id), `idx_tasks_workflow` on (workflow_id).
+
+The seven workflow columns are NULL on an ordinary task. `workflow_id` names the task's workflow and
+`workflow_project_id` the project whose database holds it (the task's own project unless the
+workflow put it on another board). The route is `route_start_swimlane_id` (NULL: the first column
+after To Do), `route_last_swimlane_id` (NULL: the column before Done) and `skipped_swimlane_ids` (a
+JSON array, NULL for none), read through `src/shared/workflow-route.ts`. `canvas_x` / `canvas_y`
+are where a hand placed the card on the Workflows canvas. None of them is in `update()`'s column
+list: `setWorkflowMembership`, `setRoute` and `setCanvasPosition` write them without bumping
+`updated_at`, so a canvas drag never re-indexes the task.
 
 `worktree_folder` is the DIRECTORY NAME of the task's worktree, written once and never rewritten
 (`TaskRepository.setWorktreeFolder` guards on `worktree_folder IS NULL`). New tasks get
@@ -351,7 +367,7 @@ mark) rather than migration bookkeeping.
 
 ### column_automations table
 
-What a column does when a task enters or leaves it. Replaces the `actions` + `swimlane_transitions`
+What a column does when a task enters it, when its agent finishes a turn there, and when the task leaves it. Replaces the `actions` + `swimlane_transitions`
 pair, which modelled a shared action referenced by N transitions; an automation belongs to exactly
 one column.
 
@@ -365,15 +381,23 @@ one column.
 | position | INTEGER | NOT NULL | |
 | enabled | INTEGER | NOT NULL | 1 |
 | config_json | TEXT | NOT NULL | |
+| condition | TEXT | | NULL |
+| max_runs | INTEGER | | NULL |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
 
-Valid types: `send_message`, `run_script`, `webhook`, `notify`, plus legacy `spawn_agent` on boards
-that already had one. `trigger` is `enter` or `exit`. It is TEXT rather than a boolean `on_exit`
-deliberately, so a third trigger (an agent going idle, a PR merging) is a new value rather than a
-migration.
+Valid types: `send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus legacy
+`spawn_agent` on boards that already had one. `trigger` is `enter`, `turn_end` (each time the
+column's agent finishes a turn there) or `exit`. It is TEXT rather than a boolean, so the third
+trigger was a new value rather than a migration. A row read with a trigger this build does not know
+is skipped with a warning, never read as `enter`.
 
-`position` is assigned PER TRIGGER, so each group numbers from 0 independently and the two can
+`condition` is the row's Condition in plain words, judged by the Automation agent before the row
+runs; NULL (or blank) means the row always runs. `max_runs` is its Frequency, the most times it may
+run on one task across every visit; NULL means no limit. Both are nullable so a build from before
+them still inserts into a database that has them.
+
+`position` is assigned PER TRIGGER, so each group numbers from 0 independently and the three can
 never interleave.
 
 The foreign key is genuine and enforced (`database.ts` sets `foreign_keys = ON`). The one on
@@ -411,9 +435,19 @@ the durable record; the failure toast is the rationed interruption, following
 | attempts | INTEGER | NOT NULL | 0 |
 | started_at | TEXT | NOT NULL | |
 | finished_at | TEXT | | |
+| condition_met | INTEGER | | NULL |
+| condition_reason | TEXT | | NULL |
 
 `status` is `running`, `succeeded`, `failed`, `skipped`, or `interrupted`. `detail` carries the skip
-reason, the error, or a one-line success (`HTTP 204`, `exit 0`).
+reason, the error, or a one-line success (`HTTP 204`, `exit 0`). `condition_met` and
+`condition_reason` hold the Automation agent's answer for a row with a Condition (1 or 0, and its
+one-line reason), NULL for a row without one.
+
+**What counts as a run.** A row "has run" (for a turn-end row's once-per-visit rule and for
+Frequency) when it has a row here with status `running`, `succeeded`, `failed` or `interrupted`. A
+`skipped` row, including a Condition that answered no, is not a run, so the next trigger checks it
+again. The project-open prune keeps every counted run of an automation that has a Frequency limit,
+on a task that is not archived, so pruning can never reset a limit.
 
 `automation_name` and `type` are DENORMALIZED and there is no foreign key to `column_automations`:
 a run log that empties itself when you rename or delete the automation is not a log.
@@ -427,7 +461,8 @@ Two indices, one per question the log is asked:
 
 **Project-open sweep.** In the same pass that runs `retryFailedDoneCleanups`, two things happen.
 `markStaleRunsInterrupted(startedBefore)` stamps every row still `running` as `interrupted`, and
-`pruneTo(200)` keeps the newest 200 rows per project, because nothing else bounds the table. The
+`pruneTo(200)` keeps the newest 200 rows per project, because nothing else bounds the table, plus
+every counted run of an automation with a Frequency limit on a task that is not archived. The
 sweep is required for honesty: `synchronous-shutdown.md` forbids awaiting a drain on quit, so a
 `running` row at boot is a known orphan, and without this "these always run" is false on every
 restart.
@@ -440,6 +475,114 @@ automation as `interrupted` and raise a toast saying it did not finish.
 
 Nothing is retried automatically, ever. A fired webhook and a half-run script are not safe to repeat
 blind, so the user gets Run again on the row instead.
+
+### workflows table
+
+A set of linked tasks with its own agent, in its HOME project's database. Its tasks live on their
+own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| title | TEXT | NOT NULL | |
+| brief | TEXT | | NULL |
+| source_task_id | TEXT | | NULL |
+| state | TEXT | NOT NULL | 'draft' |
+| draft_json | TEXT | | NULL |
+| color_slot | INTEGER | NOT NULL | 1 |
+| revision | INTEGER | NOT NULL | 1 |
+| created_at | TEXT | NOT NULL | |
+| started_at | TEXT | | NULL |
+| finished_at | TEXT | | NULL |
+| agent_name | TEXT | | NULL |
+| agent_session_id | TEXT | | NULL |
+| agent_cwd | TEXT | | NULL |
+| agent_read_project_ids | TEXT | NOT NULL | '[]' |
+| agent_pty_cols | INTEGER | | NULL |
+| agent_pty_rows | INTEGER | | NULL |
+| paused_at | TEXT | | NULL |
+
+`state` is `draft` (not started), `running`, `paused` or `done`; a value this build does not know
+reads as paused, so the engine leaves it alone. A draft keeps its planned tasks and links in
+`draft_json` (`WorkflowDraft`: tasks by local key, with their project, route, an optional board
+task to take in, and their run settings in the task row's own columns: `base_branch`,
+`use_worktree`, `run_mode`, `profile_id` and the four override pins, which Start copies onto the
+task it creates; a draft saved before those existed reads them as the defaults) rather than as
+rows on any board, so no board read has to filter planned work out;
+Start creates the tasks and clears it. `revision` goes up on every save and edit, and
+`kangentic_save_workflow` refuses a save that carries an older one. `color_slot` is the
+`--kng-chart-N` slot of the workflow's icon, the first no unfinished workflow holds.
+`agent_name` and `agent_session_id` are the workflow agent's conversation: the agent that holds it
+and the id it resumes by. They live here rather than in `sessions`, whose `task_id` is a foreign
+key to tasks, and they change no plan, so writing them leaves `revision` alone. Null until the agent
+first starts, and again after a resume finds no conversation to resume.
+
+`agent_cwd` is the checkout that conversation ran in, rewritten at every start. The agent CLI keeps
+the history under it (Claude keys the file by it), so the conversation viewer and
+`kangentic_get_transcript` read the conversation through it, with no sessions row.
+
+`agent_read_project_ids` is a JSON array of project ids: the other registered projects the workflow
+agent asked to read (`kangentic_request_project_access`). It reads these, and every project its
+workflow's tasks are on, through the adapter's readable directories (Claude's `--add-dir`). Kept,
+so every later start and resume reads them; it changes no plan, so `revision` stays.
+
+`agent_pty_cols` / `agent_pty_rows` are the workflow agent's last PTY grid, written on every resize the
+desktop makes (`persistPtyGrid`), as a task session's are on `sessions.last_pty_cols/rows`. A start
+with no grid measured (after a restart) spawns at it, so the agent's first frame is drawn at the
+pane's size rather than the spawn default.
+
+`paused_at` is when a paused workflow was paused, stamped by `setState` on Pause and cleared by
+every other state, so it is set only while the workflow is paused. The Workflows picker reads it
+for the paused row's "Paused yesterday 18:20". A workflow paused before the column existed has none.
+
+Index: `idx_workflows_state` on (state), so the engine's "anything running?" probe is one lookup.
+
+### task_links table
+
+"blocked waits for blocker to reach Done", in the workflow's home database.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| workflow_id | TEXT | NOT NULL, FK->workflows ON DELETE CASCADE | |
+| blocker_project_id | TEXT | NOT NULL | |
+| blocker_task_id | TEXT | NOT NULL | |
+| blocked_project_id | TEXT | NOT NULL | |
+| blocked_task_id | TEXT | NOT NULL | |
+| created_at | TEXT | NOT NULL | |
+
+No foreign key to tasks: either end can be a task in another project's database. A task delete
+removes the links that name it in its own database (`TaskRepository.delete`), and the engine never
+counts a link whose blocker is gone as satisfied. Indexes: `idx_task_links_workflow`,
+`idx_task_links_blocker`, `idx_task_links_blocked`, and `idx_task_links_pair` UNIQUE on
+(blocker_task_id, blocked_task_id).
+
+### task_moves table
+
+Every column a task entered, one row per entry. It is the visit boundary turn-end automations count
+from ("has this row run since the task came into the column?"), and a workflow task's step history.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| task_id | TEXT | NOT NULL, FK->tasks ON DELETE CASCADE | |
+| from_swimlane_id | TEXT | | NULL |
+| to_swimlane_id | TEXT | NOT NULL | |
+| origin | TEXT | NOT NULL | |
+| reason | TEXT | | NULL |
+| at | TEXT | NOT NULL | |
+
+Written by `TaskRepository` inside the same transaction as the move (`move`, `unarchive`, and a
+create into a column), so no move lands without its record, including the ones that bypass
+`handleTaskMove` (the Phase 3 rollback, unarchive, create). A reorder within a column writes
+nothing. `origin` is who moved it: `renderer`, `agent`, `mobile`, `auto-move`, `automation`,
+`workflow`, `rollback`, `unarchive` or `create`. `reason` is the Move to column row's name, or a
+workflow's step. `from_swimlane_id` is NULL for a task born into the column.
+
+There is no foreign key to `swimlanes`: deleting a column must not delete a task's history.
+
+Indices: `idx_task_moves_task` on (task_id, at DESC) for a task's latest entry into a column, and
+`idx_task_moves_to_column` on (to_swimlane_id, at DESC).
 
 ### actions table (retired)
 
@@ -1009,7 +1152,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 63. **Subagent attribution columns on `conversation_turn_usage`** - adds `subagent_id`, `agent_type`, and `parent_tool_use_id` (`TEXT DEFAULT NULL`) plus `spawn_depth` (`INTEGER DEFAULT NULL`), and creates `idx_turn_usage_agent_type` on `(agent_type, ts)`. `subagent_id` is the discriminator: NULL for every main-thread (driver) turn, set for a turn a Task-tool subagent ran. Every row written before subagent capture existed is a main-thread turn, so NULL is also the correct historical value and no backfill is needed. The index serves the project-wide by-type rollup's `GROUP BY` ordering only. It does NOT prune on `subagent_id`, which is in no index, so that predicate still runs per row; the per-task breakdown rides the existing `idx_turn_usage_task` instead. See the `conversation_turn_usage` table section above for which readers see which rows. Four idempotent guarded `ALTER TABLE`s plus one idempotent `CREATE INDEX IF NOT EXISTS`.
 64. **`turn_spawn_links`** - adds the table that makes `parent_tool_use_id` resolvable, mapping a subagent-spawning tool call's id to the turn that emitted it, plus `idx_turn_spawn_links_turn` on `(turn_uuid)` for the reverse direction. Migration 63 stored the child's half of that link and nothing stored the parent's: `conversation_turn_usage.turn_uuid` is the transcript record's own uuid for a main-thread row and `sub:<subagentId>:<messageId>` for a subagent one, and neither is a tool-use id, so the column named a key no row carried. No backfill: links accrue as sessions are indexed, and a task with none reports its fan-outs under a null driver rather than losing them. One idempotent `CREATE TABLE IF NOT EXISTS` plus one idempotent `CREATE INDEX IF NOT EXISTS`.
 65. **`remote_item_cache` table** - creates the persistent cache of remote board items for the Import dialog, keyed by `(external_source, repository, external_id)`. The dialog paints it instantly on open (`backlog:importGetCached`, no network) and reconciles only items changed since `MAX(remote_updated_at)` (`backlog:importReconcile`), so browsing a large tracker no longer re-fetches everything and no longer spawns one `az rest` per Azure DevOps work item just to render the list. `state_category` is the normalized `'open' | 'closed'` bucket, kept for a future SQL-level filter; the copy the dialog actually reads is `stateCategory` inside `payload`, which also carries `alreadyImported` forced false (re-stamped from the live backlog on read) and has Azure DevOps comments deferred to import time. See the `remote_item_cache table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
-66. **`column_automations` and `automation_runs` tables, and the actions-to-automations data migration** - creates both tables and their four indices (see the table sections above), then converts what the old `actions` + `swimlane_transitions` pair held. Every transition row becomes a `column_automations` row on its `to` column, in `(from, to, execution_order)` order, with the action's name, type and config copied; an action referenced N times becomes N independent automations, because an automation belongs to exactly one column. Names are made unique per column BEFORE the unique index is created, or its creation fails. Three types are DROPPED rather than ported, rows and all: `kill_session` (at Priority 4 the task has no active session, so the seeded `* -> Planning` row did nothing), `create_worktree` (duplicates the move path's `ensureTaskWorktree`) and `cleanup_worktree` (duplicates what a To Do move does). The seeded "Start Planning Agent" is skipped too, since its prompt equals `DEFAULT_SPAWN_PROMPT_TEMPLATE`, which the fallback spawn already uses; a `spawn_agent` row with any OTHER prompt IS copied, as the one legacy automation. Every swimlane with a non-empty `auto_command` gains a `send_message` enter row carrying the message and its mode, and both swimlane fields are then cleared. `workingDir` is dropped from `run_script` configs. Idempotent via a `schema_meta` flag, so a second run is a no-op; `tests/unit/automations-migration.test.ts` pins each of those cases.
+66. **`column_automations` and `automation_runs` tables, and the actions-to-automations data migration** - creates both tables and their four indices (see the table sections above), then converts what the old `actions` + `swimlane_transitions` pair held. Every transition row becomes a `column_automations` row on its `to` column, in `(from, to, execution_order)` order, with the action's name, type and config copied; an action referenced N times becomes N independent automations, because an automation belongs to exactly one column. Names are made unique per column BEFORE the unique index is created, or its creation fails. Three types are DROPPED rather than ported, rows and all: `kill_session` (at Priority 4 the task has no active session, so the seeded `* -> Planning` row did nothing), `create_worktree` (duplicates the move path's `ensureTaskWorktree`) and `cleanup_worktree` (duplicates what a To Do move does). The seeded "Start Planning Agent" is skipped too, since its prompt equals the frozen seeded literal `SEEDED_SPAWN_PROMPT_TEMPLATE` (`{{task_xml}}{{attachments}}`, which the fallback spawn's default covers; the default itself has since grown `{{workflow_xml}}`, so the migration compares against the literal it seeded, not the current default); a `spawn_agent` row with any OTHER prompt IS copied, as the one legacy automation. Every swimlane with a non-empty `auto_command` gains a `send_message` enter row carrying the message and its mode, and both swimlane fields are then cleared. `workingDir` is dropped from `run_script` configs. Idempotent via a `schema_meta` flag, so a second run is a no-op; `tests/unit/automations-migration.test.ts` pins each of those cases.
 67. **`conversation_id` + `cumulative_*` columns on `usage_history` (per-leg deltas)** - adds `conversation_id TEXT`, `cumulative_cost_usd REAL` and `cumulative_duration_ms INTEGER` behind a guarded `ALTER TABLE`, backfills `conversation_id` from surviving `sessions.agent_session_id`, copies the existing `total_cost_usd` / `total_duration_ms` into the cumulative columns, then rewrites the two `total_*` columns to per-leg deltas via `LINEAGE_DELTA_SET_SQL`. Rewrites historical data, so it runs once inside a transaction and is idempotent: re-running recomputes the same deltas from the untouched `cumulative_*` values. Rows with a NULL `conversation_id` (105 of 2,434 on the dogfooding install, $116.68) keep their reading unchanged. Also adds `idx_usage_history_conversation`.
 68. **`idx_turn_usage_main_session` covering index on `conversation_turn_usage`** - a PARTIAL covering index on `(session_id, ts, input_tokens, output_tokens) WHERE subagent_id IS NULL`, created after the subagent-attribution columns exist (it references one of them). It serves the two per-session main-thread rollups the dashboard runs on every load: `listUsageRollup`'s `session_turns` CTE (breakdown tokens) and `getGroupedUsageSince`'s `session_tokens` CTE (the cost-allocation denominator). Both group every main-thread turn by session and sum the same two token columns, so carrying them in the index turns a full table walk into a pure index scan: measured on the dogfooding project (214k turns, 2.4k sessions) the breakdown rollup went from 93 ms to 18 ms per project, which matters because the app-wide scope runs it once per registered project (in the retrieval worker, which runs every usage read). Partial because every reader of these aggregates is main-thread-only, and SQLite only picks a partial index up when the query repeats its predicate, which both CTEs do. `idx_turn_usage_session` stays: it serves `getForSession`, which reads a session's subagent rows too. Idempotent `CREATE INDEX IF NOT EXISTS`.
 69. **`memory_chunks` index and full-text triggers** - drops `idx_memory_chunks_doc`, which duplicated the table's own `UNIQUE(corpus, doc_id, seq)` index (every read kept its plan and time without it) at the cost of a second index write per chunk. Replaces the three unconditional full-text sync triggers (`trg_memory_chunks_ai`/`_ad`/`_au`) with `trg_memory_chunks_fts_ai`/`_ad`/`_au`, which skip `corpus = 'code'`: source code is found by meaning, and its chunks in the shared full-text table would slow every keyword search. All three skip code alike, since a full-text `delete` for a row the index never held corrupts an external-content index. The indexes over `memory_chunks` added since are not migrations: the retrieval worker builds them after its storage upkeep, each in a quiet moment (`src/main/retrieval/index-builds.ts`), because each reads the whole table. Idempotent `DROP ... IF EXISTS` and `CREATE TRIGGER IF NOT EXISTS`.
@@ -1018,6 +1161,13 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 72. **`memory_task_summaries` and its `effort` column** - creates the task summaries table (see the section above) and adds `effort TEXT DEFAULT NULL` to one made before it, recording the effort each summary was written at so Rebuild rewrites only those written some other way. Idempotent `CREATE TABLE IF NOT EXISTS` plus a guarded `ALTER TABLE`.
 73. **`last_pty_cols` / `last_pty_rows` columns on sessions** - adds both as `INTEGER DEFAULT NULL`, the PTY grid a session last had, so a resume after a desktop restart or a pty host crash spawns at it instead of the 120x30 default (see the `sessions` table notes above). In memory a respawn already starts at its predecessor's grid; this is the copy that outlives the session registry. No backfill: NULL correctly means "never recorded", and the next grid change fills it. Idempotent guarded `ALTER TABLE`s sharing one `table_info` read.
 74. **`result_tokens_read_at` column on sessions** - adds `result_tokens_read_at TEXT DEFAULT NULL`, the UTC ISO time a transcript read for the record's per-tool Tokens answered and left it nothing to keep, so `fillEarlierRunResultTokens` does not parse that transcript again on every launch. NULL for every existing row, which the fill then reads once.
+75. **`condition` / `max_runs` on column_automations, and `condition_met` / `condition_reason` on automation_runs** - every automation's Condition and Frequency, and the Automation agent's answer on each run (see both tables above). All nullable with no default, so a build from before them still inserts. Guarded `ALTER TABLE`s.
+76. **`task_moves`** - creates the record of every column a task entered (see the table above), with `idx_task_moves_task` and `idx_task_moves_to_column`. No backfill: a task with no recorded entry into its column has no visit boundary, which counts its earlier runs there as this visit's. Idempotent `CREATE ... IF NOT EXISTS`.
+77. **Workflows** (`runWorkflowsMigration`) - the `workflows` and `task_links` tables (see above) and seven nullable task columns: `workflow_id`, `workflow_project_id`, `route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`, `canvas_x`, `canvas_y`, plus `idx_tasks_workflow`. Every existing task reads as an ordinary one. Idempotent: `CREATE ... IF NOT EXISTS` and guarded `ALTER TABLE`s sharing one `table_info` read.
+78. **`agent_name` / `agent_session_id` on workflows** - the workflow agent's conversation (see the `workflows` table above), both `TEXT DEFAULT NULL`. Guarded `ALTER TABLE`s on one `table_info` read, inside `runWorkflowsMigration`.
+79. **`agent_cwd` and `agent_read_project_ids` on workflows** - `agent_cwd TEXT DEFAULT NULL`, the checkout the agent's conversation ran in (written at every start), where its CLI keeps the history, so the transcript readers can read the conversation; and `agent_read_project_ids TEXT NOT NULL DEFAULT '[]'`, the other registered projects the workflow agent asked to read (see the `workflows` table above). Guarded `ALTER TABLE`s on the same `table_info` read.
+80. **`agent_pty_cols` / `agent_pty_rows` on workflows** - both `INTEGER DEFAULT NULL`, the workflow agent's last PTY grid (see the `workflows` table above), so a start after a restart spawns at the pane's size. Guarded `ALTER TABLE`s on the same `table_info` read.
+81. **`paused_at` on workflows** - `TEXT DEFAULT NULL`, when a paused workflow was paused (see the `workflows` table above), for the picker's paused row. A guarded `ALTER TABLE` on the same `table_info` read, at the end of `runWorkflowsMigration`.
 
 ### Key Migrations (Global DB)
 
@@ -1068,7 +1218,11 @@ Operates on a per-project DB.
 | `setWorktreeFolder(id, folder)` | Record the worktree's directory name. Write-once: guarded on `worktree_folder IS NULL`, so a task's worktree can never be relocated by a later write |
 | `setWorktreeSkipReason(id, reason)` | Record why the last spawn ran without a worktree (a `WorktreeSkipReason`), or null once it has one. Does NOT bump `updated_at`: spawn telemetry must not reorder the board |
 | `recoverLegacyWorktreeFolder(taskId, worktreesRoot)` | For a pre-numeric-scheme task whose `worktree_path` was already cleared by a Done move, recover and persist its original directory name from the newest `sessions.cwd`. Accepts only a direct child of `worktreesRoot`, so a project that is itself checked out at a worktree path cannot claim the enclosing worktree's name |
-| `move(input)` | Transactional move: shift positions in old and new swimlanes, update task |
+| `move(input, provenance)` | Transactional move: shift positions in old and new swimlanes, update task, and write the `task_moves` row in the same transaction. `provenance` (`{ origin, reason? }`) is required, so no caller moves a task without saying who moved it; a reorder within the column records nothing |
+| `setWorkflowMembership(taskId, membership)` | Put a task in a workflow with its route, or take it out (`null`, which also clears its route and canvas place). Does not bump `updated_at` |
+| `setRoute(taskId, route)` | A workflow task's route (`route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`). Does not bump `updated_at` |
+| `setCanvasPosition(taskId, canvasX, canvasY)` | Where a hand placed the card on the Workflows canvas, or `null, null` for the auto layout. Never bumps `updated_at`, so a card drag costs no re-index |
+| `listByWorkflow(workflowId)` | Every task of a workflow on this board, archived (Done) included, by display id |
 | `reorderWithinSwimlane(swimlaneId, orderedTaskIds)` | Dense rewrite of one swimlane's task order to 0..N-1 in a single transaction. The write behind `kangentic_reorder_tasks` and `kangentic_move_task`'s same-column `position`. Unlike `move()`'s two-shift arithmetic it heals position gaps left by archiving; a stray id from another swimlane is a no-op (`swimlane_id` guard), and re-issuing the same order writes nothing (`position != ?` guard, so `updated_at` moves only on rows that actually shift) |
 | `archive(id)` | Set `archived_at` to now (soft-delete for Done column) |
 | `unarchive(id, targetSwimlaneId, position)` | Clear `archived_at`, move to target swimlane and position |
@@ -1099,9 +1253,10 @@ Operates on a per-project DB. Takes over from `ActionRepository`, whose IPC hand
 | Method | Description |
 |--------|-------------|
 | `listAll()` | Every column's automations, which is what the renderer store holds |
-| `listForColumn(columnId)` | One column's rows, both groups, ordered by trigger then position |
+| `listForColumn(columnId)` | One column's rows, all three groups, ordered by trigger then position |
+| `getById(automationId)` | One automation by id, or null |
 | `getForTrigger(columnId, trigger)` | That trigger's ENABLED rows in run order. The read the engine does on a move. |
-| `replaceForColumn(columnId, automations)` | Whole-column delete-and-insert. `position` is assigned PER TRIGGER, so the two groups number from 0 independently and can never interleave. A supplied `id` is kept, so a row keeps its identity and its run history across an edit. |
+| `replaceForColumn(columnId, automations)` | Whole-column delete-and-insert. `position` is assigned PER TRIGGER, so the three groups number from 0 independently and can never interleave. A supplied `id` is kept, so a row keeps its identity and its run history across an edit. |
 | `deleteForColumn(columnId)` | Drop a column's rows. `SwimlaneRepository.delete` calls it explicitly, even though the foreign key cascades too. |
 
 ### AutomationRunRepository
@@ -1114,10 +1269,63 @@ Operates on a per-project DB.
 | `finish(id, status, detail, attempts)` | Close it on every exit path |
 | `recordSkipped(run, reason)` | Write a row that opens and closes at once. A skip never ran, so it has no window to be interrupted in. |
 | `recordDeliveredByCaller(run, detail)` | Write a `succeeded` row for a message the move delivered itself, in its own keystroke burst, so the run log shows it like every other run. |
+| `hasWorkflowStepSince(taskId, swimlaneId, since)` | Has a workflow step check answered for this task in this column since `since`? A check writes its row after the reply it judged, so a resumed task's catch-up asks it with the reply's time to tell a judged reply from one a Pause or a quit left unjudged. |
+| `recordWorkflowStep({ taskId, swimlaneId, workflowId, met, reason })` | Record a workflow step check's answer, so "why did the task not move on" has an answer in the same log. Its automation id is `workflow-step:<workflowId>` and its type `workflow_step`, neither of which names a column automation; a yes that moved the task is `succeeded`, a no is `skipped`, each with the answer's reason. |
+| `hasRunSince(automationId, taskId, since)` | Whether the automation has run on the task since `since`, the task's entry into the column. Counts executed runs only (`running`, `succeeded`, `failed`, `interrupted`), never a skip. A null `since` (no recorded entry) counts every run. The turn-end group's once-per-visit check. |
+| `hasSkipSince(automationId, taskId, since, detail)` | Whether a `skipped` row with exactly this `detail` exists since `since`. A null `since` counts every such skip. Lets a turn-end group record "Set up an Automation agent" once per visit rather than at every turn end. |
+| `countRuns(automationId, taskId)` | How many executed runs the automation has on the task, across every visit. What Frequency (`max_runs`) checks. |
 | `listForTask(taskId, limit)` | Everything that ran for one card, newest first |
 | `listForAutomation(automationId, limit)` | Every run of one automation, newest first. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
 | `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |
-| `pruneTo(limit)` | Keep the newest N rows. Nothing else bounds the table. |
+| `pruneTo(limit)` | Keep the newest N rows, plus every counted run of an automation with a Frequency limit on a task that is not archived, so pruning never resets a limit. Nothing else bounds the table. |
+
+### TaskMoveRepository
+
+Operates on a per-project DB. Reads `task_moves` only: `TaskRepository` writes the rows inside the
+move's own transaction, so a move cannot land without its record.
+
+| Method | Description |
+|--------|-------------|
+| `visitStartedAt(taskId, swimlaneId)` | When the task last entered this column (the newest row, rowid breaking a same-millisecond tie), or null when no entry was recorded. The visit boundary `hasRunSince` and `hasSkipSince` count from. |
+| `listForTask(taskId)` | Every recorded move of one task, oldest first |
+| `recentFinishedColumnVisits(doneSwimlaneId, limit)` | For the `limit` tasks that most recently entered Done, how many entered each column on the way. What `{{columns}}` tells a workflow's agent about how work moves through this board. |
+
+### WorkflowRepository
+
+Operates on the workflow's home project DB.
+
+| Method | Description |
+|--------|-------------|
+| `getById(id)` | One workflow, or undefined |
+| `listAll()` | Every workflow, newest first. MCP's `kangentic_list_workflows` with `includeFinished` |
+| `listOpen()` | Every workflow not finished, newest first: the picker's rows |
+| `listSupersessions()` | Every task a started workflow (running, paused or done) replaced at Start, as `{ sourceTaskId, workflowId, title, colorSlot }` with the workflow's current title. Read from `task_moves`: the source's latest move into a Done column must be Start's (origin `workflow`, reason beginning `SUPERSEDED_MOVE_REASON_PREFIX`, at or after `started_at`), credited to the workflow that started last at or before it. A source that left To Do before Start and was completed by hand is not listed |
+| `hasActive()` | One indexed probe for a running or paused workflow, the engine's fast path for a board with no workflow to read |
+| `create({ title, brief, sourceTaskId })` | A new not-started workflow with an empty plan, "Untitled workflow" when no title, and the first free color slot |
+| `saveDraft(id, draft, { title, expectedRevision })` | Replace a not-started workflow's plan (and title). A stale `expectedRevision` throws `StaleWorkflowRevisionError`, so the user's edits since the caller read it win |
+| `writeDraftLayout(id, draft)` | Store where hands placed a not-started workflow's cards, leaving the revision alone: a card move changes no plan |
+| `rename(id, title)` | Rename, bumping the revision |
+| `markStarted(id)` | Running, the plan spent (its tasks now exist), `started_at` stamped |
+| `setState(id, state)` | Running, paused or done; done stamps `finished_at`, paused stamps `paused_at`, and any other state clears it |
+| `bumpRevision(id)` | Any change to a started workflow's tasks, links or routes |
+| `setAgentConversation(id, conversation)` | The workflow agent's conversation (`agent_name`, `agent_session_id`, `agent_cwd`), or null to forget it so the next open starts a new one. The revision stays |
+| `addAgentReadProject(id, projectId)` | Let the workflow agent read another registered project from now on; false when it already could. The revision stays |
+| `setAgentGrid(id, grid)` / `getAgentGrid(id)` | The workflow agent's last PTY grid (`agent_pty_cols/rows`), or null before it has one. The revision stays |
+| `delete(id)` | Delete; its links cascade |
+
+### TaskLinkRepository
+
+Operates on the workflow's home project DB. Either end of a link can be a task in another
+project's database, so nothing here reads a task.
+
+| Method | Description |
+|--------|-------------|
+| `listForWorkflow(workflowId)` | A workflow's links, oldest first |
+| `listBlockersOf(blockedTaskId)` | What a task waits for |
+| `listBlockedBy(blockerTaskId)` | What waits for a task |
+| `insert(link)` | Add a link; the same pair twice returns the link already there |
+| `delete(blockerTaskId, blockedTaskId)` | Remove one link; true when there was one |
+| `deleteForTask(taskId)` | Every link naming a task, either end (Remove from workflow) |
 
 ### ActionRepository (legacy, still present)
 

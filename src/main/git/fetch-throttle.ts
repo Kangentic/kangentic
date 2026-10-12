@@ -1,6 +1,6 @@
 import path from 'node:path';
-import type { SimpleGit } from 'simple-git';
 import { runGitWithTimeout, isGitTimeoutError } from './git-spawn';
+import type { GitClient } from './git-client';
 
 /**
  * Fetch throttle cache - avoids redundant `git fetch` calls for the
@@ -129,6 +129,20 @@ export function clearFetchCache(): void {
 }
 
 /**
+ * Make the next `fetchIfStale` for this project fetch, whatever fetched it in
+ * the last 30 seconds. A workflow start calls it: the task it starts waited for
+ * a blocker to reach Done, which usually means that blocker's work was just
+ * merged, and a throttled fetch would cut the new worktree from the base as it
+ * was before the merge.
+ */
+export function forgetRecentFetches(projectPath: string): void {
+  const prefix = fetchCacheKey(projectPath, '');
+  for (const key of [...fetchCache.keys()]) {
+    if (key.startsWith(prefix)) fetchCache.delete(key);
+  }
+}
+
+/**
  * Environment for a fetch that runs with no user gesture behind it (the
  * background scheduler). `GIT_TERMINAL_PROMPT=0` makes git fail instead of
  * prompting on the terminal path (stdin is already closed, so that path could
@@ -167,11 +181,11 @@ function fetchCacheKey(projectPath: string, branch: string): string {
  * populated on success, so a transient timeout never poisons subsequent
  * calls.
  *
- * The `_git: SimpleGit` parameter is retained on the signature for
- * back-compat with existing callers but is unused (prefixed `_` so
- * eslint accepts it). The timeout path requires `child_process.spawn`
- * directly so we can attach an `AbortSignal` (simple-git's `.raw()`
- * exposes no abort primitive).
+ * The `_git` parameter is retained on the signature for back-compat with
+ * existing callers (a simple-git instance or a `GitClient`) but is unused
+ * (prefixed `_` so eslint accepts it). The fetch runs through
+ * `runGitWithTimeout` so it can take an `AbortSignal` and a timeout, which
+ * neither client exposes; that path starts the child in the pty host.
  *
  * `options.onOutcome` reports what actually happened - fetched, throttle
  * skip, or a classified failure - because the returned string cannot: a
@@ -187,7 +201,7 @@ function fetchCacheKey(projectPath: string, branch: string): string {
  * will click.
  */
 export async function fetchIfStale(
-  _git: SimpleGit,
+  _git: Pick<GitClient, 'raw'>,
   projectPath: string,
   branch: string,
   options?: { signal?: AbortSignal; onOutcome?: (outcome: FetchIfStaleOutcome) => void; nonInteractive?: boolean },

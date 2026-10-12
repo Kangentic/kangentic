@@ -183,6 +183,166 @@ scope for a sticky drop. Two findings:
 | Early exit in `probePendingChanges` on a dirty status | Declined | The confirm dialog reports the unpushed count even when dirty; skipping it under-reports the loss |
 | Re-add the write-queue drag hold or re-park session pushes | Not considered | Commit e84099e1's reasons hold and S2 confirms the pushes cost nothing |
 
+## The Workflows canvas (2026-10-04, #732)
+
+The Workflows view draws real `TaskCard` bodies as React Flow nodes. Scenarios `W30` and `W100`
+seed a started workflow of 30 or 100 linked tasks (with 5 and 8 mock sessions pushing activity),
+open the view, and measure idle, a card drag, a pan on empty canvas, and a link drag, on the same
+144Hz-class display (7.5ms refresh) as the board numbers above.
+
+The first run at 100 cards missed the board's bar. Idle missed 18 to 87 refreshes in 3 seconds,
+and a card drag ran at a 15ms p95 with up to 12ms of pointer-event processing. Script time was
+about 50ms across a 3-second window, so React was not the cost. A trace (`--trace`) put it in
+Blink: `Layerize` (`PaintArtifactCompositor::Update`) cost 5.7ms on every main frame, re-deciding
+the compositor layers of 100 cards' paint chunks. An A/B over stylesheets (`--experiments`)
+measured the candidates:
+
+| Variant | Layerize per frame | Idle, missed | Drag, missed |
+|---|---|---|---|
+| As built | 5.7ms | 49 | 108 |
+| Activity marks still | 5.6ms | 6 | 36 |
+| Links hidden | 5.6ms | 42 | 110 |
+| `contain: layout paint style` on each node | 5.7ms | 47 | 96 |
+| `content-visibility: auto` on each node | 5.8ms | 55 | 101 |
+| `will-change: transform` on each node | 0.2ms | 0 | 2 |
+| `will-change: transform` on the viewport | 0.3ms | 2 | 2 |
+
+The viewport shipped (`index.css`): one compositor layer instead of 100. Zooming in to 2x still
+re-rasters it at the new scale, checked with screenshots, so the cards stay sharp. Two React
+changes ship with it: the node's `memo` ignores the position props React Flow passes every drag
+frame, so a drag never re-renders the card; and a reload keeps every node and task object it did
+not change (`reseedNodes`, `shareUnchanged`), so dropping one card no longer re-renders all 100.
+
+After, at 100 cards, 5 runs: idle 0 missed; card drag at an 8ms p95 with 3.8ms of event
+processing; link drag at an 8ms p95. At 30 cards every scenario is flat at 8ms. A pan at 100
+cards still misses a single refresh on 3 to 8% of frames, never a frame over 16ms (so nothing a
+60Hz display would show); two identical baselines measured 25 and 62 misses, and no variant beat
+that spread. About 1ms of each frame's paint is the activity marks' stroke animation, which runs
+on the main thread on the board too.
+
+### Workflow cards on the board, and the link drag (2026-10-04, #732 M4)
+
+Two measurements after the board gained workflow cards and the canvas gained its link hint, at
+100 cards, 3 runs each, on the production build:
+
+- **Link drag.** Every node subscribed to "is a link being drawn", so a link's start and end
+  re-rendered all 100 cards, and each mounted (then unmounted) its full-card drop target and asked
+  React Flow to re-measure it: a 48 to 62ms frame at both ends. The target now mounts with the card
+  and a `data-linking` attribute on the canvas root turns its pointer events on. Worst frame 48.7ms
+  to 14.1ms (median), no frame over 33ms.
+- **Board drag of a workflow card.** The W scenarios now drag a To Do workflow card on the board
+  (the lock refuses the drop), then delete the workflow, which leaves the same cards as ordinary
+  tasks, and drag again. dnd-kit re-renders every card when a drag starts, and the first build's
+  workflow body re-rendered with it: the drag-start frame was 83 to 97ms against the plain board's
+  41.7ms, and overlay latency 161ms against 82ms. The strip and the To Do footer are now memoized
+  on the task row and skip that pass: 55.6ms and 117ms. What is left is the taller cards' forced
+  layout (about 12ms of `getBoundingClientRect` in dnd-kit's measuring) and the activity marks'
+  `getAnimations` in their layout effect, which runs on every render of every mark. The plain
+  board's own 41.7ms at 100+ cards is the board's existing activation cost, not the workflow's.
+- **The pan, and the waiting footers' spinners.** The pan figures above were measured before the
+  canvas cards had footers. Once every To Do card said "Blocked by #413..." with the design's
+  spinning `Loader2`, a pan at 100 cards missed 82 to 143 of about 500 refreshes, with frames to
+  28ms. An A/B over stylesheets (`--experiments`) found the cause in one row: with the canvas's
+  spinners stopped the pan missed 7, and with every other candidate (the inspector, the header,
+  the canvas tools, the dot grid, the activity marks, the idle pulse) it stayed above 100. Pausing
+  them only while a gesture runs did not help. A task waiting on another is not loading, so the
+  waiting footer's glyph is now held still (`WorkflowWaitingBar`). On the real code: pan 1 missed
+  refresh, card drag 0, idle 1, link drag 3, and the board drag of a workflow card now measures
+  the same as the plain board (108ms against 109ms overlay latency).
+
+### With the workflow agent's pane open (2026-10-04, #732 M5)
+
+The view now opens its workflow agent in a 560px pane beside the canvas, a live terminal the rig's
+mock agent keeps writing to. At 100 cards, 5 runs, medians: idle 1 missed refresh, card drag 0,
+pan 0, link drag 3. The canvas gestures are where they were without the pane.
+
+The board drag of a workflow card measured 111ms overlay latency and a 62.5ms drag-start frame,
+against 81ms and 41.6ms for the plain board. The workflow figure is inside its earlier 108 to 117ms
+range, and the pane is not mounted on the board. The plain board is what moved: 109ms in the run
+above, 81ms here, and 82ms in the first M4 run. So "the same as the plain board" above was one
+plain run's variance. The taller cards' activation cost described in the M4 bullet remains.
+`releaseToSettle` reads 8,030ms for the workflow card because the lock refuses the drop and the
+card never lands in Executing, so the settle wait runs to its 8-second timeout.
+
+Since 2026-10-11 a locked card is held to its own column for the whole drag (it can be reordered
+there, never carried out), and the rig now waits for it to settle back in To Do, so `releaseToSettle`
+for the workflow card should read a real settle rather than the timeout. Owed: a W30 and W100 rerun
+to confirm it, and to measure the links overlay following a kept card through a drag (it measures
+every frame of that drag).
+
+### The final tree (2026-10-04, #732 production-readiness pass)
+
+`W30` and `W100`, 5 runs each, on the production build of the branch as it stands after the
+journey fixes, medians:
+
+- At 30 cards every canvas scenario (idle, card drag, pan, link drag) is flat: an 8.1ms p95, no
+  missed refresh, no frame over 8.6ms. The board drag of a workflow card misses 1 refresh with a
+  52ms overlay latency, against 48ms for the same cards with no workflow.
+- At 100 cards idle, card drag and pan are flat, and the link drag misses none (2 in its worst
+  run). The board drag of a workflow card reads 97ms overlay latency and a 53.4ms drag-start
+  frame, against 79ms and 39.4ms for the plain board. That is below M5's 111ms and 62.5ms, and
+  the gap is the taller cards' activation cost described in the M4 bullet.
+- The start burst is new to this audit: the 4 seconds after Start, once the first sessions run,
+  while the rest of the free slots spawn. At 30 cards it is flat. At 100 cards it missed 10
+  refreshes with one 46.6ms frame and 62ms of stall over 16ms in all. It happens once per Start,
+  and nothing in it is a gesture.
+
+### The workflow card's drag start, traced (2026-10-04, #732)
+
+The M4 bullet blamed the remaining gap on taller cards' forced layout in dnd-kit's measuring and
+on the activity marks' `getAnimations`. A trace says neither. Every `Layout` in the drag-start
+task was 0.4 to 0.5ms with about 54 dirty objects, and both calls were only where a forced style
+pass landed. Two board costs scaled with the size of the dragged card's column, which at W100 is
+To Do with about 90 cards:
+
+- **The drop highlight restyled the whole column.** The first `onDragOver` names the card's own
+  column, and `updateDropHighlight` wrote `--drop-color` onto it. A custom property is
+  inherited, so the next measurement recalculated every element in the column: 2,948 elements
+  and 10ms with workflow cards, 608 and 3ms without. The column now carries its color from
+  render (`Swimlane`), and the drag only toggles the class.
+- **Every card in that column started a transition.** dnd-kit gives each of those cards its zero
+  transform when the drag starts, with the sortable `transition` in the same commit. The resting
+  value was `translate3d(0, 0, 0)`, the same matrix spelled differently, so about 90 cards ran a
+  200ms transition from identity to identity. That cost a 3ms style pass inside the task and
+  about 5ms of paint and layerize on the frame that first draws the overlay (1.5ms on the plain
+  board). The resting value is now dnd-kit's own spelling (`TaskCard`), so nothing changes and
+  nothing starts.
+
+The committed rig, interleaving the two builds (two invocations each, 6 runs per scenario),
+medians with the worst in brackets: the workflow card's overlay latency went from 122.5ms (132)
+to 86.5ms (88), and the same cards with no workflow from 92.5ms (95) to 86.5ms (108). The
+drag-start frame went from about 69ms to 42ms on the workflow board, the same as the plain
+board. What is left is the board's own activation (four commits that each re-render every card,
+because the sortable context changes) and the overlay drawing the taller card.
+
+### The selected task's flowing links (2026-10-07, #732)
+
+The selected card's own links now flow, their dashes moving from blocker to dependent
+(`.workflow-link-flow`, a `stroke-dashoffset` animation). A dash offset is not a composited
+property, so every frame repaints the link, and inside the viewport's single layer that repaint
+lands on tiles full of cards. At `W100` the stylesheet A/B compared the flow inside the viewport's
+layer, the flow switched off, and the flowing link's own `<svg>` (React Flow draws each edge in
+one) on a layer of its own with `will-change: transform`. Seven rig invocations, two of them with
+16 busy threads loading the CPU:
+
+| Invocations | Flow in the viewport's layer | Flow on its own layer | Flow off |
+|---|---|---|---|
+| The first two (no layer arm yet) | 4 of 5 pans missed 12 or more | not run | 1 of 4, with another animation running |
+| The last five (all three arms in each) | 1 of 15 | 0 of 15, at most 1 missed | 0 of 15 |
+
+The first two invocations caught the flow halving a pan's rate (a 13.9ms p95, every other
+refresh, three times). That never recurred in the last five, in any arm, so the comparison that
+matters, the last five, shows no clear win for the layer. It shows no cost either: Layerize stayed
+at 0.2 to 0.4ms a frame in every arm, idle and card drag were flat, and a 2x zoom on a flowing link
+(`zoomShot` with `zoomAt`) is as sharp with the layer as without. The layer shipped (`index.css`) as
+a precaution that confines the per-frame repaint to the link, and only a flowing link gets one, so
+a selection adds one layer per link it flows on.
+
+The `--experiments` table now leads with `anims`, the count of running animations under each
+stylesheet, so an arm that switches an animation off shows it did (13 with the flow, 11 without,
+for a selected card with two links). A `zoomShot` experiment can name `zoomAt`, a selector, to
+zoom over the first element it matches inside the canvas instead of the canvas's centre.
+
 ## Reproducing
 
 The production rig is committed as `scripts/drag-perf-rig.mjs` with its mock agent in
@@ -196,7 +356,10 @@ node scripts/drag-perf-rig.mjs --scenarios=S1,S3 --runs=5 --label=before
 ```
 
 It writes `tests/.tmp/drag-perf-<label>.json` and prints the per-scenario table, and
-`--analyze=<json>` re-prints a saved run. Keep the window unoccluded for the duration: a hidden
+`--analyze=<json>` re-prints a saved run. For the Workflows scenarios, `--cpu-profile` and
+`--trace` record the first run of each gesture and print where its time went (scripts by chunk,
+or rendering phases per thread), and `--experiments=<json>` takes a list of
+`{ "name", "css" }` and prints the per-frame cost of each stylesheet against the same canvas. Keep the window unoccluded for the duration: a hidden
 Chromium page stops `requestAnimationFrame` and throttles timers to once a second. Build again
 after any `npm start` or `/preview` of the same checkout: `scripts/dev.js` writes its dev main
 bundle to the same `.vite/build/index.js`, and the rig refuses to run against it.

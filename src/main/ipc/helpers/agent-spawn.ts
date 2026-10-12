@@ -28,12 +28,15 @@ import { loadTaskProfile } from './task-profile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
+import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import { emitSpawnProgress, createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked } from './task-git';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { registerResumeController, releaseResumeController } from '../handlers/session-resume-controllers';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
+import { checkAutomationConditions, type ConditionCheckDeps } from '../../automations/condition-check/condition-check';
+import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 
 /**
  * Whether a column may spawn an agent at all, independent of its `auto_spawn`
@@ -130,7 +133,19 @@ export function createTransitionEngine(
     attachments,
     automations,
     automationRuns,
+    { checkConditions: (input, limits) => checkAutomationConditions(conditionCheckDeps(context), input, limits) },
   );
+}
+
+/** What a Condition check reads from the app: the config, and the agent registry. */
+export function conditionCheckDeps(context: IpcContext): ConditionCheckDeps {
+  return {
+    loadConfig: () => context.configManager.load(),
+    listAgents: async () => agentRegistry.list().flatMap((name) => {
+      const adapter = agentRegistry.get(name);
+      return adapter ? [{ name, adapter }] : [];
+    }),
+  };
 }
 
 export interface AgentSpawnOptions {
@@ -264,6 +279,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // A spawn prompt is not a move; the picker does not offer the move
       // keywords in this context.
       move: null,
+      workflow: readWorkflowPromptFacts(currentTask, options.projectId ?? null),
     });
 
   const run = async (): Promise<void> => {
@@ -414,9 +430,16 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // enter automation rather than in `swimlanes.auto_command`. The task's own
       // MCP-set command still outranks it, which is the precedence
       // `resolveEffectiveAutoCommand` exists to keep identical on every path.
-      const columnMessage = resolveColumnMessage(
+      const resolvedColumnMessage = resolveColumnMessage(
         getProjectRepos(context, options.projectId).automations.listForColumn(toLane.id),
       );
+      // A handoff runs no enter group, so nothing here can check a row's
+      // Condition or Frequency. Sending a guarded row would skip both; it is
+      // left unsent, as the runner leaves a row it cannot check.
+      const columnMessage = resolvedColumnMessage && !resolvedColumnMessage.guarded ? resolvedColumnMessage : null;
+      if (resolvedColumnMessage?.guarded) {
+        console.log(`[spawnAgent] Handoff for task ${task.id.slice(0, 8)}: the column's message has a Condition or Frequency limit, so it is not sent.`);
+      }
       const taskOverride = currentTask.auto_command?.trim();
       const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, columnMessage?.message);
       if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
@@ -437,17 +460,17 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         const interpolated = taskOverride
           ? interpolateTaskTemplate(effectiveAutoCommand, vars)
           : interpolateTemplate(effectiveAutoCommand, vars);
-        context.terminalSubmitScheduler.scheduleKeystrokes(
-          currentTask.id,
-          currentTask.session_id,
-          [{ text: interpolated, verify: 'submitted' }],
-          {
-            freshlySpawned: true,
-            verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
-            mode: columnMessage?.mode ?? 'immediate',
-            onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
-          },
-        );
+        // Keystrokes once the new agent is alive, or, for a message with line
+        // breaks, a paste once its first turn ends.
+        deliverAgentMessageInBackground(context, {
+          taskId: currentTask.id,
+          sessionId: currentTask.session_id,
+          message: interpolated,
+          mode: columnMessage?.mode ?? 'immediate',
+          verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
+          freshlySpawned: true,
+          onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
+        });
       }
     }
 
@@ -586,17 +609,17 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     const currentTask = tasks.getById(task.id);
     if (!currentTask?.session_id) return;
 
-    context.terminalSubmitScheduler.scheduleKeystrokes(
-      currentTask.id,
-      currentTask.session_id,
-      [{ text: effective, verify: 'submitted' }],
-      {
-        freshlySpawned: true,
-        verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
-        mode,
-        onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
-      },
-    );
+    // Keystrokes once the CLI is alive, or, for a message with line breaks, a
+    // paste once the fresh agent's first turn ends, whatever the row's mode.
+    deliverAgentMessageInBackground(context, {
+      taskId: currentTask.id,
+      sessionId: currentTask.session_id,
+      message: effective,
+      mode,
+      verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
+      freshlySpawned: true,
+      onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
+    });
   };
 
   try {

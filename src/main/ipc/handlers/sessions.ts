@@ -1,6 +1,7 @@
 import { ipcMain, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveOwnSessionRecord } from '../../db/repositories/session-own-record';
 import { retrievalClient } from '../../retrieval/retrieval-client';
@@ -11,6 +12,7 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { nextOnRoute } from '../../../shared/workflow-route';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
@@ -40,10 +42,6 @@ const sessionStartTimes = new Map<string, number>();
 const sessionSpawnAnalyticsFired = new Set<string>();
 
 export function registerSessionHandlers(context: IpcContext): void {
-  /** Renderers whose focus-set teardown is already wired, so repeated
-   *  SESSION_SET_FOCUSED calls do not stack duplicate listeners. */
-  const focusTeardownWatched = new Set<number>();
-
   // === Sessions ===
   ipcMain.handle(IPC.SESSION_SPAWN, (_, input, projectId?: string | null) => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
@@ -106,18 +104,27 @@ export function registerSessionHandlers(context: IpcContext): void {
 
   // === Session Suspend / Resume ===
   // The Pause button. The whole path lives in pauseTaskSession
-  // (session-pause.ts), shared with the phone's pause-session verb, so a
-  // desktop and a phone Pause cannot drift. A task with no live session is a
-  // silent no-op here, as it always was.
+  // (session-pause.ts), shared with the phone's pause-session verb and with
+  // Pause workflow, so the three cannot drift. A task with no live session is
+  // a silent no-op here, as it always was.
   ipcMain.handle(IPC.SESSION_SUSPEND, async (_, taskId: string, projectId?: string | null): Promise<void> => {
     await pauseTaskSession(context, taskId, { projectId });
   });
 
   // The Resume button. The whole path lives in resumeTaskSession
   // (session-resume.ts), shared with the phone's start-session verb for a
-  // paused task, so a desktop and a phone Resume cannot drift.
+  // paused task and with Resume workflow, so the three cannot drift.
   ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string, projectId?: string | null) =>
     resumeTaskSession(context, taskId, { projectId, resumePrompt }));
+
+  registerSessionRecoveryHandlers(context);
+}
+
+/** Reset, reconcile, and the session listeners: the rest of the session handlers. */
+function registerSessionRecoveryHandlers(context: IpcContext): void {
+  /** Renderers whose focus-set teardown is already wired, so repeated
+   *  SESSION_SET_FOCUSED calls do not stack duplicate listeners. */
+  const focusTeardownWatched = new Set<number>();
 
   // === Session Reset (safety-net recovery for unrecoverable sessions) ===
   ipcMain.handle(IPC.SESSION_RESET, (_, taskId: string, projectId?: string | null) => {
@@ -534,6 +541,10 @@ export function registerSessionHandlers(context: IpcContext): void {
   });
 
   context.sessionManager.on('idle-timeout', (sessionId: string, taskId: string, timeoutMinutes: number) => {
+    // A workflow's own agent is no task: there is no task row to write and no
+    // card to toast for. Its pane shows it paused, and its own lifecycle
+    // (`registerWorkflowAgentLifecycle`) records what it spent.
+    if (context.sessionManager.getSession(sessionId)?.workflowId) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!context.mainWindow.isDestroyed()) {
       broadcast(context.mainWindow, IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);
@@ -548,6 +559,9 @@ export function registerSessionHandlers(context: IpcContext): void {
     void withTaskLock(taskId, async () => {
       try {
         context.terminalSubmitScheduler.cancel(taskId);
+        // A pasted message is not the scheduler's, so it is stopped on its
+        // own, as quietly as the keystrokes above.
+        supersedeMessageDeliveries(taskId);
         applySuspendDbWrites(context, projectId, taskId, 'system');
       } catch (error) {
         console.error('[idle-timeout] DB sync failed:', error);
@@ -848,9 +862,11 @@ export function registerSessionHandlers(context: IpcContext): void {
         loadTaskProfile(context, task, resolvedProjectPath),
         swimlanes.list(),
       );
-      if (!lane?.plan_exit_target_id) return;
-
-      const target = swimlanes.getById(lane.plan_exit_target_id);
+      // A workflow task's plan approval finishes its step: it moves to the next
+      // column on its ROUTE, wherever the column would send an ordinary task.
+      const target = task.workflow_id
+        ? nextOnRoute(swimlanes.list(), task, task.swimlane_id)
+        : (lane?.plan_exit_target_id ? swimlanes.getById(lane.plan_exit_target_id) : null);
       if (!target) return;
 
       const position = tasks.list(target.id).length;

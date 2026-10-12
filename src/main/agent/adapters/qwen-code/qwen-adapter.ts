@@ -135,6 +135,8 @@ export class QwenAdapter implements AgentAdapter {
       parseEvent: QwenStatusParser.parseEvent,
       isFullRewrite: false,
     },
+    // Its turn-end hook reaches the engine as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.hooksAndPty((data: string) => {
       // Qwen Code shares Gemini's TUI rendering: box-drawing borders
       // (U+2570 ... U+2500 ... U+256F) close every interactive surface

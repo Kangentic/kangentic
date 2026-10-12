@@ -22,7 +22,10 @@
  * hasn't produced one yet) - it is driven externally via
  * notifyTaskStalled(taskId) (wired to spawn-stall-watcher.ts), which
  * resolves task context by taskId and cools down per (device, taskId,
- * category) instead of per session.
+ * category) instead of per session. A sixth, 'workflow-complete', has
+ * neither a session nor one task: notifyWorkflowComplete (called by
+ * workflows/workflow-complete.ts) names the workflow and cools down per
+ * workflow.
  *
  * Per registered device: presence suppression (a bridge session reporting
  * 'connected' means the user is already watching from that device), then
@@ -97,6 +100,7 @@ const PLACEHOLDER_BODIES: Record<PushCategory, string> = {
   'session-failed': 'Session stopped',
   'plan-complete': 'Plan complete',
   'spawn-stalled': 'Task is taking a while to start',
+  'workflow-complete': 'Workflow complete',
 };
 
 export interface PushTaskContext {
@@ -158,6 +162,11 @@ export function redactPushTokens(text: string): string {
 export interface PushNotifierOptions {
   sessionManager: Pick<SessionManager, 'on' | 'off' | 'getActivityStatsSnapshot'>;
   registrationStore: Pick<PushRegistrationStore, 'list' | 'remove'>;
+  /**
+   * The Mobile bridge switch, read at every notification. Off, nothing is sent: a
+   * push goes to Expo directly, so closing the relay sessions alone would not stop it.
+   */
+  isBridgeEnabled: () => boolean;
   /** Devices whose bridge session reports 'connected' - already watching, never pinged. */
   getConnectedDeviceIds: () => Set<string>;
   resolveTaskContext: (sessionId: string) => PushTaskContext | null;
@@ -321,7 +330,21 @@ export class PushNotifier {
     this.notifyWithContext(taskContext, taskId, '', 'spawn-stalled', '');
   }
 
+  /**
+   * Every task of a workflow reached Done. A workflow has no session and no one
+   * task, so the envelope names the workflow as its task title, carries an empty
+   * task and session id, and cools down per workflow. Where a tap on it lands is
+   * the mobile app's to decide; its tap router was written for envelopes that
+   * name a task.
+   */
+  notifyWorkflowComplete(input: { projectId: string; workflowId: string; title: string; taskCount: number }): void {
+    if (this.disposed) return;
+    const detail = input.taskCount === 1 ? 'Its task is in Done.' : `All ${input.taskCount} tasks are in Done.`;
+    this.notifyWithContext({ projectId: input.projectId, taskId: '', taskTitle: input.title }, input.workflowId, '', 'workflow-complete', detail);
+  }
+
   private notifyWithContext(taskContext: PushTaskContext, cooldownSubject: string, envelopeSessionId: string, category: PushCategory, detail: string): void {
+    if (!this.options.isBridgeEnabled()) return;
     const connectedDeviceIds = this.options.getConnectedDeviceIds();
     const now = Date.now();
 

@@ -4,7 +4,7 @@
 
 The transition engine runs a column's automations when tasks move between swimlanes. It handles the logic that makes Kanban columns "active" -- spawning agents, sending messages, running scripts, calling webhooks, and raising notifications.
 
-Each column owns ONE ordered list, split into an On enter group and an On exit group. An automation belongs to exactly one column: there are no `from -> to` pairs and no shared, named actions. Every type is an adapter under `src/main/automations/adapters/`, declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`), and the engine dispatches through `automationRegistry`. Users edit the lists in the Column Manager; the file format is [Configuration](configuration.md#column-automations) and the tables are [Database](database.md).
+Each column owns ONE ordered list, split into three groups: On task enter, On agent turn end and On task exit. An automation belongs to exactly one column: there are no `from -> to` pairs and no shared, named actions. Every type is an adapter under `src/main/automations/adapters/`, declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`), and the engine dispatches through `automationRegistry`. Users edit the lists in the Column Manager; the file format is [Configuration](configuration.md#column-automations) and the tables are [Database](database.md).
 
 ## Priority Rules on Task Move
 
@@ -32,13 +32,13 @@ Priority 3 has four sub-cases, checked in order:
 
 The delta is computed against what the session is *actually running at*, not the leaving column, so a column whose value the session already has restarts nothing. The two fields resolve that differently: **model** uses the session record's `applied_model`, while **effort** prefers the level the agent itself reports (`task.effort_override ?? <agent-reported effort> ?? record.applied_effort`), because `applied_effort` records only what Kangentic last asked for and an `/effort` typed straight into the terminal never reaches it. A level the model silently downgraded counts as applied: when the target equals `applied_effort` and the reported level has not moved since the session's first report, nothing restarts. Model deliberately stays record-only - telemetry reports canonical ids while the configured values are flag strings, so comparing them would read a false change and restart the PTY on every move. Only a concrete target restarts: entering a "Default" column (null target) keeps the session, since `--resume <id>` preserves what it runs at. A per-task override wins on both sides, so a pinned field never restarts. See [Command Injection](command-injection.md) for the full precedence.
 
-**c) Same agent + column message only:** If the plan carries the column's message and no `restartReason`, the message is scheduled into the running session via `TerminalSubmitScheduler.scheduleKeystrokes`. No suspend/resume cycle occurs.
+**c) Same agent + column message only:** If the plan carries the column's message and no `restartReason`, the message is scheduled into the running session via `TerminalSubmitScheduler.scheduleKeystrokes`. No suspend/resume cycle occurs. A column message that `shouldPaste` (more than one line or over 1,000 characters, and not a slash command) stays out of the plan and is pasted into the session instead, after the turn ends; the row still counts as delivered, so the On enter group does not send it again.
 
 **d) Same agent, permission-only change or no change:** The session stays alive with no interruption. A permission-mode delta never restarts: in the canonical Planning -> Executing flow the user already approved the plan in the terminal and Claude left plan mode in-session, so the spawn-time permission mode recorded on the session is stale.
 
 ## Triggers
 
-An automation's `trigger` is `enter` or `exit`, and it means any move into or out of the column it belongs to. There is no `from -> to` pair and no wildcard, because a list belongs to one column rather than to a lane pair.
+An automation's `trigger` is `enter`, `turn_end` or `exit`. `enter` and `exit` mean any move into or out of the column it belongs to; `turn_end` means each time the agent working the task finishes a turn there. There is no `from -> to` pair and no wildcard, because a list belongs to one column rather than to a lane pair. The three are declared once in `AUTOMATION_TRIGGERS`.
 
 **On exit runs in Phase 1**, inside the short task lock, after the DB write and the `board:changed` emit and BEFORE the priority branches. That order is load-bearing: Priority 1 kills the session, so an exit automation that needs the agent has to find it still attached. Two consequences:
 
@@ -46,6 +46,30 @@ An automation's `trigger` is `enter` or `exit`, and it means any move into or ou
 - **The exit group is capped at 60 seconds in aggregate** (`EXIT_GROUP_BUDGET_MS`), overriding the adapters' own budgets, because holding the short lock is what wedges that task's next move. A row that would exceed the cap is recorded `failed` with "Exit automations are capped so the board stays responsive." Exit is for quick handoffs; long work belongs on enter, where Phase 3 already holds the lock across the spawn and has a progress spinner to show for it.
 
 **On enter runs at both of the destination's session paths.** Priority 3's two keep-alive returns run the group against the live session (`runWarmEnterAutomations`), and Priority 4 runs it with the fallback spawn handed in as `startAgent`. To Do and Done run exit rows only: an enter automation can never fire there, so the Column Manager does not offer the group and `canColumnRun` blocks one written by hand.
+
+### On agent turn end
+
+`src/main/automations/turn-end/turn-end-runner.ts`, wired in `register-all.ts`. It is not part of a move: it runs when the agent working a task finishes a turn.
+
+- **What a turn end is.** The activity engine's `onTurnEnded` (`SessionManager`'s `'turn-ended'` event): a thinking-to-idle commit whose turn the agent's own turn-end hook cleared (a Stop: a non-permission `Idle` at subagent depth 0), after any background work the turn left has drained. Never an interrupt, a failed turn, an `idle_hint` (Esc between tool calls ends a turn that way, with no hook), PTY silence or a watchdog guess. Only agents that declare `reportsTurnEnd` on their runtime strategy have one; a column whose agent does not (its only signal is terminal silence) offers no turn-end group. The listener only schedules: the work runs off the engine's commit stack.
+- **Only a turn that began in this visit counts.** The payload carries `turnStartedAt`, and a turn that began before the task's latest `task_moves` entry into the column is ignored: a task dragged in mid-turn ends that turn here, but the turn did the last column's work.
+- **The session must still be the task's.** A turn end from a session that is no longer `task.session_id`, or from an isolated column's session the task has left, does nothing.
+- **Cheap when there is nothing to do:** a column with no enabled turn-end rows costs one indexed query.
+- **Then:** wait out the turn's last paint (`waitForTurnCompletion`, 1.5 s of PTY silence); read `{{agentReply}}` if a pending row needs it (`transcript.finalReply` in the retrieval worker, 15 s cap, empty on failure); answer every pending Condition in one call on the Automation agent; re-check that the same session is idle in the same column on the same turn; run the rows.
+- **The same turn, not just idle.** The pass judges the turn its payload names, by its `workSerial` (how many turn-initiating events the agent had reported at the turn end), and asks `SessionManager.isLatestTurn` after the paint wait and again at the re-check. A turn the user started meanwhile moves the serial, so it abandons the pass and writes nothing, even when that turn has already ended without a turn end of its own (a failed turn, an Esc) and the agent is idle again. PTY output never moves it, so an agent's trailing paint does not. The workflow step runs the same check before its own Condition check and after it.
+- **The run rule:** rows run top to bottom. A row runs at most once per visit (an executed run since the task's latest entry into the column), and only a row that executes counts: a Condition that answers no is recorded `skipped` with its reason, and the next turn end checks it again. A row past its Frequency, already run this visit, or that the column cannot run is left out without a record. A Move to column row that runs ends the group.
+- **The column's rows first, then the workflow.** For a task in a running workflow, the workflow's own step runs after the column's turn-end rows, in the same pass, and only when they left it something to decide. A row that moved the task leaves it nothing: the step reads where the task is, so it never moves a task twice. A row that sent the agent a message started its next turn, so the step waits for the turn end that answers it. A row whose Condition answered no did nothing, so it does not hold the step back: once every row has been evaluated and the agent is still idle in the column, the step judges the turn and moves the task along its route when the column's work is done. To keep a workflow task in a column until something is true (a pull request ready to merge), give the column a row that acts while it is not, such as a Send message telling the agent to wait for CI and check again.
+- **Outside the task lock, one pass per task.** A row can take minutes, and a Move to column row's own move takes that lock (`withTaskLock` is not reentrant). A move made meanwhile supersedes the group (`supersedeTurnEndWork`, called by `handleTaskMove` before it takes the lock); the group's own move passes `fromTurnEndGroup` and does not. A second turn end during a pass runs once more after it, so two passes never both read "not run this visit".
+- **A resume catches up the workflow step, never the rows.** A resumed session (a Resume, a workflow's Resume, recovery at launch or after a pty host crash) comes back idle with no turn end, so `SessionManager` announces it (`'session-resumed'`, emitted for a task session spawned with `resuming: true`, carrying its work serial as it came back). For a task in a running workflow, `catchUpAfterResume` waits out the resume's repaint, and if no work began since, reads the final reply and runs the workflow step on it when the reply is from this visit and no step check has answered since it (`hasWorkflowStepSince`). That is the reply a Pause abandoned mid-check, or a quit cut short. A reply a check already answered is never asked again, and the column's rows stay with real turn ends. It shares the one-pass-per-task queue, behind any turn end.
+- **Delivery waits.** A Send message row on a turn end awaits its outcome, like exit's. A message with more than one line (or over 1,000 characters) is pasted (`submitContent`) after the turn's last paint, so a `{{agentReply}}` keeps its line breaks. A message that opens with a slash command is always typed, since a pasted slash command never runs. Every trigger shares this rule; see [`send_message`](#send_message----send-message-to-agent).
+
+### Condition and Frequency
+
+Every row, on every trigger, can carry a **Condition** (`condition`, plain words) and a **Frequency** (`max_runs`). The runner owns both; no adapter reads either.
+
+- **Frequency** is checked first: a row that has run `max_runs` times on the task (counted across every visit, executed runs only) is skipped with "Already ran N times on this task, its limit."
+- **Condition** is answered by the Automation agent (`automation.agent` in Settings > Workflows) in one headless, read-only call for the group (`automations/condition-check/`): the task (its title, description, labels, column, and any linked PR with its state and, while it can still merge, its merge readiness, as the card's chip shows it), the move or the agent's final message, and each Condition under a label. It reads only that final message, never the rest of the conversation, so a column's prompt that wants its verdict judged has the agent end on it. The reply is one `C1: yes - reason` line per Condition, read the same when it is written as a list item; a label missing or written twice counts as no. Outside text is framed in tags that are defused inside it, and the prompt says it is data, never instructions. On enter and exit the call happens inside the group (on exit, within the 60 s budget); at a turn end it happens before anything runs. With no Automation agent, a row with a Condition is skipped with "Set up an Automation agent in Settings > Workflows to check this condition."
+- The answer (`condition_met`, `condition_reason`) rides the run row, yes or no.
 
 ## The agent starts on demand
 
@@ -57,7 +81,7 @@ A column that cannot meet a need shows the row switched off with its switch disa
 
 ## Automation adapters
 
-Five types, four of them offered for a new automation. Each declares its fields, its per-field escaping, its timeout and its retry policy in `AUTOMATION_MANIFEST`, which the renderer reads for the picker, the Edit automation dialog and the row sentence. `tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree.
+Six types, five of them offered for a new automation. Each declares its fields, its per-field escaping, its timeout and its retry policy in `AUTOMATION_MANIFEST`, which the renderer reads for the picker, the Edit automation dialog and the row sentence. A type may also declare the triggers it runs on (`triggers`, with `triggerUnavailableReason`) and that a row of it ends its group (`endsGroup`). A field may declare one trigger where it does nothing (`unavailableOn: { trigger, reason }`): the Edit automation dialog keeps it there, disabled, with the reason on each option, leaves its stored value alone, and the row earns no mark for it. Consumers read it through `automationFieldUnavailableReason`, never by the field's key. `tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree, and `tests/unit/automation-manifest-reserved-keys.test.ts` fails an `unavailableOn` on a field that cannot show it or on a trigger the type never runs on.
 
 ### `send_message` -- Send message to agent
 
@@ -66,9 +90,15 @@ Delivers an interpolated message to the task's agent. This is what the retired `
 | Field | Type | Description |
 |-------|------|-------------|
 | `message` | string | The text, with `{{placeholders}}`. Escaping is `none`, because it is prose going to an agent |
-| `mode` | `'immediate'` \| `'deferred'` | Run immediately (interrupts the current turn) or wait for the current turn |
+| `mode` | `'immediate'` \| `'deferred'` | Run immediately (interrupts the current turn) or wait for the current turn. Unavailable on `turn_end` (`unavailableOn`): the turn is already over, so it sends at once |
 
 Needs the agent. No timeout of its own beyond the scheduler's 120s, and no retry: `TerminalSubmitScheduler` already has a confirmation verifier and a one-shot escalation ladder. Delivery goes through `context.deliverToAgent`, which applies the three rungs when this run started the agent and the plain scheduled keystroke otherwise. See [Command Injection](command-injection.md).
+
+Keystrokes turn line breaks into spaces, so every path that hands a message to a live agent asks one question first (`shouldPaste`, `automations/turn-end/agent-message-delivery.ts`). A message with more than one line, or over 1,000 characters, is pasted with bracketed paste (`submitContent`) and keeps its line breaks. A one-line message, and any message that starts with `/`, stays keystrokes, the only way a slash command runs: `/code-review {{attachments}}` spans lines once the paths are filled in, and it is typed on one line so the command still runs. When a paste lands depends on the trigger:
+
+- **On task exit:** awaited inside the exit budget, and handed the run's signal. `immediate` pastes at once; `deferred` waits for the agent's turn to end first.
+- **On task enter, Run again, and the warm move's column message:** in the background, once the agent's turn has ended and the scheduler has no keystrokes left for the task, whatever the mode. A task's pastes run one at a time, in order, on every trigger, so two of them never write into the terminal at once. On a fresh spawn that is the end of the agent's first turn. A move to another column cancels a paste still waiting (`supersedeMessageDeliveries`), and its outcome is reported like a keystroke burst's (`cancelled` is silent, `failed` raises a notice). A message the spawn already took as its opening prompt is not pasted again.
+- **On agent turn end:** awaited, after the turn's last paint.
 
 ### `run_script` -- Run script
 
@@ -103,6 +133,15 @@ Every variable also arrives as a `KANGENTIC_*` environment variable, which is th
 
 One desktop notification through the same `showNotification` path `DesktopNotifier` uses, so it inherits click-to-task. No timeout, no retry.
 
+### `move_to_column`: Move to column
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `targetColumn` | string | The destination column's name. Empty or absent is Next column: the column after the task's own (on its route in a workflow, else on the board), resolved by `resolveMoveTarget`, the same answer `kangentic_move_task`'s `column: "next"` gets. Renaming a column rewrites the rows that name it |
+| `message` | string | Optional. Sent to the agent in the destination column once its turn ends, after that column's own On task enter rows. Escaping is `none`; a multi-line message (a review's `{{agentReply}}`) is pasted whole |
+
+Offered on `turn_end` only: on enter or exit its move would run inside the move that fired it, under that move's own task lock. It moves through `context.moveTask`, which runs `handleTaskMove` with origin `'automation'` (a quiet push, `TASK_MOVED_BY_AUTOMATION`, and the row's name as the move's `task_moves` reason), so the source column's exit rows and the destination's enter rows run as they do for a drag. A row that runs ends its group (`endsGroup`). The message is handed on in the background (`deliverMessageAfterMove`), so the run row reads "Moved to Executing, with a message." as soon as the move commits rather than waiting out the destination agent's first turn. No timeout of its own and no retry: the move owns its deadlines.
+
 ### `spawn_agent` -- Start agent (legacy)
 
 The one legacy adapter, kept because a row carrying a custom `promptTemplate` is not a duplicate of anything and has no other home. It is never offered for a new automation, appears as a disabled option in the dialog's Type select, and shows a lint on its row: "This is handled by the column's settings now. Remove it to use them." Its one field, `promptTemplate`, has escaping `none`.
@@ -117,7 +156,7 @@ The one legacy adapter, kept because a row carrying a custom `promptTemplate` is
 - **Bounded.** Nothing timed out: `withTaskLock` is a PQueue with no timeout and Phase 3 holds it across the whole list, so one hung webhook wedged every later operation on that task until a restart. Each row now runs under its adapter's `timeoutMs`, combined with the move's own signal.
 - **Recorded.** There was no run table at all, so "did my automation run" had no answer. Every row writes an `automation_runs` row: `running` before the attempt, closed on every exit path as `succeeded`, `failed`, `skipped` or `interrupted`, with a one-line `detail` (`HTTP 204`, `exit 0`, the skip reason, the error).
 
-  A message reports **"Delivered" on exit and "Sent" on enter**, and the difference is real rather than cosmetic. The exit hook awaits the keystroke burst, so the row is written only once it has gone out. The enter group cannot await: Phase 3 holds the task lock across it, and a deferred message waits for the agent's current turn to end, so awaiting would hold that lock for as long as the scheduler's ladder runs. Neither word is "Confirmed": only Claude implements a submission verifier, so on every other agent even the exit case is unconfirmed and the scheduler reports that outcome on its own channel.
+  A message reports **"Delivered" on exit and at a turn end, and "Sent" on enter**, and the difference is real rather than cosmetic. The exit hook awaits the keystroke burst, so the row is written only once it has gone out. The enter group cannot await: Phase 3 holds the task lock across it, and a deferred message waits for the agent's current turn to end, so awaiting would hold that lock for as long as the scheduler's ladder runs. Neither word is "Confirmed": only Claude implements a submission verifier, so on every other agent even the exit case is unconfirmed and the scheduler reports that outcome on its own channel.
 
 The runner never throws for an automation's sake. It rethrows exactly one thing: an abort of the move itself.
 
@@ -143,8 +182,12 @@ variable" picker and its inline `{{` completion, and this table - see
 entry's `description`, that field is user-facing copy and should stay to one
 line.
 
-22 keywords, of which 18 resolve everywhere and 4 only in an automation (the
-move keywords, marked below).
+26 keywords. 19 resolve wherever there is a task, 5 only in an automation (the
+move keywords and `{{agentReply}}`), and 2 only in a workflow agent's first
+message (`{{columns}}` and `{{brief_xml}}`), each marked below. That first
+message (Settings > Workflows) is the third context: it is written before any
+task exists, so it offers only `{{projectName}}`, `{{projectPath}}`,
+`{{baseBranch}}` (the project's default) and its own two.
 
 **Two substitution rules, split by SOURCE rather than by destination.**
 
@@ -172,7 +215,8 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 |----------|-------|
 | `{{title}}` | Task title (PTY-sanitized) |
 | `{{description}}` | Task description with `: ` prefix when non-empty |
-| `{{task_xml}}` | Task title and description wrapped in a `<task>` envelope (`<title>` / `<description>` children). Default seeded prompt template is `{{task_xml}}{{attachments}}`, which gives the agent a structured envelope without forcing the user to template it manually. |
+| `{{task_xml}}` | Task title and description wrapped in a `<task>` envelope (`<title>` / `<description>` children). Default seeded prompt template is `{{task_xml}}{{workflow_xml}}{{attachments}}`, which gives the agent a structured envelope without forcing the user to template it manually. |
+| `{{workflow_xml}}` | A workflow task's `<workflow>` block: the workflow's name, the task's route, the tasks it built on (with their branch and PR) and the tasks waiting on it, then how its turns are judged (end a turn only with the column's work done or with a question; progress notes go beside the next tool call; `kangentic_move_task` with `"next"`; `--kangentic-no-activity-hold` for anything meant to keep running). Read by the engine (`readWorkflowPromptFacts`) and escaped. Empty, and dropped, for a task outside a workflow, so an ordinary task's default prompt is unchanged. |
 | `{{taskId}}` | Task UUID |
 | `{{taskNumber}}` | The task's `#N`, the number people say out loud (`display_id`) |
 | `{{projectPath}}` | Main project checkout path (empty if no project is open) - always the base repo, even when the task has a worktree |
@@ -191,13 +235,23 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{column}}` | The column the automation belongs to. Automations only |
 | `{{fromColumn}}` | The column the task moved out of (empty for a task born into a column). Automations only |
 | `{{toColumn}}` | The column the task moved into. Automations only |
-| `{{trigger}}` | Which end of the move this is: `enter` or `exit`. Automations only |
+| `{{trigger}}` | When this automation runs: `enter`, `turn_end` or `exit`. Automations only |
+| `{{agentReply}}` | The agent's reply at the end of its last turn in this column: the final message, full text with its line breaks. Empty on task enter, and for an agent whose transcript Kangentic cannot read. Automations only |
+| `{{columns}}` | One line per column between To Do and Done, in board order: what it runs (an agent, plan mode, its own session, a slash command), its enabled automations, and how many of the last 10 finished tasks went through it (from `task_moves`; left out until a task has finished). Names escaped. Workflow agent only |
+| `{{brief_xml}}` | What the workflow was made from: a `<brief>` block with the source task's `<source_task>#N</source_task>`, `<title>` and `<description>`, laid out and escaped like `{{task_xml}}`. Empty, and dropped, for a workflow made from nothing. Workflow agent only |
 
-The last four are marked **automations only** because each entry declares
+The five marked **automations only** and the two marked **workflow agent only** are limited because each entry declares
 its `contexts` (`src/shared/task-template-vars.ts`). A `spawn_agent` prompt
-template is not a move, so those four would resolve permanently empty there,
+template is not a move, so those five would resolve permanently empty there,
 and the picker does not offer them in that context. A flat list that offered
-everything everywhere would be lying about four of its entries.
+everything everywhere would be lying about five of its entries.
+
+`{{agentReply}}` is read from the session whose turn just ended, which for an
+isolated column is that column's own session, not the task's main one. It is
+the same final answer `kangentic_get_transcript` returns for `view: "result"`,
+uncut: the newest assistant message after the last user prompt, its text blocks
+joined. It is what carries a review's findings to the column a Move to column
+row sends the task to.
 
 Drop-and-collapse preserves newlines: only runs of spaces and tabs collapse,
 and only in the template's own text, never inside a substituted value. That is
@@ -246,6 +300,7 @@ When a task moves to a column whose On enter group holds a `send_message` automa
 - `TerminalSubmitScheduler.scheduleKeystrokes` schedules the message for deferred PTY injection
 - Interpolates the message with task variables
 - Waits for the CLI's first `'thinking'` activity event, then delivers via `TerminalSubmit.submitKeystrokes` as a handshake chain (drain + output-settle between keystrokes) rather than fixed sleeps
+- A message with more than one line, or over 1,000 characters, is pasted instead, once the agent's first turn ends, unless it opens with a slash command (see [`send_message`](#send_message----send-message-to-agent))
 
 If keystroke delivery cannot be confirmed in the agent's transcript, it escalates to a session restart that passes the command as the CLI's prompt argument - the same guarantee the resumed path has. Every injection ends in a recorded outcome on the task, and a failure raises a notice instead of a console warning. The full contract, including the delivery ladder, the prompt-state policy, and the measured before/after delivery rate, is in [Command Injection](command-injection.md).
 
@@ -253,7 +308,7 @@ Each message declares WHEN it fires, via its own `mode` field: `immediate` (the 
 
 This enables workflows like moving a task from "Running" to "Code Review" to automatically send a review prompt to the agent.
 
-`resolveColumnMessage` picks the column's message: the FIRST enabled `send_message` row in its On enter group. First, not all of them, because the two callers that ask are asking a question with one answer. A spawn has a single prompt slot, and the live injection types exactly one command. Later message rows are the runner's to deliver. `resolveEffectiveAutoCommand` then puts a per-task `auto_command` (MCP-only, `kangentic_create_task`'s `autoCommand` param) ahead of it for that task.
+`resolveColumnMessage` picks the column's message: the FIRST enabled `send_message` row in its On enter group. First, not all of them, because the two callers that ask are asking a question with one answer. A spawn has a single prompt slot, and the live injection types exactly one command. Later message rows are the runner's to deliver. A first row with a Condition or a Frequency limit comes back `guarded`, and the live injection and the handoff leave it unsent, because only the runner applies those two: a warm move lets the enter group send it after both checks, and a handoff, which runs no enter group, does not send it. `resolveEffectiveAutoCommand` then puts a per-task `auto_command` (MCP-only, `kangentic_create_task`'s `autoCommand` param) ahead of it for that task.
 
 **A profile cannot re-point the message.** Automations are shared by every profile, which is why the Column Manager's whole list is read-only under one. `BoardProfileEntry.autoCommand` is the retired key that used to overlay it: nothing reads it, and nothing writes it. A column's own legacy `autoCommand` in `kangentic.json` IS still read, and converted into a `send_message` row on apply.
 
@@ -333,7 +388,7 @@ Default setup: Planning column has `plan_exit_target_id` pointing to the Executi
 
 New projects get seven columns and NO automations. Every column's list starts empty.
 
-The two rows the seed used to write were both dead weight. `* -> Planning: Kill Session` ran at Priority 4, where the task has no active session, so it found nothing to suspend and did nothing at all. `Start Planning Agent` carried `DEFAULT_SPAWN_PROMPT_TEMPLATE` (`{{task_xml}}{{attachments}}`), which is exactly what the fallback spawn uses when nothing supplies a prompt, so it duplicated what the column's own "Start an agent here" setting already produces.
+The two rows the seed used to write were both dead weight. `* -> Planning: Kill Session` ran at Priority 4, where the task has no active session, so it found nothing to suspend and did nothing at all. `Start Planning Agent` carried `{{task_xml}}{{attachments}}`, which was then exactly what the fallback spawn used when nothing supplied a prompt (the default has since gained `{{workflow_xml}}`; the migration compares against the literal the seed wrote), so it duplicated what the column's own "Start an agent here" setting already produces.
 
 Seeding them also taught the wrong model: it made starting an agent look like an automation a user could reorder or delete, when it is a column setting. An empty list is both true and the right blank page to start from. `tests/unit/default-swimlanes-seed-parity.test.ts` pins it.
 

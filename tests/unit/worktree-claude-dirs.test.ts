@@ -8,12 +8,15 @@
  * `.claude/skills/`, `.claude/agents/`, and the rest of `.claude/` (settings.json, etc.)
  * and survives git operations.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execSync } from 'node:child_process';
 import { WorktreeManager } from '../../src/main/git/worktree-manager';
+
+// Real git in every case (createWorktree, plus a rebase in one); under a full gate's load the rebase case ran past 5s, so the same 20s as worktree-base-branch.
+vi.setConfig({ testTimeout: 20000 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

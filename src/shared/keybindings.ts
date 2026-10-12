@@ -141,6 +141,15 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: true,
   },
   {
+    id: 'view.toggleWorkflows',
+    label: 'Open workflows',
+    description: 'Open the Workflows view; pressed there, return to the view you came from.',
+    group: 'General',
+    scope: 'board',
+    defaultCombo: 'Mod+Shift+L',
+    rebindable: true,
+  },
+  {
     id: 'view.toggleSidebar',
     label: 'Toggle sidebar',
     description: 'Show or hide the project sidebar.',

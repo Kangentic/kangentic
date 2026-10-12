@@ -25,7 +25,8 @@
  * resolveSpawnOverrides resolve against the real project instead of null.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type Database from 'better-sqlite3';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -184,6 +185,11 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 import { IPC } from '../../src/shared/ipc-channels';
+import { WORKFLOW_REFUSALS } from '../../src/shared/workflow-refusals';
+import { getProjectDb } from '../../src/main/db/database';
+import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
+import { WorkflowRepository } from '../../src/main/db/repositories/workflow-repository';
+import { openTestDatabase } from './helpers/test-database';
 
 // ---------------------------------------------------------------------------
 // Test
@@ -603,5 +609,86 @@ describe('BACKLOG_DEMOTE external-origin carry-back', () => {
       [],
       { externalId: null, externalSource: null, externalUrl: null },
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BACKLOG_DEMOTE refuses a task that is in a workflow.
+//
+// A demote deletes the task, which would drop it from its workflow and unblock
+// whatever waits for it, from a menu that says only "Backlog". The refusal
+// names the workflow, so this reads the workflow's title through the real
+// `workflowTitleOf` over a real migrated database: the file-wide
+// `getProjectDb` mock returns `{}`, which the real repository cannot read, and
+// the sentence would silently degrade to "Remove #N from its workflow first."
+// ---------------------------------------------------------------------------
+
+describe('BACKLOG_DEMOTE refuses a task in a workflow', () => {
+  const WORKFLOW_TITLE = 'Usage budgets';
+  let database: Database.Database;
+  let context: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedHandlers.clear();
+
+    mockCleanupTaskResources.mockReset();
+    mockCleanupTaskResources.mockImplementation(async () => {});
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: {
+        getById: taskRepoMock.getById,
+        delete: taskRepoMock.delete,
+      },
+      attachments: {
+        list: attachmentRepoMock.list,
+        deleteByTaskId: attachmentRepoMock.deleteByTaskId,
+      },
+    });
+
+    database = openTestDatabase();
+    runProjectMigrations(database);
+    vi.mocked(getProjectDb).mockReturnValue(database as never);
+
+    context = createMockContext();
+    registerBacklogHandlers(context as never);
+  });
+
+  afterEach(() => {
+    // clearAllMocks keeps implementations, so put the file-wide default back
+    // before the next describe reads it.
+    vi.mocked(getProjectDb).mockReturnValue({} as never);
+    database.close();
+  });
+
+  it('throws the workflow refusal and deletes, cleans up and creates nothing', async () => {
+    const workflows = new WorkflowRepository(database);
+    const workflow = workflows.create({ title: WORKFLOW_TITLE });
+    workflows.markStarted(workflow.id);
+    taskRepoMock.getById.mockReturnValue({
+      id: 'task-in-workflow',
+      display_id: 414,
+      title: 'Budgets API',
+      description: 'desc',
+      labels: [],
+      priority: 0,
+      external_id: null,
+      external_source: null,
+      external_url: null,
+      session_id: null,
+      workflow_id: workflow.id,
+      workflow_project_id: null,
+    });
+
+    const handler = capturedHandlers.get(IPC.BACKLOG_DEMOTE);
+    if (!handler) throw new Error('BACKLOG_DEMOTE handler not registered');
+
+    await expect(Promise.resolve(handler(null, { taskId: 'task-in-workflow' })))
+      .rejects.toThrow(new Error(WORKFLOW_REFUSALS.removeFirst('#414', WORKFLOW_TITLE)));
+
+    expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+    expect(backlogRepoMock.createFromTask).not.toHaveBeenCalled();
+    expect(taskRepoMock.delete).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
   });
 });

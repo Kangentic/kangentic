@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
-import type { BoardColumnAutomations, BoardColumnConfig } from '../../src/shared/types';
+import type { AutomationWriteInput, BoardColumnAutomations, BoardColumnConfig, BoardConfig } from '../../src/shared/types';
 
 /** The one database every module under test shares, swapped per test. */
 const harness = vi.hoisted(() => ({ db: null as unknown }));
@@ -25,6 +25,8 @@ const { runProjectMigrations } = await import('../../src/main/db/migrations/proj
 const { buildBoardConfigFromDb } = await import('../../src/main/config/board-config/build-config');
 const { applyBoardConfigToDb } = await import('../../src/main/config/board-config/apply-config');
 const { AutomationRepository } = await import('../../src/main/db/repositories/automation-repository');
+const { AutomationRunRepository } = await import('../../src/main/db/repositories/automation-run-repository');
+const { frequencyLimitReason } = await import('../../src/main/automations/automation-runner');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { planColumnAutomations } = await import('../../src/main/config/board-config/apply-automations');
 
@@ -136,6 +138,376 @@ describe('kangentic.json automations round-trip', () => {
     const second = build();
 
     expect(second.columns).toEqual(first.columns);
+  });
+
+  describe('On agent turn end, Condition and Frequency', () => {
+    function seedReviewLoop() {
+      const fixture = freshDatabase();
+      const codeReview = fixture.lanes.list().find((lane) => lane.name === 'Code Review')!;
+      fixture.automations.replaceForColumn(codeReview.id, [
+        { name: 'Review', type: 'send_message', trigger: 'enter', enabled: true, config: { message: '/code-review' } },
+        {
+          name: 'Back for revisions',
+          type: 'move_to_column',
+          trigger: 'turn_end',
+          enabled: true,
+          config: { targetColumn: 'Executing', message: 'Back from review:\n{{agentReply}}' },
+          condition: 'The review found work the implementer can do',
+          max_runs: 3,
+        },
+        { name: 'Clean', type: 'move_to_column', trigger: 'turn_end', enabled: true, config: {}, condition: 'The review is clean' },
+      ]);
+      return fixture;
+    }
+
+    it('writes onTurnEnd with the guards as camelCase row keys, and the column by name', () => {
+      seedReviewLoop();
+      const automations = columnNamed(build(), 'Code Review')?.automations;
+
+      expect(automations?.onTurnEnd).toEqual([
+        {
+          name: 'Back for revisions',
+          type: 'move_to_column',
+          condition: 'The review found work the implementer can do',
+          maxRuns: 3,
+          targetColumn: 'Executing',
+          message: 'Back from review:\n{{agentReply}}',
+        },
+        // No targetColumn: Next column is the absent key, not a stored value.
+        { name: 'Clean', type: 'move_to_column', condition: 'The review is clean' },
+      ]);
+      // A row with neither guard carries neither key.
+      expect(automations?.onEnter?.[0]).toEqual({ name: 'Review', type: 'send_message', message: '/code-review' });
+    });
+
+    it('round-trips the turn-end group, the guards and an absent targetColumn through apply unchanged', () => {
+      seedReviewLoop();
+      const first = build();
+      applyBoardConfigToDb('p1', first);
+      const second = build();
+
+      expect(second.columns).toEqual(first.columns);
+    });
+
+    // apply-config runs on every project open and hands the rows to the
+    // repository without ids. Frequency counts runs by automation id, so a row
+    // that came back with a fresh id each time would start its count over at every
+    // launch, and a "twice only" review loop would loop forever across restarts.
+    it('keeps a row\'s id, and with it its Frequency count, when the same file is applied again', () => {
+      const { database, lanes, automations } = freshDatabase();
+      const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
+      const taskId = 'task-frequency';
+      database
+        .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(taskId, 'A task in review', '', codeReview.id, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+
+      const file = build();
+      columnNamed(file, 'Code Review')!.automations = {
+        onTurnEnd: [{ name: 'Back for revisions', type: 'move_to_column', targetColumn: 'Executing', maxRuns: 2 }],
+      };
+      // The file on disk, read back the way the app reads it on each open.
+      const fileText = JSON.stringify(file);
+
+      applyBoardConfigToDb('p1', JSON.parse(fileText) as BoardConfig);
+      const [applied] = automations.listForColumn(codeReview.id);
+      expect(applied).toMatchObject({ name: 'Back for revisions', trigger: 'turn_end', max_runs: 2 });
+
+      const runs = new AutomationRunRepository(database);
+      for (const runId of ['run-1', 'run-2']) {
+        runs.start({ id: runId, automation: applied, taskId });
+        runs.finish(runId, 'succeeded', 'Moved to Executing.');
+      }
+      expect(runs.countRuns(applied.id, taskId)).toBe(2);
+
+      applyBoardConfigToDb('p1', JSON.parse(fileText) as BoardConfig);
+
+      const [reapplied] = automations.listForColumn(codeReview.id);
+      expect(reapplied.id).toBe(applied.id);
+      expect(runs.countRuns(reapplied.id, taskId)).toBe(2);
+      // And the limit still bites: the row is spent for this task, not fresh.
+      expect(frequencyLimitReason(reapplied, runs, taskId)).toBe('Already ran 2 times on this task, its limit.');
+    });
+
+    it('warns and skips a Move to column row filed under onEnter or onExit', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: {
+          onEnter: [{ name: 'Too early', type: 'move_to_column', targetColumn: 'Executing' }],
+          onExit: [{ name: 'Too late', type: 'move_to_column' }],
+          onTurnEnd: [{ name: 'Clean', type: 'move_to_column' }],
+        },
+      });
+
+      expect(plan.rows.map((row) => row.name)).toEqual(['Clean']);
+      expect(plan.warnings).toHaveLength(2);
+      expect(plan.warnings[0]).toContain('"Too early"');
+      expect(plan.warnings[0]).toContain('onTurnEnd');
+    });
+
+    it('keeps the column when onTurnEnd is not a list', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: { onTurnEnd: { name: 'Clean', type: 'move_to_column' } } as unknown as BoardColumnAutomations,
+      });
+
+      expect(plan.keepExisting).toBe(true);
+      expect(plan.rows).toEqual([]);
+      expect(plan.warnings[0]).toContain('onTurnEnd must be a list');
+    });
+
+    it('reads a blank condition as off with no warning, and a maxRuns of the wrong type as off with one', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: {
+          onTurnEnd: [
+            { name: 'Blank', type: 'notify', condition: '   ' },
+            { name: 'Text limit', type: 'notify', maxRuns: '3' as unknown as number },
+          ],
+        },
+      });
+
+      expect(plan.rows.map((row) => [row.name, row.condition, row.max_runs])).toEqual([
+        ['Blank', null, null],
+        ['Text limit', null, null],
+      ]);
+      // A blank condition is a deliberate "off"; a guard of the wrong type is not.
+      expect(plan.warnings).toEqual([
+        'Automation "Text limit" on "Code Review" has a maxRuns that is not a number. It runs without a limit.',
+      ]);
+    });
+
+    // The MCP writer refuses a maxRuns that is not a whole number of at least 1,
+    // so a file carrying one was hand-edited. It used to be read quietly: a 0 ran
+    // the row with no limit and nothing said so, in a loop whose limit exists to
+    // stop it.
+    describe('a numeric maxRuns that is not a whole number of at least 1', () => {
+      function planForMaxRuns(maxRuns: number) {
+        return planColumnAutomations({
+          name: 'Code Review',
+          automations: { onTurnEnd: [{ name: 'Loop', type: 'notify', maxRuns }] },
+        });
+      }
+
+      it('warns that a 0 runs without a limit, and stores no limit', () => {
+        const plan = planForMaxRuns(0);
+
+        expect(plan.rows.map((row) => row.max_runs)).toEqual([null]);
+        expect(plan.warnings).toEqual([
+          'Automation "Loop" on "Code Review" has a maxRuns of 0, which is not a whole number of at least 1. It runs without a limit.',
+        ]);
+      });
+
+      it.each([-1, 0.5])('warns that a %s runs without a limit, and stores no limit', (maxRuns) => {
+        const plan = planForMaxRuns(maxRuns);
+
+        expect(plan.rows.map((row) => row.max_runs)).toEqual([null]);
+        expect(plan.warnings).toEqual([
+          `Automation "Loop" on "Code Review" has a maxRuns of ${maxRuns}, which is not a whole number of at least 1. It runs without a limit.`,
+        ]);
+      });
+
+      it('warns that a 2.5 is read as 2, and stores 2', () => {
+        const plan = planForMaxRuns(2.5);
+
+        expect(plan.rows.map((row) => row.max_runs)).toEqual([2]);
+        expect(plan.warnings).toEqual([
+          'Automation "Loop" on "Code Review" has a maxRuns of 2.5, which is not a whole number of at least 1. Its limit is read as 2.',
+        ]);
+      });
+
+      it('warns about nothing for a whole number of at least 1', () => {
+        const plan = planForMaxRuns(3);
+
+        expect(plan.rows.map((row) => row.max_runs)).toEqual([3]);
+        expect(plan.warnings).toEqual([]);
+      });
+
+      it('reaches the apply result and the database, not just the planner', () => {
+        const { lanes, automations } = freshDatabase();
+        const config = build();
+        columnNamed(config, 'Code Review')!.automations = {
+          onTurnEnd: [
+            { name: 'Unlimited', type: 'notify', maxRuns: 0 },
+            { name: 'Floored', type: 'notify', maxRuns: 2.5 },
+            { name: 'Whole', type: 'notify', maxRuns: 3 },
+          ],
+        };
+
+        const { warnings } = applyBoardConfigToDb('p1', config);
+
+        const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
+        expect(automations.listForColumn(codeReview.id).map((row) => [row.name, row.max_runs])).toEqual([
+          ['Unlimited', null],
+          ['Floored', 2],
+          ['Whole', 3],
+        ]);
+        expect(warnings.filter((warning) => warning.includes('maxRuns'))).toEqual([
+          'Automation "Unlimited" on "Code Review" has a maxRuns of 0, which is not a whole number of at least 1. It runs without a limit.',
+          'Automation "Floored" on "Code Review" has a maxRuns of 2.5, which is not a whole number of at least 1. Its limit is read as 2.',
+        ]);
+      });
+    });
+
+    it('warns about a condition that is not text, and keeps the row without one', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: {
+          onTurnEnd: [{ name: 'Numbered', type: 'notify', condition: 5 as unknown as string }],
+        },
+      });
+
+      expect(plan.rows.map((row) => [row.name, row.condition])).toEqual([['Numbered', null]]);
+      expect(plan.warnings).toEqual([
+        'Automation "Numbered" on "Code Review" has a condition that is not text. It runs without one.',
+      ]);
+    });
+  });
+
+  describe('keeping what this build does not understand', () => {
+    // A file written by a NEWER build. The list, the row type and the row key are
+    // invented: they stand for whatever a later release adds.
+    function newerFile(executingId: string): BoardConfig {
+      return {
+        version: 1,
+        columns: [{
+          id: executingId,
+          name: 'Executing',
+          automations: {
+            onEnter: [
+              { name: 'Setup', type: 'run_script', script: 'npm ci', retryLimit: 2 },
+              { name: 'Post to chat', type: 'post_chat_message', channel: 'builds' },
+              { name: 'Ping', type: 'webhook', url: 'https://hooks.example.com/abc' },
+            ],
+            onPullRequestMerged: [{ name: 'Close the loop', type: 'notify' }],
+          } as unknown as BoardColumnAutomations,
+        }],
+      };
+    }
+
+    function seedExecuting() {
+      const fixture = freshDatabase();
+      const executing = fixture.lanes.list().find((lane) => lane.name === 'Executing')!;
+      return { ...fixture, executing };
+    }
+
+    it('applies what it knows and warns about the type it does not', () => {
+      const { executing, automations } = seedExecuting();
+      const result = applyBoardConfigToDb('p1', newerFile(executing.id));
+
+      expect(automations.listForColumn(executing.id).map((row) => row.name)).toEqual(['Setup', 'Ping']);
+      expect(result.warnings.some((warning) => warning.includes('post_chat_message'))).toBe(true);
+    });
+
+    it('carries the unknown list, row type and row key into the next export', () => {
+      const { executing } = seedExecuting();
+      const file = newerFile(executing.id);
+      applyBoardConfigToDb('p1', file);
+
+      const exported = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: file, fingerprint: 'test' });
+      const automations = columnNamed(exported, 'Executing')?.automations as Record<string, unknown> | undefined;
+
+      // The unknown row keeps its place in the run order, after the row it followed.
+      expect(automations?.onEnter).toEqual([
+        { name: 'Setup', type: 'run_script', script: 'npm ci', retryLimit: 2 },
+        { name: 'Post to chat', type: 'post_chat_message', channel: 'builds' },
+        { name: 'Ping', type: 'webhook', url: 'https://hooks.example.com/abc' },
+      ]);
+      expect(automations?.onPullRequestMerged).toEqual([{ name: 'Close the loop', type: 'notify' }]);
+    });
+
+    // Where the unknown row lands once the row it followed is gone. The file's
+    // order is the run order, so a wrong spot changes what runs first.
+    describe('placing an unknown row when a neighbor was deleted', () => {
+      const setup = { name: 'Setup', type: 'run_script', script: 'npm ci' };
+      const ping = { name: 'Ping', type: 'webhook', url: 'https://hooks.example.com/abc' };
+      const postToChat = { name: 'Post to chat', type: 'post_chat_message', channel: 'builds' };
+      const announce = { name: 'Announce', type: 'announce_build', target: 'builds' };
+
+      const setupInDatabase: AutomationWriteInput = {
+        name: 'Setup', type: 'run_script', trigger: 'enter', enabled: true, config: { script: 'npm ci' },
+      };
+      const pingInDatabase: AutomationWriteInput = {
+        name: 'Ping', type: 'webhook', trigger: 'enter', enabled: true, config: { url: 'https://hooks.example.com/abc' },
+      };
+
+      /**
+       * The file on disk (a newer build's, onEnter in the order given) and then the
+       * database the user edited down to `keptInDatabase`. Returns the exported
+       * onEnter names, in order.
+       */
+      function exportAfterKeeping(
+        fileOnEnter: Array<Record<string, unknown>>,
+        keptInDatabase: AutomationWriteInput[],
+      ): unknown[] {
+        const { executing, automations } = seedExecuting();
+        const file: BoardConfig = {
+          version: 1,
+          columns: [{
+            id: executing.id,
+            name: 'Executing',
+            automations: { onEnter: fileOnEnter } as unknown as BoardColumnAutomations,
+          }],
+        };
+        automations.replaceForColumn(executing.id, keptInDatabase);
+
+        const exported = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: file, fingerprint: 'test' });
+        const onEnter = columnNamed(exported, 'Executing')?.automations?.onEnter as Array<Record<string, unknown>>;
+        return onEnter.map((row) => row.name);
+      }
+
+      it('puts it after the nearest earlier row that is still there, not first, when the row it followed was deleted', () => {
+        // The file reads [Setup, Ping, Post to chat]. Ping is deleted, so the
+        // export writes [Setup, Post to chat]. Anchored on the deleted Ping, the
+        // lookup finds nothing and the unknown row used to land first.
+        expect(exportAfterKeeping([setup, ping, postToChat], [setupInDatabase])).toEqual(['Setup', 'Post to chat']);
+      });
+
+      it('walks back past more than one deleted row to the nearest one that is left', () => {
+        expect(exportAfterKeeping([setup, ping, { ...ping, name: 'Ping 2' }, postToChat], [setupInDatabase]))
+          .toEqual(['Setup', 'Post to chat']);
+      });
+
+      it('keeps two unknown rows that followed a deleted row together and in order', () => {
+        expect(exportAfterKeeping([setup, ping, postToChat, announce], [setupInDatabase]))
+          .toEqual(['Setup', 'Post to chat', 'Announce']);
+      });
+
+      it('keeps an unknown row that led the list first, even with the row after it deleted', () => {
+        expect(exportAfterKeeping([postToChat, setup, ping], [pingInDatabase])).toEqual(['Post to chat', 'Ping']);
+      });
+
+      it('leaves the order alone when nothing was deleted', () => {
+        expect(exportAfterKeeping([setup, postToChat, ping], [setupInDatabase, pingInDatabase]))
+          .toEqual(['Setup', 'Post to chat', 'Ping']);
+      });
+    });
+
+    it('keeps them across a second apply and export, so they survive every save', () => {
+      const { executing } = seedExecuting();
+      const file = newerFile(executing.id);
+      applyBoardConfigToDb('p1', file);
+      const firstExport = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: file, fingerprint: 'test' });
+      applyBoardConfigToDb('p1', firstExport);
+      const secondExport = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: firstExport, fingerprint: 'test' });
+
+      expect(secondExport.columns).toEqual(firstExport.columns);
+    });
+
+    it('drops an unknown key once its row is gone from the database', () => {
+      // Matching is by name and type: a row the user deleted takes its unknown
+      // keys with it rather than leaving them stranded on a neighbor.
+      const { executing, automations } = seedExecuting();
+      const file = newerFile(executing.id);
+      applyBoardConfigToDb('p1', file);
+      automations.replaceForColumn(executing.id, [
+        { name: 'Ping', type: 'webhook', trigger: 'enter', enabled: true, config: { url: 'https://hooks.example.com/abc' } },
+      ]);
+
+      const exported = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: file, fingerprint: 'test' });
+      const onEnter = columnNamed(exported, 'Executing')?.automations?.onEnter as Array<Record<string, unknown>>;
+
+      expect(onEnter.some((row) => 'retryLimit' in row)).toBe(false);
+    });
   });
 
   describe('reading a file written by an older build', () => {

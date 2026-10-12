@@ -85,6 +85,93 @@ describe('AutomationRepository', () => {
     expect(minted?.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  // A writer that carries no ids (the kangentic.json apply on every project open,
+  // an agent's kangentic_set_automations) must not reset a row's identity: the
+  // Frequency count and the once-per-visit check read runs by automation id.
+  describe('ids of rows written without one', () => {
+    it('reuses the id of the row in the same column with the same name, type and trigger', () => {
+      const { automations, columnId } = setup();
+      const [first] = automations.replaceForColumn(columnId, [webhook('Ping')]);
+
+      const [second] = automations.replaceForColumn(columnId, [
+        webhook('Ping', { config: { url: 'https://changed.example.com' } }),
+      ]);
+
+      expect(second.id).toBe(first.id);
+      expect(second.config.url).toBe('https://changed.example.com');
+      expect(second.created_at).toBe(first.created_at);
+    });
+
+    it('keeps each row its own id when the rows come back in another order', () => {
+      const { automations, columnId } = setup();
+      const written = automations.replaceForColumn(columnId, [webhook('Alpha'), webhook('Beta'), webhook('Gamma')]);
+      const idByName = new Map(written.map((row) => [row.name, row.id]));
+
+      const rewritten = automations.replaceForColumn(columnId, [webhook('Gamma'), webhook('Alpha'), webhook('Beta')]);
+
+      expect(rewritten.map((row) => row.name)).toEqual(['Gamma', 'Alpha', 'Beta']);
+      for (const row of rewritten) expect(row.id).toBe(idByName.get(row.name));
+      expect(new Set(rewritten.map((row) => row.id)).size).toBe(rewritten.length);
+    });
+
+    it('does not reuse the id of a row in another column', () => {
+      const { database, lanes, automations, columnId } = setup();
+      const otherColumn = lanes.create({ name: 'Elsewhere', position: 98 });
+      const [inOtherColumn] = automations.replaceForColumn(otherColumn.id, [webhook('Ping')]);
+
+      const [inThisColumn] = automations.replaceForColumn(columnId, [webhook('Ping')]);
+
+      expect(inThisColumn.id).not.toBe(inOtherColumn.id);
+      expect((database.prepare('SELECT COUNT(*) as rowCount FROM column_automations').get() as { rowCount: number }).rowCount).toBe(2);
+    });
+
+    // One write per case, so the name index (unique per column, case-blind) never
+    // sees the old and the new row together.
+    const changedIdentity: Array<[string, Partial<AutomationWriteInput>]> = [
+      ['name', { name: 'Pong' }],
+      ['type', { type: 'notify', config: {} }],
+      ['trigger', { trigger: 'exit' }],
+    ];
+    it.each(changedIdentity)('gives a new id when the %s differs', (_field, changes) => {
+      const { automations, columnId } = setup();
+      const [first] = automations.replaceForColumn(columnId, [webhook('Ping')]);
+
+      const [second] = automations.replaceForColumn(columnId, [webhook('Ping', changes)]);
+
+      expect(second.id).not.toBe(first.id);
+      expect(second.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(automations.getById(first.id)).toBeNull();
+    });
+
+    // The row without an id comes FIRST: the explicit-id set is built up front,
+    // which is what stops it taking 'a' before 'Beta' has been written. With the
+    // explicit row first, the ids already handed out would hide the same mistake.
+    it('never hands an id another row in the same call names to a row written without one', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [webhook('Alpha', { id: 'a' })]);
+
+      const rewrite = () => automations.replaceForColumn(columnId, [webhook('Alpha'), webhook('Beta', { id: 'a' })]);
+      expect(rewrite).not.toThrow();
+
+      const saved = automations.listForColumn(columnId);
+      expect(saved).toHaveLength(2);
+      expect(saved.find((row) => row.name === 'Beta')?.id).toBe('a');
+      expect(saved.find((row) => row.name === 'Alpha')?.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(new Set(saved.map((row) => row.id)).size).toBe(saved.length);
+    });
+
+    it('never hands an id to two rows, whichever order they are written in', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [webhook('Alpha', { id: 'a' })]);
+
+      const saved = automations.replaceForColumn(columnId, [webhook('Beta', { id: 'a' }), webhook('Alpha')]);
+
+      expect(saved.find((row) => row.name === 'Beta')?.id).toBe('a');
+      expect(saved).toHaveLength(2);
+      expect(new Set(saved.map((row) => row.id)).size).toBe(2);
+    });
+  });
+
   it('keeps the created_at of a row that survives the replace', () => {
     const { automations, columnId } = setup();
     const first = automations.replaceForColumn(columnId, [webhook('Ping', { id: 'ping' })]);
@@ -146,6 +233,86 @@ describe('AutomationRepository', () => {
     });
   });
 
+  // `resolveMoveTarget` reads a Move to column target trimmed and case-blind, so
+  // a stored " testing " moves a task to Testing today. A rename of that column
+  // has to carry such a row along, or the row quietly stops moving anything.
+  describe('a column rename (SwimlaneRepository.update)', () => {
+    function moveTo(name: string, targetColumn: string): AutomationWriteInput {
+      return { name, type: 'move_to_column', trigger: 'turn_end', enabled: true, config: { targetColumn } };
+    }
+
+    /** The seeded Testing column, and a different column to hold the automations. */
+    function renamableSetup() {
+      const context = setup();
+      const testing = context.lanes.list().find((lane) => lane.name === 'Testing');
+      if (!testing) throw new Error('expected a Testing column in the seeded board');
+      expect(context.columnId).not.toBe(testing.id);
+      return { ...context, testing };
+    }
+
+    const targetOf = (automations: AutomationRepository, columnId: string) => automations.listForColumn(columnId)[0].config.targetColumn;
+
+    it('points a row at the new name when its stored target has surrounding space and another case', () => {
+      const { database, lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('Hand off', ' testing ')]);
+      // What the engine reads back is the stored text: a write that tidied it would leave nothing to follow.
+      const stored = database.prepare("SELECT json_extract(config_json, '$.targetColumn') AS target FROM column_automations").get() as { target: string };
+      expect(stored.target).toBe(' testing ');
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(targetOf(automations, columnId)).toBe('Verify');
+    });
+
+    it('points a row at the new name when its stored target is wrapped in a tab or a line break, as resolveMoveTarget reads it', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('Tabbed', '\ttesting'), moveTo('Broken', 'Testing\r\n')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(automations.listForColumn(columnId).map((row) => row.config.targetColumn)).toEqual(['Verify', 'Verify']);
+    });
+
+    // SQLite's TRIM and LOWER know only ASCII; resolveMoveTarget's trim and
+    // lowercase do not, so the rename matches through the same function.
+    it('points a row at the new name when its stored target is padded with a space only JavaScript trims, as resolveMoveTarget reads it', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('No-break', 'Testing\u00a0'), moveTo('Em space', '\u2003testing')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(automations.listForColumn(columnId).map((row) => row.config.targetColumn)).toEqual(['Verify', 'Verify']);
+    });
+
+    it('points a row at the new name when its stored target differs only in the case of a letter outside ASCII', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      lanes.update({ id: testing.id, name: 'Prüfung' });
+      automations.replaceForColumn(columnId, [moveTo('Umlaut', 'PRÜFUNG')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(targetOf(automations, columnId)).toBe('Verify');
+    });
+
+    it('points a row at the new name when its stored target is the column\'s exact name (the control)', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('Hand off', 'Testing')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(targetOf(automations, columnId)).toBe('Verify');
+    });
+
+    it('leaves a row that names another column alone, however it is spaced', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('Back out', ' planning ')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(targetOf(automations, columnId)).toBe(' planning ');
+    });
+  });
+
   it('drops a column automations when the column is deleted', () => {
     const { database, lanes, automations } = setup();
     const created = lanes.create({ name: 'Temporary', position: 99 });
@@ -155,7 +322,7 @@ describe('AutomationRepository', () => {
     lanes.delete(created.id);
 
     expect(automations.listForColumn(created.id)).toEqual([]);
-    expect((database.prepare('SELECT COUNT(*) as c FROM column_automations').get() as { c: number }).c).toBe(0);
+    expect((database.prepare('SELECT COUNT(*) as rowCount FROM column_automations').get() as { rowCount: number }).rowCount).toBe(0);
   });
 
   it('treats an unparseable config blob as empty rather than failing the column', () => {
@@ -211,6 +378,32 @@ describe('AutomationRunRepository', () => {
     const [row] = runs.listForTask(taskId);
     expect(row).toMatchObject({ automation_id: 'a1', automation_name: 'Ping the channel', type: 'webhook', status: 'succeeded', detail: 'HTTP 204' });
     expect(row.finished_at).not.toBeNull();
+  });
+
+  it('says a workflow step check answered after a reply, in that column only', () => {
+    // A resumed task's catch-up asks this to tell a judged reply from one a
+    // Pause or a quit left unjudged (turn-end-runner.ts).
+    const { database, runs, columnId, taskId } = setup();
+    const otherColumnId = new SwimlaneRepository(database).list()[1].id;
+    const before = new Date(Date.now() - 60_000).toISOString();
+    const after = new Date(Date.now() + 60_000).toISOString();
+    expect(runs.hasWorkflowStepSince(taskId, columnId, before)).toBe(false);
+
+    // A "not done" answer is a check that answered.
+    runs.recordWorkflowStep({ taskId, swimlaneId: columnId, workflowId: 'workflow-1', met: false, reason: 'It asked a question.', detail: 'Not done yet: it asked a question.' });
+
+    expect(runs.hasWorkflowStepSince(taskId, columnId, before)).toBe(true);
+    expect(runs.hasWorkflowStepSince(taskId, columnId, after)).toBe(false);
+    expect(runs.hasWorkflowStepSince(taskId, otherColumnId, before)).toBe(false);
+  });
+
+  it('does not count a column automation\'s run as a workflow step check', () => {
+    const { runs, columnId, taskId } = setup();
+    const before = new Date(Date.now() - 60_000).toISOString();
+    runs.start({ id: 'run-1', automation: automation('a1', columnId), taskId });
+    runs.finish('run-1', 'succeeded', 'HTTP 204');
+
+    expect(runs.hasWorkflowStepSince(taskId, columnId, before)).toBe(false);
   });
 
   it('records a skip with its reason', () => {

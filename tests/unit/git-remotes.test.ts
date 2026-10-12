@@ -7,9 +7,9 @@ const state = vi.hoisted(() => ({
   rawCalls: 0,
 }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: () => {
-    // simpleGit() itself throws synchronously when the directory is missing,
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: () => {
+    // gitAt() itself throws synchronously when the directory is missing,
     // which is why the production constructor call sits inside the try.
     if (state.constructError) throw state.constructError;
     return {

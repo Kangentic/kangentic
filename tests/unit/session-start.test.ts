@@ -75,6 +75,18 @@ vi.mock('../../src/main/ipc/handlers/session-resume', () => ({
     return mockResumeTaskSession(context, taskId, options);
   },
 }));
+const mockWorkflowGetById = vi.fn();
+const mockGetProjectDb = vi.fn((projectId: string) => ({ projectId }));
+vi.mock('../../src/main/db/database', () => ({
+  getProjectDb: (projectId: string) => mockGetProjectDb(projectId),
+}));
+vi.mock('../../src/main/db/repositories/workflow-repository', () => ({
+  WorkflowRepository: class {
+    getById(workflowId: string): unknown {
+      return mockWorkflowGetById(workflowId);
+    }
+  },
+}));
 
 import { startTaskSession } from '../../src/main/ipc/handlers/session-start';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -124,6 +136,32 @@ describe('startTaskSession', () => {
 
     expect(mockReconcileTaskSessionRef).toHaveBeenCalledWith(expect.anything(), PROJECT_ID, TASK_ID);
     expect(mockReconcileTaskSessionRef).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a task in a paused workflow with the reason, reading the workflow from its home project', async () => {
+    mockWorkflowGetById.mockReturnValue({ id: 'wf-1', title: 'Usage budgets', state: 'paused' });
+    mockReconcileTaskSessionRef.mockReturnValue({
+      task: makeTask({ display_id: 414, workflow_id: 'wf-1', workflow_project_id: 'proj-home' }),
+      liveSession: null,
+    });
+
+    await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID))
+      .rejects.toThrow('#414 is in Usage budgets, which is paused. Resume the workflow to start its tasks again.');
+    expect(mockGetProjectDb).toHaveBeenLastCalledWith('proj-home');
+    expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
+  });
+
+  it('starts a task in a running workflow as it would any task', async () => {
+    mockWorkflowGetById.mockReturnValue({ id: 'wf-1', title: 'Usage budgets', state: 'running' });
+    mockReconcileTaskSessionRef.mockReturnValue({
+      task: makeTask({ display_id: 414, workflow_id: 'wf-1', workflow_project_id: null }),
+      liveSession: null,
+    });
+
+    const result = await startTaskSession(makeContext(), PROJECT_ID, TASK_ID);
+
+    expect(result.outcome).toBe('starting');
+    expect(mockAutoSpawnForTask).toHaveBeenCalledTimes(1);
   });
 
   it('returns live and spawns nothing when the task already has a running session', async () => {

@@ -5,7 +5,8 @@ import { parseToolBreakdown, type EarlierRunRecord, type SessionRepository } fro
 import { sumToolResultTokens } from '../../../shared/tool-call-totals';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { SessionManager } from '../../pty/session-manager';
-import type { SessionRecord } from '../../../shared/types';
+import type { SessionRecord, Session } from '../../../shared/types';
+import { workflowAgentEffort } from '../../workflows/workflow-agent-effort';
 
 /**
  * Capture session metrics (cost, tokens, model, duration, tool calls,
@@ -104,6 +105,48 @@ export function captureSessionMetrics(
         effort: record?.applied_effort ?? null,
       });
     }
+  } catch {
+    // Metrics capture is best-effort -- never break the calling flow
+  }
+}
+
+/**
+ * A workflow's own agent's spend, for Stats. It has no `sessions` row (it is a
+ * transient session carrying `workflowId`, decision 93), so this writes its
+ * `usage_history` row directly: keyed by its PTY session id, the id the live
+ * dashboard rows use, so the live overlay and the ledger dedup against each
+ * other; and with the conversation it resumes by, so a resume's leg books only
+ * its own delta. Upserts, so every capture point can call it. Synchronous and
+ * best-effort, like `captureSessionMetrics`.
+ */
+export function captureWorkflowAgentUsage(
+  sessionManager: SessionManager,
+  usageHistoryRepo: UsageHistoryRepository,
+  session: Pick<Session, 'id' | 'startedAt' | 'agentSessionId'>,
+): void {
+  try {
+    const usage = sessionManager.getUsageCache()[session.id];
+    // No conversation id, no lineage: every leg would book the whole conversation again.
+    if (!usage || !session.agentSessionId) return;
+    const agentName = sessionManager.getSessionAgentName(session.id) ?? null;
+    usageHistoryRepo.recordSessionUsage({
+      sessionRecordId: session.id,
+      sessionStartedAt: session.startedAt,
+      sessionType: agentName ? agentRegistry.get(agentName)?.sessionType ?? null : null,
+      conversationId: session.agentSessionId,
+      cumulativeCostUsd: usage.cost.totalCostUsd,
+      totalInputTokens: usage.contextWindow.totalInputTokens ?? 0,
+      totalOutputTokens: usage.contextWindow.totalOutputTokens ?? 0,
+      cumulativeDurationMs: usage.cost.totalDurationMs ?? null,
+      toolCallCount: sessionManager.getToolCallCount(session.id),
+      modelId: usage.model.id ?? null,
+      modelDisplayName: usage.model.displayName ?? null,
+      compactionCount: sessionManager.getCompactionCount(session.id),
+      agent: agentName,
+      // The status line's effort when it reports one, else what the agent was
+      // started with: it has no session record to carry `applied_effort`.
+      effort: usage.model.effort ?? workflowAgentEffort(session.id),
+    });
   } catch {
     // Metrics capture is best-effort -- never break the calling flow
   }

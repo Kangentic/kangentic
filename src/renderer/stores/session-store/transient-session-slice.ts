@@ -1,6 +1,7 @@
 import { type StateCreator } from 'zustand';
 import type { ActivityState, Session, SessionInjectSettingsInput } from '../../../shared/types';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { useProjectStore } from '../project-store';
 import { useToastStore } from '../toast-store';
 import type { SessionStore } from './types';
@@ -80,7 +81,7 @@ export function selectLiveCommandTerminalSlots(sessions: readonly Session[], pro
   const slots = new Set<string>();
   if (!projectId) return slots;
   for (const session of sessions) {
-    if (!session.transient || session.projectId !== projectId || session.status === 'exited') continue;
+    if (!isCommandTerminalSession(session) || session.projectId !== projectId || session.status === 'exited') continue;
     if (session.commandTerminalSlot) slots.add(session.commandTerminalSlot);
   }
   return slots;
@@ -140,7 +141,7 @@ export function selectCommandTerminalSummary(
   let anyActive = false;
   let anyNeedsUser = false;
   for (const session of sessions) {
-    if (!session.transient) continue;
+    if (!isCommandTerminalSession(session)) continue;
     if (session.status !== 'running') continue;
     if (session.projectId !== projectId) continue;
     count += 1;

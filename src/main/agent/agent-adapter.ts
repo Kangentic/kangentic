@@ -215,6 +215,18 @@ export interface CommandOptions {
    */
   taskProcessTag?: string;
   /**
+   * Launch with no tool that edits a file or runs a shell command, and with
+   * Kangentic's MCP server as the only one. Set only for a workflow's own agent,
+   * and only on an adapter that declares `supportsReadOnlyLaunch`.
+   */
+  readOnly?: boolean;
+  /**
+   * More directories the agent may read, beyond its `cwd`: other projects'
+   * checkouts, for a workflow agent planning tasks on their boards. Set only on
+   * an adapter that declares `supportsReadableDirectories`.
+   */
+  readableDirectories?: readonly string[];
+  /**
    * Present only when this project's execution mode for this agent is
    * 'remote' (resolved by the spawn chokepoint from `agent.executionServers`
    * + `agent.execution`). Adapters that declare `remoteExecution` read this
@@ -414,6 +426,22 @@ export interface AgentAdapter {
    * concrete CLI flag.
    */
   readonly launchOptions?: readonly AgentLaunchOptionInfo[];
+
+  /**
+   * True when `buildCommand` honours `CommandOptions.readOnly`: the agent reads
+   * files and calls Kangentic's MCP tools, and has no tool that edits a file or
+   * runs a shell command. A workflow's own agent needs it; an agent without it
+   * cannot be one. Declared only once the CLI's flags were measured to hold, since
+   * a CLI can let a user's own approval settings outrank them.
+   */
+  readonly supportsReadOnlyLaunch?: boolean;
+
+  /**
+   * True when `buildCommand` honours `CommandOptions.readableDirectories`, so a
+   * read-only agent can read other projects' code without a permission prompt.
+   * A workflow agent without it reads only its own project.
+   */
+  readonly supportsReadableDirectories?: boolean;
 
   /** Build the shell command string to spawn the agent. */
   buildCommand(options: SpawnCommandOptions): string;

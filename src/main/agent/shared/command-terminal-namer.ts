@@ -13,6 +13,7 @@
  * the wrong agent for a background project's terminal.
  */
 import { EventType, PromptReason, type Session, type SessionEvent } from '../../../shared/types';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { AgentAdapter } from '../agent-adapter';
 import { tryAcquireSummarizeSlot } from './summarize-rate-limit';
 
@@ -81,7 +82,8 @@ export class CommandTerminalNamer {
     const promptText = (event.detail ?? '').trim();
     if (!promptText || promptText === PromptReason.PtyActivity) return;
     const session = this.deps.sessionManager.getSession(sessionId);
-    if (!session?.transient) return;
+    // A workflow's own agent is transient too, but has no terminal name to earn.
+    if (!session || !isCommandTerminalSession(session)) return;
     // First prompt wins, and only once: a later prompt never renames it.
     this.attemptedSessionIds.add(sessionId);
     if (session.commandTerminalLabel) return;

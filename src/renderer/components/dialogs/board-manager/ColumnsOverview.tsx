@@ -1,4 +1,4 @@
-import { Bot, CircleArrowUp, MessageSquare, Zap } from 'lucide-react';
+import { Bot, CircleArrowUp, Columns3Cog, MessageSquare } from 'lucide-react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../DataTable';
 import { Pill } from '../../Pill';
 import { ToggleSwitch } from '../../settings/shared';
@@ -72,6 +72,7 @@ export interface OverviewRow {
   handoff: OverviewFlag;
   session: OverviewValue;
   onEnter: OverviewValue;
+  onTurnEnd: OverviewValue;
   onExit: OverviewValue;
 }
 
@@ -181,7 +182,7 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
     { label: '', span: 1 },
     { label: 'Agent', span: 5, icon: <Bot size={12} strokeWidth={1.75} /> },
     { label: 'Conversation', span: 2, icon: <MessageSquare size={12} strokeWidth={1.75} /> },
-    { label: 'Automations', span: 2, icon: <Zap size={12} strokeWidth={1.75} /> },
+    { label: 'Automations', span: 3, icon: <Columns3Cog size={12} strokeWidth={1.75} /> },
   ];
 
   // The widths reach the table through DataTable's <colgroup>; a grouped
@@ -218,22 +219,28 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
       },
     },
     { key: 'autoSpawn', label: 'Start', width: 'w-[6%]', render: (row) => <OverviewToggle flag={row.autoSpawn} /> },
-    { key: 'agent', label: 'Agent', width: 'w-[15%]', render: (row) => <OverviewCell value={row.agent} /> },
-    { key: 'model', label: 'Model', width: 'w-[12%]', render: (row) => <OverviewCell value={row.model} /> },
+    { key: 'agent', label: 'Agent', width: 'w-[13%]', render: (row) => <OverviewCell value={row.agent} /> },
+    { key: 'model', label: 'Model', width: 'w-[11%]', render: (row) => <OverviewCell value={row.model} /> },
     { key: 'effort', label: 'Effort', width: 'w-[7%]', render: (row) => <OverviewCell value={row.effort} /> },
-    { key: 'permission', label: 'Permissions', width: 'w-[14%]', render: (row) => <OverviewCell value={row.permission} /> },
-    { key: 'handoff', label: 'Handoff', width: 'w-[8%]', render: (row) => <OverviewToggle flag={row.handoff} /> },
-    { key: 'session', label: 'Session', width: 'w-[9%]', render: (row) => <OverviewCell value={row.session} /> },
+    { key: 'permission', label: 'Permissions', width: 'w-[12%]', render: (row) => <OverviewCell value={row.permission} /> },
+    { key: 'handoff', label: 'Handoff', width: 'w-[7%]', render: (row) => <OverviewToggle flag={row.handoff} /> },
+    { key: 'session', label: 'Session', width: 'w-[8%]', render: (row) => <OverviewCell value={row.session} /> },
     {
       key: 'onEnter',
       label: 'On enter',
-      width: 'w-[8%]',
+      width: 'w-[7%]',
       render: (row) => <span data-enter={row.onEnter.label}><OverviewCell value={row.onEnter} /></span>,
+    },
+    {
+      key: 'onTurnEnd',
+      label: 'On turn end',
+      width: 'w-[8%]',
+      render: (row) => <span data-turn-end={row.onTurnEnd.label}><OverviewCell value={row.onTurnEnd} /></span>,
     },
     {
       key: 'onExit',
       label: 'On exit',
-      width: 'w-[8%]',
+      width: 'w-[7%]',
       render: (row) => <span data-exit={row.onExit.label}><OverviewCell value={row.onExit} /></span>,
     },
   ];

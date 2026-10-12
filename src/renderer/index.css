@@ -477,6 +477,170 @@
   transform: rotate(3deg);
 }
 
+/* The Workflows canvas viewport is its own compositor layer. Without it Blink
+   re-layerizes every card's paint chunks on every frame: 5.7ms a frame at 100
+   cards, measured with scripts/drag-perf-rig.mjs (W100), which missed one
+   refresh in four at 144Hz while idle and more during a drag. With it, 0.3ms.
+   Zooming in still re-rasters the layer at the new scale (checked against
+   screenshots at 2x), so the cards stay sharp. */
+.workflow-canvas .react-flow__viewport {
+  will-change: transform;
+}
+
+/* A card's full-size link target (WorkflowTaskNode) is mounted with the card
+   and takes the pointer only while a link is drawn, so it never takes a card
+   drag and starting a link re-renders no card. React Flow finds the card under
+   the pointer by hit-testing, which is why the switch is pointer-events. */
+.workflow-canvas .react-flow__handle.workflow-card-target {
+  pointer-events: none !important;
+}
+.workflow-canvas[data-linking] .react-flow__handle.workflow-card-target {
+  pointer-events: all !important;
+}
+
+/* While a link is drawn no port shows but the incoming ports of the tasks that
+   can take that link (board 10b): this hides them all, and WorkflowCanvas
+   writes one rule that shows the targets' again. The line starts from its own
+   dot (WorkflowConnectionLine), so the blocker's port hides too. Visibility,
+   not opacity, so a hidden port cannot be hit either. */
+.workflow-canvas[data-linking] .workflow-port-in,
+.workflow-canvas[data-linking] .workflow-port-out {
+  visibility: hidden;
+}
+
+/* The task under the pointer that can take the link: an accent ring and a
+   7px halo (board 10b). */
+.workflow-canvas .workflow-link-target {
+  box-shadow:
+    0 0 0 2px var(--color-accent),
+    0 0 0 7px color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+/* A card that cannot take the link refuses the pointer. React Flow marks the
+   handle under the pointer `connectingto`, and `valid` when a release there
+   would link. */
+.workflow-canvas[data-linking] .react-flow__handle.workflow-card-target.connectingto:not(.valid) {
+  cursor: not-allowed;
+}
+
+/* The card that says what a release would do, and a card being moved, sit
+   over every other card: the hint 44px above a card lands on the card in the
+   row above, which may come later in the DOM. Beats React Flow's inline
+   z-index, hence the !important. */
+.workflow-canvas .react-flow__node:has(.workflow-link-hint),
+.workflow-canvas .react-flow__node.dragging {
+  z-index: 2000 !important;
+}
+
+/* A card is something to click: a click selects it and a double-click opens
+   it, so it shows the pointer. React Flow gives a draggable node `grab`, the
+   pannable background's own cursor, which made a card read as empty canvas.
+   The background keeps `grab`; a card being moved shows `grabbing`. React
+   Flow's stylesheet loads after this one with the Workflows view, so these
+   outrank its `.react-flow__node.draggable` rules instead of relying on
+   order. */
+.workflow-canvas .react-flow__node.draggable {
+  cursor: pointer;
+}
+.workflow-canvas .react-flow__node.draggable.dragging {
+  cursor: grabbing;
+}
+
+/* A card takes focus for React Flow's keyboard moves. React Flow clears the
+   browser's focus ring only on its own node types, so ours drew the OS one
+   (the Windows accent color), which read as a second selection and could sit
+   on another card than the selected one. Keyboard focus wears the app's 1px
+   accent ring instead, outside the card, so the selected border inside it
+   stays as drawn. */
+.workflow-canvas .react-flow__node:focus,
+.workflow-canvas .react-flow__node:focus-visible {
+  outline: none;
+}
+.workflow-canvas .react-flow__node:focus-visible .workflow-node {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Auto layout's slide (canvas-arrange.ts): the cards it moves glide to their
+   new places, in the 300ms CANVAS_MOTION_MS names. The links they carry are
+   drawn for the final places, so they hide at once and fade back in once the
+   cards arrive. The slide is on only for that gesture, so a dragged card never
+   trails the pointer. The canvas starts no slide while motion is off; the
+   guards below keep the fade quiet too. */
+.workflow-canvas[data-arranging] .react-flow__node {
+  transition: transform 300ms cubic-bezier(0.2, 0, 0, 1);
+}
+.workflow-canvas .react-flow__edge {
+  transition: opacity 160ms ease-out;
+}
+.workflow-canvas[data-arranging] .react-flow__edge.workflow-edge-arranging {
+  opacity: 0;
+  transition: none;
+}
+.no-motion .workflow-canvas .react-flow__edge {
+  transition-duration: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .workflow-canvas .react-flow__edge {
+    transition-duration: 0s;
+  }
+}
+
+/* The selected task's own links flow from blocker to dependent
+   (WorkflowEdge.tsx): the dashes travel toward the arrow, so which way the
+   work goes reads at a glance. They hold still under reduced motion
+   or with the Animations setting off. The board's links overlay
+   (WorkflowLinksOverlay.tsx) draws its lines the same way, so a link looks
+   the same on the board as on the canvas. */
+@keyframes workflow-link-flow {
+  to { stroke-dashoffset: -22; }
+}
+.workflow-canvas .workflow-link-flow,
+.workflow-links-overlay .workflow-link-flow {
+  stroke-dasharray: 7 4;
+  animation: workflow-link-flow 0.9s linear infinite;
+}
+/* The overlay is one <svg> over the whole board; its own layer keeps the
+   flow's repaint off the lanes, as the canvas's edge layer does below. */
+.workflow-links-overlay {
+  will-change: transform;
+}
+/* A dash offset is not a composited property, so each frame repaints the
+   link. React Flow draws each edge in its own <svg>; giving a flowing one its
+   own layer keeps that repaint off the viewport's layer, whose tiles hold the
+   cards. A precaution, not a measured win: at 100 cards, in runs that tried
+   both, a pan missed 12 or more refreshes once in 15 without it and never
+   with it, and the layer cost nothing measurable and stays sharp at 2x zoom.
+   The runs are in docs/board-drag-perf-audit.md. */
+.workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
+  will-change: transform;
+}
+.no-motion .workflow-canvas .workflow-link-flow,
+.no-motion .workflow-links-overlay .workflow-link-flow {
+  animation: none;
+}
+.no-motion .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow),
+.no-motion .workflow-links-overlay {
+  will-change: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .workflow-canvas .workflow-link-flow,
+  .workflow-links-overlay .workflow-link-flow {
+    animation: none;
+  }
+  .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow),
+  .workflow-links-overlay {
+    will-change: auto;
+  }
+}
+
+/* A card being moved lifts off the canvas (board 10b). */
+.workflow-canvas .react-flow__node.dragging .workflow-node {
+  box-shadow:
+    0 18px 40px rgb(0 0 0 / 0.55),
+    0 0 0 1px color-mix(in srgb, var(--color-accent-fg) 50%, transparent);
+}
+
 /* Swirling drop zone border */
 @keyframes spin-border {
   from { transform: rotate(0deg); }

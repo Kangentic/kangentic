@@ -50,6 +50,14 @@ const STATUS_LINE_REFRESH_INTERVAL_SECONDS = 10;
 const KANGENTIC_MCP_ALLOW_RULE = 'mcp__kangentic';
 
 /**
+ * The built-in tools a read-only launch keeps: reading and searching files,
+ * nothing that writes or runs. ToolSearch too, since Claude defers MCP tools
+ * behind it: without it the agent sees Kangentic's tools listed and every call
+ * fails "No such tool available" (measured on the workflow agent's first save).
+ */
+const READ_ONLY_TOOLS = 'Read,Grep,Glob,ToolSearch';
+
+/**
  * Auto-mode classifier allow rule for Kangentic's own MCP tools (see the
  * KANGENTIC_MCP_ALLOW_RULE comment above for why this is needed separately
  * from `permissions.allow`). Natural language, not a tool-name pattern - this
@@ -175,6 +183,27 @@ export class CommandBuilder {
     if (this.lastMcpConfigPath) {
       parts.push('--mcp-config', quoteArg(toForwardSlash(this.lastMcpConfigPath), shell));
       this.lastMcpConfigPath = null;
+    }
+
+    // A read-only launch (a workflow's own agent). `--tools` limits the built-in
+    // tools in an interactive session too, and named, since on macOS and Linux
+    // the default set leaves out Glob and Grep; MCP tools are untouched by it.
+    // `--strict-mcp-config` then makes Kangentic's server the only one, which
+    // here is the WANTED blocking of the user's own servers: any of them may
+    // write. It does not reach Claude in Chrome, a built-in server that drives
+    // the user's browser, so `--no-chrome` turns that off (measured: without it
+    // a read-only launch still listed some 20 browser tools). What Kangentic's
+    // server offers this caller is limited on its side
+    // (`buildWorkflowAgentMcpServer`), so the server is the guarantee and these
+    // flags are the second lock.
+    if (options.readOnly) {
+      parts.push('--tools', quoteArg(READ_ONLY_TOOLS, shell), '--strict-mcp-config', '--no-chrome');
+    }
+    // Other checkouts the agent may read with no permission prompt (a workflow
+    // agent's other projects). One flag per directory: `--add-dir` takes a list,
+    // and the prompt, which would otherwise join it, comes after `--` below.
+    for (const directory of options.readableDirectories ?? []) {
+      parts.push('--add-dir', quoteArg(directory, shell));
     }
 
     // Session: --resume for existing conversations, --session-id for new ones

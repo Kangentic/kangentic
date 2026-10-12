@@ -37,6 +37,8 @@ interface TaskBranchRowProps {
    * of offering a worktree the spawn would ignore.
    */
   worktreeBlocker?: WorktreeBlocker | null;
+  /** The project whose branches the base branch picker lists; omitted, the open one. */
+  projectId?: string | null;
 }
 
 /**
@@ -76,6 +78,7 @@ export function TaskBranchRow({
   setUseWorktree,
   showWorktree = true,
   worktreeBlocker = null,
+  projectId = null,
 }: TaskBranchRowProps) {
   const editableName = setCustomBranchName !== undefined;
 
@@ -137,6 +140,7 @@ export function TaskBranchRow({
           value={baseBranch}
           defaultBranch={defaultBaseBranch || 'main'}
           onChange={setBaseBranch}
+          projectId={projectId}
         />
       </div>
       {showWorktree && (

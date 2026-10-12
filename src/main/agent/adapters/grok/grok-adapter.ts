@@ -166,6 +166,8 @@ export class GrokAdapter implements AgentAdapter {
    *   spawn), so there is nothing to capture.
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Its turn-end hook reaches the engine as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.hooksAndPty(),
     statusFile: {
       parseStatus: GrokStatusParser.parseStatus,

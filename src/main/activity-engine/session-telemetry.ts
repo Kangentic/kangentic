@@ -47,6 +47,12 @@ interface SessionTelemetryCallbacks {
    * and every consumer that cares about state transitions ignores it.
    */
   onReasonChange?(sessionId: string, activity: ActivityState, reason: ActivityReason): void;
+  /**
+   * A turn the agent itself ended has settled (see
+   * `ActivityEngineCallbacks.onTurnEnded`). Optional: only the production
+   * wiring consumes it.
+   */
+  onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
   onEvent(sessionId: string, event: SessionEvent): void;
   onIdleTimeout(sessionId: string): void;
   onPlanExit(sessionId: string): void;
@@ -274,6 +280,7 @@ export class SessionTelemetry {
         // change in any listener that observes both streams.
         this.pushEvent(sessionId, event);
       },
+      onTurnEnded: (sessionId, turnStartedAt, workSerial) => this.callbacks.onTurnEnded?.(sessionId, turnStartedAt, workSerial),
     }, activityEngineOptions);
 
     this.ptyTracker = new PtyActivityTracker({
@@ -1043,6 +1050,14 @@ export class SessionTelemetry {
 
   getSessionActivity(sessionId: string): ActivityState | undefined {
     return this.activityEngine.getState(sessionId)?.activity;
+  }
+
+  /**
+   * How much work the agent has reported (`SessionEngineState.workSerial`), or
+   * undefined for an unknown session.
+   */
+  getWorkSerial(sessionId: string): number | undefined {
+    return this.activityEngine.getState(sessionId)?.workSerial;
   }
 
   getActivityReason(sessionId: string): ActivityReason | null {

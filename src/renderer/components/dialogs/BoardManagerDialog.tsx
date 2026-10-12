@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Layers, Sliders, Bot, MessageSquare, Plus,
+  Layers, Sliders, Bot, MessageSquare,
   RotateCcw, Palette, ChevronRight, Trash2, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
@@ -17,6 +17,7 @@ import { AddAutomationPicker } from './board-manager/AddAutomationPicker';
 import { EditAutomationDialog } from './board-manager/EditAutomationDialog';
 import {
   appendRow,
+  columnFacts,
   copyAutomation,
   describeAutomationChanges,
   dirtyColumnIds,
@@ -29,6 +30,7 @@ import {
   pruneColumnRows,
   remapDraftIds,
   removeRow,
+  renameColumnsInDrafts,
   replaceRow,
   runnableAutomationCounts,
   runnableRows,
@@ -38,6 +40,8 @@ import {
   type AutomationDraftsByColumn,
 } from './board-manager/automation-drafts';
 import type { AutomationTrigger, AutomationType } from '../../../shared/types';
+import { canTriggerRun } from '../../../shared/automation-manifest';
+import { automationAgentReady } from '../../../shared/answer-agent';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
@@ -50,8 +54,6 @@ import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
-import { OverlayPopover } from '../OverlayPopover';
-import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
 import { unionKnownModels, useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -74,18 +76,7 @@ import {
 } from '../../../shared/types';
 import { ProfileBar } from './board-manager/ProfileBar';
 import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
-import { templateVarsFor } from '../../../shared/task-template-vars';
-
-/**
- * Every field this picker serves belongs to a column automation, which runs on
- * a move, so the four move keywords resolve here and are offered. A spawn
- * prompt is not a move and gets the shorter list; that is what `contexts`
- * exists for, and filtering here is what makes the declaration mean something.
- *
- * Module scope because the list never changes, and because the picker is
- * rendered inside a dialog that re-renders on every keystroke.
- */
-const AUTOMATION_TEMPLATE_VARS = templateVarsFor('automation');
+import { TemplateVariablePicker } from '../TemplateVariablePicker';
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 
@@ -113,7 +104,8 @@ type SectionId = 'general' | 'agent' | 'auto';
  * the per-column list on the right, so a settings card cannot also hold it. Both
  * of this card's controls are about the agent's conversation, one handing the
  * previous agent's over and one choosing which the column continues, so the name
- * is reinforced by its own contents. `Zap` stays free for the automations card.
+ * is reinforced by its own contents. `Columns3Cog` stays free for the
+ * automations card.
  */
 const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
   { id: 'general', label: 'General', icon: Sliders },
@@ -507,105 +499,9 @@ function DisabledSectionNotice({ reason }: { reason: string }) {
   return <p className={`${SETTING_DESCRIPTION_CLASS} pt-3 pb-1 max-w-2xl`}>{reason}</p>;
 }
 
-/**
- * The agent-message field's template-variable inserter.
- *
- * This replaced a row of ten always-on `{{chip}}` buttons. Ten monospace tokens
- * are a wall of syntax the user has to read past to reach the field they
- * actually came for, and their names alone do not say what they resolve to -
- * `{{task_xml}}` and `{{description}}` are not self-explanatory. One pill opens
- * a list that can afford to carry each variable's meaning.
- *
- * Portal + `strategy: 'fixed'` is not optional: the board manager's detail form
- * is a scroll container, so an in-flow menu is clipped to it (see
- * `.claude/rules/popover-escapes-clipping.md`). The outside-click handler checks
- * BOTH refs for the same reason - once portaled, a click inside the menu is
- * "outside" the trigger's subtree.
- */
-function TemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  const { style } = usePopoverPosition(
-    buttonRef as React.RefObject<HTMLElement>,
-    menuRef as React.RefObject<HTMLElement>,
-    open,
-    { mode: 'dropdown', strategy: 'fixed' },
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        setOpen(false);
-        buttonRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKey, true);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKey, true);
-    };
-  }, [open]);
-
-  return (
-    <>
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        data-testid="template-variable-trigger"
-        className="inline-flex cursor-pointer items-center gap-1 rounded border border-edge/40 bg-surface-control/40 px-2 py-1 text-xs text-fg-muted transition-colors hover:border-edge hover:text-fg focus:outline-none focus-visible:border-accent"
-      >
-        <Plus size={13} />
-        Template variable
-      </button>
-
-      <OverlayPopover
-        open={open}
-        popoverRef={menuRef}
-        style={style}
-        portal
-        className="fixed z-[2147483646] w-80 overflow-hidden rounded-lg border border-edge bg-surface shadow-xl"
-        data-testid="template-variable-menu"
-      >
-        <div className="max-h-72 overflow-y-auto py-1">
-          {AUTOMATION_TEMPLATE_VARS.map((templateVar) => (
-            <button
-              key={templateVar.name}
-              type="button"
-              onClick={() => {
-                onInsert(templateVar.chip);
-                setOpen(false);
-              }}
-              className="flex w-full cursor-pointer flex-col gap-0.5 px-3 py-1.5 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:bg-surface-hover"
-            >
-              <span className="font-mono text-xs text-fg">{templateVar.chip}</span>
-              {/* Clamped: a couple of these descriptions are written for the docs
-                  tables and run long. The full text stays available on hover. */}
-              <span className="line-clamp-1 text-[11px] text-fg-faint" title={templateVar.description}>
-                {templateVar.description}
-              </span>
-              {/* Shown only where empty is the NORMAL state, not merely a
-                  possible one, so it stays a warning rather than noise. */}
-              {templateVar.availability && (
-                <span className="text-[11px] text-fg-muted">{templateVar.availability}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      </OverlayPopover>
-    </>
-  );
+/** The automation fields' Template variable menu: the shared picker, on the automation context. */
+function AutomationTemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => void }) {
+  return <TemplateVariablePicker context="automation" onInsert={onInsert} />;
 }
 
 /**
@@ -729,6 +625,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // implicitly updates this subscription too.
   const agentList = useConfigStore((state) => state.agentList);
   const loadAgentList = useConfigStore((state) => state.loadAgentList);
+  // The Automation agent's choice, which decides whether an automation's
+  // Condition can be switched on in the edit dialog.
+  const globalConfig = useConfigStore((state) => state.globalConfig);
   // The overview's "newer version available" mark reads the same model union
   // the Model combobox lists (useKnownModels), so the two never disagree.
   const discoveredModelsByAgent = useConfigStore((state) => state.config.discoveredModelsByAgent);
@@ -1067,15 +966,16 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         isolated: applies && laneDraft.session_target === 'isolated',
         // The DRAFT's counts, not the saved ones, so switching a row off
         // updates the rail before Save, like every other number on this
-        // surface. Enter and exit together: the rail says how much happens
-        // here, and the two groups on the column page say which end.
+        // surface. Every group together: the rail says how much happens here,
+        // and the groups on the column page say when.
         automationCount: (() => {
-          const counts = runnableAutomationCounts(automationDrafts[id] ?? [], laneDraft);
-          return counts.enter + counts.exit;
+          const reportsTurnEnd = agentList.find((agent) => agent.name === (overrideName ?? projectDefaultAgent))?.reportsTurnEnd;
+          const counts = runnableAutomationCounts(automationDrafts[id] ?? [], { ...laneDraft, reportsTurnEnd });
+          return counts.enter + counts.turn_end + counts.exit;
         })(),
       }];
     });
-  }, [laneOrder, drafts, originals, newDraftIds, agentList, automationDrafts]);
+  }, [laneOrder, drafts, originals, newDraftIds, agentList, automationDrafts, projectDefaultAgent]);
 
   // Rows for the "All columns" overview grid, read from drafts so unsaved edits show.
   const overviewRows: OverviewRow[] = useMemo(() => {
@@ -1122,10 +1022,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       const newerModel = modelOverride ? newerModelFor(modelOverride, laneKnownModels) : null;
 
       const rows = automationDrafts[id] ?? [];
-      const counts = runnableAutomationCounts(rows, laneDraft);
+      const columnInput = { ...laneDraft, reportsTurnEnd: laneAgentInfo?.reportsTurnEnd };
+      const counts = runnableAutomationCounts(rows, columnInput);
       // The tooltip names exactly the rows the number counts.
       const nameRows = (trigger: AutomationTrigger): string =>
-        runnableRows(rows, laneDraft, trigger).map((row) => row.name).join(', ');
+        runnableRows(rows, columnInput, trigger).map((row) => row.name).join(', ');
+      const turnEndGroup = canTriggerRun(columnFacts(columnInput), 'turn_end');
 
       return [{
         id,
@@ -1176,6 +1078,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         onEnter: isTerminal
           ? { label: '0', changed: false, applicable: false, reason: `Nothing runs when a task enters ${terminalName}.` }
           : { label: String(counts.enter), changed: counts.enter > 0, applicable: true, reason: nameRows('enter') },
+        // No agent works in To Do or Done, so no turn ends there either; nor in
+        // a column with no agent, or one whose agent reports no turn end.
+        onTurnEnd: isTerminal
+          ? { label: '0', changed: false, applicable: false, reason: `Nothing runs at a turn end in ${terminalName}.` }
+          : !turnEndGroup.ok
+            ? { label: '0', changed: false, applicable: false, reason: turnEndGroup.reason }
+            : { label: String(counts.turn_end), changed: counts.turn_end > 0, applicable: true, reason: nameRows('turn_end') },
         onExit: { label: String(counts.exit), changed: counts.exit > 0, applicable: true, reason: nameRows('exit') },
       }];
     });
@@ -1521,6 +1430,17 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       // A column staged for deletion takes its rows with it; writing them back
       // would recreate rows for a column that is gone.
       for (const deletedId of pendingDeleteIds) plannedDrafts = pruneColumnRows(plannedDrafts, deletedId);
+      // A row that names a column renamed in this same Save (Move to column's
+      // Column) follows the new name. Main renames saved rows on its own; this
+      // covers the drafts about to overwrite them. All renames in one pass, so a
+      // chain of renames moves each row once.
+      const renames = Object.entries(drafts).flatMap(([id, laneDraft]) => {
+        const before = originals[id]?.name;
+        return before && laneDraft.name.trim() && before !== laneDraft.name
+          ? [{ oldName: before, newName: laneDraft.name }]
+          : [];
+      });
+      plannedDrafts = renameColumnsInDrafts(plannedDrafts, renames);
 
       for (const entry of planAutomationSave(automationOriginals, plannedDrafts)) {
         try {
@@ -2422,6 +2342,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
             <div className="w-full shrink-0 @[1100px]:flex-1 @[1100px]:w-auto @[1100px]:min-w-0 @[1100px]:shrink @[1100px]:min-h-0 @[1100px]:overflow-y-auto">
               <AutomationsPane
                 column={draft}
+                reportsTurnEnd={effectiveAgentInfo?.reportsTurnEnd}
                 drafts={rowsForColumn(draft.id)}
                 readOnly={activeProfileId !== null}
                 isDirty={(row) => {
@@ -2488,9 +2409,22 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           key={editing.rowId}
           draft={editingRow}
           column={editingColumn}
+          reportsTurnEnd={agentList.find((agent) => agent.name === (editingColumn.agent_override ?? projectDefaultAgent))?.reportsTurnEnd}
+          columns={laneOrder
+            .filter((id) => id !== editing.columnId)
+            .flatMap((id) => {
+              const lane = drafts[id];
+              return lane && lane.name.trim() !== '' ? [{ name: lane.name, color: lane.color }] : [];
+            })}
+          automationAgentReady={automationAgentReady(agentList, globalConfig.automation, true)}
+          onOpenAutomationSettings={() => {
+            const store = useConfigStore.getState();
+            store.setLastSettingsTab('workflows');
+            store.setSettingsOpen(true);
+          }}
           isNew={editing.isNew}
           takenNames={takenNamesFor(rowsForColumn(editing.columnId), editing.rowId)}
-          templatePicker={TemplateVariablePicker}
+          templatePicker={AutomationTemplateVariablePicker}
           onDone={(next) => {
             mutateRows(editing.columnId, (rows) => replaceRow(rows, next));
             setEditing(null);

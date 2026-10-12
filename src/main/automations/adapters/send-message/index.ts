@@ -55,10 +55,13 @@ export const sendMessageAdapter: AutomationAdapter = {
     // - the exit path reported it in ONE millisecond while the agent received
     // nothing but the burst's leading Ctrl+U.
     //
+    // On TURN END the group runs outside the task lock, so it awaits the burst
+    // the way exit does, and "Delivered" is a fact there too.
+    //
     // Neither word is "Confirmed". Only Claude implements a submission verifier,
     // so on every other agent even the exit case is unconfirmed, and the
     // scheduler reports that outcome on its own channel.
-    return { detail: context.trigger === 'exit' ? 'Delivered' : 'Sent' };
+    return { detail: context.trigger === 'enter' ? 'Sent' : 'Delivered' };
   },
 };
 

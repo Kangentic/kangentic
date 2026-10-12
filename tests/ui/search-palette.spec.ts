@@ -277,6 +277,11 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 }
 
 test.describe('Search Palette', () => {
+  // Every test launches its own browser and waits up to 15s for the app, so
+  // the default 15s test budget ran out on a loaded machine before the test's
+  // own steps did (seen on Ctrl+F during a full gate).
+  test.describe.configure({ timeout: 30_000 });
+
   test('Ctrl+Shift+F opens the palette', async () => {
     const { browser, page } = await launchWithState(preConfigWithSearchHits());
     try {

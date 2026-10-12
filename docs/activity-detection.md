@@ -190,7 +190,7 @@ The 24 `EventType` values written to `events.jsonl` by `event-bridge.js`, define
 | `ToolStart` | `tool_start` | `thinking` | Agent began invoking a tool |
 | `ToolEnd` | `tool_end` | log-only | Tool returned; counters update and `lastSignalAt` refreshes (a `PostToolUse` hook proves the agent is alive, so `tool_end` is NOT in the engine's `LOG_ONLY_EVENTS` set), but the activity state does not change |
 | `Idle` | `idle` | `idle` | Agent finished its turn (Stop hook, prompt-regex, or silence timer) |
-| `Interrupted` | `interrupted` | `idle` | User pressed Esc / Ctrl+C; clears counters and commits idle |
+| `Interrupted` | `interrupted` | `idle` | The user stopped the turn: Esc while a tool runs, or Ctrl+C; clears counters and commits idle. Esc BETWEEN tool calls fires no hook at all, so that turn ends through `idle_hint` instead (see "Turn ends" below) |
 | `TurnFailed` | `turn_failed` | `idle` | Turn aborted by a TERMINAL service/API error (Claude's `StopFailure` hook, which fires instead of `Stop`); `detail` carries the error type (e.g. `authentication_error`). Routed through the Interrupted bypass: clears counters and commits idle immediately (see "Aborted-turn recovery") |
 | `TurnRetrying` | `turn_retrying` | conditional idle | `StopFailure` fired for a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error), classified at the source (like `IdleHint`). Holds the session `thinking` through a live retry (preserving `subagentDepth` and deferring to the stale-thinking or stuck-subagent watchdog); idles immediately if the turn had already wound down or ended (see "Aborted-turn recovery") |
 | `SessionStart` | `session_start` | log-only | Session began; carries adapter session metadata |
@@ -230,6 +230,43 @@ To extend it to another hook-based agent, capture a real session that exhibits t
 - **Gemini / Qwen Code** share the same hook shape (`AfterAgent` -> `idle` stop-equivalent, `Notification` -> `notification`), so they could be susceptible. But they wire no `SubagentStart`/`SubagentStop` hooks, so the subagent-delegation failure mode is not modeled, and we have no captured session to confirm their notification text. Wire only after capturing evidence.
 - **Kimi** does not need this: its wire protocol emits an explicit `TurnEnd -> Idle`, and none of its `Notification`-mapped messages mean "waiting for input."
 - **Codex / Copilot / OpenCode** wire no Notification hook, so the pattern cannot apply.
+
+### Turn ends (`onTurnEnded`)
+
+Going idle and finishing a turn are different facts, and On agent turn end automations need the
+second. The engine reports one through `ActivityEngineCallbacks.onTurnEnded(sessionId,
+turnStartedAt, workSerial)`, which `SessionTelemetry` relays and `SessionManager` emits as `'turn-ended'`
+(`TurnEndedPayload`, with the task, project, agent session and isolated column). `'activity'` is
+not overloaded for it: that event fires on every state change, and a Stop commits as
+`timer:stability`, the same trigger three watchdogs use.
+
+- **What counts.** The engine records what cleared the turn in `turnEndSource`: `'stop'` for the
+  agent's own turn-end hook (a non-permission, non-timeout `Idle`), `'idle-hint'` for an
+  `idle_hint` that ended it, and null for everything else. `onTurnEnded` fires once, on the
+  thinking-to-idle COMMIT, only when the source is `'stop'`. The commit, not the hook, so a turn
+  whose background shells or subagents were still held reports only once they drain.
+- **What does not.** An `idle_hint` (Esc between tool calls fires no hook and ends the turn exactly
+  this way, so the two cannot be told apart), `Interrupted`, `TurnFailed`, a `TurnRetrying` that
+  idles, a permission prompt, every watchdog and silence timer, and a resume's idle seed.
+- **`turnStartedAt`** is stamped on every idle-to-thinking commit, and at spawn when the session is
+  seeded thinking. A permission prompt resolving back to thinking keeps it, since that is the same
+  turn. The turn-end runner uses it to ignore a turn that began before the task entered its column.
+- **`workSerial`** is the turn's identity. It counts the turn-initiating events (`TURN_INITIATING_EVENTS`)
+  `processEvent` has handled, and rides the turn end beside `turnStartedAt`.
+  `SessionManager.isLatestTurn(sessionId, workSerial)` is true only while the agent has reported no
+  work since. The turn-end runner and the workflow step ask it before acting on a check's answer, so
+  a turn the user began meanwhile stops them even after it failed or was interrupted back to idle
+  with no turn end of its own. It is not `turnStartedAt` because `forceThinking` re-stamps that: a
+  PTY-tracked agent's trailing paint after its turn end (Kimi's tracker is never suppressed) would
+  read as a new turn every time. Only an agent's own hook or wire events move the serial.
+- **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for the
+  hook agents and Kimi (whose wire protocol emits `TurnEnd`); false for agents whose only signal is
+  terminal silence, where a quiet compile and a finished turn look the same.
+- Pinned by `tests/unit/activity-engine-turn-ended.test.ts` and two replay fixtures:
+  `session-030-code-review-background-subagents` (#529's pass #76: 12 Stops, 3 turn ends, because
+  the background reviewers held the other nine) and `session-031-turn-failed-then-continue` (a
+  captured task session: a `turn_failed` with error `unknown` idles with no turn end, then the turn
+  after the user's "continue" ends once at its Stop).
 
 ### Aborted-turn recovery (service errors)
 

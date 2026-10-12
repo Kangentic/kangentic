@@ -69,7 +69,7 @@ function makeBoard(): Board {
     // The DB half of what handleTaskMove does. Applying it here is what makes
     // this an end-to-end check of the ordinal-to-raw translation rather than an
     // assertion about a dispatch payload.
-    onTaskMove: vi.fn(async (input) => { tasks.move(input); }),
+    onTaskMove: vi.fn(async (input) => { tasks.move(input, { origin: 'agent' }); }),
     onTasksReordered: vi.fn(),
     onSwimlaneUpdated: vi.fn(),
     onSwimlaneDeleted: vi.fn(),

@@ -95,6 +95,7 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
 
   const sessionLabel = useCallback(
     (session: (typeof sessions)[number]): string => {
+      if (session.workflowId) return 'Workflow agent';
       if (session.transient) return 'Command terminal';
       const task = tasks.find((candidate) => candidate.id === session.taskId);
       return task ? task.title : session.taskId.slice(0, 8);

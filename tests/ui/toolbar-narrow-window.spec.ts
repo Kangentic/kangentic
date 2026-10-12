@@ -60,11 +60,14 @@ const WIDE = { width: 1600, height: 900 };
 
 /**
  * A project long enough in the name to exercise the title bar, a full set of
- * swimlanes, labelled tasks so the Labels filter has content, and backlog items so
- * the Backlog segment carries its count badge (which widens the switcher).
+ * swimlanes, labelled tasks so the Labels filter has content, backlog items so
+ * the Backlog segment carries its count badge, and a running workflow so the
+ * Workflows segment carries its working mark. Both widen the switcher, so the
+ * row is measured at its widest.
  */
 function seedScript(): string {
   return `
+    window.__mockWorkflows = [{ workflow: { id: 'narrow-workflow', title: 'Narrow', state: 'running', draft: null } }];
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
 
@@ -181,6 +184,24 @@ async function switchToBacklog(page: Page): Promise<void> {
   await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 10000 });
 }
 
+/**
+ * The seeded workflow has no tasks yet, so the view opens on an empty canvas.
+ * Workflows folds the sidebar on the way in, which would leave this toolbar
+ * 860px at the floor. Opening it there, as a user can, keeps these cases on the
+ * 400px sidebar their names promise.
+ */
+async function switchToWorkflows(page: Page): Promise<void> {
+  await page.locator('[data-testid="view-toggle-workflows"]').click();
+  await page.locator('[data-testid="workflows-view"]').waitFor({ state: 'visible', timeout: 10000 });
+  const sidebar = page.locator('[data-testid="sidebar-area"]');
+  await expect(sidebar).toHaveAttribute('data-open', 'false');
+  await page.locator('[data-testid="sidebar-expand-button"]').click();
+  await expect(sidebar).toHaveAttribute('data-open', 'true');
+  // Its width transition has run, so the row is measured beside the full 400px.
+  await expect.poll(() => sidebar.evaluate((element) => Math.round(element.getBoundingClientRect().width)))
+    .toBeGreaterThanOrEqual(400);
+}
+
 interface RowReading {
   height: number;
   /** Right edge of each control, and of the row's own content box, rounded. */
@@ -265,9 +286,19 @@ const BACKLOG_CONTROLS = [
   'import-sources-btn',
 ];
 
+/** The Workflows view shares the board's search and filter and has no toolbar action. */
+const WORKFLOWS_CONTROLS = [
+  'view-toggle-group',
+  'manage-labels-btn',
+  'manage-priorities-btn',
+  'board-search',
+  'board-filter-btn',
+];
+
 /** Every label that must still be text at the wide baseline. */
-const BOARD_LABELS = ['Board', 'Backlog', 'Labels', 'Priorities', 'Filter', 'Add column'];
-const BACKLOG_LABELS = ['Board', 'Backlog', 'Labels', 'Priorities', 'Filter', 'New Task', 'Import Tasks'];
+const BOARD_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter', 'Add column'];
+const BACKLOG_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter', 'New Task', 'Import Tasks'];
+const WORKFLOWS_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter'];
 
 /**
  * The shared body of all four toolbar cases: measure the row wide, narrow the
@@ -290,6 +321,11 @@ async function expectRowSurvivesTheFloor(
   for (const label of wideLabels) {
     expect(wideText, `"${label}" is missing from the toolbar at ${WIDE.width}px wide`).toContain(label);
   }
+  // The Backlog count and the Workflows mark are what make this the widest
+  // switcher; without them the floor case below is not the one the ladder was
+  // sized for.
+  await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, running');
+  await expect(page.locator('[data-testid="view-toggle-backlog"]')).toHaveAttribute('aria-label', 'Backlog, 3 items');
 
   const wideHeight = await settledHeight(page);
   expect(wideHeight).toBeGreaterThan(0);
@@ -366,28 +402,39 @@ test.describe('Chrome rows at the 900x600 floor', () => {
     }
   });
 
+  test('workflows toolbar survives the floor with the sidebar at its 400px default', async () => {
+    const { browser, page } = await launch();
+    try {
+      await switchToWorkflows(page);
+      await expectRowSurvivesTheFloor(page, WORKFLOWS_CONTROLS, WORKFLOWS_LABELS);
+    } finally {
+      await browser.close();
+    }
+  });
+
   /**
    * The two-width checks above would both pass with a threshold set so badly that
    * the row breaks somewhere in between. With a 400px sidebar the toolbar's own
    * width is the viewport minus 405, so this range walks the container from 495 to
-   * 945 and crosses every step in BOTH ladders.
+   * 1045 and crosses every step in all three ladders.
    *
-   * The ceiling is set by the widest threshold either branch has, the backlog's
-   * filter controls at 920. Stopping at a 1300px viewport tops the container out
-   * at 895 and never crosses it, which leaves the widest and last-crossed step in
+   * The ceiling is set by the widest threshold any branch has, the backlog's
+   * filter controls at 1000 (a content box of 1000 is a 1032px row, a 1437px
+   * viewport). Stopping short of it leaves the widest and last-crossed step in
    * the whole ladder covered only by the two fixed-width tests on either side of
    * it.
    */
-  for (const [view, controls] of [['board', BOARD_CONTROLS], ['backlog', BACKLOG_CONTROLS]] as const) {
+  for (const [view, controls] of [['board', BOARD_CONTROLS], ['backlog', BACKLOG_CONTROLS], ['workflows', WORKFLOWS_CONTROLS]] as const) {
     test(`the ${view} toolbar holds at every width across the ladder`, async () => {
       const { browser, page } = await launch();
       try {
         if (view === 'backlog') await switchToBacklog(page);
+        if (view === 'workflows') await switchToWorkflows(page);
 
         const baseline = await settledHeight(page);
         const broken: string[] = [];
 
-        for (let width = 900; width <= 1350; width += 25) {
+        for (let width = 900; width <= 1450; width += 25) {
           await page.setViewportSize({ width, height: FLOOR.height });
           const height = await settledHeight(page);
           if (Math.abs(height - baseline) > 1) {

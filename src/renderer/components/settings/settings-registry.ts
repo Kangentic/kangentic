@@ -163,6 +163,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent idle', description: 'When an agent finishes its turn or needs permission', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
   { id: 'notifications.onAgentCrash', tabId: 'notifications', label: 'Agent crash', description: 'When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too.', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'crash', 'exit', 'failed', 'ended'] },
   { id: 'notifications.onPlanComplete', tabId: 'notifications', label: 'Plan complete', description: 'When a plan finishes and the task auto-moves', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
+  { id: 'notifications.onWorkflowComplete', tabId: 'notifications', label: 'Workflow complete', description: 'When every task in a workflow reaches Done', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'workflow', 'linked tasks'] },
   { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
 
   // ── Notifications > Delivery ──
@@ -178,6 +179,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'dictation.autoSubmit', tabId: 'dictation', label: 'Auto-submit', description: 'Press Enter after inserting, or leave the text for you to review and send.', scope: 'global', section: 'Voice dictation', keywords: ['send', 'submit', 'enter', 'auto', 'release', 'commit', 'voice', 'dictation'] },
   { id: 'dictation.releaseBufferMs', tabId: 'dictation', label: 'Release buffer', description: 'Keep capturing briefly after release so the last word is not clipped.', scope: 'global', section: 'Voice dictation', keywords: ['release', 'buffer', 'tail', 'trailing', 'capture', 'delay', 'grace', 'clip', 'cutoff', 'word', 'voice', 'dictation', 'push to talk'] },
   { id: 'dictation.remote', tabId: 'dictation', label: 'Cloud endpoint', description: 'OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when Refinement model is Cloud endpoint. Only the final clip is sent; the live preview stays on this machine.', scope: 'global', section: 'Transcription', keywords: ['remote', 'cloud', 'openai', 'endpoint', 'api', 'url', 'voice', 'dictation', 'refinement', 'custom'] },
+
+  // ── Workflows ──
+  { id: 'automation.agentCard', tabId: 'workflows', label: 'Automation agent', description: 'Judges conditions and workflow steps.', scope: 'global', keywords: ['automation', 'condition', 'check', 'checks', 'workflow', 'step', 'judge', 'agent', 'model', 'turn end', 'only if'] },
+  { id: 'automation.agent', tabId: 'workflows', label: 'Agent', description: "Which agent answers an automation's Condition. Nothing runs on an agent nobody chose.", scope: 'global', section: 'Automation agent', keywords: ['automation', 'condition', 'check', 'agent', 'claude', 'codex', 'workflow', 'only if'] },
+  { id: 'automation.model', tabId: 'workflows', label: 'Model', description: 'A small, fast model is usually enough to read one reply and answer yes or no.', scope: 'global', section: 'Automation agent', keywords: ['automation', 'condition', 'check', 'model', 'cost', 'cheap', 'haiku', 'sonnet', 'tokens'] },
+  { id: 'automation.effort', tabId: 'workflows', label: 'Effort', description: "Unset runs at the agent's recommended level.", scope: 'global', section: 'Automation agent', keywords: ['automation', 'condition', 'check', 'effort', 'reasoning', 'speed', 'low', 'high'] },
+  { id: 'workflows.agentPrompt', tabId: 'workflows', label: 'Workflow agent prompt', description: 'The first message it gets for a new workflow.', scope: 'global', keywords: ['workflow', 'agent', 'prompt', 'first message', 'planning', 'plan', 'brief', 'template', 'columns', 'instructions'] },
 
   // ── Knowledge Graph (tab id `knowledgeGraph`; the index, the local model that finds by meaning, the agent that answers) ──
   { id: 'knowledgeGraph.indexingEnabled', tabId: 'knowledgeGraph', label: 'Index', description: 'What Quick Find and the Knowledge Graph search.', scope: 'global', keywords: ['index', 'conversation', 'conversations', 'transcript', 'tasks', 'commits', 'sources', 'search', 'recall', 'memory', 'privacy', 'local', 'offline', 'history', 'rebuild'] },
@@ -272,6 +280,7 @@ export const TAB_LABELS: Record<string, string> = {
   terminal: 'Terminal',
   behavior: 'Behavior',
   performance: 'Performance',
+  workflows: 'Workflows',
   dictation: 'Dictation',
   knowledgeGraph: 'Knowledge Graph',
   hotkeys: 'Hotkeys',

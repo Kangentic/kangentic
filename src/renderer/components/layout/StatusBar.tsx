@@ -25,7 +25,8 @@ export function StatusBar() {
   const openWhatsNewAction = useUpdaterStore((s) => s.openWhatsNew);
   const openWhatsNew = () => openWhatsNewAction({ autoOpened: false });
 
-  const projectSessions = allSessions.filter((s) => s.projectId === currentProject?.id);
+  // A workflow's own agent lives only in the Workflows view, so it is not counted here.
+  const projectSessions = allSessions.filter((s) => s.projectId === currentProject?.id && !s.workflowId);
   const activeSessions = projectSessions.filter((s) => s.status === 'running').length;
   const queued = projectSessions.filter((s) => s.status === 'queued').length;
 

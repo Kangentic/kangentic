@@ -35,6 +35,17 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
   const isSystemColumn = role !== null;
   const isDraggable = !!dragHandleProps && !isGhost;
 
+  // The drop highlight's color (`.drop-highlight` in index.css), set here for
+  // good rather than by the drag. A custom property is inherited, so writing
+  // it on the lane at drag time restyled every element in the lane: 2,948 of
+  // them, 10ms inside the drag-start task, for a To Do lane of 90 workflow
+  // cards (`scripts/drag-perf-rig.mjs`, W100). The drag now toggles only the
+  // class, and the var reads the same value it always did.
+  const dropColorStyle = useMemo(
+    () => (swimlane.color ? ({ '--drop-color': swimlane.color } as React.CSSProperties) : undefined),
+    [swimlane.color],
+  );
+
   return (
     <div
       data-testid="swimlane"
@@ -45,6 +56,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
       } ${
         isSystemColumn ? 'ring-1 ring-edge/50' : ''
       } ${isSystemColumn ? 'bg-surface-raised/70' : 'bg-surface-raised/50'}`}
+      style={dropColorStyle}
       title={isGhost ? 'Removed from team config. Move tasks to continue.' : undefined}
     >
       {/* Accent bar */}

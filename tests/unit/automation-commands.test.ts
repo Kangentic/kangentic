@@ -372,6 +372,36 @@ describe('automation MCP commands', () => {
     it('says so plainly when a column has none', () => {
       expect(handleListAutomations({ column: 'Executing' }, context).message).toContain('no automations');
     });
+
+    // The sentence names only the verb and its value, as the row's second line
+    // does, so every option the panel shows as a mark follows in words: an
+    // agent reads the text, and the send timing and Move to column's message
+    // would otherwise be in `data` alone.
+    it('names the marks in words after the sentence', () => {
+      handleSetAutomations({
+        column: 'Executing',
+        automations: [
+          { name: 'Review', type: 'send_message', message: '/code-review', mode: 'deferred' },
+          {
+            name: 'Back for revisions',
+            type: 'move_to_column',
+            on: 'turn_end',
+            targetColumn: 'Planning',
+            message: '{{agentReply}}\nFix these first.',
+            condition: 'The review is clean',
+            maxRuns: 3,
+          },
+          { name: 'Summarize', type: 'send_message', on: 'turn_end', message: 'Summarize', mode: 'deferred' },
+        ],
+      }, context);
+
+      const lines = (handleListAutomations({ column: 'Executing' }, context).message ?? '').split('\n');
+      expect(lines).toContain('    1. Review (send_message) Sends "/code-review" (waits for the current turn to end)');
+      expect(lines).toContain('    1. Back for revisions (move_to_column) Moves the task to Planning'
+        + ' (with a message; only if the review is clean; at most 3 times for each task)');
+      // At a turn end the turn is already over, so a waiting Send message sends at once.
+      expect(lines).toContain('    2. Summarize (send_message) Sends "Summarize"');
+    });
   });
 
   // ---------------------------------------------------------------------------

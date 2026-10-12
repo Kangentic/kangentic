@@ -7,6 +7,7 @@ import {
   AUTOMATION_MANIFEST,
   RETIRED_ACTION_TYPES,
   canColumnRun,
+  canTriggerRun,
   isAutomationType,
   isRetiredActionType,
   stableAutomationTypes,
@@ -35,6 +36,9 @@ import type { AutomationType } from '../../src/shared/types';
 const RAW_SUBSTITUTION_FIELDS = [
   // Prose the agent reads as text, never as code.
   'send_message.message',
+  // The same, for the agent in the column a Move to column row sends the task
+  // to: often a whole review verdict through {{agentReply}}.
+  'move_to_column.message',
   // A notification's own strings. They are rendered by the OS, not executed or parsed.
   'notify.title',
   'notify.body',
@@ -77,7 +81,7 @@ describe('automation manifest and registry parity', () => {
   });
 
   it('offers only stable types for a new automation', () => {
-    expect(stableAutomationTypes()).toEqual(['send_message', 'run_script', 'webhook', 'notify']);
+    expect(stableAutomationTypes()).toEqual(['send_message', 'run_script', 'webhook', 'notify', 'move_to_column']);
     expect(automationRegistry.stable().map((adapter) => adapter.id)).toEqual(stableAutomationTypes());
   });
 });
@@ -195,6 +199,43 @@ describe('canColumnRun', () => {
   it('allows a type that needs nothing on a column with no agent', () => {
     for (const type of ['run_script', 'webhook', 'notify'] satisfies AutomationType[]) {
       expect(canColumnRun(type, NO_AGENT_COLUMN, 'enter').ok, type).toBe(true);
+    }
+  });
+});
+
+/**
+ * The turn-end refusals, word for word. Each one is shown in place of a
+ * column's On agent turn end group, so its wording was approved on the #732
+ * board (15) and a reword should fail here rather than ship unnoticed.
+ */
+describe('canTriggerRun: why nothing runs at a turn end', () => {
+  function reasonFor(column: AutomationColumnFacts): string | null {
+    const result = canTriggerRun(column, 'turn_end');
+    return result.ok ? null : result.reason;
+  }
+
+  it('names To Do and Done each by itself', () => {
+    expect(reasonFor(TODO_COLUMN)).toBe('Nothing runs at a turn end in To Do.');
+    expect(reasonFor(DONE_COLUMN)).toBe('Nothing runs at a turn end in Done.');
+  });
+
+  it('says Start an agent here is off for a column with no agent', () => {
+    expect(reasonFor(NO_AGENT_COLUMN)).toBe('Start an agent here is off, so no agent ends a turn here.');
+  });
+
+  it("says the column's agent can't report a finished turn", () => {
+    expect(reasonFor({ ...AGENT_COLUMN, reportsTurnEnd: false })).toBe("This column's agent can't report when it finishes a turn.");
+  });
+
+  it('allows a column whose agent reports a turn end, or one not known yet', () => {
+    expect(reasonFor({ ...AGENT_COLUMN, reportsTurnEnd: true })).toBeNull();
+    expect(reasonFor(AGENT_COLUMN)).toBeNull();
+  });
+
+  it('refuses Move to column on enter and exit with its one-line reason', () => {
+    for (const trigger of ['enter', 'exit'] as const) {
+      const result = canColumnRun('move_to_column', AGENT_COLUMN, trigger);
+      expect(result.ok === false && result.reason, trigger).toBe('Move to column runs only at a turn end.');
     }
   });
 });

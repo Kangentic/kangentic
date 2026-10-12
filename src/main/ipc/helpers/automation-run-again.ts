@@ -3,6 +3,7 @@ import { getProjectDb } from '../../db/database';
 import { createTransitionEngine, resolveInjectionVerifier } from './agent-spawn';
 import { getProjectRepos } from './project-repos';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
+import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import { showDesktopNotification } from '../handlers/system';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -84,20 +85,20 @@ export async function runAutomationAgain(
         // On exit row was silently cut to a minute.
         groupBudgetMs: RUN_AGAIN_BUDGET_MS,
         // Fire and forget, like the warm enter path: nothing here cancels the
-        // scheduler, so a message queues rather than racing anything.
+        // scheduler, so a message queues rather than racing anything. A
+        // message with line breaks is pasted once the agent's turn ends, and a
+        // move out of the column cancels it.
         deliverToAgent: async (message, mode) => {
           const liveSession = task.session_id;
           if (!liveSession) return;
-          context.terminalSubmitScheduler.scheduleKeystrokes(
+          deliverAgentMessageInBackground(context, {
             taskId,
-            liveSession,
-            [{ text: message, verify: 'submitted' }],
-            {
-              mode,
-              verifier: resolveInjectionVerifier(task.agent, sessionRepo, taskId),
-              onOutcome: (report) => reportAutoCommandOutcome(context, repos.tasks, task, report, projectId),
-            },
-          );
+            sessionId: liveSession,
+            message,
+            mode,
+            verifier: resolveInjectionVerifier(task.agent, sessionRepo, taskId),
+            onOutcome: (report) => reportAutoCommandOutcome(context, repos.tasks, task, report, projectId),
+          });
         },
         showNotification: (notification) => showDesktopNotification(context, notification),
         onProgress: createProgressCallback(context.mainWindow, taskId),

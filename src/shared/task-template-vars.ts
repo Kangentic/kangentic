@@ -18,8 +18,11 @@
  * declaration, so the engine's implicit default and the seed cannot drift. The
  * legacy-rewrite migration keeps its own frozen literal on purpose: a migration
  * must not retroactively rewrite old rows if this default ever changes.
+ *
+ * `{{workflow_xml}}` resolves empty for a task outside a workflow, and
+ * drop-and-collapse removes it, so an ordinary task's prompt is unchanged.
  */
-export const DEFAULT_SPAWN_PROMPT_TEMPLATE = '{{task_xml}}{{attachments}}';
+export const DEFAULT_SPAWN_PROMPT_TEMPLATE = '{{task_xml}}{{workflow_xml}}{{attachments}}';
 
 /**
  * The ONE definition of what a template variable looks like in text.
@@ -39,6 +42,7 @@ export const TEMPLATE_VARIABLE_PATTERN = /\{\{(\w+)\}\}/g;
 
 export const TASK_TEMPLATE_VAR_NAMES = [
   'task_xml',
+  'workflow_xml',
   'title',
   'description',
   'taskId',
@@ -60,6 +64,9 @@ export const TASK_TEMPLATE_VAR_NAMES = [
   'fromColumn',
   'toColumn',
   'trigger',
+  'agentReply',
+  'columns',
+  'brief_xml',
 ] as const;
 
 export type TaskTemplateVarName = (typeof TASK_TEMPLATE_VAR_NAMES)[number];
@@ -74,14 +81,23 @@ export type TaskTemplateVarName = (typeof TASK_TEMPLATE_VAR_NAMES)[number];
  *     knows its column, both ends of the move, and the trigger.
  *   - `'spawn'` - a `spawn_agent` prompt template, which knows the task and the
  *     project and nothing about a move.
+ *   - `'workflow'` - a workflow agent's first message (Settings > Workflows),
+ *     written before any of its tasks exist: it knows the project, the board's
+ *     columns and the workflow's brief, and no task.
  */
-export type TaskTemplateContextName = 'automation' | 'spawn';
+export type TaskTemplateContextName = 'automation' | 'spawn' | 'workflow';
 
-/** Available everywhere, which is most of the catalog. */
+/** Available wherever there is a task, which is most of the catalog. */
 const EVERYWHERE: readonly TaskTemplateContextName[] = ['automation', 'spawn'];
+
+/** The project's own facts, which a workflow agent's first message knows too. */
+const PROJECT_LEVEL: readonly TaskTemplateContextName[] = ['automation', 'spawn', 'workflow'];
 
 /** The move knows these; a spawn prompt does not. */
 const MOVE_ONLY: readonly TaskTemplateContextName[] = ['automation'];
+
+/** Only a workflow agent's first message has a brief and a plan to make. */
+const WORKFLOW_AGENT_ONLY: readonly TaskTemplateContextName[] = ['workflow'];
 
 export interface TaskTemplateVarInfo {
   name: TaskTemplateVarName;
@@ -100,8 +116,15 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'task_xml',
     chip: '{{task_xml}}',
-    description: 'Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is {{task_xml}}{{attachments}}.',
+    description: 'Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is {{task_xml}}{{workflow_xml}}{{attachments}}.',
     contexts: EVERYWHERE,
+  },
+  {
+    name: 'workflow_xml',
+    chip: '{{workflow_xml}}',
+    description: 'A workflow task\'s <workflow> block: its route, its neighbours, and how its turns are judged.',
+    contexts: EVERYWHERE,
+    availability: 'Empty for a task outside a workflow.',
   },
   {
     name: 'title',
@@ -131,13 +154,13 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
     name: 'projectPath',
     chip: '{{projectPath}}',
     description: 'Main project checkout path. Always the base repo, even when the task has a worktree.',
-    contexts: EVERYWHERE,
+    contexts: PROJECT_LEVEL,
   },
   {
     name: 'projectName',
     chip: '{{projectName}}',
     description: 'The project\'s name as it reads in the sidebar.',
-    contexts: EVERYWHERE,
+    contexts: PROJECT_LEVEL,
   },
   {
     name: 'worktreePath',
@@ -157,7 +180,7 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
     name: 'baseBranch',
     chip: '{{baseBranch}}',
     description: "Effective base branch: the task's override, else the project's configured default.",
-    contexts: EVERYWHERE,
+    contexts: PROJECT_LEVEL,
   },
   {
     name: 'prUrl',
@@ -236,8 +259,34 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'trigger',
     chip: '{{trigger}}',
-    description: 'Which end of the move this is: enter or exit.',
+    description: 'When this automation runs: enter, turn_end or exit.',
     contexts: MOVE_ONLY,
+  },
+  // The agent's final message of the turn that just ended, so a review's
+  // findings can ride along with a move back to Executing. Full text, newlines
+  // kept. Read from the session whose turn ended (for an isolated column, that
+  // column's own session), never "the task's latest session".
+  {
+    name: 'agentReply',
+    chip: '{{agentReply}}',
+    description: "The agent's reply at the end of its last turn in this column.",
+    contexts: MOVE_ONLY,
+    availability: 'Empty on task enter, and for an agent whose transcript Kangentic cannot read.',
+  },
+  // A workflow agent's first message. Written before any task exists, so these
+  // describe the board and the brief, and are offered nowhere else.
+  {
+    name: 'columns',
+    chip: '{{columns}}',
+    description: 'One line per column between To Do and Done: what it runs, and how recent tasks went through it.',
+    contexts: WORKFLOW_AGENT_ONLY,
+  },
+  {
+    name: 'brief_xml',
+    chip: '{{brief_xml}}',
+    description: 'What the workflow was made from, in a <brief> block with the source task\'s number.',
+    contexts: WORKFLOW_AGENT_ONLY,
+    availability: 'Empty for a workflow made from nothing.',
   },
 ];
 

@@ -8,20 +8,21 @@ import type { ActivityState } from '../../shared/types';
  * two drift apart, and the failure mode of a wrong answer here is delivering
  * a command (or killing a session) in the middle of live work.
  *
- * WHY A BARE `idle` IS NOT ENOUGH. The activity engine's idle is trustworthy
- * for ordinary turns but has catalogued sustained false positives:
+ * WHY A BARE `idle` IS NOT ENOUGH. The engine commits idle when the agent's
+ * hooks say the turn is over, and the CLI can still be PAINTING after that:
+ * its last frame, an error, a retry footer, a countdown. Two cases that used
+ * to read idle for minutes are now held in the engine instead:
  *
- *   - during an API 529 / server_error retry backoff, `StopFailure` maps to
- *     `turn_failed` and force-commits idle for the whole backoff window
- *     (observed ~148s);
- *   - while Claude's `Monitor` tool is waiting, the engine tracks no holder at
- *     all and reads idle for the entire wait.
+ *   - a transient API error (529 overloaded, server_error, rate_limit,
+ *     api_error) arrives as `turn_retrying`, which holds a live turn thinking
+ *     through the backoff (observed ~148s). A turn that had already wound down
+ *     (an `idle_hint` came first) and a terminal error (`turn_failed`) still
+ *     idle at once;
+ *   - Claude's `Monitor` wait is a tracked background holder: its launch
+ *     arrives as `background_shell_start`.
  *
- * A stability window does not help: both cases are minutes long, so any
- * practical window expires inside them. What distinguishes them is that the
- * CLI is still PAINTING - a spinner, a retry footer, a countdown. So this
- * requires two independent signals to agree: activity is idle AND the PTY has
- * produced no output for `quietMs`.
+ * What is left is the painting, so this requires two independent signals to
+ * agree: activity is idle AND the PTY has produced no output for `quietMs`.
  *
  * Note the direction carefully. Output PRESENT holds delivery back; output
  * ABSENT is never taken as proof of anything on its own. That is the safe

@@ -19,6 +19,38 @@ import type { AutoCommandMode, AutomationTrigger, AutomationType, SwimlaneRole }
 /** A capability an automation needs from its column before it can run. */
 export type AutomationNeed = 'agent';
 
+/**
+ * Every trigger, in the order a column shows its groups: what happens as a task
+ * enters, each time its agent finishes a turn there, and as it leaves. The one
+ * list every consumer iterates (the Automations pane, the drafts' sort,
+ * `kangentic.json`'s reader and writer, the MCP enum), so a fourth trigger is
+ * added here and nowhere is left assuming two.
+ */
+export const AUTOMATION_TRIGGERS = ['enter', 'turn_end', 'exit'] as const satisfies readonly AutomationTrigger[];
+
+/** The `kangentic.json` key each trigger's list is written under. */
+export const AUTOMATION_TRIGGER_FILE_KEYS = {
+  enter: 'onEnter',
+  turn_end: 'onTurnEnd',
+  exit: 'onExit',
+} as const satisfies Record<AutomationTrigger, string>;
+
+/**
+ * Each trigger's name as a person reads it: the Automations pane's group
+ * headings, the edit dialog's Trigger, and the MCP listings. One table, so the
+ * pane and an agent's listing never word a group two ways.
+ */
+export const AUTOMATION_TRIGGER_LABELS: Record<AutomationTrigger, string> = {
+  enter: 'On task enter',
+  turn_end: 'On agent turn end',
+  exit: 'On task exit',
+};
+
+/** Narrow a stored or received trigger string; anything else is not a trigger this build knows. */
+export function isAutomationTrigger(value: unknown): value is AutomationTrigger {
+  return typeof value === 'string' && (AUTOMATION_TRIGGERS as readonly string[]).includes(value);
+}
+
 export type AutomationFieldKind =
   | 'text'
   | 'textarea'
@@ -26,7 +58,9 @@ export type AutomationFieldKind =
   | 'segmented'
   | 'lines'
   | 'headers'
-  | 'number';
+  | 'number'
+  /** One of the board's columns, by name, with Next column (empty) first. */
+  | 'column';
 
 /**
  * How a substituted template value is escaped for THIS field.
@@ -65,6 +99,13 @@ export interface AutomationField {
   min?: number;
   max?: number;
   defaultValue?: string | number;
+  /**
+   * A fixed height for a `textarea`, for text with a shape of its own (a
+   * script, a JSON body). Omitted on a `textarea` with `templateVariables`, the
+   * field starts one row tall and grows with its text, as the dialog's
+   * Condition does: the prose a message carries. A plain textarea with no
+   * `rows` keeps three.
+   */
   rows?: number;
   /**
    * What a `number` field counts, printed after the input. A bare box holding
@@ -84,6 +125,28 @@ export interface AutomationField {
    * already uses: still read from the file, no longer offered.
    */
   hidden?: boolean;
+  /**
+   * The automation works without it, so the dialog marks the label Optional
+   * (the Agent tab's `OptionalTag`). Required fields stay unmarked: only the
+   * exception needs calling out.
+   */
+  optional?: boolean;
+  /** A note behind an info icon beside the label, for a field whose effect is not obvious from its name. */
+  info?: string;
+  /**
+   * A trigger where the field does nothing, and why. The Edit automation dialog
+   * keeps the field in place there, disabled, with the reason on each option,
+   * and leaves its stored value alone, so moving the row to another trigger
+   * brings the choice back. The row's marks skip it there too. Read through
+   * `automationFieldUnavailableReason`, never by the field's key. Send
+   * message's Delivery is the one: at a turn end the turn is already over.
+   */
+  unavailableOn?: { trigger: AutomationTrigger; reason: string };
+}
+
+/** Why this field does nothing on this trigger (`AutomationField.unavailableOn`), or null where it applies. */
+export function automationFieldUnavailableReason(field: AutomationField, trigger: AutomationTrigger): string | null {
+  return field.unavailableOn?.trigger === trigger ? field.unavailableOn.reason : null;
 }
 
 export interface AutomationManifestEntry {
@@ -104,6 +167,21 @@ export interface AutomationManifestEntry {
    */
   timeoutMs: number | null;
   retry: { attempts: number; on: 'network-or-5xx' } | null;
+  /**
+   * The triggers this type is offered on. Omitted means every trigger. Move to
+   * column declares turn end only: on enter or exit its move would run inside
+   * the move that triggered it, and `withTaskLock` is not reentrant. The Edit
+   * automation dialog disables the others with `triggerUnavailableReason`, and
+   * the `kangentic.json` reader skips a row filed under one.
+   */
+  triggers?: readonly AutomationTrigger[];
+  /** Why the type is not offered on a trigger it leaves out of `triggers`. */
+  triggerUnavailableReason?: string;
+  /**
+   * A row of this type that runs ends its group: the task has left the column,
+   * so the rows after it no longer apply. Move to column is the one.
+   */
+  endsGroup?: boolean;
 }
 
 /**
@@ -112,7 +190,7 @@ export interface AutomationManifestEntry {
  * (`{ name, type, enabled, ...fields }`) safe as reserved keys grow, and it is
  * checked by `tests/unit/automation-manifest-reserved-keys.test.ts`.
  */
-export const RESERVED_AUTOMATION_KEYS = ['name', 'type', 'enabled'] as const;
+export const RESERVED_AUTOMATION_KEYS = ['name', 'type', 'enabled', 'condition', 'maxRuns'] as const;
 
 /**
  * Action types that existed before automations and are dropped outright, rows
@@ -145,7 +223,7 @@ export const EXIT_GROUP_BUDGET_MS = 60_000;
 export const DEFAULT_SCRIPT_TIMEOUT_MINUTES = 10;
 
 const AUTO_COMMAND_MODE_FIELD_OPTIONS: readonly AutomationFieldOption[] = [
-  { value: 'immediate' satisfies AutoCommandMode, label: 'Run immediately', icon: 'zap', testId: 'auto-command-mode-immediate' },
+  { value: 'immediate' satisfies AutoCommandMode, label: 'Run immediately', icon: 'corner-down-left', testId: 'auto-command-mode-immediate' },
   { value: 'deferred' satisfies AutoCommandMode, label: 'Wait for current turn', icon: 'clock', testId: 'auto-command-mode-deferred' },
 ];
 
@@ -167,8 +245,8 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         // is correct: the agent reads it as text, not as code.
         escape: 'none',
         templateVariables: true,
-        rows: 3,
         placeholder: 'Review the latest changes and fix any issues you find',
+        info: "Sent to the task's agent as if you typed it yourself.",
       },
       {
         key: 'mode',
@@ -177,6 +255,8 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         escape: 'none',
         options: AUTO_COMMAND_MODE_FIELD_OPTIONS,
         defaultValue: 'immediate',
+        info: 'Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends.',
+        unavailableOn: { trigger: 'turn_end', reason: 'At a turn end the turn is over, so it sends at once.' },
       },
     ],
   },
@@ -284,6 +364,49 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     ],
   },
 
+  move_to_column: {
+    label: 'Move to column',
+    description: 'Moves the task to another column, with a message for the agent there.',
+    // The Backlog's own Move to Board glyph.
+    icon: 'square-arrow-right',
+    status: 'stable',
+    // The agent that just finished its turn is what triggers it, but the row
+    // does not use it: the move suspends or re-points that session itself.
+    needs: [],
+    // The move owns its deadlines (the lock, the worktree, the spawn), and the
+    // message reaches the agent where the task lands in the background, so the
+    // row never waits on that agent's first turn.
+    timeoutMs: null,
+    retry: null,
+    triggers: ['turn_end'],
+    // The hover tip on the dialog's disabled On task enter and On task exit,
+    // so it stays one short line. The why (on enter or exit the task is
+    // already moving) is on `triggers` above.
+    triggerUnavailableReason: 'Move to column runs only at a turn end.',
+    endsGroup: true,
+    fields: [
+      {
+        key: 'targetColumn',
+        label: 'Column',
+        kind: 'column',
+        escape: 'none',
+        defaultValue: '',
+        info: "Next column is the first choice: the next column on the task's route, or on the board.",
+      },
+      {
+        key: 'message',
+        label: 'Message',
+        kind: 'textarea',
+        // Prose for the agent in the next column, often a whole review verdict
+        // through `{{agentReply}}`. Delivered whole, line breaks kept.
+        escape: 'none',
+        templateVariables: true,
+        optional: true,
+        info: 'Sent to the agent in that column once it is ready.',
+      },
+    ],
+  },
+
   spawn_agent: {
     label: 'Start agent',
     description: "Legacy. The column's Start an agent here setting does this now.",
@@ -302,6 +425,13 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
 export interface AutomationColumnFacts {
   autoSpawn: boolean;
   role: SwimlaneRole | null;
+  /**
+   * Whether the agent this column runs says when its turn ended
+   * (`AgentDetectionInfo.reportsTurnEnd`). Undefined when the caller cannot
+   * tell (the agent list has not loaded), which allows rather than blocks:
+   * the engine only fires a turn end for an agent that reports one anyway.
+   */
+  reportsTurnEnd?: boolean;
 }
 
 export type AutomationRunnability = { ok: true } | { ok: false; reason: string };
@@ -318,6 +448,33 @@ export function canColumnRun(
   column: AutomationColumnFacts,
   trigger: AutomationTrigger,
 ): AutomationRunnability {
+  const group = canTriggerRun(column, trigger);
+  if (!group.ok) return group;
+  if (!isTypeOfferedOnTrigger(type, trigger)) {
+    return { ok: false, reason: AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? 'Not offered on this trigger.' };
+  }
+  if (AUTOMATION_MANIFEST[type].needs.includes('agent') && !column.autoSpawn) {
+    return { ok: false, reason: 'Start an agent here is off.' };
+  }
+  return { ok: true };
+}
+
+/**
+ * A system column's name in a refusal, by role: the facts carry the role, not
+ * the column. A `Record` so a third role fails to compile until it has one.
+ */
+const SYSTEM_COLUMN_LABELS: Record<SwimlaneRole, string> = {
+  todo: 'To Do',
+  done: 'Done',
+};
+
+/**
+ * Can ANY automation run on this trigger in this column? The half of
+ * `canColumnRun` that does not depend on the type, so the Automations pane can
+ * replace a whole group with its reason instead of offering an Add that builds
+ * something inert.
+ */
+export function canTriggerRun(column: AutomationColumnFacts, trigger: AutomationTrigger): AutomationRunnability {
   // Reads `NEVER_AUTO_SPAWN_ROLES` rather than naming todo and done again. The
   // two rules are NOT the same concept and this is not derived from that one:
   // `spawnAgent` refuses those roles an agent, while this refuses them an ENTER
@@ -328,13 +485,31 @@ export function canColumnRun(
   // other, leaving the board offering a row the engine will never run.
   // A future role has to decide BOTH questions; sharing the set is what forces
   // whoever adds it to come here and say so.
-  if (trigger === 'enter' && column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role)) {
+  const systemRole = column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role) ? column.role : null;
+  if (trigger === 'enter' && systemRole !== null) {
     return { ok: false, reason: 'Nothing runs when a task enters To Do or Done.' };
   }
-  if (AUTOMATION_MANIFEST[type].needs.includes('agent') && !column.autoSpawn) {
-    return { ok: false, reason: 'Start an agent here is off.' };
+  if (trigger === 'turn_end') {
+    // No agent works in To Do or Done, and one that never starts here ends no
+    // turn here. An agent that reports no turn end (only terminal silence)
+    // cannot tell a finished turn from a quiet compile.
+    if (systemRole !== null) {
+      return { ok: false, reason: `Nothing runs at a turn end in ${SYSTEM_COLUMN_LABELS[systemRole]}.` };
+    }
+    if (!column.autoSpawn) {
+      return { ok: false, reason: 'Start an agent here is off, so no agent ends a turn here.' };
+    }
+    if (column.reportsTurnEnd === false) {
+      return { ok: false, reason: "This column's agent can't report when it finishes a turn." };
+    }
   }
   return { ok: true };
+}
+
+/** Is this type offered on this trigger? (`AutomationManifestEntry.triggers`) */
+export function isTypeOfferedOnTrigger(type: AutomationType, trigger: AutomationTrigger): boolean {
+  const triggers = AUTOMATION_MANIFEST[type].triggers;
+  return triggers === undefined || triggers.includes(trigger);
 }
 
 /** The types offered for a NEW automation, in picker order. Never includes a legacy type. */

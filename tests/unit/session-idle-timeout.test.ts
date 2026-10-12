@@ -31,7 +31,7 @@
  *   - DB helpers, repositories, and session-lifecycle functions are mocked
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Session, SessionRecord } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -380,5 +380,71 @@ describe('idle-timeout listener - early exit when projectId is missing', () => {
 
     // getProjectRepos must NOT have been called (applySuspendDbWrites skipped).
     expect(mockGetProjectRepos).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #8 - idle-timeout listener leaves a workflow's own agent alone
+// ---------------------------------------------------------------------------
+
+describe('idle-timeout listener - a workflow\'s own agent session', () => {
+  let context: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedIpcHandlers.clear();
+    capturedSessionEventHandlers.clear();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: { getById: vi.fn(() => null), update: vi.fn() },
+      swimlanes: { getById: vi.fn(() => null) },
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { add: vi.fn(), listForTask: vi.fn(() => []) },
+    });
+
+    context = createMockContext();
+    // The project resolves, so only the workflow check can stop the listener.
+    context.sessionManager.getSessionProjectId.mockReturnValue('proj-1');
+    registerSessionHandlers(context as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('broadcasts nothing, takes no task lock and writes no task row: it has no task and no card', async () => {
+    context.sessionManager.getSession.mockReturnValue({ id: 'sess-workflow', taskId: 'wf-1', workflowId: 'wf-1' } as never);
+    const idleTimeoutHandler = capturedSessionEventHandlers.get('idle-timeout');
+    if (!idleTimeoutHandler) throw new Error('idle-timeout handler was not registered');
+
+    idleTimeoutHandler('sess-workflow', 'wf-1', 5);
+
+    // Intentional fixed wait - we cannot poll for non-occurrence. Give the
+    // queued task lock time to run its block, were the listener to enter it.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
+    expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+    expect(mockGetProjectRepos).not.toHaveBeenCalled();
+  });
+
+  it('still broadcasts and takes the task lock for a task\'s session (the control)', async () => {
+    context.sessionManager.getSession.mockReturnValue({ id: 'sess-task', taskId: 'task-1' } as never);
+    const idleTimeoutHandler = capturedSessionEventHandlers.get('idle-timeout');
+    if (!idleTimeoutHandler) throw new Error('idle-timeout handler was not registered');
+
+    idleTimeoutHandler('sess-task', 'task-1', 5);
+    await drainUntil(() => context.terminalSubmitScheduler.cancel.mock.calls.length > 0);
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.SESSION_IDLE_TIMEOUT,
+      'sess-task',
+      'task-1',
+      5,
+      'proj-1',
+    );
+    expect(context.terminalSubmitScheduler.cancel).toHaveBeenCalledWith('task-1');
   });
 });

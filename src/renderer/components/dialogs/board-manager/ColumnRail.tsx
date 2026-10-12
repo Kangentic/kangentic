@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, GripVertical, LayoutGrid, Bot, Split, Zap } from 'lucide-react';
+import { Plus, GripVertical, LayoutGrid, Bot, Split, Columns3Cog } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -155,7 +155,7 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
             title={row.automationCount === 1 ? '1 automation runs here' : `${row.automationCount} automations run here`}
             className="flex-shrink-0 text-fg-muted"
           >
-            <Zap size={12} strokeWidth={2} />
+            <Columns3Cog size={12} strokeWidth={2} />
           </span>
         )}
         {row.dirty && (

@@ -148,6 +148,8 @@ export class KimiAdapter implements AgentAdapter {
    *   to the same file).
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Its wire TurnEnd record reaches the engine as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.pty((data: string) => {
       // Strip ANSI then look for the stable Kimi input prompt at the
       // bottom of the alt-screen. Kimi's TUI redraws an "input" cell

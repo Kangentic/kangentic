@@ -4,20 +4,10 @@ import type { AgentDetectionInfo, AgentExecutionServer, AgentProjectExecution, A
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { CardRow, CardTile, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
-import { Pill } from '../../Pill';
+import { OptionalTag } from '../../OptionalTag';
 
 const DEFAULT_SERVER: AgentExecutionServer = { url: null, auth: { kind: 'none' } };
 const DEFAULT_USAGE: AgentProjectExecution = { mode: 'local', workingDirectory: null };
-
-/** Small muted "Optional" tag appended to a field label. Required fields are
- *  left unmarked - only the exception (optional) needs calling out. */
-function OptionalTag() {
-  return (
-    <Pill size="xs" className="bg-surface-hover text-fg-faint border border-edge/50 font-normal">
-      Optional
-    </Pill>
-  );
-}
 
 /**
  * Remote-execution fields for the currently-selected agent in the Agent

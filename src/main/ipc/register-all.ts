@@ -40,6 +40,9 @@ import { registerTaskMoveHandlers } from './handlers/task-move';
 import { registerTaskBranchHandlers } from './handlers/task-branch';
 import { registerTaskRuntimeOverrideHandlers } from './handlers/task-runtime-override';
 import { registerSessionHandlers } from './handlers/sessions';
+import { registerTurnEndAutomations } from '../automations/turn-end/turn-end-runner';
+import { registerWorkflowEngine } from '../workflows/workflow-engine-host';
+import { registerWorkflowHandlers } from './handlers/workflows';
 import { registerLeftoverProcessHandlers } from './handlers/leftover-processes';
 import { startMetricsSnapshotTimer } from './handlers/metrics-snapshot-timer';
 import { registerTransientSessionHandlers } from './handlers/transient-sessions';
@@ -197,6 +200,18 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       }
     },
     resolveProjectName: (projectId) => requireContext().projectRepo.getById(projectId)?.name,
+    // The workflow row lives in its HOME project's database
+    // (`Task.workflow_project_id`), which is not always the task's own.
+    resolveWorkflowTitle: (projectId, taskId) => {
+      try {
+        const task = getProjectRepos(requireContext(), projectId).tasks.getById(taskId);
+        if (!task?.workflow_id) return undefined;
+        const homeProjectId = task.workflow_project_id ?? projectId;
+        return getProjectRepos(requireContext(), homeProjectId).workflows.getById(task.workflow_id)?.title;
+      } catch {
+        return undefined;
+      }
+    },
     showNotification: (input) => showDesktopNotification(requireContext(), input),
   });
 
@@ -327,6 +342,9 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerTaskBranchHandlers(context);
   registerTaskRuntimeOverrideHandlers(context);
   registerSessionHandlers(context);
+  registerTurnEndAutomations(context);
+  registerWorkflowEngine(context);
+  registerWorkflowHandlers(context);
   registerLeftoverProcessHandlers(context);
   registerTransientSessionHandlers(context);
   registerTranscriptionHandlers(context);

@@ -96,18 +96,29 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
     const spawn = templateVarsFor('spawn').map((entry) => entry.name);
     const automation = templateVarsFor('automation').map((entry) => entry.name);
 
-    // The four move keywords have no meaning outside a move: a spawn prompt is
+    // The five move keywords have no meaning outside a move: a spawn prompt is
     // not one, so offering them there would be offering a permanent empty
     // string.
-    for (const name of ['column', 'fromColumn', 'toColumn', 'trigger']) {
+    const moveOnly = ['column', 'fromColumn', 'toColumn', 'trigger', 'agentReply'];
+    for (const name of moveOnly) {
       expect(spawn, `${name} must not be offered in a spawn prompt`).not.toContain(name);
       expect(automation, `${name} must be offered in an automation`).toContain(name);
     }
 
-    // Everything else is available in both, and an automation sees the whole
-    // catalog.
-    expect(automation.length).toBe(TASK_TEMPLATE_VAR_NAMES.length);
-    expect(spawn.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - 4);
+    // Everything else with a task is available in both, and an automation sees
+    // the whole catalog but a workflow agent's own two.
+    const workflowAgentOnly = ['columns', 'brief_xml'];
+    expect(automation.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - workflowAgentOnly.length);
+    expect(spawn.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - moveOnly.length - workflowAgentOnly.length);
+  });
+
+  it('a workflow agent\'s first message is offered the project\'s facts and its own two, never a task\'s', () => {
+    const workflow = templateVarsFor('workflow').map((entry) => entry.name).sort();
+    expect(workflow).toEqual(['baseBranch', 'brief_xml', 'columns', 'projectName', 'projectPath']);
+    for (const name of ['columns', 'brief_xml']) {
+      expect(templateVarsFor('automation').map((entry) => entry.name)).not.toContain(name);
+      expect(templateVarsFor('spawn').map((entry) => entry.name)).not.toContain(name);
+    }
   });
 
   it('every chip is documented in docs/transition-engine.md', () => {
@@ -344,28 +355,35 @@ describe('interpolateTaskTemplate: drop-and-collapse semantics', () => {
   });
 });
 
-describe('BoardManagerDialog variable list is sourced from the catalog', () => {
+describe('the Template variable menu is sourced from the catalog', () => {
   // Static scan rather than importing the .tsx (which would pull in React):
-  // pins that the Automation section renders TASK_TEMPLATE_VARS instead of a
-  // hand-maintained array that can silently drift from the resolvers.
+  // pins that the menu renders the shared catalog instead of a hand-maintained
+  // array that can silently drift from the resolvers. The menu is one shared
+  // component; the Board Manager's automation fields and Settings' workflow
+  // agent prompt each pick a context of it.
   //
   // Asserted as the INVARIANT (rendered from the catalog, no hardcoded chips)
   // rather than as one exact line. The presentation has already changed once -
   // a row of always-on chips became a picker menu - and pinning the old
   // `const TEMPLATE_VARIABLES = ...` spelling failed that refactor while the
   // property it exists to protect was never violated.
-  const source = fs.readFileSync(
+  const pickerSource = fs.readFileSync(
+    path.join(REPO_ROOT, 'src/renderer/components/TemplateVariablePicker.tsx'),
+    'utf-8',
+  );
+  const dialogSource = fs.readFileSync(
     path.join(REPO_ROOT, 'src/renderer/components/dialogs/BoardManagerDialog.tsx'),
     'utf-8',
   );
 
-  it('renders the variable list by mapping the shared catalog', () => {
-    expect(source).toMatch(/from '\.\.\/\.\.\/\.\.\/shared\/task-template-vars'/);
-    // Either the whole catalog or one context of it. The context filter is
-    // still the shared declaration, and offering a keyword where it cannot
-    // resolve is the thing `contexts` exists to prevent.
-    expect(source).toMatch(/(TASK_TEMPLATE_VARS|templateVarsFor\([^)]*\))/);
-    expect(source).toMatch(/(TASK_TEMPLATE_VARS|AUTOMATION_TEMPLATE_VARS)\.map\(/);
+  it('renders the variable list by mapping one context of the shared catalog', () => {
+    expect(pickerSource).toMatch(/from '\.\.\/\.\.\/shared\/task-template-vars'/);
+    // One context of the catalog. The context filter is still the shared
+    // declaration, and offering a keyword where it cannot resolve is the thing
+    // `contexts` exists to prevent.
+    expect(pickerSource).toMatch(/templateVarsFor\(context\)/);
+    expect(pickerSource).toMatch(/variables\.map\(/);
+    expect(dialogSource).toMatch(/<TemplateVariablePicker context="automation"/);
   });
 
   it('hardcodes no template-variable chips of its own', () => {
@@ -374,8 +392,10 @@ describe('BoardManagerDialog variable list is sourced from the catalog', () => {
     // bare `{{name}}` scan: that also hits any comment that names a variable
     // in prose (the JSDoc on the inserter mentions `{{chip}}` and
     // `{{variable}}`), which is not a second source of truth.
-    const hardcoded = source.match(/['"]\{\{[a-zA-Z_]+\}\}['"]/g) ?? [];
-    expect(hardcoded).toEqual([]);
+    for (const source of [pickerSource, dialogSource]) {
+      const hardcoded = source.match(/['"]\{\{[a-zA-Z_]+\}\}['"]/g) ?? [];
+      expect(hardcoded).toEqual([]);
+    }
     // Non-vacuous: the catalog is big enough that a hand-rolled copy of it
     // would trip the scan above many times over.
     expect(TASK_TEMPLATE_VARS.length).toBeGreaterThan(3);

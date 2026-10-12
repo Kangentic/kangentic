@@ -15,6 +15,9 @@ import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTa
 import { isAbortError } from '../../../shared/abort-utils';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
+import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { workflowTitleOf } from '../../workflows/workflow-lock-check';
 import type { IpcContext } from '../ipc-context';
 import type {
   BacklogTaskCreateInput,
@@ -318,9 +321,16 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return withTaskLock(input.taskId, async () => {
       const task = tasks.getById(input.taskId);
       if (!task) throw new Error(`Task ${input.taskId} not found`);
+      // A demote deletes the task, which would drop it from its workflow and
+      // unblock what waits for it, from a menu that says only "Backlog".
+      if (task.workflow_id) {
+        throw new Error(WORKFLOW_REFUSALS.removeFirst(`#${task.display_id}`, workflowTitleOf(task, projectId)));
+      }
 
-      // Cancel any pending auto_command injection before cleanup
+      // Cancel any pending auto_command injection before cleanup, and any
+      // message still waiting to be pasted, which the scheduler does not hold.
       context.terminalSubmitScheduler.cancel(input.taskId);
+      supersedeMessageDeliveries(input.taskId);
 
       // Clean up session, worktree, and branch. The project captured at entry:
       // a switch while this waited on the lock must not scope the leftover

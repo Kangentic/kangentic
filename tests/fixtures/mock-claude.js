@@ -54,12 +54,42 @@ if (args.includes('--help') || args.includes('-h')) {
   process.exit(0);
 }
 
+// Condition-check harness for the Automation agent (tests/e2e/workflow-engine.spec.ts).
+//
+// When MOCK_CLAUDE_CONDITION_ANSWER=1 is set, a --print run is a condition check:
+// it reads the prompt from stdin, as the answer path writes it, and answers each
+// `C<n>:` line under <conditions> in the form the real check is told to use,
+// `C<n>: yes - <reason>`. The answer is yes unless the task's title contains
+// "needs-you", which stands for an agent that ended its turn on a question, so a
+// spec drives both outcomes through one wrapper. It exits once it has answered:
+// a check that stayed alive like a session would wait out the runner's timeout.
+if (args.includes('--print') && process.env.MOCK_CLAUDE_CONDITION_ANSWER === '1') {
+  let checkInput = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => { checkInput += chunk; });
+  process.stdin.on('end', () => {
+    const conditions = /<conditions>([\s\S]*?)<\/conditions>/.exec(checkInput)?.[1] ?? '';
+    const labels = [...conditions.matchAll(/^C(\d+):/gm)].map((match) => match[1]);
+    const title = /^Title: (.*)$/m.exec(checkInput)?.[1] ?? '';
+    const met = !title.includes('needs-you');
+    for (const label of labels) {
+      console.log(`C${label}: ${met ? 'yes' : 'no'} - ${met ? 'the mock agent finished its work' : 'the mock agent asked a question'}`);
+    }
+    process.exit(0);
+  });
+  return;
+}
+
 // Parse flags to find the prompt (last positional arg)
 let sessionId = null;
 let resumed = false;
 let prompt = null;
 let settingsPath = null;
 let permissionMode = null;
+const VALUE_FLAGS = new Set([
+  '--model', '--effort', '--mcp-config', '--tools', '--allowedTools', '--disallowedTools',
+  '--append-system-prompt', '--add-dir', '--output-format', '--input-format', '--permission-prompts',
+]);
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--session-id' && i + 1 < args.length) {
@@ -76,6 +106,10 @@ for (let i = 0; i < args.length; i++) {
   } else if (args[i] === '--permission-mode' && i + 1 < args.length) {
     permissionMode = args[i + 1];
     i++; // skip value
+  } else if (VALUE_FLAGS.has(args[i])) {
+    // A flag whose value is not the prompt (`--model haiku`), so a run with no
+    // prompt does not read its last flag value as one.
+    i++;
   } else if (args[i] === '--dangerously-skip-permissions' || args[i] === '--print') {
     // flag without value, skip
   } else if (args[i] === '--') {
@@ -294,6 +328,75 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
     } catch {
       /* ignore */
     }
+  }
+}
+
+// Turn-end harness for the On agent turn end automation guard
+// (tests/e2e/turn-end-automation.spec.ts).
+//
+// When MOCK_CLAUDE_TURN_END=1 is set, a FRESH session start (--session-id, not
+// --resume, and not a --print run) plays one finished turn into the session's
+// events.jsonl, in the post-bridge shape the activity engine reads:
+//
+//   prompt  (UserPromptSubmit: the turn begins)
+//   idle    (Stop: the agent finished, and nothing else holds the turn)
+//
+// A Stop with no pending tool, subagent, background shell or permission is what
+// the engine reports as a turn end, and the turn-end runner then waits out the
+// CLI's last paint (1.5 s of PTY silence) before it runs the column's rows. This
+// mock prints nothing after its startup markers, so that silence is genuine.
+//
+// The events are written after MOCK_CLAUDE_TURN_END_DELAY_MS (default 1500) so
+// the spawn has finished registering the session and the task's session_id by
+// the time the turn ends, as it has in the real app (a real turn takes seconds).
+// The session directory comes from `--settings`, the only reliable way to find
+// it (see the bg-bash branch above for why guessing from --session-id fails).
+//
+// A resume plays nothing (the !resumed check), so a task that moves on and has
+// its agent resumed in the next column does not run a second turn there. A fresh
+// start in another column does play one, which is harmless to a spec whose
+// destination column has no turn-end rows.
+//
+// MOCK_CLAUDE_TURN_ON_INPUT=1 (tests/e2e/workflow-engine.spec.ts) makes it act on
+// what it is given, as a real CLI does: a resume that carries a prompt plays a
+// turn, and so does each line typed into it (a column's auto command arriving in
+// a session that stayed running). Without it the behavior above is unchanged.
+const turnOnInput = process.env.MOCK_CLAUDE_TURN_ON_INPUT === '1';
+if (process.env.MOCK_CLAUDE_TURN_END === '1' && sessionId && settingsPath && !args.includes('--print')) {
+  const fs = require('node:fs');
+  const pathMod = require('node:path');
+  const sessionDir = pathMod.dirname(settingsPath);
+  const eventsPath = pathMod.join(sessionDir, 'events.jsonl');
+  const markerPath = pathMod.join(sessionDir, 'turn-end.emitted');
+  const startDelayMs = parseInt(process.env.MOCK_CLAUDE_TURN_END_DELAY_MS || '1500', 10);
+  const promptToIdleMs = parseInt(process.env.MOCK_CLAUDE_TURN_END_PROMPT_TO_IDLE_MS || '500', 10);
+
+  const playTurn = (delayMs) => setTimeout(() => {
+    try {
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.appendFileSync(eventsPath, JSON.stringify({ ts: Date.now(), type: 'prompt', detail: 'mock turn' }) + '\n');
+    } catch (error) {
+      console.error('MOCK_CLAUDE_TURN_END_PROMPT_ERROR:' + error.message);
+      return;
+    }
+    setTimeout(() => {
+      try {
+        fs.appendFileSync(eventsPath, JSON.stringify({ ts: Date.now(), type: 'idle' }) + '\n');
+        // A breadcrumb the spec reads on failure: it separates "the mock never
+        // reached its write" from "the write landed and the app ignored it".
+        fs.writeFileSync(markerPath, JSON.stringify({ emittedAt: Date.now(), sessionId, eventsPath }));
+      } catch (error) {
+        console.error('MOCK_CLAUDE_TURN_END_IDLE_ERROR:' + error.message);
+      }
+    }, promptToIdleMs);
+  }, delayMs);
+
+  if (!resumed || (turnOnInput && prompt)) playTurn(startDelayMs);
+  if (turnOnInput) {
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (data) => {
+      if ((data.includes('\r') || data.includes('\n')) && !data.includes('/exit')) playTurn(0);
+    });
   }
 }
 

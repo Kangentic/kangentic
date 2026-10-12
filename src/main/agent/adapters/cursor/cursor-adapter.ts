@@ -224,6 +224,8 @@ export class CursorAdapter implements AgentAdapter {
    *   ContextBar can lift its "Starting agent..." spinner.
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Only terminal silence says a turn ended.
+    reportsTurnEnd: false,
     activity: ActivityDetection.pty(),
     sessionId: {
       fromOutput(data: string): string | null {

@@ -1,23 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Database, RotateCcw, Brain } from 'lucide-react';
 import { useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardChoiceRow, CardTile, CardStatusRow, CardSourceList, CardLinkRow, type CardSourceLineProps } from '../settings-card';
+import { SettingsCard, CardChoiceRow, CardTile, CardStatusRow, CardSourceList, CardLinkRow, type CardSourceLineProps } from '../settings-card';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { useConfigStore } from '../../../stores/config-store';
 import { useToastStore } from '../../../stores/toast-store';
-import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityResolution';
-import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
-import { ModelCombobox } from '../../dialogs/ModelCombobox';
-import { Combobox } from '../../dialogs/Combobox';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
-import { agentJobChoice, answerSetupGap, resolveAnswerAgent, taskSummariesOn } from '../../../../shared/answer-agent';
+import { agentJobChoice, answerSetupGap, taskSummariesOn } from '../../../../shared/answer-agent';
+import { AnswerAgentRows } from './answer-agent-rows';
 import { SUMMARY_BATCH_SIZE } from '../../../../shared/task-summaries';
 import { EMBEDDING_MODELS, resolveEmbeddingModel } from '../../../../shared/embedding-models';
 import { licenseLinks } from '../../../../shared/model-licenses';
 import { alwaysOnLine, codeLine, CODE_INFO, sourceRequirements, SUMMARIES_INFO, summariesLine } from './index-sources';
 import type {
-  AgentDetectionInfo, AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
+  AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
 } from '../../../../shared/types';
 
 /**
@@ -270,7 +267,14 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
             {answerCapableAgents.length === 0 ? (
               <CardStatusRow label="Agent" value="Needs a supported agent" testId="knowledge-graph-no-agent" />
             ) : (
-              <AgentRows config={globalConfig.knowledgeGraph} agents={agentList} capableAgents={answerCapableAgents} onChange={updateKnowledgeGraph} />
+              <AnswerAgentRows
+                choice={agentChoice}
+                agents={agentList}
+                capableAgents={answerCapableAgents}
+                onChange={updateKnowledgeGraph}
+                settingIds={{ agent: 'knowledgeGraph.agent', model: 'knowledgeGraph.model', effort: 'knowledgeGraph.effort' }}
+                testIdPrefix="knowledge-graph-answer"
+              />
             )}
           </>
         ) : null}
@@ -331,105 +335,6 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
 }
 
 type KnowledgeGraphPatch = NonNullable<DeepPartial<AppConfig>['knowledgeGraph']>;
-
-interface AgentRowsProps {
-  config: AppConfig['knowledgeGraph'];
-  agents: AgentDetectionInfo[];
-  /** Installed agents that can answer: the Agent row's options. */
-  capableAgents: AgentDetectionInfo[];
-  onChange: (patch: KnowledgeGraphPatch) => void;
-}
-
-/**
- * Agent, Model and Effort in the Knowledge Graph card, under the local model. The same three
- * controls as Settings > Agent's Project Defaults and the column manager:
- * Combobox, ModelCombobox, Combobox. No Permissions: answer and summary runs
- * are read-only by construction, so a permission choice would be one the run
- * must ignore. The effort is for answers; summaries run at the recommended
- * level (`agentJobChoice`), which the Effort row's info says.
- */
-function AgentRows({ config, agents, capableAgents, onChange }: AgentRowsProps) {
-  const choice = agentJobChoice(config, 'answer');
-  /**
-   * The chosen agent, resolved through the SAME rule main uses: the configured
-   * one, or nothing. There is no project fallback, so an unset row reads as
-   * unset.
-   */
-  const chosen = useMemo(
-    () => resolveAnswerAgent({ agents, configured: choice.agent, requireFound: true }),
-    [agents, choice.agent],
-  );
-  const chosenName = chosen?.name ?? null;
-  const { models, effortLevels } = useAgentCapabilityResolution(chosenName);
-  const contextWindows = useModelContextWindows(chosenName);
-  const displayNames = useModelDisplayNames(chosenName);
-  // Whether this agent's run takes a model, as its adapter declares it. When it
-  // does, the model is required: nothing runs on a default nobody chose.
-  const takesModel = chosen?.answerCapabilities?.model === true;
-  // Effort shows wherever the run passes it on AND the CLI reports levels.
-  // Unset runs at the adapter's recommended level, shown as the placeholder, so
-  // leaving it alone is a choice the user can see.
-  const takesEffort = chosen?.answerCapabilities?.effort === true && effortLevels.length > 0;
-  const recommendedEffort = chosen?.answerCapabilities?.defaultEffort;
-  const effortDefault = recommendedEffort && effortLevels.includes(recommendedEffort) ? recommendedEffort : null;
-
-  return (
-    <>
-      {/* Starts EMPTY: the agent and model are one explicit global choice,
-          never assumed from a project. */}
-      <CardRow {...settingProps('knowledgeGraph.agent')}>
-        <Combobox
-          value={chosenName ?? ''}
-          // A model id and an effort level belong to ONE CLI - Claude's `haiku`
-          // means nothing to Codex - so changing the agent clears both rather
-          // than carrying a flag the new agent will reject.
-          onChange={(next) => onChange({ agent: next === '' ? null : next, model: null, effort: null })}
-          options={capableAgents.map((agent) => ({ value: agent.name, label: agent.displayName }))}
-          placeholder="Choose an agent"
-          placeholderVariant="muted"
-          allowClear={false}
-          testId="knowledge-graph-answer-agent"
-        />
-      </CardRow>
-
-      {/* Rendered once the chosen agent's run takes a model, and REQUIRED then:
-          there is no "agent default" to fall back on, for the same reason there
-          is no default agent. */}
-      {takesModel ? (
-        <CardRow {...settingProps('knowledgeGraph.model')}>
-          <ModelCombobox
-            value={choice.model ?? ''}
-            onChange={(next) => onChange({ model: next === '' ? null : next })}
-            availableModels={models}
-            placeholder="Choose a model"
-            placeholderVariant="muted"
-            testId="knowledge-graph-answer-model"
-            onOpen={() => useConfigStore.getState().rescanModels()}
-            contextWindows={contextWindows}
-            modelDisplayNames={displayNames}
-          />
-        </CardRow>
-      ) : null}
-
-      {/* Optional, unlike the model: unset runs at the recommended level, shown
-          as the placeholder, and clearing a pick returns to it. Plain "low",
-          not "low (default)": the resolved placeholder styling already says it
-          is what runs when nothing is picked. */}
-      {takesEffort ? (
-        <CardRow {...settingProps('knowledgeGraph.effort')}>
-          <Combobox
-            value={choice.effort ?? ''}
-            onChange={(next) => onChange({ effort: next === '' ? null : next })}
-            options={effortLevels.map((level) => ({ value: level, label: level }))}
-            placeholder={effortDefault ?? 'Agent default'}
-            placeholderVariant={effortDefault ? 'resolved' : 'muted'}
-            testId="knowledge-graph-answer-effort"
-          />
-        </CardRow>
-      ) : null}
-    </>
-  );
-}
 
 /**
  * The local model's state, as the status row under Search quality. Switching

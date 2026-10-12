@@ -699,6 +699,18 @@ describe('event-bridge StopFailure -> turn_failed / turn_retrying (retryable-err
     expect(emitted.detail).toBe('authentication_error');
   });
 
+  it('stays turn_failed for the error "unknown" (a request over the context window)', () => {
+    // Empirical shape from a captured task session (fixture session-031):
+    // "API Error: Request size exceeds model context window" reached the hook
+    // as StopFailure with error "unknown". Claude does not retry it, so it must
+    // stay a terminal turn_failed, never turn_retrying.
+    const stdinContent = JSON.stringify({ error: 'unknown' });
+    runBridge(stdinContent, [outputFile, 'turn_failed', ...STOPFAILURE_DIRECTIVES]);
+    const emitted = readEvent();
+    expect(emitted.type).toBe('turn_failed');
+    expect(emitted.detail).toBe('unknown');
+  });
+
   it('falls back to error_details and still classifies correctly', () => {
     const stdinContent = JSON.stringify({ error_details: 'server_error: upstream connect error' });
     runBridge(stdinContent, [outputFile, 'turn_failed', ...STOPFAILURE_DIRECTIVES]);

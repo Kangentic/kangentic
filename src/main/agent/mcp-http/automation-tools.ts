@@ -4,6 +4,7 @@ import { callHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handle
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import {
   AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGERS,
   DEFAULT_SCRIPT_TIMEOUT_MINUTES,
   stableAutomationTypes,
 } from '../../../shared/automation-manifest';
@@ -34,14 +35,17 @@ const AUTOMATION_TYPE_VALUES: [string, ...string[]] = [FIRST_STABLE_TYPE, ...OTH
 const AUTOMATION_ROW_SCHEMA = z.object({
   id: z.string().optional().describe('Existing automation id, to keep this row\'s identity and run history across the write. Omit for a new row. Read one from kangentic_list_automations.'),
   name: z.string().max(200).describe('Label for this automation, unique on its column ignoring case. Shown in the Column Manager and in the run log.'),
-  type: z.enum(AUTOMATION_TYPE_VALUES).describe('What this automation does. send_message types a message at the column\'s agent; run_script runs a shell script in the task\'s worktree; webhook calls a URL; notify raises a desktop notification.'),
-  on: z.enum(['enter', 'exit']).optional().describe('Whether it runs when a task ENTERS this column or LEAVES it. Defaults to "enter". To Do and Done can only run exit automations.'),
+  type: z.enum(AUTOMATION_TYPE_VALUES).describe('What this automation does. send_message types a message at the column\'s agent; run_script runs a shell script in the task\'s worktree; webhook calls a URL; notify raises a desktop notification; move_to_column (on "turn_end" only) moves the task to another column with a message for the agent there, and ends the list.'),
+  on: z.enum(AUTOMATION_TRIGGERS).optional().describe('When it runs: "enter" as a task ENTERS this column, "turn_end" each time the column\'s agent FINISHES A TURN there, "exit" as the task LEAVES. Defaults to "enter". To Do and Done can only run exit automations.'),
   enabled: z.boolean().optional().describe('Defaults to true. A switched-off automation stays in the list and is skipped.'),
+  condition: z.string().max(2000).nullable().optional().describe('Condition, in plain words, judged by the Automation agent before the row runs (e.g. "the review found work the implementer can do"). A no is not a run: the row is checked again next time. Omit or null to always run. Needs an Automation agent set up in Settings > Workflows.'),
+  maxRuns: z.number().int().min(1).nullable().optional().describe('Frequency: the most times this row may run on one task, counted across every visit to the column (a review loop\'s round-trip limit). Omit or null for no limit.'),
 
   // The per-type fields. Every type's keys live on one object because the row
   // shape is flat; a key belonging to another type is dropped on write rather
   // than stored, so a copied row cannot smuggle a stale field through.
-  message: z.string().max(4000).optional().describe('send_message: the text typed at the agent. Supports template variables ({{title}}, {{taskNumber}}, {{baseBranch}}, {{fromColumn}}, {{toColumn}}).'),
+  message: z.string().max(4000).optional().describe('send_message: the text typed at the agent. move_to_column: the message for the agent in the column the task moves to (optional). Supports template variables ({{title}}, {{taskNumber}}, {{baseBranch}}, {{fromColumn}}, {{toColumn}}, and on "turn_end" {{agentReply}}, the agent\'s final message of its turn).'),
+  targetColumn: z.string().max(200).optional().describe('move_to_column: the destination column\'s name. Omit for the next column (on the task\'s route in a workflow, else on the board).'),
   mode: z.enum(['immediate', 'deferred']).optional().describe('send_message: "immediate" types it as soon as the agent is ready, "deferred" waits for the agent to finish its current turn.'),
   script: z.string().max(8000).optional().describe('run_script: the script body, run in the task\'s worktree (or the project checkout when it has none). Every template variable is also exported as a KANGENTIC_* environment variable, which is the quoting-safe way to read one.'),
   // Bounds copied from the manifest field rather than restated, so an agent can
@@ -66,7 +70,8 @@ const AUTOMATION_ROW_SCHEMA = z.object({
  *
  * A column's behavior used to be two swimlane fields (`auto_command` and its
  * mode) and a table of named actions nothing could edit. It is now an ordered
- * list of typed rows per column, split into On enter and On exit. These tools
+ * list of typed rows per column, split into On task enter, On agent turn end
+ * and On task exit. These tools
  * are how an agent reads and writes that list; `kangentic_update_column`'s
  * `autoCommand` still works and writes the first send_message enter row, which
  * covers the common case in one argument.
@@ -76,7 +81,7 @@ export function registerAutomationTools(server: McpServer, resolver: RequestReso
   server.registerTool(
     'kangentic_list_automations',
     {
-      description: 'Read what happens when a task enters or leaves a column: the ordered On enter and On exit automations, their types, settings, and whether each one can actually run. Omit `column` to read the whole board, which is the right first call for "what does this board do". Pair with kangentic_set_automations to change them.',
+      description: 'Read what happens when a task enters a column, each time its agent finishes a turn there, and when it leaves: the ordered On task enter, On agent turn end and On task exit automations, their types, settings, Conditions and Frequency limits, and whether each one can actually run. Omit `column` to read the whole board, which is the right first call for "what does this board do". Pair with kangentic_set_automations to change them.',
       inputSchema: z.object({
         column: z.string().optional().describe('Column name (case-insensitive, e.g. "Code Review"). Omit to read every column.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),

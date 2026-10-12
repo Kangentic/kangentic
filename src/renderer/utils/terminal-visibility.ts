@@ -41,7 +41,7 @@ export interface TerminalVisibilityWindowInput {
 }
 
 export interface TerminalVisibilityInput {
-  /** True when the board overlay is off-view (activeView !== 'board'). */
+  /** True when the board overlay is off-view (the Backlog view; it shows over Board and Workflows). */
   boardLayerParked: boolean;
   windows: TerminalVisibilityWindowInput[];
   /**

@@ -13,7 +13,8 @@
  * sessions, a separate behavior from the four pinned below.
  *
  * Pinned behaviors:
- *   1. Transient sessions are excluded from the overlay.
+ *   1. Transient sessions are excluded from the overlay, except a workflow's own
+ *      agent (transient WITH a `workflowId`), which counts under its home project.
  *   2. Only `running`/`queued` sessions are included.
  *   3. Project scoping: `{ kind: 'project' }` excludes other projects'
  *      sessions; `{ kind: 'all' }` includes every project's live sessions.
@@ -137,6 +138,38 @@ describe('USAGE_GET_DASHBOARD_STATS: live session overlay filtering', () => {
     const ids = liveSessions.map((row) => (row as { sessionRecordId: string }).sessionRecordId);
     expect(ids).toContain('normal-1');
     expect(ids).not.toContain('transient-1');
+  });
+
+  it('keeps a workflow\'s own agent (transient, with a workflowId) and still excludes a Command Terminal (transient, none)', () => {
+    // A workflow's agent is spawned transient so it inherits what a Command
+    // Terminal is kept out of, but it belongs to its home project and books its
+    // spend to the ledger under its session id, so the live overlay counts it.
+    // A Command Terminal has neither a task/project to scope by nor a ledger row.
+    const sessions = [
+      makeSession({ id: 'normal-1', status: 'running', transient: false, projectId: 'project-a' }),
+      makeSession({ id: 'workflow-agent-1', status: 'running', transient: true, workflowId: 'wf-1', projectId: 'project-a' }),
+      makeSession({ id: 'command-terminal-1', status: 'running', transient: true, projectId: 'project-a' }),
+    ];
+    const context = makeContext(sessions);
+
+    const liveSessions = invokeAndCaptureLiveSessions(context, { kind: 'project', projectId: 'project-a' });
+
+    const ids = liveSessions.map((row) => (row as { sessionRecordId: string }).sessionRecordId).sort();
+    expect(ids).toEqual(['normal-1', 'workflow-agent-1']);
+  });
+
+  it('scopes a workflow\'s own agent to its home project like any other live session', () => {
+    const sessions = [
+      makeSession({ id: 'workflow-agent-a', status: 'running', transient: true, workflowId: 'wf-a', projectId: 'project-a' }),
+      makeSession({ id: 'workflow-agent-b', status: 'running', transient: true, workflowId: 'wf-b', projectId: 'project-b' }),
+    ];
+    const context = makeContext(sessions);
+
+    const projectRows = invokeAndCaptureLiveSessions(context, { kind: 'project', projectId: 'project-a' });
+    expect(projectRows.map((row) => (row as { sessionRecordId: string }).sessionRecordId)).toEqual(['workflow-agent-a']);
+
+    const allRows = invokeAndCaptureLiveSessions(context, { kind: 'all' });
+    expect(allRows.map((row) => (row as { sessionRecordId: string }).sessionRecordId).sort()).toEqual(['workflow-agent-a', 'workflow-agent-b']);
   });
 
   it('includes only running/queued sessions, excluding exited and suspended', () => {

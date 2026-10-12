@@ -49,7 +49,22 @@ export interface DesktopNotifierOptions {
   flashFrame: () => void;
   resolveTaskTitle: (projectId: string, taskId: string) => string | undefined;
   resolveProjectName: (projectId: string) => string | undefined;
+  /**
+   * The title of the workflow the task belongs to, or undefined for a task
+   * outside a workflow. The workflow lives in its home project's database,
+   * which can be another project than the task's.
+   */
+  resolveWorkflowTitle: (projectId: string, taskId: string) => string | undefined;
   showNotification: (input: NotificationInput) => void;
+}
+
+/**
+ * A workflow's title as the notification body names it: "Usage budgets
+ * workflow". A title that already ends in the word (the default "Untitled
+ * workflow") is not given a second one.
+ */
+export function workflowLabel(title: string): string {
+  return /\bworkflow$/i.test(title.trim()) ? title.trim() : `${title.trim()} workflow`;
 }
 
 export class DesktopNotifier {
@@ -95,13 +110,19 @@ export class DesktopNotifier {
 
     const session = this.options.sessionManager.getSession(sessionId);
     if (!session) return;
+    // A workflow's own agent lives only in the Workflows view, where its pane
+    // shows it waiting; it raises no notification of its own.
+    if (session.workflowId) return;
     if (!this.shouldNotify(`idle:${sessionId}`, session.projectId)) return;
 
-    const projectName = this.options.resolveProjectName(session.projectId) ?? 'A project';
+    // A Command Terminal has no task, so no workflow to name.
+    const place = session.transient
+      ? this.projectName(session.projectId)
+      : this.taskPlace(session.projectId, session.taskId);
     const taskTitle = session.transient ? undefined : this.options.resolveTaskTitle(session.projectId, session.taskId);
     const label = session.transient ? 'Command Terminal' : (taskTitle ?? 'A task');
     // activity-state-ok: granular permission-vs-idle message text, not an idle-vs-active bucket
-    const body = state === 'permission' ? `Needs permission: ${projectName}` : projectName;
+    const body = state === 'permission' ? `Needs permission: ${place}` : place;
     const clickTaskId = session.transient ? COMMAND_TERMINAL_NOTIFICATION_TASK_ID : session.taskId;
 
     this.notify(`idle:${sessionId}`, label, body, session.projectId, clickTaskId);
@@ -144,11 +165,26 @@ export class DesktopNotifier {
 
     if (!this.shouldNotify(`crash:${sessionId}`, session.projectId)) return;
 
-    const projectName = this.options.resolveProjectName(session.projectId) ?? 'A project';
     const taskTitle = this.options.resolveTaskTitle(session.projectId, session.taskId);
     const label = taskTitle ?? sessionId.slice(0, 8);
 
-    this.notify(`crash:${sessionId}`, `Session crashed: ${label}`, projectName, session.projectId, session.taskId);
+    this.notify(`crash:${sessionId}`, `Session crashed: ${label}`, this.taskPlace(session.projectId, session.taskId), session.projectId, session.taskId);
+  }
+
+  private projectName(projectId: string): string {
+    return this.options.resolveProjectName(projectId) ?? 'A project';
+  }
+
+  /**
+   * Where a task's session runs, as the idle and crash bodies name it: the
+   * project, and for a task in a workflow the workflow too ("kangentic: Usage
+   * budgets workflow", #732 board 16), since several of one workflow's tasks
+   * can be waiting at once. A task outside a workflow reads as before.
+   */
+  private taskPlace(projectId: string, taskId: string): string {
+    const projectName = this.projectName(projectId);
+    const workflowTitle = this.options.resolveWorkflowTitle(projectId, taskId);
+    return workflowTitle ? `${projectName}: ${workflowLabel(workflowTitle)}` : projectName;
   }
 
   /** Cooldown + focus/active-project suppression, ported verbatim from the renderer's shouldNotify. */

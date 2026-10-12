@@ -18,6 +18,7 @@ import { softly } from '../../db/soft-db';
 import { PATHS } from '../../config/paths';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { ensureGitignore, leftoverSweepOptions, reapTaskLeftovers } from '../helpers';
+import { endWorkflowAgentsOfProject } from '../../workflows/workflow-agent';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone, bucketTaskCount } from '../../analytics/usage';
@@ -170,6 +171,8 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // `session_id` names yet: cancelled and waited for, as every terminal
   // transition does before its reap, so no PTY starts in a worktree about to go.
   await Promise.all(allTasks.map((task) => context.sessionManager.removeByTaskId(task.id)));
+  // Its workflows' own agents run in the project root, which goes below.
+  await endWorkflowAgentsOfProject(context, projectId);
 
   // Kill whatever every task of the project left running, archived ones too,
   // once their sessions have exited and before the worktrees go: a live

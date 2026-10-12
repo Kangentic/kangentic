@@ -28,7 +28,7 @@
 
 import { DOCS_URLS } from './docs-links';
 
-export type McpToolCategoryId = 'tasks' | 'board' | 'sessions' | 'browser' | 'diagnostics';
+export type McpToolCategoryId = 'tasks' | 'board' | 'workflows' | 'sessions' | 'browser' | 'diagnostics';
 
 export interface McpToolManifestEntry {
   /** Registered tool name. MUST match a registerTool('...') literal under src/main/agent/mcp-http/*-tools.ts. */
@@ -53,6 +53,7 @@ export interface McpToolCategory {
 export const MCP_TOOL_CATEGORIES: McpToolCategory[] = [
   { id: 'tasks', label: 'Tasks' },
   { id: 'board', label: 'Board' },
+  { id: 'workflows', label: 'Workflows' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'browser', label: 'Browser automation' },
   { id: 'diagnostics', label: 'Diagnostics', startsClosed: true },
@@ -84,6 +85,20 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_set_automations', label: 'Set Automations', blurb: 'replace one column\'s ordered list of messages, scripts, webhooks, and notifications', category: 'board' },
   { name: 'kangentic_get_automation_runs', label: 'Automation Runs', blurb: 'the run log for a task or a column: what ran, when, and why it failed', category: 'board' },
   { name: 'kangentic_run_automation', label: 'Run Automation', blurb: 'run one automation now against a task\'s current state', category: 'board' },
+  // ── Workflows (workflow-tools.ts) - linked tasks that run on their own ──
+  { name: 'kangentic_list_workflows', label: 'List Workflows', blurb: 'this project\'s workflows with their state and progress', category: 'workflows' },
+  { name: 'kangentic_get_workflow', label: 'Get Workflow', blurb: 'one workflow\'s tasks, routes, links and revision', category: 'workflows' },
+  { name: 'kangentic_save_workflow', label: 'Save Workflow', blurb: 'create a workflow or replace its plan before it starts', category: 'workflows' },
+  { name: 'kangentic_start_workflow', label: 'Start Workflow', blurb: 'create its tasks and let them start as their blockers finish', category: 'workflows' },
+  { name: 'kangentic_pause_workflow', label: 'Pause Workflow', blurb: 'pause every agent in a running workflow at once', category: 'workflows' },
+  { name: 'kangentic_resume_workflow', label: 'Resume Workflow', blurb: 'resume a paused workflow where each task left off', category: 'workflows' },
+  { name: 'kangentic_add_workflow_task', label: 'Add Workflow Task', blurb: 'add a task to a started workflow', category: 'workflows' },
+  { name: 'kangentic_link_workflow_tasks', label: 'Link Workflow Tasks', blurb: 'make a waiting task wait for another to reach Done', category: 'workflows' },
+  { name: 'kangentic_unlink_workflow_tasks', label: 'Unlink Workflow Tasks', blurb: 'remove a link between two workflow tasks', category: 'workflows' },
+  { name: 'kangentic_set_task_route', label: 'Set Task Route', blurb: 'change which columns a workflow task visits', category: 'workflows' },
+  { name: 'kangentic_remove_from_workflow', label: 'Remove from Workflow', blurb: 'make a workflow task an ordinary task again', category: 'workflows' },
+  { name: 'kangentic_request_project_access', label: 'Request Project Access', blurb: 'let a workflow agent read another project\'s code', category: 'workflows' },
+  { name: 'kangentic_delete_workflow', label: 'Delete Workflow', blurb: 'delete a workflow, leaving unfinished tasks as ordinary ones', category: 'workflows' },
   { name: 'kangentic_list_board_profiles', label: 'List Board Profiles', blurb: 'see the board\'s named per-column agent/model/effort presets', category: 'board' },
   { name: 'kangentic_create_board_profile', label: 'Create Board Profile', blurb: 'add a named preset of per-column agent/model/effort settings', category: 'board' },
   { name: 'kangentic_update_board_profile', label: 'Update Board Profile', blurb: 'rename a profile or retune its per-column settings, across projects', category: 'board' },

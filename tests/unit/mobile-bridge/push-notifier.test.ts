@@ -115,6 +115,7 @@ describe('PushNotifier', () => {
     notifier = new PushNotifier({
       sessionManager: sessionManager as unknown as PushNotifierOptions['sessionManager'],
       registrationStore: { list: listRegistrations, remove: removeRegistration } as unknown as PushRegistrationStore,
+      isBridgeEnabled: () => true,
       getConnectedDeviceIds: () => collectConnectedDeviceIds(fakeSessions),
       resolveTaskContext: () => ({ ...TASK_CONTEXT }),
       resolveTaskContextByTaskId: () => ({ ...TASK_CONTEXT }),
@@ -337,6 +338,35 @@ describe('PushNotifier', () => {
     const rawBody = (fetchImpl.mock.calls[0][1] as { body: string }).body;
     const body = JSON.parse(rawBody) as { data: { blob: string } };
     expect(typeof body.data.blob).toBe('string'); // real seal succeeded with sessionId: ''
+  });
+
+  it('notifyWorkflowComplete seals the workflow as the title, with no task or session, cooled down per workflow', () => {
+    buildNotifier();
+    notifier.notifyWorkflowComplete({ projectId: 'proj-1', workflowId: 'wf-1', title: 'Usage budgets', taskCount: 9 });
+    expect(sealedCategories()).toEqual(['workflow-complete']);
+    const plaintext = sealSpy.mock.calls[0][2] as { projectId: string; taskId: string; sessionId: string; taskTitle: string; detail: string };
+    expect(plaintext).toMatchObject({ projectId: 'proj-1', taskId: '', sessionId: '', taskTitle: 'Usage budgets', detail: 'All 9 tasks are in Done.' });
+
+    notifier.notifyWorkflowComplete({ projectId: 'proj-1', workflowId: 'wf-1', title: 'Usage budgets', taskCount: 9 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // Another workflow finishing in the same moment is its own push.
+    notifier.notifyWorkflowComplete({ projectId: 'proj-1', workflowId: 'wf-2', title: 'Relay reconnect', taskCount: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect((sealSpy.mock.calls[1][2] as { detail: string }).detail).toBe('Its task is in Done.');
+  });
+
+  it('sends nothing while the Mobile bridge switch is off, and reads the switch at each notification', () => {
+    let bridgeEnabled = false;
+    buildNotifier({ isBridgeEnabled: () => bridgeEnabled });
+    notifier.notifyWorkflowComplete({ projectId: 'proj-1', workflowId: 'wf-1', title: 'Usage budgets', taskCount: 9 });
+    notifier.notifyTaskStalled('task-1');
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(sealSpy).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    bridgeEnabled = true;
+    notifier.notifyWorkflowComplete({ projectId: 'proj-1', workflowId: 'wf-1', title: 'Usage budgets', taskCount: 9 });
+    expect(sealedCategories()).toEqual(['workflow-complete']);
   });
 
   it('an unintentional exit (or the flag-less spawn-failure emit) notifies session-failed; a deliberate stop does not', () => {

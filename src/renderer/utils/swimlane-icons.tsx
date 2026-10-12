@@ -118,6 +118,37 @@ export function RegistryIcon({
 }
 
 /**
+ * A column's glyph, resolved as the board's column header resolves it
+ * (`getSwimlaneIconName`): its own icon, else its To Do or Done default, else
+ * a dot in its color. `size` is the glyph box; the dot is two thirds of it,
+ * centered, so column names line up down a list (8px in a 12px box, as the
+ * phone draws it). With no color the icon inherits the text color and the dot
+ * is `fg-faint`.
+ */
+export function ColumnGlyph({
+  column,
+  size,
+  strokeWidth = 1.75,
+  color,
+}: {
+  column: Pick<Swimlane, 'icon' | 'role'>;
+  size: number;
+  strokeWidth?: number;
+  color?: string | null;
+}): React.ReactElement {
+  const iconName = getSwimlaneIconName(column);
+  if (iconName) {
+    return <RegistryIcon name={iconName} size={size} strokeWidth={strokeWidth} style={{ color: color ?? undefined }} />;
+  }
+  const dot = Math.round((size * 2) / 3);
+  return (
+    <span className="inline-flex items-center justify-center shrink-0" style={{ width: size, height: size }} data-testid="column-glyph-dot">
+      <span className="block rounded-full" style={{ width: dot, height: dot, backgroundColor: color ?? 'var(--color-fg-faint)' }} />
+    </span>
+  );
+}
+
+/**
  * Resolve the icon for a swimlane.
  * Priority: user-set icon → role default → null (color dot fallback).
  */

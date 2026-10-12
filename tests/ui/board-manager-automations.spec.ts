@@ -119,24 +119,18 @@ async function saveManager(detachTimeout = 10000): Promise<void> {
 
 async function cancelManager(): Promise<void> {
   await dialog().getByRole('button', { name: 'Cancel' }).click();
+  // Cancel either closes the manager or, with a dirty draft, raises the
+  // Discard confirm first. Wait for whichever happens: `isVisible` takes no
+  // timeout (Playwright ignores it), so it could look before the confirm drew.
   const discard = page.locator('button', { hasText: 'Discard' });
-  if (await discard.isVisible({ timeout: 500 }).catch(() => false)) await discard.click();
+  const outcome = await Promise.race([
+    discard.waitFor({ state: 'visible', timeout: 3000 }).then(() => 'confirm' as const, () => 'none' as const),
+    dialog().waitFor({ state: 'detached', timeout: 3000 }).then(() => 'closed' as const, () => 'none' as const),
+  ]);
+  if (outcome === 'confirm') await discard.click();
   await dialog().waitFor({ state: 'detached', timeout: 3000 });
 }
 
-/** Every persisted automation, straight from the IPC surface. */
-function readRows(): Promise<Array<{
-  id: string;
-  swimlane_id: string;
-  name: string;
-  type: string;
-  trigger: string;
-  position: number;
-  enabled: boolean;
-  config: Record<string, unknown>;
-}>> {
-  return page.evaluate(() => window.electronAPI.automations.list());
-}
 
 /** The persisted automations of one column, by column NAME. */
 async function readColumnRows(columnName: string): ReturnType<typeof readRows> {
@@ -378,9 +372,11 @@ test.describe('Column automations', () => {
 
     const target = row('Review');
     await expect(target).toBeVisible();
-    // The row's sentence carries the delivery mode, which is what the pill used
-    // to do in the old Session card.
-    await expect(target).toContainText('after the current turn');
+    // The row marks the delivery mode beside its name, which is what the pill
+    // used to do in the old Session card. The sentence is the message alone.
+    const deliveryMark = target.locator('[data-testid="column-automation-delivery-mark"]');
+    await expect(deliveryMark).toHaveAttribute('title', 'Delivery: waits for the current turn to end.');
+    await expect(target.locator('[data-testid="column-automation-row-sentence"]')).toHaveText('Sends "/code-review"');
 
     // The field it replaced is gone from the settings pane entirely.
     await expect(dialog().locator('[data-testid="auto-command-input"]')).toHaveCount(0);
@@ -439,21 +435,25 @@ test.describe('Column automations', () => {
 
   // 6 ─ To Do and Done take exit rows only ───────────────────────────────────
 
-  test('To Do renders the exit group only, with the reason where On enter would be', async () => {
+  test('To Do renders the exit group only, with the reason where On enter and On agent turn end would be', async () => {
     await openColumn('To Do');
 
-    await expect(dialog().locator('[data-testid="column-automation-group"]')).toHaveCount(2);
+    await expect(dialog().locator('[data-testid="column-automation-group"]')).toHaveCount(3);
     const enterGroup = dialog().locator('[data-testid="column-automation-group"][data-trigger="enter"]');
     await expect(enterGroup).toContainText('Nothing runs when a task enters To Do');
-    // No Add control in the blocked group: it would only build something inert.
+    // No Add control in a blocked group: it would only build something inert.
     await expect(enterGroup.locator('[data-testid="column-automation-add"]')).toHaveCount(0);
+    const turnEndGroup = dialog().locator('[data-testid="column-automation-group"][data-trigger="turn_end"]');
+    await expect(turnEndGroup).toContainText('Nothing runs at a turn end in To Do.');
+    await expect(turnEndGroup.locator('[data-testid="column-automation-add"]')).toHaveCount(0);
     await expect(dialog().locator('[data-testid="column-automation-add"][data-trigger="exit"]')).toBeVisible();
 
     await addThroughPicker('exit', 'notify');
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Reset notice');
-    // The dialog's When offers On exit only, and the blocked option is disabled
-    // rather than absent, so the reader can see the rule.
+    // The dialog's Trigger offers On exit only, and the blocked options are
+    // disabled rather than absent, so the reader can see the rule.
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-enter"]')).toBeDisabled();
+    await expect(editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]')).toBeDisabled();
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-exit"]')).toHaveAttribute('aria-checked', 'true');
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await saveManager();
@@ -534,6 +534,28 @@ test.describe('Column automations', () => {
     const original = await readColumnRows('Code Review');
     expect(original.map((entry) => entry.name)).toEqual(['Shared step']);
     expect(original[0].config.script).toBe('echo shared');
+  });
+
+  test('a copy row carries the same marks as the row in its own column', async () => {
+    await seedColumn('Code Review', [
+      { name: 'Waits', type: 'send_message', trigger: 'enter', config: { message: '/code-review', mode: 'deferred' } },
+      { name: 'Right away', type: 'send_message', trigger: 'enter', config: { message: '/code-review', mode: 'immediate' } },
+    ]);
+    await openColumn('Executing');
+
+    await dialog().locator('[data-testid="column-automation-add"][data-trigger="enter"]').click();
+    const picker = page.locator('[data-testid="column-automation-picker"]');
+    const copyRow = (name: string) => picker.locator(`[data-testid="column-automation-picker-copy"][data-name="${name}"]`);
+
+    // The sentence says only what is sent, so without the mark a copied Send
+    // message that waits for the turn to end would read as one that does not.
+    const waits = copyRow('Waits').locator('[data-testid="column-automation-picker-copy-title"] [data-testid="column-automation-delivery-mark"]');
+    await expect(waits).toHaveAttribute('title', 'Delivery: waits for the current turn to end.');
+    await expect(waits).toHaveAttribute('aria-label', 'Delivery: waits for the current turn to end.');
+    await expect(copyRow('Right away').locator('[data-testid="column-automation-delivery-mark"]')).toHaveCount(0);
+
+    await picker.locator('[data-testid="column-automation-picker-filter"]').press('Escape');
+    await expect(picker).toHaveCount(0);
   });
 
   // 10 ─ Names are unique within a column ────────────────────────────────────
@@ -666,21 +688,24 @@ test.describe('Column automations', () => {
 
   // 13 ─ When is a real radiogroup ───────────────────────────────────────────
 
-  test('When is a two-option radiogroup its arrow keys drive', async () => {
+  test('Trigger is a three-option radiogroup its arrow keys drive', async () => {
     await openColumn('Executing');
     await addThroughPicker('enter', 'notify');
 
     const trigger = editDialog().locator('[data-testid="edit-automation-trigger"]');
     await expect(trigger).toHaveAttribute('role', 'radiogroup');
     const enter = editDialog().locator('[data-testid="edit-automation-trigger-enter"]');
+    const turnEnd = editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]');
     const exit = editDialog().locator('[data-testid="edit-automation-trigger-exit"]');
     await expect(enter).toHaveAttribute('aria-checked', 'true');
 
     await enter.focus();
     await page.keyboard.press('ArrowRight');
+    await expect(turnEnd).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('ArrowRight');
     await expect(exit).toHaveAttribute('aria-checked', 'true');
     await page.keyboard.press('ArrowLeft');
-    await expect(enter).toHaveAttribute('aria-checked', 'true');
+    await expect(turnEnd).toHaveAttribute('aria-checked', 'true');
   });
 
   // 14 ─ All columns: one cell vocabulary ────────────────────────────────────
@@ -702,7 +727,7 @@ test.describe('Column automations', () => {
     const headerCells = await dialog().locator('thead tr').first().locator('th').count();
     const bodyCells = await overviewRow('Executing').locator('td').count();
     expect(headerCells).toBeGreaterThan(0);
-    expect(bodyCells).toBe(10);
+    expect(bodyCells).toBe(11);
 
     // A column nobody touched prints the value its select sits on, unemphasised.
     const testing = overviewRow('Testing');
@@ -745,7 +770,12 @@ test.describe('Column automations', () => {
     ]);
     await refreshAutomationStore('Merge');
 
-    await expect(page.locator('[data-swimlane-name="Merge"] [data-testid="column-automation-glyph"]')).toHaveText('1');
+    const boardGlyph = page.locator('[data-swimlane-name="Merge"] [data-testid="column-automation-glyph"]');
+    await expect(boardGlyph).toHaveText('1');
+    // Automations draw the column-with-a-cog mark. The bolt belongs to the Edit
+    // automation dialog's Trigger card, and no two concepts share a glyph.
+    await expect(boardGlyph.locator('svg.lucide-columns-3-cog')).toHaveCount(1);
+    await expect(boardGlyph.locator('svg.lucide-zap')).toHaveCount(0);
 
     await openColumn('Merge');
     // The rail shows PRESENCE only: a glyph, no digit. The number the two other
@@ -755,6 +785,7 @@ test.describe('Column automations', () => {
     await expect(mergeGlyph).toBeVisible();
     await expect(mergeGlyph).toHaveText('');
     await expect(mergeGlyph).toHaveAttribute('title', '1 automation runs here');
+    await expect(mergeGlyph.locator('svg.lucide-columns-3-cog')).toHaveCount(1);
     await expect(railRow('Testing').locator('[data-testid="board-manager-tab-automation"]')).toHaveCount(0);
 
     await openOverview();

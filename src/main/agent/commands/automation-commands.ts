@@ -13,17 +13,27 @@
  * anything when copying between projects.
  */
 
-import { AutomationRepository, type AutomationWriteInput } from '../../db/repositories/automation-repository';
+import {
+  AutomationRepository,
+  isWholeMaxRuns,
+  normalizeCondition,
+  normalizeMaxRuns,
+  type AutomationWriteInput,
+} from '../../db/repositories/automation-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import {
   AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGER_LABELS,
+  AUTOMATION_TRIGGERS,
   canColumnRun,
+  isAutomationTrigger,
   isAutomationType,
   isRetiredActionType,
+  isTypeOfferedOnTrigger,
   stableAutomationTypes,
 } from '../../../shared/automation-manifest';
-import { describeAutomation } from '../../../shared/automation-describe';
+import { describeAutomation, describeAutomationMarksInWords } from '../../../shared/automation-describe';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -64,12 +74,12 @@ export const handleListAutomations: CommandHandler = (
       continue;
     }
     lines.push(`${column.name}:`);
-    for (const trigger of ['enter', 'exit'] as const) {
+    for (const trigger of AUTOMATION_TRIGGERS) {
       const group = rows
         .filter((row) => row.trigger === trigger)
         .sort((left, right) => left.position - right.position);
       if (group.length === 0) continue;
-      lines.push(`  On ${trigger}:`);
+      lines.push(`  ${AUTOMATION_TRIGGER_LABELS[trigger]}:`);
       for (const row of group) {
         // `canColumnRun` is the same predicate the runner uses, so a row this
         // says is blocked is a row that will be recorded skipped. Reporting it
@@ -80,8 +90,14 @@ export const handleListAutomations: CommandHandler = (
           row.enabled ? null : 'switched off',
           runnable.ok ? null : `cannot run: ${runnable.reason}`,
         ].filter((flag): flag is string => flag !== null);
+        // The sentence names only the verb and its one required value, as the
+        // row's second line does. Everything the panel shows as a mark (the
+        // send timing, Move to column's message, the Condition, the Frequency)
+        // follows in words, since an agent reads this text and not `data`.
+        const marks = describeAutomationMarksInWords(row);
         lines.push(
           `    ${row.position + 1}. ${row.name} (${row.type}) ${describeAutomation(row.type, row.config)}`
+          + (marks !== null ? ` (${marks})` : '')
           + (flags.length > 0 ? ` [${flags.join('; ')}]` : ''),
         );
       }
@@ -179,7 +195,35 @@ export const handleSetAutomations: CommandHandler = (
       };
     }
 
-    const trigger: AutomationTrigger = entry.on === 'exit' || entry.trigger === 'exit' ? 'exit' : 'enter';
+    // Read strictly: an unknown trigger is refused, never read as "enter" (the
+    // old mapping turned anything that was not "exit" into an enter row, so a
+    // misspelled "turn_end" would have run on every entry).
+    const rawTrigger = entry.on ?? entry.trigger ?? 'enter';
+    if (!isAutomationTrigger(rawTrigger)) {
+      return {
+        success: false,
+        error: `${where}: unknown "on" value ${JSON.stringify(rawTrigger)}. Valid values: ${AUTOMATION_TRIGGERS.join(', ')}. Nothing was saved.`,
+      };
+    }
+    const trigger: AutomationTrigger = rawTrigger;
+    if (!isTypeOfferedOnTrigger(type as AutomationType, trigger)) {
+      const offered = AUTOMATION_TRIGGERS.filter((candidate) => isTypeOfferedOnTrigger(type as AutomationType, candidate));
+      return {
+        success: false,
+        error: `${where}: a ${type} row runs only on ${offered.join(' or ')}, not ${trigger}. `
+          + `${AUTOMATION_MANIFEST[type as AutomationType].triggerUnavailableReason ?? ''} Nothing was saved.`.trim(),
+      };
+    }
+
+    // Condition and Frequency, on every type. A blank condition is none.
+    if (entry.condition !== undefined && entry.condition !== null && typeof entry.condition !== 'string') {
+      return { success: false, error: `${where}: condition must be text (or null to always run). Nothing was saved.` };
+    }
+    if (entry.maxRuns !== undefined && entry.maxRuns !== null
+      && (typeof entry.maxRuns !== 'number' || !isWholeMaxRuns(entry.maxRuns))) {
+      return { success: false, error: `${where}: maxRuns must be a whole number of at least 1 (or null for no limit). Nothing was saved.` };
+    }
+
     const runnable = canColumnRun(type as AutomationType, { autoSpawn: swimlane.auto_spawn, role: swimlane.role }, trigger);
     if (!runnable.ok) {
       // A warning, not a refusal: the row is legal and stored, and turning the
@@ -204,6 +248,8 @@ export const handleSetAutomations: CommandHandler = (
       trigger,
       enabled: entry.enabled !== false,
       config: readConfig(entry, type as AutomationType),
+      condition: normalizeCondition(typeof entry.condition === 'string' ? entry.condition : null),
+      max_runs: normalizeMaxRuns(typeof entry.maxRuns === 'number' ? entry.maxRuns : null),
     });
   }
 
@@ -217,10 +263,12 @@ export const handleSetAutomations: CommandHandler = (
   // by construction.
   context.onSwimlaneUpdated(swimlane);
 
-  const counts = { enter: saved.filter((row) => row.trigger === 'enter').length, exit: saved.filter((row) => row.trigger === 'exit').length };
+  const counts = AUTOMATION_TRIGGERS
+    .map((trigger) => `${saved.filter((row) => row.trigger === trigger).length} ${AUTOMATION_TRIGGER_LABELS[trigger].toLowerCase()}`)
+    .join(', ');
   return {
     success: true,
-    message: `Replaced "${swimlane.name}" automations: ${counts.enter} on enter, ${counts.exit} on exit.`
+    message: `Replaced "${swimlane.name}" automations: ${counts}.`
       + (warnings.length > 0 ? `\nHeads up: ${warnings.join(' ')}` : ''),
     data: { automations: saved.map((row) => serializeRow(row, swimlane.name)), warnings },
   };
@@ -320,7 +368,8 @@ function renderRuns(runs: ReturnType<AutomationRunRepository['listForTask']>, su
   const lines = runs.map((run) =>
     `${run.started_at} ${run.automation_name} (${run.type}, on ${run.trigger}): ${run.status}`
     + (run.attempts > 1 ? ` after ${run.attempts} attempts` : '')
-    + (run.detail ? ` - ${run.detail}` : ''));
+    + (run.detail ? ` - ${run.detail}` : '')
+    + (run.condition_met === null ? '' : ` [condition ${run.condition_met ? 'met' : 'not met'}${run.condition_reason ? `: ${run.condition_reason}` : ''}]`));
   return {
     success: true,
     message: `${runs.length} automation run(s) for ${subject}, newest first:\n${lines.join('\n')}`,
@@ -352,6 +401,8 @@ function serializeRow(row: ColumnAutomation, columnName: string): Record<string,
     on: row.trigger,
     position: row.position,
     enabled: row.enabled,
+    condition: row.condition,
+    maxRuns: row.max_runs,
     ...row.config,
   };
 }

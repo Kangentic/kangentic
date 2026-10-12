@@ -12,6 +12,11 @@ interface DialogFooterActionsProps {
   busy?: boolean;
   disabled?: boolean;
   /**
+   * Why the submit is disabled, as its tooltip: a workflow task's Save while
+   * the workflow agent works ("Available when the workflow agent finishes").
+   */
+  disabledReason?: string | null;
+  /**
    * Omit for a submit button inside a `<form>` (NewTaskDialog), which submits
    * via the form's own onSubmit. Pass a handler for a footer with no form
    * (the task-detail window).
@@ -41,6 +46,7 @@ export function DialogFooterActions({
   submitLabel,
   busy = false,
   disabled = false,
+  disabledReason = null,
   onSubmit,
   leading,
   submitTestId,
@@ -60,6 +66,7 @@ export function DialogFooterActions({
           type={onSubmit ? 'button' : 'submit'}
           onClick={onSubmit}
           disabled={disabled || busy}
+          title={disabled && disabledReason ? disabledReason : undefined}
           className="rounded bg-accent-emphasis px-4 py-1.5 text-xs text-accent-on transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           data-testid={submitTestId}
         >

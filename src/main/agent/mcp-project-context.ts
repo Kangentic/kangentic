@@ -8,6 +8,8 @@ import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../db/database';
 import { autoSpawnForTask, reapTaskLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
+import { getProjectRepos } from '../ipc/helpers/project-repos';
+import { deliverMessageAfterMove } from '../automations/turn-end/deliver-message';
 import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
 import { applyTaskSettingsToLiveSession } from '../ipc/handlers/task-runtime-override';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
@@ -228,8 +230,19 @@ export function buildCommandContextForProject(
     // handleTaskMove owns the fan-out for every one of its callers, keyed on the
     // origin passed in - which also drops the raw-SQL re-read this used to need
     // purely to recover a title for the toast.
-    onTaskMove: async (input) => {
-      await handleTaskMove(ipcContext, input, 'agent', projectId, projectPath);
+    onTaskMove: async (input, options) => {
+      await handleTaskMove(
+        ipcContext, input, 'agent', projectId, projectPath,
+        options?.moverIsTaskAgent ? { moverIsTaskAgent: true } : undefined,
+      );
+      const message = options?.message?.trim();
+      if (!message) return;
+      // Only once the task really landed: a refused or superseded move has
+      // nobody in the destination to hand the message to.
+      const landed = getProjectRepos(ipcContext, projectId).tasks.getById(input.taskId);
+      if (landed?.swimlane_id !== input.targetSwimlaneId) return;
+      const columnName = getProjectRepos(ipcContext, projectId).swimlanes.getById(input.targetSwimlaneId)?.name ?? 'the next column';
+      void deliverMessageAfterMove(ipcContext, projectId, input.taskId, columnName, message);
     },
 
     onTasksReordered: (swimlane, orderedTaskIds) => {

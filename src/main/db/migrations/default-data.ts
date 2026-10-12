@@ -51,10 +51,10 @@ export function seedDefaultSwimlanes(db: Database.Database): void {
  * The two rows this used to write were both dead weight. `* -> Planning: Kill
  * Session` ran at Priority 4, where the task has no active session, so
  * `executeKillSession` found nothing to suspend and did nothing at all. `Start
- * Planning Agent` carried `DEFAULT_SPAWN_PROMPT_TEMPLATE`, which is exactly
- * what the fallback spawn uses when no action supplies a prompt, so it
- * duplicated behavior the column's own "Start an agent here" setting already
- * produces.
+ * Planning Agent` carried `{{task_xml}}{{attachments}}`, which was then exactly
+ * what the fallback spawn used when no action supplied a prompt (the default
+ * has since gained `{{workflow_xml}}`), so it duplicated behavior the column's
+ * own "Start an agent here" setting already produces.
  *
  * Seeding them also taught the wrong model: it made starting an agent look like
  * an automation a user could reorder or delete, when it is a column setting. A

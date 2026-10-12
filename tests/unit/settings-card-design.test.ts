@@ -47,7 +47,7 @@ const BASE_TILES = ['CardRow', 'CardToggleRow', 'CardChoiceRow', 'CardGroupTile'
 /** Components that render their children in place, so the scan looks through them. */
 const TRANSPARENT_WRAPPERS = new Set(['Fragment', 'React.Fragment', 'DndContext', 'SortableContext']);
 /** What a tab may render at its top level besides cards. */
-const TAB_ROOT_EXTRAS = new Set(['ConfirmDialog', 'DevToolsSections']);
+const TAB_ROOT_EXTRAS = new Set(['ConfirmDialog', 'DevToolsSections', 'WorkflowAgentPromptDialog']);
 
 /**
  * `CardTile`'s className is for layout inside the tile. A fill or padding there
@@ -423,7 +423,7 @@ describe('settings card design', () => {
     }
     // Components that render tiles are found wherever they live: a local one, an
     // imported helper, and the keybindings rows.
-    for (const component of ['NotifyChannelRow', 'AgentExecutionFields', 'AgentLaunchOptionFields', 'HotkeyRow', 'OsHotkeyBanner', 'SortableActionItem', 'ActionRow', 'AgentRows', 'EmbeddingModelStatus', 'CardSourceList', 'CardLinkRow']) {
+    for (const component of ['NotifyChannelRow', 'AgentExecutionFields', 'AgentLaunchOptionFields', 'HotkeyRow', 'OsHotkeyBanner', 'SortableActionItem', 'ActionRow', 'AnswerAgentRows', 'EmbeddingModelStatus', 'CardSourceList', 'CardLinkRow']) {
       expect(tileComponents.has(component), `expected ${component} to be recognised as rendering tiles`).toBe(true);
     }
     const owners = descriptions.map((entry) => entry.owner);

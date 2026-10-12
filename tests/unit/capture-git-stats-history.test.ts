@@ -215,7 +215,8 @@ describe('captureGitChurn', () => {
     const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats } = makeRepos();
     for (let taskIndex = 0; taskIndex < 6; taskIndex += 1) {
       captureGitChurn(
-        makeTask({ id: `task-${taskIndex}` }),
+        // Six tasks, six worktrees: two captures of ONE worktree share a read.
+        makeTask({ id: `task-${taskIndex}`, worktree_path: `/mock/project/.kangentic/worktrees/${taskIndex}` }),
         sessionRepo,
         usageHistoryRepo,
         `record-${taskIndex}`,
@@ -238,6 +239,58 @@ describe('captureGitChurn', () => {
       if (sessionSetTaskGitStats.mock.calls.length === 6) break;
     }
     await expect.poll(() => sessionSetTaskGitStats.mock.calls.length).toBe(6);
+  });
+
+  it('shares one churn read between two captures of the same worktree that overlap, and each writes its own record', async () => {
+    // A suspend fires two captures for the same stopped agent: the move's (or
+    // the Done branch's) and the session exit handler's. Each read is six git
+    // processes. Red-green: without the shared read, the DiffService is built
+    // twice and getChurnSummary runs twice.
+    let releaseRead: () => void = () => undefined;
+    mockGetChurnSummary.mockImplementation(() =>
+      new Promise<void>((resolve) => { releaseRead = resolve; })
+        .then(() => ({ linesAdded: 5, linesRemoved: 2, filesChanged: 1 })),
+    );
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats } = makeRepos(['record-exit', 'record-move']);
+    const task = makeTask();
+
+    captureGitChurn(task, sessionRepo, usageHistoryRepo, 'record-exit', '/mock/project', 'main');
+    captureGitChurn(task, sessionRepo, usageHistoryRepo, 'record-move', '/mock/project', 'main');
+    await expect.poll(() => mockGetChurnSummary.mock.calls.length).toBe(1);
+    releaseRead();
+    await expect.poll(() => sessionSetTaskGitStats.mock.calls.length).toBe(2);
+
+    expect(mockDiffServiceCtor).toHaveBeenCalledTimes(1);
+    expect(mockGetChurnSummary).toHaveBeenCalledTimes(1);
+    const stats = { linesAdded: 5, linesRemoved: 2, filesChanged: 1 };
+    expect(sessionSetTaskGitStats).toHaveBeenNthCalledWith(1, ['record-exit', 'record-move'], 'record-exit', stats);
+    expect(sessionSetTaskGitStats).toHaveBeenNthCalledWith(2, ['record-exit', 'record-move'], 'record-move', stats);
+  });
+
+  it('runs the read again for a capture asked for after the shared read settled', async () => {
+    // The share covers the overlap only, so a later capture never reuses an
+    // answer the worktree may have moved past.
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats } = makeRepos();
+    const task = makeTask();
+
+    captureGitChurn(task, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await expect.poll(() => sessionSetTaskGitStats.mock.calls.length).toBe(1);
+    captureGitChurn(task, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await expect.poll(() => sessionSetTaskGitStats.mock.calls.length).toBe(2);
+
+    expect(mockGetChurnSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not share a read between two bases of the same worktree', async () => {
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats } = makeRepos();
+
+    captureGitChurn(makeTask({ base_branch: 'main' }), sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    captureGitChurn(makeTask({ base_branch: 'develop' }), sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await expect.poll(() => sessionSetTaskGitStats.mock.calls.length).toBe(2);
+
+    expect(mockGetChurnSummary).toHaveBeenCalledTimes(2);
+    expect(mockGetChurnSummary).toHaveBeenNthCalledWith(1, 'main');
+    expect(mockGetChurnSummary).toHaveBeenNthCalledWith(2, 'develop');
   });
 
   it('queues its churn read at BACKGROUND priority: a USER-priority read enqueued later still runs first', async () => {

@@ -72,3 +72,27 @@ export function appendAnswerCaller(projectUrl: string, chatId: string): string {
 export function isAnswerCaller(callerSessionId: string | undefined): boolean {
   return callerSessionId !== undefined && callerSessionId.startsWith(ANSWER_CALLER_PREFIX);
 }
+
+/**
+ * The caller segment prefix that marks a workflow's own agent.
+ *
+ * That agent plans a workflow and is launched read-only: it reads the code and
+ * the board, and changes nothing but its own workflow's plan. The server gives a
+ * caller with this prefix the read-only tools and the planning tools only (see
+ * `buildWorkflowAgentMcpServer`), so a tool that creates, moves or deletes board
+ * work is not there to call, whatever the CLI's own permissions allow.
+ */
+export const WORKFLOW_AGENT_CALLER_PREFIX = 'workflow-';
+
+/** The MCP URL for one workflow's agent: `/mcp/<projectId>/workflow-<workflowId>`. */
+export function appendWorkflowAgentCaller(projectUrl: string | undefined, workflowId: string): string | undefined {
+  if (!projectUrl) return undefined;
+  return `${projectUrl}/${WORKFLOW_AGENT_CALLER_PREFIX}${workflowId}`;
+}
+
+/** The workflow a `appendWorkflowAgentCaller` segment names, or null for any other caller. */
+export function workflowIdOfCaller(callerSessionId: string | undefined): string | null {
+  if (callerSessionId === undefined || !callerSessionId.startsWith(WORKFLOW_AGENT_CALLER_PREFIX)) return null;
+  const workflowId = callerSessionId.slice(WORKFLOW_AGENT_CALLER_PREFIX.length);
+  return workflowId.length > 0 ? workflowId : null;
+}

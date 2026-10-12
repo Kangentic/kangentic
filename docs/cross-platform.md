@@ -43,7 +43,7 @@ three quote forms a command builder can emit: a bare path, a double-quoted path,
 single-quoted path `quoteArg` produces for unix-like shells. UNC exe paths (`\\server\share\...`)
 are normalized the same way.
 
-Agent spawns (never transient Command Terminals) additionally prefix the typed line with the
+Agent spawns (never a transient session: a Command Terminal or a workflow's agent) additionally prefix the typed line with the
 shell's own clear via `buildSpawnClearPrelude()` (same module): `Clear-Host; ` for the
 PowerShell family, `cls & ` for cmd, and `clear; ` for every other shell (bash, zsh, fish, nu,
 dash, ksh, sh, WSL, Git Bash - the default arm, not a closed list). The shell then erases its

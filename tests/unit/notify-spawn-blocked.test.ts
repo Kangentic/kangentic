@@ -35,8 +35,8 @@ vi.mock('../../src/main/git/git-checks', () => ({
 
 vi.mock('../../src/main/git/fetch-throttle', () => ({ fetchIfStale: vi.fn(async () => 'main') }));
 
-vi.mock('simple-git', () => ({
-  default: () => ({ raw: vi.fn(async () => '') }),
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: () => ({ raw: vi.fn(async () => '') }),
 }));
 
 vi.mock('../../src/main/shutdown-state', () => ({

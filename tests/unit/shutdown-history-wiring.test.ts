@@ -15,6 +15,9 @@
  *
  * SessionRepository.findByAnyId is configured via a module-level fn ref so each
  * test can control what record the shutdown loop sees for the session.
+ *
+ * A workflow's own agent has no sessions row to suspend, so the same loop hands
+ * it to captureWorkflowAgentUsage and never to markRecordSuspended.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -72,8 +75,10 @@ vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
 }));
 
 const mockCaptureSessionMetrics = vi.fn();
+const mockCaptureWorkflowAgentUsage = vi.fn();
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: (...args: unknown[]) => mockCaptureSessionMetrics(...args),
+  captureWorkflowAgentUsage: (...args: unknown[]) => mockCaptureWorkflowAgentUsage(...args),
   refineTranscriptTokens: vi.fn(),
   refineTranscriptToolCounts: vi.fn(),
 }));
@@ -99,6 +104,7 @@ vi.mock('../../src/main/browser/browser-lane-manager', () => ({
 import { syncShutdownCleanup } from '../../src/main/shutdown';
 import { destroyAllLanes } from '../../src/main/browser/browser-lane-manager';
 import { closeAll } from '../../src/main/db/database';
+import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 
 // ---------------------------------------------------------------------------
 // Fixture factories
@@ -538,6 +544,62 @@ describe('syncShutdownCleanup history wire-up', () => {
 
     // Queued sessions are marked exited but never go through captureSessionMetrics.
     expect(mockCaptureSessionMetrics).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A workflow's own agent is a transient session carrying `workflowId`. It has
+   * no `sessions` row to suspend (and its taskId is the workflow's id, not a
+   * task's), so the shutdown loop writes its spend through its own synchronous
+   * writer and moves on. The running record is set up here so the task path
+   * WOULD proceed all the way to markRecordSuspended if the branch were missing.
+   */
+  describe('a workflow\'s own agent', () => {
+    const runningTaskRecord = {
+      id: 'record-001',
+      status: 'running',
+      agent_session_id: 'agent-aaa',
+      session_type: 'claude_agent',
+      started_at: '2026-01-01T10:00:00Z',
+    };
+
+    it('is captured through captureWorkflowAgentUsage and never reaches markRecordSuspended', () => {
+      mockFindByAnyId.mockReturnValue(runningTaskRecord);
+      const workflowAgent = buildRunningSession({ id: 'pty-wf', taskId: 'wf-1', transient: true, workflowId: 'wf-1' });
+      const dependencies = buildMockDependencies([workflowAgent]);
+      const sessionManager = dependencies.getSessionManager();
+      dependencies.getSessionManager.mockReturnValue(sessionManager);
+
+      syncShutdownCleanup(dependencies);
+
+      expect(mockCaptureWorkflowAgentUsage).toHaveBeenCalledTimes(1);
+      // The same UsageHistoryRepository the project's other captures use.
+      expect(createdHistoryInstances).toHaveLength(1);
+      expect(mockCaptureWorkflowAgentUsage).toHaveBeenCalledWith(sessionManager, createdHistoryInstances[0], workflowAgent);
+      expect(mockFindByAnyId).not.toHaveBeenCalled();
+      expect(mockCaptureSessionMetrics).not.toHaveBeenCalled();
+      expect(markRecordSuspended).not.toHaveBeenCalled();
+    });
+
+    it('does not stop a task session in the same project from being captured and suspended', () => {
+      mockFindByAnyId.mockReturnValue(runningTaskRecord);
+      const workflowAgent = buildRunningSession({ id: 'pty-wf', taskId: 'wf-1', transient: true, workflowId: 'wf-1' });
+      const taskSession = buildRunningSession({ id: 'pty-task', taskId: 'task-111' });
+      const dependencies = buildMockDependencies([workflowAgent, taskSession]);
+      const sessionManager = dependencies.getSessionManager();
+      dependencies.getSessionManager.mockReturnValue(sessionManager);
+
+      syncShutdownCleanup(dependencies);
+
+      expect(mockCaptureWorkflowAgentUsage).toHaveBeenCalledTimes(1);
+      expect(mockCaptureWorkflowAgentUsage).toHaveBeenCalledWith(sessionManager, expect.anything(), workflowAgent);
+      // Only the task session is looked up (by its own session id) and suspended.
+      expect(mockFindByAnyId).toHaveBeenCalledTimes(1);
+      expect(mockFindByAnyId).toHaveBeenCalledWith('pty-task');
+      expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(1);
+      expect(mockCaptureSessionMetrics.mock.calls[0][3]).toBe('pty-task');
+      expect(markRecordSuspended).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(markRecordSuspended).mock.calls[0][1]).toBe('record-001');
+    });
   });
 });
 

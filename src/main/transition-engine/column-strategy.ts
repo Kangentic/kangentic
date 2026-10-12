@@ -21,6 +21,7 @@
  * an in-flight task.
  */
 
+import { hasCondition, hasFrequencyLimit } from '../automations/row-guards';
 import type {
   AutoCommandMode,
   BoardProfile,
@@ -251,8 +252,8 @@ export function resolveEffectiveAutoCommand(
  * one. `BoardProfileEntry.autoCommand` is the retired key that used to do it.
  */
 export function resolveColumnMessage(
-  automations: ReadonlyArray<Pick<ColumnAutomation, 'id' | 'type' | 'trigger' | 'enabled' | 'position' | 'config'>>,
-): { id: string; message: string; mode: AutoCommandMode } | null {
+  automations: ReadonlyArray<Pick<ColumnAutomation, 'id' | 'type' | 'trigger' | 'enabled' | 'position' | 'config' | 'condition' | 'max_runs'>>,
+): { id: string; message: string; mode: AutoCommandMode; guarded: boolean } | null {
   const row = [...automations]
     .filter((candidate) => candidate.type === 'send_message' && candidate.trigger === 'enter' && candidate.enabled)
     .sort((left, right) => left.position - right.position)[0];
@@ -265,7 +266,13 @@ export function resolveColumnMessage(
   // the runner to skip the row rather than send it twice. The warm live
   // injection is the one that needs it: it bundles this message into the
   // model/effort keystroke burst, then runs the rest of the group.
-  return { id: row.id, message, mode: row.config.mode ?? 'immediate' };
+  //
+  // `guarded` says the row carries a Condition or a Frequency limit. Only the
+  // runner applies those, so a caller that delivers the message itself must
+  // leave a guarded row to the runner: delivering it would skip both. Asked
+  // through the runner's own predicates, so the two never disagree.
+  const guarded = hasCondition(row) || hasFrequencyLimit(row);
+  return { id: row.id, message, mode: row.config.mode ?? 'immediate', guarded };
 }
 
 /**

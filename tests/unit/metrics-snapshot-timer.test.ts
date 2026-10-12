@@ -13,6 +13,10 @@
  *      'running'; also skips running-in-memory sessions whose DB record is not
  *      'running' (the second guard inside snapshotRunningSessions).
  *
+ *   4. A workflow's own agent (a running session carrying `workflowId`) has no
+ *      `sessions` row, so the tick hands it to `captureWorkflowAgentUsage` and
+ *      never takes the task path (`findByAnyId`, `captureSessionMetrics`).
+ *
  * The tick function is synchronous (no awaits), so vi.advanceTimersByTime is used
  * throughout (not the async variant). Module-level snapshotTimer state is cleaned
  * up via stopMetricsSnapshotTimer() in afterEach.
@@ -34,8 +38,9 @@ import type { SessionManager } from '../../src/main/pty/session-manager';
 // returned function synchronously runs the batch body.
 const makeMockDb = () => ({ transaction: passThroughTransaction });
 
-const { mockCaptureSessionMetrics, mockGetProjectDb, mockFindByAnyId } = vi.hoisted(() => ({
+const { mockCaptureSessionMetrics, mockCaptureWorkflowAgentUsage, mockGetProjectDb, mockFindByAnyId } = vi.hoisted(() => ({
   mockCaptureSessionMetrics: vi.fn(),
+  mockCaptureWorkflowAgentUsage: vi.fn(),
   // Inline rather than the shared helper: vi.hoisted runs before imports.
   mockGetProjectDb: vi.fn(() => ({ transaction: (fn: () => void) => Object.assign(fn, { immediate: fn }) })),
   /** Shared findByAnyId stub - re-configured per test in beforeEach. */
@@ -61,6 +66,7 @@ vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
 
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: mockCaptureSessionMetrics,
+  captureWorkflowAgentUsage: mockCaptureWorkflowAgentUsage,
 }));
 
 // Imported AFTER vi.mock declarations so the mocked modules are in place.
@@ -81,7 +87,7 @@ const SNAPSHOT_INTERVAL_MS = 45_000;
 // ---------------------------------------------------------------------------
 
 /** Minimal Session stub. Only id/taskId/projectId/status are read by snapshotRunningSessions. */
-function makeSession(overrides: Partial<Pick<Session, 'id' | 'taskId' | 'projectId' | 'status'>> = {}): Session {
+function makeSession(overrides: Partial<Pick<Session, 'id' | 'taskId' | 'projectId' | 'status' | 'transient' | 'workflowId'>> = {}): Session {
   return {
     id: 'session-1',
     taskId: 'task-1',
@@ -395,5 +401,70 @@ describe('snapshotRunningSessions filter', () => {
     expect(mockGetProjectDb).toHaveBeenCalledTimes(2);
     expect(transactionCalls).toBe(2);
     expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. A workflow's own agent
+// ---------------------------------------------------------------------------
+
+describe('snapshotRunningSessions: a workflow\'s own agent', () => {
+  // A workflow's agent is a transient session carrying `workflowId`, with the
+  // workflow's id as its `taskId`. It has no `sessions` row, so the task path
+  // would look up a record that does not exist and skip it: its spend would
+  // never reach the ledger while it runs.
+  const workflowAgent = makeSession({
+    id: 'session-workflow-agent',
+    taskId: 'wf-1',
+    projectId: 'proj-shared',
+    status: 'running',
+    transient: true,
+    workflowId: 'wf-1',
+  });
+
+  it('captures its spend through captureWorkflowAgentUsage and never takes the task path', () => {
+    const manager = makeManagerStub([workflowAgent]);
+    startMetricsSnapshotTimer(manager);
+
+    vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS);
+
+    expect(mockCaptureWorkflowAgentUsage).toHaveBeenCalledTimes(1);
+    expect(mockCaptureWorkflowAgentUsage).toHaveBeenCalledWith(manager, expect.anything(), workflowAgent);
+    expect(mockFindByAnyId).not.toHaveBeenCalled();
+    expect(mockCaptureSessionMetrics).not.toHaveBeenCalled();
+  });
+
+  it('leaves a task session in the same project on the task path', () => {
+    const taskSession = makeSession({ id: 'session-task', taskId: 'task-ok', projectId: 'proj-shared', status: 'running' });
+    const manager = makeManagerStub([workflowAgent, taskSession]);
+    startMetricsSnapshotTimer(manager);
+
+    vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS);
+
+    expect(mockCaptureWorkflowAgentUsage).toHaveBeenCalledTimes(1);
+    expect(mockCaptureWorkflowAgentUsage).toHaveBeenCalledWith(manager, expect.anything(), workflowAgent);
+    // The task session alone is looked up, by its own session id, and alone
+    // reaches the task capture; the workflow agent never takes that path.
+    expect(mockFindByAnyId).toHaveBeenCalledTimes(1);
+    expect(mockFindByAnyId).toHaveBeenCalledWith('session-task');
+    expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(1);
+    expect(mockCaptureSessionMetrics).toHaveBeenCalledWith(
+      manager,
+      expect.anything(),
+      expect.anything(),
+      'session-task',
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+    );
+  });
+
+  it('skips a paused workflow agent, as it skips any session that is not running', () => {
+    const manager = makeManagerStub([{ ...workflowAgent, status: 'suspended' }]);
+    startMetricsSnapshotTimer(manager);
+
+    vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS);
+
+    expect(mockCaptureWorkflowAgentUsage).not.toHaveBeenCalled();
   });
 });

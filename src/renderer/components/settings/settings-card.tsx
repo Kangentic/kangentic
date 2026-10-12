@@ -146,11 +146,17 @@ interface SettingsCardProps {
    * it only when it should show.
    */
   children?: React.ReactNode;
+  /**
+   * One button in the header's right slot, for a card with no switch (the
+   * Workflow agent prompt's Expand). It ends on the switches' right edge, as a
+   * switch would. Never set together with `checked`.
+   */
+  headerAction?: React.ReactNode;
   testId?: string;
 }
 
 export function SettingsCard({
-  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, tag, children, testId,
+  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, tag, children, headerAction, testId,
 }: SettingsCardProps) {
   const visible = useAnySettingVisible([...(searchId ? [searchId] : []), ...(searchIds ?? [])]);
   if (!visible) return null;
@@ -216,6 +222,7 @@ export function SettingsCard({
               testId={searchId ? `setting-row-${searchId}` : undefined}
             />
           ) : null}
+          {!hasSwitch && headerAction ? <div className="flex flex-shrink-0">{headerAction}</div> : null}
         </div>
       </div>
       {/* Counted, not truthiness: a `.map()` over nothing is an empty array,

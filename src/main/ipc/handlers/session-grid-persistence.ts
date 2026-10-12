@@ -1,5 +1,6 @@
 import { getOpenProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { isShuttingDown } from '../../shutdown-state';
 import type { PtyResizeOrigin } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -44,7 +45,11 @@ export function persistPtyGrid(
     try {
       const database = getOpenProjectDb(projectId);
       if (!database) return;
-      new SessionRepository(database).updatePtyGrid(sessionId, grid);
+      // A workflow's own agent has no session record: its grid is kept on its
+      // workflow, in the home project the agent runs in.
+      const workflowId = context.sessionManager.getSession?.(sessionId)?.workflowId ?? null;
+      if (workflowId) new WorkflowRepository(database).setAgentGrid(workflowId, grid);
+      else new SessionRepository(database).updatePtyGrid(sessionId, grid);
     } catch {
       // Best-effort: a resume without a recorded grid spawns at the default.
     }

@@ -1,0 +1,737 @@
+/**
+ * The workflow operations on real, migrated SQLite: a plan is validated whole
+ * before anything is written, Start creates the tasks on their boards with
+ * their routes and links, and the started workflow's guards (links, routes,
+ * removal) hold.
+ *
+ * Two projects, so a task on another board is covered. The move path and the
+ * session handlers are mocked: Start moves only the source task, and most
+ * workflows here have none. The ones that do pin that a source task that cannot
+ * move to Done never fails a Start that has already run.
+ *
+ * Start is several writes (one transaction per board, then the home database),
+ * so a write that throws after an earlier board committed undoes what those
+ * boards hold. The cases below make each of those writes throw, on real SQLite.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type Database from 'better-sqlite3';
+
+const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
+vi.mock('../../src/main/db/database', () => ({
+  getProjectDb: (projectId: string) => {
+    const db = harness.dbs.get(projectId);
+    if (!db) throw new Error(`No database for ${projectId}`);
+    return db;
+  },
+}));
+vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));
+vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
+vi.mock('../../src/main/workflows/workflow-changed', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/workflows/workflow-changed')>()),
+  notifyWorkflowChanged: vi.fn(),
+}));
+
+const { handleTaskMove } = await import('../../src/main/ipc/handlers/task-move');
+const { notifyWorkflowChanged } = await import('../../src/main/workflows/workflow-changed');
+const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
+const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
+const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
+const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
+const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
+const service = await import('../../src/main/workflows/workflow-service');
+const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake');
+
+import { openTestDatabase } from './helpers/test-database';
+import { planAcrossBoards, taskTitled } from './helpers/workflow-plans';
+import type { IpcContext } from '../../src/main/ipc/ipc-context';
+
+describe('workflow operations', () => {
+  let context: IpcContext;
+
+  function database(projectId: string): Database.Database {
+    const db = openTestDatabase();
+    db.exec('PRAGMA foreign_keys = ON');
+    runProjectMigrations(db);
+    harness.dbs.set(projectId, db);
+    return db;
+  }
+
+  beforeEach(() => {
+    harness.dbs.clear();
+    database('home');
+    database('mobile');
+    const projects = [
+      { id: 'home', name: 'kangentic', path: '/projects/home' },
+      { id: 'mobile', name: 'kangentic-mobile', path: '/projects/mobile' },
+    ];
+    context = {
+      projectRepo: {
+        list: () => projects,
+        getById: (id: string) => projects.find((project) => project.id === id),
+      },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+    } as unknown as IpcContext;
+  });
+
+  afterEach(() => {
+    for (const projectDatabase of harness.dbs.values()) (projectDatabase as Database.Database).close();
+    harness.dbs.clear();
+    vi.restoreAllMocks();
+  });
+
+  const lanesOf = (projectId: string) => new SwimlaneRepository(harness.dbs.get(projectId) as Database.Database).list();
+  const tasksOf = (projectId: string) => new TaskRepository(harness.dbs.get(projectId) as Database.Database);
+
+  function plan(extra: Partial<service.PlanInput> = {}): service.PlanInput {
+    return {
+      title: 'Usage budgets',
+      tasks: [
+        { key: 'api', title: 'Budgets API', description: 'Add the API.', skip: ['Planning'] },
+        { key: 'ui', title: 'Budgets UI', description: 'Show budgets.' },
+        { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile', routeLast: 'Code Review' },
+      ],
+      links: [{ blocker: 'api', blocked: 'ui' }, { blocker: 'api', blocked: 'phone' }],
+      ...extra,
+    };
+  }
+
+  it('saves a plan by key, resolving columns and projects by name', () => {
+    const workflow = service.createWorkflow('home', {});
+    const saved = service.savePlan(context, 'home', workflow.id, plan());
+    expect(saved.title).toBe('Usage budgets');
+    expect(saved.draft?.tasks.map((task) => task.key)).toEqual(['api', 'ui', 'phone']);
+    const planning = lanesOf('home').find((lane) => lane.name === 'Planning')!;
+    expect(saved.draft?.tasks[0].skipped_swimlane_ids).toEqual([planning.id]);
+    expect(saved.draft?.tasks[2].project_id).toBe('mobile');
+  });
+
+  it('refuses a plan with a loop, an unknown key, a bad column or a duplicate key, writing nothing', () => {
+    const workflow = service.createWorkflow('home', {});
+    const attempts: Array<[Partial<service.PlanInput>, RegExp]> = [
+      [{ links: [{ blocker: 'api', blocked: 'ui' }, { blocker: 'ui', blocked: 'api' }] }, /loop/],
+      [{ links: [{ blocker: 'nope', blocked: 'ui' }] }, /not a task key/],
+      [{ tasks: [{ key: 'api', title: 'A', skip: ['Nowhere'] }] }, /not a column a route can use/],
+      [{ tasks: [{ key: 'api', title: 'A' }, { key: 'api', title: 'B' }], links: [] }, /share the key/],
+    ];
+    for (const [change, message] of attempts) {
+      expect(() => service.savePlan(context, 'home', workflow.id, plan(change))).toThrow(message);
+    }
+    expect(service.readWorkflow(context, 'home', workflow.id).tasks).toEqual([]);
+  });
+
+  it('refuses a save over a newer revision', () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan({ revision: workflow.revision }));
+    expect(() => service.savePlan(context, 'home', workflow.id, plan({ revision: workflow.revision })))
+      .toThrow(/changed since you read it/);
+  });
+
+  it('announces a pause, a resume and a rename on every board holding its tasks, though no task row changed', async () => {
+    // Every card carries its workflow's state and name, and a paired phone
+    // redraws them only on a board event.
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const emit = vi.mocked(context.boardEvents.emitBoardChanged);
+    const boardsAnnounced = (): string[] => [...new Set(emit.mock.calls.map(([event]) => event.projectId))].sort();
+
+    emit.mockClear();
+    await service.pauseWorkflow(context, 'home', workflow.id);
+    expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+
+    emit.mockClear();
+    await service.resumeWorkflow(context, 'home', workflow.id);
+    expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+
+    emit.mockClear();
+    service.renameWorkflow(context, 'home', workflow.id, 'Spend limits');
+    expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+  });
+
+  it('wakes the engine with the workflow\'s id on a resume only, so Resume retries its failed starts at once', async () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const wake = vi.fn();
+    setWorkflowWake(wake);
+    try {
+      await service.pauseWorkflow(context, 'home', workflow.id);
+      expect(wake.mock.calls.every(([retryWorkflowId]) => retryWorkflowId === undefined)).toBe(true);
+
+      wake.mockClear();
+      await service.resumeWorkflow(context, 'home', workflow.id);
+      expect(wake).toHaveBeenCalledWith(workflow.id);
+    } finally {
+      setWorkflowWake(null);
+    }
+  });
+
+  it('starts: tasks in To Do on their boards, with routes and cross-board links', async () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    const result = await service.startWorkflow(context, 'home', workflow.id);
+    expect(result.workflow.state).toBe('running');
+    expect(result.createdCount).toBe(3);
+
+    const homeTasks = tasksOf('home').listByWorkflow(workflow.id);
+    const mobileTasks = tasksOf('mobile').listByWorkflow(workflow.id);
+    expect(homeTasks.map((task) => task.title).sort()).toEqual(['Budgets API', 'Budgets UI']);
+    expect(mobileTasks.map((task) => task.title)).toEqual(['Budgets on the phone']);
+    const homeTodo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+    expect(homeTasks.every((task) => task.swimlane_id === homeTodo.id)).toBe(true);
+    expect(mobileTasks[0].workflow_project_id).toBe('home');
+
+    const links = new TaskLinkRepository(harness.dbs.get('home') as Database.Database).listForWorkflow(workflow.id);
+    expect(links).toHaveLength(2);
+    expect(links.some((link) => link.blocked_project_id === 'mobile')).toBe(true);
+
+    const view = service.readWorkflow(context, 'home', workflow.id);
+    const phone = view.tasks.find((task) => task.title === 'Budgets on the phone')!;
+    expect(phone.route).toEqual(['Planning', 'Executing', 'Code Review']);
+    expect(phone.waitsFor).toHaveLength(1);
+  });
+
+  describe('which board a task is on, in the read model', () => {
+    // Task numbers count per board, so the home board's first task and the second
+    // board's first task are both #1. The read model names the board of a task
+    // that is not on the home board, and of a blocker that is not, so the
+    // agent-facing text can tell the two #1s apart.
+
+    it('names the project of a planned task on another board, and no project for one on the home board', () => {
+      const workflow = planAcrossBoards(service, context);
+
+      const view = service.readWorkflow(context, 'home', workflow.id);
+
+      expect(taskTitled(view, 'Budgets on the phone').board).toBe('kangentic-mobile');
+      expect(taskTitled(view, 'Budgets API').board).toBeNull();
+      expect(taskTitled(view, 'Budgets UI').board).toBeNull();
+    });
+
+    it('names the board of a started task on another board, and names a blocker there by it when its number matches a home task', async () => {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+
+      const view = service.readWorkflow(context, 'home', workflow.id);
+
+      const api = taskTitled(view, 'Budgets API');
+      const phone = taskTitled(view, 'Budgets on the phone');
+      const ui = taskTitled(view, 'Budgets UI');
+      // The pinned ambiguity: each board's first task is #1.
+      expect(phone.displayId).toBe(api.displayId);
+      expect(phone.board).toBe('kangentic-mobile');
+      expect(api.board).toBeNull();
+      expect(ui.board).toBeNull();
+      expect(api.waitsFor).toEqual([`#${phone.displayId} on "kangentic-mobile"`]);
+      // A blocker on the home board stays a bare number.
+      expect(ui.waitsFor).toEqual([`#${api.displayId}`]);
+    });
+
+    it('falls back to the project id when the board\'s project is no longer registered', async () => {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const registeredProject = context.projectRepo.getById.bind(context.projectRepo);
+      vi.spyOn(context.projectRepo, 'getById').mockImplementation((projectId: string) => (
+        projectId === 'mobile' ? undefined : registeredProject(projectId)
+      ));
+
+      const view = service.readWorkflow(context, 'home', workflow.id);
+
+      const api = taskTitled(view, 'Budgets API');
+      const phone = taskTitled(view, 'Budgets on the phone');
+      expect(phone.board).toBe('mobile');
+      expect(api.waitsFor).toEqual([`#${phone.displayId} on "mobile"`]);
+    });
+  });
+
+  describe('the task a workflow was made from', () => {
+    let wake: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      vi.mocked(handleTaskMove).mockReset();
+      vi.mocked(notifyWorkflowChanged).mockClear();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      wake = vi.fn();
+      setWorkflowWake(wake);
+    });
+
+    afterEach(() => {
+      setWorkflowWake(null);
+    });
+
+    /** A workflow planned from a task waiting in To Do on the home board. */
+    function plannedFromSource(): { workflowId: string; source: { id: string; display_id: number }; todoId: string; doneId: string } {
+      const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+      const done = lanesOf('home').find((lane) => lane.role === 'done')!;
+      const source = tasksOf('home').create({ title: 'Budgets', description: '', swimlane_id: todo.id });
+      const workflow = service.createWorkflow('home', { sourceTaskId: source.id });
+      service.savePlan(context, 'home', workflow.id, plan());
+      return { workflowId: workflow.id, source, todoId: todo.id, doneId: done.id };
+    }
+
+    it('moves it to Done on Start, and reports which task it superseded (the control)', async () => {
+      const { workflowId, source, doneId } = plannedFromSource();
+
+      const result = await service.startWorkflow(context, 'home', workflowId);
+
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ taskId: source.id, targetSwimlaneId: doneId }),
+        'workflow',
+        'home',
+        '/projects/home',
+        expect.anything(),
+      );
+      expect(result.supersededSource).toBe(source.display_id);
+    });
+
+    it('still starts when it cannot move to Done: the workflow runs, the engine wakes, and the task stays in To Do', async () => {
+      const { workflowId, source, todoId, doneId } = plannedFromSource();
+      vi.mocked(handleTaskMove).mockRejectedValueOnce(new Error('Worktree setup failed: no space left'));
+      wake.mockClear();
+      vi.mocked(notifyWorkflowChanged).mockClear();
+
+      const result = await service.startWorkflow(context, 'home', workflowId);
+
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ taskId: source.id, targetSwimlaneId: doneId }),
+        'workflow',
+        'home',
+        '/projects/home',
+        expect.anything(),
+      );
+      expect(result.workflow.state).toBe('running');
+      expect(result.createdCount).toBe(3);
+      expect(result.supersededSource).toBeNull();
+      expect(wake).toHaveBeenCalledTimes(1);
+      expect(notifyWorkflowChanged).toHaveBeenCalledWith('home', workflowId);
+      expect(tasksOf('home').getById(source.id)!.swimlane_id).toBe(todoId);
+      expect(tasksOf('home').listByWorkflow(workflowId)).toHaveLength(2);
+    });
+  });
+
+  it('refuses to start an empty workflow, or one already started', async () => {
+    const empty = service.createWorkflow('home', {});
+    await expect(service.startWorkflow(context, 'home', empty.id)).rejects.toThrow(/no tasks yet/);
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toThrow(/already started/);
+  });
+
+  it('takes in a board task in To Do instead of creating one', async () => {
+    const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+    const existing = tasksOf('home').create({ title: 'Already here', description: '', swimlane_id: todo.id });
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, {
+      tasks: [{ key: 'old', title: 'Already here', existingTask: String(existing.display_id) }],
+      links: [],
+    });
+    const result = await service.startWorkflow(context, 'home', workflow.id);
+    expect(result.createdCount).toBe(0);
+    expect(tasksOf('home').getById(existing.id)!.workflow_id).toBe(workflow.id);
+  });
+
+  describe('a Start whose write fails after an earlier board committed', () => {
+    // Start writes one transaction per board, then the home database's links and
+    // state: separate files, so no single transaction spans them. A write that
+    // throws part way undoes what the committed boards hold (the tasks it
+    // created are deleted, the board tasks it took in leave the workflow), so
+    // the workflow stays a draft and a retry of Start can start it.
+    const diskFull = new Error('disk full');
+
+    /**
+     * A taken-in home task, a new home task, then a new task on the second board.
+     * Boards are written in the plan's order, so the home board commits before the
+     * second one is touched: a failure on the second board has something to undo.
+     */
+    function plannedAcrossBoards() {
+      const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+      const takenIn = tasksOf('home').create({ title: 'Already here', description: '', swimlane_id: todo.id });
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, {
+        title: 'Usage budgets',
+        tasks: [
+          { key: 'old', title: 'Already here', existingTask: String(takenIn.display_id) },
+          { key: 'api', title: 'Budgets API' },
+          { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' },
+        ],
+        links: [{ blocker: 'old', blocked: 'api' }, { blocker: 'api', blocked: 'phone' }],
+      });
+      return { workflow, takenIn, todoId: todo.id };
+    }
+
+    const homeLinks = () => new TaskLinkRepository(harness.dbs.get('home') as Database.Database);
+    const titlesOn = (projectId: string) => tasksOf(projectId).list().map((task) => task.title).sort();
+
+    /** Nothing of the failed Start is left: a draft with its plan, and the boards as they were. */
+    function expectBoardsAsBeforeStart(workflowId: string, takenInId: string, todoId: string): void {
+      const workflow = service.requireWorkflow('home', workflowId);
+      expect(workflow.state).toBe('draft');
+      expect(workflow.draft?.tasks).toHaveLength(3);
+      // Created tasks are gone, and the one taken in is an ordinary task in To Do again.
+      expect(titlesOn('home')).toEqual(['Already here']);
+      expect(titlesOn('mobile')).toEqual([]);
+      const takenIn = tasksOf('home').getById(takenInId)!;
+      expect(takenIn.workflow_id).toBeNull();
+      expect(takenIn.workflow_project_id).toBeNull();
+      expect(takenIn.swimlane_id).toBe(todoId);
+      expect(tasksOf('home').listByWorkflow(workflowId)).toEqual([]);
+      expect(homeLinks().listForWorkflow(workflowId)).toEqual([]);
+    }
+
+    /** The retry the undo exists for: it succeeds, and each planned task exists exactly once. */
+    async function expectRetryStartsOnce(workflowId: string, takenInId: string): Promise<void> {
+      const result = await service.startWorkflow(context, 'home', workflowId);
+
+      expect(result.workflow.state).toBe('running');
+      expect(result.createdCount).toBe(2);
+      expect(titlesOn('home')).toEqual(['Already here', 'Budgets API']);
+      expect(titlesOn('mobile')).toEqual(['Budgets on the phone']);
+      expect(tasksOf('home').getById(takenInId)!.workflow_id).toBe(workflowId);
+      expect(tasksOf('home').listByWorkflow(workflowId)).toHaveLength(2);
+      expect(tasksOf('mobile').listByWorkflow(workflowId)).toHaveLength(1);
+      expect(homeLinks().listForWorkflow(workflowId)).toHaveLength(2);
+    }
+
+    it('undoes the home board\'s writes when the second board\'s write throws, and a retry of Start succeeds', async () => {
+      const { workflow, takenIn, todoId } = plannedAcrossBoards();
+      const createTask = TaskRepository.prototype.create;
+      // Only the second board's task fails; the home board's own creates run for real.
+      const createSpy = vi.spyOn(TaskRepository.prototype, 'create').mockImplementation(function (this: InstanceType<typeof TaskRepository>, input) {
+        if (input.title === 'Budgets on the phone') throw diskFull;
+        return createTask.call(this, input);
+      });
+
+      await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toBe(diskFull);
+
+      // The home board committed first, so the failure came after real writes.
+      expect(createSpy.mock.calls.map(([input]) => input.title)).toEqual(['Budgets API', 'Budgets on the phone']);
+      expectBoardsAsBeforeStart(workflow.id, takenIn.id, todoId);
+
+      createSpy.mockRestore();
+      await expectRetryStartsOnce(workflow.id, takenIn.id);
+    });
+
+    it.each([
+      ['a link write', () => vi.spyOn(TaskLinkRepository.prototype, 'insert')],
+      ['marking the workflow started', () => vi.spyOn(WorkflowRepository.prototype, 'markStarted')],
+    ])('undoes both boards\' writes when the home write throws (%s), and a retry of Start succeeds', async (_label, spyOnWrite) => {
+      const { workflow, takenIn, todoId } = plannedAcrossBoards();
+      const writeSpy = spyOnWrite().mockImplementation(() => {
+        throw diskFull;
+      });
+
+      await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toBe(diskFull);
+
+      // Both boards had committed their tasks by then: the home board's and the second board's.
+      expect(writeSpy).toHaveBeenCalled();
+      expectBoardsAsBeforeStart(workflow.id, takenIn.id, todoId);
+
+      writeSpy.mockRestore();
+      await expectRetryStartsOnce(workflow.id, takenIn.id);
+    });
+
+    it('reports the write\'s own error, not the undo\'s, when the undo cannot reach a board', async () => {
+      // The failure that got here may be the disk under one of the boards too:
+      // the error to report is the Start's, and the undo only logs its own.
+      const { workflow, takenIn } = plannedAcrossBoards();
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      vi.spyOn(WorkflowRepository.prototype, 'markStarted').mockImplementation(() => {
+        throw diskFull;
+      });
+      const setMembership = TaskRepository.prototype.setWorkflowMembership;
+      const membershipSpy = vi.spyOn(TaskRepository.prototype, 'setWorkflowMembership').mockImplementation(function (this: InstanceType<typeof TaskRepository>, taskId, membership) {
+        // Start joins tasks to the workflow for real; only the undo's release (null) fails.
+        if (membership === null) throw new Error('undo failed');
+        setMembership.call(this, taskId, membership);
+      });
+
+      await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toBe(diskFull);
+
+      expect(membershipSpy).toHaveBeenCalledWith(takenIn.id, null);
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining('Could not undo a failed Start'), expect.objectContaining({ message: 'undo failed' }));
+    });
+  });
+
+  it('only lets a task in To Do wait, and removes a task with its links', async () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const api = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets API')!;
+    const ui = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets UI')!;
+
+    // Start the API task by hand: a started task can no longer wait.
+    const executing = lanesOf('home').find((lane) => lane.name === 'Executing')!;
+    tasksOf('home').move({ taskId: api.id, targetSwimlaneId: executing.id, targetPosition: 0 }, { origin: 'workflow' });
+    expect(() => service.linkTasks(context, 'home', workflow.id, { blocker: String(ui.display_id), blocked: String(api.display_id) }))
+      .toThrow(/has started/);
+
+    const removed = service.removeFromWorkflow(context, 'home', workflow.id, { task: String(ui.display_id) });
+    expect(removed.workflow_id).toBeNull();
+    expect(new TaskLinkRepository(harness.dbs.get('home') as Database.Database).listBlockersOf(ui.id)).toEqual([]);
+  });
+
+  it('removes a task\'s links before it clears the task\'s membership, so a failure between the two writes leaves a member with no links', async () => {
+    // The links are in the home database and the membership on the task's own
+    // board: two writes. If the second fails, links left to a task outside the
+    // workflow would hold a dependent back forever (a blocker the workflow
+    // cannot see is never done), while a member with no links can be removed again.
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const ui = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets UI')!;
+    const links = new TaskLinkRepository(harness.dbs.get('home') as Database.Database);
+    const linksOfUi = () => links.listForWorkflow(workflow.id)
+      .filter((link) => link.blocker_task_id === ui.id || link.blocked_task_id === ui.id);
+    expect(linksOfUi()).toHaveLength(1);
+    vi.spyOn(TaskRepository.prototype, 'setWorkflowMembership').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+
+    expect(() => service.removeFromWorkflow(context, 'home', workflow.id, { task: String(ui.display_id) })).toThrow('disk full');
+
+    expect(linksOfUi()).toEqual([]);
+    // Still a member, and the other task's links are untouched.
+    expect(tasksOf('home').getById(ui.id)!.workflow_id).toBe(workflow.id);
+    expect(links.listForWorkflow(workflow.id)).toHaveLength(1);
+  });
+
+  it('keeps a started task\'s past route fixed, and lets what is ahead change', async () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const ui = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets UI')!;
+    const review = lanesOf('home').find((lane) => lane.name === 'Code Review')!;
+    tasksOf('home').move({ taskId: ui.id, targetSwimlaneId: review.id, targetPosition: 0 }, { origin: 'workflow' });
+
+    expect(() => service.setTaskRoute(context, 'home', workflow.id, { task: String(ui.display_id), skip: ['Planning'] }))
+      .toThrow(/Only the columns after it can change/);
+    const updated = service.setTaskRoute(context, 'home', workflow.id, { task: String(ui.display_id), skip: ['Testing'] });
+    const testing = lanesOf('home').find((lane) => lane.name === 'Testing')!;
+    expect(updated.skipped_swimlane_ids).toEqual([testing.id]);
+  });
+
+  describe('a route that starts after it ends', () => {
+    // An empty route sends a task straight to Done when its blockers clear, with
+    // no agent having worked it, so every writer of a route refuses this order.
+    const REVERSED = /routeStart comes after routeLast/;
+
+    const laneNamed = (name: string) => lanesOf('home').find((lane) => lane.name === name)!;
+
+    /** A started workflow (the plan's three tasks), with its Budgets UI task waiting in To Do and no route set. */
+    async function startedWithUiInTodo() {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, plan());
+      await service.startWorkflow(context, 'home', workflow.id);
+      const ui = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets UI')!;
+      return { workflow, ui };
+    }
+
+    const storedRoute = (taskId: string) => {
+      const task = tasksOf('home').getById(taskId)!;
+      return { start: task.route_start_swimlane_id, last: task.route_last_swimlane_id, skipped: task.skipped_swimlane_ids };
+    };
+
+    const titlesOf = (workflowId: string) => tasksOf('home').listByWorkflow(workflowId).map((task) => task.title).sort();
+
+    it('refuses setTaskRoute with both ends given in reverse order on a task in To Do, and stores nothing', async () => {
+      const { workflow, ui } = await startedWithUiInTodo();
+      expect(storedRoute(ui.id)).toEqual({ start: null, last: null, skipped: [] });
+
+      expect(() => service.setTaskRoute(context, 'home', workflow.id, {
+        task: String(ui.display_id),
+        routeStart: 'Code Review',
+        routeLast: 'Planning',
+      })).toThrow(REVERSED);
+      expect(storedRoute(ui.id)).toEqual({ start: null, last: null, skipped: [] });
+
+      // The same two columns in board order are accepted, so the order is what was refused.
+      service.setTaskRoute(context, 'home', workflow.id, {
+        task: String(ui.display_id),
+        routeStart: 'Planning',
+        routeLast: 'Code Review',
+      });
+      expect(storedRoute(ui.id)).toEqual({ start: laneNamed('Planning').id, last: laneNamed('Code Review').id, skipped: [] });
+    });
+
+    it('refuses setTaskRoute naming only routeLast when it falls before the routeStart already stored, and keeps the stored route', async () => {
+      const { workflow, ui } = await startedWithUiInTodo();
+      // Valid on its own: with no last column set there is nothing to reverse against.
+      service.setTaskRoute(context, 'home', workflow.id, { task: String(ui.display_id), routeStart: 'Code Review' });
+      const stored = storedRoute(ui.id);
+      expect(stored).toEqual({ start: laneNamed('Code Review').id, last: null, skipped: [] });
+
+      expect(() => service.setTaskRoute(context, 'home', workflow.id, {
+        task: String(ui.display_id),
+        routeLast: 'Planning',
+      })).toThrow(REVERSED);
+
+      expect(storedRoute(ui.id)).toEqual(stored);
+    });
+
+    it('refuses addWorkflowTask with the route reversed, creating no task', async () => {
+      const { workflow } = await startedWithUiInTodo();
+      const titlesBefore = titlesOf(workflow.id);
+
+      expect(() => service.addWorkflowTask(context, 'home', workflow.id, {
+        key: 'extra',
+        title: 'Reversed extra',
+        routeStart: 'Code Review',
+        routeLast: 'Planning',
+      })).toThrow(REVERSED);
+
+      expect(titlesOf(workflow.id)).toEqual(titlesBefore);
+      expect(titlesOf(workflow.id)).not.toContain('Reversed extra');
+
+      // The same two columns in board order create the task, so the order is what was refused.
+      const created = service.addWorkflowTask(context, 'home', workflow.id, {
+        key: 'extra',
+        title: 'Ordered extra',
+        routeStart: 'Planning',
+        routeLast: 'Code Review',
+      });
+      expect(storedRoute(created.id)).toEqual({ start: laneNamed('Planning').id, last: laneNamed('Code Review').id, skipped: [] });
+    });
+
+    it('refuses savePlan with a task whose route is reversed, and keeps the stored draft', () => {
+      // A draft is where a reversed route would otherwise sit unseen until Start.
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, plan());
+      const repository = new WorkflowRepository(harness.dbs.get('home') as Database.Database);
+      const stored = repository.getById(workflow.id)!;
+      expect(stored.draft?.tasks.map((task) => task.key)).toEqual(['api', 'ui', 'phone']);
+
+      expect(() => service.savePlan(context, 'home', workflow.id, plan({
+        title: 'Reversed budgets',
+        tasks: [{ key: 'api', title: 'Budgets API', routeStart: 'Code Review', routeLast: 'Planning' }],
+        links: [],
+      }))).toThrow(REVERSED);
+
+      const afterRefusal = repository.getById(workflow.id)!;
+      expect(afterRefusal.draft).toEqual(stored.draft);
+      expect(afterRefusal.title).toBe(stored.title);
+      expect(afterRefusal.revision).toBe(stored.revision);
+
+      // The same two columns in board order are saved, so the order is what was refused.
+      const saved = service.savePlan(context, 'home', workflow.id, plan({
+        tasks: [{ key: 'api', title: 'Budgets API', routeStart: 'Planning', routeLast: 'Code Review' }],
+        links: [],
+      }));
+      expect(saved.draft?.tasks).toHaveLength(1);
+      expect(saved.draft?.tasks[0].route_start_swimlane_id).toBe(laneNamed('Planning').id);
+      expect(saved.draft?.tasks[0].route_last_swimlane_id).toBe(laneNamed('Code Review').id);
+    });
+  });
+
+  describe('the tasks an added task waits for', () => {
+    // Task numbers count per board, so api (home) and phone (kangentic-mobile) are
+    // both #1. A task id names one task of the workflow on any of its boards; a
+    // number can only name a task on the home board.
+
+    /** A started workflow whose api task is on the home board and whose phone task is on the mobile one, both still in To Do. */
+    async function startedAcrossBoards() {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const api = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets API')!;
+      const phone = tasksOf('mobile').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets on the phone')!;
+      expect(phone.display_id).toBe(api.display_id);
+      return { workflow, api, phone };
+    }
+
+    const linksInto = (workflowId: string, blockedTaskId: string) =>
+      new TaskLinkRepository(harness.dbs.get('home') as Database.Database)
+        .listForWorkflow(workflowId)
+        .filter((link) => link.blocked_task_id === blockedTaskId);
+
+    it('waits for a member task on another board named by its id, linked from that board', async () => {
+      const { workflow, phone } = await startedAcrossBoards();
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [phone.id] });
+
+      const links = linksInto(workflow.id, created.id);
+      expect(links).toHaveLength(1);
+      expect(links[0]).toMatchObject({
+        blocker_task_id: phone.id,
+        blocker_project_id: 'mobile',
+        blocked_task_id: created.id,
+        blocked_project_id: 'home',
+      });
+    });
+
+    it('reads a number as a task on the home board, though the other board has a task with that number', async () => {
+      const { workflow, api, phone } = await startedAcrossBoards();
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [String(api.display_id)] });
+
+      const links = linksInto(workflow.id, created.id);
+      expect(links).toHaveLength(1);
+      expect(links[0]).toMatchObject({ blocker_task_id: api.id, blocker_project_id: 'home' });
+      expect(links[0].blocker_task_id).not.toBe(phone.id);
+    });
+
+    it('waits for a task on each board in one call, by an id and by a number', async () => {
+      const { workflow, api, phone } = await startedAcrossBoards();
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [phone.id, String(api.display_id)] });
+
+      const links = linksInto(workflow.id, created.id);
+      expect(links.map((link) => [link.blocker_project_id, link.blocker_task_id]).sort()).toEqual(
+        [['home', api.id], ['mobile', phone.id]].sort(),
+      );
+    });
+
+    it('still names a member task on the home board by its id', async () => {
+      const { workflow, api } = await startedAcrossBoards();
+
+      const created = service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [api.id] });
+
+      expect(linksInto(workflow.id, created.id)).toMatchObject([{ blocker_task_id: api.id, blocker_project_id: 'home' }]);
+    });
+
+    it('refuses the id of a task on another board that is not in the workflow, creating no task', async () => {
+      const { workflow } = await startedAcrossBoards();
+      const mobileTodo = lanesOf('mobile').find((lane) => lane.role === 'todo')!;
+      const outsider = tasksOf('mobile').create({ title: 'Not in the workflow', description: '', swimlane_id: mobileTodo.id });
+      const titlesBefore = tasksOf('home').listByWorkflow(workflow.id).map((task) => task.title).sort();
+
+      expect(() => service.addWorkflowTask(context, 'home', workflow.id, { key: 'docs', title: 'Budgets docs', waitsFor: [outsider.id] }))
+        .toThrow(/No task/);
+
+      expect(tasksOf('home').listByWorkflow(workflow.id).map((task) => task.title).sort()).toEqual(titlesBefore);
+    });
+  });
+
+  it('keeps only the text labels of an added task: a label that is not text never reaches the task row', async () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+
+    const created = service.addWorkflowTask(context, 'home', workflow.id, {
+      key: 'extra',
+      title: 'Labelled extra',
+      // An agent's input is not checked against the type: numbers and nulls arrive from the tool call.
+      labels: ['ui', 1, null, 'api'] as unknown as string[],
+    });
+
+    expect(created.labels).toEqual(['ui', 'api']);
+    // Read the column itself: the repository's read path drops non-text entries too,
+    // so a re-read through it would pass whatever was written.
+    const row = (harness.dbs.get('home') as Database.Database)
+      .prepare('SELECT labels FROM tasks WHERE id = ?')
+      .get(created.id) as { labels: string };
+    expect(JSON.parse(row.labels)).toEqual(['ui', 'api']);
+  });
+
+  it('deletes a started workflow, leaving its unfinished tasks as ordinary tasks', async () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const result = service.deleteWorkflow(context, 'home', workflow.id);
+    expect(result.released).toBe(3);
+    expect(tasksOf('home').listByWorkflow(workflow.id)).toEqual([]);
+    expect(tasksOf('mobile').listByWorkflow(workflow.id)).toEqual([]);
+  });
+});

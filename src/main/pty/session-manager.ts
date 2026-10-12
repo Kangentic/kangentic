@@ -3,6 +3,7 @@ import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
+import { isCommandTerminalSession } from '../../shared/session-owner';
 
 /**
  * Renderer key used when a caller does not identify itself (headless callers, and
@@ -124,6 +125,42 @@ export interface SessionManagerOptions {
    */
   ptyHostTransport?: PtyHostTransport;
 }
+
+/**
+ * The `'turn-ended'` event's payload: a turn the agent itself ended has
+ * settled (`ActivityEngineCallbacks.onTurnEnded`). Carries the session that
+ * ended the turn, which for an isolated column (Code Review) is that column's
+ * session, never the task's main one.
+ */
+export interface TurnEndedPayload {
+  sessionId: string;
+  taskId: string;
+  projectId: string;
+  agentSessionId: string | null;
+  isolatedSwimlaneId: string | null;
+  /**
+   * When the turn began (epoch ms), or null when the engine never saw it begin.
+   * A consumer compares it with when the task entered its column, so a turn
+   * that started before a move is never judged by the new column.
+   */
+  turnStartedAt: number | null;
+  /**
+   * The turn's identity: how much work the agent had reported when the turn
+   * ended (`SessionEngineState.workSerial`). A consumer that acts on the turn
+   * later asks `SessionManager.isLatestTurn` with it.
+   */
+  workSerial: number;
+}
+
+/**
+ * The `'session-resumed'` event's payload: a task session spawned to resume a
+ * conversation (a Resume, a workflow's Resume, or recovery at launch or after
+ * a pty host crash) is running. It comes back idle with no turn end, so a
+ * listener that acts on turn ends learns of it here. `workSerial` is the
+ * session's work serial as it came back: a turn the user starts after the
+ * resume moves it (`SessionManager.isLatestTurn`).
+ */
+export type SessionResumedPayload = Omit<TurnEndedPayload, 'turnStartedAt'>;
 
 /** Per-session pipeline numbers for the dev terminal-pipeline route. */
 export interface SessionPipelineStats {
@@ -493,6 +530,29 @@ export class SessionManager extends EventEmitter {
       // only new information is which reason to draw.
       onReasonChange: (sessionId, activity, reason) =>
         this.emit('activity-reason', sessionId, activity, reason),
+      // Its own event too, not an 'activity' idle: that idle also comes from an
+      // interrupt, a failed turn, PTY silence and the watchdogs, and the
+      // listeners here (column automations, workflow steps) act only on a turn
+      // the agent finished. A listener that throws must not unwind the engine's
+      // commit, so the emit is guarded.
+      onTurnEnded: (sessionId, turnStartedAt, workSerial) => {
+        const session = this.registry.get(sessionId);
+        if (!session || session.transient) return;
+        const payload: TurnEndedPayload = {
+          sessionId,
+          taskId: session.taskId,
+          projectId: session.projectId,
+          agentSessionId: session.agentSessionId ?? null,
+          isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
+          turnStartedAt,
+          workSerial,
+        };
+        try {
+          this.emit('turn-ended', payload);
+        } catch (error) {
+          console.error(`[SESSION] turn-ended listener threw for ${sessionId.slice(0, 8)}:`, error);
+        }
+      },
       onEvent: (sessionId, event) => {
         this.noteCommandTerminalAgentEvent(sessionId, event);
         this.emit('event', sessionId, event);
@@ -1385,6 +1445,15 @@ export class SessionManager extends EventEmitter {
     return this.sessionQueue.length;
   }
 
+  /**
+   * Agent slots free right now: the app-wide cap less every running, starting
+   * and queued session. The workflow engine starts no more tasks than this, so
+   * To Do stays its durable queue and nothing piles into the in-memory one.
+   */
+  getFreeAgentSlots(): number {
+    return Math.max(0, this.sessionQueue.maxConcurrentSessions - this.activeCount - this.sessionQueue.length);
+  }
+
   /** Lightweight session counts without allocating mapped Session objects. */
   getSessionCounts(): { active: number; suspended: number; total: number } {
     return this.registry.getSessionCounts();
@@ -1412,6 +1481,7 @@ export class SessionManager extends EventEmitter {
         exitCode: null,
         resuming: input.resuming ?? false,
         transient: input.transient ?? false,
+        workflowId: input.workflowId ?? null,
         commandTerminalSlot: input.commandTerminalSlot ?? null,
         commandTerminalBranch: input.commandTerminalBranch ?? null,
         isolatedSwimlaneId: input.isolatedSwimlaneId,
@@ -1462,12 +1532,37 @@ export class SessionManager extends EventEmitter {
       // debounce (a surface that opens the session inside it cancels the
       // park, as on any switch).
       if (session.status === 'running') this.reconsiderRestingGrid(id);
+      if (session.status === 'running' && input.resuming && !input.transient) this.announceResumed(id, input.agentSessionId ?? null);
       return session;
     } finally {
       // An abandoned spawn settles once the PTY the host started has exited;
       // until then it is still in flight for a teardown waiting on it.
       if (inFlight.abandonedPtyExit) void inFlight.abandonedPtyExit.then(settle);
       else settle();
+    }
+  }
+
+  /**
+   * Say that a task session resumed a conversation. Guarded as the turn end's
+   * emit is: a listener that throws must not fail the spawn that already ran.
+   * The conversation's id is the one the resume named until the session
+   * reports its own.
+   */
+  private announceResumed(sessionId: string, resumedAgentSessionId: string | null): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    const payload: SessionResumedPayload = {
+      sessionId,
+      taskId: session.taskId,
+      projectId: session.projectId,
+      agentSessionId: session.agentSessionId ?? resumedAgentSessionId,
+      isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
+      workSerial: this.telemetry.getWorkSerial(sessionId) ?? 0,
+    };
+    try {
+      this.emit('session-resumed', payload);
+    } catch (error) {
+      console.error(`[SESSION] session-resumed listener threw for ${sessionId.slice(0, 8)}:`, error);
     }
   }
 
@@ -2057,7 +2152,9 @@ export class SessionManager extends EventEmitter {
   endCommandTerminal(sessionId: string, options?: { immediate?: boolean }): 'ended' | 'not-found' | 'not-command-terminal' {
     const session = this.registry.get(sessionId);
     if (!session) return 'not-found';
-    if (!session.transient) return 'not-command-terminal';
+    // A workflow's own agent is transient too, but no Command Terminal: it is
+    // ended through its workflow (`endWorkflowAgent`), never by a terminal Stop.
+    if (!isCommandTerminalSession(session)) return 'not-command-terminal';
     const sessionDirectory = commandTerminalSessionDirectory(session);
     this.kill(sessionId, options);
     const sessionExited = this.awaitExit(sessionId);
@@ -2082,11 +2179,15 @@ export class SessionManager extends EventEmitter {
    * Skipped during quit: `killAll()` exits every terminal, and its bounded
    * drain (synchronous-shutdown.md) is no place for removals and broadcasts.
    * A row a Stop already removed is not found and costs nothing.
+   *
+   * A workflow's own agent keeps its row, as a task's agent does: its Pause is
+   * a suspend, and the Workflows pane shows the paused agent from that row
+   * until the user resumes it.
    */
   private endCommandTerminalAfterPtyExit(sessionId: string): void {
     if (isShuttingDown()) return;
     const session = this.registry.get(sessionId);
-    if (!session?.transient) return;
+    if (!session || !isCommandTerminalSession(session)) return;
     const sessionDirectory = commandTerminalSessionDirectory(session);
     this.remove(sessionId);
     void removeCommandTerminalDirectory(sessionDirectory);
@@ -2252,7 +2353,9 @@ export class SessionManager extends EventEmitter {
    * session whose agent signalled its own end (`agentEndSignaledAt`) skips the
    * spawn grace below, so a `/exit` inside the first 30 s still ends promptly.
    * The WSL arm below still applies to it: a WSL Command Terminal is ended by
-   * the end settle instead (`noteCommandTerminalAgentEvent`).
+   * the end settle instead (`noteCommandTerminalAgentEvent`). A workflow's own
+   * agent is transient but no Command Terminal: it is judged and retired like a
+   * task's agent, keeping an exited row.
    *
    * Each arm below excludes a case where "no agent process under the shell" is
    * NOT a fault:
@@ -2301,12 +2404,13 @@ export class SessionManager extends EventEmitter {
     if (session.status !== 'running' || session.pty === null) return false;
     // The agent said it is ending, so it demonstrably ran: the grace, which
     // exists for an agent that has not started yet, no longer applies.
-    if (session.transient && typeof session.agentEndSignaledAt === 'number') return true;
+    const commandTerminal = isCommandTerminalSession(session);
+    if (commandTerminal && typeof session.agentEndSignaledAt === 'number') return true;
     const startedAtMs = Date.parse(session.startedAt);
     if (!Number.isFinite(startedAtMs)) return false;
     const elapsedMs = Date.now() - startedAtMs;
     if (elapsedMs < AGENT_SPAWN_GRACE_MS) return false;
-    if (!session.transient) return true;
+    if (!commandTerminal) return true;
     const agentStarted = typeof session.agentStartObservedAt === 'number' || session.altScreenEnteredAt !== undefined;
     return agentStarted || elapsedMs >= COMMAND_TERMINAL_AGENT_START_CEILING_MS;
   }
@@ -2339,13 +2443,13 @@ export class SessionManager extends EventEmitter {
    * sweep works. An agent with no SessionEnd hook, under WSL or with the
    * watcher off, still outlives its agent until its PTY exits.
    *
-   * Task sessions are untouched: the sweep's slower cadence is fine for a row
-   * that only needs its status corrected.
+   * Task sessions and a workflow's own agent are untouched: the sweep's slower
+   * cadence is fine for a row that only needs its status corrected.
    */
   private noteCommandTerminalAgentEvent(sessionId: string, event: SessionEvent): void {
     if (event.type !== EventType.SessionEnd && event.type !== EventType.SessionStart) return;
     const session = this.registry.get(sessionId);
-    if (!session?.transient) return;
+    if (!session || !isCommandTerminalSession(session)) return;
     if (event.type === EventType.SessionStart) {
       session.agentStartObservedAt ??= Date.now();
       session.agentEndSignaledAt = null;
@@ -2392,7 +2496,7 @@ export class SessionManager extends EventEmitter {
    */
   private endCommandTerminalAfterAgentEndSettle(sessionId: string): void {
     const session = this.registry.get(sessionId);
-    if (!session?.transient) return;
+    if (!session || !isCommandTerminalSession(session)) return;
     if (session.status !== 'running' || session.pty === null) return;
     this.endCommandTerminalForAgentExit(sessionId, session);
   }
@@ -2437,8 +2541,10 @@ export class SessionManager extends EventEmitter {
     // its window closes as it does on Stop, and no shell is left for a phone's
     // `interactive-terminal` to type into. It has no record to resume and no
     // task to report on, so the exit-code override and the kept `exited` row
-    // below do not apply. Immediate, since the tree saw the agent gone.
-    if (session.transient) {
+    // below do not apply. Immediate, since the tree saw the agent gone. A
+    // workflow's own agent takes the task path: its exited row is how the pane
+    // notices a resume that failed and starts it over.
+    if (isCommandTerminalSession(session)) {
       this.endCommandTerminalForAgentExit(sessionId, session, { immediate: true });
       return;
     }
@@ -2930,7 +3036,7 @@ export class SessionManager extends EventEmitter {
    */
   setCommandTerminalLabel(sessionId: string, label: string): boolean {
     const session = this.registry.get(sessionId);
-    if (!session?.transient || session.commandTerminalLabel) return false;
+    if (!session || !isCommandTerminalSession(session) || session.commandTerminalLabel) return false;
     const trimmed = label.trim();
     if (!trimmed) return false;
     session.commandTerminalLabel = trimmed;
@@ -2952,7 +3058,7 @@ export class SessionManager extends EventEmitter {
    */
   setCommandTerminalBranch(sessionId: string, branch: string): void {
     const session = this.registry.get(sessionId);
-    if (!session?.transient) return;
+    if (!session || !isCommandTerminalSession(session)) return;
     const trimmed = branch.trim();
     if (!trimmed) return;
     session.commandTerminalBranch = trimmed;
@@ -2966,6 +3072,20 @@ export class SessionManager extends EventEmitter {
   /** Return the latest ActivityReason for a session, or null if unknown. */
   getActivityReason(sessionId: string): ActivityReason | null {
     return this.telemetry.getActivityReason(sessionId);
+  }
+
+  /**
+   * Is the turn that ended at `workSerial` (a `TurnEndedPayload`'s) still the
+   * session's latest? Any work the agent reports after it (a prompt, a tool, a
+   * subagent) moves the serial, so a turn the user began after that turn end
+   * makes this false even once it has failed or been interrupted back to idle,
+   * which emits no turn end of its own. PTY output does not move it, so an
+   * agent's trailing paint never does. An unknown session is never the same
+   * turn.
+   */
+  isLatestTurn(sessionId: string, workSerial: number): boolean {
+    const current = this.telemetry.getWorkSerial(sessionId);
+    return current !== undefined && current === workSerial;
   }
 
   /**

@@ -128,7 +128,7 @@ sessions bypass all of this (not task agents).
      - Start status file watcher (100ms debounce)
      - Start events file watcher (50ms debounce)
      - The host runs the output handler (16ms batched flush, 512KB scrollback)
-     - After 100ms delay, write CLI command to PTY stdin (agent spawns prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient Command Terminals exempt)
+     - After 100ms delay, write CLI command to PTY stdin (agent spawns prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient sessions, Command Terminals and a workflow's agent, exempt)
 
 ## Queue
 
@@ -269,6 +269,15 @@ them on exactly the slow path where the later read matters most.
 
 ## Resume
 
+A resumed agent comes back idle and reports no turn end, so `SessionManager` announces the resume
+itself. Every task session spawned with `resuming: true` and reaching `running` (a Resume, a
+workflow's Resume, launch recovery, recovery after a pty host crash) emits `'session-resumed'`
+with the session, task and project ids, the conversation it resumed, and its work serial as it
+came back. The turn-end runner uses it to give a workflow task the step check a Pause or a quit
+cut short (see [Transition Engine](transition-engine.md), "A resume catches up the workflow step").
+A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, a separate event
+from `'activity'`; see [Activity Detection](activity-detection.md), "Turn ends".
+
 ### Where resume is refused
 
 `SESSION_RESUME` (the task detail's Pause/Resume toggle) restarts a suspended session **in
@@ -407,7 +416,9 @@ first alt-screen entry (`altScreenEnteredAt`), which no shell emits. The first-o
 evidence, because a pwsh preamble trips it. With neither, the sweep judges the terminal once
 `COMMAND_TERMINAL_AGENT_START_CEILING_MS` (2 minutes) has passed. That ceiling is what still ends
 a launch that failed and an agent with no hooks and no alt screen. Either stays up to two minutes
-instead of 30 seconds. A task keeps the plain grace, since its retirement leaves a resumable row.
+instead of 30 seconds. A task keeps the plain grace, since its retirement leaves a resumable row,
+and so does a workflow's own agent (transient, but no Command Terminal): its retirement keeps an
+exited row, which the Workflows pane reads to start it over.
 
 The sweep's cadence alone would leave the shell for 1 to 2.5 minutes, so a Command Terminal has a
 fast path. The agent's SessionEnd hook (`onEvent` in `session-manager.ts`) stamps
@@ -439,7 +450,9 @@ until its PTY exits.
 
 A Command Terminal whose PTY exits on its own (a crash, or the shell killed) also ends: after the
 `exit` emit, the spawn flow's `onPtyExited` hook removes the row and deletes the directory, so a
-transient registry row exists exactly while its PTY runs. That removal is skipped while
+Command Terminal's registry row exists exactly while its PTY runs. A workflow's own agent keeps its
+row through the same exit, suspended after a Pause or exited, as a task's agent does
+(`isCommandTerminalSession` decides which). That removal is skipped while
 SessionManager is shutting down, which keeps it out of the bounded quit drain.
 
 The inverse case, a shell that exits while its agent keeps running, is the pty host's to clean up,
@@ -946,8 +959,8 @@ phone needs and reads the rest by request.
   INDEPENDENT, not chained: pwsh's `Clear-Host` renders through ConPTY as per-row erases
   plus `\x1b[3J` with no `\x1b[2J` at all, so the prelude cleans every consumer purely
   in-stream while the detection layer keys on whichever real `2J` the TUI itself emits -
-  either alone suffices. The one-shot is bounded to the spawn: transient Command Terminals
-  never arm it (no spawn echo to strip, and a user shell's later `\x1b[2J` - viewport-only by
+  either alone suffices. The one-shot is bounded to the spawn: transient sessions (Command
+  Terminals and a workflow's agent) never arm it (no spawn echo to strip, and a user shell's later `\x1b[2J` - viewport-only by
   spec - must not be upgraded into a scrollback wipe), and it expires after a takeover window
   (`PRE_TUI_TAKEOVER_WINDOW_MS`) so a mid-session repaint clear can never fire it against
   genuine accumulated history. Alt-screen sessions skip the
@@ -1138,8 +1151,13 @@ phone needs and reads the rest by request.
   pure `resolvePtyEchoReassert` (exported from `useTerminal.ts`): in-sync self-filter first,
   then foreign-hold (`mobile`/`park` origins - a phone or the park legitimately holds the grid;
   `spawn` is healable), refused-hold (see below), parked, replay-in-flight, own-resize-pending,
-  and last a TIME-WINDOWED budget (2 re-asserts per divergence signature per 10s) - deliberately
-  not reset by an in-sync echo, because in a two-surface fight each side's successful re-assert
+  and last a TIME-WINDOWED budget. A replay-in-flight skip is deferred, not dropped
+  (`isPtyEchoDeferredToReplaySettle`): a replay sends a resize only when its fit changes the
+  grid, and a PTY reshaped under the terminal changes nothing on its side, so `settleScrollback`
+  judges the last echo again once the replay ends. The same holds for a re-assert whose debounce
+  fires while a replay is in flight. Before this, a rogue resize landing during a slow replay was
+  never healed. The budget allows 2 re-asserts per divergence signature per 10s and is
+  deliberately not reset by an in-sync echo, because in a two-surface fight each side's successful re-assert
   lands an in-sync echo at the other side, so a reset-on-heal budget never binds in exactly the
   livelock it exists to bound. `resize()` also reports `refused: true` from the mobile sub-floor
   branch (the one path where main deliberately holds the grid against the caller), which arms a
@@ -1487,12 +1505,18 @@ phone needs and reads the rest by request.
 
 ## Transient Sessions
 
-Transient sessions are ephemeral agent terminals spawned from the command bar (Ctrl+Shift+P) or by a paired phone's `command-terminal` start. They differ from task-bound sessions in several ways:
+Command Terminals are ephemeral agent terminals spawned from the command bar (Ctrl+Shift+P) or by a paired phone's `command-terminal` start. They are transient sessions, and they differ from task-bound sessions in several ways:
 
 - **No task association** - run at the project root with no Kanban task
 - **No DB persistence** - no session record in the database
 - **No resume capability** - killed on close; a suspend ends the terminal, since there is nothing to resume
 - **Queued like any spawn** - at the concurrency limit the row starts `queued` and already holds its slot
+
+A workflow's own agent is the other transient session. It shares the first two and the queue, but
+not the third: its Pause is a suspend that keeps its row, and Resume brings back its conversation.
+Everything in this section that is a Command Terminal's alone (the slot, the cap, the end) is
+decided by `isCommandTerminalSession`, never by `transient`. See
+[architecture.md](architecture.md) (Workflows) for the workflow agent.
 
 ### Identity survives a renderer reload
 
@@ -1525,7 +1549,8 @@ mounts before recovery runs adopts an unpaired live PTY for its slot rather than
 `SESSION_SPAWN_TRANSIENT` and the phone's `command-terminal` start both run `startCommandTerminal`
 (`src/main/ipc/handlers/transient-sessions.ts`). It first claims a slot: the window's requested
 one (`slot-1` to `slot-4`) when it is free, else the lowest free one. The project's non-exited
-transient rows and every in-flight start's reservation count as occupied, and a start past
+Command Terminal rows (a workflow agent's never) and every in-flight start's reservation count as
+occupied, and a start past
 `MAX_COMMAND_TERMINALS` is refused (`command-terminal-limit`). The reservation is taken before the
 first await and released once the spawn has registered its row or the start has failed.
 

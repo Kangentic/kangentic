@@ -1,15 +1,15 @@
 import { spawnWithAbort, type SpawnWithAbortOptions } from './spawn-with-abort';
 
 /**
- * Run a `git` subcommand via child_process.spawn with kill-on-timeout and
- * optional external cancellation. simple-git's `.raw()` provides nice
- * output formatting but no abort primitive, so any operation that can
- * hang (network fetch, worktree remove on locked file handles) needs
- * this lower-level path.
+ * Run a `git` subcommand with kill-on-timeout and optional external
+ * cancellation. The git client (`git-client.ts`) has no abort primitive, so
+ * any operation that can hang (network fetch, worktree remove on locked file
+ * handles) needs this path.
  *
  * The lifecycle (internal timeout, external-signal forwarding, drained
- * stdio, single-settle) lives in spawnWithAbort; this wrapper supplies the
- * git binary, args, and the git-flavored error labels.
+ * stdio, single-settle) lives in spawnWithAbort, which starts the child in
+ * the pty host when one is registered; this wrapper supplies the git binary,
+ * args, and the git-flavored error labels.
  */
 export interface GitSpawnOptions {
   /** Wall-clock cap. On expiry the child is killed via internal AbortController. */

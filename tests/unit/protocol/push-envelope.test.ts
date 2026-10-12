@@ -43,6 +43,18 @@ describe('push envelope', () => {
     expect(openPushEnvelope(pushKey, recipientKey, blob)).toEqual(plaintext);
   });
 
+  it('round-trips a workflow-complete envelope, which names no task and no session', () => {
+    const plaintext = plaintextFixture({
+      category: 'workflow-complete', taskId: '', sessionId: '', taskTitle: 'Usage budgets', detail: 'All 9 tasks are in Done.',
+    });
+    const blob = sealPushEnvelope(pushKey, recipientKey, plaintext);
+    expect(openPushEnvelope(pushKey, recipientKey, blob)).toEqual(plaintext);
+  });
+
+  it('keeps workflow-complete last, so every older category keeps its place', () => {
+    expect(PUSH_CATEGORIES[PUSH_CATEGORIES.length - 1]).toBe('workflow-complete');
+  });
+
   it('produces a padding-free base64url blob with a fresh nonce per seal', () => {
     const plaintext = plaintextFixture();
     const first = sealPushEnvelope(pushKey, recipientKey, plaintext);

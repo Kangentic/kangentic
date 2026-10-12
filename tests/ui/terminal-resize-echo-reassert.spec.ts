@@ -112,6 +112,8 @@ interface RendererTraceEvent {
 interface TestWindow {
   __scrollbackValue?: string;
   __scrollbackReads?: number;
+  __scrollbackGate?: Promise<void>;
+  __releaseScrollback?: () => void;
   __mockFireSessionData?: (sessionId: string, data: string) => void;
   __mockFirePtyResized?: (sessionId: string, cols: number, rows: number, origin?: string) => void;
   __mockResizeResult?: { colsChanged: boolean; refused?: boolean };
@@ -361,6 +363,90 @@ test.describe('Terminal width-drift echo re-assert', () => {
         .toContain(REPAIRED_CONTENT);
       const repairedText = await dialog.locator('.xterm').first().innerText();
       expect(repairedText).not.toContain('#END');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a divergence that lands while a replay is in flight is healed once that replay settles', async () => {
+    // The E2E incident (terminal-width-drift-selfheal under load): the rogue
+    // echo arrived during a replay, was skipped as 'replay-in-flight', and the
+    // replay settled without sending a resize because its fit changed nothing
+    // on this side. No later echo came, so the PTY stayed at the rogue grid.
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      const ownerDims = await openDetailAndCaptureOwnerDims(page);
+      await waitForTerminalTraceQuiescence(page);
+      await clearResizeCalls(page);
+
+      // Hold every scrollback read open until the test releases it, so the
+      // replay below stays in flight for as long as the test needs.
+      await page.evaluate(() => {
+        const testWindow = window as unknown as TestWindow;
+        testWindow.__scrollbackGate = new Promise<void>((resolve) => {
+          testWindow.__releaseScrollback = resolve;
+        });
+        if (testWindow.electronAPI) {
+          testWindow.electronAPI.sessions.getScrollback = async () => {
+            const liveWindow = window as unknown as TestWindow;
+            liveWindow.__scrollbackReads = (liveWindow.__scrollbackReads ?? 0) + 1;
+            await liveWindow.__scrollbackGate;
+            return liveWindow.__scrollbackValue ?? '';
+          };
+        }
+      });
+      const scrollbackReadsBefore = await page.evaluate(
+        () => (window as unknown as TestWindow).__scrollbackReads ?? 0,
+      );
+
+      // A first divergence heals the usual way, and the heal's repair replay
+      // is the replay the test holds in flight.
+      const firstRogueCols = ownerDims.cols + 80;
+      await page.evaluate(
+        ({ sessionId, cols }) => {
+          (window as unknown as TestWindow).__mockFirePtyResized?.(sessionId, cols, 15, 'desktop');
+        },
+        { sessionId: SESSION_ID, cols: firstRogueCols },
+      );
+      await expect
+        .poll(async () => page.evaluate(() => (window as unknown as TestWindow).__scrollbackReads ?? 0), { timeout: 5000 })
+        .toBeGreaterThan(scrollbackReadsBefore);
+      expect(
+        await page.evaluate(() => (window as unknown as TestWindow).electronAPI?.sessions.__resizeCalls ?? []),
+      ).toEqual([{ sessionId: SESSION_ID, cols: ownerDims.cols, rows: ownerDims.rows }]);
+
+      // The second divergence lands while that replay is in flight. Positive
+      // control: it really was skipped as replay-in-flight, so the heal below
+      // can only come from the replay's settle.
+      const secondRogueCols = ownerDims.cols + 40;
+      await page.evaluate(
+        ({ sessionId, cols }) => {
+          (window as unknown as TestWindow).__mockFirePtyResized?.(sessionId, cols, 15, 'desktop');
+        },
+        { sessionId: SESSION_ID, cols: secondRogueCols },
+      );
+      await expect
+        .poll(async () => (await readEchoTraceEvents(page)).map((event) => event.reason ?? event.action), { timeout: 5000 })
+        .toEqual(['reassert', 'replay-in-flight']);
+
+      // The replay settles at this terminal's unchanged grid, so it sends no
+      // resize of its own.
+      await page.evaluate(() => (window as unknown as TestWindow).__releaseScrollback?.());
+
+      // The heal: the settle judges the deferred divergence again and
+      // re-asserts the OWNER's grid, once.
+      await expect
+        .poll(
+          async () => page.evaluate(() => (window as unknown as TestWindow).electronAPI?.sessions.__resizeCalls ?? []),
+          { timeout: 10000 },
+        )
+        .toEqual([
+          { sessionId: SESSION_ID, cols: ownerDims.cols, rows: ownerDims.rows },
+          { sessionId: SESSION_ID, cols: ownerDims.cols, rows: ownerDims.rows },
+        ]);
+      expect((await readEchoTraceEvents(page)).at(-1)).toEqual(expect.objectContaining({
+        action: 'reassert', trigger: 'replay-settle', cols: secondRogueCols, rows: 15,
+      }));
     } finally {
       await browser.close();
     }

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import simpleGit from 'simple-git';
+import { gitAt } from '../../git/git-client';
 import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { WorktreeManager, GitQueuePriority, type GitWaitProgress } from '../../git/worktree-manager';
@@ -92,6 +92,11 @@ function isSameDirectory(first: string, second: string): boolean {
  * `excludeTaskId` is for the checkout guard, which must not be blocked by the
  * task's own session; occupancy checks that protect a mutation of the task's
  * OWN tree pass no exclusion so any live occupant blocks.
+ *
+ * A workflow's own agent is never an occupant. It runs read-only in the project
+ * root for as long as its workflow is open, so counting it would block every
+ * branch switch there for that whole time, and a checkout under it loses no
+ * work of its own.
  */
 export function findLiveSessionInDirectory(
   context: IpcContext,
@@ -100,6 +105,7 @@ export function findLiveSessionInDirectory(
 ): { taskId: string; transient?: boolean } | undefined {
   return context.sessionManager.listSessions().find((session) =>
     (options?.excludeTaskId === undefined || session.taskId !== options.excludeTaskId)
+    && !session.workflowId
     && (session.status === 'running' || session.status === 'queued')
     && Boolean(session.cwd)
     && isSameDirectory(session.cwd, directory));
@@ -479,7 +485,7 @@ async function surfaceWorktreeBaseDrift(
       // baseline now that the probe is actually running (see spawn-progress).
       touchSpawnStaleProbe(task.id);
       const baseBranch = resolveEffectiveBaseBranch(context, task, projectPath);
-      await fetchIfStale(simpleGit(projectPath), projectPath, baseBranch, {
+      await fetchIfStale(gitAt(projectPath), projectPath, baseBranch, {
         signal,
         onOutcome: makeBaseFetchOutcomeHandler(context, task, baseBranch, projectId, probeGeneration),
       });
@@ -561,7 +567,7 @@ export async function ensureTaskBranchCheckout(
       // withTaskLock (per-task, deliberately parallel across tasks) and
       // projectQueues would be a deadlock surface.
       assertNoOtherAgentInDirectory(context, task.id, projectPath);
-      const git = simpleGit(projectPath);
+      const git = gitAt(projectPath);
 
       // Emit 'fetching' once the job actually starts (after any queue wait) so
       // the card flips from the "Waiting..." label to "Fetching latest...".
@@ -650,7 +656,7 @@ export async function ensureTaskBranchCheckout(
   const worktreeManager = new WorktreeManager(projectPath);
   await worktreeManager.withLock(async () => {
     assertNoOtherAgentInDirectory(context, task.id, projectPath);
-    const git = simpleGit(projectPath);
+    const git = gitAt(projectPath);
     // Emit 'fetching' once the job actually starts (after any queue wait) so
     // the card flips from the "Waiting..." label to "Fetching latest...".
     options?.onProgress?.('fetching');

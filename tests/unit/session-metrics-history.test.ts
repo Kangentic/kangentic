@@ -16,8 +16,9 @@
  *      is best-effort; it must never break shutdown or task-move flows.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { captureSessionMetrics } from '../../src/main/ipc/handlers/session-metrics';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { captureSessionMetrics, captureWorkflowAgentUsage } from '../../src/main/ipc/handlers/session-metrics';
+import { forgetWorkflowAgentEffort, recordWorkflowAgentEffort } from '../../src/main/workflows/workflow-agent-effort';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../src/main/db/repositories/usage-history-repository';
 import type { SessionManager } from '../../src/main/pty/session-manager';
@@ -80,6 +81,98 @@ function makeMocks(usageBySessionId: Record<string, SessionUsage> = {}): Mocks {
 
   return { sessionManager, sessionRepo, usageHistoryRepo, updateMetrics, recordSessionUsage, getSessionAgentName, findByAnyId };
 }
+
+describe('captureWorkflowAgentUsage', () => {
+  const session = { id: 'pty-agent-1', startedAt: '2026-10-04T12:00:00.000Z', agentSessionId: 'conv-wf' };
+
+  it('writes the workflow agent\'s spend under its own session id and conversation', () => {
+    const { sessionManager, usageHistoryRepo, recordSessionUsage } = makeMocks({ 'pty-agent-1': makeUsage() });
+    captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+    expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionRecordId: 'pty-agent-1',
+      sessionStartedAt: '2026-10-04T12:00:00.000Z',
+      conversationId: 'conv-wf',
+      cumulativeCostUsd: 0.42,
+      agent: 'claude',
+    }));
+  });
+
+  it('writes nothing with no usage yet, or with no conversation to key its legs by', () => {
+    const noUsage = makeMocks({});
+    captureWorkflowAgentUsage(noUsage.sessionManager, noUsage.usageHistoryRepo, session);
+    expect(noUsage.recordSessionUsage).not.toHaveBeenCalled();
+
+    const noConversation = makeMocks({ 'pty-agent-1': makeUsage() });
+    captureWorkflowAgentUsage(noConversation.sessionManager, noConversation.usageHistoryRepo, { ...session, agentSessionId: null });
+    expect(noConversation.recordSessionUsage).not.toHaveBeenCalled();
+  });
+
+  describe('its effort', () => {
+    // The agent has no session record to carry `applied_effort`, so a status
+    // line that reports no effort falls back to the effort it was started with
+    // (src/main/workflows/workflow-agent-effort.ts, real here).
+    afterEach(() => {
+      forgetWorkflowAgentEffort('pty-agent-1');
+    });
+
+    it('is the one the agent was started with when the status line reports none', () => {
+      recordWorkflowAgentEffort('pty-agent-1', 'high');
+      const { sessionManager, usageHistoryRepo, recordSessionUsage } = makeMocks({ 'pty-agent-1': makeUsage() });
+
+      captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+
+      expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high' }));
+    });
+
+    it('is the status line\'s when it reports one, over the effort the agent was started with', () => {
+      recordWorkflowAgentEffort('pty-agent-1', 'high');
+      const { sessionManager, usageHistoryRepo, recordSessionUsage } = makeMocks({
+        'pty-agent-1': makeUsage({ model: { id: 'claude-opus-4', displayName: 'Claude Opus 4', effort: 'low' } }),
+      });
+
+      captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+
+      expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ effort: 'low' }));
+    });
+
+    it('is null for a session whose start recorded no effort', () => {
+      const { sessionManager, usageHistoryRepo, recordSessionUsage } = makeMocks({ 'pty-agent-1': makeUsage() });
+
+      captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+
+      expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ effort: null }));
+    });
+
+    it('is null when the agent was started on the CLI\'s own default effort', () => {
+      recordWorkflowAgentEffort('pty-agent-1', null);
+      const { sessionManager, usageHistoryRepo, recordSessionUsage } = makeMocks({ 'pty-agent-1': makeUsage() });
+
+      captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+
+      expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ effort: null }));
+    });
+
+    it('is another session\'s effort never: each session id keeps its own', () => {
+      recordWorkflowAgentEffort('pty-other-agent', 'max');
+      const { sessionManager, usageHistoryRepo, recordSessionUsage } = makeMocks({ 'pty-agent-1': makeUsage() });
+
+      captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+      forgetWorkflowAgentEffort('pty-other-agent');
+
+      expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ effort: null }));
+    });
+
+    it('is forgotten when the session is: a forgotten session books null', () => {
+      recordWorkflowAgentEffort('pty-agent-1', 'high');
+      forgetWorkflowAgentEffort('pty-agent-1');
+      const { sessionManager, usageHistoryRepo, recordSessionUsage } = makeMocks({ 'pty-agent-1': makeUsage() });
+
+      captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+
+      expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ effort: null }));
+    });
+  });
+});
 
 describe('captureSessionMetrics history write', () => {
   beforeEach(() => {

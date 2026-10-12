@@ -10,13 +10,15 @@ chrome unless these are stated.
 
 ## The rule
 
-- **Icons:** use Lucide React icons. No inline SVGs. Exactly three files are exempt, each
-  consuming a shipped `@kangentic/branding` asset that cannot be a lucide glyph:
+- **Icons:** use Lucide React icons. No inline SVGs. Exactly four files are exempt. Three
+  consume a shipped `@kangentic/branding` asset that cannot be a lucide glyph:
   `components/BrandMark.tsx` (the brandmark lockup), `components/ActivityMark.tsx` (the nine
   activity marks, shared with the website and mobile app), and
-  `components/command-bar/CommandTerminalIcon.tsx` (a wrapper over `ActivityMark`). Each carries
-  a comment naming this rule. Adding a fourth needs the same justification, not a silent inline
-  `<svg>`.
+  `components/command-bar/CommandTerminalIcon.tsx` (a wrapper over `ActivityMark`). The fourth,
+  `components/workflows/NoWorkflowsIllustration.tsx`, is the Workflows empty state's drawing of
+  four linked cards: its curves are a diagram, not an icon, so no lucide glyph can draw them. It
+  paints only theme tokens and never moves. Each exempt file carries a comment naming this rule.
+  Adding a fifth needs the same justification, not a silent inline `<svg>`.
 - **List keys:** every JSX element rendered from `.map()` (or any array) carries a stable `key`.
   This is review-only. `react/jsx-key` used to enforce it, but that rule ships with
   `eslint-plugin-react`, which has no ESLint 10 release (its peer range stops at ESLint 9), so
@@ -145,9 +147,12 @@ chrome unless these are stated.
   (`src/main/agent/adapters/**`) is caught by the always-on conventions finder instead, which runs
   regardless of which files changed.
 - **Test (inline-SVG allowlist only):** `tests/unit/branding-assets.test.ts` asserts which
-  branding asset each of the three exempt files imports, so the allowlist above is anchored to
-  real imports rather than being a fourth list that drifts. It does not detect a NEW inline
-  `<svg>` elsewhere; that stays review-caught.
+  branding asset each of the three branding exemptions imports, so the allowlist above is
+  anchored to real imports rather than being a list that drifts. For the drawn exemption it
+  asserts the file draws an `<svg>`, names this rule, and holds no hex color, animation, or
+  transition. It also fails when the Icons bullet above names a file the test does not list, or
+  the test lists one the bullet does not name. It does not detect a NEW inline `<svg>`
+  elsewhere; that stays review-caught.
 - **Test (text selection):** `tests/unit/clickable-control-select-none.test.ts` parses the TSX AST
   under `src/renderer/**` and fails on a non-`button` element with an `onClick` and an action cursor
   whose className lacks `select-none`, unless it carries a `// select-none-ok: <reason>` marker. It

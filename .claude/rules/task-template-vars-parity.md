@@ -6,6 +6,7 @@ paths:
   - "src/main/ipc/helpers/agent-spawn.ts"
   - "src/main/transition-engine/transition-engine.ts"
   - "src/renderer/components/dialogs/BoardManagerDialog.tsx"
+  - "src/renderer/components/TemplateVariablePicker.tsx"
   - "docs/transition-engine.md"
   - "docs/architecture.md"
 ---
@@ -36,10 +37,12 @@ When you add, rename, or remove a task-template keyword:
 2. **Resolver:** add/rename/remove the matching key in `TASK_TEMPLATE_RESOLVERS`
    (`src/main/agent/shared/task-template-resolvers.ts`). The `Record<TaskTemplateVarName, ...>`
    shape makes a missing resolver a `tsc` failure, not a silent gap.
-3. **UI:** nothing to edit - `BoardManagerDialog.tsx`'s "Template variable" picker maps
-   `TASK_TEMPLATE_VARS` directly, rendering each entry's `chip` and `description`. Because it
-   shows the description too, a new keyword's `description` is user-facing copy, not just a docs
-   string: keep it to one line (the menu clamps it).
+3. **UI:** nothing to edit - the shared "Template variable" picker
+   (`components/TemplateVariablePicker.tsx`) maps one context of the catalog
+   (`templateVarsFor(context)`), rendering each entry's `chip` and `description`: the Board
+   Manager's automation fields use `'automation'`, and Settings' Workflow agent prompt uses
+   `'workflow'`. Because it shows the description too, a new keyword's `description` is
+   user-facing copy, not just a docs string: keep it to one line (the menu clamps it).
 4. **Docs:** document the new keyword in both `docs/transition-engine.md` (Template Variables)
    and `docs/architecture.md` (Action Types). This couples to [[docs-stay-in-sync]].
 5. **Resolution semantics are per-keyword, not a blanket rule.** `{{baseBranch}}` resolves to the

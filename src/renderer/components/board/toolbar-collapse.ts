@@ -43,23 +43,32 @@
  *
  * So each step fires where the CURRENT state would push the search below about
  * 140px (roughly eleven characters, which a one-to-three word board query lives
- * in), and the two branches reach that at genuinely different widths: backlog
- * carries two actions where board carries one, and New Task is wider than Add
- * column. Measured fixed cost of everything that is not the search:
+ * in), and the branches reach that at genuinely different widths: backlog
+ * carries two actions where board carries one, New Task is wider than Add
+ * column, and Workflows has none. Measured fixed cost of everything that is not
+ * the search, in the row's content box (what the container query reads), with
+ * the three-view switcher and the Backlog count badge showing:
  *
- *   state              board   backlog
- *   full                 647       770
- *   after step 1         485       526
- *   after step 2         427       468
- *   after step 3         325       368
+ *   state              board   backlog   workflows
+ *   full                 708       827         576
+ *   after step 1         555       587         423
+ *   after step 2         411       444         280
+ *   after step 3         298       342           -
  *
- * Add 140 to each and round, and you get the thresholds below. Sharing one set
- * would mean using the backlog's, which collapses the board's filter labels about
- * 130px of window earlier than it needs to.
+ * Add 140, plus 26 for the count badge the Workflows segment carried when these
+ * were measured, and round up, and you get the thresholds below. The badge is
+ * now the 16px working mark a project with a running workflow shows, 22px with
+ * its gap, so the thresholds keep 4px of slack. Workflows has no step
+ * 3: its dividers are the last thing to give, and they hold down to the floor.
+ * Sharing one set would mean using the backlog's, which collapses the board's
+ * filter labels about 120px of window earlier than it needs to.
  *
- * At the absolute floor (495px, a 400px sidebar at a 900px window) the backlog
- * search lands at 127px, under the target. There is nothing left to give there;
- * that is the width the dividers turn into gaps to claw 26px back for.
+ * At the absolute floor (495px, a 400px sidebar at a 900px window, 463px of
+ * content) the backlog search is at its narrowest with the Backlog count and the
+ * Workflows mark showing; `toolbar-narrow-window.spec.ts` seeds both and holds
+ * it to its floor.
+ * There is nothing left to give there; that is the width the dividers turn into
+ * gaps, and the switcher's options tighten, to claw back for.
  *
  * Every class string below is a COMPLETE literal. Tailwind scans source text for
  * class candidates, so a breakpoint composed from a variable at a call site would
@@ -107,6 +116,15 @@ export interface ToolbarCollapseClasses {
    * 16px glyph, the option derives 30px instead, and the row reads ragged.
    */
   viewSwitcherIcon: string;
+  /**
+   * The switcher's option padding and gap, on the same query as its label:
+   * 12px a side around a word, 4px around an icon alone (the control's own
+   * `tight` value), with 2px before a count badge or mark instead of 6. The
+   * three icon-only options, the Backlog count and the Workflows mark gave back
+   * 44px when measured with two counts, which at the floor is the difference
+   * between a backlog search field and a slot.
+   */
+  viewSwitcherSpacing: string;
   /** Add column, or New Task. Last to give: a primary action's word is worth most. */
   primaryAction: ToolbarControlCollapse;
   /**
@@ -120,25 +138,27 @@ export interface ToolbarCollapseClasses {
 
 export const BOARD_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   filterControl: {
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[790px]:w-auto @[790px]:h-auto @[790px]:px-3',
-    label: 'hidden @[790px]:inline',
+    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[880px]:w-auto @[880px]:h-auto @[880px]:px-3',
+    label: 'hidden @[880px]:inline',
   },
-  viewSwitcherLabel: 'hidden @[630px]:inline',
-  viewSwitcherIcon: 'flex items-center h-5 @[630px]:hidden',
+  viewSwitcherLabel: 'hidden @[730px]:inline',
+  viewSwitcherIcon: 'flex items-center h-5 @[730px]:hidden',
+  viewSwitcherSpacing: 'px-1 gap-0.5 @[730px]:px-3 @[730px]:gap-1.5',
   primaryAction: {
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[570px]:w-auto @[570px]:h-auto @[570px]:px-3',
-    label: 'hidden @[570px]:inline',
+    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[580px]:w-auto @[580px]:h-auto @[580px]:px-3',
+    label: 'hidden @[580px]:inline',
   },
-  divider: 'h-5 shrink-0 w-0 mx-1 bg-transparent @[570px]:w-px @[570px]:mx-2.5 @[570px]:bg-edge/50',
+  divider: 'h-5 shrink-0 w-0 mx-1 bg-transparent @[580px]:w-px @[580px]:mx-2.5 @[580px]:bg-edge/50',
 };
 
 export const BACKLOG_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   filterControl: {
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[920px]:w-auto @[920px]:h-auto @[920px]:px-3',
-    label: 'hidden @[920px]:inline',
+    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[1000px]:w-auto @[1000px]:h-auto @[1000px]:px-3',
+    label: 'hidden @[1000px]:inline',
   },
-  viewSwitcherLabel: 'hidden @[670px]:inline',
-  viewSwitcherIcon: 'flex items-center h-5 @[670px]:hidden',
+  viewSwitcherLabel: 'hidden @[760px]:inline',
+  viewSwitcherIcon: 'flex items-center h-5 @[760px]:hidden',
+  viewSwitcherSpacing: 'px-1 gap-0.5 @[760px]:px-3 @[760px]:gap-1.5',
   primaryAction: {
     // `px-4`, not the board action's `px-3`: New Task keeps its own wider padding
     // above the threshold.
@@ -146,4 +166,25 @@ export const BACKLOG_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
     label: 'hidden @[610px]:inline',
   },
   divider: 'h-5 shrink-0 w-0 mx-1 bg-transparent @[610px]:w-px @[610px]:mx-2.5 @[610px]:bg-edge/50',
+};
+
+/**
+ * The Workflows branch: the board's own search and filter (the view shares
+ * them) and no primary action, since the view's actions live in its own
+ * header. So the dividers are the last thing to give.
+ */
+export const WORKFLOWS_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
+  filterControl: {
+    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[750px]:w-auto @[750px]:h-auto @[750px]:px-3',
+    label: 'hidden @[750px]:inline',
+  },
+  viewSwitcherLabel: 'hidden @[590px]:inline',
+  viewSwitcherIcon: 'flex items-center h-5 @[590px]:hidden',
+  viewSwitcherSpacing: 'px-1 gap-0.5 @[590px]:px-3 @[590px]:gap-1.5',
+  // Unused: the view has no toolbar action. Kept so the branch has the same shape.
+  primaryAction: {
+    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[450px]:w-auto @[450px]:h-auto @[450px]:px-3',
+    label: 'hidden @[450px]:inline',
+  },
+  divider: 'h-5 shrink-0 w-0 mx-1 bg-transparent @[450px]:w-px @[450px]:mx-2.5 @[450px]:bg-edge/50',
 };

@@ -13,6 +13,7 @@ import {
   type CollisionDetection,
   type DropAnimation,
   type DropAnimationKeyframeResolver,
+  type Modifier,
 } from '@dnd-kit/core';
 import {
   sortableKeyboardCoordinates,
@@ -23,8 +24,11 @@ import { useBoardStore } from '../stores/board-store';
 import { useToastStore } from '../stores/toast-store';
 import { useProjectStore } from '../stores/project-store';
 import { useConfigStore } from '../stores/config-store';
+import { useWorkflowStore } from '../stores/workflow-store';
 import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
 import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
+import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../utils/workflow-refusal';
+import { isLockedOnBoard } from '../utils/board-workflow';
 import type { Task, Swimlane as SwimlaneType } from '../../shared/types';
 
 interface UseBoardDragDropParams {
@@ -36,6 +40,8 @@ interface UseBoardDragDropParams {
 interface UseBoardDragDropResult {
   sensors: ReturnType<typeof useSensors>;
   collisionDetection: CollisionDetection;
+  /** The DndContext's modifiers: a locked workflow card stays over its own column. */
+  modifiers: Modifier[];
   handleDragStart: (event: DragStartEvent) => void;
   handleDragOver: (event: DragOverEvent) => void;
   handleDragEnd: (event: DragEndEvent) => Promise<void>;
@@ -155,6 +161,18 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
   // animation when dnd-kit's rect is gone.
   const dragStartRectRef = useRef<DOMRect | null>(null);
 
+  // The column a locked workflow card is held to for this drag (its workflow
+  // runs and only the workflow moves it, `isLockedOnBoard`), or null. The
+  // card can still be reordered there, so a person can regroup a column, but
+  // the drag never reaches another column: collisions see only this column's
+  // cards, and the card itself moves up and down only (`modifiers`). Set at
+  // the drag's start; main refuses a cross-column move on its own as well.
+  const lockedLaneRef = useRef<string | null>(null);
+
+  const modifiers = useMemo<Modifier[]>(() => [
+    ({ transform }) => (lockedLaneRef.current ? { ...transform, x: 0 } : transform),
+  ], []);
+
   // True between beginBoardDrag() and its paired endBoardDrag(). Read only by
   // the unmount cleanup below to recover the reload gate if the <DndContext>
   // unmounts mid-drag (dnd-kit fires no dragEnd/dragCancel in that case).
@@ -188,12 +206,6 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     [swimlanes],
   );
 
-  /** O(1) swimlaneId → hex color lookup for drop highlight styling. */
-  const swimlaneColorMap = useMemo(
-    () => new Map(swimlanes.map((swimlane) => [swimlane.id, swimlane.color])),
-    [swimlanes],
-  );
-
   /** O(1) taskId → swimlaneId lookup covering both active and archived tasks. */
   const taskToSwimlane = useMemo(() => {
     const map = new Map<string, string>();
@@ -212,6 +224,20 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // Column drags: closestCorners (unchanged)
     if (String(args.active.id).startsWith('column:')) {
       return closestCorners(args);
+    }
+
+    // A locked workflow card reorders among its own column's cards and reaches
+    // nothing else. Held in Done (an archived card), it has nowhere to go.
+    const lockedLane = lockedLaneRef.current;
+    if (lockedLane) {
+      if (lockedLane === doneLaneId) return [];
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter((container) => {
+          const containerId = String(container.id);
+          return !containerId.startsWith('column:') && !swimlaneIds.has(containerId) && findSwimlane(containerId) === lockedLane;
+        }),
+      });
     }
 
     // Done column: check with pointerWithin first (docs' "trash bin" pattern).
@@ -274,29 +300,22 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     return closestCenter({ ...args, droppableContainers: otherSwimlaneContainers });
   }, [findSwimlane, doneLaneId, swimlaneIds]);
 
-  /** Toggle .drop-highlight class on swimlane DOM elements without React re-render. */
+  /**
+   * Toggle .drop-highlight class on swimlane DOM elements without React re-render.
+   * Only the class: the lane carries its `--drop-color` from render (Swimlane),
+   * because writing that inherited property here restyled the whole lane.
+   */
   const updateDropHighlight = useCallback((targetId: string | null) => {
     const previousId = hoveringSwimlaneIdRef.current;
     if (previousId === targetId) return;
     if (previousId) {
-      const previousElement = document.querySelector(`[data-swimlane-id="${previousId}"]`) as HTMLElement | null;
-      if (previousElement) {
-        previousElement.classList.remove('drop-highlight');
-        previousElement.style.removeProperty('--drop-color');
-      }
+      document.querySelector(`[data-swimlane-id="${previousId}"]`)?.classList.remove('drop-highlight');
     }
     if (targetId) {
-      const targetElement = document.querySelector(`[data-swimlane-id="${targetId}"]`) as HTMLElement | null;
-      if (targetElement) {
-        const color = swimlaneColorMap.get(targetId);
-        if (color) {
-          targetElement.style.setProperty('--drop-color', color);
-        }
-        targetElement.classList.add('drop-highlight');
-      }
+      document.querySelector(`[data-swimlane-id="${targetId}"]`)?.classList.add('drop-highlight');
     }
     hoveringSwimlaneIdRef.current = targetId;
-  }, [swimlaneColorMap]);
+  }, []);
 
   // Clean up stale drop highlights on unmount (e.g. HMR replaces this component
   // mid-drag, so handleDragEnd/handleDragCancel never fire).
@@ -331,6 +350,14 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     beginBoardDrag();
     dragInFlightRef.current = true;
     const id = event.active.id as string;
+    // A drag of another card ends the workflow links overlay, and a load of
+    // one still in flight. A drag of the card whose links are up keeps them:
+    // the overlay follows it every frame while it is reordered (KanbanBoard
+    // passes it `dragging`).
+    const workflowState = useWorkflowStore.getState();
+    const draggingFocus = workflowState.linkFocus?.taskId === id;
+    if (!draggingFocus && (workflowState.linkFocus || workflowState.linkFocusLoading)) workflowState.clearLinks();
+    lockedLaneRef.current = null;
     if (!id.startsWith('column:')) {
       const swimlaneId = taskToSwimlane.get(id);
       if (swimlaneId) {
@@ -338,6 +365,8 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
         const task = state.tasks.find((candidate) => candidate.id === id)
           ?? state.archivedTasks.find((candidate) => candidate.id === id);
         if (task) {
+          const workflow = task.workflow_id ? boardWorkflowNow(task) : null;
+          lockedLaneRef.current = workflow && isLockedOnBoard(workflow) ? task.swimlane_id : null;
           setActiveTask(task);
           dragOriginRef.current = task.swimlane_id;
           const sourceElement = document.querySelector(`[data-task-id="${id}"]`);
@@ -382,6 +411,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     const { active, over } = event;
     const originalSwimlane = dragOriginRef.current;
     const stashedStartRect = dragStartRectRef.current;
+    lockedLaneRef.current = null;
     dragOriginRef.current = null;
     dragStartRectRef.current = null;
     setActiveTask(null);
@@ -463,6 +493,18 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       return;
     }
 
+    // --- A workflow's lock ---
+    // Asked before anything moves or flies, with main's own predicate, so a
+    // refused card goes back to its column (the reload undoes the drag-over
+    // placement) and the reason shows with the card's links.
+    const movingTask = state.tasks.find((candidate) => candidate.id === taskId);
+    const refusal = movingTask ? refusedBoardMove(movingTask, targetSwimlaneId, swimlanes) : null;
+    if (movingTask && refusal) {
+      useBoardStore.getState().loadBoard();
+      showWorkflowRefusal(movingTask, refusal, () => useBoardStore.getState().setActiveView('workflows'));
+      return;
+    }
+
     const currentTasks = state.tasks;
     const laneTasks = currentTasks
       .filter((task) => task.swimlane_id === targetSwimlaneId && task.id !== taskId)
@@ -486,6 +528,12 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     if (doneLane && targetSwimlaneId === doneLane.id && originalSwimlane) {
       const task = state.tasks.find((candidate) => candidate.id === taskId);
       if (!task) return;
+
+      // The card's own kept links followed it through the drag. Flying into
+      // Done it has no card on the board to draw them to, so they end here
+      // rather than leave the board dimmed with no lines for the flight.
+      const workflowState = useWorkflowStore.getState();
+      if (workflowState.linkFocus?.taskId === taskId) workflowState.clearLinks();
 
       // Hide the card from its source column synchronously. On release dnd-kit
       // restores the original sortable card to full opacity in its source lane;
@@ -601,6 +649,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     endBoardDrag();
     setActiveTask(null);
     updateDropHighlight(null);
+    lockedLaneRef.current = null;
     dragOriginRef.current = null;
     dragStartRectRef.current = null;
     useBoardStore.getState().loadBoard();
@@ -609,6 +658,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
   return {
     sensors,
     collisionDetection,
+    modifiers,
     handleDragStart,
     handleDragOver,
     handleDragEnd,

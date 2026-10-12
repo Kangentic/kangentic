@@ -29,7 +29,7 @@
  * are literally the defaults), so there is nothing for a highlight to pick out.
  * They keep the picker button they already have.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { templateVarsFor } from '../../shared/task-template-vars';
 import type { TaskTemplateContextName, TaskTemplateVarInfo } from '../../shared/task-template-vars';
 import {
@@ -131,7 +131,28 @@ export interface TemplateTextFieldProps {
    * them would put the field's label inside the field.
    */
   insertRef?: React.RefObject<TemplateTextFieldInsert | null>;
+  /**
+   * Start one row tall and grow with the text, up to `maxRows`, then scroll.
+   * For a field that is usually one line and sometimes a paragraph (an
+   * automation's Condition, a Move to column message), so the dialog is not
+   * tall for the common case and nothing hides the rare long one. `rows` is
+   * ignored while this is set.
+   */
+  grow?: { maxRows: number };
+  /** Shown dimmed and not editable, keeping its place (an automation's Condition switched off). */
+  disabled?: boolean;
+  /** Fired when the field loses focus, for a caller that saves then (a settings field). */
+  onBlur?: () => void;
+  /**
+   * Fill the parent's height and scroll inside, for a field that IS the body of
+   * a dialog (the Workflow agent prompt's editor). `rows` is ignored while set.
+   */
+  fill?: boolean;
 }
+
+/** `leading-5` and `py-1.5` from `LAYER_CLASS`: one row, and the padding around the rows. */
+const ROW_HEIGHT_PX = 20;
+const VERTICAL_PADDING_PX = 12;
 
 export function TemplateTextField({
   value,
@@ -142,9 +163,26 @@ export function TemplateTextField({
   placeholder,
   ariaLabel,
   insertRef,
+  grow,
+  disabled = false,
+  onBlur,
+  fill = false,
 }: TemplateTextFieldProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
+  const maxGrowRows = grow?.maxRows ?? null;
+
+  // Grow with the text: measure the content at its natural height, then cap it.
+  // A layout effect, so the field is never painted at the old height for a frame
+  // after a keystroke that wrapped a line.
+  useLayoutEffect(() => {
+    if (maxGrowRows === null) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const capped = Math.min(textarea.scrollHeight, maxGrowRows * ROW_HEIGHT_PX + VERTICAL_PADDING_PX);
+    textarea.style.height = `${capped}px`;
+  }, [value, maxGrowRows]);
   const [trigger, setTrigger] = useState<{ query: string; rangeStart: number; rangeEnd: number } | null>(null);
   const [storedActiveIndex, setActiveIndex] = useState(0);
 
@@ -271,7 +309,7 @@ export function TemplateTextField({
   };
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className={fill ? 'flex min-h-0 flex-1 flex-col gap-1' : 'flex flex-col gap-1'}>
       {/* Two nested boxes, and both are load-bearing. The OUTER one anchors the
           inline picker, which hangs below the field at `top-full` and would be
           clipped away entirely by the inner box's `overflow-hidden`. The INNER
@@ -281,8 +319,8 @@ export function TemplateTextField({
           completely. That shipped for exactly one preview: every test passed
           while the field rendered blank, because they assert DOM attributes and
           a blank field has all the right ones. */}
-      <div className="relative" data-testid={`${testId}-body`}>
-        <div className="relative overflow-hidden rounded border border-edge-input bg-surface-control focus-within:border-accent">
+      <div className={`relative ${fill ? 'min-h-0 flex-1' : ''} ${disabled ? 'opacity-50' : ''}`} data-testid={`${testId}-body`}>
+        <div className={`relative overflow-hidden rounded border border-edge-input bg-surface-control focus-within:border-accent ${fill ? 'h-full' : ''}`}>
           {/* Under the textarea, and inert. `aria-hidden` because it is the same
               string the textarea already exposes: without it every value is
               announced twice. */}
@@ -327,20 +365,21 @@ export function TemplateTextField({
             data-testid={testId}
             aria-label={ariaLabel}
             value={value}
-            rows={rows}
+            rows={maxGrowRows === null ? rows : 1}
             placeholder={placeholder}
+            disabled={disabled}
             onChange={(event) => { onChange(event.target.value); refreshTrigger(); }}
             onSelect={refreshTrigger}
             onClick={refreshTrigger}
             onKeyDown={handleKeyDown}
             onScroll={syncScroll}
-            onBlur={() => setTrigger(null)}
+            onBlur={() => { setTrigger(null); onBlur?.(); }}
             // Transparent BOTH ways, and neither is optional. The background
             // would hide the mirror this control exists for; the text would
             // double every character against the mirror's copy. The caret and
             // the selection still come from here, which is what keeps native
             // selection painting and IME correct.
-            className={`${LAYER_CLASS} relative block bg-transparent text-transparent caret-fg-tertiary placeholder-fg-muted focus:outline-none overflow-y-auto`}
+            className={`${LAYER_CLASS} relative block bg-transparent text-transparent caret-fg-tertiary placeholder-fg-muted focus:outline-none overflow-y-auto ${fill ? 'h-full' : ''}`}
           />
         </div>
 
@@ -349,11 +388,15 @@ export function TemplateTextField({
           // portaled. This one is the inline `{{` completer, anchored to the
           // caret in the field it completes.
           //
-          // popover-inflow-ok: no clipping ancestor at its only mount site.
-          // `EditAutomationDialog` is the sole consumer, and its panel root is
-          // `overflow-visible` (`BaseDialog.tsx`) while its body is the plain
-          // `px-4 py-4` branch, not the `rawBody` one that sets
-          // `overflow-hidden`. Re-check if the field gains a second consumer.
+          // popover-inflow-ok: no clipping ancestor at either mount site.
+          // `EditAutomationDialog`'s panel root is `overflow-visible`
+          // (`BaseDialog.tsx`) and its body is the plain `px-4 py-4` branch,
+          // not the `rawBody` one that sets `overflow-hidden`. Settings'
+          // Workflow agent prompt sits in the tab's scroll area, which grows
+          // to hold the completer rather than clipping it; in its editor
+          // dialog the field fills the body, so the completer can pass under
+          // the footer, and the Template variable button (portaled) is the
+          // way in there. Re-check if the field gains another consumer.
           <div
             data-testid={`${testId}-inline-picker`}
             className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-lg border border-edge bg-surface py-1 shadow-xl"

@@ -9,6 +9,7 @@ import { useConfigStore } from './stores/config-store';
 import { useMobileStore } from './stores/mobile-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
+import { useWorkflowStore } from './stores/workflow-store';
 import { useToastStore } from './stores/toast-store';
 import { useLeftoverProcessesStore } from './stores/leftover-processes-store';
 import { describeLeftoverReport } from './lib/leftover-processes';
@@ -1124,6 +1125,38 @@ export function App() {
         }
       }));
     }
+    // Every task in a workflow reached Done. Shaped like Plan Complete: a toast
+    // for the project on screen, a desktop notification through the same
+    // focus gate and cooldown for one that is not.
+    if (tasks?.onWorkflowCompleted) {
+      cleanups.push(tasks.onWorkflowCompleted((completed) => {
+        const notifyConfig = useConfigStore.getState().config.notifications;
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (completed.projectId === activeProjectId && notifyConfig.toasts.onWorkflowComplete) {
+          useToastStore.getState().addToast({
+            message: completed.taskCount === 1
+              ? `Workflow complete. The task of "${completed.title}" is in Done.`
+              : `Workflow complete. All ${completed.taskCount} tasks of "${completed.title}" are in Done.`,
+            variant: 'success',
+          });
+        }
+        if (notifyConfig.desktop.onWorkflowComplete) {
+          const notificationKey = `workflow-complete:${completed.workflowId}`;
+          shouldNotify(notificationKey, completed.projectId).then((notify) => {
+            if (!notify) return;
+            const project = useProjectStore.getState().projects.find((candidate) => candidate.id === completed.projectId);
+            // No task: a click on it goes to the workflow's project.
+            sendNotification(notificationKey, `Workflow complete: ${completed.title}`, project?.name ?? 'A project', completed.projectId, '');
+          });
+        }
+      }));
+    }
+    // A workflow or its tasks changed, whoever changed it: the Workflows view
+    // (and its segment's count) reloads that one workflow.
+    const workflows = window.electronAPI?.workflows;
+    if (workflows?.onChanged) {
+      cleanups.push(workflows.onChanged((changed) => useWorkflowStore.getState().handleChanged(changed)));
+    }
 
     return () => {
       cleanups.forEach((fn) => fn());
@@ -1222,6 +1255,10 @@ if (import.meta.hot) {
     useBoardStore.getState().loadBoardProfiles();
     useBoardStore.getState().loadAutomations();
     useBacklogStore.getState().loadBacklog();
+    useWorkflowStore.getState().loadWorkflows();
+    useWorkflowStore.getState().loadSupersessions();
+    useWorkflowStore.getState().loadDetail();
+    useWorkflowStore.getState().loadHomeSummaries(Object.keys(useWorkflowStore.getState().homeSummaries));
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();
     // Usage dashboard Pattern B: refetch the composite payload from
@@ -1299,5 +1336,8 @@ if (import.meta.env.DEV) {
     // happens to toast verbatim (`config:writeFailed`), which drags unrelated
     // setup into a test about toasts.
     toast: useToastStore,
+    // So a UI test can open and clear the board's links overlay in the same
+    // task it then reads, to catch the overlay's fade while it runs.
+    workflow: useWorkflowStore,
   };
 }

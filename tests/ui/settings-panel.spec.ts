@@ -210,6 +210,9 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Agent Idle')).toBeVisible();
     await expect(page.getByText('Agent Crash')).toBeVisible();
     await expect(page.getByText('Plan Complete')).toBeVisible();
+    // Workflow complete defaults to both channels, as the app's own defaults
+    // do. The mock's config once lacked the key, so the row read Off here.
+    await expect(page.getByTestId('notify-channel-onWorkflowComplete-both')).toHaveAttribute('aria-checked', 'true');
     // Delivery settings
     await expect(page.getByText('Toast Auto-Dismiss')).toBeVisible();
     await expect(page.getByText('Max Visible Toasts')).toBeVisible();

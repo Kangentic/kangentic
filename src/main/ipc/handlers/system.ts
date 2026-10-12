@@ -125,11 +125,17 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.APP_GET_VERSION, () => app.getVersion());
 
   // === Config ===
-  ipcMain.handle(IPC.CONFIG_GET, () => {
-    const config = context.configManager.getEffectiveConfig(context.currentProjectPath || undefined);
+  ipcMain.handle(IPC.CONFIG_GET, (_event, projectId?: string | null) => {
+    // Another registered project's, for a workflow's planned task on its board
+    // (its default base branch and Worktrees switch); the open project's otherwise.
+    const otherProject = projectId && projectId !== context.currentProjectId ? context.projectRepo.getById(projectId) : undefined;
+    if (projectId && projectId !== context.currentProjectId && !otherProject) throw new Error('Unknown project');
+    const config = context.configManager.getEffectiveConfig(otherProject ? otherProject.path : context.currentProjectPath || undefined);
     // Overlay board config's defaultBaseBranch (team-shared) onto the effective config.
     // Spread to avoid mutating the cached config object from ConfigManager.
-    const boardDefaultBranch = context.boardConfigManager.getDefaultBaseBranch();
+    const boardDefaultBranch = otherProject
+      ? context.boardConfigManager.getDefaultBaseBranchForPath(otherProject.path)
+      : context.boardConfigManager.getDefaultBaseBranch();
     if (boardDefaultBranch) {
       return { ...config, git: { ...config.git, defaultBaseBranch: boardDefaultBranch } };
     }
@@ -636,10 +642,15 @@ export function registerSystemHandlers(context: IpcContext): void {
     return context.gitDetector.detect();
   });
 
-  ipcMain.handle(IPC.GIT_LIST_BRANCHES, async () => {
-    if (!context.currentProjectPath || !isGitRepo(context.currentProjectPath)) return [];
+  // The open project's branches, or another registered project's for a
+  // workflow's planned task on its board (an unknown one has none).
+  ipcMain.handle(IPC.GIT_LIST_BRANCHES, async (_event, projectId?: string | null) => {
+    const projectPath = projectId && projectId !== context.currentProjectId
+      ? context.projectRepo.getById(projectId)?.path ?? null
+      : context.currentProjectPath;
+    if (!projectPath || !isGitRepo(projectPath)) return [];
     try {
-      const worktreeManager = new WorktreeManager(context.currentProjectPath);
+      const worktreeManager = new WorktreeManager(projectPath);
       return await worktreeManager.listRemoteBranches();
     } catch { return []; }
   });

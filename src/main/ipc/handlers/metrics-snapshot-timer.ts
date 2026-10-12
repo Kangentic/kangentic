@@ -2,7 +2,8 @@ import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import { captureSessionMetrics } from './session-metrics';
+import { captureSessionMetrics, captureWorkflowAgentUsage } from './session-metrics';
+import { isWorkflowAgentSession } from '../../../shared/session-owner';
 import type { SessionManager } from '../../pty/session-manager';
 import type { Session } from '../../../shared/types';
 import { writeTransaction } from '../../db/transaction';
@@ -72,6 +73,11 @@ function snapshotRunningSessions(sessionManager: SessionManager): void {
       const snapshotProjectBatch = writeTransaction(db, () => {
         for (const session of sessions) {
           try {
+            // A workflow's agent has no sessions row; its spend has its own writer.
+            if (isWorkflowAgentSession(session)) {
+              captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+              continue;
+            }
             // The session's own record with no fallback (see resolveOwnSessionRecord).
             const record = sessionRepo.findByAnyId(session.id);
             if (!record || record.status !== 'running') continue;

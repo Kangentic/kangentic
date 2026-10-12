@@ -163,6 +163,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
       inputSchema: z.object({
         taskId: z.string().optional().describe('Task ID (numeric display ID like "42" or full UUID). Returns the transcript from the most recent session for this task (see sessionIndex for older ones).'),
         sessionId: z.string().optional().describe('Session UUID for a specific session. Use kangentic_list_sessions to find session IDs.'),
+        workflow: z.string().optional().describe('A workflow\'s id or exact title: read that workflow\'s own agent\'s conversation (structured only). Use instead of taskId and sessionId.'),
         sessionIndex: z.number().int().min(0).optional().describe('When taskId is given, which session to pick: 0 = newest (default), 1 = previous, etc. Sessions are ordered started_at DESC.'),
         format: z.enum(['structured', 'raw']).optional().describe('"structured" (default) = parsed conversation as markdown from native session history; "raw" = verbatim ANSI-stripped terminal scrollback.'),
         view: z.enum(['full', 'responses', 'result']).optional().describe('Structured only. "full" (default) = whole conversation; "responses" = assistant text turns only (no tool calls/results/thinking); "result" = just the final assistant text (the Agent SDK ResultMessage.result). Ignored for raw.'),
@@ -175,9 +176,10 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ taskId, sessionId, sessionIndex, format, view, tail, search, aroundUuid, context, maxChars, project }) => withProject(resolver, project, (ctx) => callHandler('get_transcript', {
+    async ({ taskId, sessionId, workflow, sessionIndex, format, view, tail, search, aroundUuid, context, maxChars, project }) => withProject(resolver, project, (ctx) => callHandler('get_transcript', {
       taskId: taskId ?? null,
       sessionId: sessionId ?? null,
+      workflow: workflow ?? null,
       sessionIndex: sessionIndex ?? null,
       format: format ?? null,
       view: view ?? null,

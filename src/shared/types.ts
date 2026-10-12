@@ -177,6 +177,9 @@ export interface AgentDetectionInfo {
   pastedImageReferenceTemplate?: string;
   /** True if the adapter exposes a one-shot summarize capability (used by auto-name task title). */
   supportsSummarize?: boolean;
+  /** True if the agent says when its turn ended (`AdapterRuntimeStrategy.reportsTurnEnd`), which
+   *  is what a column's On agent turn end automations and a workflow task's step check need. */
+  reportsTurnEnd?: boolean;
   /** True if the adapter can answer a question over supplied context (used by the
    *  Knowledge Graph's Ask). Read instead of the agent's name, per
    *  `.claude/rules/agent-adapters-boundary.md`. */
@@ -590,6 +593,31 @@ export interface Task {
    * `'agent_override'` clears it, and setting it forces `'column_settings'`.
    */
   run_mode: TaskRunMode;
+  /**
+   * The workflow this task belongs to (`Workflow.id`), or null for an ordinary
+   * task. The workflow, and its links, live in its HOME project's database,
+   * `workflow_project_id`, which is this task's own project unless the
+   * workflow put the task on another board. Written only by the workflow
+   * repository paths (`setWorkflowMembership`), never by the generic `update()`.
+   */
+  workflow_id: string | null;
+  workflow_project_id: string | null;
+  /**
+   * The first column on this task's route. Null means the first column after
+   * To Do, so a column added there later is on the route by default.
+   */
+  route_start_swimlane_id: string | null;
+  /** The last column on the route; null means the column before Done. */
+  route_last_swimlane_id: string | null;
+  /** Columns inside the route this task skips. Empty for none. */
+  skipped_swimlane_ids: string[];
+  /**
+   * Where a hand placed this task's card on the Workflows canvas, or null for
+   * the automatic layout. Written without bumping `updated_at`, as
+   * `detail_view_state` is, so a card drag never re-indexes the task.
+   */
+  canvas_x: number | null;
+  canvas_y: number | null;
   attachment_count: number;
   /**
    * Outcome of this task's most recent auto_command injection - the durable
@@ -887,15 +915,19 @@ export type AutomationType =
   | 'run_script'
   | 'webhook'
   | 'notify'
+  | 'move_to_column'
   | 'spawn_agent';
 
 /**
- * When an automation runs, relative to the column that owns it. There is
+ * When an automation runs, relative to the column that owns it: as a task
+ * enters it, each time the agent working there finishes a turn (`turn_end`, the
+ * session manager's `'turn-ended'`), or as the task leaves. There is
  * deliberately no 'both': every both-ends workflow needs different settings per
- * direction, so it is two automations, and without it a column's two group
- * counts always sum to its total.
+ * direction, so it is two automations, and without it a column's group counts
+ * always sum to its total. `AUTOMATION_TRIGGERS` (`automation-manifest.ts`)
+ * lists them in the order a column shows and runs them.
  */
-export type AutomationTrigger = 'enter' | 'exit';
+export type AutomationTrigger = 'enter' | 'turn_end' | 'exit';
 
 /**
  * An automation's per-type payload. Keys are declared by the adapter's manifest
@@ -929,6 +961,14 @@ export interface AutomationConfig {
   /** webhook payload, and the notification's body. */
   body?: string;
 
+  // move_to_column
+  /**
+   * The destination column's NAME, as `kangentic.json`'s `planExitTarget` names
+   * one. Empty or absent means the next column (on the task's route in a
+   * workflow, else on the board). Renaming a column renames it here too.
+   */
+  targetColumn?: string;
+
   // legacy spawn_agent
   agent?: string;
   promptTemplate?: string;
@@ -942,10 +982,21 @@ export interface ColumnAutomation {
   name: string;
   type: AutomationType;
   trigger: AutomationTrigger;
-  /** 0..n WITHIN (swimlane_id, trigger), so the two groups never interleave. */
+  /** 0..n WITHIN (swimlane_id, trigger), so the groups never interleave. */
   position: number;
   enabled: boolean;
   config: AutomationConfig;
+  /**
+   * Prose the Automation agent judges before the row runs ("All tests pass").
+   * Null means the row always runs, which is every automation made before
+   * Conditions existed. A no is not a run: the row is checked again next time.
+   */
+  condition: string | null;
+  /**
+   * The most times this row may run on one task, counted across every visit
+   * to the column (a review loop's round-trip limit). Null means no limit.
+   */
+  max_runs: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -958,6 +1009,10 @@ export interface AutomationWriteInput {
   trigger: AutomationTrigger;
   enabled: boolean;
   config: AutomationConfig;
+  /** See `ColumnAutomation.condition`. Omitted or null: always runs. */
+  condition?: string | null;
+  /** See `ColumnAutomation.max_runs`. Omitted or null: no limit. */
+  max_runs?: number | null;
 }
 
 /**
@@ -1010,6 +1065,14 @@ export interface AutomationRun {
   attempts: number;
   started_at: string;
   finished_at: string | null;
+  /**
+   * What the Automation agent answered for the row's Condition: true (it ran),
+   * false (a skipped run, checked again next time), null when the row has no
+   * Condition or it was never asked.
+   */
+  condition_met: boolean | null;
+  /** The Automation agent's one-line reason for its answer, or null. */
+  condition_reason: string | null;
 }
 
 /**
@@ -1069,9 +1132,14 @@ export interface Session {
   /** True for ephemeral command terminal sessions (no task association, no DB persistence). */
   transient?: boolean;
   /**
+   * Set on a workflow's own agent: a transient session that is no Command
+   * Terminal. Its `taskId` is the workflow's id. See src/shared/session-owner.ts.
+   */
+  workflowId?: string | null;
+  /**
    * For a transient session, the durable Command Terminal SLOT id (`slot-1`, ...)
    * main allocated at spawn (honoring the slot a desktop window asked for). Null
-   * for task agents.
+   * for task agents and for a workflow's own agent.
    *
    * On this DTO for CORRECTNESS, which is what separates it from `agentName`
    * (deliberately kept off, as a diagnostic - see `listManagedSummaries` in
@@ -2762,6 +2830,8 @@ export interface NotificationConfig {
     onAgentIdle: boolean;
     onAgentCrash: boolean;
     onPlanComplete: boolean;
+    /** Every task in a workflow reached Done. */
+    onWorkflowComplete: boolean;
     /** A task spawn has been preparing (worktree/git) longer than the stall threshold. */
     onSpawnStalled: boolean;
   };
@@ -2769,6 +2839,8 @@ export interface NotificationConfig {
     onAgentIdle: boolean;
     onAgentCrash: boolean;
     onPlanComplete: boolean;
+    /** Every task in a workflow reached Done. */
+    onWorkflowComplete: boolean;
     /** A task spawn has been preparing (worktree/git) longer than the stall threshold. */
     onSpawnStalled: boolean;
     durationSeconds: number;
@@ -3660,6 +3732,42 @@ export interface AppConfig {
   };
 
   /**
+   * The Automation agent: which agent, model and effort answer an automation's
+   * Condition (and, with workflows, judge whether a column's work is done).
+   * GLOBAL, in Settings > Workflows, first card.
+   *
+   * Its own choice, not the Knowledge Graph's and not the project's default
+   * agent: a user may run workflows without the Knowledge Graph, and a check
+   * that silently spent on the project's agent is exactly what the Knowledge
+   * Graph's explicit choice was made to end (`src/shared/answer-agent.ts`). Unset
+   * means no Condition can be switched on and nothing is spent.
+   *
+   * Resolved like `agentJobChoice`: an adapter NAME, a model id cleared whenever
+   * the agent changes, and an effort that is optional (unset runs the adapter's
+   * recommended level).
+   */
+  automation?: {
+    agent?: string | null;
+    model?: string | null;
+    effort?: string | null;
+  };
+
+  /**
+   * Workflows. GLOBAL, in Settings > Workflows.
+   *
+   * `agentPrompt` is the whole first message a new workflow's agent gets,
+   * envelope included (`{{brief_xml}}` is to it what `{{task_xml}}` is to a
+   * column prompt). Unset, or blank, sends `DEFAULT_WORKFLOW_AGENT_PROMPT`
+   * (`src/shared/workflow-agent-prompt.ts`). An edit applies to workflows whose
+   * agent starts after it; a running conversation keeps what it was sent.
+   */
+  workflows?: {
+    agentPrompt?: string | null;
+    /** The Workflows view's agent pane width in px, set by dragging its edge. Unset is the default (560). */
+    agentPaneWidth?: number | null;
+  };
+
+  /**
    * Voice-to-text dictation. GLOBAL/shared scope (hardware/user level, not
    * per-project): lives below the settings separator in the Dictation tab.
    * The push-to-talk binding is NOT here; it lives in `hotkeyOverrides` keyed
@@ -4070,12 +4178,14 @@ export const DEFAULT_CONFIG: AppConfig = {
       onAgentIdle: true,
       onAgentCrash: true,
       onPlanComplete: true,
+      onWorkflowComplete: true,
       onSpawnStalled: true,
     },
     toasts: {
       onAgentIdle: true,
       onAgentCrash: true,
       onPlanComplete: true,
+      onWorkflowComplete: true,
       onSpawnStalled: true,
       durationSeconds: 4,
       maxCount: 5,
@@ -4597,6 +4707,19 @@ export interface TaskCreateInput {
   }>;
   /** Preserve an original creation timestamp (UTC ISO 8601) instead of stamping "now". Used when relocating a task to a different project's board. */
   createdAt?: string;
+  /** Workflow membership and route, for a task a workflow's Start creates (see `Task.workflow_id`). */
+  workflow?: TaskWorkflowMembership;
+}
+
+/** The workflow columns of a task, written together. */
+export interface TaskWorkflowMembership {
+  workflow_id: string;
+  workflow_project_id: string;
+  route_start_swimlane_id: string | null;
+  route_last_swimlane_id: string | null;
+  skipped_swimlane_ids: string[];
+  canvas_x: number | null;
+  canvas_y: number | null;
 }
 
 export interface TaskUpdateInput {
@@ -4730,6 +4853,342 @@ export interface TaskMoveInput {
   taskId: string;
   targetSwimlaneId: string;
   targetPosition: number;
+}
+
+/**
+ * Who moved a task into a column, as `task_moves` records it. The six move
+ * origins `handleTaskMove` takes, plus the writes that place a task without it:
+ * a rollback of a failed move, an unarchive, and a create into a column.
+ */
+export type TaskMoveRecordOrigin =
+  | 'renderer'
+  | 'agent'
+  | 'mobile'
+  | 'auto-move'
+  | 'workflow'
+  | 'automation'
+  | 'rollback'
+  | 'unarchive'
+  | 'create';
+
+/** What a repository write that moves a task records about it. */
+export interface TaskMoveProvenance {
+  origin: TaskMoveRecordOrigin;
+  /** A short why, when the mover knows one ("Back for revisions", "Step done"). */
+  reason?: string | null;
+}
+
+/**
+ * A workflow's lifecycle. A `draft` holds its planned tasks in `draft` and has
+ * created nothing on any board; Start creates them and makes it `running`.
+ * `paused` holds every task's session suspended; `done` is every task in Done.
+ */
+export type WorkflowState = 'draft' | 'running' | 'paused' | 'done';
+
+/**
+ * How a planned task will run, in the task row's own shape, so Start copies
+ * them onto the task it creates: the base branch (null is the board's), the
+ * Worktree or Project choice (null is the project's setting), and Column
+ * Settings with a profile or an agent override. The profile and the four pins
+ * exclude each other exactly as on a task (`applyProfileExclusivity`).
+ */
+export type WorkflowTaskRunSettings = Pick<
+  Task,
+  'base_branch' | 'use_worktree' | 'run_mode' | 'profile_id' | 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'
+>;
+
+/** One planned task in a workflow that has not started. `key` is local to the draft. */
+export interface WorkflowDraftTask extends WorkflowTaskRunSettings {
+  key: string;
+  title: string;
+  description: string;
+  /** The project the task is created in; null is the workflow's home project. */
+  project_id: string | null;
+  /**
+   * A task already on the board that the workflow takes in at Start, instead
+   * of creating one. It must still be in To Do then, and it keeps its own run
+   * settings: this entry's stay at their defaults.
+   */
+  existing_task_id: string | null;
+  route_start_swimlane_id: string | null;
+  route_last_swimlane_id: string | null;
+  skipped_swimlane_ids: string[];
+  labels: string[];
+  priority: number;
+  canvas_x: number | null;
+  canvas_y: number | null;
+}
+
+/** "blocked waits for blocker", by draft keys. */
+export interface WorkflowDraftLink {
+  blocker: string;
+  blocked: string;
+}
+
+export interface WorkflowDraft {
+  tasks: WorkflowDraftTask[];
+  links: WorkflowDraftLink[];
+}
+
+/**
+ * A set of linked tasks with its own agent. Lives in its home project's
+ * database. Its tasks can sit on other projects' boards; each carries this
+ * workflow's id and home project id.
+ */
+export interface Workflow {
+  id: string;
+  title: string;
+  /** The text it was made from (a source task's title and description), never rewritten. */
+  brief: string | null;
+  /** The To Do task it was made from, which moves to Done at Start. */
+  source_task_id: string | null;
+  state: WorkflowState;
+  /** The planned tasks until Start; null once started. */
+  draft: WorkflowDraft | null;
+  /** Which `--kng-chart-N` slot (1 to 6) colors its icon. */
+  color_slot: number;
+  /** Bumped on every save and edit, so a save over a changed workflow is refused. */
+  revision: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  /** When it was last paused, while it is paused (the picker's "Paused yesterday 18:20"); null otherwise. */
+  paused_at: string | null;
+  /** The agent holding the workflow agent's conversation; null until it first starts. */
+  agent_name: string | null;
+  /** The id that conversation resumes by (`--resume`); null until it first starts. */
+  agent_session_id: string | null;
+  /** The checkout that conversation ran in, where the agent CLI keeps its history; null until it first starts. */
+  agent_cwd: string | null;
+  /**
+   * Registered projects the workflow agent asked to read
+   * (`kangentic_request_project_access`), beyond its home project and the projects
+   * its tasks are on, which it always reads. Kept, so a resume reads them too.
+   */
+  agent_read_project_ids: string[];
+}
+
+/**
+ * One column between To Do and Done on a workflow task's board, as the
+ * Workflows view's route rail draws it. Every such column has a step, on the
+ * route or not, so the rail shows the whole board in order.
+ */
+export interface WorkflowRouteStep {
+  swimlaneId: string;
+  name: string;
+  color: string | null;
+  icon: string | null;
+  /**
+   * `done`: the task left it; `current`: the task is in it; `ahead`: on the
+   * route, not reached; `skipped`: off the route.
+   */
+  state: 'done' | 'current' | 'ahead' | 'skipped';
+  /** When the task last left this column, for a `done` step. */
+  finishedAt: string | null;
+}
+
+/** A board's To Do or Done column: an end of every task's journey on that board. */
+export interface WorkflowColumnEnd {
+  swimlaneId: string;
+  name: string;
+  color: string | null;
+  icon: string | null;
+}
+
+/**
+ * A board's two journey ends, which a card's step track draws before and after
+ * the route (To Do first, Done last); null where the board has no such column.
+ */
+export interface WorkflowBoardEnds {
+  todo: WorkflowColumnEnd | null;
+  done: WorkflowColumnEnd | null;
+}
+
+/** Where a workflow task is: `planned` exists only in a workflow that has not started. */
+export type WorkflowTaskPlace = 'planned' | 'todo' | 'working' | 'done';
+
+/**
+ * One task of a workflow as the Workflows view reads it. `key` is the node id:
+ * the draft key before Start, the task id after.
+ */
+export interface WorkflowViewTask {
+  key: string;
+  projectId: string;
+  /** The board task, once created. A home-project card reads its live row from the board store by id. */
+  task: Task | null;
+  /** The planned task, while the workflow has not started. */
+  planned: WorkflowDraftTask | null;
+  title: string;
+  displayId: number | null;
+  place: WorkflowTaskPlace;
+  /** The column it is in, once created. */
+  swimlaneId: string | null;
+  steps: WorkflowRouteStep[];
+  /** Where a hand placed its card on the canvas; null is the automatic layout. */
+  canvasX: number | null;
+  canvasY: number | null;
+}
+
+/** "blocked waits for blocker", by `WorkflowViewTask.key`. */
+export interface WorkflowViewLink {
+  blockerKey: string;
+  blockedKey: string;
+}
+
+/** What the Workflows view draws for one workflow. */
+export interface WorkflowDetail {
+  workflow: Workflow;
+  homeProjectId: string;
+  tasks: WorkflowViewTask[];
+  links: WorkflowViewLink[];
+  /** Each project a task is on, by id; more than one is a workflow across boards. */
+  projectNames: Record<string, string>;
+  /**
+   * Each of those projects' boards' To Do and Done columns, by id: the two
+   * ends a card's step track draws, and the Done color a Done card wears (its
+   * own board's, not the open board's).
+   */
+  boardEnds: Record<string, WorkflowBoardEnds>;
+}
+
+/** What the Workflows view's agent pane shows: the workflow's own agent, or why it has none. */
+export interface WorkflowAgentStatus {
+  /** Its session, running, queued or paused; null when it has none. */
+  session: Session | null;
+  /** Why the workflow agent cannot run, written for the user; null when it can. */
+  unavailable: string | null;
+}
+
+/** One row of the Workflows picker, with the counts the header shows. */
+export interface WorkflowSummary {
+  workflow: Workflow;
+  taskCount: number;
+  doneCount: number;
+  /** Started and not done. */
+  inProgressCount: number;
+  /** In To Do with nothing left to wait for: starts when an agent slot is free. */
+  queuedCount: number;
+  /** In To Do, waiting for a task that is not done. */
+  blockedCount: number;
+  /**
+   * Each created task as a board card shows it, by task id: what its footer
+   * says it waits for, and where a person may drag it. Empty before Start.
+   */
+  boardTasks: Record<string, WorkflowBoardTask>;
+  /** The workflow's own agent as its picker row names it; null when it has no session. */
+  agent: WorkflowAgentSummary | null;
+}
+
+/** A workflow's own agent, for the picker's note ("Agent idle, last message 10:44"). */
+export interface WorkflowAgentSummary {
+  /** `active` mid-turn, `idle` waiting for the user, `paused` suspended. */
+  state: 'active' | 'idle' | 'paused';
+  /** When its last turn ended in this run of the app (ISO); null when none was seen. */
+  lastReplyAt: string | null;
+  /**
+   * The agent's session, when it is a new conversation started because the
+   * earlier one could not be resumed; null otherwise. The agent pane says so
+   * while that session is the one it shows, until the line is closed or the
+   * agent next resumes normally. On the summary, not `WorkflowAgentStatus`,
+   * because the start-over happens after the pane's open has answered, and
+   * only the summary is pushed again.
+   */
+  startedOverSessionId: string | null;
+}
+
+/** A started workflow's task as its board card shows it: the footer and the lock. */
+export interface WorkflowBoardTask {
+  /** The tasks it waits for that are not done, as the footer names them ("#413"). */
+  waitingFor: string[];
+  /**
+   * While the workflow runs and the task sits in a human gate (a column whose
+   * work no agent can judge): the column a person may drag it to. Null otherwise.
+   */
+  humanGateTargetId: string | null;
+  /** It has a link, either way: the strip's links button and hover show them only then. */
+  hasLinks: boolean;
+}
+
+/**
+ * A task the Workflows view adds (Add task) or edits before Start (the Edit
+ * Task window). The run settings are optional: omitted on an add is the
+ * default (Column Settings, the board's base branch), omitted on an edit is
+ * left as it is.
+ */
+export interface WorkflowTaskInput extends Partial<WorkflowTaskRunSettings> {
+  title: string;
+  description?: string;
+  labels?: string[];
+  priority?: number;
+  /**
+   * The board it goes on; omitted is the workflow's home project. Fixed once
+   * the task exists. Changing it on a planned task resets its route to every
+   * column of the new board, and its base branch and profile, which belong to
+   * the old one, unless the same edit sets them.
+   */
+  projectId?: string | null;
+}
+
+/** A card's place on the canvas, by `WorkflowViewTask.key`. */
+export interface WorkflowCanvasPosition {
+  key: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * A task a workflow replaced at Start: the To Do task it was made from, which
+ * Start moved to Done. Named by the workflow's current title and color, so the
+ * line under the Done row follows a rename and outlives the workflow finishing.
+ */
+export interface WorkflowSupersession {
+  sourceTaskId: string;
+  workflowId: string;
+  title: string;
+  colorSlot: number;
+}
+
+/** Pushed when a workflow or its tasks change, so an open Workflows view reloads it. */
+export interface WorkflowChangedEvent {
+  /** The workflow's home project. */
+  projectId: string;
+  workflowId: string;
+}
+
+/** Pushed when every task in a workflow reaches Done. */
+export interface WorkflowCompletedEvent {
+  workflowId: string;
+  title: string;
+  taskCount: number;
+  /** The workflow's home project. */
+  projectId: string;
+}
+
+/**
+ * "blocked waits for blocker to reach Done". Stored in the workflow's home
+ * project database; either end can be a task in another project, so there is
+ * no foreign key to tasks and a delete removes its links in code.
+ */
+export interface TaskLink {
+  id: string;
+  workflow_id: string;
+  blocker_project_id: string;
+  blocker_task_id: string;
+  blocked_project_id: string;
+  blocked_task_id: string;
+  created_at: string;
+}
+
+/** One `task_moves` row: a task entering a column. */
+export interface TaskMoveRecord {
+  id: string;
+  task_id: string;
+  /** Null when the task was born into the column. */
+  from_swimlane_id: string | null;
+  to_swimlane_id: string;
+  origin: TaskMoveRecordOrigin;
+  reason: string | null;
+  at: string;
 }
 
 export interface TaskUnarchiveInput {
@@ -4967,6 +5426,18 @@ export const ActivityDetection = {
 export interface AdapterRuntimeStrategy {
   /** How thinking vs idle is detected (hooks, PTY patterns, or both). */
   readonly activity: ActivityDetectionStrategy;
+
+  /**
+   * Whether the agent says when its turn ended: a hook or a wire record that
+   * reaches the activity engine as a real `Idle` event, which is what fires
+   * the session manager's `'turn-ended'` (column automations' On agent turn
+   * end, a workflow task's step check). False for an agent whose only idle
+   * signal is terminal silence or a prompt pattern: a quiet compile looks the
+   * same, so its column offers no On agent turn end group and a workflow task
+   * there advances only when a person moves it. Required, so every adapter
+   * states it.
+   */
+  readonly reportsTurnEnd: boolean;
 
   /**
    * How the agent's real CLI session ID is captured for resume support.
@@ -5461,6 +5932,8 @@ export interface SpawnSessionInput {
   resuming?: boolean;
   /** True for ephemeral command terminal sessions. */
   transient?: boolean;
+  /** Set for a workflow's own agent (transient, never a Command Terminal). See src/shared/session-owner.ts. */
+  workflowId?: string | null;
   /** For a transient session, its durable Command Terminal slot (`slot-1`, ...),
    *  as `startCommandTerminal` allocated it. Recorded so every surface names the
    *  terminal the same way. See src/shared/command-terminal-name.ts. */
@@ -5575,12 +6048,13 @@ export interface BoardColumnConfig {
   /** LEGACY companion to `autoCommand`. Read on apply, never written. */
   autoCommandMode?: AutoCommandMode;
   /**
-   * What happens when a task enters or leaves this column.
+   * What happens when a task enters this column, when its agent finishes a
+   * turn here, and when the task leaves.
    *
-   * Two named arrays rather than one list with an `on` key per row: it mirrors
-   * the two groups the UI shows, array order IS each row's `position` within
-   * its group, and adding an exit automation touches only the `onExit` array in
-   * a diff. An empty group is an absent key.
+   * Three named arrays rather than one list with an `on` key per row: it
+   * mirrors the three groups the UI shows, array order IS each row's `position`
+   * within its group, and adding an exit automation touches only the `onExit`
+   * array in a diff. An empty group is an absent key.
    */
   automations?: BoardColumnAutomations;
   agentOverride?: string | null;
@@ -5611,10 +6085,16 @@ export type BoardAutomationConfig = {
   type: string;
   /** Omitted means enabled. Only `false` is ever written. */
   enabled?: boolean;
+  /** Prose the Automation agent judges before the row runs. Omitted means it always runs. */
+  condition?: string;
+  /** The most times the row may run on one task, across visits. Omitted means no limit. */
+  maxRuns?: number;
 } & Record<string, unknown>;
 
 export interface BoardColumnAutomations {
   onEnter?: BoardAutomationConfig[];
+  /** Each time the agent working in the column finishes a turn there. */
+  onTurnEnd?: BoardAutomationConfig[];
   onExit?: BoardAutomationConfig[];
 }
 
@@ -6109,6 +6589,15 @@ export interface ElectronAPI {
      * came from.
      */
     onMovedByMobile: (callback: (projectId?: string) => void) => () => void;
+    /**
+     * A task Kangentic moved on its own: a Move to column automation at a turn
+     * end, or a workflow starting or advancing a task. Quiet, like
+     * `onMovedByMobile`: the board reloads and nothing toasts, because a
+     * workflow can move many cards an hour and the run log already records why.
+     */
+    onMovedByAutomation: (callback: (projectId?: string) => void) => () => void;
+    /** Every task in a workflow reached Done (`WorkflowCompletedEvent`). */
+    onWorkflowCompleted: (callback: (event: WorkflowCompletedEvent) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).
@@ -6130,7 +6619,11 @@ export interface ElectronAPI {
 
   // Swimlanes
   swimlanes: {
-    list: () => Promise<Swimlane[]>;
+    /**
+     * The board's columns. `projectId` reads another project's board (a
+     * workflow's planned task on it); omitted, the open project's.
+     */
+    list: (projectId?: string | null) => Promise<Swimlane[]>;
     create: (input: SwimlaneCreateInput) => Promise<Swimlane>;
     update: (input: SwimlaneUpdateInput) => Promise<Swimlane>;
     delete: (id: string) => Promise<void>;
@@ -6375,7 +6868,12 @@ export interface ElectronAPI {
 
   // Config
   config: {
-    get: () => Promise<AppConfig>;
+    /**
+     * The effective config: global, that project's overrides, and its board's
+     * team-shared default base branch. `projectId` reads another project's
+     * (a workflow's planned task on it); omitted, the open project's.
+     */
+    get: (projectId?: string | null) => Promise<AppConfig>;
     getGlobal: () => Promise<AppConfig>;
     set: (config: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     /** Synchronous, blocking persist of a config partial. Used only on the quit/unload
@@ -6458,7 +6956,8 @@ export interface ElectronAPI {
   // Git
   git: {
     detect: (forceRefresh?: boolean) => Promise<{ found: boolean; path: string | null; version: string | null; meetsMinimum: boolean }>;
-    listBranches: () => Promise<string[]>;
+    /** The repository's branches. `projectId` lists another project's; omitted, the open project's. */
+    listBranches: (projectId?: string | null) => Promise<string[]>;
     diffFiles: (input: GitDiffFilesInput) => Promise<GitDiffFilesResult>;
     fileContent: (input: GitFileContentInput) => Promise<GitFileContentResult>;
     fileImage: (input: GitFileImageInput) => Promise<GitImageContentResult>;
@@ -6625,6 +7124,50 @@ export interface ElectronAPI {
     };
   };
 
+  /**
+   * Workflows. `projectId` is always the workflow's HOME project, captured when
+   * the user acted; a task is addressed by its `WorkflowViewTask.key`. Every
+   * change is announced with `onChanged`, whoever made it.
+   */
+  workflows: {
+    list: (projectId: string) => Promise<WorkflowSummary[]>;
+    /**
+     * Every task of the project a workflow replaced at Start, finished
+     * workflows included, which `list` leaves out. What the Done column's
+     * "Superseded by" line reads.
+     */
+    listSupersessions: (projectId: string) => Promise<WorkflowSupersession[]>;
+    get: (projectId: string, workflowId: string) => Promise<WorkflowDetail>;
+    /** A new workflow, from a To Do task (its brief) or from nothing. */
+    create: (projectId: string, sourceTaskId: string | null) => Promise<Workflow>;
+    rename: (projectId: string, workflowId: string, title: string) => Promise<Workflow>;
+    delete: (projectId: string, workflowId: string) => Promise<void>;
+    start: (projectId: string, workflowId: string) => Promise<void>;
+    pause: (projectId: string, workflowId: string) => Promise<void>;
+    resume: (projectId: string, workflowId: string) => Promise<void>;
+    /** Add task: a planned task before Start, a task in To Do after. Returns its key. */
+    addTask: (projectId: string, workflowId: string, input: WorkflowTaskInput) => Promise<string>;
+    /** Edit a planned task (before Start). A created task is edited like any task. */
+    updateTask: (projectId: string, workflowId: string, key: string, input: Partial<WorkflowTaskInput>) => Promise<void>;
+    removeTask: (projectId: string, workflowId: string, key: string) => Promise<void>;
+    setLink: (projectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => Promise<void>;
+    /** The columns of the task's route, by swimlane id; every other column is skipped. */
+    setRoute: (projectId: string, workflowId: string, key: string, swimlaneIds: string[]) => Promise<void>;
+    /** Where hands placed cards; null puts every card back in the automatic layout. */
+    setPositions: (projectId: string, workflowId: string, positions: WorkflowCanvasPosition[] | null) => Promise<void>;
+    /**
+     * The workflow's own agent as the view's pane opens: its session as it is, or
+     * started (resuming its conversation, or with the first message) when it has
+     * none. A paused agent stays paused. `cols`/`rows` are the pane's grid.
+     */
+    agentOpen: (projectId: string, workflowId: string, cols?: number, rows?: number) => Promise<WorkflowAgentStatus>;
+    /** The pane's Resume: a paused or exited agent comes back on its conversation. */
+    agentResume: (projectId: string, workflowId: string, cols?: number, rows?: number) => Promise<WorkflowAgentStatus>;
+    /** The pane's Pause: the agent stops and frees its slot, keeping its conversation. */
+    agentPause: (projectId: string, workflowId: string) => Promise<void>;
+    onChanged: (callback: (event: WorkflowChangedEvent) => void) => () => void;
+  };
+
   // Mobile Bridge -- machine-global (like config), not project-scoped.
   /** Agent Monitor. Machine-global: no channel here takes a projectId, because the
    *  snapshot deliberately spans every registered project. */
@@ -6755,8 +7298,12 @@ export interface ElectronAPI {
     /** The warnings of the project's last apply, for a renderer that missed the `onWarnings` push. */
     getLastWarnings: (projectId: string) => Promise<string[]>;
     onShortcutsChanged: (callback: (projectId: string) => void) => () => void;
-    /** The board's named Board Profiles (see `BoardProfile`). Empty when the board has none. */
-    getBoardProfiles: () => Promise<BoardProfile[]>;
+    /**
+     * The board's named Board Profiles (see `BoardProfile`). Empty when the
+     * board has none. `projectId` reads another project's board; omitted, the
+     * open project's.
+     */
+    getBoardProfiles: (projectId?: string | null) => Promise<BoardProfile[]>;
     /** Replace the board's Board Profiles. Team-scoped: `tasks.profile_id` is resolved on every machine that opens the board. */
     setBoardProfiles: (profiles: BoardProfile[]) => Promise<void>;
     /** An agent (MCP) rewrote this project's Board Profiles; re-read them. */

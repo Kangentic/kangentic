@@ -60,6 +60,7 @@ async function buildAgentList(
         pastedImageNativeExtensions: adapter.pastedImageNativeExtensions,
         pastedImageReferenceTemplate: adapter.pastedImageReferenceTemplate,
         supportsSummarize: typeof adapter.summarize === 'function',
+        reportsTurnEnd: adapter.runtime.reportsTurnEnd,
         supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
         answerCapabilities: adapter.answerCapabilities,
         capabilities,

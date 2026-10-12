@@ -91,10 +91,25 @@ export interface AutomationContext {
    * with a lint instead of crashing something.
    */
   legacySpawnAgent?(config: AutomationConfig): Promise<void>;
+  /**
+   * Move the task to another column, for a Move to column row. Present only on
+   * a turn end (the type is offered there alone), where no move is in flight:
+   * a move from inside an enter or exit group would run inside that move's own
+   * task lock and abort it.
+   *
+   * `column` is a column NAME, or null for the next column (on the task's route
+   * in a workflow, else on the board). `message` is sent to the agent where the
+   * task lands, after that column's own On task enter rows. Resolves once the
+   * move is committed, with the destination's name; rejects with a reason the
+   * run log shows when the move cannot be made.
+   */
+  moveTask?(input: { column: string | null; message: string | null; reason: string }): Promise<{ columnName: string }>;
   /** The move's signal, combined with this run's own timeout. */
   signal: AbortSignal;
   /** The `automation_runs` row id. The webhook sends it as its idempotency key. */
   runId: string;
+  /** The running automation's own name, for a record it writes (the reason on a move it makes). */
+  automationName?: string;
   onProgress?: (phase: string) => void;
 }
 

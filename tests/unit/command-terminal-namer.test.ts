@@ -121,6 +121,17 @@ describe('CommandTerminalNamer', () => {
     expect(summarize).not.toHaveBeenCalled();
   });
 
+  it('never names a workflow\'s own agent: transient, but no terminal, and its first prompt is the planning brief', async () => {
+    sessionManager.sessions.set('workflow-agent', terminal({ id: 'workflow-agent', taskId: 'workflow-1', workflowId: 'workflow-1', commandTerminalSlot: null }));
+    sessionManager.agentNames.set('workflow-agent', 'codex');
+
+    sessionManager.emit('event', 'workflow-agent', prompt('<workflow_request>plan usage budgets</workflow_request>'));
+    expect(getAdapter).not.toHaveBeenCalled();
+    await Promise.resolve();
+
+    expect(summarize).not.toHaveBeenCalled();
+  });
+
   it('leaves a terminal that already has a name alone', async () => {
     sessionManager.sessions.set('term-1', terminal({ commandTerminalLabel: 'Named Already' }));
 

@@ -424,6 +424,23 @@ export async function settleFrames(page: Page, frames = 2): Promise<void> {
 }
 
 /**
+ * A CSS color as the page computes it, so a token (`var(--color-edge)`), a hex
+ * and an element's own computed style compare as one string, in every theme.
+ * `property` is the style property the value resolves through: `color` by
+ * default, `backgroundColor` to compare a fill.
+ */
+export async function computedColor(page: Page, cssColor: string, property: 'color' | 'backgroundColor' = 'color'): Promise<string> {
+  return page.evaluate(({ value, styleProperty }) => {
+    const probe = document.createElement('span');
+    probe.style[styleProperty] = value;
+    document.body.appendChild(probe);
+    const resolved = getComputedStyle(probe)[styleProperty];
+    probe.remove();
+    return resolved;
+  }, { value: cssColor, styleProperty: property });
+}
+
+/**
  * Launch a headless Chromium page with the electronAPI mock injected.
  * The Vite dev server must be running (started by playwright webServer config).
  */

@@ -123,7 +123,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (29 channels)
+### Tasks (31 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -149,6 +149,8 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:sessionResync` | on | Event: quiet (toast-free) board re-sync after a session restart or respawn that cleared `task.session_id`, so the board store's stale `task.session_id` reloads |
 | `task:prLinkChanged` | on | Event: quiet (toast-free) board re-sync after the APP reconciled a task's PR link or state - the refresh sweep, the session-idle auto-link, the `pr-candidate` resolve after an agent's PR command, the forced re-resolve that follows a link write, or the task-detail "Link / refresh PR" control. Distinct from `task:updatedByAgent` because no agent made the change: an agent's own `update_task` / `link_pr` still goes out on that channel and still toasts. Payload is the bare `projectId` |
 | `task:movedByMobile` | on | Event: quiet (toast-free) board reload after a task was moved from the paired mobile app. A third provenance, distinct from both siblings above: `task:updatedByAgent` would announce "Task updated by agent" for a card the user dragged on their own phone, and this is not the app reconciling itself either. Payload is the bare `projectId` |
+| `task:movedByAutomation` | on | Event: quiet (toast-free) board reload after Kangentic moved a task on its own, as a Move to column automation does at a turn end (move origins `automation` and `workflow`). The run log records why, so nothing toasts. Sent at the move's commit point and again when it settles, so the card moves before a Done move's cleanup finishes. Renderer subscribes via `onMovedByAutomation`. Payload is the bare `projectId` |
+| `workflow:completed` | on | Event: every task in a workflow reached Done (`WorkflowCompletedEvent`: id, title, task count, home project). The renderer raises the Workflow Complete toast and desktop notification, each behind its `notifications.*.onWorkflowComplete` switch. Renderer subscribes via `tasks.onWorkflowCompleted` |
 | `task:spawnBlocked` | on | Event: the task's agent could not start. Fires for three steps, and the entry points differ per step. WORKTREE and CHECKOUT: only on create, promote, unarchive, MCP auto-spawn, or the phone's `start-session`, which deliberately keep the task (a move instead rejects the invoke, which the renderer already toasts). A phone Start reaches them through `autoSpawnForTask`; a phone Resume of a paused task reports its worktree and agent steps through `resumeTaskSession`'s `onFailed` hook, because the phone was answered at acceptance and no rejection reaches a toast (the desktop Resume button still rejects instead). Any git failure at those two steps fires this, not only the case where another task holds the checkout. AGENT (the spawn itself, most often a CLI that is not installed or not on PATH): every board-driven entry point including a drag move, because `spawnAgent`'s catch swallows that error and resolves the invoke, so this event is the only user-visible notice on that path. Without it the result is indistinguishable from a healthy spawn |
 | `task:spawnWarning` | on | Event: non-blocking spawn anomaly - the agent still started, but its base branch could not be freshened (network or credential fetch failure), so it may be running from a stale base. The message is composed in main and toasted verbatim, cooldown-guarded per project and reason class so a bulk unarchive while offline produces one toast, not one per task |
 | `task:autoCommandResult` | on | Event: the outcome of a task's auto_command injection (`AutoCommandResultNotice`: state, command, reason, discardedDraft, interruptedTurn, escalated). Rationed by `shouldNotify` so a routine delivery stays silent and only a failure, an escalation, or a discarded draft reaches the user |
@@ -209,10 +211,36 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `backlogAttachment:getDataUrl` | invoke | Get data URL for display |
 | `backlogAttachment:open` | invoke | Open attachment in the system default application. Same answer-or-timeout contract and file-manager fallback as `attachment:open` |
 
+### Workflows (19 channels)
+
+The Workflows view. Every call names the workflow's home project; a task is addressed by its view key (its draft key before Start, its task id after). The handler routes reads and plan edits (list, supersessions, get, create, add, update and remove a task, link, route, positions) through `src/main/workflows/workflow-view-service.ts`, which shapes the read model and edits a planned workflow by key; every rule a started workflow has is enforced once, in `workflow-service.ts`, which the view service calls and the MCP tools reach directly (start, pause, resume, rename and delete go there straight).
+
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `workflow:list` | invoke | The picker's rows: every unfinished workflow with its done, in progress, queued and blocked counts |
+| `workflow:listSupersessions` | invoke | Every task of the project a workflow replaced at Start, by the workflow's current title and color, finished workflows included: the Done row's "Superseded by" line (`WorkflowRepository.listSupersessions`) |
+| `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions, and each board's name and To Do and Done columns |
+| `workflow:create` | invoke | New workflow, from a To Do task (its brief) or from nothing |
+| `workflow:rename` | invoke | Rename a workflow |
+| `workflow:delete` | invoke | Delete a workflow; once started, its unfinished tasks stay as ordinary tasks |
+| `workflow:start` | invoke | Create the planned tasks in To Do and their links |
+| `workflow:pause` | invoke | Pause every task's agent |
+| `workflow:resume` | invoke | Resume every task's agent |
+| `workflow:addTask` | invoke | Add task: a planned task before Start, a task in To Do after |
+| `workflow:updateTask` | invoke | Edit a planned task before Start |
+| `workflow:removeTask` | invoke | Remove a task from the workflow (a planned one is gone; a created one stays on its board) |
+| `workflow:setLink` | invoke | Link or unlink two tasks (one waits for the other to reach Done) |
+| `workflow:setRoute` | invoke | A task's route, as the column ids it visits |
+| `workflow:setPositions` | invoke | Where hands placed cards, or null for the automatic layout; any other payload is refused; changes no plan revision |
+| `workflow:agentOpen` | invoke | The pane shows the workflow agent: an existing session as it is (a paused one stays paused), else a start that resumes its conversation by id or sends the first message (`src/main/workflows/workflow-agent.ts`) |
+| `workflow:agentResume` | invoke | The pane's Resume: start the paused agent again on its own conversation |
+| `workflow:agentPause` | invoke | The pane's Pause: suspend the agent, keeping its conversation (its spend is captured first) |
+| `workflow:changed` | on | A workflow or its tasks changed, whoever changed it; an open view reloads it |
+
 ### Swimlanes (6 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `swimlane:list` | invoke | Fetch all swimlanes |
+| `swimlane:list` | invoke | Fetch all swimlanes. An optional `projectId` reads another registered project's board (a workflow's planned task on it) |
 | `swimlane:create` | invoke | Create swimlane with name, color, icon, role |
 | `swimlane:update` | invoke | Update swimlane properties |
 | `swimlane:delete` | invoke | Delete swimlane (blocked if has tasks) |
@@ -316,7 +344,7 @@ from a host's complete mounted set, never accumulated from claim/release - see
 ### Config (11 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides) |
+| `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides, and the board's team-shared default base branch). An optional `projectId` reads another registered project's |
 | `config:getGlobal` | invoke | Fetch global-only AppConfig (no project overrides) |
 | `config:set` | invoke | Update global config (partial merge). Resolves `ConfigSetResult` (`{ persisted }`), which says whether the write reached disk. Only the settings panel acts on it: this channel also carries window layouts, model caches and announcement dismissals, so a failure here is not necessarily something a user asked for (Sentry DESKTOP-1C) |
 | `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down. Puts the same boolean on `event.returnValue`, which the preload bridge discards: there is no renderer left to tell |
@@ -342,7 +370,7 @@ from a host's complete mounted set, never accumulated from claim/release - see
 | `boardConfig:changed` | on | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
 | `boardConfig:warnings` | on | Event: the project-open reconcile's warnings for the board's warning banner, sent on every open (an empty list clears it) |
 | `boardConfig:getLastWarnings` | invoke | The warnings of a project's last apply. The renderer fetches them each time a project becomes current, for the push it drops when it lands first (a launch restore, an open by folder path) |
-| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](configuration.md#board-profiles)) |
+| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](configuration.md#board-profiles)). An optional `projectId` reads another registered project's board |
 | `boardConfig:setBoardProfiles` | invoke | Replace the board's Board Profiles (team-scoped) |
 | `boardConfig:boardProfilesChanged` | on | Event: an agent (MCP) rewrote this project's Board Profiles |
 | `boardConfig:getShortcuts` | invoke | Get task detail dialog shortcuts |
@@ -384,7 +412,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, supportsAnswerFromContext, answerCapabilities, capabilities, remoteExecution, launchOptions) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, capabilities, remoteExecution, launchOptions) |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 
 ### Handoffs (1 channel)
@@ -411,7 +439,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `git:detect` | invoke | Detect git installation (path, version, minimum version check) |
-| `git:listBranches` | invoke | List branches for a repository |
+| `git:listBranches` | invoke | List branches for a repository: the open project's, or another registered project's by an optional `projectId` |
 | `git:diffFiles` | invoke | List changed files with status and stats for a scope (working / staged / branch), or for a single commit (`<oid>^..<oid>`) when `commitOid` is set, overriding `scope` |
 | `git:fileContent` | invoke | Fetch original and modified file content for diff display (per scope, or for a single commit when `commitOid` is set). A `filePath` or rename `oldPath` that is absolute, drive-relative, or holds a `..` segment, or a `commitOid` that is not a hex object id, is refused before any read and returns empty text, as `git:fileImage` refuses it with unreadable sides |
 | `git:fileImage` | invoke | Fetch both sides of a changed raster image or SVG as bytes for the Changes panel's image view, with the same per-scope revisions as `git:fileContent`. Each side is fingerprinted and sized before its bytes are read: a side from git from the header of one `git cat-file --batch` process (`src/main/git/git-object-reader.ts`), a working-tree side from `stat`. A side whose fingerprint (its blob id, or a working-tree file's size and modified time) matches one the caller passes in `knownFingerprints` answers `unchanged` without bytes, so a diff refresh does not resend an image that did not change. A working-tree side read within 2 seconds of its last write gets a fingerprint marked racy, which never matches, so the next refresh reads it again. A side over 10 MB returns its size alone. A Git LFS pointer answers `lfs-pointer`, and a side that cannot be read (a refused path, a missing object or file, a failed read) answers `unreadable`; a refused or missing path is quiet and any other failure is logged. A separate channel because the mobile bridge forwards `git:fileContent`'s result to the phone as JSON |
@@ -612,9 +640,12 @@ Stores the project list. Tables:
 Created on project open. Stored in the global config directory (not inside the project). Tables:
 
 - **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null, set only at create, narrowed on read via `normalizeSwimlaneRole` and normalized when applied from `kangentic.json`, with an unconditional migration repairing any stray value already on disk. See [database.md](database.md)), position, color, icon, is_archived, permission_mode, auto_spawn, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at, description (plus the retired `auto_command` / `auto_command_mode`, which the column's message automation replaced)
-- **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, auto_command_state, auto_command_text, auto_command_error, auto_command_at, profile_id, run_mode, session_id, worktree_path, worktree_folder, worktree_skip_reason, branch_name, pushed_branch, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, base_branch, resolved_base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, archived_at, created_at, updated_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
-- **column_automations** -- What runs when a task enters or leaves a column. Fields: id, swimlane_id, name, type (`send_message`, `run_script`, `webhook`, `notify`, plus the legacy `spawn_agent`), trigger (`enter`/`exit`), position, enabled, config_json, created_at, updated_at. One list per column, numbered per trigger, with names unique per column
-- **automation_runs** -- One row per execution, so an outcome survives a restart and a rename. Fields: id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status (`running`/`succeeded`/`failed`/`skipped`/`interrupted`), detail, attempts, started_at, finished_at. Swept on project open: stale `running` rows become `interrupted`, then the newest 200 are kept
+- **tasks** - Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, auto_command_state, auto_command_text, auto_command_error, auto_command_at, profile_id, run_mode, session_id, worktree_path, worktree_folder, worktree_skip_reason, branch_name, pushed_branch, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, base_branch, resolved_base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, workflow_id, workflow_project_id, route_start_swimlane_id, route_last_swimlane_id, skipped_swimlane_ids, canvas_x, canvas_y, archived_at, created_at, updated_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
+- **column_automations** - What runs when a task enters a column, when its agent finishes a turn there, and when the task leaves. Fields: id, swimlane_id, name, type (`send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus the legacy `spawn_agent`), trigger (`enter`/`turn_end`/`exit`), position, enabled, config_json, condition (the row's Condition in plain words, answered by the Automation agent; NULL runs always), max_runs (Frequency, the most runs per task; NULL is no limit), created_at, updated_at. One list per column, numbered per trigger, with names unique per column
+- **automation_runs** - One row per execution, so an outcome survives a restart and a rename. Fields: id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status (`running`/`succeeded`/`failed`/`skipped`/`interrupted`), detail, attempts, started_at, finished_at, condition_met, condition_reason (the Automation agent's yes or no and its one-line reason, NULL for a row without a Condition). Swept on project open: stale `running` rows become `interrupted`, then the newest 200 are kept, plus every counted run of an automation with a Frequency limit on a task that is not archived
+- **task_moves** - One row per column a task entered: id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at. Written by `TaskRepository` in the move's own transaction. It is the visit boundary turn-end automations count from, read through `TaskMoveRepository`. See [database.md](database.md)
+- **workflows** - A set of linked tasks that runs on its own, in the project it was made in. Fields: id, title, brief, source_task_id, state (`draft`/`running`/`paused`/`done`), draft_json (the plan until Start), color_slot, revision, created_at, started_at, finished_at, paused_at, plus the workflow agent's conversation, grid and read access (agent_name, agent_session_id, agent_cwd, agent_read_project_ids, agent_pty_cols, agent_pty_rows). See [Workflows](#workflows) and [database.md](database.md)
+- **task_links** - "This task waits for that one to reach Done", kept in the workflow's home database. Fields: id, workflow_id, blocker_project_id, blocker_task_id, blocked_project_id, blocked_task_id, created_at. No foreign key to `tasks`, since an end can sit in another project's database
 - **actions**, **swimlane_transitions** -- Retired by the migration that created `column_automations`. Left on disk only so an older build can still read the file; nothing reads them after the migration. See [database.md](database.md)
 - **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, isolated_swimlane_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, started_at, suspended_at, exited_at, suspended_by, total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, applied_model, applied_effort, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed, tool_breakdown, compaction_count, last_pty_cols, last_pty_rows, result_tokens_read_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
@@ -685,6 +716,11 @@ group is capped at 60 seconds in aggregate whatever the adapters declare, becaus
 short lock is what wedges that task's next move. Every row is isolated: a failure records its
 outcome in `automation_runs` and the next row still runs.
 
+The column's On agent turn end group is not part of a move: `automations/turn-end/turn-end-runner.ts`
+runs it when the agent working a task finishes a turn there (`SessionManager`'s `'turn-ended'`),
+outside the task lock, one pass per task, and a Move to column row in it moves the task through
+`handleTaskMove` like any other mover. See [Transition Engine](transition-engine.md#on-agent-turn-end).
+
 ### Automation adapters
 
 Each type is an adapter under `src/main/automations/adapters/`, registered in
@@ -699,6 +735,7 @@ folder and one manifest entry. See `.claude/rules/automation-adapters.md` for th
 | `run_script` | Run script | none | 10 minutes by default, per automation | Run a script as a child process in the task's worktree, awaiting the exit and recording the code |
 | `webhook` | Call webhook | none | 30s | Send a request with an interpolated body, retried on a transport error, 408, 429 or 5xx with an idempotency key |
 | `notify` | Notify me | none | none | Raise one desktop notification through the same path `DesktopNotifier` uses |
+| `move_to_column` | Move to column | none | none (the move owns its deadlines) | Move the task to a named column, or the next one when none is named, and hand the agent there an optional message. Runs on `turn_end` only, and a row that runs ends its group |
 | `spawn_agent` | Start agent | none | none | Legacy. Kept so a row carrying a custom `promptTemplate` still runs; never offered for a new automation |
 
 The retired types are `kill_session`, `create_worktree` and `cleanup_worktree`
@@ -713,7 +750,7 @@ paths, and the legacy-action migration alike, so a hand-written file that predat
 opens. Neither alias is written back. See
 [Configuration](configuration.md#column-automations).
 
-Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}` and `{{trigger}}` in a column automation, where there is a move to read them from. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
+Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{workflow_xml}}` (a workflow task's `<workflow>` block, empty for any other task), `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}`, `{{trigger}}` and `{{agentReply}}` in a column automation, where there is a move to read them from. A workflow agent's first message (Settings > Workflows) has no task: it offers `{{projectName}}`, `{{projectPath}}` and `{{baseBranch}}`, plus its own `{{columns}}` (what each column runs, and how recent tasks went through it) and `{{brief_xml}}` (what the workflow was made from). One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
 
 ## PTY Session Manager
 
@@ -727,7 +764,7 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 4. Spawn the PTY in the pty host (a `spawn` request; node-pty runs there, and the reply carries the pid)
 5. Start two file watchers (status, events)
 6. The host runs the output handler (16ms batched flush)
-7. After 100ms delay, write the CLI command to PTY stdin (agent spawns are prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient Command Terminals are not)
+7. After 100ms delay, write the CLI command to PTY stdin (agent spawns are prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient sessions, Command Terminals and a workflow's agent, are not)
 
 ### Output Streaming
 
@@ -822,7 +859,7 @@ State: `tasks`, `swimlanes`, `automations`, `automationsLoaded`, `archivedTasks`
 - **Move confirmations queue** - `pendingMoveConfirms` is FIFO. As a single slot, a second confirmation overwrote the first, and that move had already returned `ok` without calling the IPC, leaving an optimistic placement no write backed.
 - **Session cascade** -- after task move, reloads sessions to detect spawns/kills from transition engine. Auto-activates new sessions with toast notification.
 - **Completion animation** -- `setCompletingTask()` mounts the FlyingCard with the captured drop rect; a per-task completion gate joins the fly finishing (`markCompletionAnimationDone`) and the move being approved (`approveCompletion`, after a clean worktree probe or a confirmed dialog), and `persistCompletion` runs the actual move once both signals land.
-- **Automations** (`board-store/automations-slice.ts`) -- `loadAutomations()` fetches every column's list, `replaceAutomationsForColumn()` writes one column's whole list and re-reads, and `runAutomationAgain()` re-runs one row for the failure toast's Run again and returns the result. `selectAutomationCounts(swimlaneId)` derives the runnable enter/exit counts the rail, the board glyph and the overview all read, so the same number cannot mean three things.
+- **Automations** (`board-store/automations-slice.ts`) -- `loadAutomations()` fetches every column's list, `replaceAutomationsForColumn()` writes one column's whole list and re-reads, and `runAutomationAgain()` re-runs one row for the failure toast's Run again and returns the result. `selectAutomationCounts(swimlaneId, reportsTurnEnd?)` derives the runnable enter, turn-end and exit counts the rail, the board glyph and the overview all read, so the same number cannot mean three things.
 
 ### SessionStore (`session-store.ts`)
 
@@ -943,7 +980,11 @@ src/main/automations/
     run-script/             # child process in the task's worktree, awaits the exit
     webhook/                # request with retry, idempotency key, response.ok check
     notify/                 # one desktop notification
+    move-to-column/         # move the task at a turn end, then hand on the message
     legacy/spawn-agent.ts   # status 'legacy', never offered for a new automation
+  turn-end/                 # the On agent turn end runner, per-task pass tracking, message delivery
+  condition-check/          # the Automation agent's one call per group, its prompt and reply parser
+  move-target.ts            # resolveMoveTarget: a named column or the next one
   automation-registry.ts    # AutomationRegistry + automationRegistry singleton
   automation-runner.ts      # per-row isolation, timeouts, and the automation_runs record
   automation-run-outcome.ts # rationed failure push to the renderer
@@ -954,6 +995,152 @@ src/main/automations/
 The manifest (`src/shared/automation-manifest.ts`) is renderer-safe and holds each type's label,
 description, icon name, `needs`, fields, timeout and retry policy.
 `tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree.
+
+### Workflows
+
+A workflow is a set of linked tasks that run through their boards on their own (#732). It lives in
+its home project's database with its links (`workflows`, `task_links`); its tasks live on their own
+boards. A task's route (the columns it visits) is one pure shared module,
+`src/shared/workflow-route.ts`, and so is who may move a workflow task,
+`src/shared/workflow-lock.ts`, which main and the board both ask. Every refusal sentence is in
+`src/shared/workflow-refusals.ts`, so main's error and the view's disabled tooltip read the same.
+
+```
+src/main/workflows/
+  engine/
+    workflow-engine-core.ts  # pure: what is ready, start order up to free slots, completion, loops
+  workflow-engine-host.ts    # main: wake-ups, debounce, read every running workflow, carry out the plan
+  workflow-lock-check.ts     # reads the databases and config the lock predicate needs
+  workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it)
+  workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?")
+  workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
+  workflow-limits.ts         # MAX_WORKFLOW_TASKS, imported by the service and the MCP save tool's schema
+  workflow-view-service.ts   # the view's read model (detail, summaries) and planned-workflow edits by key
+  workflow-changed.ts        # the coalesced workflow:changed push
+  workflow-complete.ts       # the workflow:completed push, and the phone's workflow-complete push
+  workflow-prompt-facts.ts   # what {{workflow_xml}} tells a workflow task's agent
+  workflow-tasks.ts          # every created task of a workflow, across projects (a plain read)
+  workflow-agent.ts          # the workflow's own agent: open, resume, pause, end, start over on a lost resume,
+                             #   read access to other projects, its spend captured for Stats
+  workflow-agent-record.ts   # a SessionRecord built from the workflow row, so transcript readers reach its conversation
+  workflow-agent-prompt.ts   # its first message: {{columns}}, {{brief_xml}} and the project's facts
+  workflow-agent-effort.ts   # the effort it started at, for its Stats rows when the status line reports none
+  workflow-runtime.ts        # the IPC context the operations act through
+  workflow-wake.ts           # wake the engine from a write the board bus does not announce
+```
+
+- **The workflow agent is a transient session carrying `workflowId`** (`src/shared/session-owner.ts`).
+  Transient keeps it out of everything a task session drives: `sessions.task_id` is a foreign key to
+  tasks, so its conversation is recorded on the workflow instead (`agent_name`, `agent_session_id`).
+  `isCommandTerminalSession` keeps it out of what a Command Terminal has: the title-bar count, the
+  slot cap and re-pairing, window reconciliation, the Monitor, the name from its first prompt, the
+  leftover reap, and the phone's terminal list, lifecycle feed and push. Main ends a Command
+  Terminal whose PTY exits or is suspended; the workflow agent keeps its row, as a task's agent
+  does, so its Pause leaves a paused pane and an exited row tells the pane to start it over. The
+  agent-absence sweep judges and retires it like a task's agent, and its processes carry its
+  workflow's id as their `KANGENTIC_TASK_ID`, which no task shares. While it runs it holds an agent
+  slot under Max Concurrent Sessions, as a Command Terminal does, and its Pause frees it. It runs in
+  the home project's checkout, read-only:
+  Claude with `--tools Read,Grep,Glob,ToolSearch`, `--strict-mcp-config` and `--no-chrome`, and an
+  MCP URL whose caller segment is `workflow-<id>`, for which the server registers only the
+  read-only tools and the planning tools, bound to that workflow (`workflow-agent-scope.ts`). It is
+  not resumed at boot; the view's pane opens it.
+
+- **The engine never polls.** The board bus (every move announces there), a freed agent slot
+  (`session-removed`, `exit`), task deletes, and workflow writes wake it; a burst coalesces into
+  one pass after 150 ms. A pass with nothing running costs one indexed query per project, and each
+  is timed (`WorkflowEngineHost.stats()`, reported by the dev-only `kangentic_devtools_event_loop_lag`
+  as `workflowEngine`). The core imports no Electron, IPC, database, analytics or Sentry and
+  schedules no timer (`tests/unit/workflow-engine-boundary.test.ts`), so it can move to a utility
+  process as a transport change.
+
+  Measured (2026-10-04, a dev preview on Windows, the mock CLI): a 20-task workflow (four roots,
+  then waves of 8, 6 and 2 joined by 26 links, each task routed through Executing) ran from Start to
+  complete in 34 s on 8 agent slots. Over 142 evaluations the p95 was 1.1 ms and the worst 1.5 ms,
+  inside the 2 ms budget. The main thread did stall (19 stalls over 75 ms, the worst 152 ms), and
+  every one was a synchronous git spawn through simple-git, about 25 per task lifecycle (worktree
+  creation and removal, the diff reads). Eight ordinary tasks moved by hand made the same 25 per
+  task with no stall, because their lifecycles did not overlap: the workflow adds no git work, it
+  runs up to 8 lifecycles at once. So the fix went into the git layer, not into workflows. The
+  lifecycle's git calls now start in the pty host: `gitAt` (`src/main/git/git-client.ts`) keeps
+  simple-git's method shapes, success rule and error text over `execFileAsync`, and
+  `spawnWithAbort` hands a git binary to `spawnOffMainCli` and keeps its timeout and abort. A
+  suspend fires two churn captures for the same stopped agent (the move's and the exit handler's),
+  and while they overlap they share one read. `tests/unit/git-lifecycle-off-main.test.ts` runs one
+  lifecycle (start, a respawning move, Done, two PR resolves) against a real repository and spies
+  on every spawn: 49 git processes with 45 on main before, 37 with none on main after. The 12
+  saved are the share at its best case, both captures fired together; at a quiet Done the exit
+  handler's read can settle before the Done branch asks, and then both run. The Changes
+  panel's diff and file reads moved too, since they share `DiffService` with the churn capture. Still on
+  main through simple-git, and outside a workflow's lifecycle: the Changes panel's header and its
+  watcher, blame, file history, the commit graph, the worktree list, a task's branch switch and
+  update from base, the Command Terminal's branch calls, and the pending-changes probe of a Done
+  drop.
+- **A start** is `handleTaskMove` with origin `workflow`, into the first column of the task's route,
+  after `forgetRecentFetches` so the worktree is cut from the blockers' merged code. Starts go in To
+  Do order, up to `SessionManager.getFreeAgentSlots()`.
+- **A step** finishes at a turn end the Automation agent judges done (after the column's own
+  turn-end rows), at plan approval, or when the task's own agent moves it. The answer is recorded in
+  `automation_runs` as a `workflow_step` row.
+- **The lock** (`workflowMoveRefusal`) is asked by `handleTaskMove` before it aborts anything and
+  again inside its Phase 1 lock, and by `kangentic_move_task` before it fires. The caller's task
+  comes from the MCP request's caller segment (`CommandContext.callerTaskId`).
+- **MCP:** thirteen workflow tools in their own category (`workflow-tools.ts`,
+  `workflow-commands.ts`). Only list, get, pause and resume reach the phone's board-tool path.
+
+### Workflows in the renderer
+
+The view is the third `BoardView` (`'board' | 'backlog' | 'workflows'`), loaded on first open
+(`LazyWorkflowsView`), so `@xyflow/react` stays out of the eager bundle; `scripts/build.js` fails a
+build where it is reachable by a static import.
+
+```
+src/renderer/components/workflows/
+  WorkflowsView.tsx        # header, agent pane, canvas, inspector, dialogs, the canvas card menu
+  WorkflowAgentPane.tsx    # the workflow agent's terminal, Pause / Resume, and the plan hold while it works
+  WorkflowHeader.tsx       # picker, Rename, Start / Running / Resume, Delete, progress (a width ladder)
+  WorkflowCanvas.tsx       # React Flow: nodes, lane-routed edges, tools, search hiding
+  WorkflowTaskNode.tsx     # one card: ports, the full-card link target, the drop hint
+  WorkflowCanvasCard.tsx   # the board's card body under the workflow strip, as tall as its content
+  canvas-card-heights.ts   # each card's measured height for the layout; an estimate until measured
+  canvas-arrange.ts        # what Auto layout moved, so those cards slide and their links hide meanwhile
+  WorkflowInspector.tsx    # run order, route rail, links, Add blocker, footer (canvas and task detail)
+  WorkflowCardMenu.tsx     # the board's TaskContextMenu with Open on board
+  TaskWorkflowPanel.tsx    # task detail's workflow panel: the inspector for the task's own workflow
+  WorkflowPicker.tsx       # the header's picker, and the workflow state chip
+  WorkflowDialogs.tsx      # Start, Delete, Remove and Rename confirms
+  WorkflowStrip.tsx        # the strip on a card (canvas and board) and its step track
+  workflow-track.ts        # pure: the track's stops, the board's To Do, the route, the board's Done
+  WorkflowEdge.tsx         # a link through the lanes between columns; a selected task's links flow
+  workflow-canvas-context.ts # the workflow a node reads for its link hint
+  workflow-graph.ts        # pure: waiting, link and route guards, run order
+  workflow-layout.ts       # pure: the layered auto layout
+src/renderer/components/board/
+  WorkflowTaskCardBody.tsx # a workflow task's board card: the strip, and the To Do footer
+  card-links-preview.ts    # a 400ms rest on a workflow card previews its links; a press on it holds them through the drag and after the drop while the pointer stays on it
+  WorkflowLinksOverlay.tsx # a card's links: the canvas's flowing lines and title-row ports, clipped below the header row, re-measured on scroll, resize, card height and every frame of its card's drag; trimmed, ringed and bordered as the canvas draws a selected card's, faded in and out
+  workflow-menu-items.tsx  # Open workflow, in the card menu's leading slot
+  DeleteTaskDialog.tsx     # the Delete task confirm, shared by the board card and the canvas menu
+src/renderer/utils/
+  board-workflow.ts        # a card's workflow facts from the summaries, and the lock asked on the board
+  motion-reduced.ts        # the Animations setting or the system's reduced motion, read when a motion starts
+  workflow-refusal.ts      # a refused move: main's sentence, Open workflow, the links overlay
+```
+
+- **One store** (`workflow-store.ts`): the project's summaries (each carries `boardTasks`, every
+  card's waiting-for, human-gate exit and whether it has links), other projects' summaries for cards on this board, the
+  selected workflow's detail, task panels' watched details, and the links overlay. Edits address a
+  workflow by home project and id (`setRouteIn`, `setLinkIn`, `removeTaskIn`), so task detail acts
+  on the task's own workflow whatever the view shows. A reload keeps unchanged objects
+  (`shareUnchanged`, `shareSummaries`), so a move re-renders only the cards it changed.
+- **The lock on the board** is main's own predicate (`src/shared/workflow-lock.ts`), asked by the
+  drop and by `moveTask` before the card moves, so a refused card never slides and snaps back.
+  A card only its workflow moves (`isLockedOnBoard`) is held to its column for the whole drag
+  (`useBoardDragDrop`: its collisions see only that column's cards, and a modifier keeps it from
+  moving sideways), so it can be reordered there and never reaches another column. Main still
+  refuses on its own for every other path.
+- **An ordinary card pays nothing:** only a task with `workflow_id` mounts `WorkflowTaskCardBody`,
+  which holds the workflow subscriptions.
 
 ## Board Adapters
 

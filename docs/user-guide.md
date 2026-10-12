@@ -111,7 +111,7 @@ Drag a task from To Do to any active column (Planning, Executing, etc.). Kangent
 
 A move out of To Do is the only kind of move that sends the task itself to the agent: the title,
 description, and any attachment paths become the opening prompt (the seeded template
-`{{task_xml}}{{attachments}}`). A move between two active columns resumes the same
+`{{task_xml}}{{workflow_xml}}{{attachments}}`, where `{{workflow_xml}}` is empty outside a workflow). A move between two active columns resumes the same
 conversation - the description is not sent again, and the destination column's **Send message to
 agent** automation, if it has one, is the only new instruction the agent receives.
 Moving a task back to To Do kills its session, so moving it out again starts a fresh
@@ -152,12 +152,17 @@ Clicking a completed task opens a session summary showing: duration, model, cost
 ### Task Card Context Menu
 
 Right-click any task card on the board to open a context menu with:
+- **Open workflow** - first, on a task in a workflow (see [Workflows](#workflows))
 - **Copy Task ID** - copies the display ID (e.g., `#42`) to clipboard
 - **Edit** - opens the task detail dialog in edit mode
 - **Move to** - submenu listing all other columns as move targets
+- **New workflow** - on a To Do task in no workflow: a new workflow with this task as its brief
 - **Backlog** - send the task back to the backlog (cleans up session and worktree)
 - **Archive** - move the task to Done and archive it
 - **Delete** - permanently delete the task, session, and worktree
+
+On a task in a running workflow, Move to, Backlog and Archive stay in the menu, disabled, with the
+reason as their tooltip.
 
 ### Return to To Do
 
@@ -435,11 +440,12 @@ When a column's agent override differs from the current session's agent, moving 
 
 ### Automations
 
-What a column does when a task enters or leaves it. Each column owns one ordered list, split into
-**On enter** and **On exit**, and each row has its own switch. A row belongs to one column; there
-is no sharing and no library.
+What a column does when a task enters it, each time its agent finishes a turn there, and when it
+leaves. Each column owns one ordered list, split into **On task enter**, **On agent turn end** and
+**On task exit**, and each row has its own switch. A row belongs to one column; there is no sharing
+and no library.
 
-Four types:
+Five types:
 
 | Type | What it does |
 |------|--------------|
@@ -447,20 +453,50 @@ Four types:
 | **Run script** | Runs a script in the task's worktree, or the project checkout when it has none. |
 | **Call webhook** | Calls a URL. Retries a transport error, 408, 429 or 5xx up to three times. |
 | **Notify me** | Raises one desktop notification. Clicking it opens the task. |
+| **Move to column** | Moves the task to another column (or the next one), with a message for the agent there. On agent turn end only. |
 
 **Adding one.** Each group has its own **Add automation** control, so where you add decides when
-it runs. The picker offers the four types, and below them every row on every other column, to
-copy. A copy is independent of the original. A type the column cannot run is offered disabled,
-with the reason.
+it runs. The picker offers the types that group runs, and below them every row on every other
+column, to copy. A copy is independent of the original. A type the column cannot run is offered
+disabled, with the reason.
 
-**Editing one.** Clicking the row opens a dialog with the name, the type, the type's own fields,
-and When. Nothing else. The pencil does the same, for a pointer that is already over it; the grip,
-the switch and the trash keep their own jobs and do not open it. A name is required and must be unique on its column. Every text field takes
-template variables: type `{{` to pick one, or use the **Template variable** button. A known
-variable is highlighted; an unknown one is flagged and sent as written.
+**Editing one.** Clicking the row opens a dialog with the name, then one card for each part of the
+rule: **Trigger** (when it runs), **Condition**, **Frequency**, and **Action** (the type and its own
+fields). The pencil does the same, for a pointer that is already over it; the grip, the switch and
+the trash keep their own jobs and do not open it. A name is required and must be unique on its
+column. Every text field takes template variables: type `{{` to pick one, or use the **Template
+variable** button. A known variable is highlighted; an unknown one is flagged and sent as written.
+
+**Condition and Frequency.** Any row can carry a **Condition**, a sentence in plain words ("the
+review found work the implementer can do"). An agent checks it before the row runs, and a no means
+the row did not run: it is checked again next time. The agent that checks is the **Automation
+agent**, chosen in Settings > Workflows; until one is set up, Condition stays off. **Frequency**
+caps how many times a row runs on one task, across every visit, which is what keeps a review loop
+from bouncing a task forever. Both start off.
+
+**Reading a row.** Every row has the same two lines. The second says what the row does, and to
+what: the verb and the type's one required value, such as `Sends "Review the changes"`, `Moves the
+task to Executing`, or `Runs npm run lint` (a script shows in code type). A long value ends where
+the row ends, and a message or script with several lines shows its first line; hover the line to
+read all of it, every line. Any option you switched on is a mark after the name,
+in the editor's card order: a funnel for a Condition, a repeat icon with the run limit for a
+Frequency, a clock on a Send message row that waits for the current turn, and a speech bubble on a
+Move to column row that carries a Message. Hover a mark to read its card and value ("Condition:
+only if the review is clean.", "Frequency: at most 3 times for each task."); a Message or a
+Condition reads in full there. A webhook's body and headers and a notification's body are not
+marked: open the row for those. The rows under **Copy existing** in the Add automation picker carry
+the same marks.
+
+**On agent turn end.** Runs when the column's agent finishes a turn on its own, not when you stop
+it or a request fails. Each row runs at most once per visit to the column, top to bottom, and a
+**Move to column** row that runs ends the list. `{{agentReply}}` is the agent's final message of
+the turn, whole, so a review's findings can ride a Move to column message back to the column that
+fixes them. A column whose agent cannot report a finished turn (agents that only go quiet) shows the
+reason instead of Add automation. A Send message row here sends at once, since the turn is already
+over, so its **Delivery** is shown disabled and keeps whatever it was set to.
 
 **Reordering.** Drag a row by its grip. A drag stays inside its own group: it changes where the row
-sits, never when it runs. To change when it runs, open the row and set When.
+sits, never when it runs. To change when it runs, open the row and set its Trigger.
 
 **The agent starts by itself.** Nothing in the list starts the agent, and there is no Start agent
 row. On enter, Kangentic starts the column's agent right before the first automation that needs
@@ -476,8 +512,8 @@ in flight when Kangentic quit is marked interrupted the next time the project op
 **To Do and Done** run exit automations only. Nothing runs when a task enters them.
 
 **Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so
-they are shared with your team through git. The board header shows a lightning glyph with the
-count of automations that will actually run there, and **All columns** in the Column Manager shows
+they are shared with your team through git. The column header shows the automations mark (a
+column with a cog) and the count of automations that will run there, and **All columns** in the Column Manager shows
 every column's counts side by side.
 
 ### Reorder Columns
@@ -488,6 +524,107 @@ Drag a column by the grip in its header to reorder, or Tab to the grip and use S
 
 Columns can only be deleted when empty (no tasks).
 
+## Workflows
+
+A workflow is a set of linked tasks that runs through the board on its own. Each task follows a
+route (the columns it visits, every column between To Do and Done unless it skips some) and starts
+when every task it waits for has reached Done, as agent slots allow.
+
+**The Workflows view.** Workflows is the third segment of the Board / Backlog toggle
+(Mod+Shift+L). Its header picks the workflow and holds Rename, the lifecycle button (Start,
+Running, which pauses it, or Resume), Delete, the progress, and New workflow. The canvas in the
+middle draws each task as its card with the links between them, and the inspector on the right
+shows the run order, or the selected task's route, what it waits for, and what waits for it, with
+Open task (Open on its board, for a task on another project's board) at the bottom. The board's
+search and filter apply to the canvas too. While one of the project's workflows runs, the
+Workflows segment carries the working mark; a paused or not-started workflow shows none. In the
+picker's list, a line under each name says what that workflow's agent
+is doing ("Agent idle, last message 10:44"), or, with no agent running, how many of its tasks wait
+for you. The bottom terminal panel is hidden in this view and comes back on the board.
+
+**On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
+(Ctrl or Cmd with the wheel zooms). Fit view and Auto layout, which puts moved cards back in the
+automatic layout, sit at the bottom left, and Add task at the bottom center. Right-click a started task's card for
+the board's own menu, with Open on board at the top. The selected card wears the accent border, and
+its links stand out: what it waits for flows into it (green once that task is done, grey while it
+is not), what waits for it flows out in the accent, and every other link fades back. With reduced
+motion, or Animations off, the links hold still.
+
+**Planning one.** Click New workflow, or right-click a To Do card on the board and pick New
+workflow (its title and description become the brief). A workflow with no tasks yet shows the
+three steps on its canvas: tell the workflow agent what to build, review its plan, and press Start.
+When the first cards land, the first task in the run order is selected. Add tasks with Add task on
+the canvas, or ask an agent: "plan the usage budgets work as a workflow", which saves the plan with
+`kangentic_save_workflow`. Nothing reaches the board until you press Start. Until then a card has
+no #id, and double-clicking one opens it in the task form: the board's own New Task form, led
+by the project the task goes on, with Base branch, Worktree or Project, and Column Settings or
+Agent Override, as a task on the board has them. Each of those reads the chosen project: its
+branches and default base branch, its Worktrees setting, its default agent, and its Board
+Profiles. Choosing another project resets the task's route to every column of that board, and its
+base branch and profile. Start creates the tasks, with those settings, in To Do
+(the ones with nothing to wait for start at once) and moves the To Do task the workflow was made
+from, if any, to Done. A task can go on another project's board; the inspector then names each
+task's board. Delete removes a workflow that has not started, with its planned tasks; once
+started, its unfinished tasks stay where they are as ordinary tasks.
+
+**The workflow agent.** The pane on the left is the workflow's own agent, the project's default
+agent launched read-only: it reads the code and the board and changes only this workflow's plan,
+never a file. A new workflow's agent starts with the first message (Settings > Workflows >
+Workflow agent prompt, which you can edit), reads the brief, plans the tasks, and saves them;
+made from nothing, it first asks what you want to build. Talk to it in its terminal to reshape the
+plan. While it works, the canvas says so and the controls that would change its plan (Start, Add
+task, links, routes, Remove) wait until its turn ends; moving cards does not. The toggle in its
+header pauses and resumes it, and the conversation is kept across a restart. It also reads the
+other projects its workflow's tasks are on, and when it needs another of your projects to plan, it
+asks for it and gets it without a prompt: it restarts on the same conversation with that project
+readable and carries on. The speech-bubble button in its header opens its conversation in the
+transcript viewer, paused or not, and its spend counts in Stats. Drag the pane's right
+edge to widen it; the width is kept. Opening Workflows folds the project sidebar for room, and
+leaving restores it as you had it. It keeps running when you leave the view, and ends when its
+workflow is deleted or finishes. Only an agent Kangentic can
+launch read-only can be a workflow's agent; for any other, the pane says so and you plan on the
+canvas.
+
+**Shaping it.** Drag from a card's right-hand dot onto the card that should wait; the card under
+the pointer says what a release would do, or why it cannot. In the inspector, the route list
+starts at To Do and ends at Done, both locked on, and its switches turn each column between them on
+or off for that task; the X on a link row removes the link, and Add blocker makes the task wait for
+another. A control that would break a rule stays in place, disabled, and its
+tooltip says why (a task that has started, or has no task left to wait for, cannot get a new
+blocker; a step it has reached cannot change). Remove takes a task out of the workflow.
+
+**Moving on.** When a task's agent finishes a turn, the Automation agent (Settings > Workflows)
+judges whether that column's work is done and the agent is not waiting on you. Done moves the task
+to the next column on its route, and the last one to Done; not done leaves it where it is. A task
+that finishes a plan moves on when you approve the plan. Without an Automation agent, or in a
+column with no agent, you drag the card on yourself.
+
+**On the board.** A workflow task's card carries a strip with its workflow's name and a step
+track, and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
+task's whole journey, one mark per stop: To Do, each column on its route, then Done, so it keeps
+one length for the task's whole life. The stops it has passed are grey, where it is now is wider
+and in its column's color, and the stops ahead are bars in their columns' colors, so even a task
+that has not started says which columns it will visit. On the Workflows canvas the strip names no
+column: where the task is shows as that column's icon on a tint of its color (a dot when the column
+has no icon), and hovering it names the column. The strip's left side names the task's project.
+
+**A card's links.** Rest the pointer on a workflow card for a moment and lines fade in from what
+it waits for and to what waits for it, drawn as the Workflows canvas draws a selected card's; move
+off the card and they fade out. Dragging the card keeps them through the whole drag, and after you
+let go while the pointer stays on the card. A refused move shows them too, and keeps them until
+Escape or a click on empty board space. Open workflow in the card's right-click menu shows every
+link on the Workflows canvas. Task detail has a Workflow panel (the linked-cards button
+in its header, or in the form a To Do task opens in) with the same route, links and guards as the
+inspector.
+
+**Locked while it runs.** A running workflow's cards cannot be moved to another column by hand: a
+drag stays in the card's own column, where you can still reorder it. The exception is a card you
+move on yourself (no Automation agent, or a column with no agent), which you drag onto the next
+column of its route. No workflow task can be moved back to To Do. A refused move leaves the card
+where it is, says why with an Open workflow link, and shows the card's links. The menu keeps Move
+to, Backlog and Archive, disabled with the same reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after.
+When every task is in Done, a Workflow complete notification says so (Settings > Notifications).
+
 ## Settings
 
 Settings are accessed from two entry points, both opening the same unified panel:
@@ -495,7 +632,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ### Moving a project
 
@@ -740,11 +877,11 @@ Command Terminals keep running when you hide the layer and when you switch proje
 
 Notifications fire when an agent needs attention and you cannot already see it. The two channels cover opposite halves of that, so between them nothing is missed and nothing is said twice.
 
-Desktop notifications are for when you are away: they fire only when the window is minimized or unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking one brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second cooldown prevents the same agent repeating the same kind of desktop notification. Idle and crash are counted separately, so an agent that dies right after finishing a turn still reports the crash. A newer desktop notification for a task replaces that task's older one in Windows Action Center or macOS Notification Center, so they do not stack. Command Terminal notifications are the exception and still stack.
+Desktop notifications are for when you are away: they fire only when the window is minimized or unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), plan-completion auto-moves, a stalled spawn, and a finished workflow. The task name is the title (a finished workflow's reads "Workflow complete: <name>") and the project name is the body. For a task in a workflow, the idle and crash bodies name the workflow after the project ("kangentic: Usage budgets workflow"). Clicking one brings the window to the foreground, switches to the correct project, and opens the task detail dialog (a finished workflow names no single task, so it opens none). The taskbar also flashes on Windows. A 10-second cooldown prevents the same agent repeating the same kind of desktop notification. Idle and crash are counted separately, so an agent that dies right after finishing a turn still reports the crash. A newer desktop notification for a task replaces that task's older one in Windows Action Center or macOS Notification Center, so they do not stack. Command Terminal notifications are the exception and still stack.
 
 Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. It carries an **Open** button that opens the task. One toast per turn, not one per progress update.
 
-The Settings > Notifications panel exposes four configurable events: **Agent idle**, **Agent crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan complete**, and **Spawn stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop, Toast, or Both. Toast duration and max visible count are also configurable.
+The Settings > Notifications panel exposes five configurable events: **Agent idle**, **Agent crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan complete**, **Spawn stalled** (a task spawn that waits too long on the git queue while preparing), and **Workflow complete** (every task in a workflow reached Done). Each can be set to Off, Desktop, Toast, or Both. Toast duration and max visible count are also configurable.
 
 ### Announcements
 
@@ -896,7 +1033,7 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 - **A terminal ends when its agent does.** Type `/exit`, or let the agent crash, and the terminal ends and its window closes within a few seconds, so you are not left at a bare shell prompt (under WSL, `/exit` ends the terminal about 5 seconds later). `/clear` keeps the terminal. Anything its agent started in the background (a dev server, a watcher) is stopped about 12 seconds after the terminal ends and listed in the leftover-processes toast, the same as when a task finishes; with **Stop Leftover Processes** off it is only listed.
 - **A paired phone can start and stop terminals too.** A terminal the phone starts in the project you have open gets its window the next time you open the layer; the title-bar icon counts it right away.
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
-- Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts when they exit or go idle
+- Command Terminals are independent of task sessions: they don't appear in the terminal panel tabs and produce no toasts when they exit or go idle. Each running one still holds an agent slot under Max Concurrent Sessions, as a task's agent does.
 - Your terminals are **preserved across project switches**. If you open terminals, switch to another project, and switch back, they are still running. Each project keeps its own terminals, so you can keep ad-hoc work going while navigating between projects.
 - If git checkout fails when switching branches (e.g., uncommitted changes), a warning toast explains the issue and the session stays on the current branch
 
@@ -1261,6 +1398,7 @@ General:
 - **Mod+Shift+A** - Toggle the Knowledge Graph (a map of what this project's conversation index has learned)
 - **Mod+Shift+M** - Toggle the Agent Monitor (every running agent, across all projects)
 - **Mod+Shift+B** - Switch between Board and Backlog view
+- **Mod+Shift+L** - Open the Workflows view; pressed there, return to the view you came from
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
 - **Mod+Shift+P** - Toggle the Command Terminal window

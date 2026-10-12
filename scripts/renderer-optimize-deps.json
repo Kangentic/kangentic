@@ -8,6 +8,9 @@
   "monaco-editor", "monaco-editor/base/common/errors",
   "recharts",
   "three", "camera-controls",
+  "@xyflow/react",
   "turndown", "turndown-plugin-gfm",
+  "react-markdown", "remark-gfm", "remove-markdown",
+  "@tanstack/react-virtual", "qrcode",
   "pixelmatch"
 ]

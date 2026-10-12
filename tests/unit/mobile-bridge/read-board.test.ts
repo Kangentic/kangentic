@@ -4,12 +4,26 @@ const tasksList = vi.fn();
 const tasksListArchivedPage = vi.fn();
 const swimlanesList = vi.fn();
 const backlogList = vi.fn();
+const workflowWireFacts = vi.fn();
 
 vi.mock('../../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: vi.fn(() => ({ tasks: { list: tasksList, listArchivedPage: tasksListArchivedPage }, swimlanes: { list: swimlanesList } })),
 }));
 vi.mock('../../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({})),
+}));
+// The archived page reads a session summary per task; none of these tasks ran an agent.
+vi.mock('../../../src/main/db/repositories/session-repository', () => ({
+  SessionRepository: class {
+    getSummaryForTask(): null {
+      return null;
+    }
+  },
+}));
+// What a task's workflow looks like on the wire is workflow-wire.test.ts's business;
+// here only that read-board hands those facts to the task mapper, on both paths.
+vi.mock('../../../src/main/mobile-bridge/handlers/workflow-wire', () => ({
+  workflowWireFacts: (...args: unknown[]) => workflowWireFacts(...args),
 }));
 vi.mock('../../../src/main/db/repositories/backlog-repository', () => ({
   BacklogRepository: class {
@@ -125,6 +139,9 @@ describe('handleReadBoard', () => {
     registryRows = [];
     activityStates = {};
     activityReasons = {};
+    tasksListArchivedPage.mockReset().mockReturnValue({ tasks: [], totalCount: 0 });
+    // No task is in a workflow unless a test says so.
+    workflowWireFacts.mockReset().mockReturnValue(new Map());
   });
 
   it('with no projectId, returns the project bootstrap list (with derived accent colors, group and position) and never touches task repos', async () => {
@@ -191,7 +208,8 @@ describe('handleReadBoard', () => {
     expect(response.payload).toEqual({
       projectId: 'proj-1',
       columns: [{ id: 'lane-1', role: null, spawns_session: true }],
-      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, pausable: false }],
+      // An ordinary task carries a null workflow: the key is always sent.
+      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, pausable: false, workflow: null }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
@@ -277,6 +295,58 @@ describe('handleReadBoard', () => {
       expect(response.payload).toHaveProperty('backlog');
       expect(response.payload).not.toHaveProperty('view');
       expect(backlogList).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('workflow facts on a task row', () => {
+    // A workflow task's wire row carries the facts of its whole workflow (the
+    // strip, what it waits for, its lock), read per board. Both reads of a board
+    // send them: the live snapshot, and the one-shot page of archived tasks
+    // (a finished workflow's tasks are archived, and still say whose they were).
+    const workflowFact = {
+      id: 'wf-1',
+      title: 'Usage budgets',
+      project_id: 'proj-1',
+      state: 'running',
+      color_slot: 2,
+      route: ['lane-1', 'lane-2'],
+      waiting_for: ['#412'],
+      lock_reason: 'Moving #413 is not allowed while Usage budgets runs.',
+      gate_target_id: null,
+    };
+
+    it('the live snapshot sends a workflow task\'s facts on its row and null on every other row', async () => {
+      const workflowTask = { id: 't-wf', workflow_id: 'wf-1', session_id: null };
+      const plainTask = { id: 't-plain', workflow_id: null, session_id: null };
+      tasksList.mockReturnValue([plainTask, workflowTask]);
+      workflowWireFacts.mockReturnValue(new Map([['t-wf', workflowFact]]));
+      const context = boardContext();
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      expect(response.ok).toBe(true);
+      const rows = (response.payload as { tasks: Array<{ id: string; workflow: unknown }> }).tasks;
+      expect(rows.find((row) => row.id === 't-wf')?.workflow).toEqual(workflowFact);
+      expect(rows.find((row) => row.id === 't-plain')?.workflow).toBeNull();
+      // Read for this board's own tasks.
+      expect(workflowWireFacts).toHaveBeenCalledWith(context, 'proj-1', [plainTask, workflowTask]);
+    });
+
+    it('the archived page sends them too', async () => {
+      const workflowTask = { id: 't-wf', workflow_id: 'wf-1', archived_at: '2026-09-01T00:00:00.000Z' };
+      const plainTask = { id: 't-plain', workflow_id: null, archived_at: '2026-09-01T00:00:00.000Z' };
+      tasksListArchivedPage.mockReturnValue({ tasks: [plainTask, workflowTask], totalCount: 2 });
+      workflowWireFacts.mockReturnValue(new Map([['t-wf', workflowFact]]));
+      const context = boardContext();
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      expect(response.ok).toBe(true);
+      const page = response.payload as { archivedTasks: Array<{ id: string; workflow: unknown }>; archivedTotalCount: number };
+      expect(page.archivedTotalCount).toBe(2);
+      expect(page.archivedTasks.find((row) => row.id === 't-wf')?.workflow).toEqual(workflowFact);
+      expect(page.archivedTasks.find((row) => row.id === 't-plain')?.workflow).toBeNull();
+      expect(workflowWireFacts).toHaveBeenCalledWith(context, 'proj-1', [plainTask, workflowTask]);
     });
   });
 
@@ -655,6 +725,13 @@ describe('handleReadBoard', () => {
         },
       ]);
       expect(snapshot.commandTerminalsOffered).toBe(true);
+    });
+
+    it('a workflow\'s own agent is never listed as a terminal: it is transient, but no Command Terminal', async () => {
+      // A slot is set on purpose, so only the owner check can keep it off the list.
+      registryRows = [{ id: 'workflow-agent', taskId: 'workflow-1', workflowId: 'workflow-1', status: 'running', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-1' }];
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      expect((response.payload as { commandTerminals: unknown[] }).commandTerminals).toEqual([]);
     });
 
     it('a terminal that is not running is not listed', async () => {

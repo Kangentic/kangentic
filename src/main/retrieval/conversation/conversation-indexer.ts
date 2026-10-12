@@ -452,6 +452,39 @@ export class ConversationIndexer {
   }
 
   /**
+   * A workflow's own agent: its turns into the token ledger, and nothing into
+   * the search index. It has no session record (it is a transient session
+   * carrying the workflow's id), so the caller names its conversation; and its
+   * planning conversation is not task work, so it never becomes a Knowledge
+   * Graph document. The ledger upserts by turn uuid, so a walk of a resumed
+   * conversation records each turn once, owned by the latest session.
+   * Never throws.
+   */
+  async recordWorkflowAgentTurns(projectId: string, owner: { sessionId: string; agentSessionId: string; sessionType: string; cwd: string }): Promise<IndexOutcome> {
+    let db: Database.Database;
+    try {
+      db = this.deps.getDb(projectId);
+    } catch {
+      return 'error';
+    }
+    const adapter = this.deps.getAdapter(owner.sessionType);
+    if (!adapter?.parseTranscript && !adapter?.parseTranscriptWindow) return 'unsupported';
+    try {
+      const walked = await this.walkTranscript(adapter, owner.agentSessionId, owner.cwd, null);
+      if (walked.entryCount === 0) return 'missing-source';
+      new ConversationUsageStore(db).recordTurns(
+        { agentSessionId: owner.agentSessionId, sessionId: owner.sessionId, taskId: null },
+        walked.usageRecords,
+        this.deps.now(),
+      );
+      return 'indexed';
+    } catch (error) {
+      console.warn(`[retrieval] workflow agent turn usage failed for session ${owner.sessionId}:`, error);
+      return 'error';
+    }
+  }
+
+  /**
    * Index one session's SUBAGENT token usage into the turn-usage ledger.
    *
    * Deliberately a SEPARATE method from `indexSession`, not an option on it. The

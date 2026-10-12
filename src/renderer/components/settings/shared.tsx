@@ -61,6 +61,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
   );
   const backdropMouseDown = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -71,6 +72,13 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
         return;
       }
       if (event.key === 'Escape') {
+        // A dialog a tab opened (a confirm, the Workflow agent prompt's editor)
+        // owns Escape while it is open: both listeners are bubble-phase on
+        // `document` and this one was registered first, so without this one
+        // keystroke closed the dialog AND the panel under it. A dialog the tab
+        // portaled to the body marks its portal `data-settings-layer`.
+        if (panelRef.current?.querySelector('[data-base-dialog]')) return;
+        if (document.querySelector('[data-settings-layer] [data-base-dialog]')) return;
         // If searching, clear search first instead of closing
         if (isSearching && onSearchChange) {
           onSearchChange('');
@@ -96,6 +104,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
       }}
     >
       <div
+        ref={panelRef}
         className={`fixed top-10 right-0 bottom-0 w-[720px] bg-surface-raised border-l border-edge shadow-2xl flex flex-col ${contentClassName}`}
         onAnimationEnd={onAnimationEnd}
         onMouseDown={(event) => event.stopPropagation()}

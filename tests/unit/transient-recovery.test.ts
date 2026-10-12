@@ -43,6 +43,22 @@ function transientMap(entries: TransientSessionEntry[]): Record<string, Transien
 }
 
 describe('planTransientRecovery', () => {
+  it('never adopts a workflow\'s own agent into a Command Terminal window', () => {
+    // Transient, running and slotless: every test the pass applies to a Command
+    // Terminal survivor holds, which is exactly why it must be excluded by owner.
+    const recovered = planTransientRecovery({
+      sessions: [transientSession({ id: 'sess-workflow-agent', workflowId: 'wf-1' })],
+      transientSessions: {},
+    });
+    expect(recovered === null || Object.keys(recovered).length === 0).toBe(true);
+    expect(findAdoptableTransientSession(
+      [transientSession({ id: 'sess-workflow-agent', workflowId: 'wf-1', commandTerminalSlot: 'slot-1' })],
+      {},
+      PROJECT_A,
+      'slot-1',
+    )).toBeNull();
+  });
+
   it('re-pairs each survivor to the slot main recorded, not to a dense position', () => {
     // The whole point of carrying commandTerminalSlot. The old `slot-${index + 1}`
     // guess would have produced slot-1 / slot-2 here, so a window titled "Command

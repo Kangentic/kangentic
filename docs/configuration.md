@@ -57,7 +57,7 @@ a runtime re-apply - so a 40-character path used to pay all of that 40 times.
 
 The panel uses a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
-- **Settings Panel** - opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs are grouped by category (`SETTINGS_TABS` in `settings-tabs.ts`): the `'project'` group (General, Theme, Agent, Git, Browser, Shortcuts) is per-project settings, hidden when no project is open; the `'system'` group (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) is shared settings that apply across all projects and remain fully usable with no project open. The system group is further split into sidebar tiers (`tier` on each tab): Core (Board through Notifications, unlabeled - the default group), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer); order within each group is curated by frequency/concept rather than alphabetical, since the search bar already covers fast lookup-by-name. The Task tab holds task-presentation settings that used to live under Board (Card Density, Ticket Numbers) and Terminal (the whole Context Bar section), grouping controls that describe how an individual task presents itself rather than board layout or terminal cosmetics; Board keeps `columnWidth` and board-level Config Sync/Window settings, and Terminal keeps shell/font/cursor/colors. Terminal is global-only (shell, font, cursor style, colors): shell in particular was never reliably project-scoped at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever project is currently focused - `src/main/pty/session-manager.ts`), so a background project's spawn/resume could silently pick up the wrong shell. See `.claude/rules/settings-tab-scope.md` for why a setting's tab must match its persistence scope. Within the project group, General saves `project.location` to the project record in the global index database via a "Change..." button that re-points the project after its folder is moved or renamed, preserving tasks and history which are keyed by project id; Theme saves `theme`, `themeFollowsSystem`, `themeLight`, and `themeDark` to `.kangentic/config.json`; Agent, Git, and Browser also save to `.kangentic/config.json`; Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`). The Agent tab exposes the `project.defaultAgent` setting (the "Agent" combobox), the agent CLI used for new sessions in this project, along with `project.defaultModel` and `project.defaultEffort` (the "Model" and "Effort" comboboxes), the project-level model and reasoning-effort defaults applied when no column or task override is set. Like `project.location`, all three are stored on the project record in the global index database rather than in `AppConfig`. When the selected agent declares remote-execution support (today: OpenCode only), the Agent tab also shows an Execution mode row right below the CLI Path row, letting the project run that agent locally (the default) or attach to a server it declares support for - see [Remote Execution](#remote-execution) below; an agent without the capability shows none of these rows. The system-group tabs save to the global config. When no project is open, only the system tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `themeFollowsSystem`, `themeLight`, `themeDark`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl`, `importSources`, and `agent.execution` (a remote server's working directory is specific to the project it was configured for) is stored per-project and is never cloned into a new project.
+- **Settings Panel** - opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs are grouped by category (`SETTINGS_TABS` in `settings-tabs.ts`): the `'project'` group (General, Theme, Agent, Git, Browser, Shortcuts) is per-project settings, hidden when no project is open; the `'system'` group (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) is shared settings that apply across all projects and remain fully usable with no project open. The system group is further split into sidebar tiers (`tier` on each tab): Core (Board through Notifications, unlabeled - the default group), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer); order within each group is curated by frequency/concept rather than alphabetical, since the search bar already covers fast lookup-by-name. The Task tab holds task-presentation settings that used to live under Board (Card Density, Ticket Numbers) and Terminal (the whole Context Bar section), grouping controls that describe how an individual task presents itself rather than board layout or terminal cosmetics; Board keeps `columnWidth` and board-level Config Sync/Window settings, and Terminal keeps shell/font/cursor/colors. Terminal is global-only (shell, font, cursor style, colors): shell in particular was never reliably project-scoped at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever project is currently focused - `src/main/pty/session-manager.ts`), so a background project's spawn/resume could silently pick up the wrong shell. See `.claude/rules/settings-tab-scope.md` for why a setting's tab must match its persistence scope. Within the project group, General saves `project.location` to the project record in the global index database via a "Change..." button that re-points the project after its folder is moved or renamed, preserving tasks and history which are keyed by project id; Theme saves `theme`, `themeFollowsSystem`, `themeLight`, and `themeDark` to `.kangentic/config.json`; Agent, Git, and Browser also save to `.kangentic/config.json`; Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`). The Agent tab exposes the `project.defaultAgent` setting (the "Agent" combobox), the agent CLI used for new sessions in this project, along with `project.defaultModel` and `project.defaultEffort` (the "Model" and "Effort" comboboxes), the project-level model and reasoning-effort defaults applied when no column or task override is set. Like `project.location`, all three are stored on the project record in the global index database rather than in `AppConfig`. When the selected agent declares remote-execution support (today: OpenCode only), the Agent tab also shows an Execution mode row right below the CLI Path row, letting the project run that agent locally (the default) or attach to a server it declares support for - see [Remote Execution](#remote-execution) below; an agent without the capability shows none of these rows. The system-group tabs save to the global config. When no project is open, only the system tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `themeFollowsSystem`, `themeLight`, `themeDark`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl`, `importSources`, and `agent.execution` (a remote server's working directory is specific to the project it was configured for) is stored per-project and is never cloned into a new project.
 
 ### App-Only Settings
 
@@ -83,6 +83,9 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `agent.idleTimeoutMinutes`
 - `developer.activityDebugOverlay`, `developer.persistConsoleLogs`, `developer.recordIpcTraffic`, `developer.previewInspectionServer`, `developer.previewEvalEnabled`, `developer.stallProfiler`
 - `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
+- `automation.agent`, `automation.model`, `automation.effort` (the Automation agent that answers automation Conditions, in the Workflows tab; see [Workflows (Automation agent)](#workflows-automation-agent))
+- `workflows.agentPrompt` (the workflow agent's first message, in the Workflows tab)
+- `workflows.agentPaneWidth` (the Workflows view's agent pane width; set by dragging the pane's edge, not in Settings)
 - `dictation.*` (all voice dictation settings)
 - `knowledgeGraph.*` (conversation search + recall, in the Knowledge Graph tab, id `knowledgeGraph`)
 - `mobileBridge.*` (mobile companion app pairing/relay, in the Mobile Devices tab)
@@ -356,10 +359,12 @@ something is listening on.
 | `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when an agent finishes its turn or needs permission. Suppressed only while the window is focused AND that session's project is the open one, so an unfocused window still alerts on the open project |
 | `notifications.desktop.onAgentCrash` | boolean | `true` | Desktop notification when session exits with error |
 | `notifications.desktop.onPlanComplete` | boolean | `true` | Desktop notification when plan completes and task auto-moves |
+| `notifications.desktop.onWorkflowComplete` | boolean | `true` | Desktop notification when every task in a workflow reaches Done ("Workflow complete: <title>", the project's name as the body; a click opens the project). Through the same focus gate and cooldown as Plan Complete |
 | `notifications.desktop.onSpawnStalled` | boolean | `true` | Desktop notification when a task spawn stays in a preparing phase (worktree/git queue) past the stall threshold (~8s) |
 | `notifications.toasts.onAgentIdle` | boolean | `true` | In-app toast when an agent finishes its turn or needs permission, on the open project. Skipped while that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it |
 | `notifications.toasts.onAgentCrash` | boolean | `true` | In-app toast when a session exits (error or clean); the `notifications.desktop.onAgentCrash` row fires on error exits only |
 | `notifications.toasts.onPlanComplete` | boolean | `true` | In-app toast when a plan completes and its task auto-moves, on the open project |
+| `notifications.toasts.onWorkflowComplete` | boolean | `true` | In-app toast when every task in a workflow reaches Done, on the workflow's project: "Workflow complete. All 9 tasks of "Usage budgets" are in Done." |
 | `notifications.toasts.onSpawnStalled` | boolean | `true` | In-app toast (with a Cancel action) when a task spawn stalls past the threshold while preparing |
 | `notifications.toasts.durationSeconds` | number | `4` | Toast auto-dismiss time in seconds (1-30) |
 | `notifications.toasts.maxCount` | number | `5` | Maximum simultaneous visible toasts (1-10) |
@@ -543,6 +548,22 @@ fork that threw), and the
 same text is in `<project>/.kangentic/logs/<date>.log` as a
 `[utility-process]` warning.
 
+### Workflows (Automation agent)
+
+Settings > Workflows, first in the Advanced tier. Global-only: it applies to every project and works
+with no project open. Its first card is the **Automation agent**, which answers every automation's
+Condition (and judges when a workflow step is done).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `automation.agent` | `string \| null` | `null` | The agent that answers Conditions, an adapter name (`claude`, `codex`). Its own choice, separate from the Knowledge Graph's and from the project's default agent, with no fallback to either: while it is unset, a row with a Condition is skipped ("Set up an Automation agent") and nothing is spent. Resolved through `automationAgentChoice` and checked with `automationAgentReady` (`src/shared/answer-agent.ts`), which the Edit automation dialog and the engine both read. A check runs through the same headless, read-only answer path as Ask (`answerFromContext`, in the shared answer home), at most two at once, with the CLI's detection cached for five minutes. |
+| `automation.model` | `string \| null` | `null` | The model the check runs at, as that CLI's own id. Required when the agent's answer run takes a model. Cleared whenever `automation.agent` changes. A small, fast model is usually enough: a check reads one reply and answers yes or no. |
+| `automation.effort` | `string \| null` | `null` | The effort level the check runs at. Optional: unset runs at the adapter's recommended level. Cleared with the model when the agent changes. |
+| `workflows.agentPrompt` | `string \| null` | `null` | The whole first message a new workflow's agent gets, envelope included. Unset or blank sends the default (`DEFAULT_WORKFLOW_AGENT_PROMPT`, `src/shared/workflow-agent-prompt.ts`). Offers `{{projectName}}`, `{{projectPath}}`, `{{baseBranch}}`, `{{columns}}` and `{{brief_xml}}`. An edit applies to agents that start after it; a running conversation keeps what it was sent. |
+| `workflows.agentPaneWidth` | `number \| null` | `null` | The agent pane's width in the Workflows view, in pixels. Written when a drag on the pane's right edge ends, never shown in Settings. Unset means 560; read back clamped to 360 to 960 (`workflowAgentPaneWidth`, `WorkflowAgentPane.tsx`). Below that width plus 780 (the inspector and a 400px canvas), the open pane lies over the canvas instead of taking its width. A drag on a docked pane stops where the canvas would drop below 400px, so the drag itself never turns the pane floating. |
+
+**The Automation agent card is a registry entry, not a config key.** `automation.agentCard` is the Automation agent card, so Settings search finds it by "automation", "condition" or "workflow step" and lands on the whole card. Its three rows are the `automation.agent`, `automation.model` and `automation.effort` entries above.
+
 ### Mobile Bridge
 
 The Mobile Devices tab hosts the desktop half of the mobile companion app's pairing/transport link (`src/main/mobile-bridge/`, see [Mobile Bridge](mobile-bridge.md)). Global-only (per-machine) - the identity, roster, and relay connection represent this desktop installation, not any one project.
@@ -609,22 +630,44 @@ Each swimlane has its own overrides (stored in the per-project DB):
 
 ## Column automations
 
-What a column does when a task enters or leaves it. Each column owns one ordered list, split into
-two groups, **On enter** and **On exit**, and each row has its own switch. They are edited in the
+What a column does when a task enters it, each time its agent finishes a turn there, and when the
+task leaves. Each column owns one ordered list, split into three groups, **On task enter**, **On
+agent turn end** and **On task exit**, and each row has its own switch. They are edited in the
 **Column Manager** (click a column header on the board), and they round-trip through
 `kangentic.json` under the column that owns them.
 
-Four types ship. Each is an adapter under `src/main/automations/adapters/`, declared once in
+Five types ship. Each is an adapter under `src/main/automations/adapters/`, declared once in
 `AUTOMATION_MANIFEST`, which is also what the editor renders its fields from.
 
 | Type | What it does | Fields |
 |------|--------------|--------|
-| `send_message` | Types a message at the column's agent | `message`, `mode` (`immediate` \| `deferred`) |
+| `send_message` | Types a message at the column's agent. On every trigger, a message with more than one line is pasted whole, unless it starts with `/` (a slash command is always typed, so it runs) | `message`, `mode` (`immediate` \| `deferred`) |
 | `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (default 10, range 1 to 120, file only) |
 | `webhook` | Calls a URL, retrying a transport error, 408, 429 or 5xx, for up to 3 attempts in total | `url`, `method`, `body`, `headers` |
 | `notify` | Raises one desktop notification | `title`, `body` |
+| `move_to_column` | Moves the task to another column, and hands the agent there a message. On agent turn end only; a row that runs ends its group | `targetColumn` (a column name; absent means the next column), `message` |
 
-A fifth, `spawn_agent`, is legacy: it survives on boards that already had a `spawn_agent` row
+**On agent turn end** runs when the agent working the task finishes a turn on its own (not an
+interrupt, a failed turn, or a background job still running), once the turn has settled. Only a
+turn that began after the task entered the column counts. Rows run top to bottom, each at most
+once per visit, and only a row that actually runs counts: a row whose Condition answered no is
+checked again at the next turn end. To Do and Done have no turn ends, nor does a column whose agent
+is off or does not report turn ends (agents whose only signal is terminal silence).
+
+**Condition and Frequency apply to every type.** A row's **Condition** is a sentence in plain words
+("the review found work the implementer can do"), answered yes or no by the **Automation agent**
+(Settings > Workflows) before the row runs, with a one-line reason the run log keeps. One headless,
+read-only call answers every pending Condition of a group at once; at a turn end it reads the
+task and the agent's final message, on enter or exit the task and the move. Until an Automation
+agent is set up, a row with a Condition is skipped (a Condition written earlier is kept). A row's
+**Frequency** is the most times it may run on one task, counted across every visit; a row past it
+is skipped. Both are off on every row unless set, so a board from before them runs as it did.
+
+The Code Review loop is two `move_to_column` rows on a review column's On agent turn end: "Back for
+revisions" to Executing with the reviewer's `{{agentReply}}` in its message, behind a Condition and
+a Frequency, and "Clean" to the next column behind its own Condition.
+
+A sixth, `spawn_agent`, is legacy: it survives on boards that already had a `spawn_agent` row
 carrying a custom prompt, and cannot be created. `kill_session`, `create_worktree` and
 `cleanup_worktree` are gone entirely, rows and all, because each was a no-op or a duplicate of
 what the move path already does.
@@ -758,6 +801,17 @@ Ghost columns are invisible on the board but still exist in the database. Once a
           { "name": "Review", "type": "send_message", "message": "/code-review {{baseBranch}}" },
           { "name": "Ping the channel", "type": "webhook", "url": "https://hooks.example.com/abc" }
         ],
+        "onTurnEnd": [
+          {
+            "name": "Back for revisions",
+            "type": "move_to_column",
+            "targetColumn": "Executing",
+            "message": "Back from {{column}}. What the review found:\n{{agentReply}}",
+            "condition": "The review found work the implementer can do",
+            "maxRuns": 3
+          },
+          { "name": "Clean", "type": "move_to_column", "condition": "The review is clean" }
+        ],
         "onExit": [
           { "name": "Archive the log", "type": "run_script", "enabled": false, "script": "scripts/archive.sh" }
         ]
@@ -791,14 +845,25 @@ before the first picker scan on a machine, write the alias in lowercase. What an
 decided by the CLI on each machine: the provider and variables such as
 `ANTHROPIC_DEFAULT_OPUS_MODEL` can point it at a different version.
 
-**Automations nest under the column that owns them, as two named arrays.** Array order IS the
-run order within its group, an empty group is an absent key, and the type's own fields sit flat
-on the row beside `name`, `type` and `enabled` rather than under a `with` object. Those three
-keys are reserved: `automation-manifest-reserved-keys.test.ts` fails an adapter that declares a
-field colliding with one, which is what keeps the flat shape safe as the reserved set grows.
+**Automations nest under the column that owns them, as three named arrays** (`onEnter`,
+`onTurnEnd`, `onExit`). Array order IS the run order within its group, an empty group is an absent
+key, and the type's own fields sit flat on the row beside `name`, `type`, `enabled`, `condition`
+and `maxRuns` rather than under a `with` object. Those five keys are reserved:
+`automation-manifest-reserved-keys.test.ts` fails an adapter that declares a field colliding with
+one, which is what keeps the flat shape safe as the reserved set grows.
 
-`enabled` is omitted when true, so a switched-off row is the only one that carries it. There is
-no `on` key, because the array a row sits in already says which trigger it runs on.
+`enabled` is omitted when true, so a switched-off row is the only one that carries it; `condition`
+and `maxRuns` are omitted when off. There is no `on` key, because the array a row sits in already
+says which trigger it runs on. A `move_to_column` row names its column by name, as `planExitTarget`
+does, and renaming that column rewrites the row.
+
+**Keys this build does not know are kept.** When the export rebuilds a column's `automations`, it
+carries over any automation list, row type, or row key it does not recognize from the file it last
+read (a row is matched by name and type). So a field or trigger that a NEWER build added survives a
+save by this one. The reverse cannot be fixed from here: a build from before On agent turn end
+ignores `onTurnEnd`, `condition` and `maxRuns`, drops those rows from its database, and its next
+export writes the file without them. **A team that shares `kangentic.json` should update
+Kangentic together.**
 
 **The top-level `actions` and `transitions` arrays are gone, along with `columns[].autoCommand`
 and `columns[].autoCommandMode`.** All four are still READ, and converted on apply by the same
@@ -813,8 +878,12 @@ board:
 - A row that is not an object, has no name, or has a `type` outside the registry is skipped.
 - A RETIRED type (`kill_session`, `create_worktree`, `cleanup_worktree`) is skipped, matching
   what the migration did to the same row in the database.
+- A row filed under a trigger its type does not run on (a `move_to_column` row in `onEnter` or
+  `onExit`) is skipped: it would run inside the move that fired it.
+- A `maxRuns` below 1 or not a number reads as off, and a fraction is rounded down. Each one warns,
+  since the MCP writer refuses all three. A blank `condition` reads as off with no warning.
 - A second row with a name already used in the same column is renamed (`Notify 2`).
-- An `automations` value that is not an object, or an `onEnter` / `onExit` that is not a list
+- An `automations` value that is not an object, or an `onEnter` / `onTurnEnd` / `onExit` that is not a list
   (`{}`, or a single row written without brackets), keeps that column's current automations
   untouched. Treating it as empty would delete the column's rows, and on project open the export
   that follows would write the deletion into the file. A malformed value also does not count as

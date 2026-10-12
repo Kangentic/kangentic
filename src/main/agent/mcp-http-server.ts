@@ -47,12 +47,15 @@ import { makeTaskCounter, type TaskCounter } from './mcp-http/handler-helpers';
 import { registerTaskTools } from './mcp-http/task-tools';
 import { registerProfileTools } from './mcp-http/profile-tools';
 import { registerAutomationTools } from './mcp-http/automation-tools';
+import { registerWorkflowTools } from './mcp-http/workflow-tools';
 import { registerSessionTools } from './mcp-http/session-tools';
 import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
-import { isAnswerCaller } from './mcp-http/caller-url';
+import { isAnswerCaller, workflowIdOfCaller } from './mcp-http/caller-url';
+import { scopeServerToWorkflowAgent } from './mcp-http/workflow-agent-scope';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
+import { resolveCallerTaskId } from './mcp-http/caller-task';
 import {
   registerBrowserTools,
   type AutomationConfigReader,
@@ -357,16 +360,21 @@ export function buildConfiguredMcpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions },
   );
-  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices);
+  // The calling agent's task, looked up once for the request: the browser
+  // tools scope their default pane to it, and the move tool's workflow lock
+  // lets a task's own agent move it while its workflow runs.
+  const callerTaskId = resolveCallerTaskId(browser);
+  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId ?? null);
   registerProfileTools(mcpServer, resolver);
   registerAutomationTools(mcpServer, resolver);
+  registerWorkflowTools(mcpServer, resolver);
   registerSessionTools(mcpServer, resolver);
   registerProjectTools(mcpServer, resolver);
   registerSearchTools(mcpServer, resolver);
   registerUsageTools(mcpServer, resolver);
   registerDiagnosticsTools(mcpServer, resolver);
   if (browserAutomationEnabled) {
-    registerBrowserTools(mcpServer, getBrowserAutomationConfig, browser);
+    registerBrowserTools(mcpServer, getBrowserAutomationConfig, browser, callerTaskId);
   }
   // Steering needs live main-process singletons. They are absent only before
   // the IPC context exists (the server starts ahead of createWindow), which is
@@ -408,6 +416,48 @@ export function buildAnswerMcpServer(resolver: RequestResolver, callerSessionId?
   );
   // The caller rides along so the run's searches reach the Knowledge Graph trace.
   registerSearchTools(mcpServer, resolver, callerSessionId);
+  return mcpServer;
+}
+
+/**
+ * The McpServer a workflow's own agent sees: every read-only tool, and the tools
+ * that shape its plan, bound to its own workflow (`workflow-agent-scope.ts`).
+ *
+ * Selected by the caller segment (`workflowIdOfCaller`). The agent is launched
+ * read-only, and this is the half of that the CLI cannot override: a tool that
+ * starts, deletes, moves or creates board work is not registered for it. No
+ * browser or steering tools, since it has no task and drives no other session.
+ *
+ * Exported so the tool list is unit-testable without booting the HTTP server.
+ */
+export function buildWorkflowAgentMcpServer(
+  resolver: RequestResolver,
+  taskCounter: TaskCounter,
+  workflowId: string,
+  toolArgumentNotices?: ToolArgumentNotices,
+): McpServer {
+  const instructions = `${buildServerInstructions(resolver, false)}\n\n`
+    + 'You are planning one workflow. The workflow tools here act on it, so leave out `workflow`. '
+    + 'You can read the code and the board, and change only this workflow\'s plan.\n\n'
+    // Named here because Claude Code defers MCP tools when there are many: the
+    // agent sees a tool's name, not its description, until it searches, and a
+    // small model went to the disk instead (#732, the preview journey).
+    + 'READING ANOTHER PROJECT: you can read the checkouts of the projects this workflow\'s tasks are on. '
+    + 'To read any other registered project (kangentic_list_projects names them), call '
+    + 'kangentic_request_project_access with its name, then end your turn: it is granted at once, and your '
+    + 'session comes back on this conversation with that checkout readable. Do not search the disk for another '
+    + 'project\'s folder: it is outside what you can read until access is granted.';
+  const mcpServer = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions });
+  const scoped = scopeServerToWorkflowAgent(mcpServer, workflowId);
+  registerTaskTools(scoped, resolver, taskCounter, toolArgumentNotices, null);
+  registerProfileTools(scoped, resolver);
+  registerAutomationTools(scoped, resolver);
+  registerWorkflowTools(scoped, resolver);
+  registerSessionTools(scoped, resolver);
+  registerProjectTools(scoped, resolver);
+  registerSearchTools(scoped, resolver);
+  registerUsageTools(scoped, resolver);
+  registerDiagnosticsTools(scoped, resolver);
   return mcpServer;
 }
 
@@ -476,17 +526,21 @@ async function handleHttpRequest(
   const toolArgumentNotices = createToolArgumentNotices();
 
   // A Knowledge Graph answer run gets one tool and nothing else (see
-  // `buildAnswerMcpServer`); every other caller gets the full server.
+  // `buildAnswerMcpServer`), a workflow's agent the read-only and planning
+  // tools (`buildWorkflowAgentMcpServer`); every other caller gets the full server.
+  const callerWorkflowId = workflowIdOfCaller(callerSessionId);
   const mcpServer = isAnswerCaller(callerSessionId)
     ? buildAnswerMcpServer(resolver, callerSessionId)
-    : buildConfiguredMcpServer(
-      resolver,
-      taskCounter,
-      getBrowserAutomationConfig,
-      resolveSteering(callerSessionId),
-      resolveBrowser(projectId, callerSessionId),
-      toolArgumentNotices,
-    );
+    : callerWorkflowId !== null
+      ? buildWorkflowAgentMcpServer(resolver, taskCounter, callerWorkflowId, toolArgumentNotices)
+      : buildConfiguredMcpServer(
+        resolver,
+        taskCounter,
+        getBrowserAutomationConfig,
+        resolveSteering(callerSessionId),
+        resolveBrowser(projectId, callerSessionId),
+        toolArgumentNotices,
+      );
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

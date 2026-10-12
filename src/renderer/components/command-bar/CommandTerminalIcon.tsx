@@ -10,7 +10,7 @@ import type { CommandTerminalTone } from '../../stores/session-store/transient-s
  * The center morphs from the shell prompt to a `+` when rendered for the "New terminal" button,
  * so that button reads as a terminal glyph (not a bare plus).
  *
- * One of the three files `ui-conventions.md` exempts from the lucide-only / no-inline-SVG rule,
+ * One of the four files `ui-conventions.md` exempts from the lucide-only / no-inline-SVG rule,
  * and the only one that holds the exemption second-hand: it draws nothing itself, it wraps
  * `ActivityMark`. The geometry comes from `@kangentic/branding`'s `terminal-*` marks.
  * It was previously hand-authored here and was byte-identical to the packaged art (same rect,

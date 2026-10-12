@@ -263,6 +263,15 @@ export class ClaudeAdapter implements AgentAdapter {
   readonly displayName = 'Claude Code';
   readonly sessionType = 'claude_agent';
   readonly supportsCallerSessionId = true;
+  // `--tools` with the read-only set (`READ_ONLY_TOOLS` in command-builder.ts,
+  // which keeps ToolSearch so the deferred Kangentic tools stay reachable),
+  // plus `--strict-mcp-config`. `--tools` is the CLI's own restriction of the
+  // built-in set, honoured in an interactive session; unlike plan mode it does
+  // not reroute the model.
+  readonly supportsReadOnlyLaunch = true;
+  // `--add-dir` per directory (command-builder.ts): the CLI's own way to widen
+  // what a session may read and search without a prompt.
+  readonly supportsReadableDirectories = true;
   // Claude streams account-wide rate-limit windows in its status line, so the
   // ContextBar shows the rate-limit pill for any Claude session using the shared
   // global snapshot - even a freshly spawned one that has not reported its own yet.
@@ -374,6 +383,8 @@ export class ClaudeAdapter implements AgentAdapter {
   // demand by transcript-parser.ts for the renderer's Transcript tab and
   // lifetime-token refinement.)
   readonly runtime: AdapterRuntimeStrategy = {
+    // Its Stop hook reaches the engine as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.hooks(),
     statusFile: {
       parseStatus: ClaudeStatusParser.parseStatus,

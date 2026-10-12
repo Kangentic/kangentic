@@ -71,7 +71,11 @@ const SUPPORTED_MARKS: readonly string[] = ACTIVITY_MARK_NAMES;
 // Every renderer file that shows an activity mark goes through the shared component. Rendering a
 // lucide glyph (or a fresh inline <svg>) for one of these states is the drift this set removes.
 const ACTIVITY_MARK_CONSUMERS = [
-  'src/renderer/components/board/TaskCard.tsx',
+  // The board card's body, shared with the Workflows canvas (TaskCard renders it).
+  'src/renderer/components/board/task-card-view.tsx',
+  'src/renderer/components/workflows/WorkflowHeader.tsx',
+  'src/renderer/components/workflows/WorkflowInspector.tsx',
+  'src/renderer/components/workflows/WorkflowPicker.tsx',
   'src/renderer/components/board/ActivityReasonTooltip.tsx',
   'src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx',
   'src/renderer/components/command-bar/CommandTerminalIcon.tsx',
@@ -90,14 +94,21 @@ const ACTIVITY_MARK_CONSUMERS = [
   'src/renderer/components/monitor/MonitorCard.tsx',
   'src/renderer/components/monitor/MonitorSummaryCards.tsx',
 ];
-// `ui-conventions.md` exempts exactly these three files from "use lucide, no inline SVGs", each
-// because it consumes a shipped branding asset. Anchoring the allowlist to real imports keeps the
-// rule's list from becoming a fourth thing that drifts.
+// `ui-conventions.md` exempts four files from "use lucide, no inline SVGs". These three are exempt
+// because each consumes a shipped branding asset. Anchoring the allowlist to real imports keeps the
+// rule's list from becoming another thing that drifts.
 const INLINE_SVG_EXEMPT_FILES = [
   BRAND_MARK_COMPONENT,
   ACTIVITY_COMPONENT,
   'src/renderer/components/command-bar/CommandTerminalIcon.tsx',
 ];
+// The fourth draws instead of importing: the Workflows empty state's linked cards, a diagram no
+// lucide glyph can draw. It has no branding import to anchor to, so it is held to what the rule
+// says about it instead: it names the rule, paints theme tokens only, and never moves.
+const DRAWN_INLINE_SVG_EXEMPT_FILES = [
+  'src/renderer/components/workflows/NoWorkflowsIllustration.tsx',
+];
+const UI_CONVENTIONS_RULE = '.claude/rules/ui-conventions.md';
 
 interface ActivityContractJson {
   floors: { indicator: number; control: number };
@@ -498,5 +509,27 @@ describe('activity marks', () => {
       notExempt,
       `ui-conventions.md exempts these from the lucide-only rule, but they no longer consume branding art:\n${notExempt.join('\n')}`,
     ).toEqual([]);
+  });
+
+  it('a drawn inline-SVG exemption names the rule, paints theme tokens only, and never moves', () => {
+    for (const relativePath of DRAWN_INLINE_SVG_EXEMPT_FILES) {
+      const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8');
+      expect(source.includes('<svg'), `${relativePath} is exempt for its inline <svg> but draws none`).toBe(true);
+      expect(source.includes('ui-conventions.md'), `${relativePath} should say in a comment why ui-conventions.md exempts it`).toBe(true);
+      // A hex literal would not follow a light theme; theme tokens do.
+      expect(source.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [], `${relativePath} paints a hex color instead of a theme token`).toEqual([]);
+      expect(source.match(/animate-|transition|@keyframes|<animate/g) ?? [], `${relativePath} is meant to be static`).toEqual([]);
+    }
+  });
+
+  it('the rule\'s Icons bullet names exactly the files this test exempts', () => {
+    const rule = fs.readFileSync(path.join(REPO_ROOT, UI_CONVENTIONS_RULE), 'utf-8');
+    const bulletStart = rule.indexOf('- **Icons:**');
+    expect(bulletStart, `${UI_CONVENTIONS_RULE} has no Icons bullet`).toBeGreaterThanOrEqual(0);
+    const bulletEnd = rule.indexOf('\n- **', bulletStart + 1);
+    const bullet = rule.slice(bulletStart, bulletEnd < 0 ? undefined : bulletEnd);
+    const named = [...bullet.matchAll(/`(components\/[^`]+\.tsx)`/g)].map((match) => `src/renderer/${match[1]}`).sort();
+    const listed = [...INLINE_SVG_EXEMPT_FILES, ...DRAWN_INLINE_SVG_EXEMPT_FILES].sort();
+    expect(named, `${UI_CONVENTIONS_RULE}'s Icons bullet and this test's exempt lists disagree`).toEqual(listed);
   });
 });

@@ -1,4 +1,4 @@
-import { simpleGit } from 'simple-git';
+import { gitAt } from './git-client';
 import { viaGitRead } from './git-read-queue';
 import { isSafeBranchName } from './push-command';
 
@@ -29,7 +29,7 @@ export async function readWorktreeHead(worktreePath: string): Promise<{ branch: 
  */
 export async function readWorktreeHeadUnqueued(worktreePath: string): Promise<{ branch: string | null; sha: string | null }> {
   try {
-    const git = simpleGit(worktreePath);
+    const git = gitAt(worktreePath);
     const branchRaw = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
     const sha = (await git.revparse(['HEAD'])).trim();
     return {
@@ -60,11 +60,11 @@ export async function readLocalBranchSha(repoCwd: string, branchName: string): P
   if (!isSafeBranchName(branchName)) return null;
   return viaGitRead(async () => {
     try {
-      const git = simpleGit(repoCwd);
+      const git = gitAt(repoCwd);
       const sha = (await git.revparse(['--verify', '--quiet', `${LOCAL_REF_PREFIX}${branchName}`])).trim();
       return HEX_SHA_PATTERN.test(sha) ? sha : null;
     } catch {
-      // Missing branch, or `simpleGit()` itself threw on a missing directory.
+      // Missing branch, or `gitAt()` itself threw on a missing directory.
       return null;
     }
   });
@@ -92,7 +92,7 @@ export async function readLocalBranchSha(repoCwd: string, branchName: string): P
 export async function hasCommitsAheadOfBase(repoCwd: string, baseBranch: string, sha: string): Promise<boolean> {
   return viaGitRead(async () => {
     try {
-      const git = simpleGit(repoCwd);
+      const git = gitAt(repoCwd);
       const commitCountOutput = (await git.raw(['rev-list', '--count', `${baseBranch}..${sha}`])).trim();
       return Number.parseInt(commitCountOutput, 10) > 0;
     } catch {
@@ -138,7 +138,7 @@ export async function isShaContainedInRef(repoCwd: string, ref: string, sha: str
   if (!ref || !sha || ref.startsWith('-')) return null;
   return viaGitRead(async () => {
     try {
-      const git = simpleGit(repoCwd);
+      const git = gitAt(repoCwd);
       for (const candidateRef of [`origin/${ref}`, ref]) {
         let commitCountOutput: string;
         try {
@@ -152,7 +152,7 @@ export async function isShaContainedInRef(repoCwd: string, ref: string, sha: str
       }
       return null;
     } catch {
-      // `simpleGit()` itself throws when repoCwd is not an existing directory (a
+      // `gitAt()` itself throws when repoCwd is not an existing directory (a
       // relocated project, a reclaimed worktree). The outer try keeps the
       // never-answers-with-a-failure contract INSIDE the queued job, as
       // git-read-queue.ts requires: a rejection here would surface to
@@ -210,7 +210,7 @@ const REMOTE_REF_PREFIX = 'refs/remotes/';
  * branch's tip is a base tip whatever `base_branch` claims.
  *
  * The `refs/remotes/` prefix requirement is load-bearing, not defensive. Several
- * unit suites mock simple-git's `raw` with a single catch-all string
+ * unit suites mock the git client's `raw` with a single catch-all string
  * (`pr-remote-gate-no-wipe.test.ts`, `pr-link-degrade-hints.test.ts`), and a
  * lenient parser would read `'0'` as a branch name and spend a provider call on
  * it. Real `for-each-ref` output is always full refnames, and git forbids
@@ -218,7 +218,7 @@ const REMOTE_REF_PREFIX = 'refs/remotes/';
  * exact.
  *
  * Fails SAFE and NEVER throws, the same contract as {@link isShaContainedInRef}:
- * an empty result skips the tier. The outer try wraps `simpleGit()` itself,
+ * an empty result skips the tier. The outer try wraps `gitAt()` itself,
  * which throws synchronously when `repoCwd` does not exist (a relocated project,
  * a reclaimed worktree); a rejection escaping here would reach pr-linking.ts as
  * a non-PRResolver error and suppress its confident-not-found clear.
@@ -251,7 +251,7 @@ export async function readRefsPointingAtSha(
 
   return viaGitRead(async () => {
     try {
-      const git = simpleGit(repoCwd);
+      const git = gitAt(repoCwd);
       // A sha with no refs pointing at it, or an object gc has already dropped,
       // exits 0 with empty output rather than erroring.
       const output = await git.raw([

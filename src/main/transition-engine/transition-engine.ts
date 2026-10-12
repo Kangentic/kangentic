@@ -14,9 +14,14 @@ import type {
   NotificationInput,
 } from '../../shared/types';
 import { runAutomations, type AutomationRunSummary } from '../automations/automation-runner';
+import type { AutomationContext } from '../automations/shared/automation-adapter';
+import type { ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
+import type { ConditionPromptInput } from '../automations/condition-check/condition-prompt';
 import type { AutomationRepository } from '../db/repositories/automation-repository';
-import type { AutomationRunRepository } from '../db/repositories/automation-run-repository';
+import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
+import { interpolateTaskTemplate } from '../agent/shared/template-utils';
 import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../shared/task-template-vars';
+import { readWorkflowPromptFacts } from '../workflows/workflow-prompt-facts';
 import { SessionManager } from '../pty/session-manager';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import { resolveTaskTemplateVars } from '../agent/shared';
@@ -85,6 +90,45 @@ export interface SpawnOverrides {
   forceFresh?: boolean;
 }
 
+/**
+ * What the engine borrows from the app for automations, injected so the engine
+ * stays free of the IPC context. `checkConditions` answers Conditions on the
+ * Automation agent (`automations/condition-check/`); absent, a row with a
+ * Condition is skipped with the reason.
+ */
+export interface TransitionEngineServices {
+  checkConditions?: (input: ConditionPromptInput, limits?: ConditionCheckLimits) => Promise<ConditionCheckOutcome>;
+}
+
+/** Options shared by every way into an automation group. */
+interface AutomationGroupOptions {
+  signal: AbortSignal;
+  startAgent?: (pendingPrompt?: string) => Promise<void>;
+  // `signal` is the automation run's own, so a caller that WAITS for
+  // delivery (the exit hook does; see `deliverExitMessage`) is bounded by
+  // the same budget that bounds every other row. A caller that only
+  // schedules delivery ignores it.
+  deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
+  legacySpawnAgent?: (config: AutomationConfig) => Promise<void>;
+  showNotification: (input: NotificationInput) => void;
+  onProgress?: (phase: string) => void;
+  fromColumn?: Swimlane | null;
+  toColumn?: Swimlane | null;
+  /** Rows the caller delivered itself. See `RunAutomationsOptions`. */
+  alreadyDelivered?: ReadonlySet<string>;
+  /** A recovery move out of Done. See `RunAutomationsOptions`. */
+  suppressAgentMessages?: boolean;
+  groupBudgetMs?: number;
+  /** Turn end only: the agent's final message of the turn, for `{{agentReply}}` and Conditions. */
+  agentReply?: string | null;
+  /** Turn end only: Conditions the caller already answered (see `RunAutomationsOptions`). */
+  conditionAnswers?: ReadonlyMap<string, RunConditionAnswer>;
+  /** Turn end only: why a Condition without an answer could not be checked. */
+  conditionUnavailableReason?: string;
+  /** Turn end only: move the task, for a Move to column row (`AutomationContext.moveTask`). */
+  moveTask?: AutomationContext['moveTask'];
+}
+
 export class TransitionEngine {
   constructor(
     private sessionManager: SessionManager,
@@ -95,6 +139,7 @@ export class TransitionEngine {
     private attachmentRepo?: AttachmentRepository,
     private automationRepo?: AutomationRepository,
     private automationRunRepo?: AutomationRunRepository,
+    private services: TransitionEngineServices = {},
   ) {}
 
   /**
@@ -120,6 +165,8 @@ export class TransitionEngine {
       // A spawn prompt is not a move, so the four move keywords resolve empty
       // here and the picker does not offer them in this context.
       move: null,
+      // A workflow task's <workflow> block; null for every other task.
+      workflow: readWorkflowPromptFacts(task, this.getConfig().projectId),
     });
     await this.executeSpawnAgent({
       promptTemplate: skipPromptTemplate ? undefined : DEFAULT_SPAWN_PROMPT_TEMPLATE,
@@ -142,29 +189,20 @@ export class TransitionEngine {
     task: Task,
     column: Swimlane,
     trigger: AutomationTrigger,
-    options: {
-      signal: AbortSignal;
-      startAgent?: (pendingPrompt?: string) => Promise<void>;
-      // `signal` is the automation run's own, so a caller that WAITS for
-      // delivery (the exit hook does; see `deliverExitMessage`) is bounded by
-      // the same budget that bounds every other row. A caller that only
-      // schedules delivery ignores it.
-      deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
-      legacySpawnAgent?: (config: AutomationConfig) => Promise<void>;
-      showNotification: (input: NotificationInput) => void;
-      onProgress?: (phase: string) => void;
-      fromColumn?: Swimlane | null;
-      toColumn?: Swimlane | null;
-      /** Rows the caller delivered itself. See `RunAutomationsOptions`. */
-      alreadyDelivered?: ReadonlySet<string>;
-      /** A recovery move out of Done. See `RunAutomationsOptions`. */
-      suppressAgentMessages?: boolean;
+    options: AutomationGroupOptions & {
+      /**
+       * Run only these rows of the group, in the group's order. The turn-end
+       * group passes the rows still pending this visit; every other caller
+       * runs the whole group.
+       */
+      onlyIds?: ReadonlySet<string>;
     },
   ): Promise<AutomationRunSummary> {
     const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
     if (!this.automationRepo || !this.automationRunRepo) return empty;
 
-    const automations = this.automationRepo.getForTrigger(column.id, trigger);
+    const all = this.automationRepo.getForTrigger(column.id, trigger);
+    const automations = options.onlyIds ? all.filter((row) => options.onlyIds!.has(row.id)) : all;
     if (automations.length === 0) return empty;
 
     return this.runAutomationGroup(automations, task, column, trigger, options);
@@ -198,6 +236,8 @@ export class TransitionEngine {
        * short-lock budget the re-run path explicitly does not inherit.
        */
       groupBudgetMs?: number;
+      /** A re-run of a Move to column row moves the task through this. */
+      moveTask?: AutomationContext['moveTask'];
     },
   ): Promise<AutomationRunSummary> {
     const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
@@ -212,37 +252,24 @@ export class TransitionEngine {
     });
   }
 
-  /** The shared body: template variables, the adapter context, and the runner. */
-  private async runAutomationGroup(
-    automations: ColumnAutomation[],
+  /**
+   * The template variables a group's rows resolve against, built once per
+   * group. Public so the turn-end group can resolve a Condition's own
+   * variables before it checks, with exactly what its rows will see.
+   */
+  resolveGroupTemplateVars(
     task: Task,
     column: Swimlane,
     trigger: AutomationTrigger,
-    options: {
-      signal: AbortSignal;
-      startAgent?: (pendingPrompt?: string) => Promise<void>;
-      deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
-      legacySpawnAgent?: (config: AutomationConfig) => Promise<void>;
-      showNotification: (input: NotificationInput) => void;
-      onProgress?: (phase: string) => void;
-      fromColumn?: Swimlane | null;
-      toColumn?: Swimlane | null;
-      alreadyDelivered?: ReadonlySet<string>;
-      suppressAgentMessages?: boolean;
-      groupBudgetMs?: number;
-    },
-  ): Promise<AutomationRunSummary> {
-    const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
-    if (!this.automationRunRepo) return empty;
-
+    options: { fromColumn?: Swimlane | null; toColumn?: Swimlane | null; agentReply?: string | null },
+  ): Record<string, string> {
     const config = this.getConfig();
-    const attachmentPaths = this.attachmentRepo?.getPathsForTask(task.id) ?? [];
     // task_xml gets the RAW description so multi-line markdown survives;
     // {{description}} stays sanitized for legacy single-line prose templates.
-    const templateVars = resolveTaskTemplateVars({
+    return resolveTaskTemplateVars({
       task,
       defaultBaseBranch: config.gitConfig.defaultBaseBranch,
-      attachmentPaths,
+      attachmentPaths: this.attachmentRepo?.getPathsForTask(task.id) ?? [],
       devPort: getDevPortForTask(task.id),
       projectPath: config.projectPath,
       projectName: config.projectName ?? null,
@@ -256,7 +283,67 @@ export class TransitionEngine {
         toColumn: options.toColumn?.name ?? null,
         trigger,
       },
+      agentReply: options.agentReply ?? null,
+      workflow: readWorkflowPromptFacts(task, config.projectId),
     });
+  }
+
+  /**
+   * Build the Condition check's input for these rows, each Condition's own
+   * template variables resolved. Null when nothing can check them.
+   */
+  conditionCheckInput(
+    task: Task,
+    column: Swimlane,
+    trigger: AutomationTrigger,
+    rows: ColumnAutomation[],
+    templateVars: Record<string, string>,
+    options: { fromColumn?: Swimlane | null; toColumn?: Swimlane | null; agentReply?: string | null },
+  ): ConditionPromptInput {
+    return {
+      task: {
+        title: task.title,
+        description: task.description,
+        labels: task.labels,
+        prUrl: task.pr_url,
+        prState: task.pr_state,
+        prMergeReadiness: task.pr_merge_readiness,
+      },
+      column: column.name,
+      trigger,
+      move: trigger === 'turn_end'
+        ? null
+        : { fromColumn: options.fromColumn?.name ?? null, toColumn: options.toColumn?.name ?? null },
+      agentReply: options.agentReply ?? null,
+      rows: rows.map((row) => ({
+        automationId: row.id,
+        name: row.name,
+        condition: interpolateTaskTemplate(row.condition ?? '', templateVars),
+      })),
+    };
+  }
+
+  /** Answer Conditions on the Automation agent, or say why that cannot happen. */
+  async checkConditions(input: ConditionPromptInput, limits?: ConditionCheckLimits): Promise<ConditionCheckOutcome> {
+    if (!this.services.checkConditions) {
+      return { ok: false, reason: 'Set up an Automation agent in Settings > Workflows to check this condition.' };
+    }
+    return this.services.checkConditions(input, limits);
+  }
+
+  /** The shared body: template variables, the adapter context, and the runner. */
+  private async runAutomationGroup(
+    automations: ColumnAutomation[],
+    task: Task,
+    column: Swimlane,
+    trigger: AutomationTrigger,
+    options: AutomationGroupOptions,
+  ): Promise<AutomationRunSummary> {
+    const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
+    if (!this.automationRunRepo) return empty;
+
+    const config = this.getConfig();
+    const templateVars = this.resolveGroupTemplateVars(task, column, trigger, options);
 
     return runAutomations({
       automations,
@@ -267,6 +354,19 @@ export class TransitionEngine {
       alreadyDelivered: options.alreadyDelivered,
       suppressAgentMessages: options.suppressAgentMessages,
       groupBudgetMs: options.groupBudgetMs,
+      conditionAnswers: options.conditionAnswers,
+      conditionUnavailableReason: options.conditionUnavailableReason,
+      // Enter and exit check their Conditions here, once for the group. The
+      // turn-end group checked before it ran anything and passes its answers.
+      checkConditions: options.conditionAnswers
+        ? undefined
+        : async (rows, limits) => {
+          const outcome = await this.checkConditions(
+            this.conditionCheckInput(task, column, trigger, rows, templateVars, options),
+            limits,
+          );
+          return outcome.ok ? { ok: true, answers: outcome.answers } : outcome;
+        },
       context: {
         task,
         column,
@@ -285,6 +385,7 @@ export class TransitionEngine {
         deliverToAgent: options.deliverToAgent,
         showNotification: options.showNotification,
         legacySpawnAgent: options.legacySpawnAgent,
+        moveTask: options.moveTask,
         onProgress: options.onProgress,
       },
     });
@@ -313,6 +414,7 @@ export class TransitionEngine {
       projectPath: engineConfig.projectPath,
       projectName: engineConfig.projectName ?? null,
       move: null,
+      workflow: readWorkflowPromptFacts(task, engineConfig.projectId),
     });
     await this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal, agentOverride, undefined, spawnOverrides);
   }

@@ -51,6 +51,37 @@ export function agentJobChoice(config: KnowledgeGraphConfig | undefined, job: Ag
   };
 }
 
+type AutomationAgentConfig = NonNullable<AppConfig['automation']>;
+
+/**
+ * The Automation agent's choice (`AppConfig.automation`), the agent that
+ * answers automation Conditions. Its own setting, with no fallback to the
+ * Knowledge Graph's agent or the project's default, for the reason this
+ * module's header gives: nothing runs on an agent nobody chose.
+ */
+export function automationAgentChoice(config: AutomationAgentConfig | undefined): AgentJobChoice {
+  return {
+    agent: config?.agent ?? null,
+    model: config?.model ?? null,
+    effort: config?.effort ?? null,
+  };
+}
+
+/**
+ * Whether the Automation agent is set up enough to run a check: an agent that
+ * can answer, installed, with a model when its answer run takes one. The one
+ * test the Condition card and the engine both read, so the card never offers a
+ * switch the engine would then skip.
+ */
+export function automationAgentReady<T extends AnswerAgentCandidate>(
+  agents: ReadonlyArray<T>,
+  config: AutomationAgentConfig | undefined,
+  requireFound: boolean,
+): boolean {
+  const choice = automationAgentChoice(config);
+  return answerSetupGap({ agents, configured: choice.agent, configuredModel: choice.model, requireFound }) === null;
+}
+
 /**
  * Whether task summaries are switched on. On unless switched off:
  * they are part of what the Knowledge Graph reads, and nothing is spent until

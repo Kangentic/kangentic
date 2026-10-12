@@ -59,6 +59,13 @@ export const IPC = {
   TASK_SESSION_RESYNC: 'task:sessionResync',
   TASK_PR_LINK_CHANGED: 'task:prLinkChanged',
   TASK_MOVED_BY_MOBILE: 'task:movedByMobile',
+  // A move Kangentic made on its own: a Move to column automation at a turn
+  // end, or a workflow starting or advancing a task. Quiet: the board reloads,
+  // and the run log (or the workflow) says why.
+  TASK_MOVED_BY_AUTOMATION: 'task:movedByAutomation',
+  // Every task in a workflow reached Done: the Workflow Complete toast and
+  // desktop notification (`WorkflowCompletedEvent`).
+  WORKFLOW_COMPLETED: 'workflow:completed',
   TASK_SPAWN_BLOCKED: 'task:spawnBlocked',
   // Non-blocking spawn anomaly: the agent still started, but from a base that
   // could not be freshened (network/credential fetch failure).
@@ -383,6 +390,33 @@ export const IPC = {
   BACKLOG_ATTACHMENT_REMOVE: 'backlogAttachment:remove',
   BACKLOG_ATTACHMENT_GET_DATA_URL: 'backlogAttachment:getDataUrl',
   BACKLOG_ATTACHMENT_OPEN: 'backlogAttachment:open',
+
+  // Workflows (the Workflows view). Every call names the workflow's HOME
+  // project; a task is addressed by its view key (draft key, or task id once
+  // started). The MCP tools reach the same operations through
+  // src/main/workflows/workflow-service.ts.
+  WORKFLOW_LIST: 'workflow:list',
+  WORKFLOW_LIST_SUPERSESSIONS: 'workflow:listSupersessions',
+  WORKFLOW_GET: 'workflow:get',
+  WORKFLOW_CREATE: 'workflow:create',
+  WORKFLOW_RENAME: 'workflow:rename',
+  WORKFLOW_DELETE: 'workflow:delete',
+  WORKFLOW_START: 'workflow:start',
+  WORKFLOW_PAUSE: 'workflow:pause',
+  WORKFLOW_RESUME: 'workflow:resume',
+  WORKFLOW_ADD_TASK: 'workflow:addTask',
+  WORKFLOW_UPDATE_TASK: 'workflow:updateTask',
+  WORKFLOW_REMOVE_TASK: 'workflow:removeTask',
+  WORKFLOW_SET_LINK: 'workflow:setLink',
+  WORKFLOW_SET_ROUTE: 'workflow:setRoute',
+  WORKFLOW_SET_POSITIONS: 'workflow:setPositions',
+  // The workflow's own agent, in the view's left pane (src/main/workflows/workflow-agent.ts).
+  WORKFLOW_AGENT_OPEN: 'workflow:agentOpen',
+  WORKFLOW_AGENT_RESUME: 'workflow:agentResume',
+  WORKFLOW_AGENT_PAUSE: 'workflow:agentPause',
+  // A workflow or its tasks changed (any source: the view, an agent, the
+  // engine), so an open Workflows view reloads it (`WorkflowChangedEvent`).
+  WORKFLOW_CHANGED: 'workflow:changed',
 
   // Clipboard (and the pasted-image temp directory it shares with the drop path)
   CLIPBOARD_READ_IMAGE: 'clipboard:readImage',

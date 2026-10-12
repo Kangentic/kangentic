@@ -30,6 +30,7 @@ import {
   pruneColumnRows,
   remapDraftIds,
   removeRow,
+  renameColumnsInDrafts,
   rowsFor,
   runnableAutomationCounts,
   runnableRows,
@@ -233,16 +234,16 @@ describe('what runs here', () => {
       draft({ id: 'a4', type: 'webhook', trigger: 'exit' }),
     ];
 
-    expect(automationCounts(list)).toEqual({ enter: 3, exit: 1 });
-    expect(runnableAutomationCounts(list, AGENT_COLUMN)).toEqual({ enter: 2, exit: 1 });
+    expect(automationCounts(list)).toEqual({ enter: 3, turn_end: 0, exit: 1 });
+    expect(runnableAutomationCounts(list, AGENT_COLUMN)).toEqual({ enter: 2, turn_end: 0, exit: 1 });
     // With no agent the message cannot run, so the count drops rather than
     // reporting something that will not happen.
-    expect(runnableAutomationCounts(list, NO_AGENT_COLUMN)).toEqual({ enter: 1, exit: 1 });
+    expect(runnableAutomationCounts(list, NO_AGENT_COLUMN)).toEqual({ enter: 1, turn_end: 0, exit: 1 });
   });
 
   it('counts no enter rows on To Do, where an enter automation can never fire', () => {
     const list = [draft({ trigger: 'enter' }), draft({ id: 'a2', trigger: 'exit' })];
-    expect(runnableAutomationCounts(list, TODO_COLUMN)).toEqual({ enter: 0, exit: 1 });
+    expect(runnableAutomationCounts(list, TODO_COLUMN)).toEqual({ enter: 0, turn_end: 0, exit: 1 });
   });
 
   it('names the rows a count covers, for the tooltip', () => {
@@ -364,6 +365,130 @@ describe('saving', () => {
     const remapped = remapDraftIds(drafts, 'new:1', 'lane-real');
     expect(Object.keys(remapped)).toEqual(['lane-real']);
     expect(remapDraftIds(drafts, 'missing', 'lane-real')).toBe(drafts);
+  });
+});
+
+// A Move to column row names its target by the column's NAME, so renaming a
+// column in the Board Manager has to carry every row that names it. Only
+// `move_to_column` declares a `kind: 'column'` field today, so every row below
+// is that type: the file's default webhook draft has no column field and could
+// never change.
+describe('renameColumnsInDrafts', () => {
+  function movesTo(id: string, targetColumn: string): AutomationDraft {
+    return draft({ id, name: `Hand off ${id}`, type: 'move_to_column', trigger: 'turn_end', config: { targetColumn } });
+  }
+  function targetOf(row: AutomationDraft): unknown {
+    return (row.config as Record<string, unknown>).targetColumn;
+  }
+
+  it('points a row at the new name of a column renamed in the same Save', () => {
+    const drafts = { 'lane-1': [movesTo('m1', 'Testing')] };
+
+    const renamed = renameColumnsInDrafts(drafts, [{ oldName: 'Testing', newName: 'Verify' }]);
+
+    expect(targetOf(renamed['lane-1'][0])).toBe('Verify');
+    // The rest of the row is what it was, and the input draft was not edited in place.
+    expect(renamed['lane-1'][0]).toMatchObject({ id: 'm1', name: 'Hand off m1', type: 'move_to_column', trigger: 'turn_end' });
+    expect(targetOf(drafts['lane-1'][0])).toBe('Testing');
+  });
+
+  it('reaches rows in every column, and leaves a row that names another column as it was', () => {
+    const elsewhere = movesTo('m3', 'Merge');
+    const drafts = {
+      'lane-1': [movesTo('m1', 'Testing'), elsewhere],
+      'lane-2': [movesTo('m2', 'Testing')],
+    };
+
+    const renamed = renameColumnsInDrafts(drafts, [{ oldName: 'Testing', newName: 'Verify' }]);
+
+    expect(targetOf(renamed['lane-1'][0])).toBe('Verify');
+    expect(targetOf(renamed['lane-2'][0])).toBe('Verify');
+    expect(renamed['lane-1'][1]).toBe(elsewhere);
+  });
+
+  it('moves a chain of renames once: a row naming A ends at B, and a row naming B ends at C', () => {
+    const drafts = { 'lane-1': [movesTo('m1', 'Review'), movesTo('m2', 'Verify')] };
+    const chain = [
+      { oldName: 'Review', newName: 'Verify' },
+      { oldName: 'Verify', newName: 'Ship' },
+    ];
+
+    const renamed = renameColumnsInDrafts(drafts, chain);
+    expect(targetOf(renamed['lane-1'][0])).toBe('Verify');
+    expect(targetOf(renamed['lane-1'][1])).toBe('Ship');
+
+    // The answer does not depend on the order the renames were listed in.
+    const reversed = renameColumnsInDrafts(drafts, [...chain].reverse());
+    expect(targetOf(reversed['lane-1'][0])).toBe('Verify');
+    expect(targetOf(reversed['lane-1'][1])).toBe('Ship');
+  });
+
+  it('swaps two columns\' names in one pass', () => {
+    const drafts = { 'lane-1': [movesTo('m1', 'Planning'), movesTo('m2', 'Testing')] };
+
+    const renamed = renameColumnsInDrafts(drafts, [
+      { oldName: 'Planning', newName: 'Testing' },
+      { oldName: 'Testing', newName: 'Planning' },
+    ]);
+
+    expect(targetOf(renamed['lane-1'][0])).toBe('Testing');
+    expect(targetOf(renamed['lane-1'][1])).toBe('Planning');
+  });
+
+  it('matches the old name ignoring case and surrounding space, as the engine reads it', () => {
+    const drafts = {
+      'lane-1': [movesTo('m1', 'testing'), movesTo('m2', '  TESTING  '), movesTo('m3', 'Testing')],
+    };
+
+    // The old name is matched the same way whatever the case or space it is given in.
+    const renamed = renameColumnsInDrafts(drafts, [{ oldName: '  tESTing ', newName: 'Verify' }]);
+
+    expect(renamed['lane-1'].map(targetOf)).toEqual(['Verify', 'Verify', 'Verify']);
+  });
+
+  it('writes the new name trimmed', () => {
+    const drafts = { 'lane-1': [movesTo('m1', 'Testing')] };
+
+    const renamed = renameColumnsInDrafts(drafts, [{ oldName: 'Testing', newName: '  Verify  ' }]);
+
+    expect(targetOf(renamed['lane-1'][0])).toBe('Verify');
+  });
+
+  describe('when nothing changes it returns the same object', () => {
+    it('for no renames at all', () => {
+      const drafts = { 'lane-1': [movesTo('m1', 'Testing')] };
+      expect(renameColumnsInDrafts(drafts, [])).toBe(drafts);
+    });
+
+    it('for a rename no row names', () => {
+      const drafts = { 'lane-1': [movesTo('m1', 'Testing')] };
+      expect(renameColumnsInDrafts(drafts, [{ oldName: 'Planning', newName: 'Verify' }])).toBe(drafts);
+    });
+
+    it('for a rename to the very name a row already holds', () => {
+      const drafts = { 'lane-1': [movesTo('m1', 'Verify')] };
+      expect(renameColumnsInDrafts(drafts, [{ oldName: 'Verify', newName: 'Verify' }])).toBe(drafts);
+    });
+
+    it('for a row with no target, and for a type with no column field', () => {
+      const drafts = {
+        'lane-1': [
+          draft({ id: 'm1', type: 'move_to_column', trigger: 'turn_end', config: {} }),
+          draft({ id: 'w1', type: 'webhook', config: { url: 'Testing' } }),
+        ],
+      };
+      expect(renameColumnsInDrafts(drafts, [{ oldName: 'Testing', newName: 'Verify' }])).toBe(drafts);
+    });
+  });
+
+  it('keeps the very row objects it did not change, so only the edited rows are new', () => {
+    const untouchedColumn = [movesTo('m2', 'Merge')];
+    const drafts = { 'lane-1': [movesTo('m1', 'Testing')], 'lane-2': untouchedColumn };
+
+    const renamed = renameColumnsInDrafts(drafts, [{ oldName: 'Testing', newName: 'Verify' }]);
+
+    expect(renamed).not.toBe(drafts);
+    expect(renamed['lane-2'][0]).toBe(untouchedColumn[0]);
   });
 });
 
@@ -490,8 +615,9 @@ describe('the row sentence', () => {
   it('comes from the shared describer, so a row reads the same everywhere', () => {
     expect(describeDraft(draft({ type: 'webhook', config: { url: 'https://hooks.example.com/abc' } })))
       .toBe('POST to hooks.example.com');
+    // The timing is a mark beside the name now, not words in the sentence.
     expect(describeDraft(draft({ type: 'send_message', config: { message: '/code-review', mode: 'deferred' } })))
-      .toBe('Sends "/code-review" after the current turn.');
+      .toBe('Sends "/code-review"');
   });
 
   it('survives a half-built row', () => {

@@ -1784,4 +1784,156 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_column_automations_name ON column_automations(swimlane_id, name COLLATE NOCASE)',
   );
+
+  // Migration: an automation's Condition (prose an agent judges at each run,
+  // NULL = always runs) and Frequency (the most times it may run on one task,
+  // NULL = no limit). Nullable with no default, so every automation that exists
+  // keeps running exactly as it did, and a build from before these columns that
+  // shares the database still inserts.
+  const automationColumnNames = new Set(
+    (db.pragma('table_info(column_automations)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!automationColumnNames.has('condition')) {
+    db.exec('ALTER TABLE column_automations ADD COLUMN condition TEXT DEFAULT NULL');
+  }
+  if (!automationColumnNames.has('max_runs')) {
+    db.exec('ALTER TABLE column_automations ADD COLUMN max_runs INTEGER DEFAULT NULL');
+  }
+
+  // Migration: what the Automation agent answered for a run's Condition (1 yes,
+  // 0 no, NULL when the row has none) and its one-line reason. A no is recorded
+  // as a skipped run with these filled in, so "why didn't it run" has an answer.
+  const runColumnNames = new Set(
+    (db.pragma('table_info(automation_runs)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!runColumnNames.has('condition_met')) {
+    db.exec('ALTER TABLE automation_runs ADD COLUMN condition_met INTEGER DEFAULT NULL');
+  }
+  if (!runColumnNames.has('condition_reason')) {
+    db.exec('ALTER TABLE automation_runs ADD COLUMN condition_reason TEXT DEFAULT NULL');
+  }
+
+  // Migration: one row per column a task entered. The visit boundary for
+  // automations ("has this row run since the task arrived here"), a workflow
+  // task's step history, and the counts `{{columns}}` reports. Written by
+  // TaskRepository inside the same transaction as the move itself, so a move
+  // that bypasses `handleTaskMove` (a rollback, an unarchive, a create) is still
+  // recorded. No foreign key to swimlanes: a deleted column must not erase the
+  // history of the tasks that passed through it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_moves (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      from_swimlane_id TEXT,
+      to_swimlane_id TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      reason TEXT,
+      at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_moves_task ON task_moves(task_id, at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_moves_to_column ON task_moves(to_swimlane_id, at DESC)');
+
+  runWorkflowsMigration(db);
+}
+
+/**
+ * Workflows: a set of linked tasks with its own agent.
+ *
+ * The workflow and its links live in its HOME project's database; its tasks
+ * live on their own boards and carry the workflow's id and home project id.
+ * Every task column is nullable with no default, so every existing task reads
+ * as an ordinary one and a build from before these columns still inserts.
+ *
+ * `task_links` has no foreign key to tasks: either end can be a task in another
+ * project's database, so a task delete removes its links in code
+ * (`TaskRepository.delete`). It does cascade from its workflow, which is always
+ * in this database.
+ */
+function runWorkflowsMigration(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      brief TEXT,
+      source_task_id TEXT,
+      state TEXT NOT NULL DEFAULT 'draft',
+      draft_json TEXT,
+      color_slot INTEGER NOT NULL DEFAULT 1,
+      revision INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_workflows_state ON workflows(state)');
+
+  // The workflow agent's conversation: which agent holds it and the id it
+  // resumes by. On the workflow, not in `sessions`, whose `task_id` is a foreign
+  // key to tasks; the agent is no task.
+  const workflowColumnNames = new Set(
+    (db.pragma('table_info(workflows)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  // `agent_cwd` is the checkout the conversation ran in, which is where the
+  // agent CLI keeps its history (Claude keys the file by it).
+  for (const columnName of ['agent_name', 'agent_session_id', 'agent_cwd']) {
+    if (!workflowColumnNames.has(columnName)) {
+      db.exec(`ALTER TABLE workflows ADD COLUMN ${columnName} TEXT DEFAULT NULL`);
+    }
+  }
+  // The other registered projects the workflow agent asked to read, a JSON
+  // array of project ids, so a resume grants them again.
+  if (!workflowColumnNames.has('agent_read_project_ids')) {
+    db.exec("ALTER TABLE workflows ADD COLUMN agent_read_project_ids TEXT NOT NULL DEFAULT '[]'");
+  }
+  // The workflow agent's last PTY grid, what a task session keeps in
+  // `sessions.last_pty_cols/rows`, so a start after a restart draws its first
+  // frame at the pane's size instead of the spawn default.
+  for (const columnName of ['agent_pty_cols', 'agent_pty_rows']) {
+    if (!workflowColumnNames.has(columnName)) {
+      db.exec(`ALTER TABLE workflows ADD COLUMN ${columnName} INTEGER DEFAULT NULL`);
+    }
+  }
+
+  const taskColumnNames = new Set(
+    (db.pragma('table_info(tasks)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  const workflowTaskColumns: Array<[string, string]> = [
+    ['workflow_id', 'TEXT'],
+    ['workflow_project_id', 'TEXT'],
+    ['route_start_swimlane_id', 'TEXT'],
+    ['route_last_swimlane_id', 'TEXT'],
+    ['skipped_swimlane_ids', 'TEXT'],
+    ['canvas_x', 'REAL'],
+    ['canvas_y', 'REAL'],
+  ];
+  for (const [columnName, columnType] of workflowTaskColumns) {
+    if (!taskColumnNames.has(columnName)) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN ${columnName} ${columnType} DEFAULT NULL`);
+    }
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_workflow ON tasks(workflow_id)');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_links (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      blocker_project_id TEXT NOT NULL,
+      blocker_task_id TEXT NOT NULL,
+      blocked_project_id TEXT NOT NULL,
+      blocked_task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_links_workflow ON task_links(workflow_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_links_blocker ON task_links(blocker_task_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_links_blocked ON task_links(blocked_task_id)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_task_links_pair ON task_links(blocker_task_id, blocked_task_id)');
+
+  // When a paused workflow was paused, for the picker's "Paused yesterday
+  // 18:20". Written on Pause, cleared on Resume. A workflow paused before this
+  // column existed reads as paused with no time.
+  if (!workflowColumnNames.has('paused_at')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN paused_at TEXT DEFAULT NULL');
+  }
 }

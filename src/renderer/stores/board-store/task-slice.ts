@@ -8,6 +8,8 @@ import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { invalidateProject } from '../project-cache';
 import { describeIpcError } from '../../lib/ipc-error';
+import { isWorkflowLockMessage } from '../../utils/board-workflow';
+import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../../utils/workflow-refusal';
 import { applyStructuralSharing } from './structural-sharing';
 import { applyTaskListPayload } from './lane-pins';
 import { fetchArchivedReconcile } from './archived-tasks-slice';
@@ -241,6 +243,16 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
     const prevTask = get().tasks.find((t) => t.id === input.taskId);
     const prevSessionId = prevTask?.session_id ?? null;
 
+    // A workflow's lock, asked before anything moves: the card never slides
+    // into a column main would refuse. The drop asks first; this covers every
+    // other caller (the card menu, a move made after the workflow changed).
+    const lockRefusal = prevTask ? refusedBoardMove(prevTask, input.targetSwimlaneId, get().swimlanes) : null;
+    if (prevTask && lockRefusal) {
+      if (!switchedAway()) await get().loadBoard();
+      showWorkflowRefusal(prevTask, lockRefusal, () => get().setActiveView('workflows'));
+      return { ok: false };
+    }
+
     // Moves into a Done-role lane archive the task on the backend. Extend the
     // completingTaskIds guard (originally scoped to the animated FlyingCard
     // path in setCompletingTask) to this direct path as well, so every
@@ -449,8 +461,15 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       } else {
         await get().loadBoard();
       }
+      // Main's lock refused a move the board's copy of the workflow allowed (it
+      // changed in between): main's sentence, with its workflow, not a failure.
+      const message = describeIpcError(err);
+      if (prevTask && isWorkflowLockMessage(message, prevTask, boardWorkflowNow(prevTask))) {
+        showWorkflowRefusal(prevTask, message, () => get().setActiveView('workflows'));
+        return { ok: false };
+      }
       useToastStore.getState().addToast({
-        message: `Failed to move task: ${describeIpcError(err)}`,
+        message: `Failed to move task: ${message}`,
         variant: 'error',
       });
       return { ok: false };

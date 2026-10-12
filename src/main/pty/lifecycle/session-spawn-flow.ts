@@ -439,6 +439,7 @@ export async function performSpawn(
     exitCode: null,
     resuming: input.resuming ?? false,
     transient: input.transient ?? false,
+    workflowId: input.workflowId ?? null,
     commandTerminalSlot: input.commandTerminalSlot ?? null,
     commandTerminalBranch: input.commandTerminalBranch ?? null,
     isolatedSwimlaneId: input.isolatedSwimlaneId,

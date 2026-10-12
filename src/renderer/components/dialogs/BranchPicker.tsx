@@ -31,6 +31,8 @@ interface BranchPickerProps {
   /** Element the dropdown positions against (defaults to the chip's own wrapper).
    *  When set, the dropdown is portaled + fixed so it escapes the header clip. */
   anchorRef?: RefObject<HTMLElement | null>;
+  /** The project whose branches to list (a workflow's planned task on another board); omitted, the open one. */
+  projectId?: string | null;
 }
 
 export function BranchPicker({
@@ -43,6 +45,7 @@ export function BranchPicker({
   onOpenChange,
   hideTrigger = false,
   anchorRef,
+  projectId = null,
 }: BranchPickerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledOpen !== undefined;
@@ -100,7 +103,7 @@ export function BranchPicker({
     void (async () => {
       let result: string[];
       try {
-        result = await fetchGitBranches();
+        result = await fetchGitBranches(projectId);
       } catch {
         result = [];
       }
@@ -108,7 +111,7 @@ export function BranchPicker({
     })();
     requestAnimationFrame(() => searchRef.current?.focus());
     return () => { cancelled = true; };
-  }, [open, openGeneration]);
+  }, [open, openGeneration, projectId]);
 
   // Close on click outside (consider both the position anchor and the dropdown).
   useEffect(() => {

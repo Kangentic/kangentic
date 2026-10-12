@@ -26,6 +26,8 @@ export interface DeriveFocusedSessionIdsInput {
    *  focused set and gets them. Distinct from `dialogSessionIds`, which names
    *  windows in THIS renderer and therefore must stay focused. */
   remotelyOwnedSessionIds?: ReadonlySet<string>;
+  /** The workflow agent whose terminal the Workflows view's pane has mounted, if any. */
+  workflowAgentSessionId?: string | null;
 }
 
 /**
@@ -84,6 +86,17 @@ export function deriveFocusedSessionIds(input: DeriveFocusedSessionIdsInput): st
       if (isParked(sessionId)) continue;
       if (!focusedIds.includes(sessionId)) focusedIds.push(sessionId);
     }
+  }
+
+  // 5. The Workflows view's agent pane, while it shows a terminal. Command
+  // Terminal slots are the only other source of transient sessions here, so
+  // without this the pane's terminal would get no bytes.
+  if (
+    input.activeView === 'workflows'
+    && input.workflowAgentSessionId
+    && !focusedIds.includes(input.workflowAgentSessionId)
+  ) {
+    focusedIds.push(input.workflowAgentSessionId);
   }
 
   return focusedIds;

@@ -109,7 +109,7 @@ export function ProfileNameDialog({
             type="button"
             onClick={() => onConfirm(trimmed)}
             disabled={!canConfirm}
-            className="px-3 py-1.5 text-sm rounded bg-accent text-on-accent
+            className="px-3 py-1.5 text-sm rounded bg-accent text-accent-on
               disabled:opacity-40 disabled:pointer-events-none"
             data-testid="profile-name-confirm"
           >

@@ -1,4 +1,4 @@
-import simpleGit from 'simple-git';
+import { gitAt } from './git-client';
 
 /**
  * "git version 2.43.0.windows.1" -> "2.43.0". Also covers "2.39.5 (Apple Git-154)"
@@ -28,7 +28,7 @@ export function isVersionAtLeast(actual: string, minimum: string): boolean {
 let installedGitVersion: Promise<string | null> | null = null;
 
 /**
- * Version of the `git` that simple-git runs (the first one on PATH), read once
+ * Version of the `git` the git client runs (the first one on PATH), read once
  * per process. Kept apart from GitDetector, which is owned by the IPC context
  * and resolves the binary through `which`, so git code can gate on a version
  * without reaching into IPC. Never rejects: any failure reads as null
@@ -38,7 +38,8 @@ let installedGitVersion: Promise<string | null> | null = null;
 export function getInstalledGitVersion(): Promise<string | null> {
   if (!installedGitVersion) {
     const pending = Promise.resolve()
-      .then(() => simpleGit().raw(['--version']))
+      // simple-git ran it in the process's working directory when given none.
+      .then(() => gitAt(process.cwd()).raw(['--version']))
       .then(parseGitVersion)
       .catch(() => null);
     installedGitVersion = pending;

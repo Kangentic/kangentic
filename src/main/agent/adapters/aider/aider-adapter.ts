@@ -134,6 +134,8 @@ export class AiderAdapter implements AgentAdapter {
    *   context        → `context> `
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Only its prompt pattern says a turn ended.
+    reportsTurnEnd: false,
     activity: ActivityDetection.pty((data: string) => {
       const clean = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
       return /(?:^|\n)\s*(?:architect|ask|help|context)?>\s*$/.test(clean);

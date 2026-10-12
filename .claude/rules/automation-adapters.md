@@ -36,8 +36,12 @@ registry, one folder per type, and a manifest the renderer reads.
   and enforced by the runner, so the policy is uniform and visible in one place. Nothing timed out
   before this: `withTaskLock` is a `PQueue` with no `timeout` and the move's Phase 3 holds it
   across the whole list, so one hung row wedged every later operation on that task until a restart.
-- **A field key is never a reserved `kangentic.json` row key** (`name`, `type`, `enabled`). The
-  file writes a row flat, which reads better in a committed file, and the reserved set will grow.
+- **A field key is never a reserved `kangentic.json` row key** (`name`, `type`, `enabled`,
+  `condition`, `maxRuns`). The file writes a row flat, which reads better in a committed file, and
+  the reserved set grows: every row's Condition and Frequency are row keys, not fields.
+- **Condition and Frequency are the runner's, never an adapter's.** The runner skips a row whose
+  Frequency is spent or whose Condition the Automation agent answered no, records the answer on
+  the run, and treats a skip as no run. An adapter never reads either.
 - **`describe(config)` must not throw on any input**, including `{}` and a config full of
   unsubstituted `{{variables}}`. A half-built draft renders through it: the picker adds an
   automation before it has a name or a value.
@@ -59,7 +63,10 @@ registry, one folder per type, and a manifest the renderer reads.
   until someone adds it to the allowlist deliberately.
 - **Test:** `tests/unit/automation-manifest-reserved-keys.test.ts` fails a field key that collides
   with a reserved row key, repeats within its type, is not a plain identifier, or declares options
-  a field of that kind cannot render.
+  a field of that kind cannot render. It also checks each field's `unavailableOn` (a trigger where
+  the field does nothing, such as Send message's Delivery at a turn end): only on a segmented
+  field, on a trigger the type runs on, with a one-line reason. The dialog and the row marks read it
+  through `automationFieldUnavailableReason`, never by the field's key.
 - Both run in CI via `npm run test:unit`.
 - **Review:** `/code-review`'s always-on conventions finder flags type-name branching outside
   `adapters/`, the same criterion it already applies to agent, board and PR adapters (see
@@ -73,6 +80,8 @@ present as legacy: each was a no-op or a duplicate of the move path, so the migr
 rows and the file reader warns and skips them. `spawn_agent` is the one legacy adapter, because a
 custom `promptTemplate` has no other home.
 
-Does not govern the trigger set. There are two triggers today, `enter` and `exit`, and the `trigger`
-column is TEXT rather than a boolean precisely so a third is an adapter-shaped change and not a
-migration.
+Does not govern the trigger set. There are three triggers, `enter`, `turn_end` and `exit`, declared
+once in `AUTOMATION_TRIGGERS` (`src/shared/automation-manifest.ts`), which every consumer iterates.
+The `trigger` column is TEXT, so a fourth is a manifest change, not a migration. A type that runs
+on only some triggers declares them (`triggers`, with `triggerUnavailableReason`); Move to column
+runs at a turn end only, because on enter or exit its move would run inside the move that fired it.

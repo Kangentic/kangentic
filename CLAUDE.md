@@ -29,7 +29,7 @@ src/
       commands/   # MCP command handlers
     automations/  # Column automation adapter system (mirrors agent/, boards/, pr/)
       shared/     # AutomationAdapter contract, context, errors, describe helpers
-      adapters/   # Per-type subfolders (send-message/, run-script/, webhook/, notify/, legacy/)
+      adapters/   # Per-type subfolders (send-message/, run-script/, webhook/, notify/, move-to-column/, legacy/)
       automation-registry.ts  # Central AutomationRegistry + automationRegistry singleton
     boards/       # Board integration adapter system (mirrors agent/)
       shared/     # BoardAdapter interface + auth, mapping, download, rate-limit helpers
@@ -44,6 +44,8 @@ src/
     pr/           # PR subsystem (mirrors agent/boards): shared/ contract + errors,
                   #   adapters/github/ connector, pr-registry, linking, refresh, scheduler
     pty/          # PTY session manager, shell resolver
+    workflows/    # Linked tasks that run on their own: pure engine/ core (starts, lock) + main host,
+                  #   turn-end step check, operations behind the kangentic_*_workflow MCP tools
   preload/        # Context bridge (preload.ts)
   renderer/       # React UI
     components/   # Board, dialogs, layout, terminal, sidebar
@@ -112,7 +114,7 @@ won't be found.
   `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
   settings, saved to `.kangentic/config.json`, and hidden when no project is selected.
   `'system'` tabs (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications,
-  Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared
+  Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared
   settings that apply across all projects, saved to global config, and remain fully functional with
   no project open. The Task tab holds task-presentation settings split out of Board (Card Density,
   Ticket Numbers) and Terminal (the whole Context Bar section): those describe how an individual
@@ -131,7 +133,7 @@ won't be found.
   Theme is its own tab, not folded into General, so it has a discoverable sidebar entry distinct
   from Project Location. System tabs are further grouped in the sidebar into three tiers (`tier`
   in `settings-tabs.ts`): Core (Board through Notifications, unlabeled - the default group
-  directly under the System header), Advanced (Dictation through Mobile Devices), and Other
+  directly under the System header), Advanced (Workflows through Mobile Devices), and Other
   (Privacy, Developer). Tiers must stay contiguous; `settings-tab-scope-parity.test.ts` enforces
   it. A thin full-bleed divider (not just the "System" text label) marks the Project/System
   boundary, since that split is behavioral (System tabs must work with no project open), not just

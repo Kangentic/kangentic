@@ -58,8 +58,8 @@ vi.mock('../../src/main/git/git-spawn', () => ({
   isGitTimeoutError: vi.fn(() => false),
 }));
 
-vi.mock('simple-git', () => ({
-  default: () => ({}),
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: () => ({}),
 }));
 
 vi.mock('node:fs', () => ({

@@ -79,6 +79,15 @@ interface SegmentedControlProps<T extends string> {
    * from its neighbours, and the time and status rows stop lining up in columns.
    */
   tight?: boolean;
+  /**
+   * Replaces every option's horizontal padding and its gap (icon, label,
+   * trailing badge), for a group whose options shed their labels
+   * (`labelClassName`): the board toolbar narrows an icon-only option on the
+   * same container query that hides its label, because at the 900px floor the
+   * spacing a label needs is width the search field cannot spare. Overrides
+   * `tight`.
+   */
+  optionSpacingClassName?: string;
   /** Stretch to fill the container, options sharing the width equally. */
   fullWidth?: boolean;
   /** Group-level test hook. */
@@ -101,16 +110,18 @@ const GROUND_CLASSES = {
 
 const OPTION_TEXT = {
   default: {
-    size: 'px-3 py-1 text-sm font-medium',
-    tightSize: 'px-1 py-1 text-sm font-medium',
+    padding: 'px-3',
+    tightPadding: 'px-1',
+    size: 'py-1 text-sm font-medium',
     selected: 'text-fg',
     idle: 'text-fg-muted',
     idleHover: 'hover:text-fg',
     optionDisabled: 'text-fg-disabled',
   },
   quiet: {
-    size: 'px-3 py-1.5 text-xs',
-    tightSize: 'px-1 py-1.5 text-xs',
+    padding: 'px-3',
+    tightPadding: 'px-1',
+    size: 'py-1.5 text-xs',
     selected: 'text-fg-secondary',
     idle: 'text-fg-muted',
     idleHover: 'hover:text-fg-secondary',
@@ -149,6 +160,7 @@ export function SegmentedControl<T extends string>({
   quiet = false,
   labelClassName = '',
   tight = false,
+  optionSpacingClassName,
   fullWidth = false,
   testId,
   ariaLabel,
@@ -354,7 +366,7 @@ export function SegmentedControl<T extends string>({
               onClick={() => onChange(option.value)}
               data-testid={option.testId}
               data-selected={selected}
-              className={`relative z-[1] flex items-center justify-center gap-1.5 rounded ${tight ? text.tightSize : text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+              className={`relative z-[1] flex items-center justify-center rounded ${optionSpacingClassName ?? `${tight ? text.tightPadding : text.padding} gap-1.5`} ${text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
                 fullWidth ? 'flex-1' : ''
               } ${
                 selected

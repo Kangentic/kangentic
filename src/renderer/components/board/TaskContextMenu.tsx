@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react';
-import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowIcon } from 'lucide-react';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
+import { placeContextMenu, type MenuPlacement } from './context-menu-placement';
 
 /**
  * Inline context menu shown on right-click of a task card. Offers
@@ -9,10 +10,21 @@ import type { Task, Swimlane } from '../../../shared/types';
  * every non-archived non-ghost target lane), send-to-backlog,
  * archive, and delete.
  *
- * Positions itself at the click coordinates, clamped to stay fully
- * visible in the viewport. Closes on outside click or Escape. The
- * parent owns the `position` prop and the `onClose` callback.
+ * Positions itself at the click coordinates, then measures its rendered size
+ * before paint and moves inside the window, 8px from each edge: a workflow
+ * task's menu (its workflow rows plus every Move to row) is taller than any
+ * fixed guess. A menu taller than the window scrolls. Closes on outside click
+ * or Escape. The parent owns the `position` prop and the `onClose` callback.
+ *
+ * A row the task cannot take (a workflow's lock) stays in place, disabled,
+ * with the reason as its tooltip: controls never come and go with state. The
+ * whole row dims, its text, icon and dot together, as one unavailable item.
  */
+
+const ROW_CLASS = 'w-full px-3 py-1.5 text-sm text-left flex items-center gap-2 text-fg-secondary';
+const LIVE_ROW_CLASS = `${ROW_CLASS} hover:bg-surface-hover/40`;
+const DISABLED_ROW_CLASS = `${ROW_CLASS} opacity-40 cursor-not-allowed`;
+
 export function TaskContextMenu({
   position,
   task,
@@ -25,6 +37,9 @@ export function TaskContextMenu({
   onDelete,
   onClose,
   leading,
+  moveRefusal,
+  sendAwayRefusal,
+  onNewWorkflow,
   testId = 'task-context-menu',
 }: {
   /** Root `data-testid`, so each host can address its own instance. */
@@ -43,6 +58,12 @@ export function TaskContextMenu({
   onArchive: () => void;
   onDelete: () => void;
   onClose: () => void;
+  /** Why a Move to row is refused (a workflow's lock); null leaves it live. */
+  moveRefusal?: (targetSwimlaneId: string) => string | null;
+  /** Why Backlog and Archive are refused: each would take the task out of its workflow. */
+  sendAwayRefusal?: string | null;
+  /** New workflow from this task, offered on a To Do card that is in no workflow. */
+  onNewWorkflow?: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -67,16 +88,34 @@ export function TaskContextMenu({
     (lane) => lane.id !== task.swimlane_id && !lane.is_archived && !lane.is_ghost,
   );
 
-  const menuStyle: React.CSSProperties = {
-    left: Math.min(position.x, window.innerWidth - 200),
-    top: Math.min(position.y, window.innerHeight - 300),
-  };
+  // The press point by value: `position` is a new object on each render of the host.
+  const { x: pointerX, y: pointerY } = position;
+  const [placement, setPlacement] = useState<MenuPlacement>({ left: pointerX, top: pointerY, maxHeight: undefined });
+  // Measured before paint, so the menu never shows at the press point first.
+  // `offset*` sizes, not the bounding rect: the entrance animation scales the
+  // menu, and a rect read on mount would be the scaled-down size.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const borderHeight = menu.offsetHeight - menu.clientHeight;
+    setPlacement(placeContextMenu(
+      { x: pointerX, y: pointerY },
+      { width: menu.offsetWidth, height: menu.scrollHeight + borderHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+    ));
+  }, [pointerX, pointerY]);
 
   return (
     <div
       ref={menuRef}
       className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[180px] overlay-popover-in"
-      style={{ ...menuStyle, transformOrigin: 'top left' }}
+      style={{
+        left: placement.left,
+        top: placement.top,
+        maxHeight: placement.maxHeight,
+        overflowY: placement.maxHeight === undefined ? undefined : 'auto',
+        transformOrigin: 'top left',
+      }}
       data-dismissable-layer
       data-testid={testId}
     >
@@ -128,30 +167,48 @@ export function TaskContextMenu({
           <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
             Move to
           </div>
-          {moveTargets.map((lane) => (
-            <button
-              key={lane.id}
-              type="button"
-              onClick={() => { onMoveTo(lane.id); onClose(); }}
-              className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
-              data-testid="context-move-to"
-            >
-              <div
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: lane.color }}
-              />
-              {lane.name}
-            </button>
-          ))}
+          {moveTargets.map((lane) => {
+            const refusal = moveRefusal?.(lane.id) ?? null;
+            return (
+              <button
+                key={lane.id}
+                type="button"
+                onClick={() => { if (refusal) return; onMoveTo(lane.id); onClose(); }}
+                aria-disabled={refusal ? true : undefined}
+                title={refusal ?? undefined}
+                className={refusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
+                data-testid="context-move-to"
+              >
+                <div
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: lane.color }}
+                />
+                {lane.name}
+              </button>
+            );
+          })}
         </>
       )}
 
       <div className="border-t border-edge my-1" />
 
+      {onNewWorkflow && (
+        <button
+          type="button"
+          onClick={() => { onNewWorkflow(); onClose(); }}
+          className={LIVE_ROW_CLASS}
+          data-testid="context-new-workflow"
+        >
+          <WorkflowIcon size={14} className="text-fg-faint" />
+          New workflow
+        </button>
+      )}
       <button
         type="button"
-        onClick={() => { onSendToBacklog(); }}
-        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+        onClick={() => { if (sendAwayRefusal) return; onSendToBacklog(); }}
+        aria-disabled={sendAwayRefusal ? true : undefined}
+        title={sendAwayRefusal ?? undefined}
+        className={sendAwayRefusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
         data-testid="context-send-to-backlog"
       >
         <Inbox size={14} className="text-fg-faint" />
@@ -159,8 +216,10 @@ export function TaskContextMenu({
       </button>
       <button
         type="button"
-        onClick={() => { onArchive(); onClose(); }}
-        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+        onClick={() => { if (sendAwayRefusal) return; onArchive(); onClose(); }}
+        aria-disabled={sendAwayRefusal ? true : undefined}
+        title={sendAwayRefusal ?? undefined}
+        className={sendAwayRefusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
         data-testid="context-archive-task"
       >
         <Archive size={14} className="text-fg-faint" />

@@ -31,18 +31,21 @@ A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
 | Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_reorder_tasks`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_create_column`, `kangentic_delete_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
 | Profile Tools | `src/main/agent/mcp-http/profile-tools.ts` | Board Profile read + authoring (`kangentic_list_board_profiles`, `kangentic_create_board_profile`, `kangentic_update_board_profile`, `kangentic_delete_board_profile`). Entries are keyed by column NAME so a profile can be copied between projects; see [Board Profiles](#board-profiles). |
 | Automation Tools | `src/main/agent/mcp-http/automation-tools.ts` | Column automation read, write, run log, and re-run (`kangentic_list_automations`, `kangentic_set_automations`, `kangentic_get_automation_runs`, `kangentic_run_automation`). See [Column automations](#column-automations). |
+| Workflow Tools | `src/main/agent/mcp-http/workflow-tools.ts` | Plan, start and change a workflow of linked tasks (`kangentic_list_workflows`, `kangentic_get_workflow`, `kangentic_save_workflow`, `kangentic_start_workflow`, `kangentic_pause_workflow`, `kangentic_resume_workflow`, `kangentic_add_workflow_task`, `kangentic_link_workflow_tasks`, `kangentic_unlink_workflow_tasks`, `kangentic_set_task_route`, `kangentic_remove_from_workflow`, `kangentic_request_project_access`, `kangentic_delete_workflow`). See [Workflows](#workflows). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_get_activity_intervals`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Steering Tools | `src/main/agent/mcp-http/steering-tools.ts` | The write side of the session surface (`kangentic_send_session_message`) plus its debugging read (`kangentic_get_session_messages_sent`). Kept out of `session-tools.ts` because the send needs live main-process singletons (SessionManager, TerminalSubmit) that `CommandContext` does not carry. |
 | Session Send Coordinator | `src/main/agent/mcp-http/session-send.ts` | Delivery + guards behind the steering tools: per-target serialization, the sliding-window ceiling, the steer-chain depth backstop, deferred `deliverWhen: "idle"` delivery, and out-of-band provenance recording (the message itself carries no in-band prefix). |
 | Project Tools | `src/main/agent/mcp-http/project-tools.ts` | Multi-project discovery (`kangentic_list_projects`). |
 | Search Tools | `src/main/agent/mcp-http/search-tools.ts` | The single unified search (`kangentic_search`): tasks, backlog, session events, projects, past conversations (keyword or, with `mode:"hybrid"`, semantic) and commits, with `groupBy: "task"` and `relatedToTask`. The ranking runs in the retrieval worker. The board-scoped `kangentic_search_tasks` lives in `task-tools.ts`. |
-| Caller URL | `src/main/agent/mcp-http/caller-url.ts` | Appends the calling session to the MCP URL as a path segment. An `answer-<chatId>` caller is a Knowledge Graph answer run, which the server gives `kangentic_search` alone. |
+| Caller URL | `src/main/agent/mcp-http/caller-url.ts` | Appends the calling session to the MCP URL as a path segment. An `answer-<chatId>` caller is a Knowledge Graph answer run, which the server gives `kangentic_search` alone. A `workflow-<workflowId>` caller is a workflow's own agent. |
+| Caller Task | `src/main/agent/mcp-http/caller-task.ts` | The calling agent's own task, looked up once per request from the session in the URL. The browser tools scope their default pane to it, and `kangentic_move_task`'s workflow lock lets a task's own agent move it. |
+| Workflow Agent Scope | `src/main/agent/mcp-http/workflow-agent-scope.ts` | For a `workflow-` caller, registers only the read-only tools and the planning tools (save, add task, link, unlink, set route, remove from workflow, request project access), never start, pause, resume, delete or any browser or steering tool. The planning tools lose their `workflow` and `project` arguments and act on the caller's own workflow. `kangentic_get_workflow` reads the caller's own workflow when `workflow` is left out, and the one it names otherwise. |
 | Answer Search Trace | `src/main/agent/mcp-http/answer-search-trace.ts` | For an `answer-` caller, enforces the per-question search budget and publishes each search's query and hits, which the Ask handler forwards to the map as a step line and rings. |
 | Diagnostics Tools | `src/main/agent/mcp-http/diagnostics-tools.ts` | Read-only product tools backing crash records, persistent console logs, process metrics, IPC traffic recordings, and worktree state. |
 | Tool Annotations | `src/main/agent/mcp-http/annotations.ts` | Shared `READ_ONLY_ANNOTATIONS` / `MUTATING_ANNOTATIONS` MCP tool-annotation constants. Every tool in every `*-tools.ts` file declares one of these (see the Tool annotations note below). |
 | Browser Tools | `src/main/agent/mcp-http/browser-tools.ts` | Shipped `kangentic_browser_*` MCP tool family driving the embedded Browser pane via in-process CDP (no HTTP bridge, no lockfile). Gated by the global `browserAutomation.*` policy. |
 | Usage Tools | `src/main/agent/mcp-http/usage-tools.ts` | Aggregated usage statistics (`kangentic_get_usage_stats`): tokens, cost, burn rate, and by-model / by-agent / by-effort / by-subagent-type breakdowns, per project or app-wide, over the shared time ranges. Reads the same usage-stats service as the in-app dashboard. |
-| Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, profile (`profile-commands.ts`: the four `*_board_profile` commands plus the shared `resolveProfileSelector` used by create/update task), inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), activity-interval (`get_activity_intervals`), automation (`automation-commands.ts`: `list_automations`, `set_automations`, `get_automation_runs`, `run_automation`), and dev-port (`dev-port-commands.ts`: `reserve_dev_ports`, `check_dev_ports`) commands. |
+| Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, profile (`profile-commands.ts`: the four `*_board_profile` commands plus the shared `resolveProfileSelector` used by create/update task), inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), activity-interval (`get_activity_intervals`), automation (`automation-commands.ts`: `list_automations`, `set_automations`, `get_automation_runs`, `run_automation`), dev-port (`dev-port-commands.ts`: `reserve_dev_ports`, `check_dev_ports`), and workflow (`workflow-commands.ts`: the thirteen workflow tools, thin shells over `src/main/workflows/workflow-service.ts`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers, and the single place that decides how the done column is treated: `listActiveSwimlanes` (Done excluded; search, profiles, task stats, and the post-delete remaining-columns list), `listBoardColumns` / `isBoardColumn` (Done included; the board read tools), and `resolveColumn`'s `includeArchivedDone` and `refuseDone` options, which every by-name lookup of Done goes through. |
 | Task Ordering | `src/main/agent/commands/task-ordering.ts` | Pure ordinal-slot arithmetic shared by `handleMoveTask`'s same-column reposition and `handleReorderTasks`: slot clamping, prefix-merge reordering, and ordinal-to-raw-position translation. |
 | Column Enums | `src/main/agent/commands/column-enums.ts` | The valid value sets for a column's enum fields (`COLUMN_ENUM_FIELDS`: `permissionMode`, `sessionTarget`, `sessionSpawnStrategy`, `autoCommandMode`) and the `parseEnumParam` helper that narrows them, shared by the column handlers and the profile handlers. This is the only narrowing on the mobile-bridge path, which routes into `commandHandlers` directly and validates just that `params` is an object, so none of the zod schemas above are in front of it. |
@@ -629,8 +632,9 @@ Move a task to a different column, optionally placing it at a chosen slot in tha
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
-| `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`) |
+| `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`), or `"next"` for the column after the task's current one. A column literally named "next" wins. |
 | `position` | number | No | Zero-based ordinal slot among the column's tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Omit to append to the end of the column, which is the default. |
+| `message` | string | No | A message for the agent in the destination column (up to 20,000 characters, line breaks kept). It is delivered once that agent's turn ends, after the column's own On task enter automations, so the move and its hand-off are one call: a separate `kangentic_send_session_message` cannot reach a session the move itself is suspending or starting. Refused on a move that stays in the task's column. |
 
 Naming the task's **current** column together with `position` repositions it in place. That path is
 presentation only: it does not change the task's column, session, worktree, or `session_id`, and it
@@ -797,8 +801,9 @@ This cannot be undone.
 
 ### Column automations
 
-What a column does when a task enters or leaves it. Each column owns one ordered list, split into
-two groups (On enter and On exit), and each row has its own switch. Four types ship:
+What a column does when a task enters it, each time its agent finishes a turn there, and when it
+leaves. Each column owns one ordered list, split into three groups (`on`: `enter`, `turn_end`,
+`exit`), and each row has its own switch. Five types ship:
 
 | Type | What it does | Fields |
 |------|--------------|--------|
@@ -806,6 +811,19 @@ two groups (On enter and On exit), and each row has its own switch. Four types s
 | `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (1 to 120, default 10, file only) |
 | `webhook` | Calls a URL, retrying a transport error, 408, 429 or 5xx, for up to 3 attempts in total | `url`, `method`, `body`, `headers` |
 | `notify` | Raises one desktop notification | `title`, `body` |
+| `move_to_column` | `turn_end` only. Moves the task, and hands the agent there a message; ends the group | `targetColumn` (omit for the next column), `message` |
+
+Every row also takes two guards:
+
+- **`condition`**: a sentence in plain words, answered yes or no by the Automation agent (Settings >
+  Workflows) before the row runs. A no is not a run, so the next trigger checks it again. Omit or
+  `null` to always run. A row with a Condition is skipped until an Automation agent is set up.
+- **`maxRuns`**: Frequency, the most times the row may run on one task across every visit (a review
+  loop's round-trip limit). Omit or `null` for no limit.
+
+A `turn_end` row runs when the column's agent finishes a turn on its own (not an interrupt or a
+failed turn), at most once per visit, top to bottom. `{{agentReply}}` resolves to that agent's final
+message of the turn, whole, which is how a review's findings reach the next column.
 
 Two names are accepted but not offered:
 
@@ -821,12 +839,19 @@ Every text field takes the template variables listed in
 written rather than dropped. A script also receives each one as a `KANGENTIC_*` environment
 variable, which is the quoting-safe way to read one.
 
-Three rules decide whether a row actually runs, and they are reported by
+These rules decide whether a row actually runs, and they are reported by
 `kangentic_list_automations` rather than left to be discovered:
 
 - A row whose switch is off is skipped.
 - A `send_message` row on a column whose `autoSpawn` is off can never run: no agent starts there.
 - An On enter row on To Do or Done can never run: neither column runs automations on entry.
+- A `turn_end` row can never run on To Do or Done, on a column whose `autoSpawn` is off, or where
+  the column's agent can't report when it finishes a turn. The reasons read "Nothing runs at a turn
+  end in To Do." (or "in Done."), "Start an agent here is off, so no agent ends a turn here.", and
+  "This column's agent can't report when it finishes a turn."
+- A type written under a trigger it does not run on (`move_to_column` on `enter` or `exit`) is
+  refused by `kangentic_set_automations`, with the reason ("Move to column runs only at a turn
+  end.").
 
 Every execution writes a row to the run log, whatever happens, which is what
 `kangentic_get_automation_runs` reads. A row left `running` was in flight when Kangentic quit; the
@@ -843,8 +868,21 @@ board do": a board-wide read answers it once instead of one call per column.
 | `column` | string | No | Column name (case-insensitive). Omit to read every column. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
-Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, and the type's own fields.
+Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `condition`, `maxRuns`, and
+the type's own fields. `condition` and `maxRuns` are null when the row has none.
 A row that cannot run as things stand is flagged with the reason.
+
+The text lists each row on one line: its name, its type, and the sentence the Column Manager shows
+(the verb and the one required value), then every option the panel shows as a mark, in words, in
+parentheses. The action's own options come first, then the Condition and the Frequency:
+
+```
+Moves the task to Executing (with a message; only if the review is clean; at most 3 times for each task)
+```
+
+A waiting Send message reads "waits for the current turn to end", on enter and exit only: at a turn
+end the turn is already over, so it sends at once. A Move to column row's message text is in the
+row's data, not the line.
 
 ### kangentic_set_automations
 
@@ -859,15 +897,25 @@ change applied. Pass `[]` to remove them all.
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
 Each entry takes `name` (required, unique within the column ignoring case), `type`, an optional
-`on` (`enter` by default), an optional `enabled` (true by default), an optional `id`, and the
-type's own fields flat on the object:
+`on` (`enter` by default, or `turn_end` or `exit`), an optional `enabled` (true by default), an
+optional `condition` and `maxRuns` (both off by default), an optional `id`, and the type's own
+fields flat on the object:
 
 ```json
 {
   "column": "Code Review",
   "automations": [
     { "id": "623a36ef-...", "name": "Review", "type": "send_message", "message": "/code-review {{baseBranch}}" },
-    { "name": "Ping the channel", "type": "webhook", "url": "https://hooks.example.com/abc" },
+    {
+      "name": "Back for revisions",
+      "type": "move_to_column",
+      "on": "turn_end",
+      "targetColumn": "Executing",
+      "message": "Back from {{column}}. What the review found:\n{{agentReply}}",
+      "condition": "The review found work the implementer can do",
+      "maxRuns": 3
+    },
+    { "name": "Clean", "type": "move_to_column", "on": "turn_end", "condition": "The review is clean" },
     { "name": "Archive the log", "type": "run_script", "on": "exit", "enabled": false, "script": "scripts/archive.sh" }
   ]
 }
@@ -877,10 +925,14 @@ Whole-column rather than per-row because a reorder, a delete and an insert arriv
 applying them separately would make the unique name index reject an intermediate state the final
 state does not have. Carry each existing row's `id` through so it keeps its identity and its run
 history; a row with no `id` is created fresh. Array order is each row's position within its trigger
-group, so the two groups number independently.
+group, so the three groups number independently.
 
 A row the column cannot run as things stand is stored and warned about, not refused: building a
-list before switching the column's agent on is a legitimate order of operations.
+list before switching the column's agent on is a legitimate order of operations. Two things ARE
+refused, with the reason, so nothing is stored that could never be what the caller meant: an
+unknown `on`, and a type written under a trigger it does not run on (`move_to_column` runs on
+`turn_end` only). A `maxRuns` that is not a whole number of at least 1, or a `condition` that is
+not a string, is refused too.
 
 ### kangentic_get_automation_runs
 
@@ -896,7 +948,8 @@ automations that column holds now). Newest first.
 
 Each run carries its status (`running`, `succeeded`, `failed`, `skipped`, `interrupted`), the
 `detail` (the failure reason, the skip reason, or a one-line success such as `HTTP 204` or
-`exit 0`), the attempt count, and its timestamps. The log denormalizes the automation's name and
+`exit 0`), the attempt count, and its timestamps. A run whose row has a Condition also shows whether
+the Automation agent found it met or not met, and the agent's one-line reason. The log denormalizes the automation's name and
 type and takes no foreign key to the automation, so renaming or deleting one does not empty its
 history.
 
@@ -919,6 +972,216 @@ failure, so `{{toColumn}}` resolves against where it is now, while `{{fromColumn
 It will not start an agent: a `send_message` automation against a task with no live session is
 recorded skipped rather than spawning one. It takes the task lock and is capped at five minutes, so
 a hung row cannot wedge that task's next move.
+
+### Workflows
+
+A workflow is a set of linked tasks that run through their boards on their own. Each task has a
+**route**, the columns it visits (every column between To Do and Done unless it starts later, ends
+earlier, or skips some), and starts when every task it waits for has reached Done. A step finishes
+when the column's work is done: the Automation agent judges the agent's final message at each turn
+end (or a plan is approved, or the task's own agent moves it with `kangentic_move_task`), and the
+task moves to the next column on its route. A column with no agent, an agent that reports no turn
+end, or no Automation agent set up is a human gate: a person drags the card on.
+
+While a workflow runs its tasks are locked. Only the workflow, its column automations, plan exit
+and a task's OWN agent move them; a drag, the phone or another agent is refused with
+"#414 is locked while Usage budgets runs." Nothing moves a workflow task into To Do. Paused, its
+cards move by hand except into To Do.
+
+A workflow lives in the project it was made in (pass `project` to reach another). Its tasks can sit
+on other registered projects' boards: name the project on the planned task. Of these tools the
+phone's board-tool path reaches only list, get, pause and resume; planning, Start and Delete stay
+on the desktop (see [Mobile Bridge](mobile-bridge.md#board-tool-surface)).
+
+### kangentic_list_workflows
+
+The project's workflows with their state (not started, running, paused) and progress, newest first.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `includeFinished` | boolean | No | Include workflows whose tasks are all in Done. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_get_workflow
+
+One workflow: its state, its `revision`, and each task with its column, route and what it waits
+for. A workflow not started lists its planned tasks by key, each with any run setting that is not
+the default, in `kangentic_save_workflow`'s own names (`project "API", baseBranch "develop",
+useWorktree false, profile "Heavy"`), so a plan read and sent back keeps them. A started task on
+another project's board says which (`#7 ... In Review on board "API"`), and so does a blocker
+there (`Waits for #7 on "API"`), since task numbers count per board. `data` carries every task's
+`runSettings` in the task row's shape.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title (case-insensitive). |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_save_workflow
+
+Save the plan of a workflow that has not started, replacing what it held: its title, every planned
+task, and the links. Omit `workflow` to create one. Nothing reaches a board until it starts.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | No | The workflow to replace the plan of. Omit to create a new one. |
+| `title` | string | No | Its name. |
+| `brief` | string | No | A new workflow only: the text it was made from. |
+| `tasks` | array | Yes | Every planned task (at most 100). See below. |
+| `links` | array | No | `{ blocker, blocked }` by key: blocked waits for blocker to reach Done. |
+| `revision` | number | No | The revision `kangentic_get_workflow` reported. A save over a newer one is refused, so the user's edits win. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+Each planned task takes `key` (unique in the plan), `title`, `description`, and optionally
+`project` (another board, by name), `existingTask` (a To Do task to take in instead of creating
+one), `routeStart`, `routeLast`, `skip` (column names), `labels` and `priority`. It also takes the
+run settings a task on the board has, which Start copies onto the task it creates:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `baseBranch` | string | The branch its worktree is cut from. Omitted is the board's base branch. |
+| `useWorktree` | boolean | `true` for its own worktree, `false` for the project folder. Omitted is the project's setting. |
+| `runMode` | string | `column_settings` (the default) or `agent_override`. A pin below implies `agent_override`. |
+| `profile` | string | A Board Profile on the task's own board, by name or id. Column Settings only. |
+| `agentOverride` | string | A registered agent, pinned for the whole task. |
+| `modelOverride` | string | A model, checked against what that agent's CLI offers. |
+| `effortOverride` | string | An effort level, checked against that agent's levels. |
+| `permissionMode` | string | A permission mode, pinned for the whole task. |
+
+The handler checks each of these itself, since a command can be reached without the tool's
+schema. An unknown agent, model, effort or profile is refused with the valid ones, and so is a
+profile together with a pin, or `runMode: "column_settings"` with a pin. A task taken in with
+`existingTask` keeps its own settings, so it takes none. Every problem is reported before anything
+is written: a duplicate key, a column a route cannot use, a link to an unknown key, a loop. That
+holds for a new workflow too: a save without `workflow` creates the workflow only with a plan that
+passed, in the same write, so a refused one leaves nothing behind. The answer reads "Saved: 9
+tasks, 13 links."
+
+### kangentic_start_workflow
+
+Start a planned workflow: its tasks appear in To Do on their boards and each starts on its own when
+nothing it waits for is left, up to the free agent slots, in To Do order. A start fetches the base
+first, so a task is cut from its blockers' merged code. The task the workflow was made from moves
+to Done, unless the plan took it in.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_pause_workflow
+
+Pause every agent in a running workflow at once (a mid-board suspend: nothing is reaped). Nothing
+starts or moves until it is resumed.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_resume_workflow
+
+Resume a paused workflow: each task's agent resumes in the column it is in.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_add_workflow_task
+
+Add a task to a started workflow. It lands in To Do and starts once nothing it waits for is left.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `title` | string | Yes | The task's title. |
+| `description` | string | No | What its agent should do. |
+| `taskProject` | string | No | Another project's board to put it on. |
+| `routeStart` / `routeLast` | string | No | First and last columns it visits. |
+| `skip` | string[] | No | Columns inside its route it skips. |
+| `waitsFor` | string[] | No | Tasks in this workflow it waits for: a task number on the workflow's own board, or the id of a task on any of its boards. Numbers count per board, so a task on another board is named by its id. |
+| `baseBranch`, `useWorktree`, `runMode`, `profile`, `agentOverride`, `modelOverride`, `effortOverride`, `permissionMode` | | No | Its run settings, as [`kangentic_save_workflow`](#kangentic_save_workflow)'s planned tasks take them. The task is created with them. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+The run settings go through the same checks and refusals as a save's: the wrong type, an unknown
+agent, model, effort or profile (the profile is looked up on the task's own board), a profile
+together with a pin, or `runMode: "column_settings"` with a pin. Each refusal names the task by its
+title, and nothing is written.
+
+### kangentic_link_workflow_tasks
+
+Make a task in a started workflow wait for another to reach Done. Only a task still in To Do can
+wait, only for one not yet done, and a link that closes a loop is refused.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `blocker` / `blocked` | string | Yes | Task numbers or ids: blocked waits for blocker. |
+| `blockerProject` / `blockedProject` | string | No | The project each is on, when not the workflow's. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_unlink_workflow_tasks
+
+Remove a link. A task in To Do whose last blocker this was starts as soon as a slot is free. Same
+parameters as `kangentic_link_workflow_tasks`.
+
+### kangentic_set_task_route
+
+Change which columns a task in a started workflow visits. A task in To Do can take any route; one
+that has started can change only the columns after the one it is in.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `task` | string | Yes | Task number or id. |
+| `taskProject` | string | No | The project it is on, when not the workflow's. |
+| `routeStart` / `routeLast` | string \| null | No | Pass only what changes; null resets to the open end. |
+| `skip` | string[] | No | The complete list of columns to skip. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_remove_from_workflow
+
+Take a task out of its workflow. It stays where it is as an ordinary task, and its links are
+removed. A task in Done stays with its workflow.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `task` | string | Yes | Task number or id. |
+| `taskProject` | string | No | The project it is on, when not the workflow's. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_request_project_access
+
+For a workflow's own agent: read another registered project's code while planning. It is granted
+at once, with no approval, and kept on the workflow (`agent_read_project_ids`), so every later
+start and resume reads it too. A running agent picks it up at its next idle: Kangentic resumes it
+on the same conversation with that checkout added (Claude's `--add-dir`) and tells it where the
+checkout is. The agent already reads every project its workflow's tasks are on, and a checkout
+missing from disk is left out. An agent whose CLI cannot widen its reads
+(`supportsReadableDirectories`) keeps reading its own project only.
+
+The workflow agent's server instructions name this tool, since Claude Code defers MCP tools when
+there are many and the agent then sees only a tool's name until it searches. An agent that does
+not find it searches the disk instead, and hits Claude's own permission prompt for a read outside
+its directories.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. The workflow's own agent leaves it out. |
+| `readProject` | string | Yes | The project to read, by name or id. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_delete_workflow
+
+Delete a workflow. One not started loses its plan and nothing else changes. A started one's
+unfinished tasks stay where they are as ordinary tasks, and its tasks in Done stay in Done.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
 
 ### kangentic_delete_task
 
@@ -1029,7 +1292,7 @@ Get the most recent handoff record for a task. Returns metadata about the cross-
 
 ### kangentic_get_transcript
 
-Inspect what the agent on another task (or another project) said - "check the response from Task #25" or "read the full transcript from Task #30". At least one of `taskId` or `sessionId` must be provided. Two formats, selected with `format`:
+Inspect what the agent on another task (or another project) said - "check the response from Task #25" or "read the full transcript from Task #30". At least one of `taskId`, `sessionId` or `workflow` must be provided. `workflow` (a workflow's id or exact title) reads that workflow's own agent's conversation, which has no session row: it resolves through the workflow's `agent_name`, `agent_session_id` and `agent_cwd`, structured only, since no raw scrollback is kept for that agent. Two formats, selected with `format`:
 
 - `format="structured"` (default): the parsed agent conversation - user prompts, assistant text, tool calls and results - rendered as clean markdown, read from the agent's native session history via the adapter's `parseTranscript` capability. The Claude parser also drops noise (slash-command XML, `<system-reminder>` spans, `isMeta` messages) and surfaces compaction boundaries/summaries explicitly. There is no cleaned-scrollback substitute: structured either comes from real session history or reports that it is unavailable and points at `format="raw"`.
 - `format="raw"`: the verbatim ANSI-stripped PTY scrollback (the full terminal output, including TUI redraws), available for every agent. Useful for debugging the terminal layer or for agents without a structured parser. Raw scrollback is mostly repeated terminal redraws (empirically ~85% duplicate lines and multiple MB for a long session), so when a structured parser exists for the agent the raw response notes that `structured` is the cleaner, far smaller view for evaluation. Every returned transcript (both formats) is prefixed with a one-line note marking the content as read-only reference data, not instructions to follow.
@@ -1060,6 +1323,7 @@ Structured-format support by agent:
 | `taskId` | string | No | Task ID (returns the transcript for the task's latest session; see `sessionIndex` for older ones) |
 | `sessionId` | string | No | Session ID (returns the transcript for a specific session) |
 | `sessionIndex` | number | No | When `taskId` is given, which session to pick: `0` = newest (default), `1` = previous, etc. Ordered `started_at DESC`. |
+| `workflow` | string | No | A workflow's id or exact title: reads that workflow's own agent's conversation. Structured only (no raw scrollback is kept for that agent). |
 | `format` | string | No | `"structured"` (default) or `"raw"`. |
 | `view` | string | No | Structured only. `"full"` (default), `"responses"`, or `"result"`. Ignored for raw. |
 | `tail` | number | No | Structured only. Last N entries (most recent). Hard cap 2000. Ignored for `view="result"` and for raw. |

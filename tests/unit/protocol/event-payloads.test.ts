@@ -66,6 +66,19 @@ const boardTaskFixture: JsonValue = {
   resumable: false,
   paused: false,
   pausable: true,
+  workflow: null,
+};
+
+const workflowFixture: JsonValue = {
+  id: 'wf-1',
+  title: 'Usage budgets',
+  project_id: 'p-1',
+  state: 'running',
+  color_slot: 3,
+  route: ['lane-2', 'lane-4'],
+  waiting_for: ['#413'],
+  lock_reason: '#7 is locked while Usage budgets runs.',
+  gate_target_id: null,
 };
 
 describe('parseTranscriptEntriesWire', () => {
@@ -298,6 +311,32 @@ describe('board row guards', () => {
     const withoutReadiness = { ...(boardTaskFixture as Record<string, JsonValue>) };
     delete withoutReadiness.pr_merge_readiness;
     expect(parseBoardTaskWire(withoutReadiness).pr_merge_readiness).toBeNull();
+  });
+
+  it('reads a board task from a desktop that predates workflows as in no workflow', () => {
+    const withoutWorkflow = { ...(boardTaskFixture as Record<string, JsonValue>) };
+    delete withoutWorkflow.workflow;
+    expect(parseBoardTaskWire(withoutWorkflow).workflow).toBeNull();
+  });
+
+  it('parses a workflow task\'s strip, wait and lock', () => {
+    const inWorkflow = { ...(boardTaskFixture as Record<string, JsonValue>), workflow: workflowFixture };
+    expect(parseBoardTaskWire(inWorkflow).workflow).toEqual(workflowFixture);
+  });
+
+  it('costs a malformed workflow only its strip, never the task', () => {
+    const malformed = { ...(boardTaskFixture as Record<string, JsonValue>), workflow: { title: 'No id' } };
+    const parsed = parseBoardTaskWire(malformed);
+    expect(parsed.id).toBe('t-1');
+    expect(parsed.workflow).toBeNull();
+  });
+
+  it('fills a workflow\'s unreadable details with what draws safely', () => {
+    const sparse = { ...(boardTaskFixture as Record<string, JsonValue>), workflow: { id: 'wf-1', title: 'Usage budgets', project_id: 'p-1', route: ['lane-2', 4], waiting_for: 'x' } };
+    expect(parseBoardTaskWire(sparse).workflow).toEqual({
+      id: 'wf-1', title: 'Usage budgets', project_id: 'p-1', state: 'running', color_slot: 1,
+      route: ['lane-2'], waiting_for: [], lock_reason: null, gate_target_id: null,
+    });
   });
 
   it('passes through a present pr_merge_readiness value', () => {

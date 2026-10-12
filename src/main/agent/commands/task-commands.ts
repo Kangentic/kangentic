@@ -7,6 +7,9 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
+import { MOVE_MESSAGE_MAX_CHARS } from './move-message-limit';
+import { resolveMoveTarget, routeOf } from '../../automations/move-target';
+import { checkWorkflowMoveForAgent } from '../../workflows/workflow-lock-check';
 import {
   clampSlot,
   computeIdsWithTaskAtSlot,
@@ -795,6 +798,17 @@ export const handleMoveTask: CommandHandler = (
     return { success: false, error: parsedSlot.error };
   }
 
+  // Validated here, not only in zod: the phone's board-tool path calls this
+  // handler with no schema in front of it.
+  const rawMessage = params.message;
+  if (rawMessage !== undefined && rawMessage !== null && typeof rawMessage !== 'string') {
+    return { success: false, error: 'message must be a string.' };
+  }
+  const message = typeof rawMessage === 'string' && rawMessage.trim() ? rawMessage : null;
+  if (message && message.length > MOVE_MESSAGE_MAX_CHARS) {
+    return { success: false, error: `message is ${message.length} characters; the limit is ${MOVE_MESSAGE_MAX_CHARS}.` };
+  }
+
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
   const task = resolveTask(taskRepo, taskIdParam);
@@ -802,11 +816,27 @@ export const handleMoveTask: CommandHandler = (
     return { success: false, error: `Task "${taskIdParam}" not found` };
   }
 
-  const resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
+  // A column named exactly "next" wins; otherwise "next" means the next column
+  // after the task's own, the same answer a Move to column row gets.
+  let resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
+  if ('error' in resolution && columnName.trim().toLowerCase() === 'next') {
+    const allSwimlanes = new SwimlaneRepository(db).list();
+    // A workflow task's next column is the next one on its route.
+    const next = resolveMoveTarget(allSwimlanes, task.swimlane_id, null, routeOf(task));
+    if (!next.ok) return { success: false, error: next.reason };
+    resolution = { swimlane: next.column, allSwimlanes };
+  }
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }
   const { swimlane: targetSwimlane } = resolution;
+
+  if (message && task.swimlane_id === targetSwimlane.id) {
+    return {
+      success: false,
+      error: `Task "${task.title}" is already in ${targetSwimlane.name}, so there is no agent to hand the message to on arrival. To message the agent working on it, use kangentic_send_session_message.`,
+    };
+  }
 
   if (task.swimlane_id === targetSwimlane.id) {
     // Already here, and no slot named: the long-standing no-op.
@@ -854,6 +884,16 @@ export const handleMoveTask: CommandHandler = (
     };
   }
 
+  // A workflow task's lock, asked here because the move below fires and
+  // forgets: a refusal inside it would never reach the agent. The task's own
+  // agent (its main session or an isolated column's) may move it; any other
+  // caller may not while its workflow runs.
+  const moverIsTaskAgent = context.callerTaskId === task.id;
+  const refusal = checkWorkflowMoveForAgent(context.projectId, task, targetSwimlane.id, moverIsTaskAgent);
+  if (refusal) {
+    return { success: false, error: refusal };
+  }
+
   // Cross-column. The task is not in the target lane yet, so its length is a
   // legal (appending) slot. An ordinal has to be translated into a RAW position
   // before it reaches the repository: the two diverge as soon as archiving has
@@ -868,18 +908,23 @@ export const handleMoveTask: CommandHandler = (
 
   // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
   // The MCP response confirms intent; the LLM should re-query to verify state if needed.
-  void context.onTaskMove({
-    taskId: task.id,
-    targetSwimlaneId: targetSwimlane.id,
-    targetPosition,
-  }).catch((error) => {
+  const moveInput = { taskId: task.id, targetSwimlaneId: targetSwimlane.id, targetPosition };
+  const moveOptions = {
+    ...(message ? { message } : {}),
+    ...(moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
+  };
+  const moving = Object.keys(moveOptions).length > 0
+    ? context.onTaskMove(moveInput, moveOptions)
+    : context.onTaskMove(moveInput);
+  void moving.catch((error) => {
     console.error(`[move_task] Failed for task ${task.id.slice(0, 8)}:`, error);
   });
 
   const placement = parsedSlot ? ` at position ${slot}` : '';
+  const handOff = message ? ' Its agent there gets your message once it is ready.' : '';
   return {
     success: true,
-    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.`,
+    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.${handOff}`,
     data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
   };
 };
@@ -1017,6 +1062,14 @@ export function handleMoveTaskToProject(
   const task = resolveTask(sourceTaskRepo, taskId);
   if (!task) {
     return { success: false, error: `Task "${taskId}" not found` };
+  }
+  // A relocation makes a NEW task (new id, new number), which would orphan the
+  // task's workflow links. A workflow already puts a task on any board it needs.
+  if (task.workflow_id) {
+    return {
+      success: false,
+      error: `Task #${task.display_id} is in a workflow and cannot be moved to another project. Remove it from the workflow first (kangentic_remove_from_workflow).`,
+    };
   }
 
   const sourceSwimlane = new SwimlaneRepository(sourceDb).getById(task.swimlane_id);

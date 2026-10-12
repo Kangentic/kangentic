@@ -304,6 +304,8 @@ export class OpenCodeAdapter implements AgentAdapter {
    *   `time_created` falls in the spawn window.
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Its plugin reports the end of a turn as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.hooksAndPty(),
     statusFile: {
       parseStatus: () => null,

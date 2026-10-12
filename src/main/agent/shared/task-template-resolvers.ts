@@ -1,7 +1,7 @@
-import type { Task } from '../../../shared/types';
+import type { AutomationTrigger, Task } from '../../../shared/types';
 import { sanitizeForPty } from '../../../shared/paths';
 import { TASK_TEMPLATE_VAR_NAMES, type TaskTemplateVarName } from '../../../shared/task-template-vars';
-import { buildTaskXml } from './prompt-xml';
+import { buildTaskXml, buildWorkflowXml, type WorkflowXmlInput } from './prompt-xml';
 
 /**
  * Everything a task-template resolver needs. `defaultBaseBranch` is the
@@ -61,8 +61,23 @@ export interface TaskTemplateContext {
     column: string;
     fromColumn: string | null;
     toColumn: string | null;
-    trigger: 'enter' | 'exit';
+    trigger: AutomationTrigger;
   } | null;
+  /**
+   * The agent's final message of the turn that just ended, full text, read by
+   * the turn-end runner from the session whose turn it was. Absent everywhere
+   * else (on enter and exit there is no turn behind the run), which resolves
+   * `{{agentReply}}` empty.
+   */
+  agentReply?: string | null;
+  /**
+   * A workflow task's workflow facts, read by the caller
+   * (`readWorkflowPromptFacts`). Null for an ordinary task, which resolves
+   * `{{workflow_xml}}` empty. Required, not optional, for the reason
+   * `projectPath` is: the picker offers the variable in every context, so a
+   * call site that forgot it would resolve it empty with nothing to say so.
+   */
+  workflow: WorkflowXmlInput | null;
 }
 
 type TaskTemplateResolver = (ctx: TaskTemplateContext) => string;
@@ -77,6 +92,9 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   // through shell delivery. The legacy {{description}} prose var stays
   // sanitized so user-customized single-line templates don't break.
   task_xml: ({ task }) => buildTaskXml({ title: sanitizeForPty(task.title), description: task.description }),
+  // A leading newline so it sits on its own line after `{{task_xml}}` in the
+  // default prompt; empty (and dropped) for a task outside a workflow.
+  workflow_xml: ({ workflow }) => (workflow ? `\n${buildWorkflowXml(workflow)}` : ''),
   title: ({ task }) => sanitizeForPty(task.title),
   description: ({ task }) => {
     const clean = sanitizeForPty(task.description);
@@ -135,6 +153,14 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   fromColumn: ({ move }) => move?.fromColumn ?? '',
   toColumn: ({ move }) => move?.toColumn ?? '',
   trigger: ({ move }) => move?.trigger ?? '',
+  // Verbatim, newlines kept: it is prose for the next agent, and the delivery
+  // path (bracketed paste) carries line breaks intact.
+  agentReply: ({ agentReply }) => agentReply ?? '',
+  // Offered only in a workflow agent's first message, which has no task and is
+  // resolved by `buildWorkflowAgentFirstMessage`
+  // (src/main/workflows/workflow-agent-prompt.ts). A task template never sees them.
+  columns: () => '',
+  brief_xml: () => '',
 };
 
 /** Resolve every task template variable for the given context. */

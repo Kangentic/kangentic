@@ -179,15 +179,11 @@ export function registerBrowserTools(
   server: McpServer,
   getAutomationConfig: AutomationConfigReader,
   dependencies: BrowserToolDependencies,
+  // From `resolveCallerTaskId` (caller-task.ts), passed in so one request
+  // looks it up once.
+  callerTaskId: string | undefined,
 ): void {
-  const { projectId, callerSessionId, sessions } = dependencies;
-
-  // Resolved ONCE per request, not per tool call: the McpServer is rebuilt for
-  // every HTTP request, so this closure can never go stale. A missing lookup or
-  // an unknown session leaves it undefined, which degrades the implicit default
-  // to "the single pane in my project" rather than refusing.
-  const callerTaskId =
-    callerSessionId && sessions ? sessions.getSessionTaskId(callerSessionId) : undefined;
+  const { projectId, callerSessionId } = dependencies;
 
   // Caller scope is stamped here, not taken from tool arguments, so no tool can
   // opt out of it. This is the single point that scopes the 20 tools driving

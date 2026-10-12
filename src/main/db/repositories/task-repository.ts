@@ -1,21 +1,40 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason } from '../../../shared/types';
+import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMoveProvenance, TaskWorkflowMembership, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 import { writeTransaction } from '../transaction';
+import { removeLinksInWorkflowHome } from './workflow-home-links';
 
-/** Raw row from SQLite - labels stored as JSON string. */
-interface TaskRow extends Omit<Task, 'labels'> {
+/** Raw row from SQLite - labels and skipped columns stored as JSON strings. */
+interface TaskRow extends Omit<Task, 'labels' | 'skipped_swimlane_ids'> {
   labels: string;
+  skipped_swimlane_ids: string | null;
+}
+
+function parseStringList(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 function rowToTask(row: TaskRow): Task {
-  let labels: string[] = [];
-  try {
-    labels = JSON.parse(row.labels);
-  } catch { /* default to empty */ }
-  return { ...row, labels };
+  return {
+    ...row,
+    labels: parseStringList(row.labels),
+    // A row from before the workflow columns reads as an ordinary task.
+    workflow_id: row.workflow_id ?? null,
+    workflow_project_id: row.workflow_project_id ?? null,
+    route_start_swimlane_id: row.route_start_swimlane_id ?? null,
+    route_last_swimlane_id: row.route_last_swimlane_id ?? null,
+    skipped_swimlane_ids: parseStringList(row.skipped_swimlane_ids),
+    canvas_x: row.canvas_x ?? null,
+    canvas_y: row.canvas_y ?? null,
+  };
 }
 
 /**
@@ -30,7 +49,7 @@ function rowToTask(row: TaskRow): Task {
 const ADVANCED_PIN_FIELDS = ['agent_override', 'model_override', 'effort_override', 'permission_mode'] as const;
 
 type AdvancedPinFields = Pick<Task, typeof ADVANCED_PIN_FIELDS[number]>;
-type ExclusiveFields = AdvancedPinFields & Pick<Task, 'profile_id' | 'run_mode'>;
+export type ExclusiveFields = AdvancedPinFields & Pick<Task, 'profile_id' | 'run_mode'>;
 
 const CLEARED_PINS = {
   agent_override: null,
@@ -67,8 +86,11 @@ const CLEARED_PINS = {
  *   3. Asking for `'column_settings'` clears the pins, mirroring what the
  *      dialog's Column Settings card does locally.
  * A write touching none of them leaves all three alone.
+ *
+ * Exported for a workflow's planned task, which holds the same fields before
+ * the task exists, so its draft never holds a state `create` would rewrite.
  */
-function applyProfileExclusivity(next: ExclusiveFields, requested: Partial<ExclusiveFields>): ExclusiveFields {
+export function applyProfileExclusivity(next: ExclusiveFields, requested: Partial<ExclusiveFields>): ExclusiveFields {
   if (requested.profile_id != null) {
     return { ...next, ...CLEARED_PINS, run_mode: 'column_settings' };
   }
@@ -359,6 +381,13 @@ export class TaskRepository {
       auto_command: input.auto_command ?? null,
       profile_id: exclusive.profile_id,
       run_mode: exclusive.run_mode,
+      workflow_id: input.workflow?.workflow_id ?? null,
+      workflow_project_id: input.workflow?.workflow_project_id ?? null,
+      route_start_swimlane_id: input.workflow?.route_start_swimlane_id ?? null,
+      route_last_swimlane_id: input.workflow?.route_last_swimlane_id ?? null,
+      skipped_swimlane_ids: input.workflow?.skipped_swimlane_ids ?? [],
+      canvas_x: input.workflow?.canvas_x ?? null,
+      canvas_y: input.workflow?.canvas_y ?? null,
       attachment_count: 0,
       // A brand-new task has never run an auto_command. These four columns are
       // written only by `recordAutoCommandOutcome`, never by create/update.
@@ -377,7 +406,72 @@ export class TaskRepository {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.pr_merge_readiness, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.created_at, task.updated_at);
 
+    // Only a workflow's Start passes membership, so an ordinary create costs
+    // no second statement.
+    if (input.workflow) this.writeWorkflowColumns(task.id, input.workflow);
+
+    // A task born into a column has entered it: its first visit starts here.
+    this.recordMove(task.id, null, task.swimlane_id, { origin: 'create' });
+
     return task;
+  }
+
+  /**
+   * Put a task in a workflow, or take it out (`null`), with its route. A task
+   * taken out keeps nothing: it is an ordinary task again, on the auto layout.
+   * Does not bump `updated_at`: membership is not an edit the board orders by.
+   */
+  setWorkflowMembership(taskId: string, membership: TaskWorkflowMembership | null): void {
+    this.writeWorkflowColumns(taskId, membership);
+  }
+
+  /** Change a workflow task's route. Same no-`updated_at` reasoning as membership. */
+  setRoute(
+    taskId: string,
+    route: Pick<TaskWorkflowMembership, 'route_start_swimlane_id' | 'route_last_swimlane_id' | 'skipped_swimlane_ids'>,
+  ): void {
+    this.db.prepare(
+      'UPDATE tasks SET route_start_swimlane_id = ?, route_last_swimlane_id = ?, skipped_swimlane_ids = ? WHERE id = ?',
+    ).run(
+      route.route_start_swimlane_id,
+      route.route_last_swimlane_id,
+      route.skipped_swimlane_ids.length > 0 ? JSON.stringify(route.skipped_swimlane_ids) : null,
+      taskId,
+    );
+  }
+
+  /**
+   * Where a hand placed the card on the Workflows canvas (null, null for the
+   * auto layout). Never bumps `updated_at`: the retrieval worker re-indexes a
+   * task whenever it changes, and a card drag must not cost a re-index.
+   */
+  setCanvasPosition(taskId: string, canvasX: number | null, canvasY: number | null): void {
+    this.db.prepare('UPDATE tasks SET canvas_x = ?, canvas_y = ? WHERE id = ?').run(canvasX, canvasY, taskId);
+  }
+
+  /** Every task in a workflow on this board, archived (Done) included, by display id. */
+  listByWorkflow(workflowId: string): Task[] {
+    const rows = this.db.prepare(`${TaskRepository.SELECT_WITH_COUNT}
+      WHERE t.workflow_id = ?
+      ORDER BY t.display_id ASC`).all(workflowId) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  private writeWorkflowColumns(taskId: string, membership: TaskWorkflowMembership | null): void {
+    this.db.prepare(`
+      UPDATE tasks SET workflow_id = ?, workflow_project_id = ?, route_start_swimlane_id = ?,
+        route_last_swimlane_id = ?, skipped_swimlane_ids = ?, canvas_x = ?, canvas_y = ?
+      WHERE id = ?
+    `).run(
+      membership?.workflow_id ?? null,
+      membership?.workflow_project_id ?? null,
+      membership?.route_start_swimlane_id ?? null,
+      membership?.route_last_swimlane_id ?? null,
+      membership && membership.skipped_swimlane_ids.length > 0 ? JSON.stringify(membership.skipped_swimlane_ids) : null,
+      membership?.canvas_x ?? null,
+      membership?.canvas_y ?? null,
+      taskId,
+    );
   }
 
   update(input: TaskUpdateInput): Task {
@@ -446,7 +540,16 @@ export class TaskRepository {
     this.db.prepare('UPDATE tasks SET detail_view_state = ? WHERE id = ?').run(detailViewState, taskId);
   }
 
-  move(input: TaskMoveInput): void {
+  /**
+   * Move a task, and record the move in `task_moves` in the same transaction.
+   *
+   * `provenance` is required so no caller can move a task without saying who
+   * moved it: the record is the visit boundary column automations count from
+   * and a workflow task's step history, and a move it missed would let a
+   * turn-end row run twice in one visit. A reorder within the column records
+   * nothing, since the task did not enter a column.
+   */
+  move(input: TaskMoveInput, provenance: TaskMoveProvenance): void {
     const { taskId, targetSwimlaneId, targetPosition } = input;
     const task = this.getById(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
@@ -463,8 +566,19 @@ export class TaskRepository {
       // Move the task
       this.db.prepare('UPDATE tasks SET swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
         .run(targetSwimlaneId, targetPosition, new Date().toISOString(), taskId);
+
+      if (task.swimlane_id !== targetSwimlaneId) {
+        this.recordMove(taskId, task.swimlane_id, targetSwimlaneId, provenance);
+      }
     });
     tx();
+  }
+
+  /** One `task_moves` row. Called inside the transaction that made the move. */
+  private recordMove(taskId: string, fromSwimlaneId: string | null, toSwimlaneId: string, provenance: TaskMoveProvenance): void {
+    this.db.prepare(
+      'INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(uuidv4(), taskId, fromSwimlaneId, toSwimlaneId, provenance.origin, provenance.reason ?? null, new Date().toISOString());
   }
 
   /**
@@ -561,9 +675,14 @@ export class TaskRepository {
   }
 
   unarchive(id: string, targetSwimlaneId: string, position: number): Task {
+    const before = this.getById(id);
     const now = new Date().toISOString();
-    this.db.prepare('UPDATE tasks SET archived_at = NULL, swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
-      .run(targetSwimlaneId, position, now, id);
+    writeTransaction(this.db, () => {
+      this.db.prepare('UPDATE tasks SET archived_at = NULL, swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
+        .run(targetSwimlaneId, position, now, id);
+      // Entering a column out of the archive is a visit like any other.
+      if (before) this.recordMove(id, before.swimlane_id, targetSwimlaneId, { origin: 'unarchive' });
+    })();
     return this.getById(id)!;
   }
 
@@ -712,8 +831,24 @@ export class TaskRepository {
       // Shift down tasks above the deleted one
       this.db.prepare('UPDATE tasks SET position = position - 1 WHERE swimlane_id = ? AND position > ?')
         .run(task.swimlane_id, task.position);
+      // A deleted task's links go with it, so a task that waited for it stops
+      // waiting. Here because every delete passes through this method.
+      if (task.workflow_id !== null) {
+        this.db.prepare('DELETE FROM task_links WHERE blocker_task_id = ? OR blocked_task_id = ?').run(id, id);
+      }
     });
     tx();
+
+    // Links live in the workflow's HOME database, so a task on another board
+    // has none here: its home removes them, as a delete on the home board does.
+    // After the transaction, because it writes another project's database.
+    if (task.workflow_id !== null && task.workflow_project_id !== null) {
+      try {
+        removeLinksInWorkflowHome(task);
+      } catch (error) {
+        console.warn(`[TaskRepository] Could not remove the links of deleted task ${id.slice(0, 8)} in its workflow's home:`, error);
+      }
+    }
 
     // Return the task's dev-server ports to the pool.
     //

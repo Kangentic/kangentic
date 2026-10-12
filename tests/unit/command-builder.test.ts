@@ -1075,6 +1075,60 @@ describe('adapter command composed through adaptCommandForShell', () => {
   });
 });
 
+// A workflow's own agent is launched read-only: the built-in tools limited to
+// reading and searching files, and Kangentic's MCP server the only one.
+describe('CommandBuilder buildClaudeCommand: read-only launch', () => {
+  it('limits the built-in tools and makes the MCP config strict', () => {
+    const cmd = new CommandBuilder().buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'wf-1',
+      cwd: '/project',
+      permissionMode: 'default',
+      shell: 'bash',
+      readOnly: true,
+    });
+    // ToolSearch loads the deferred MCP tools; without it no Kangentic tool can be called.
+    expect(cmd).toContain("--tools 'Read,Grep,Glob,ToolSearch'");
+    expect(cmd).toContain('--strict-mcp-config');
+    // Claude in Chrome is a built-in server --strict-mcp-config does not reach.
+    expect(cmd).toContain('--no-chrome');
+    // Plan mode reroutes the model, so a read-only launch never uses it.
+    expect(cmd).not.toContain('--permission-mode');
+  });
+
+  it('adds neither flag to an ordinary launch', () => {
+    const cmd = new CommandBuilder().buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'task-1',
+      cwd: '/project',
+      permissionMode: 'default',
+      shell: 'bash',
+    });
+    expect(cmd).not.toContain('--tools');
+    expect(cmd).not.toContain('--strict-mcp-config');
+    expect(cmd).not.toContain('--no-chrome');
+    expect(cmd).not.toContain('--add-dir');
+  });
+
+  it('gives each readable directory its own --add-dir, before the prompt\'s --', () => {
+    const cmd = new CommandBuilder().buildClaudeCommand({
+      cliPath: 'C:\\tools\\claude.exe',
+      taskId: 'wf-1',
+      cwd: 'C:\\projects\\home',
+      permissionMode: 'default',
+      shell: 'powershell',
+      readOnly: true,
+      readableDirectories: ['C:\\projects\\mobile app', 'C:\\projects\\relay'],
+      prompt: 'Plan it',
+    });
+    expect(cmd).toContain('--add-dir "C:\\projects\\mobile app"');
+    expect(cmd).toContain('--add-dir "C:\\projects\\relay"');
+    // `--add-dir` takes a list, so the prompt must sit behind the end-of-options marker.
+    expect(cmd.indexOf('--add-dir')).toBeLessThan(cmd.indexOf('"--"'));
+    expect(cmd.endsWith('"Plan it"')).toBe(true);
+  });
+});
+
 // The real CommandBuilder.buildClaudeCommand's "--" end-of-options guard
 // (as opposed to the deliberately simplified inline buildClaudeCommand()
 // helper above, which never went through quoteArg for the marker) was never

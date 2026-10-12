@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, LeftoverProcessReport, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan } from '../shared/types';
+import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, LeftoverProcessReport, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -173,6 +173,17 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.TASK_MOVED_BY_MOBILE, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_MOVED_BY_MOBILE, handler);
     },
+    onMovedByAutomation: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId?: string) =>
+        callback(projectId);
+      ipcRenderer.on(IPC.TASK_MOVED_BY_AUTOMATION, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_MOVED_BY_AUTOMATION, handler);
+    },
+    onWorkflowCompleted: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, completed: WorkflowCompletedEvent) => callback(completed);
+      ipcRenderer.on(IPC.WORKFLOW_COMPLETED, handler);
+      return () => ipcRenderer.removeListener(IPC.WORKFLOW_COMPLETED, handler);
+    },
     onSpawnProgress: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, label: string | null) =>
         callback(taskId, label);
@@ -197,7 +208,7 @@ const api: ElectronAPI = {
   },
 
   swimlanes: {
-    list: () => ipcRenderer.invoke(IPC.SWIMLANE_LIST),
+    list: (projectId) => ipcRenderer.invoke(IPC.SWIMLANE_LIST, projectId ?? null),
     create: (input) => ipcRenderer.invoke(IPC.SWIMLANE_CREATE, input),
     update: (input) => ipcRenderer.invoke(IPC.SWIMLANE_UPDATE, input),
     delete: (id) => ipcRenderer.invoke(IPC.SWIMLANE_DELETE, id),
@@ -359,7 +370,7 @@ const api: ElectronAPI = {
   },
 
   config: {
-    get: () => ipcRenderer.invoke(IPC.CONFIG_GET),
+    get: (projectId) => ipcRenderer.invoke(IPC.CONFIG_GET, projectId ?? null),
     getGlobal: () => ipcRenderer.invoke(IPC.CONFIG_GET_GLOBAL),
     set: (config) => ipcRenderer.invoke(IPC.CONFIG_SET, config),
     setSync: (config) => { ipcRenderer.sendSync(IPC.CONFIG_SET_SYNC, config); },
@@ -422,7 +433,7 @@ const api: ElectronAPI = {
 
   git: {
     detect: (forceRefresh?: boolean) => ipcRenderer.invoke(IPC.GIT_DETECT, forceRefresh),
-    listBranches: () => ipcRenderer.invoke(IPC.GIT_LIST_BRANCHES),
+    listBranches: (projectId) => ipcRenderer.invoke(IPC.GIT_LIST_BRANCHES, projectId ?? null),
     diffFiles: (input) => ipcRenderer.invoke(IPC.GIT_DIFF_FILES, input),
     fileContent: (input) => ipcRenderer.invoke(IPC.GIT_FILE_CONTENT, input),
     fileImage: (input) => ipcRenderer.invoke(IPC.GIT_FILE_IMAGE, input),
@@ -645,6 +656,37 @@ const api: ElectronAPI = {
     },
   },
 
+  // Workflows: every call names the workflow's home project explicitly.
+  workflows: {
+    list: (projectId) => ipcRenderer.invoke(IPC.WORKFLOW_LIST, projectId),
+    listSupersessions: (projectId) => ipcRenderer.invoke(IPC.WORKFLOW_LIST_SUPERSESSIONS, projectId),
+    get: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_GET, projectId, workflowId),
+    create: (projectId, sourceTaskId) => ipcRenderer.invoke(IPC.WORKFLOW_CREATE, projectId, sourceTaskId),
+    rename: (projectId, workflowId, title) => ipcRenderer.invoke(IPC.WORKFLOW_RENAME, projectId, workflowId, title),
+    delete: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_DELETE, projectId, workflowId),
+    start: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_START, projectId, workflowId),
+    pause: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_PAUSE, projectId, workflowId),
+    resume: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_RESUME, projectId, workflowId),
+    addTask: (projectId, workflowId, input) => ipcRenderer.invoke(IPC.WORKFLOW_ADD_TASK, projectId, workflowId, input),
+    updateTask: (projectId, workflowId, key, input) =>
+      ipcRenderer.invoke(IPC.WORKFLOW_UPDATE_TASK, projectId, workflowId, key, input),
+    removeTask: (projectId, workflowId, key) => ipcRenderer.invoke(IPC.WORKFLOW_REMOVE_TASK, projectId, workflowId, key),
+    setLink: (projectId, workflowId, blockerKey, blockedKey, linked) =>
+      ipcRenderer.invoke(IPC.WORKFLOW_SET_LINK, projectId, workflowId, blockerKey, blockedKey, linked),
+    setRoute: (projectId, workflowId, key, swimlaneIds) =>
+      ipcRenderer.invoke(IPC.WORKFLOW_SET_ROUTE, projectId, workflowId, key, swimlaneIds),
+    setPositions: (projectId, workflowId, positions) =>
+      ipcRenderer.invoke(IPC.WORKFLOW_SET_POSITIONS, projectId, workflowId, positions),
+    agentOpen: (projectId, workflowId, cols, rows) => ipcRenderer.invoke(IPC.WORKFLOW_AGENT_OPEN, projectId, workflowId, cols, rows),
+    agentResume: (projectId, workflowId, cols, rows) => ipcRenderer.invoke(IPC.WORKFLOW_AGENT_RESUME, projectId, workflowId, cols, rows),
+    agentPause: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_AGENT_PAUSE, projectId, workflowId),
+    onChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, changed: WorkflowChangedEvent) => callback(changed);
+      ipcRenderer.on(IPC.WORKFLOW_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.WORKFLOW_CHANGED, handler);
+    },
+  },
+
   mobile: {
     getStatus: () => ipcRenderer.invoke(IPC.MOBILE_GET_STATUS),
     startPairing: () => ipcRenderer.invoke(IPC.MOBILE_START_PAIRING),
@@ -702,7 +744,7 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
     },
-    getBoardProfiles: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_BOARD_PROFILES),
+    getBoardProfiles: (projectId) => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_BOARD_PROFILES, projectId ?? null),
     setBoardProfiles: (profiles) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_BOARD_PROFILES, profiles),
     onBoardProfilesChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);

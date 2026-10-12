@@ -165,7 +165,7 @@ vi.mock('../../src/main/git/git-checks', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// simple-git mock: captures the last git.raw() call per WorktreeManager instance
+// git client mock: captures the last git.raw() call per WorktreeManager instance
 // ---------------------------------------------------------------------------
 
 type GitRawFn = (args: string[]) => Promise<string>;
@@ -173,13 +173,8 @@ type GitRawFn = (args: string[]) => Promise<string>;
 const mockGitRaw = vi.fn<GitRawFn>(async () => '');
 const mockGitInstances: Array<{ raw: typeof mockGitRaw }> = [];
 
-vi.mock('simple-git', () => ({
-  default: vi.fn(() => {
-    const instance = { raw: mockGitRaw };
-    mockGitInstances.push(instance);
-    return instance;
-  }),
-  simpleGit: vi.fn(() => {
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: vi.fn(() => {
     const instance = { raw: mockGitRaw };
     mockGitInstances.push(instance);
     return instance;

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -36,6 +36,12 @@ interface ComboboxProps {
    * their own fallback computation bottomed out with no concrete value.
    */
   placeholderVariant?: 'resolved' | 'muted';
+  /**
+   * An icon at the field's left edge, the name `Select` gives the same slot:
+   * the workflow task form's project picker leads with a folder, as Settings'
+   * project switcher does.
+   */
+  leadingIcon?: ReactNode;
 }
 
 const NAVIGABLE_SELECTOR = '[data-combobox-option]';
@@ -66,6 +72,7 @@ export function Combobox({
   allowClear = true,
   disabled = false,
   placeholderVariant = 'resolved',
+  leadingIcon,
 }: ComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
@@ -244,6 +251,11 @@ export function Combobox({
       {/* `surface-control`, matching FIELD_CONTROL_BASE: this is an input, not a
           text-bearing card. See the note there for the split. */}
       <div className="flex items-center gap-0 border border-edge-input rounded bg-surface-control">
+        {leadingIcon && (
+          <span className="flex shrink-0 items-center pl-2.5 text-fg-muted pointer-events-none" aria-hidden="true">
+            {leadingIcon}
+          </span>
+        )}
         <input
           ref={inputRef}
           type="text"
@@ -256,7 +268,7 @@ export function Combobox({
           disabled={disabled}
           // `fg-tertiary`, matching FIELD_CONTROL_BASE: see the note there on
           // why value text steps down rather than the fill stepping up.
-          className={`flex-1 bg-transparent px-3 py-1.5 text-sm text-fg-tertiary focus:outline-none disabled:cursor-not-allowed ${
+          className={`flex-1 bg-transparent ${leadingIcon ? 'min-w-0 pl-2 pr-3' : 'px-3'} py-1.5 text-sm text-fg-tertiary focus:outline-none disabled:cursor-not-allowed ${
             placeholderVariant === 'muted' ? 'placeholder-fg-faint' : 'placeholder-fg'
           }`}
         />

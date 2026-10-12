@@ -41,11 +41,21 @@ import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgress
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveReportedEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
+import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
-import { deliverExitMessage } from '../helpers/exit-message-delivery';
+import { supersedeMessageDeliveries, supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
+import {
+  deliverAgentMessageAndWait,
+  deliverAgentMessageInBackground,
+  pasteAgentMessageInBackground,
+  shouldPaste,
+} from '../../automations/turn-end/agent-message-delivery';
+import { checkWorkflowMove, readTaskForWorkflowPrecheck } from '../../workflows/workflow-lock-check';
+import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
+import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
@@ -210,7 +220,7 @@ type MoveSpawnPlan = {
  * from the phone left the desktop board rendering the card in its old column
  * indefinitely.
  */
-export type TaskMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move';
+export type TaskMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move' | 'automation' | 'workflow';
 
 /**
  * The renderer push for each origin, or null for "say nothing".
@@ -239,6 +249,13 @@ const MOVE_PUSH_BY_ORIGIN: Record<
     sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_MOBILE, projectId),
   'auto-move': (context, projectId, input, title) =>
     sendToRenderer(context.mainWindow, IPC.TASK_AUTO_MOVED, input.taskId, input.targetSwimlaneId, title, projectId),
+  // A Move to column automation and a workflow step are Kangentic acting on its
+  // own. Quiet: a workflow can move many cards an hour, and the run log (or the
+  // workflow view) is where "why did this move" is answered.
+  automation: (context, projectId) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_AUTOMATION, projectId),
+  workflow: (context, projectId) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_AUTOMATION, projectId),
 };
 
 export async function handleTaskMove(
@@ -258,12 +275,49 @@ export async function handleTaskMove(
   // answer someone on a deadline (the mobile bridge verb, against the phone's
   // 10s per-verb budget) answers on this signal and lets the tail finish behind
   // the response. Every other caller keeps awaiting the whole move.
-  options?: { continuationPrompt?: string; onCommitted?: () => void },
+  //
+  // `moveReason` is recorded on the move's `task_moves` row: the name of the
+  // Move to column automation that made it, or a workflow's "Step done".
+  //
+  // `fromTurnEndGroup` marks a Move to column row's own move, which must not
+  // stop the turn-end group that made it (`supersedeTurnEndWork`).
+  //
+  // `moverIsTaskAgent` says an `'agent'` move comes from the task's own agent
+  // session, which a running workflow lets through (`workflowMoveRefusal`).
+  options?: {
+    continuationPrompt?: string;
+    onCommitted?: () => void;
+    moveReason?: string;
+    fromTurnEndGroup?: boolean;
+    moverIsTaskAgent?: boolean;
+  },
 ): Promise<void> {
+  // A workflow task's lock, asked BEFORE anything below aborts work in flight:
+  // a refused drag must not cancel the workflow's own move of the same task.
+  // Asked again inside the lock, against the reconciled row.
+  const workflowCheck = (task: Task, checkProjectId: string): void => {
+    const refusal = checkWorkflowMove(context, {
+      projectId: checkProjectId,
+      task,
+      toSwimlaneId: input.targetSwimlaneId,
+      origin,
+      moverIsTaskAgent: options?.moverIsTaskAgent === true,
+    });
+    if (refusal) throw new Error(refusal);
+  };
+  const precheckProjectId = projectId ?? context.currentProjectId;
+  if (precheckProjectId) {
+    const precheckTask = readTaskForWorkflowPrecheck(precheckProjectId, input.taskId);
+    if (precheckTask) workflowCheck(precheckTask, precheckProjectId);
+  }
+
   // Abort any in-flight move or promotion BEFORE queueing on the lock - the
   // existing holder must see its abort and return so we can acquire the lock.
   taskMoveControllers.get(input.taskId)?.abort();
   abortBacklogPromotion(input.taskId);
+  // Turn-end work is superseded inside Phase 1, once the move is known to
+  // change columns and the lock has let it through (see there): a reorder or a
+  // refused move must not cancel a step check the idle agent will not repeat.
   const moveController = new AbortController();
   taskMoveControllers.set(input.taskId, moveController);
   const { signal } = moveController;
@@ -386,8 +440,22 @@ export async function handleTaskMove(
       // move injects per column config. See spawnAgent's `suppressAutoCommand`.
       const suppressAutoCommand = fromLane?.role === 'done';
 
-      // Move the task in the database
-      tasks.move(input);
+      // The workflow lock, against the row as it is now (see the pre-check).
+      workflowCheck(task, resolvedProjectId);
+
+      // A move out of the column supersedes the task's turn-end work: a group
+      // running for the column it is leaving, or a moved task's message still
+      // waiting for an agent it is about to leave. Never a reorder within the
+      // column, and never a refused move: the agent is idle, so no later turn
+      // end would repeat a cancelled step check, and the task would sit there.
+      // The turn-end group never holds this lock, so aborting it here is safe.
+      if (fromSwimlaneId !== input.targetSwimlaneId) {
+        supersedeTurnEndWork(input.taskId, { exceptOwnGroup: options?.fromTurnEndGroup });
+      }
+
+      // Move the task in the database, recording who moved it (the visit
+      // boundary turn-end automations count from).
+      tasks.move(input, { origin, reason: options?.moveReason ?? null });
 
       // Atomic archive for Done-role target: run synchronously in the same tick
       // as tasks.move so no reader can observe the intermediate state
@@ -447,6 +515,18 @@ export async function handleTaskMove(
       // design). That second emit is what corrects a committed-then-rolled-back
       // move. Same row, same shape, two emits.
       emitBoardChanged();
+      // An open Workflows view shows where each of its tasks is.
+      notifyWorkflowOfTask(task, announceProjectId);
+      // Kangentic's own moves (a Move to column row, a workflow step or start)
+      // have no optimistic renderer write behind them, so without this the card
+      // sat in its old column until the move settled: through a Done move's
+      // suspend, reap and worktree removal, while the Workflow Complete toast
+      // had already said it was done. Their push is the quiet board reload
+      // (no toast), so sending it now and again at settle costs one extra
+      // reload, never a second toast.
+      if (announceProjectId && (origin === 'automation' || origin === 'workflow')) {
+        MOVE_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, task.title);
+      }
 
       // Commit signal for a caller that answers on the row landing (the mobile
       // bridge verb). Bus first, so the board event is already queued on the
@@ -463,6 +543,14 @@ export async function handleTaskMove(
 
       // Within-column reorder: no side effects needed
       if (fromSwimlaneId === input.targetSwimlaneId) return null;
+
+      // The task is leaving its column, so a message that column is still
+      // waiting to paste (a multi-line On task enter row, held for the agent's
+      // turn to end) is no longer the column's to send. Keystroke bursts are
+      // stopped by the scheduler's own cancel in the Priority branches below;
+      // a paste never enters the scheduler, so it is stopped here. Not on the
+      // reorder above: the task keeps its column, and with it its message.
+      supersedeMessageDeliveries(task.id);
 
       // === Exit automations ===
       //
@@ -512,21 +600,23 @@ export async function handleTaskMove(
             // suspends or re-points the session, so a burst merely SCHEDULED
             // here is cancelled mid-flight by this same move. See
             // `deliverExitMessage` for what that looked like in a preview.
+            // A message with line breaks is pasted instead, awaited the same
+            // way and handed `runSignal`, so the exit budget bounds it too.
             deliverToAgent: async (message, mode, runSignal) => {
               const liveSession = task.session_id;
               // The runner already skips an agent-needing row when the task
               // has no session, so reaching here without one means the row
               // does not need the agent. Nothing to deliver into.
               if (!liveSession) return;
-              await deliverExitMessage(
-                context,
-                task.id,
-                liveSession,
+              await deliverAgentMessageAndWait(context, {
+                taskId: task.id,
+                sessionId: liveSession,
                 message,
                 mode,
-                resolveInjectionVerifier(task.agent, exitSessionRepo, task.id),
-                runSignal,
-              );
+                verifier: resolveInjectionVerifier(task.agent, exitSessionRepo, task.id),
+                signal: runSignal,
+                turnWait: 'when-deferred',
+              });
             },
             showNotification: (notification) => showDesktopNotification(context, notification),
             // The card names the row that is running. Without it a 60s exit
@@ -573,7 +663,9 @@ export async function handleTaskMove(
        * Message delivery inside it is fire and forget, unlike the exit hook's:
        * nothing after this point cancels the scheduler (Priority 3's own
        * `cancel` already ran, above the injection), and a message queues behind
-       * that burst rather than racing it.
+       * that burst rather than racing it. A message with line breaks is pasted
+       * instead, and waits for the agent's turn to end, which also keeps it from
+       * racing that burst.
        *
        * No `startAgent`: on the keep-alive branches the session is live by
        * construction, and on the suspending one the column cannot hold a row
@@ -611,16 +703,17 @@ export async function handleTaskMove(
               const currentTask = enterRepos.tasks.getById(task.id);
               const liveSession = currentTask?.session_id;
               if (!liveSession) return;
-              context.terminalSubmitScheduler.scheduleKeystrokes(
-                task.id,
-                liveSession,
-                [{ text: message, verify: 'submitted' }],
-                {
-                  mode,
-                  verifier: resolveInjectionVerifier(task.agent, sessionRepo, task.id),
-                  onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
-                },
-              );
+              // A one-line message is scheduled as keystrokes; one with line
+              // breaks is pasted once the agent's turn ends, and a move out of
+              // this column cancels it (`supersedeMessageDeliveries`).
+              deliverAgentMessageInBackground(context, {
+                taskId: task.id,
+                sessionId: liveSession,
+                message,
+                mode,
+                verifier: resolveInjectionVerifier(task.agent, sessionRepo, task.id),
+                onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
+              });
             },
             showNotification: (notification) => showDesktopNotification(context, notification),
             onProgress: createProgressCallback(context.mainWindow, task.id),
@@ -1012,9 +1105,12 @@ export async function handleTaskMove(
           // enter automation rather than in `swimlanes.auto_command`. Read
           // through the same resolver the spawn paths use, so a warm move and a
           // cold spawn cannot disagree about what the column sends.
-          const columnMessage = toLane
+          const resolvedColumnMessage = toLane
             ? resolveColumnMessage(getProjectRepos(context, resolvedProjectId).automations.listForColumn(toLane.id))
             : null;
+          // A row with a Condition or a Frequency limit rides no burst: the
+          // enter group sends it after checking both.
+          const columnMessage = resolvedColumnMessage && !resolvedColumnMessage.guarded ? resolvedColumnMessage : null;
           const effectiveAutoCommand = resolveEffectiveAutoCommand(task.auto_command, columnMessage?.message);
           const interpolatedAuto = effectiveAutoCommand?.trim()
             ? interpolateTaskTemplate(effectiveAutoCommand, resolveTaskTemplateVars({
@@ -1030,6 +1126,7 @@ export async function handleTaskMove(
                 move: toLane
                   ? { column: toLane.name, fromColumn: fromLane?.name ?? null, toColumn: toLane.name, trigger: 'enter' }
                   : null,
+                workflow: readWorkflowPromptFacts(task, resolvedProjectId),
               }))
             : '';
           // Whether the burst below actually carries the COLUMN's message, as
@@ -1044,13 +1141,20 @@ export async function handleTaskMove(
           // immediately on a warm move while the cold spawn honored the row's
           // own mode. A task-tier pin has no row and keeps the default.
           const injectionMode: AutoCommandMode = deliveredColumnMessage ? columnMessage.mode : 'immediate';
+          // A message with line breaks cannot ride the keystroke burst, which
+          // would flatten it to one line. It is pasted after the burst instead,
+          // so the plan carries no message of its own. Everything else keeps
+          // reading `interpolatedAuto`: the delivery mode, and the runner's skip
+          // list (the row is still delivered here, not by the group).
+          const trimmedAuto = interpolatedAuto.trim();
+          const pastedMessage = trimmedAuto && shouldPaste(trimmedAuto) ? trimmedAuto : null;
           const plan = prepareInjectionPlan({
             adapter,
             sessionRepo,
             task,
             toLane: toLane ?? null,
             project,
-            autoCommand: interpolatedAuto,
+            autoCommand: pastedMessage ? '' : interpolatedAuto,
             ...resolveReportedEffort(context.sessionManager, task.session_id),
           });
 
@@ -1091,40 +1195,60 @@ export async function handleTaskMove(
           }
 
           // 2. No settings delta, but a column message (or the task's own
-          // auto_command) -> inject it into the running PTY. The sequence carries
-          // that one command and nothing else.
-          if (plan) {
+          // auto_command) -> deliver it to the running PTY: a one-line message as
+          // the burst's one command, a multi-line one pasted after it. A pasted
+          // message takes this branch with or without a plan: with none it would
+          // fall to 3, which arms the group with nothing delivered and sends the
+          // row again.
+          if (plan || pastedMessage) {
             const injectedSessionId = task.session_id;
-            context.terminalSubmitScheduler.scheduleKeystrokes(task.id, injectedSessionId, plan.sequence, {
-              verifier: plan.verifier,
-              mode: injectionMode,
-              // Rung 3 of the delivery ladder. Routed through the allowlisted
-              // in-place restart rather than a new spawn call, so this adds no
-              // spawn entry point (see spawn-entry-point-parity.md).
-              escalate: async (commands) => {
-                if (!resolvedProjectPath) return false;
-                // `restartSessionForSettingsChange` mutates per-task session
-                // state and documents that its caller must hold the task lock.
-                // Taking it here is safe and not reentrant: `scheduleKeystrokes`
-                // is fire-and-forget, so this callback runs well after the
-                // TASK_MOVE handler released the lock.
-                return withTaskLock(task.id, async () => {
-                  const restarted = await restartSessionForSettingsChange(
-                    context,
-                    resolvedProjectId,
-                    resolvedProjectPath,
-                    task.id,
-                    { phase: 'resending-command', resumePrompt: commands.join('\n') },
-                  );
-                  return restarted.ok;
-                });
-              },
-              onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
-            });
+            const reportOutcome = (report: InjectionReport): void =>
+              reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId);
+            if (plan && plan.sequence.length > 0) {
+              context.terminalSubmitScheduler.scheduleKeystrokes(task.id, injectedSessionId, plan.sequence, {
+                verifier: plan.verifier,
+                mode: injectionMode,
+                // Rung 3 of the delivery ladder. Routed through the allowlisted
+                // in-place restart rather than a new spawn call, so this adds no
+                // spawn entry point (see spawn-entry-point-parity.md).
+                escalate: async (commands) => {
+                  if (!resolvedProjectPath) return false;
+                  // `restartSessionForSettingsChange` mutates per-task session
+                  // state and documents that its caller must hold the task lock.
+                  // Taking it here is safe and not reentrant: `scheduleKeystrokes`
+                  // is fire-and-forget, so this callback runs well after the
+                  // TASK_MOVE handler released the lock.
+                  return withTaskLock(task.id, async () => {
+                    const restarted = await restartSessionForSettingsChange(
+                      context,
+                      resolvedProjectId,
+                      resolvedProjectPath,
+                      task.id,
+                      { phase: 'resending-command', resumePrompt: commands.join('\n') },
+                    );
+                    return restarted.ok;
+                  });
+                },
+                onOutcome: reportOutcome,
+              });
+            }
+            // After the burst, never racing it: the paste waits for the turn to
+            // end and for the scheduler to finish this task's keystrokes. A move
+            // out of the column cancels it (`supersedeMessageDeliveries`).
+            if (pastedMessage) {
+              pasteAgentMessageInBackground(context, {
+                taskId: task.id,
+                sessionId: injectedSessionId,
+                message: pastedMessage,
+                onOutcome: reportOutcome,
+              });
+            }
+            const injectedTexts = (plan?.sequence ?? []).map((command) => command.text);
             console.log(
-              `[TASK_MOVE] Injecting ${plan.sequence.length} command(s) for task ${task.id.slice(0, 8)}`
-              + ` into running session${plan.verifier ? ' (with command verification)' : ''}: `
-              + `${plan.sequence.map((command) => command.text).join(' | ')}`,
+              `[TASK_MOVE] Injecting ${injectedTexts.length} command(s) for task ${task.id.slice(0, 8)}`
+              + ` into running session${plan?.verifier ? ' (with command verification)' : ''}: `
+              + `${injectedTexts.join(' | ')}`
+              + (pastedMessage ? `${injectedTexts.length > 0 ? ', then ' : ''}a ${pastedMessage.length}-character message to paste` : ''),
             );
             // Name the row the burst above actually carried, so it is not sent
             // a second time, and let the rest of the group run after the lock.
@@ -1431,7 +1555,7 @@ export async function handleTaskMove(
               taskId: input.taskId,
               targetSwimlaneId: fromSwimlaneId,
               targetPosition: originalPosition,
-            });
+            }, { origin: 'rollback', reason: 'The move into the column failed.' });
           }
         } catch (rollbackError) {
           console.error('[TASK_MOVE] Rollback after move failure failed:', rollbackError);

@@ -108,6 +108,22 @@ export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([
   'set_automations',
   'get_automation_runs',
   'run_automation',
+  // Workflows. The phone reads them (list_workflows, get_workflow) and pauses
+  // or resumes one (classified in the protocol tuples); everything else stays
+  // on the desktop. Planning one (save, add task, link, unlink, routes,
+  // remove, the project access its agent asks for) is the workflow agent's
+  // job beside the canvas, where the plan can be seen whole. Start is the
+  // plan's approval, made where the plan is on screen, and delete cannot be
+  // undone: both stay with the desktop's Workflows view and its confirms.
+  'save_workflow',
+  'start_workflow',
+  'add_workflow_task',
+  'link_workflow_tasks',
+  'unlink_workflow_tasks',
+  'set_task_route',
+  'remove_from_workflow',
+  'request_project_access',
+  'delete_workflow',
 ]);
 
 /** True only for a `commandHandlers` key that is both classified here and not on the exclusion list. */

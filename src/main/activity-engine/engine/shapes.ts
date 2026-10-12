@@ -498,6 +498,46 @@ export interface SessionEngineState {
    */
   idleAuthoritative: boolean;
   /**
+   * What cleared `turnActive` for the turn still settling, so the idle it
+   * produces can be told apart once it commits: `'stop'` for the agent's own
+   * turn-end hook (a non-permission `Idle` at subagent depth 0), `'idle-hint'`
+   * for an `idle_hint` that ended the turn, null for everything else (no turn
+   * ended yet, an interrupt, a failed turn, `forceIdle`, a new turn).
+   *
+   * The commit cannot read this from its trigger: a Stop arms the stability
+   * window and the idle lands later as `timer:stability`, and background work
+   * the Stop left running can hold the session thinking until long after it.
+   * Only `'stop'` counts as a turn end (`ActivityEngineCallbacks.onTurnEnded`).
+   * An `idle_hint` does not: Esc between tool calls fires no hook and ends the
+   * turn through it, so it cannot tell a finished turn from a stopped one.
+   * Consumed (set back to null) by the commit that reports the turn end, so a
+   * turn ends at most once.
+   */
+  turnEndSource: 'stop' | 'idle-hint' | null;
+  /**
+   * When the session last went from idle to thinking (engine clock), or null
+   * before its first turn. Reported with a turn end so a consumer can tell a
+   * turn that began before some boundary from one that began after it: a task
+   * dragged into a column while its agent is mid-turn must not have that
+   * column's turn-end automations judge the old column's work. A permission
+   * prompt resolving back to thinking is the same turn and does not restamp it.
+   */
+  turnStartedAt: number | null;
+  /**
+   * How many events that start or carry a turn's work (`TURN_INITIATING_EVENTS`)
+   * the engine has processed for this session. Reported with a turn end, so a
+   * consumer that judged that turn can ask later whether the agent has reported
+   * anything since: a newer turn moves it even when that turn failed or was
+   * interrupted back to idle with no turn end of its own.
+   *
+   * Only `processEvent` moves it, so only the agent's own hooks or wire events
+   * do. PTY output and the status heartbeat force thinking without touching it,
+   * since an agent's trailing paint after a turn end is not a new turn. That is
+   * why it, and not `turnStartedAt`, is the turn's identity: a PTY-tracked
+   * agent's paint re-stamps `turnStartedAt`.
+   */
+  workSerial: number;
+  /**
    * The last `ActivityReason` handed to a consumer, or null before the first
    * one. Exists so a reason that changes KIND without the activity changing can
    * still be reported.
@@ -738,6 +778,24 @@ export interface ActivityEngineCallbacks {
    * see the log entry first.
    */
   onSyntheticEvent?(sessionId: string, event: SessionEvent): void;
+  /**
+   * Fired once when a turn the agent itself ended has fully settled: a
+   * thinking-to-idle commit whose turn was cleared by the agent's turn-end hook
+   * (`turnEndSource === 'stop'`), after any background work the turn left
+   * holding the session has drained. Never for an interrupt, a failed turn, an
+   * `idle_hint`, a PTY-silence or watchdog idle, a resume's idle seed, or a
+   * permission prompt resolving to idle.
+   *
+   * Always fires AFTER the matching `onActivityChange`, so a listener that
+   * reads the session's activity sees `idle`. Optional: only the production
+   * wiring consumes it (column automations and workflow steps).
+   *
+   * `turnStartedAt` is when the turn that just ended began
+   * (`SessionEngineState.turnStartedAt`), or null when the engine never saw it
+   * begin. `workSerial` is `SessionEngineState.workSerial` at the turn end: the
+   * turn's identity, still current until the agent reports new work.
+   */
+  onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
 }
 
 /**

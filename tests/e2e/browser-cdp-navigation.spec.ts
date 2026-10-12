@@ -189,6 +189,14 @@ test.describe('Browser pane CDP across navigations', () => {
 
     const client = await connectMcp(tmpDir);
     try {
+      // The renderer knows the pane before main does: main's pane registry fills
+      // from a separate message, so a driving call made the moment the webview
+      // reports its id answered "no-pane-open" on a loaded machine (seen in a
+      // full gate). Wait for main's own list to carry a pane it can drive.
+      await expect
+        .poll(async () => (await callTool(client, 'kangentic_browser_list_panes', {})).text, { timeout: 15_000, intervals: [100, 250, 500] })
+        .toMatch(/"driveable":\s*true/);
+
       // Arming the answer is a driving call, so it is also what attaches CDP (attach is lazy):
       // Page.enable and Network.enable go out here, on the frame the pane loaded first.
       const armed = await callTool(client, 'kangentic_browser_handle_dialog', { accept: true, persist: true });

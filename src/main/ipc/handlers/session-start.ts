@@ -35,6 +35,21 @@ import { reconcileTaskSessionRef } from './session-reconcile';
 import { resumeTaskSession, type ResumeAcceptance } from './session-resume';
 import { isTaskPaused, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import type { IpcContext } from '../ipc-context';
+import type { Task } from '../../../shared/types';
+import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { getProjectDb } from '../../db/database';
+import { WorkflowRepository } from '../../db/repositories/workflow-repository';
+
+/** The title of the paused workflow a task is in, or null (none, not paused, or unreadable). */
+function pausedWorkflowTitle(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): string | null {
+  if (!task.workflow_id) return null;
+  try {
+    const workflow = new WorkflowRepository(getProjectDb(task.workflow_project_id ?? projectId)).getById(task.workflow_id);
+    return workflow?.state === 'paused' ? workflow.title : null;
+  } catch {
+    return null;
+  }
+}
 
 export type StartTaskSessionResult =
   /** The task already has a live session. Nothing was spawned. */
@@ -82,6 +97,11 @@ export async function startTaskSession(
     const lane = swimlanes.getById(task.swimlane_id);
     const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
     if (blocked) throw new Error(resumeBlockMessage(blocked));
+    // A paused workflow holds every one of its tasks; starting one alone
+    // would leave the rest paused with the workflow still reading paused.
+    // Resume is the way back, for all of them at once.
+    const pausedIn = pausedWorkflowTitle(task, projectId);
+    if (pausedIn) throw new Error(WORKFLOW_REFUSALS.pausedStart(`#${task.display_id}`, pausedIn));
 
     // The rule read-board's `resumable` applies (the paused half of
     // `taskSessionStatesOf`), so the flag that promises the phone this path

@@ -13,6 +13,7 @@ import { DEFAULT_AGENT, type Task } from '../../../../shared/types';
 export function useBranchConfig(task: Task, title: string, isInTodo: boolean) {
   const {
     config: { worktreesEnabled, defaultBaseBranch, agentExecution },
+    projectId,
     projectPath,
     defaultAgent,
     swimlanes,
@@ -39,6 +40,9 @@ export function useBranchConfig(task: Task, title: string, isInTodo: boolean) {
     active: isInTodo,
     projectPath: projectPath || null,
     remoteAgent,
+    // The branch list too: a task opened from another project lists that
+    // project's branches, not the open board's.
+    projectId,
   });
 
   const { reset } = settings;

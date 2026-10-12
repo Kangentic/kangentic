@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { canColumnRun, EXIT_GROUP_BUDGET_MS } from '../../shared/automation-manifest';
 import type { AutomationRunStatus, ColumnAutomation, Swimlane } from '../../shared/types';
-import type { AutomationRunRepository } from '../db/repositories/automation-run-repository';
+import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
+import type { ConditionCheckLimits } from './condition-check/condition-check';
 import { interpolateAutomationConfig } from './interpolate-config';
+import { hasCondition, hasFrequencyLimit } from './row-guards';
 import type { AutomationContext } from './shared/automation-adapter';
 import {
   AutomationTimeoutError,
@@ -46,6 +48,8 @@ export interface AutomationRunSummary {
   failures: AutomationRunOutcome[];
   /** True when this run started the agent, so the caller can skip its fallback spawn. */
   startedAgent: boolean;
+  /** True when a row that ends its group (Move to column) ran and stopped the list. */
+  endedGroup?: boolean;
 }
 
 export interface RunAutomationsOptions {
@@ -106,6 +110,48 @@ export interface RunAutomationsOptions {
    * retry, the agent start) without a PTY or a network.
    */
   registry?: AutomationRegistry;
+  /**
+   * Condition answers the caller already has, keyed by automation id. The
+   * turn-end group checks before it runs anything (it has to re-verify the
+   * session afterwards), so it passes its answers in. A row with a Condition
+   * and no answer here is checked by `checkConditions`, or skipped.
+   */
+  conditionAnswers?: ReadonlyMap<string, RunConditionAnswer>;
+  /**
+   * Answer the group's pending Conditions with one call, for a caller that has
+   * not checked them itself (enter and exit). Absent, a row with a Condition is
+   * skipped with `conditionUnavailableReason`.
+   */
+  checkConditions?: (rows: ColumnAutomation[], limits: ConditionCheckLimits) => Promise<ConditionCheckResult>;
+  /** Why a Condition could not be checked, when neither of the above is given. */
+  conditionUnavailableReason?: string;
+}
+
+/**
+ * The longest an enter or exit group waits for its Condition check when it has
+ * no tighter budget of its own. The group runs inside the move's task lock; a
+ * check that runs past this reads as not checked, and its rows skip.
+ */
+export const CONDITION_CHECK_WAIT_MS = 60_000;
+
+/** What a Condition check hands the runner: answers by automation id, or why there are none. */
+export type ConditionCheckResult =
+  | { ok: true; answers: ReadonlyMap<string, RunConditionAnswer> }
+  | { ok: false; reason: string };
+
+/** A row whose Frequency limit is spent on this task, with the reason, or null. */
+export function frequencyLimitReason(automation: ColumnAutomation, runs: AutomationRunRepository, taskId: string): string | null {
+  if (!hasFrequencyLimit(automation)) return null;
+  const limit = automation.max_runs;
+  if (runs.countRuns(automation.id, taskId) < limit) return null;
+  return limit === 1
+    ? 'Already ran once on this task, its limit.'
+    : `Already ran ${limit} times on this task, its limit.`;
+}
+
+/** The run-log reason for a Condition that answered no. */
+export function conditionNotMetReason(answer: RunConditionAnswer): string {
+  return answer.reason ? `Condition not met: ${answer.reason}` : 'Condition not met.';
 }
 
 export async function runAutomations(options: RunAutomationsOptions): Promise<AutomationRunSummary> {
@@ -130,6 +176,31 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
    */
   let agentState: 'untouched' | 'started' | 'failed' = 'untouched';
   let agentFailure = '';
+
+  // The group's Conditions, answered once for every row that could run. A row
+  // the column cannot run, or whose Frequency is spent, is never asked about:
+  // a check costs a model call.
+  const conditionAnswers = new Map<string, RunConditionAnswer>(options.conditionAnswers ?? []);
+  let conditionUnavailable = options.conditionUnavailableReason ?? 'The condition was not checked.';
+  const unanswered = automations.filter((automation) => hasCondition(automation)
+    && !conditionAnswers.has(automation.id)
+    && registry.get(automation.type) !== undefined
+    && canColumnRun(automation.type, { autoSpawn: column.auto_spawn, role: column.role }, automation.trigger).ok
+    && frequencyLimitReason(automation, runs, context.task.id) === null);
+  if (unanswered.length > 0 && options.checkConditions) {
+    // The check is bounded: enter and exit groups run inside the move's task
+    // lock, so the group's own budget, else `CONDITION_CHECK_WAIT_MS`, caps it.
+    const elapsedMs = Date.now() - groupStartedAt;
+    const timeoutMs = groupBudgetMs !== null
+      ? Math.max(0, Math.min(groupBudgetMs - elapsedMs, CONDITION_CHECK_WAIT_MS))
+      : CONDITION_CHECK_WAIT_MS;
+    const checked = await options.checkConditions(unanswered, { signal, timeoutMs });
+    if (checked.ok) {
+      for (const [automationId, answer] of checked.answers) conditionAnswers.set(automationId, answer);
+    } else {
+      conditionUnavailable = checked.reason;
+    }
+  }
 
   for (const automation of automations) {
     signal.throwIfAborted();
@@ -156,10 +227,12 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     //
     // "Sent", not "Delivered", for the same reason every other enter message
     // says so: the burst was handed to the scheduler, and the confirmed outcome
-    // arrives separately on the task's own auto-command channel.
+    // arrives separately on the task's own auto-command channel. Not "with the
+    // move's keystrokes" either: a message with line breaks rides the move as a
+    // paste, and this runner cannot tell which the move used.
     if (options.alreadyDelivered?.has(automation.id)) {
-      runs.recordDeliveredByCaller(started, "Sent with the move's own keystrokes.");
-      record('succeeded', "Sent with the move's own keystrokes.");
+      runs.recordDeliveredByCaller(started, "Sent with the move.");
+      record('succeeded', "Sent with the move.");
       continue;
     }
 
@@ -184,6 +257,33 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       runs.recordSkipped(started, reason);
       record('skipped', reason);
       continue;
+    }
+
+    // Frequency: a row that has run its limit on this task is skipped. A skip
+    // is not a run, so it never counts toward the limit itself.
+    const spent = frequencyLimitReason(automation, runs, context.task.id);
+    if (spent) {
+      runs.recordSkipped(started, spent);
+      record('skipped', spent);
+      continue;
+    }
+
+    // Condition: a no is not a run. The answer, yes or no, rides the run row so
+    // the log says why a row ran or did not.
+    if (hasCondition(automation)) {
+      const answer = conditionAnswers.get(automation.id);
+      if (!answer) {
+        runs.recordSkipped(started, conditionUnavailable);
+        record('skipped', conditionUnavailable);
+        continue;
+      }
+      started.condition = answer;
+      if (!answer.met) {
+        const reason = conditionNotMetReason(answer);
+        runs.recordSkipped(started, reason);
+        record('skipped', reason);
+        continue;
+      }
     }
 
     // The agent starts before the first row that needs it, not at a fixed point
@@ -261,7 +361,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
 
       try {
         const config = interpolateAutomationConfig(automation.config, adapter.manifest.fields, context.templateVars);
-        const outcome = await adapter.execute(config, { ...context, runId, signal: combined });
+        const outcome = await adapter.execute(config, { ...context, runId, signal: combined, automationName: automation.name });
         runs.finish(runId, 'succeeded', outcome.detail, attempt);
         record('succeeded', outcome.detail);
         lastError = null;
@@ -303,6 +403,16 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       record('failed', detail);
       // And the loop continues. This is the isolate-and-continue rule.
       console.error(`[automations] "${automation.name}" on ${column.name} failed: ${detail}`);
+      continue;
+    }
+
+    // A row that moved the task (Move to column) ends the group: the task has
+    // left the column, so the rows below it no longer apply. Checked here,
+    // before the next iteration's abort check, so the group's own move cannot
+    // read as the move that superseded it.
+    if (adapter.manifest.endsGroup) {
+      summary.endedGroup = true;
+      break;
     }
   }
 
