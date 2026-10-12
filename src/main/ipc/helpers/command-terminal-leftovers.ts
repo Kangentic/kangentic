@@ -20,6 +20,7 @@
  */
 import type { Session } from '../../../shared/types';
 import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { DEAD_ROOT_ORPHAN_EXIT_GRACE_MS } from '../../pty/host/dead-root-orphans';
 
 export const COMMAND_TERMINAL_REAP_DELAY_MS = DEAD_ROOT_ORPHAN_EXIT_GRACE_MS + 2_000;
@@ -67,7 +68,9 @@ export class CommandTerminalLeftoverReaper {
   }
 
   private readonly onRemoved: RemovedListener = (_sessionId, session) => {
-    if (!session?.transient || !session.cwd || this.disposed) return;
+    // A workflow's own agent is transient too, but runs no shell tool, and its
+    // end already waits for its process to exit (`endWorkflowAgent`).
+    if (!session || !isCommandTerminalSession(session) || !session.cwd || this.disposed) return;
     // The terminal's own folder is the reap's directory. It is never passed as
     // a worktree: the macOS orphan rule treats a worktree as wholly the task's,
     // and a project root is shared with every task that has no worktree.

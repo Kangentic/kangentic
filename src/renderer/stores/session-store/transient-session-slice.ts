@@ -81,7 +81,7 @@ export function selectLiveCommandTerminalSlots(sessions: readonly Session[], pro
   const slots = new Set<string>();
   if (!projectId) return slots;
   for (const session of sessions) {
-    if (!session.transient || session.projectId !== projectId || session.status === 'exited') continue;
+    if (!isCommandTerminalSession(session) || session.projectId !== projectId || session.status === 'exited') continue;
     if (session.commandTerminalSlot) slots.add(session.commandTerminalSlot);
   }
   return slots;

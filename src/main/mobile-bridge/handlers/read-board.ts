@@ -18,6 +18,7 @@ import type { IpcContext } from '../../ipc/ipc-context';
 import type { Task } from '../../../shared/types';
 import { isPauseOffered, isResumeOffered, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
 import { commandTerminalDisplayName, commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
@@ -49,7 +50,7 @@ function listCommandTerminalWires(context: IpcContext, projectId: string): Comma
   const activityCache = context.sessionManager.getActivityCache();
   const terminals: CommandTerminalWire[] = [];
   for (const terminalSession of context.sessionManager.listSessions()) {
-    if (!terminalSession.transient || terminalSession.projectId !== projectId) continue;
+    if (!isCommandTerminalSession(terminalSession) || terminalSession.projectId !== projectId) continue;
     if (terminalSession.status !== 'running' && terminalSession.status !== 'queued') continue;
     const slotNumber = commandTerminalSlotNumber(terminalSession.commandTerminalSlot);
     if (slotNumber === null) continue;

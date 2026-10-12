@@ -1030,6 +1030,7 @@ describe('MobileBridgeService.attachContext() push task-context resolver', () =>
     projectId: string;
     taskId: string;
     transient?: boolean;
+    workflowId?: string | null;
     commandTerminalLabel?: string | null;
     commandTerminalSlot?: string | null;
   }
@@ -1122,5 +1123,14 @@ describe('MobileBridgeService.attachContext() push task-context resolver', () =>
 
   it('a session the manager does not know resolves to null', () => {
     expect(resolveSessionContext({}, 'gone')).toBeNull();
+  });
+
+  it('a workflow\'s own agent resolves to null, so it pages no phone: it lives in the desktop\'s Workflows view', () => {
+    const context = resolveSessionContext({
+      'workflow-agent': { projectId: 'proj-1', taskId: 'workflow-1', transient: true, workflowId: 'workflow-1', commandTerminalSlot: null },
+    }, 'workflow-agent');
+
+    expect(context).toBeNull();
+    expect(taskRepoReads).toEqual([]);
   });
 });

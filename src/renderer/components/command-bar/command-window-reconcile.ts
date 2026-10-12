@@ -17,6 +17,7 @@
 
 import type { SessionStatus } from '../../../shared/types';
 import { commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 
 /** A window's identity for reconciliation: its store id and its durable slot
  *  anchor (`slot-N`). Structural so a real `ManagedWindow` maps in cheaply. */
@@ -95,7 +96,7 @@ export function planCommandWindowReconciliation(input: {
     // cast to compile and the non-null-ness rests on the reader. Returning the
     // slot from inside the guard lets the compiler prove it instead.
     ...sessions.flatMap((session) => (
-      session.transient
+      isCommandTerminalSession(session)
       && session.status === 'running'
       && session.projectId === projectId
       && session.commandTerminalSlot

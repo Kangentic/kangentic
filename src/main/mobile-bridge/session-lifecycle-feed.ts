@@ -23,6 +23,7 @@
  * settle re-emit either.
  */
 import type { Session } from '../../shared/types';
+import { isWorkflowAgentSession } from '../../shared/session-owner';
 import type { SessionManager } from '../pty/session-manager';
 import type { BoardChangedEvent } from './board-event-bus';
 
@@ -55,6 +56,10 @@ export class SessionLifecycleBoardFeed {
   }
 
   private readonly onSessionChanged = (sessionId: string, session: Session): void => {
+    // A workflow's own agent is transient, but neither a task nor a terminal:
+    // its task id is its workflow's, which names no board row, and a phone has
+    // no terminal list entry for it.
+    if (isWorkflowAgentSession(session)) return;
     if (session.transient) {
       this.noteCommandTerminalChanged(sessionId, session);
       return;
@@ -63,6 +68,7 @@ export class SessionLifecycleBoardFeed {
   };
 
   private readonly onSessionRemoved = (sessionId: string, session: Session): void => {
+    if (isWorkflowAgentSession(session)) return;
     if (session.transient) {
       this.announcedTerminalLabels.delete(sessionId);
       this.notifyCommandTerminalsChanged(session.projectId, sessionId);

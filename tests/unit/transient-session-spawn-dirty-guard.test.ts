@@ -582,6 +582,20 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
       .rejects.toMatchObject({ code: 'command-terminal-limit' });
   });
 
+  it('never counts a workflow\'s own agent toward the cap: it is transient, but holds no terminal slot', async () => {
+    const context = createMockContext();
+    context.sessionManager.listSessions.mockReturnValue([
+      liveTerminal('slot-1'),
+      liveTerminal('slot-2'),
+      liveTerminal('slot-3'),
+      { id: 'workflow-agent', projectId: 'proj-1', transient: true, workflowId: 'workflow-1', status: 'running', cwd: PROJECT_ROOT },
+    ]);
+
+    const result = await startCommandTerminal(context as never, { projectId: 'proj-1' });
+
+    expect(result.slot).toBe('slot-4');
+  });
+
   it('gives a slotless terminal no slot of its own: three of them leave room for one start, in slot-1', async () => {
     const context = createMockContext();
     context.sessionManager.listSessions.mockReturnValue([

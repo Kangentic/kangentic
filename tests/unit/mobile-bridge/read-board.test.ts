@@ -727,6 +727,13 @@ describe('handleReadBoard', () => {
       expect(snapshot.commandTerminalsOffered).toBe(true);
     });
 
+    it('a workflow\'s own agent is never listed as a terminal: it is transient, but no Command Terminal', async () => {
+      // A slot is set on purpose, so only the owner check can keep it off the list.
+      registryRows = [{ id: 'workflow-agent', taskId: 'workflow-1', workflowId: 'workflow-1', status: 'running', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-1' }];
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      expect((response.payload as { commandTerminals: unknown[] }).commandTerminals).toEqual([]);
+    });
+
     it('a terminal that is not running is not listed', async () => {
       registryRows = [{ id: 'term-1', taskId: 'uuid-1', status: 'exited', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-1' }];
       const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);

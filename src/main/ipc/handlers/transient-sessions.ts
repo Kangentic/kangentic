@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import simpleGit, { type SimpleGit } from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import {
   MAX_COMMAND_TERMINALS,
   commandTerminalSlotId,
@@ -140,7 +141,9 @@ function reserveCommandTerminalSlot(
   const occupied = new Set<string>(reserved);
   let unslottedLiveCount = 0;
   for (const session of context.sessionManager.listSessions()) {
-    if (!session.transient || session.projectId !== projectId || session.status === 'exited') continue;
+    // A workflow's own agent is transient too, but holds no terminal slot and
+    // never counts against the terminal cap.
+    if (!isCommandTerminalSession(session) || session.projectId !== projectId || session.status === 'exited') continue;
     if (session.commandTerminalSlot) occupied.add(session.commandTerminalSlot);
     else unslottedLiveCount += 1;
   }

@@ -2152,7 +2152,9 @@ export class SessionManager extends EventEmitter {
   endCommandTerminal(sessionId: string, options?: { immediate?: boolean }): 'ended' | 'not-found' | 'not-command-terminal' {
     const session = this.registry.get(sessionId);
     if (!session) return 'not-found';
-    if (!session.transient) return 'not-command-terminal';
+    // A workflow's own agent is transient too, but no Command Terminal: it is
+    // ended through its workflow (`endWorkflowAgent`), never by a terminal Stop.
+    if (!isCommandTerminalSession(session)) return 'not-command-terminal';
     const sessionDirectory = commandTerminalSessionDirectory(session);
     this.kill(sessionId, options);
     const sessionExited = this.awaitExit(sessionId);
@@ -2177,11 +2179,15 @@ export class SessionManager extends EventEmitter {
    * Skipped during quit: `killAll()` exits every terminal, and its bounded
    * drain (synchronous-shutdown.md) is no place for removals and broadcasts.
    * A row a Stop already removed is not found and costs nothing.
+   *
+   * A workflow's own agent keeps its row, as a task's agent does: its Pause is
+   * a suspend, and the Workflows pane shows the paused agent from that row
+   * until the user resumes it.
    */
   private endCommandTerminalAfterPtyExit(sessionId: string): void {
     if (isShuttingDown()) return;
     const session = this.registry.get(sessionId);
-    if (!session?.transient) return;
+    if (!session || !isCommandTerminalSession(session)) return;
     const sessionDirectory = commandTerminalSessionDirectory(session);
     this.remove(sessionId);
     void removeCommandTerminalDirectory(sessionDirectory);
@@ -2347,7 +2353,9 @@ export class SessionManager extends EventEmitter {
    * session whose agent signalled its own end (`agentEndSignaledAt`) skips the
    * spawn grace below, so a `/exit` inside the first 30 s still ends promptly.
    * The WSL arm below still applies to it: a WSL Command Terminal is ended by
-   * the end settle instead (`noteCommandTerminalAgentEvent`).
+   * the end settle instead (`noteCommandTerminalAgentEvent`). A workflow's own
+   * agent is transient but no Command Terminal: it is judged and retired like a
+   * task's agent, keeping an exited row.
    *
    * Each arm below excludes a case where "no agent process under the shell" is
    * NOT a fault:
@@ -2396,12 +2404,13 @@ export class SessionManager extends EventEmitter {
     if (session.status !== 'running' || session.pty === null) return false;
     // The agent said it is ending, so it demonstrably ran: the grace, which
     // exists for an agent that has not started yet, no longer applies.
-    if (session.transient && typeof session.agentEndSignaledAt === 'number') return true;
+    const commandTerminal = isCommandTerminalSession(session);
+    if (commandTerminal && typeof session.agentEndSignaledAt === 'number') return true;
     const startedAtMs = Date.parse(session.startedAt);
     if (!Number.isFinite(startedAtMs)) return false;
     const elapsedMs = Date.now() - startedAtMs;
     if (elapsedMs < AGENT_SPAWN_GRACE_MS) return false;
-    if (!session.transient) return true;
+    if (!commandTerminal) return true;
     const agentStarted = typeof session.agentStartObservedAt === 'number' || session.altScreenEnteredAt !== undefined;
     return agentStarted || elapsedMs >= COMMAND_TERMINAL_AGENT_START_CEILING_MS;
   }
@@ -2434,13 +2443,13 @@ export class SessionManager extends EventEmitter {
    * sweep works. An agent with no SessionEnd hook, under WSL or with the
    * watcher off, still outlives its agent until its PTY exits.
    *
-   * Task sessions are untouched: the sweep's slower cadence is fine for a row
-   * that only needs its status corrected.
+   * Task sessions and a workflow's own agent are untouched: the sweep's slower
+   * cadence is fine for a row that only needs its status corrected.
    */
   private noteCommandTerminalAgentEvent(sessionId: string, event: SessionEvent): void {
     if (event.type !== EventType.SessionEnd && event.type !== EventType.SessionStart) return;
     const session = this.registry.get(sessionId);
-    if (!session?.transient) return;
+    if (!session || !isCommandTerminalSession(session)) return;
     if (event.type === EventType.SessionStart) {
       session.agentStartObservedAt ??= Date.now();
       session.agentEndSignaledAt = null;
@@ -2487,7 +2496,7 @@ export class SessionManager extends EventEmitter {
    */
   private endCommandTerminalAfterAgentEndSettle(sessionId: string): void {
     const session = this.registry.get(sessionId);
-    if (!session?.transient) return;
+    if (!session || !isCommandTerminalSession(session)) return;
     if (session.status !== 'running' || session.pty === null) return;
     this.endCommandTerminalForAgentExit(sessionId, session);
   }
@@ -2532,8 +2541,10 @@ export class SessionManager extends EventEmitter {
     // its window closes as it does on Stop, and no shell is left for a phone's
     // `interactive-terminal` to type into. It has no record to resume and no
     // task to report on, so the exit-code override and the kept `exited` row
-    // below do not apply. Immediate, since the tree saw the agent gone.
-    if (session.transient) {
+    // below do not apply. Immediate, since the tree saw the agent gone. A
+    // workflow's own agent takes the task path: its exited row is how the pane
+    // notices a resume that failed and starts it over.
+    if (isCommandTerminalSession(session)) {
       this.endCommandTerminalForAgentExit(sessionId, session, { immediate: true });
       return;
     }
@@ -3025,7 +3036,7 @@ export class SessionManager extends EventEmitter {
    */
   setCommandTerminalLabel(sessionId: string, label: string): boolean {
     const session = this.registry.get(sessionId);
-    if (!session?.transient || session.commandTerminalLabel) return false;
+    if (!session || !isCommandTerminalSession(session) || session.commandTerminalLabel) return false;
     const trimmed = label.trim();
     if (!trimmed) return false;
     session.commandTerminalLabel = trimmed;
@@ -3047,7 +3058,7 @@ export class SessionManager extends EventEmitter {
    */
   setCommandTerminalBranch(sessionId: string, branch: string): void {
     const session = this.registry.get(sessionId);
-    if (!session?.transient) return;
+    if (!session || !isCommandTerminalSession(session)) return;
     const trimmed = branch.trim();
     if (!trimmed) return;
     session.commandTerminalBranch = trimmed;

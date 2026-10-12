@@ -348,6 +348,13 @@ describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
     expect(spawnEnvAt(0).KANGENTIC_TASK_ID).toBe('transient-task-uuid');
   });
 
+  it('tags a workflow\'s own agent with its workflow id, which no task shares, never the outer task main inherited', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ taskId: 'workflow-1', transient: true, workflowId: 'workflow-1' }), context);
+
+    expect(spawnEnvAt(0).KANGENTIC_TASK_ID).toBe('workflow-1');
+  });
+
   it('shares the tag into the distro through WSLENV on a WSL shell', async () => {
     const context = makeContext();
     vi.mocked(context.getShell).mockResolvedValue('wsl -d Ubuntu');

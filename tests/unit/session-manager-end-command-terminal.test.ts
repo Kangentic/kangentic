@@ -148,6 +148,13 @@ describe('SessionManager.endCommandTerminal', () => {
     expect(manager.getSession('task-session')).toBeDefined();
   });
 
+  it('refuses a workflow\'s own agent: transient, but ended only through its workflow', () => {
+    seed({ id: 'workflow-agent', taskId: 'workflow-1', workflowId: 'workflow-1', commandTerminalSlot: null });
+
+    expect(manager.endCommandTerminal('workflow-agent')).toBe('not-command-terminal');
+    expect(manager.getSession('workflow-agent')).toBeDefined();
+  });
+
   it('reports an id with no live row as not found', () => {
     expect(manager.endCommandTerminal('ghost')).toBe('not-found');
   });
@@ -220,6 +227,21 @@ describe('a Command Terminal whose PTY exits on its own', () => {
     expect(manager.getSession('task-session')).toBeDefined();
   });
 
+  it('keeps a paused workflow agent\'s row and folder: the Workflows pane shows it paused until Resume', () => {
+    // A workflow agent's Pause is a suspend, whose PTY exit lands here. Ended
+    // as a Command Terminal, the row would go, and the pane would find no agent
+    // and start it again on its own.
+    seedRow({ id: 'workflow-agent', taskId: 'workflow-1', workflowId: 'workflow-1', status: 'suspended', exitCode: null });
+    const removed: string[] = [];
+    manager.on('session-removed', (id: string) => { removed.push(id); });
+
+    ptyExited('workflow-agent');
+
+    expect(manager.getSession('workflow-agent')?.status).toBe('suspended');
+    expect(removed).toEqual([]);
+    expect(rmSpy).not.toHaveBeenCalled();
+  });
+
   it('does nothing during quit, so the bounded exit drain stays free of removals', () => {
     seedRow({});
     shuttingDown.value = true;
@@ -290,7 +312,7 @@ describe('a session spawned through a real SessionManager whose PTY exits', () =
    * Spawn a session through the manager and record the two pushes that matter
    * to a window or a phone, in the order they were emitted.
    */
-  async function spawnAndRecord(options: { taskId: string; transient: boolean }) {
+  async function spawnAndRecord(options: { taskId: string; transient: boolean; workflowId?: string }) {
     const { mockPty, triggerExit } = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(mockPty as unknown as pty.IPty);
     const session = await manager.spawn({
@@ -298,7 +320,8 @@ describe('a session spawned through a real SessionManager whose PTY exits', () =
       command: '',
       cwd: projectDirectory,
       transient: options.transient,
-      commandTerminalSlot: options.transient ? 'slot-1' : undefined,
+      workflowId: options.workflowId,
+      commandTerminalSlot: options.transient && !options.workflowId ? 'slot-1' : undefined,
     });
     const timeline: string[] = [];
     manager.on('exit', (sessionId: string) => { timeline.push(`exit:${sessionId}`); });
@@ -335,6 +358,20 @@ describe('a session spawned through a real SessionManager whose PTY exits', () =
     expect(manager.getSession(session.id)?.status).toBe('exited');
     expect(rmSpy).not.toHaveBeenCalledWith(
       path.join(session.cwd, '.kangentic', 'sessions', 'task-001'),
+      expect.anything(),
+    );
+  });
+
+  it('keeps a workflow agent\'s exited row, which its pane reads to start it over', async () => {
+    const { session, timeline, triggerExit } = await spawnAndRecord({ taskId: 'workflow-1', transient: true, workflowId: 'workflow-1' });
+
+    triggerExit(1);
+
+    await vi.waitFor(() => expect(timeline).toContain(`exit:${session.id}`));
+    expect(timeline).toEqual([`exit:${session.id}`]);
+    expect(manager.getSession(session.id)?.status).toBe('exited');
+    expect(rmSpy).not.toHaveBeenCalledWith(
+      path.join(session.cwd, '.kangentic', 'sessions', 'workflow-1'),
       expect.anything(),
     );
   });

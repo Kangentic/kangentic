@@ -156,6 +156,16 @@ describe('SessionLifecycleBoardFeed', () => {
       expect(eventsEmitted().some((event) => event.ids.includes('made-up-uuid'))).toBe(false);
     });
 
+    it('says nothing about a workflow\'s own agent: its task id is its workflow\'s, and a phone lists no terminal for it', () => {
+      const workflowAgent = terminalFixture({ id: 'workflow-agent', taskId: 'workflow-1', workflowId: 'workflow-1', commandTerminalSlot: null });
+      sessionManager.getSession.mockReturnValue(workflowAgent);
+      sessionManager.emit('session-changed', 'workflow-agent', workflowAgent);
+      sessionManager.emit('exit', 'workflow-agent', 0, false);
+      sessionManager.emit('session-removed', 'workflow-agent', { ...workflowAgent, status: 'exited' });
+      vi.advanceTimersByTime(5000);
+      expect(eventsEmitted()).toEqual([]);
+    });
+
     it('announces a start once, with the session id, and stays quiet on a status-only change', () => {
       sessionManager.emit('session-changed', 'term-1', terminalFixture());
       // An agent session id captured, say: same label, no news for the phone.

@@ -183,6 +183,13 @@ describe('SessionManager agent-absence wiring', () => {
       expect(isCandidate()).toBe(true);
     });
 
+    it('judges a workflow\'s own agent like a task\'s: past its grace, with no Command Terminal start evidence to wait for', () => {
+      // Transient too, but no Command Terminal: the start-evidence gate and
+      // its ceiling are a terminal's, and this agent keeps a task's plain grace.
+      seedSession({ transient: true, workflowId: 'workflow-1', taskId: 'workflow-1' });
+      expect(isCandidate()).toBe(true);
+    });
+
     it('ACCEPTS a transient Command Terminal past its spawn grace once its agent started: C2 ends it when that agent exits', () => {
       // A Command Terminal types the project's agent CLI into its shell, the
       // same shape as a task session, so an empty tree means its agent is gone
@@ -357,6 +364,21 @@ describe('SessionManager agent-absence wiring', () => {
       expect(manager.getSession('session-1')).toBeUndefined();
     });
 
+    it('retires a workflow\'s own agent like a task\'s: its exited row stays, for the Workflows pane to read', () => {
+      // The pane notices a resume that failed from this exited row and starts
+      // the agent over; ending it as a Command Terminal would remove the row.
+      const session = seedSession({ transient: true, workflowId: 'workflow-1', taskId: 'workflow-1' });
+      const removed: string[] = [];
+      manager.on('session-removed', (id: string) => { removed.push(id); });
+
+      retire();
+
+      expect(killedPtys).toEqual([4242]);
+      expect(session.overrideExitCode).toBe(0);
+      expect(removed).toEqual([]);
+      expect(manager.getSession('session-1')).toBeDefined();
+    });
+
     it('is a no-op for an unknown session id', () => {
       expect(() => retire('does-not-exist')).not.toThrow();
       expect(killedPtys).toEqual([]);
@@ -476,6 +498,15 @@ describe('SessionManager agent-absence wiring', () => {
 
     it('ignores a task session\'s SessionEnd: its row only needs the ordinary sweep', () => {
       const session = seedSession();
+
+      sendAgentEvent('session_end');
+
+      expect(session.agentEndSignaledAt).toBeUndefined();
+      expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+    });
+
+    it('ignores a workflow agent\'s SessionEnd too: it is transient, but no Command Terminal', () => {
+      const session = seedSession({ transient: true, workflowId: 'workflow-1', taskId: 'workflow-1' });
 
       sendAgentEvent('session_end');
 

@@ -89,6 +89,13 @@ describe('CommandTerminalLeftoverReaper', () => {
     expect(rig.reaps).toEqual([]);
   });
 
+  it('never reaps on a workflow agent\'s removal: transient, but no terminal, and its end already waits for its exit', async () => {
+    const rig = makeRig();
+    rig.sessionManager.emit('session-removed', 'workflow-agent', removedSession({ id: 'workflow-agent', taskId: 'workflow-1', workflowId: 'workflow-1', commandTerminalSlot: null }));
+    await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS * 2);
+    expect(rig.reaps).toEqual([]);
+  });
+
   it('reaps nothing once the app is quitting, and nothing after dispose', async () => {
     const quitting = makeRig();
     quitting.sessionManager.emit('session-removed', 'session-1', removedSession());

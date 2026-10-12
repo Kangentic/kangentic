@@ -20,6 +20,7 @@ import { trackFeatureUsed } from '../analytics/usage';
 import { trackEvent } from '../analytics/analytics';
 import { validateRelayUrl } from '../../shared/relay';
 import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
+import { isCommandTerminalSession, isWorkflowAgentSession } from '../../shared/session-owner';
 import type { MobileBridgeStatus, MobileBridgeTransportState, MobileDeviceConnectionState } from '../../shared/types';
 import { DevQuickPair } from './dev-quick-pair';
 import { DiffWatcher } from '../git/diff-watcher';
@@ -300,7 +301,11 @@ export class MobileBridgeService extends EventEmitter {
         // A Command Terminal has no task row: its name is the title, and the
         // discriminator tells the phone to open the terminal, not a task.
         const liveSession = context.sessionManager.getSession(sessionId);
-        if (liveSession?.transient) {
+        // A workflow's own agent pages no one: it lives in the desktop's
+        // Workflows view, which a phone has no screen for, and it raises no
+        // desktop notification either.
+        if (liveSession && isWorkflowAgentSession(liveSession)) return null;
+        if (liveSession && isCommandTerminalSession(liveSession)) {
           return {
             projectId,
             taskId,
