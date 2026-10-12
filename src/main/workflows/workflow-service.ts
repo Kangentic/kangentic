@@ -35,6 +35,7 @@ import { resumeTaskSession } from '../ipc/handlers/session-resume';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
+import { MAX_WORKFLOW_TASKS } from './workflow-limits';
 import { wakeWorkflowEngine } from './workflow-wake';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { endWorkflowAgent } from './workflow-agent';
@@ -60,11 +61,7 @@ export class WorkflowRequestError extends Error {
   }
 }
 
-/**
- * The most tasks one workflow plans, a sanity bound, not a design limit. 100
- * is what the canvas is measured at (the drag-perf run at 30 and 100 cards).
- */
-export const MAX_WORKFLOW_TASKS = 100;
+export { MAX_WORKFLOW_TASKS };
 
 // ---------------------------------------------------------------------------
 // Reading

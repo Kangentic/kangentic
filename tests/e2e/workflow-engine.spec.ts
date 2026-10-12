@@ -288,7 +288,10 @@ test.describe('Workflow engine', () => {
     await expectColumn(workflow, blocker, 'Code Review');
     await expectColumn(workflow, blocker, 'Done');
     const blockerId = (await taskState(workflow, blocker)).taskId!;
-    expect(await stepRuns(blockerId)).toEqual(['succeeded:yes', 'succeeded:yes']);
+    // Polled, not read: the step records its run once the move returns, and a
+    // move to Done commits the column, then suspends, reaps and removes the
+    // worktree before it returns, so Done is visible before the run is.
+    await expect.poll(() => stepRuns(blockerId), { timeout: 20_000 }).toEqual(['succeeded:yes', 'succeeded:yes']);
 
     // Its Done is the dependent's gate.
     await expectColumn(workflow, dependent, 'Executing');

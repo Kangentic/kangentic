@@ -3,19 +3,22 @@
  * service does (MAX_WORKFLOW_TASKS). The schema once stopped at 60 while the
  * service allowed 100, so a plan of 61 to 100 tasks from the workflow agent
  * failed validation before the handler ever saw it.
+ *
+ * The tools read the cap from its own module, never from the service: a value
+ * import of the service pulled its whole graph (task moves, the IPC handlers,
+ * dev tooling) into the MCP server, which broke every MCP server test that
+ * mocks only part of that graph. The last test pins that.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod/v4';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 
-vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
-vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
-vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));
-vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
-
 const { registerWorkflowTools } = await import('../../src/main/agent/mcp-http/workflow-tools');
-const { MAX_WORKFLOW_TASKS } = await import('../../src/main/workflows/workflow-service');
+// The service enforces the same constant (workflow-service.ts imports it from here).
+const { MAX_WORKFLOW_TASKS } = await import('../../src/main/workflows/workflow-limits');
 
 function saveWorkflowSchema(): z.ZodObject {
   const schemas = new Map<string, unknown>();
@@ -40,5 +43,11 @@ describe('kangentic_save_workflow task cap', () => {
 
   it('refuses a plan one task past it', () => {
     expect(saveWorkflowSchema().safeParse({ tasks: plannedTasks(MAX_WORKFLOW_TASKS + 1) }).success).toBe(false);
+  });
+
+  it('imports nothing from the workflow service, whose graph would ride into the MCP server', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../src/main/agent/mcp-http/workflow-tools.ts'), 'utf8');
+    const valueImports = source.split('\n').filter((line) => /^import (?!type )/.test(line));
+    expect(valueImports.filter((line) => line.includes('workflows/workflow-service'))).toEqual([]);
   });
 });

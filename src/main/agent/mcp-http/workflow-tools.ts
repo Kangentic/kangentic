@@ -4,7 +4,7 @@ import { callHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handle
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import { PERMISSION_MODES, RUN_MODES } from '../../../shared/workflow-run-settings';
-import { MAX_WORKFLOW_TASKS } from '../../workflows/workflow-service';
+import { MAX_WORKFLOW_TASKS } from '../../workflows/workflow-limits';
 
 /**
  * The workflow tools (#732): a workflow is a set of linked tasks that run

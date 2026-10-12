@@ -12,7 +12,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, computedColor } from './helpers';
+import { waitForViteReady, gotoVite, computedColor, toastCountRightNow } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -424,7 +424,7 @@ test.describe('Workflow tasks on the board', () => {
 
       await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toBeVisible();
       await expect(page.locator('[data-swimlane-name="Code Review"] [data-task-id="t414"]')).toHaveCount(0);
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: LOCKED })).toHaveCount(0);
+      expect(await toastCountRightNow(page, LOCKED)).toBe(0);
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
     } finally {
       await browser.close();
@@ -470,7 +470,7 @@ test.describe('Workflow tasks on the board', () => {
         .toEqual([expect.objectContaining({ taskId: 't415', targetSwimlaneId: 'lane-0' })]);
       const [move] = await page.evaluate(() => (window as unknown as { __recordedMoves: Array<{ targetPosition: number }> }).__recordedMoves);
       expect(move.targetPosition).toBeGreaterThan(0);
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'locked' })).toHaveCount(0);
+      expect(await toastCountRightNow(page, 'locked')).toBe(0);
       await expect(page.locator('[data-board-lanes] [data-swimlane-name="To Do"] [data-task-id="t415"]')).toHaveCount(1);
     } finally {
       await browser.close();

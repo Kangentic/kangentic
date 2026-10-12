@@ -1014,6 +1014,7 @@ src/main/workflows/
   workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it)
   workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?")
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
+  workflow-limits.ts         # MAX_WORKFLOW_TASKS, imported by the service and the MCP save tool's schema
   workflow-view-service.ts   # the view's read model (detail, summaries) and planned-workflow edits by key
   workflow-changed.ts        # the coalesced workflow:changed push
   workflow-complete.ts       # the workflow:completed push, and the phone's workflow-complete push
