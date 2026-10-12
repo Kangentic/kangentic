@@ -59,7 +59,6 @@ vi.mock('../../src/main/db/database', () => ({
     return projectDatabase;
   },
   getOpenProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
-  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   peekProjectDb: () => null,
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: harness.handleTaskMove }));
