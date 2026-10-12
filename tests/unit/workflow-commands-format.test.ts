@@ -23,6 +23,7 @@ vi.mock('../../src/main/db/database', () => ({
     if (!projectDatabase) throw new Error(`No database for ${projectId}`);
     return projectDatabase;
   },
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));

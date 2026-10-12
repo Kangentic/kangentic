@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import type { Swimlane, Task, Workflow } from '../../shared/types';
 import { startColumn } from '../../shared/workflow-route';
-import { getExistingProjectDb, getProjectDb } from '../db/database';
+import { getExistingProjectDb, getOpenProjectDb, getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { setHomeLinkRemover } from '../db/repositories/workflow-home-links';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -25,6 +25,7 @@ import { linkEndState } from './workflow-tasks';
 import { announceWorkflowComplete } from './workflow-complete';
 import { endWorkflowAgent } from './workflow-agent';
 import { notifyWorkflowChanged, setWorkflowChangedWindow } from './workflow-changed';
+import { probeWorkflowProject, type WorkflowProjectProbe } from './workflow-project-probe';
 import { setWorkflowWake } from './workflow-wake';
 import { setWorkflowRuntimeContext } from './workflow-runtime';
 
@@ -34,11 +35,20 @@ import { setWorkflowRuntimeContext } from './workflow-runtime';
  * (`planPass`), and carries the answer out through the one move path.
  *
  * - **Never a timer of its own beyond a debounce.** It wakes on a board change,
- *   a freed agent slot, a turn end, a start or resume, and project open, and a
- *   burst of those coalesces into one pass after `DEBOUNCE_MS`. A pass that
- *   finds nothing running costs one indexed query per project, once every
- *   project's database is open. The first pass after launch opens, and
- *   migrates, each registered project's database that is not open yet.
+ *   a freed agent slot, a turn end, a start or resume, and launch, and a burst
+ *   of those coalesces into one pass after `DEBOUNCE_MS`. A pass that finds
+ *   nothing running costs one indexed query per open project.
+ * - **Reads only open databases, and opens only what a workflow touches.** A
+ *   registered project whose database is not open is looked at once, on a
+ *   throwaway connection with no migrations (`probeWorkflowProject`), one per
+ *   event-loop turn. It is opened only when it homes a running or paused
+ *   workflow or holds a task of one. Every later write that brings a project
+ *   into a workflow (a start, an added task, a resume) opens it on main, and
+ *   main closes a database only when its project is deleted, so "open" stays
+ *   complete.
+ * - **Completes nothing it could not read in full.** A pass that could not read
+ *   a registered board plans no completion (that board's tasks may not be
+ *   Done) and no start that waits on a task there, until a pass reads it.
  * - **Never awaits a whole move.** A start is `handleTaskMove` with origin
  *   `'workflow'`; the host tracks it as in flight until it settles, so a pass in
  *   the meantime never issues it twice, and the next pass sees where it landed.
@@ -62,12 +72,16 @@ const TIMING_WINDOW = 200;
 
 interface FailedStart {
   workflowId: string;
+  /** The task's own board, so a pass that could not read it keeps the backoff. */
+  projectId: string;
   attempts: number;
   retryAt: number;
   timer: ReturnType<typeof setTimeout> | null;
   /** The last failure's message: a new reason toasts again, the same one does not. */
   reason: string;
 }
+
+const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 export class WorkflowEngineHost {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -86,16 +100,28 @@ export class WorkflowEngineHost {
   /** Workflows whose gone links would not delete, logged once until a delete goes through. */
   private readonly failedDrops = new Set<string>();
   private readonly durationsMs: number[] = [];
+  /**
+   * Registered projects looked at without opening them, and what the look
+   * found. What they hold cannot change while they stay closed, since every
+   * write in this process opens the database first, so each is looked at once.
+   * Another instance sharing the config dir can write one unseen, until
+   * activation opens every registered project a few seconds after launch. An
+   * entry goes when its project is opened, by this engine or anything else.
+   */
+  private readonly unopened = new Map<string, WorkflowProjectProbe>();
+  /** Projects whose failed read has been logged, so a broken one logs once a launch. */
+  private readonly unreadReported = new Set<string>();
+  private disposed = false;
 
   constructor(private readonly context: IpcContext) {}
 
   /**
    * Something that can change what runs next happened. Every running workflow
-   * is re-read on the next pass, across every project: a task on one board can
-   * hold up a task on another, and the read is cheap.
+   * is re-read on the next pass, across every open project: a task on one board
+   * can hold up a task on another, and the read is cheap.
    */
   wake(): void {
-    if (this.timer) return;
+    if (this.timer || this.disposed) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.flush();
@@ -111,6 +137,7 @@ export class WorkflowEngineHost {
   }
 
   dispose(): void {
+    this.disposed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     for (const failure of this.failedStarts.values()) {
@@ -144,7 +171,14 @@ export class WorkflowEngineHost {
     const attempts = (previous?.attempts ?? 0) + 1;
     const delayMs = START_RETRY_DELAYS_MS[Math.min(attempts, START_RETRY_DELAYS_MS.length) - 1];
     const reason = error instanceof Error ? error.message : String(error);
-    const failure: FailedStart = { workflowId: intent.workflowId, attempts, retryAt: Date.now() + delayMs, timer: null, reason };
+    const failure: FailedStart = {
+      workflowId: intent.workflowId,
+      projectId: intent.projectId,
+      attempts,
+      retryAt: Date.now() + delayMs,
+      timer: null,
+      reason,
+    };
     failure.timer = setTimeout(() => {
       failure.timer = null;
       // Due now. A timer can fire a little before `Date.now()` reaches the
@@ -182,8 +216,11 @@ export class WorkflowEngineHost {
     }
     this.evaluating = true;
     try {
+      const projectIds = this.context.projectRepo.list().map((project) => project.id);
+      const unreadProjectIds = await this.lookAtUnopenedProjects(projectIds);
+      if (this.disposed) return;
       const startedAt = performance.now();
-      const { intents, titles, taskCounts } = this.evaluate();
+      const { intents, titles, taskCounts } = this.evaluate(projectIds, unreadProjectIds);
       this.recordDuration(performance.now() - startedAt);
       for (const intent of intents) this.carryOut(intent, titles, taskCounts);
     } catch (error) {
@@ -202,41 +239,119 @@ export class WorkflowEngineHost {
     if (this.durationsMs.length > TIMING_WINDOW) this.durationsMs.shift();
   }
 
-  /** Read every running or paused workflow, and plan. Synchronous: this is the timed part. */
-  private evaluate(): { intents: CoreIntent[]; titles: Map<string, string>; taskCounts: Map<string, number> } {
-    const projectIds = this.context.projectRepo.list().map((project) => project.id);
+  /**
+   * Look at each registered project that is neither open nor looked at yet,
+   * one per event-loop turn so the first pass after launch never holds main for
+   * the whole list. Returns the ones that could not be read, which are looked
+   * at again on the next pass.
+   */
+  private async lookAtUnopenedProjects(projectIds: string[]): Promise<Set<string>> {
+    const unreadProjectIds = new Set<string>();
+    for (const projectId of projectIds) {
+      if (getOpenProjectDb(projectId) || this.unopened.has(projectId)) continue;
+      await yieldToEventLoop();
+      if (this.disposed) break;
+      if (getOpenProjectDb(projectId)) continue;
+      try {
+        this.unopened.set(projectId, probeWorkflowProject(projectId));
+      } catch (error) {
+        this.noteUnread(unreadProjectIds, projectId, error);
+      }
+    }
+    return unreadProjectIds;
+  }
+
+  /** Open a looked-at project the engine has to read. Never creates a database whose file has gone. */
+  private openForReading(projectId: string, unreadProjectIds: Set<string>): void {
+    try {
+      getExistingProjectDb(projectId);
+      this.unopened.delete(projectId);
+    } catch (error) {
+      this.noteUnread(unreadProjectIds, projectId, error);
+    }
+  }
+
+  private noteUnread(unreadProjectIds: Set<string>, projectId: string, error: unknown): void {
+    unreadProjectIds.add(projectId);
+    if (this.unreadReported.has(projectId)) return;
+    this.unreadReported.add(projectId);
+    console.warn(`[WORKFLOW] Could not read project ${projectId.slice(0, 8)}; no workflow completes until it can be read:`, error);
+  }
+
+  /**
+   * Read every running or paused workflow in the open databases, and plan.
+   * Synchronous: this is the timed part. `unreadProjectIds` holds the projects
+   * that could not be read this pass, and gains any that fail here.
+   */
+  private evaluate(
+    projectIds: string[],
+    unreadProjectIds: Set<string>,
+  ): { intents: CoreIntent[]; titles: Map<string, string>; taskCounts: Map<string, number> } {
+    const registered = new Set(projectIds);
+    // A looked-at project that was opened since, by anything, is read like any
+    // open one; one that homes a running or paused workflow is opened now.
+    for (const [projectId, probe] of this.unopened) {
+      if (!registered.has(projectId) || getOpenProjectDb(projectId)) this.unopened.delete(projectId);
+      else if (probe.homesActive) this.openForReading(projectId, unreadProjectIds);
+    }
+    const activeWorkflows: Array<{ homeProjectId: string; workflow: Workflow }> = [];
+    for (const homeProjectId of projectIds) {
+      const db = getOpenProjectDb(homeProjectId);
+      if (!db) continue;
+      try {
+        const repository = new WorkflowRepository(db);
+        // The fast path: one indexed probe for the common board with none.
+        if (!repository.hasActive()) continue;
+        for (const workflow of repository.listOpen()) {
+          if (workflow.state === 'running' || workflow.state === 'paused') activeWorkflows.push({ homeProjectId, workflow });
+        }
+      } catch (error) {
+        this.noteUnread(unreadProjectIds, homeProjectId, error);
+      }
+    }
+    const workflowIdsByBoard = new Map<string, Set<string>>();
+    if (activeWorkflows.length > 0) {
+      // A looked-at project holding a task of one of those workflows is opened too.
+      const activeWorkflowIds = new Set(activeWorkflows.map(({ workflow }) => workflow.id));
+      for (const [projectId, probe] of this.unopened) {
+        if (sharesAny(probe.memberOf, activeWorkflowIds)) this.openForReading(projectId, unreadProjectIds);
+      }
+      // Which workflows each open board holds tasks of: one covering read per
+      // board, so the full task read runs only on the boards that hold a running
+      // workflow's tasks, not on every open board for every workflow.
+      for (const projectId of projectIds) {
+        const db = getOpenProjectDb(projectId);
+        if (!db) continue;
+        try {
+          workflowIdsByBoard.set(projectId, new TaskRepository(db).workflowIdsOnBoard());
+        } catch (error) {
+          this.noteUnread(unreadProjectIds, projectId, error);
+        }
+      }
+    }
     const snapshots: CoreWorkflow[] = [];
     const titles = new Map<string, string>();
     const taskCounts = new Map<string, number>();
-    for (const homeProjectId of projectIds) {
-      let workflows: Workflow[];
-      try {
-        const repository = new WorkflowRepository(getProjectDb(homeProjectId));
-        // The fast path: one indexed probe for the common board with none.
-        if (!repository.hasActive()) continue;
-        workflows = repository.listOpen().filter((workflow) => workflow.state === 'running' || workflow.state === 'paused');
-      } catch {
-        continue;
-      }
-      for (const workflow of workflows) {
-        titles.set(workflow.id, workflow.title);
-        const snapshot = this.snapshot(homeProjectId, workflow, projectIds);
-        taskCounts.set(workflow.id, snapshot.tasks.length);
-        snapshots.push(snapshot);
-      }
+    for (const { homeProjectId, workflow } of activeWorkflows) {
+      titles.set(workflow.id, workflow.title);
+      const boards = [...workflowIdsByBoard].filter(([, workflowIds]) => workflowIds.has(workflow.id)).map(([projectId]) => projectId);
+      const snapshot = this.snapshot(homeProjectId, workflow, boards, unreadProjectIds);
+      taskCounts.set(workflow.id, snapshot.tasks.length);
+      snapshots.push(snapshot);
     }
     // A backoff lasts only while its task still waits in To Do of an open workflow.
     // A retry in flight keeps it: the move announces the task in its new column
     // before the slow work that can still fail and roll it back, and a backoff
-    // dropped then would start the count over on every retry.
+    // dropped then would start the count over on every retry. So does a task
+    // on a board this pass could not read.
     const waiting = new Set<string>();
     for (const snapshot of snapshots) {
       for (const task of snapshot.tasks) {
         if (task.place === 'todo') waiting.add(inFlightKey(task.projectId, task.taskId));
       }
     }
-    for (const key of [...this.failedStarts.keys()]) {
-      if (!waiting.has(key) && !this.inFlight.has(key)) this.forgetFailedStart(key);
+    for (const [key, failure] of [...this.failedStarts]) {
+      if (!waiting.has(key) && !this.inFlight.has(key) && !unreadProjectIds.has(failure.projectId)) this.forgetFailedStart(key);
     }
     if (snapshots.length === 0) return { intents: [], titles, taskCounts };
     const now = Date.now();
@@ -245,23 +360,29 @@ export class WorkflowEngineHost {
       if (now < failure.retryAt) blocked.add(key);
     }
     const freeSlots = this.context.sessionManager.getFreeAgentSlots() - this.inFlightSlots.size;
-    return { intents: planPass(snapshots, freeSlots, blocked), titles, taskCounts };
+    const intents = planPass(snapshots, freeSlots, blocked);
+    return {
+      intents: unreadProjectIds.size > 0 ? withoutUnreadOutcomes(intents, snapshots, unreadProjectIds) : intents,
+      titles,
+      taskCounts,
+    };
   }
 
-  private snapshot(homeProjectId: string, workflow: Workflow, projectIds: string[]): CoreWorkflow {
+  /** `boards`: the open boards holding at least one of the workflow's tasks. */
+  private snapshot(homeProjectId: string, workflow: Workflow, boards: string[], unreadProjectIds: Set<string>): CoreWorkflow {
     const tasks: CoreTask[] = [];
-    const unreadProjectIds = new Set<string>();
-    for (const projectId of projectIds) {
+    for (const projectId of boards) {
       let projectTasks: Task[];
       let lanes: Swimlane[];
       try {
-        const db = getProjectDb(projectId);
+        const db = getOpenProjectDb(projectId);
+        if (!db) continue;
         projectTasks = new TaskRepository(db).listByWorkflow(workflow.id)
           .filter((task) => (task.workflow_project_id ?? projectId) === homeProjectId);
         if (projectTasks.length === 0) continue;
         lanes = new SwimlaneRepository(db).list();
-      } catch {
-        unreadProjectIds.add(projectId);
+      } catch (error) {
+        this.noteUnread(unreadProjectIds, projectId, error);
         continue;
       }
       for (const task of projectTasks) tasks.push(coreTask(projectId, task, lanes));
@@ -383,6 +504,32 @@ export class WorkflowEngineHost {
       { moveReason: `Started by ${workflowTitle}` },
     );
   }
+}
+
+/**
+ * The plan for a pass that could not read every registered board. No workflow
+ * completes, since the unread board may hold its unfinished tasks and nothing
+ * says which workflows those are. No task starts that waits on a task there:
+ * today the core reads a blocker it cannot see as not done, and this keeps
+ * that true whatever the core comes to say about a vanished blocker.
+ */
+function withoutUnreadOutcomes(intents: CoreIntent[], snapshots: CoreWorkflow[], unreadProjectIds: ReadonlySet<string>): CoreIntent[] {
+  const linksByWorkflow = new Map(snapshots.map((snapshot) => [snapshot.workflowId, snapshot.links]));
+  return intents.filter((intent) => {
+    if (intent.kind === 'complete') return false;
+    return !(linksByWorkflow.get(intent.workflowId) ?? []).some((link) => (
+      link.blockedProjectId === intent.projectId
+      && link.blockedTaskId === intent.taskId
+      && unreadProjectIds.has(link.blockerProjectId)
+    ));
+  });
+}
+
+function sharesAny(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  for (const value of left) {
+    if (right.has(value)) return true;
+  }
+  return false;
 }
 
 function coreTask(projectId: string, task: Task, lanes: Swimlane[]): CoreTask {

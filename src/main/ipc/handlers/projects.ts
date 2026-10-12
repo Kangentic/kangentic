@@ -13,7 +13,8 @@ import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { agentRegistry } from '../../agent/agent-registry';
-import { getProjectDb, closeProjectDb } from '../../db/database';
+import { getProjectDb, getExistingProjectDb, closeProjectDb } from '../../db/database';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { softly } from '../../db/soft-db';
 import { PATHS } from '../../config/paths';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
@@ -796,6 +797,12 @@ export async function recoverSessionsAfterPtyHostLoss(
  * for every project so agent sessions start immediately, not just when
  * the user navigates to a project board.
  *
+ * It is also what migrates every registered project's database, within a few
+ * seconds of launch. A project whose folder is missing is migrated and not
+ * recovered, and its database is not created when the file is gone too. The
+ * retrieval worker opens databases with migrations off and relies on this. The
+ * workflow engine opens only the databases a running workflow touches.
+ *
  * Post-condition: resolves once every project's suspended sessions have
  * been resumed and auto-spawns have been dispatched. The slow resource
  * cleanup passes (backlog cleanup + orphan directory removal) run in the
@@ -822,12 +829,16 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       // suspended session records because their cwds no longer exist.
       if (!fs.existsSync(project.path)) {
         console.warn(`[PROJECT_OPEN] Skipping activation, path missing: ${project.path}`);
+        // Its database is still migrated, never created: the retrieval worker
+        // opens every registered project's database with migrations off (the
+        // usage reader does not skip a missing folder), so it relies on this.
+        timeSyncWork('project:activate-open-db', () => getExistingProjectDb(project.id));
         return;
       }
       // Awaited (not fire-and-forget) to keep per-project sequencing
       // deterministic; this whole closure already runs in the background.
       await ensureGitignore(project.path);
-      const db = getProjectDb(project.id);
+      const db = timeSyncWork('project:activate-open-db', () => getProjectDb(project.id));
       const taskRepo = new TaskRepository(db);
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);

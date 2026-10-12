@@ -4,6 +4,7 @@ import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMovePro
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 import { writeTransaction } from '../transaction';
+import { cachedStatement } from '../statement-cache';
 import { removeLinksInWorkflowHome } from './workflow-home-links';
 
 /** Raw row from SQLite - labels and skipped columns stored as JSON strings. */
@@ -461,6 +462,19 @@ export class TaskRepository {
    */
   setCanvasPosition(taskId: string, canvasX: number | null, canvasY: number | null): void {
     this.db.prepare('UPDATE tasks SET canvas_x = ?, canvas_y = ? WHERE id = ?').run(canvasX, canvasY, taskId);
+  }
+
+  /**
+   * Every workflow a task on this board belongs to, archived tasks included,
+   * as one covering read of `idx_tasks_workflow`. The engine asks it before
+   * `listByWorkflow`, whose attachment count groups the whole attachments
+   * table, so only a board holding a running workflow's tasks pays for that.
+   * Its statement is prepared once per connection, since the engine asks it of
+   * every open board on every pass while a workflow runs.
+   */
+  workflowIdsOnBoard(): Set<string> {
+    const rows = cachedStatement(this.db, 'SELECT DISTINCT workflow_id FROM tasks WHERE workflow_id IS NOT NULL').all() as Array<{ workflow_id: string }>;
+    return new Set(rows.map((row) => row.workflow_id));
   }
 
   /** Every task in a workflow on this board, archived (Done) included, by display id. */

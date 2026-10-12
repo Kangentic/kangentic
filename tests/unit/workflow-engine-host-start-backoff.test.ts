@@ -46,6 +46,7 @@ const harness = vi.hoisted(() => ({
   notifySpawnBlocked: vi.fn(),
 }));
 
+// Every database here is open, so the engine never looks at an unopened one.
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => {
     harness.getExistingProjectDbCalls.push(projectId);
@@ -57,6 +58,9 @@ vi.mock('../../src/main/db/database', () => ({
     if (!projectDatabase) throw new Error(`No database for ${projectId}`);
     return projectDatabase;
   },
+  getOpenProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
+  peekProjectDb: () => null,
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: harness.handleTaskMove }));
 vi.mock('../../src/main/git/fetch-throttle', () => ({ forgetRecentFetches: vi.fn() }));

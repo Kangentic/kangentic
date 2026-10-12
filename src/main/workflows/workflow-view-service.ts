@@ -177,7 +177,8 @@ export function listWorkflowSummaries(context: IpcContext, homeProjectId: string
 /**
  * The tasks of the project a workflow replaced at Start, for the line under
  * their Done rows. Unlike the summaries, a finished workflow stays: that is
- * when most superseded tasks sit in Done.
+ * when most superseded tasks sit in Done. None for a project whose database
+ * file is gone, as for the summaries.
  */
 export function listWorkflowSupersessions(homeProjectId: string): WorkflowSupersession[] {
   const homeDb = getExistingProjectDb(homeProjectId);

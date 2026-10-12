@@ -768,8 +768,11 @@ function worthDraining(context: IpcContext, waitingCorpora: ReadonlyArray<Knowle
  * every Done task's input. One project after another, in the background.
  *
  * A project whose folder is gone is left out, as `activateAllProjects` leaves
- * it out: its database is not opened, so not migrated, this launch, and a pass
- * that cannot read it would retry on the failure backoff all launch.
+ * it out of recovery: the sweeps read its checkout, and a pass that cannot
+ * would retry on the failure backoff all launch. A project asked here normally
+ * has its database migrated by then: activation migrates every registered one
+ * within seconds of launch, and this ask waits a minute. One whose activation
+ * failed is asked all the same.
  */
 function requestEveryProject(context: IpcContext): void {
   if (disposed || !summariesEnabled(context)) return;

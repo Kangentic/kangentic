@@ -199,6 +199,32 @@ export function openProjectDbIds(): string[] {
   return [...projectDbs.keys()];
 }
 
+/**
+ * Read a project's database this process has not opened, without opening it:
+ * no WAL switch, no migrations, no initializer, and no cached handle. Null when
+ * the file does not exist, so it never creates one. For a cheap look at a
+ * database that may need nothing more, such as the workflow engine asking
+ * whether a board takes part in a running workflow.
+ *
+ * `read` may meet an old schema (no migration ran) and only reads. The
+ * connection is read-write all the same: closing the last connection to a WAL
+ * database removes the `-wal` and `-shm` files, and a read-only one cannot, so
+ * it left both behind on every database it read (measured on 19 real ones).
+ * A short busy timeout, since a lock held elsewhere should fail the read for a
+ * retry, not hold this thread.
+ */
+export function peekProjectDb<T>(projectId: string, read: (db: Database.Database) => T): T | null {
+  const filePath = projectDbPath(projectId);
+  if (!fs.existsSync(filePath)) return null;
+  const db = new Database(filePath, { fileMustExist: true });
+  try {
+    db.pragma('busy_timeout = 100');
+    return read(db);
+  } finally {
+    closeQuietly(db);
+  }
+}
+
 /** A project's database only if this process already has it open. Never opens,
  *  creates or migrates one, so a caller that must not resurrect a deleted
  *  project's file (a late transcript flush) can use it safely. */

@@ -1,12 +1,14 @@
 import type { Task } from '../../shared/types';
-import { getExistingProjectDb, getProjectDb } from '../db/database';
+import { getExistingProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import type { IpcContext } from '../ipc/ipc-context';
 
 /**
  * Every created task of a workflow, across every project, with its project id.
  * Its own module, a plain read, so the workflow agent can ask which boards its
- * workflow is on without importing the service that ends it.
+ * workflow is on without importing the service that ends it. A registered
+ * project whose database file is gone has no tasks, and is not given an empty
+ * database for asking.
  */
 export function workflowTasks(context: IpcContext, homeProjectId: string, workflowId: string): Array<{ projectId: string; task: Task }> {
   return readWorkflowTasks(context, homeProjectId, workflowId).tasks;
@@ -27,7 +29,9 @@ export function readWorkflowTasks(
   for (const project of context.projectRepo.list()) {
     let tasks: Task[];
     try {
-      tasks = new TaskRepository(getProjectDb(project.id)).listByWorkflow(workflowId);
+      const db = getExistingProjectDb(project.id);
+      if (!db) continue;
+      tasks = new TaskRepository(db).listByWorkflow(workflowId);
     } catch {
       unreadProjectIds.add(project.id);
       continue;
