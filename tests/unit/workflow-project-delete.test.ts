@@ -21,14 +21,16 @@ const harness = vi.hoisted(() => ({
   dbs: new Map<string, unknown>(),
   /** Boards whose database throws when opened, as a locked file does. */
   broken: new Set<string>(),
+  /** What better-sqlite3 throws for a locked file: an error carrying its SQLite code. */
+  lockedError: (projectId: string) => Object.assign(new Error(`database for ${projectId} is locked`), { code: 'SQLITE_BUSY' }),
 }));
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => {
-    if (harness.broken.has(projectId)) throw new Error(`database for ${projectId} is locked`);
+    if (harness.broken.has(projectId)) throw harness.lockedError(projectId);
     return harness.dbs.get(projectId) ?? null;
   },
   getProjectDb: (projectId: string) => {
-    if (harness.broken.has(projectId)) throw new Error(`database for ${projectId} is locked`);
+    if (harness.broken.has(projectId)) throw harness.lockedError(projectId);
     const db = harness.dbs.get(projectId);
     if (!db) throw new Error(`No database for ${projectId}`);
     return db;

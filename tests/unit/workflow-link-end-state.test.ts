@@ -7,6 +7,9 @@
  * The host test (workflow-engine-host-gone-links.test.ts) reaches the engine
  * through a project in `unreadProjectIds`, which returns before the lookup, so
  * the fallback for a lookup that throws is only reached here.
+ *
+ * Also `readWorkflowTasks`, which builds that read: a SQLite failure makes a
+ * project unread, and any other failure reaches the caller.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
@@ -26,7 +29,10 @@ vi.mock('../../src/main/db/database', () => ({
   // Null when the project has no file, as the real one answers; a locked one throws.
   getExistingProjectDb: (projectId: string) => {
     harness.opened.push(projectId);
-    if (projectId === 'locked') throw new Error('database is locked for locked');
+    // What better-sqlite3 throws for a locked file: an error carrying its SQLite code.
+    if (projectId === 'locked' || projectId === 'busy') throw Object.assign(new Error(`database is locked for ${projectId}`), { code: 'SQLITE_BUSY' });
+    // A bug, not a database failure: what a mock missing this export throws.
+    if (projectId === 'bug') throw new TypeError('getExistingProjectDb is not a function');
     return harness.dbs.get(projectId) ?? null;
   },
 }));
@@ -34,7 +40,7 @@ vi.mock('../../src/main/db/database', () => ({
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
-const { linkEndState } = await import('../../src/main/workflows/workflow-tasks');
+const { linkEndState, readWorkflowTasks } = await import('../../src/main/workflows/workflow-tasks');
 
 import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -153,5 +159,59 @@ describe('linkEndState', () => {
 
     expect(harness.opened).toEqual(['locked']);
     expect(state).toBe('held');
+  });
+
+  it('lets a lookup failure that is no database error reach the caller instead of holding', () => {
+    registeredProjectIds.add('bug');
+
+    expect(() => linkEndState(context, { projectId: 'bug', taskId: 'task-1' }, WORKFLOW_ID, NO_TASK_IDS, NO_PROJECT_IDS)).toThrow(TypeError);
+  });
+});
+
+describe('readWorkflowTasks', () => {
+  let homeDatabase: Database.Database;
+
+  const contextWith = (projectIds: string[]): IpcContext => ({
+    projectRepo: { list: () => projectIds.map((id) => ({ id, name: id, path: `/mock/${id}` })) },
+  }) as unknown as IpcContext;
+
+  beforeEach(() => {
+    harness.dbs.clear();
+    harness.opened.length = 0;
+    homeDatabase = openTestDatabase();
+    homeDatabase.exec('PRAGMA foreign_keys = ON');
+    runProjectMigrations(homeDatabase);
+    harness.dbs.set('home', homeDatabase);
+  });
+
+  afterEach(() => {
+    homeDatabase.close();
+    harness.dbs.clear();
+  });
+
+  it('reads a project whose database fails with a SQLite error as unread, and goes on to the rest', () => {
+    const taskId = new TaskRepository(homeDatabase).create({
+      title: 'Budget API',
+      description: '',
+      swimlane_id: new SwimlaneRepository(homeDatabase).list()[0].id,
+      workflow: {
+        workflow_id: WORKFLOW_ID,
+        workflow_project_id: 'home',
+        route_start_swimlane_id: null,
+        route_last_swimlane_id: null,
+        skipped_swimlane_ids: [],
+        canvas_x: null,
+        canvas_y: null,
+      },
+    }).id;
+
+    const { tasks, unreadProjectIds } = readWorkflowTasks(contextWith(['busy', 'home']), 'home', WORKFLOW_ID);
+
+    expect(tasks.map(({ task }) => task.id)).toEqual([taskId]);
+    expect([...unreadProjectIds]).toEqual(['busy']);
+  });
+
+  it('lets any other failure reach the caller instead of reading that project as an empty board', () => {
+    expect(() => readWorkflowTasks(contextWith(['home', 'bug']), 'home', WORKFLOW_ID)).toThrow(TypeError);
   });
 });

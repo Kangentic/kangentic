@@ -1849,8 +1849,18 @@ export function runProjectMigrations(db: Database.Database): void {
  * project's database, so a task delete removes its links in code
  * (`TaskRepository.delete`). It does cascade from its workflow, which is always
  * in this database.
+ *
+ * One transaction, like the `run_mode` and usage-lineage migrations. The
+ * workflow engine's probe (`probeWorkflowProject`) checks only for the
+ * `workflows` table before it reads `tasks.workflow_id`, so the table and the
+ * column must land together: a run that failed between them used to leave a
+ * board the probe could not read until the next open finished the migration.
  */
 function runWorkflowsMigration(db: Database.Database): void {
+  writeTransaction(db, () => migrateWorkflows(db))();
+}
+
+function migrateWorkflows(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS workflows (
       id TEXT PRIMARY KEY,

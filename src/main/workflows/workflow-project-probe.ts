@@ -17,10 +17,8 @@ const NOTHING_TO_READ: WorkflowProjectProbe = { homesActive: false, memberOf: ne
  * (`peekProjectDb`): no migrations, no handle kept. Two indexed reads
  * (`idx_workflows_state`, `idx_tasks_workflow`). A database from before
  * workflows has neither the table nor the column: `tasks.workflow_id` came in
- * the same migration as the `workflows` table, so one schema check covers both
- * reads. That migration is not one transaction, so a database a failed run left
- * with the table and no column throws here, and reads as unread until
- * activation's migration finishes it.
+ * the same migration as the `workflows` table, and that migration is one
+ * transaction, so one schema check covers both reads.
  *
  * A missing file holds nothing to read. Throws when the file cannot be read
  * (locked, not a database), so the caller can tell "nothing there" from "could

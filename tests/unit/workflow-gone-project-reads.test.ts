@@ -23,7 +23,8 @@ const harness = vi.hoisted(() => ({
 }));
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => {
-    if (harness.broken.has(projectId)) throw new Error(`database for ${projectId} is locked`);
+    // What better-sqlite3 throws for a locked file: an error carrying its SQLite code.
+    if (harness.broken.has(projectId)) throw Object.assign(new Error(`database for ${projectId} is locked`), { code: 'SQLITE_BUSY' });
     return harness.dbs.get(projectId) ?? null;
   },
   getProjectDb: (projectId: string) => {

@@ -1070,7 +1070,8 @@ src/main/workflows/
 
 - **The engine never polls.** The board bus (every move announces there), a freed agent slot
   (`session-removed`, `exit`), task deletes, and workflow writes wake it; a burst coalesces into
-  one pass after 150 ms. A pass with nothing running costs one indexed query per open project, and
+  one pass after 150 ms. Its only other timers are one-shot retries on a backoff: of a start that
+  failed, and of a board it could not read (below). A pass with nothing running costs one indexed query per open project, and
   each is timed (`WorkflowEngineHost.stats()`, reported by the dev-only `kangentic_devtools_event_loop_lag`
   as `workflowEngine`). While a workflow is running or paused, a pass also asks each open board which workflows it
   holds tasks of (`TaskRepository.workflowIdsOnBoard`) and reads a workflow's tasks only on the
@@ -1092,9 +1093,14 @@ src/main/workflows/
   deleted. A second instance sharing the config dir can write a board unseen, until activation
   opens every registered board a few seconds after launch. A pass that cannot read a registered board completes no workflow, since that board may
   hold its unfinished tasks, and starts no task that waits on a task there. It logs the board once a
-  launch. A transient lock clears on the next pass; a board that stays unreadable holds finished
-  workflows at running until it is fixed or removed. `tests/unit/workflow-engine-boot-probe.test.ts`
-  pins all of it against real files.
+  launch and shows the user nothing. While any registered board stays unread it wakes itself on a
+  backoff (5 s, 30 s, 1 m, 2 m, then every 5 m), one timer at a time, because nothing else would:
+  activation opening the board, a lock clearing, or a repaired file announces nothing, and a
+  finished workflow used to stay running until some unrelated board change. The first pass that
+  reads every registered board, including after the broken project is removed, stops the retries.
+  The timer is keyed on any unread board, not only on a running workflow the pass could see, since
+  the board that would not read may home one. A board that stays broken costs one pass every 5
+  minutes. `tests/unit/workflow-engine-boot-probe.test.ts` pins all of it against real files.
 
   Measured (2026-10-12, Windows, a vitest rig on copies of the 19 project databases registered on a
   developer's machine, the largest 2.3 GB, plus one registered project with no file; and 50
