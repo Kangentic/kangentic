@@ -141,6 +141,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({})),
+  getExistingProjectDb: vi.fn(() => ({})),
   closeProjectDb: vi.fn(),
 }));
 
@@ -256,7 +257,7 @@ vi.mock('../../src/main/workflows/workflow-agent', async (importOriginal) => ({
 import { trackEvent } from '../../src/main/analytics/analytics';
 import { isShuttingDown } from '../../src/main/shutdown-state';
 import { gitFetchScheduler } from '../../src/main/git/git-fetch-scheduler';
-import { getProjectDb } from '../../src/main/db/database';
+import { getProjectDb, getExistingProjectDb } from '../../src/main/db/database';
 import { retrievalClient } from '../../src/main/retrieval/retrieval-client';
 import { repairToolBreakdownDurations } from '../../src/main/ipc/helpers/tool-breakdown-repair';
 import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
@@ -737,6 +738,30 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
     // Both were recovered, which is what used to poison the later click.
     expect(context.recoveredProjects.has(projectA.id)).toBe(true);
     expect(context.recoveredProjects.has(projectB.id)).toBe(true);
+  });
+
+  it('activateAllProjects migrates a project whose folder is gone, through the read that never creates a database, and recovers nothing there', async () => {
+    // The retrieval worker opens every registered database with migrations
+    // off, so activation is what keeps a moved project's schema current. The
+    // workflow engine used to do it by accident on its first pass, and created
+    // the file when it was gone too.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const context = createMockContext();
+      const present = makeProject({ id: 'project-present', path: path.join(PROJECT_PATH, 'present') });
+      const moved = makeProject({ id: 'project-moved', path: path.join(PROJECT_PATH, 'moved') });
+      context.projectRepo.list.mockReturnValue([present, moved]);
+      state.existingPaths.add(present.path);
+
+      await activateAllProjects(asIpcContext(context));
+
+      expect(vi.mocked(getExistingProjectDb).mock.calls.map((call) => call[0])).toEqual([moved.id]);
+      expect(vi.mocked(getProjectDb).mock.calls.map((call) => call[0])).not.toContain(moved.id);
+      expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual([present.id]);
+      expect(context.recoveredProjects.has(moved.id)).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('a just-created project is neither snapshotted nor marked, so its first real view sends it', async () => {

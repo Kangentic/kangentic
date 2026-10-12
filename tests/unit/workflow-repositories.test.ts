@@ -193,6 +193,29 @@ describe('workflow tables', () => {
     expect(workflows.hasActive()).toBe(false);
   });
 
+  it('names every workflow a board holds tasks of, archived and finished included, on each read of its own board', () => {
+    // The engine asks this of every open board on every pass, through a
+    // statement kept per connection, so a later read must see a later write and
+    // one board's answer must never be another's.
+    const board = freshDatabase();
+    const otherBoard = freshDatabase();
+    const running = board.workflows.create({ title: 'Running' });
+    const finished = board.workflows.create({ title: 'Finished' });
+    board.tasks.create({ title: 'Ordinary', description: '', swimlane_id: board.todo.id });
+    board.tasks.create({ title: 'Member', description: '', swimlane_id: board.todo.id, workflow: membership(running.id) });
+    const archived = board.tasks.create({ title: 'Done member', description: '', swimlane_id: board.todo.id, workflow: membership(finished.id) });
+    board.tasks.archive(archived.id);
+    board.workflows.setState(finished.id, 'done');
+
+    expect(board.tasks.workflowIdsOnBoard()).toEqual(new Set([running.id, finished.id]));
+    expect(otherBoard.tasks.workflowIdsOnBoard()).toEqual(new Set());
+
+    const joined = board.workflows.create({ title: 'Joined later' });
+    board.tasks.create({ title: 'Later', description: '', swimlane_id: board.todo.id, workflow: membership(joined.id) });
+    expect(new TaskRepository(board.database).workflowIdsOnBoard()).toEqual(new Set([running.id, finished.id, joined.id]));
+    expect(otherBoard.tasks.workflowIdsOnBoard()).toEqual(new Set());
+  });
+
   describe('when a workflow was paused (`paused_at`)', () => {
     it('has the column, nullable text, added once however often the migration runs', () => {
       const { database } = freshDatabase();
