@@ -4,7 +4,7 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../../git/worktree-manager';
 import { readWorktreeHead } from '../../git/worktree-head';
-import { getProjectDb } from '../../db/database';
+import { getOpenProjectDb, getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
 import type { IpcContext } from '../ipc-context';
 import { leftoverProcessReports, publishLeftoverProcesses } from './leftover-process-reports';
@@ -39,7 +39,8 @@ import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-st
  * With the user's "Stop leftover processes" setting off it kills nothing.
  * Either way the user is told what was stopped and what kept running: the
  * result goes to the leftover-process toast (`leftover-process-reports.ts`),
- * under each task's title, so pass `title` where the caller has it.
+ * under each task's title, so pass `title` where the caller has it. A reap the
+ * host finishes after main stopped waiting is reported when it finishes.
  *
  * Best-effort by contract: a teardown never fails because a reap did.
  */
@@ -61,13 +62,23 @@ export async function reapTaskLeftovers(
     if (__KANGENTIC_DEV__ && stoppingEnabled) {
       await stopWorktreePreviews(tasks.flatMap((task) => (task.worktree_path ? [task.worktree_path] : [])));
     }
+    const taskTitles = new Map<string, string>();
+    for (const task of tasks) if (task.title) taskTitles.set(task.id, task.title);
     const entries = await context.sessionManager.reapTaskProcesses(
       projectPath ?? null,
       tasks.map((task) => ({ id: task.id, worktreePath: task.worktree_path })),
-      { stop: stoppingEnabled },
+      {
+        stop: stoppingEnabled,
+        // The host finished a reap this call stopped waiting for. By now a Done
+        // move has tried its worktree removal, which a process the reap had not
+        // yet stopped can fail on Windows: retry it as a Stop from the list does.
+        onLateEntries: (lateEntries) => {
+          publishLeftoverProcesses(context.mainWindow, lateEntries, taskTitles, stoppingEnabled, projectPath ?? null);
+          const stoppedTaskIds = new Set(lateEntries.filter((entry) => entry.outcome === 'stopped').map((entry) => entry.taskId));
+          for (const taskId of stoppedTaskIds) void retryDoneWorktreeRemoval(context, projectPath ?? null, taskId);
+        },
+      },
     );
-    const taskTitles = new Map<string, string>();
-    for (const task of tasks) if (task.title) taskTitles.set(task.id, task.title);
     publishLeftoverProcesses(context.mainWindow, entries, taskTitles, stoppingEnabled, projectPath ?? null);
   } catch (error) {
     console.warn(`[TASK-REAP] Leftover reap failed for ${tasks.length} task(s) (non-fatal):`, error);
@@ -90,14 +101,20 @@ export function leftoverSweepOptions(context: IpcContext, projectPath: string): 
 }
 
 /**
- * After the user stopped a leftover process from the list, retry removing its
- * task's worktree when the task is in Done and the worktree is still on disk.
+ * After the user stopped a leftover process from the list, or a reap main had
+ * stopped waiting for stopped one, retry removing its task's worktree when the
+ * task is in Done and the worktree is still on disk.
  * On Windows a process working in a directory blocks its removal, so a window
  * or a server the Done move left running is what kept it; without this, the
  * worktree waits for the next project open (`retryFailedDoneCleanups`).
  *
  * Best-effort and quiet: if something else still holds the directory, the
  * removal fails as it did at Done, and the same startup retry takes it.
+ *
+ * Main closes a project's database only to delete the project, and a late
+ * reap answer can land after that close while the project is still listed.
+ * Opening it then would create and migrate a new empty file for a deleted
+ * project, so a closed database means there is nothing to retry.
  */
 export async function retryDoneWorktreeRemoval(
   context: IpcContext,
@@ -107,7 +124,7 @@ export async function retryDoneWorktreeRemoval(
   if (!projectPath) return false;
   try {
     const project = context.projectRepo.list().find((candidate) => candidate.path === projectPath);
-    if (!project) return false;
+    if (!project || !getOpenProjectDb(project.id)) return false;
     const { tasks, swimlanes } = getProjectRepos(context, project.id);
     const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
     if (!doneLane) return false;

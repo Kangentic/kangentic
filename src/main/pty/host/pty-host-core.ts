@@ -39,6 +39,7 @@ import {
   type StopProcessResult,
   type TaggedReapRequest,
   type TaggedReapResult,
+  type TaggedReaperQueue,
 } from '../process-tag/tagged-reap';
 import type { TaggedProcessReader } from '../process-tag/process-scan';
 import {
@@ -52,8 +53,15 @@ import {
   type PtyHostRequestMap,
   type PtyHostSpawnParams,
   type PtyHostSpawnResult,
+  type QueuedPtyHostMethod,
   type SeedFrameResult,
 } from './protocol';
+
+/** The request method each `TaggedReaper` queue answers, for `batch-started`. */
+const QUEUED_METHOD_OF: Record<TaggedReaperQueue, QueuedPtyHostMethod> = {
+  reap: 'reapTaggedProcesses',
+  stop: 'stopReportedProcess',
+};
 
 /** Rolling window the session-id scan keeps: twice ConPTY's 4 KB flush. */
 const SESSION_ID_SCAN_WINDOW = 8192;
@@ -87,6 +95,13 @@ export interface PtyHostCoreDeps {
   spawnChild?: ConstructorParameters<typeof HostCliProcesses>[1];
   /** The task-tag reader; the platform's own unless a test swaps it. */
   createTaggedProcessReader?: () => TaggedProcessReader | null;
+  /**
+   * A reap batch or a Stop started running, after its wait in the queue. Only
+   * the utility host passes it, to post `batch-started`: main restarts the
+   * budget of every request of that method still waiting. The in-process core
+   * has no request timers to restart.
+   */
+  onBatchStarted?: (method: QueuedPtyHostMethod) => void;
   /**
    * Ends what a session's shell left running when it exited on its own
    * (`dead-root-orphans.ts`). Only the utility host passes it: the in-process
@@ -529,6 +544,7 @@ export class PtyHostCore {
       this.taggedReaper = new TaggedReaper({
         reader,
         liveRootPids: () => this.liveRootPids(),
+        onBatchStart: (kind) => this.deps.onBatchStarted?.(QUEUED_METHOD_OF[kind]),
       });
     }
     return this.taggedReaper;

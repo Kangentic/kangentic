@@ -1,7 +1,8 @@
 /**
  * The leftover-process list's Stop handler (src/main/ipc/handlers/leftover-processes.ts):
  * it stops only a process a report named, by the id the report minted, and once
- * the process is gone it retries the removal of that task's Done worktree.
+ * the process is gone it retries the removal of that task's Done worktree. A
+ * Stop the host finishes after main stopped waiting does both when it lands.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -19,6 +20,8 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/ipc/helpers/task-cleanup', () => ({ retryDoneWorktreeRemoval }));
 const { trackEvent } = vi.hoisted(() => ({ trackEvent: vi.fn() }));
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent }));
+const { sendToRenderer } = vi.hoisted(() => ({ sendToRenderer: vi.fn() }));
+vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer }));
 
 import { leftoverReportCounts, registerLeftoverProcessHandlers } from '../../src/main/ipc/handlers/leftover-processes';
 import { leftoverProcessReports } from '../../src/main/ipc/helpers/leftover-process-reports';
@@ -54,6 +57,7 @@ function setup(outcome: 'stopped' | 'ended' | 'failed', ambient: { currentProjec
 beforeEach(() => {
   handlers.clear();
   retryDoneWorktreeRemoval.mockClear();
+  sendToRenderer.mockClear();
 });
 
 describe('LEFTOVER_PROCESSES_STOP', () => {
@@ -61,7 +65,7 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
     const processId = await reportOne();
     const { context, stopReportedProcess, stop } = setup('stopped');
     expect(await stop(processId)).toBe('stopped');
-    expect(stopReportedProcess).toHaveBeenCalledWith(4242, 'start-4242');
+    expect(stopReportedProcess).toHaveBeenCalledWith(4242, 'start-4242', expect.any(Function));
     expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
   });
 
@@ -98,6 +102,48 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
     await reportOne();
     expect(trackEvent).toHaveBeenCalledWith('leftover_processes', { stopped: 0, kept: 1, failed: 0, stoppingEnabled: true });
     expect(JSON.stringify(trackEvent.mock.calls)).not.toMatch(/chrome|4242|Fix login/);
+  });
+
+  // A Stop that ran past main's budget answers `failed`, but the host still
+  // finishes it. When its real outcome arrives, the row is corrected and the
+  // removal it was holding up is retried, as for a Stop that answered in time.
+  describe('a Stop the host finished after main stopped waiting', () => {
+    function setupLate() {
+      let settleLate: ((outcome: 'stopped' | 'ended' | 'failed') => void) | undefined;
+      const stopReportedProcess = vi.fn(async (_pid: number, _startKey: string, onLateOutcome?: (outcome: 'stopped' | 'ended' | 'failed') => void) => {
+        settleLate = onLateOutcome;
+        return 'failed' as const;
+      });
+      const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } };
+      const context = { sessionManager: { stopReportedProcess }, mainWindow } as unknown as IpcContext;
+      registerLeftoverProcessHandlers(context);
+      const handler = handlers.get(IPC.LEFTOVER_PROCESSES_STOP)!;
+      return { context, mainWindow, stop: (processId: unknown) => handler({}, processId), settleLate: (outcome: 'stopped' | 'ended' | 'failed') => settleLate?.(outcome) };
+    }
+
+    it('pushes the outcome to the row and retries the Done worktree once the process is gone', async () => {
+      const processId = await reportOne();
+      const { context, mainWindow, stop, settleLate } = setupLate();
+      expect(await stop(processId)).toBe('failed');
+      expect(retryDoneWorktreeRemoval).not.toHaveBeenCalled();
+      expect(sendToRenderer).not.toHaveBeenCalled();
+
+      settleLate('stopped');
+
+      expect(sendToRenderer).toHaveBeenCalledWith(mainWindow, IPC.LEFTOVER_PROCESSES_STOP_SETTLED, { processId, outcome: 'stopped' });
+      expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
+    });
+
+    it('pushes a late failure too, and retries nothing: the process still holds the directory', async () => {
+      const processId = await reportOne();
+      const { mainWindow, stop, settleLate } = setupLate();
+      await stop(processId);
+
+      settleLate('failed');
+
+      expect(sendToRenderer).toHaveBeenCalledWith(mainWindow, IPC.LEFTOVER_PROCESSES_STOP_SETTLED, { processId, outcome: 'failed' });
+      expect(retryDoneWorktreeRemoval).not.toHaveBeenCalled();
+    });
   });
 
   it('never stops anything for an id no report minted, a raw pid included', async () => {

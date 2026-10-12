@@ -3057,6 +3057,24 @@
         var outcomes = window.__mockLeftoverStopOutcomes || {};
         return outcomes[processId] || 'stopped';
       },
+      // Main pushes this only for a Stop it stopped waiting for, so the mock never
+      // does on its own. Tests push one via
+      // window.__mockFireLeftoverStopSettled({ processId, outcome }).
+      onStopSettled: function (callback) {
+        if (!window.__mockLeftoverStopSettledListeners) window.__mockLeftoverStopSettledListeners = [];
+        window.__mockLeftoverStopSettledListeners.push(callback);
+        if (!window.__mockFireLeftoverStopSettled) {
+          window.__mockFireLeftoverStopSettled = function (settled) {
+            var listeners = (window.__mockLeftoverStopSettledListeners || []).slice();
+            listeners.forEach(function (listener) { listener(settled); });
+          };
+        }
+        return function () {
+          var listeners = window.__mockLeftoverStopSettledListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
     },
 
     keybindings: {

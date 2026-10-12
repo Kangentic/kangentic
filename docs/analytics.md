@@ -471,13 +471,18 @@ in one Sentry org, one triage surface.
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
   `crashCount` - see the GPU health bullet below), a task leftover reap or a leftover-list Stop that
   failed (`source: task_reap`, with `stage` (`reap` or `stop`) and `code` (`reader_load`,
-  `empty_scan`, `process_list`, `window_list`, `connection_list`, `reap_error`, `host_error`, `wsl_error`), once per stage and code per launch; the message is
+  `empty_scan`, `process_list`, `window_list`, `connection_list`, `reap_error`, `host_timeout`,
+  `host_exited`, `host_error`, `wsl_error`), once per stage and code per launch; the message is
   fixed, and only a `reader_load` event carries text, the path-stripped load error in a
-  `task_reap` context, since any other failure's text can come from a process scan. A failure in
+  `task_reap` context, since any other failure's text can come from a process scan. The three
+  host codes are main's request to the pty host failing with no result. `host_timeout`: a running
+  host did not answer within the budget, which starts when the request's batch starts running in
+  the host, not when main sent it. `host_exited`: the host exited before it answered, or was still
+  down when the budget ran out. `host_error`: any other rejection. A failure in
   a scan pass also carries a `pass` tag. `first`: nothing was signalled yet. `second`: the
   graceful kills went out. `last`: the force pass ran as well, possibly with no target.
-  `reader_load`, `host_error`, `wsl_error`, and a `reap_error` from the home-directory lookup
-  (which runs before any scan), carry no `pass` tag. A Stop
+  `reader_load`, the three host codes, `wsl_error`, and a `reap_error` from the home-directory
+  lookup (which runs before any scan), carry no `pass` tag. A Stop
   that refused a process, such as Kangentic's own tree or a held PTY, is not reported. Neither is
   one that found the process still running after the force kill), and a guarded synchronous write that could not
   reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per

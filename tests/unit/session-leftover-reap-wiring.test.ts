@@ -280,7 +280,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     await cleanupTaskSession(context, task, tasks, null, null);
 
     expect(callOrder).toEqual(['kill', 'removeByTaskId', 'reap']);
-    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1', worktreePath: null }], { stop: true });
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1', worktreePath: null }], { stop: true, onLateEntries: expect.any(Function) });
   });
 
   it('still reaps when the task has no live session: an earlier session may have left a dev server', async () => {
@@ -301,7 +301,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     expect(callOrder).toEqual(['removeByTaskId', 'reap']);
     // The project and the worktree go with the id: only processes working
     // inside them are reaped.
-    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1b', worktreePath }], { stop: true });
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1b', worktreePath }], { stop: true, onLateEntries: expect.any(Function) });
   });
 
   it('kills nothing when the user turned "Stop leftover processes" off, and still reports', async () => {
@@ -317,7 +317,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
 
     await cleanupTaskSession(context, task, tasks, null, null);
 
-    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1d', worktreePath: null }], { stop: false });
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1d', worktreePath: null }], { stop: false, onLateEntries: expect.any(Function) });
   });
 
   it('never fails the teardown when the reap throws', async () => {

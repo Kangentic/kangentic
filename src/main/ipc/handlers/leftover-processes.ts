@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import type { LeftoverProcessReport, LeftoverStopOutcome } from '../../../shared/types';
+import type { LeftoverProcessReport, LeftoverStopOutcome, LeftoverStopSettled } from '../../../shared/types';
 import { trackEvent } from '../../analytics/analytics';
 import { leftoverProcessReports } from '../helpers/leftover-process-reports';
 import { retryDoneWorktreeRemoval } from '../helpers/task-cleanup';
 import type { IpcContext } from '../ipc-context';
+import { sendToRenderer } from '../send-to-renderer';
 
 /**
  * What the `leftover_processes` analytics event carries for one report: counts
@@ -27,6 +28,11 @@ export function leftoverReportCounts(report: LeftoverProcessReport): { stopped: 
  *
  * Once the process is gone, a Done task's worktree it was holding is removed
  * in the background (`retryDoneWorktreeRemoval`), after the answer goes back.
+ *
+ * A Stop that runs past main's budget answers `failed`, but the pty host
+ * finishes it anyway. When it does, the real outcome goes to the row
+ * (`LEFTOVER_PROCESSES_STOP_SETTLED`) and the removal is retried the same way,
+ * so the row and the worktree catch up with nothing for the user to do.
  */
 export function registerLeftoverProcessHandlers(context: IpcContext): void {
   leftoverProcessReports.setReportListener((report) => trackEvent('leftover_processes', leftoverReportCounts(report)));
@@ -34,8 +40,15 @@ export function registerLeftoverProcessHandlers(context: IpcContext): void {
     if (typeof processId !== 'string') return 'ended';
     const identity = leftoverProcessReports.resolve(processId);
     if (!identity) return 'ended';
-    const outcome = await context.sessionManager.stopReportedProcess(identity.pid, identity.startKey);
-    if (outcome !== 'failed') void retryDoneWorktreeRemoval(context, identity.projectPath, identity.taskId);
+    const retryRemovalOnceGone = (outcome: LeftoverStopOutcome): void => {
+      if (outcome !== 'failed') void retryDoneWorktreeRemoval(context, identity.projectPath, identity.taskId);
+    };
+    const outcome = await context.sessionManager.stopReportedProcess(identity.pid, identity.startKey, (lateOutcome) => {
+      const settled: LeftoverStopSettled = { processId, outcome: lateOutcome };
+      sendToRenderer(context.mainWindow, IPC.LEFTOVER_PROCESSES_STOP_SETTLED, settled);
+      retryRemovalOnceGone(lateOutcome);
+    });
+    retryRemovalOnceGone(outcome);
     return outcome;
   });
 }

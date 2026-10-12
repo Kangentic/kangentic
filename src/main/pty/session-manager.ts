@@ -62,12 +62,17 @@ import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec } from './process-tag/task-process-tag';
 import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
 import { resolveTaskDirectories } from './process-tag/task-directories';
-import { reportTaskReapFailure } from './task-reap-failure-report';
-import type { LeftoverProcessEntry, StopProcessOutcome, StopProcessResult } from './process-tag/tagged-reap';
+import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
+import type { LeftoverProcessEntry, StopProcessOutcome, StopProcessResult, TaggedReapResult } from './process-tag/tagged-reap';
 
-/** How long a task reap may take in the host: two scans, the 1 s grace
- *  between them, and the kills. A scan measured ~30 ms on Windows. */
-const TASK_REAP_TIMEOUT_MS = 15_000;
+/** How long one reap batch, or one Stop, may run in the host: two scans, the
+ *  1 s grace between them, the kills and a survivor check. Counted from when
+ *  the batch starts, not from the send: the host runs them one at a time, and
+ *  a request queued behind a batch gets its budget back when its own starts
+ *  (`batch-started`). A batch that killed three processes measured 1.07 s on
+ *  an idle Windows machine and 8.5 s at most pinned to one core beside three
+ *  busy threads (445 processes), so this keeps 3x headroom over the slow case. */
+const TASK_REAP_TIMEOUT_MS = 30_000;
 /** How long a task reap waits for a parked PTY of its task to exit: the
  *  deferred force-kill's grace plus the same kill propagation `suspend()`
  *  allows (`gracefulPtyShutdown`). */
@@ -91,6 +96,29 @@ async function removeCommandTerminalDirectory(sessionDirectory: string): Promise
   } catch {
     // Best-effort cleanup
   }
+}
+
+/** Log and report what a host reap answered, whether in time or after main stopped waiting. */
+function noteHostReapResult(result: TaggedReapResult): void {
+  if (result.failureReason) {
+    console.warn(`[TASK-REAP] reap failed (non-fatal): ${result.failureReason}`);
+    const code = result.failureCode ?? 'reap_error';
+    reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null, result.failurePass);
+  }
+  // Processes whose environment could not be read (elevated on Windows,
+  // non-dumpable on Linux, CS_RESTRICT under SIP on macOS) may carry the
+  // tag unseen. A count only: never which ones, never their contents.
+  if (result.unreadableCount > 0) {
+    console.log(`[TASK-REAP] ${result.unreadableCount} same-user process(es) had an unreadable environment and were not checked`);
+  }
+}
+
+/** Log and report a Stop the host ran but could not finish, whether it answered in time or later. */
+function noteHostStopResult(result: StopProcessResult): void {
+  if (!result.failureCode) return;
+  console.warn(`[TASK-REAP] stop failed (non-fatal): ${result.failureReason}`);
+  // A Stop never loads the reader (the reap that listed the process did), so no load error rides along.
+  reportTaskReapFailure('stop', result.failureCode, null, result.failurePass);
 }
 
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
@@ -2206,11 +2234,15 @@ export class SessionManager extends EventEmitter {
    * lists what is still running. Returns what the user is told: the processes
    * stopped, not stopped, and left running, each under a short label. Never
    * throws.
+   *
+   * A host reap that runs past its budget returns nothing here, but the host
+   * still finishes it and may kill. `onLateEntries` gets that reap's entries
+   * when its answer arrives, so the kills still reach a report.
    */
   async reapTaskProcesses(
     projectPath: string | null,
     tasks: ReadonlyArray<{ id: string; worktreePath: string | null }>,
-    options: { stop: boolean },
+    options: { stop: boolean; onLateEntries?: (entries: LeftoverProcessEntry[]) => void },
   ): Promise<LeftoverProcessEntry[]> {
     const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
     if (validTasks.length === 0) return [];
@@ -2245,23 +2277,20 @@ export class SessionManager extends EventEmitter {
       const result = await this.host.reapTaggedProcesses(
         { tasks: reapTasks, mainPid: process.pid, stop: options.stop },
         TASK_REAP_TIMEOUT_MS,
+        (lateResult) => {
+          noteHostReapResult(lateResult);
+          if (lateResult.killedPids.length > 0) {
+            console.log(`[TASK-REAP] a reap that timed out finished later: killed ${lateResult.killedPids.length} leftover process(es) for ${reapTasks.length} task(s): ${lateResult.killedPids.join(', ')}`);
+          }
+          if (lateResult.entries.length > 0) options.onLateEntries?.(lateResult.entries);
+        },
       );
       killedPids.push(...result.killedPids);
       entries.push(...result.entries);
-      if (result.failureReason) {
-        console.warn(`[TASK-REAP] reap failed (non-fatal): ${result.failureReason}`);
-        const code = result.failureCode ?? 'reap_error';
-        reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null, result.failurePass);
-      }
-      // Processes whose environment could not be read (elevated on Windows,
-      // non-dumpable on Linux, CS_RESTRICT under SIP on macOS) may carry the
-      // tag unseen. A count only: never which ones, never their contents.
-      if (result.unreadableCount > 0) {
-        console.log(`[TASK-REAP] ${result.unreadableCount} same-user process(es) had an unreadable environment and were not checked`);
-      }
+      noteHostReapResult(result);
     } catch (error) {
       console.warn('[TASK-REAP] host reap failed (non-fatal):', error);
-      reportTaskReapFailure('reap', 'host_error');
+      reportTaskReapFailure('reap', hostFailureCodeOf(error));
     }
     // The distro's reap kills and reports nothing back by name, so it runs only
     // while stopping is on.
@@ -2321,21 +2350,33 @@ export class SessionManager extends EventEmitter {
    * Never throws: a host failure reads as `failed`. A Stop the host ran but
    * could not finish (a scan that threw or listed nothing) is reported by its
    * code and pass, as a reap's is; a refusal or a survivor is an answer.
+   *
+   * A Stop that runs past its budget reads `failed` here, but the host still
+   * finishes it. `onLateOutcome` gets the outcome it reached, so the row and
+   * the worktree it held can catch up.
    */
-  async stopReportedProcess(pid: number, startKey: string): Promise<StopProcessOutcome> {
+  async stopReportedProcess(
+    pid: number,
+    startKey: string,
+    onLateOutcome?: (outcome: StopProcessOutcome) => void,
+  ): Promise<StopProcessOutcome> {
     let result: StopProcessResult;
     try {
-      result = await this.host.stopReportedProcess({ pid, startKey, mainPid: process.pid }, TASK_REAP_TIMEOUT_MS);
+      result = await this.host.stopReportedProcess(
+        { pid, startKey, mainPid: process.pid },
+        TASK_REAP_TIMEOUT_MS,
+        (lateResult) => {
+          noteHostStopResult(lateResult);
+          console.log(`[TASK-REAP] a stop that timed out finished later: ${lateResult.outcome}`);
+          onLateOutcome?.(lateResult.outcome);
+        },
+      );
     } catch (error) {
       console.warn('[TASK-REAP] stop failed (non-fatal):', error);
-      reportTaskReapFailure('stop', 'host_error');
+      reportTaskReapFailure('stop', hostFailureCodeOf(error));
       return 'failed';
     }
-    if (result.failureCode) {
-      console.warn(`[TASK-REAP] stop failed (non-fatal): ${result.failureReason}`);
-      // A Stop never loads the reader (the reap that listed the process did), so no load error rides along.
-      reportTaskReapFailure('stop', result.failureCode, null, result.failurePass);
-    }
+    noteHostStopResult(result);
     return result.outcome;
   }
 

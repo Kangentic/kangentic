@@ -3335,6 +3335,17 @@ export interface LeftoverProcessReport {
 /** `ended`: it had already exited. `failed`: it, or a process under it, is still running. */
 export type LeftoverStopOutcome = 'stopped' | 'ended' | 'failed';
 
+/**
+ * The outcome of a Stop that `stop` answered `failed` because main stopped
+ * waiting for the pty host, which then finished it. The row it names takes this
+ * outcome in place of that `failed`.
+ */
+export interface LeftoverStopSettled {
+  /** The `LeftoverProcess.id` the Stop named. */
+  processId: string;
+  outcome: LeftoverStopOutcome;
+}
+
 export interface AppConfig {
   /** The theme picked by hand. What the app paints when `themeFollowsSystem` is off. */
   theme: ThemeMode;
@@ -6913,6 +6924,8 @@ export interface ElectronAPI {
     onReport: (callback: (report: LeftoverProcessReport) => void) => () => void;
     /** Stop one reported process, with everything under it, by its `LeftoverProcess.id`. */
     stop: (processId: string) => Promise<LeftoverStopOutcome>;
+    /** The real outcome of a Stop that `stop` answered `failed` because main stopped waiting for it. */
+    onStopSettled: (callback: (settled: LeftoverStopSettled) => void) => () => void;
   };
 
   // Keybindings

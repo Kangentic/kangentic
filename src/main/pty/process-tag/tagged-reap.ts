@@ -31,7 +31,9 @@
  * the next batch, and one scan pair serves the whole batch. A bulk delete or a
  * project delete fires many at once. Each task keeps its own directories in the
  * batch, so one project's reap never widens another's, and each request gets
- * back only its own tasks' report.
+ * back only its own tasks' report. Each batch says when it starts
+ * (`onBatchStart`), and main's budget for a request still waiting restarts
+ * there, so a reap queued behind another is never charged for that wait.
  *
  * Best-effort by contract: it never throws, because a task teardown must
  * proceed even when the reap fails outright.
@@ -141,6 +143,9 @@ export interface TaggedReapResult {
   entries: LeftoverProcessEntry[];
 }
 
+/** The two queues `TaggedReaper` runs one at a time: reap batches and Stops. */
+export type TaggedReaperQueue = 'reap' | 'stop';
+
 export interface TaggedReaperDeps {
   reader: TaggedProcessReader;
   /** The PTY roots the host still holds; see `reap-plan.ts`. Read per scan. */
@@ -150,6 +155,13 @@ export interface TaggedReaperDeps {
   caseInsensitivePaths?: boolean;
   /** Defaults to `os.homedir()`; a test passes its own. */
   homeDirectory?: string;
+  /**
+   * Called as each reap batch or Stop starts running, after any wait in the
+   * queue. The pty host tells main, which restarts the budget of every request
+   * still waiting (`batch-started`), so a request is never charged for the
+   * batch ahead of it. Only `TaggedReaper` calls it.
+   */
+  onBatchStart?: (kind: TaggedReaperQueue) => void;
 }
 
 /** A fresh result each time, so no caller can share another's arrays. */
@@ -571,6 +583,7 @@ export class TaggedReaper {
       while (this.pending.size > 0) {
         const [stop, batch] = this.pending.entries().next().value as [boolean, PendingBatch];
         this.pending.delete(stop);
+        this.announceStart('reap');
         const result = await reapTaggedOnce({ tasks: batch.tasks, mainPid: batch.mainPid, stop: batch.stop }, this.deps);
         for (const waiter of batch.waiters) {
           waiter.resolve({ ...result, entries: result.entries.filter((entry) => waiter.taskIds.has(entry.taskId)) });
@@ -583,8 +596,20 @@ export class TaggedReaper {
 
   /** Stop one reported process. Stops run one at a time, so two clicks never interleave their scans. */
   stop(request: StopProcessRequest): Promise<StopProcessResult> {
-    const run = this.stopChain.then(() => stopProcessTree(request, this.deps));
+    const run = this.stopChain.then(() => {
+      this.announceStart('stop');
+      return stopProcessTree(request, this.deps);
+    });
     this.stopChain = run.then(() => undefined, () => undefined);
     return run;
+  }
+
+  /** A failure to tell main (a closed port at quit) must not strand a waiter: a reap never throws. */
+  private announceStart(kind: TaggedReaperQueue): void {
+    try {
+      this.deps.onBatchStart?.(kind);
+    } catch {
+      // Main's budget then runs from the send, as it did before batches announced their start.
+    }
   }
 }

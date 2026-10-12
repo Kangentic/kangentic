@@ -123,6 +123,14 @@ describe('pty host out-of-process boundary', () => {
     ).toEqual([]);
   });
 
+  it('has the utility host tell main when each reap batch and Stop starts', () => {
+    // Main restarts the budget of a reap queued behind a running batch on this
+    // message (DESKTOP-1X). The core's hook and the transport's restart are unit
+    // tested; this is the one line between them, in a file no unit test loads.
+    const entry = fs.readFileSync(path.join(REPO_ROOT, 'src/main/pty/host/pty-host-entry.ts'), 'utf-8');
+    expect(entry).toMatch(/onBatchStarted:\s*\(method\)\s*=>\s*post\(\{\s*type:\s*'batch-started',\s*method\s*\}\)/);
+  });
+
   it('runs one-shot children through the drop-in, and the host never forks or launches itself', () => {
     // A packaged Kangentic.exe started as a child, with RunAsNode off, boots a
     // second app. The exec service uses exec/execFile only and checks the path.

@@ -964,6 +964,13 @@ export function App() {
         }
       }));
     }
+    // A Stop main gave up waiting for reads `failed`; the host finished it
+    // anyway, and its row takes the real outcome. No toast: the row was wrong.
+    if (window.electronAPI?.leftoverProcesses?.onStopSettled) {
+      cleanups.push(window.electronAPI.leftoverProcesses.onStopSettled((settled) => {
+        useLeftoverProcessesStore.getState().settleStop(settled.processId, settled.outcome);
+      }));
+    }
 
     // This install cannot update itself until the user moves it - DESKTOP-1A,
     // the macOS read-only-volume case. Main composes the whole sentence and

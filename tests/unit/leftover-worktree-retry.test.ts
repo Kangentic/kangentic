@@ -2,19 +2,22 @@
  * `retryDoneWorktreeRemoval` (src/main/ipc/helpers/task-cleanup.ts): after the
  * user stops a leftover process from the list, a Done task's worktree that
  * process was holding is removed at once, rather than at the next project open.
+ * A reap whose answer arrives after main stopped waiting retries it the same way.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
-const { removeWorktree, taskRows, updates } = vi.hoisted(() => ({
+const { removeWorktree, taskRows, updates, getOpenProjectDb, getProjectDb } = vi.hoisted(() => ({
   removeWorktree: vi.fn(async (): Promise<boolean> => true),
   taskRows: new Map<string, { id: string; swimlane_id: string; worktree_path: string | null; branch_name: string | null }>(),
   updates: [] as Array<Record<string, unknown>>,
+  getOpenProjectDb: vi.fn((): object | null => ({})),
+  getProjectDb: vi.fn(() => ({})),
 }));
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
-vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
+vi.mock('../../src/main/db/database', () => ({ getOpenProjectDb, getProjectDb }));
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: vi.fn(() => ({
     tasks: {
@@ -41,8 +44,10 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
   },
 }));
 
-import { retryDoneWorktreeRemoval } from '../../src/main/ipc/helpers/task-cleanup';
+import { reapTaskLeftovers, retryDoneWorktreeRemoval } from '../../src/main/ipc/helpers/task-cleanup';
+import { leftoverProcessReports } from '../../src/main/ipc/helpers/leftover-process-reports';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
+import type { LeftoverProcessEntry } from '../../src/main/pty/process-tag/tagged-reap';
 
 const PROJECT_PATH = '/mock/project';
 const WORKTREE = '/mock/project/.kangentic/worktrees/task-1';
@@ -59,6 +64,9 @@ beforeEach(() => {
   updates.length = 0;
   removeWorktree.mockClear();
   removeWorktree.mockResolvedValue(true);
+  getOpenProjectDb.mockReset();
+  getOpenProjectDb.mockReturnValue({});
+  getProjectDb.mockClear();
 });
 
 describe('retryDoneWorktreeRemoval', () => {
@@ -81,6 +89,17 @@ describe('retryDoneWorktreeRemoval', () => {
     expect(await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-deleted')).toBe(false);
     expect(await retryDoneWorktreeRemoval(context(), '/mock/other', 'task-1')).toBe(false);
     expect(await retryDoneWorktreeRemoval(context(), null, 'task-1')).toBe(false);
+    expect(removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it('opens no database for a project being deleted: main closed it, and opening it would create a new empty file', async () => {
+    // A late reap answer lands after PROJECT_DELETE closed the database and
+    // before it removed the project's row, so the project is still listed.
+    taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+    getOpenProjectDb.mockReturnValue(null);
+    expect(await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1')).toBe(false);
+    expect(getOpenProjectDb).toHaveBeenCalledWith('project-1');
+    expect(getProjectDb).not.toHaveBeenCalled();
     expect(removeWorktree).not.toHaveBeenCalled();
   });
 
@@ -123,5 +142,63 @@ describe('retryDoneWorktreeRemoval', () => {
       expect(removeWorktree).not.toHaveBeenCalled();
       expect(updates).toEqual([]);
     });
+  });
+});
+
+// A Done move whose reap timed out goes on to remove the worktree while the
+// host's reap still runs, so a server holding the worktree can fail that
+// removal. When the reap's answer arrives later, the toast names what it
+// stopped and the removal is tried again, as after a Stop from the list.
+describe('reapTaskLeftovers, when the reap finishes after main stopped waiting', () => {
+  const stopped: LeftoverProcessEntry = { taskId: 'task-1', pid: 4242, startKey: 'start-4242', label: 'node (vite)', outcome: 'stopped', reason: null, place: 'worktree' };
+
+  function reapContext() {
+    let deliverLate: ((entries: LeftoverProcessEntry[]) => void) | undefined;
+    const reapTaskProcesses = vi.fn(async (_projectPath: string | null, _tasks: unknown, options: { stop: boolean; onLateEntries?: (entries: LeftoverProcessEntry[]) => void }) => {
+      deliverLate = options.onLateEntries;
+      return [];
+    });
+    const reapingContext = {
+      ...context(),
+      sessionManager: { reapTaskProcesses },
+      configManager: { load: () => ({ stopLeftoverProcesses: true }) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+    } as unknown as IpcContext;
+    return { reapingContext, deliverLate: (entries: LeftoverProcessEntry[]) => deliverLate?.(entries) };
+  }
+
+  it('reports what the late answer stopped, under the task\'s title, and retries the Done worktree it was holding', async () => {
+    taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+    const add = vi.spyOn(leftoverProcessReports, 'add').mockImplementation(() => {});
+    const { reapingContext, deliverLate } = reapContext();
+    try {
+      await reapTaskLeftovers(reapingContext, PROJECT_PATH, [{ id: 'task-1', worktree_path: WORKTREE, title: 'Fix login' }]);
+      expect(removeWorktree).not.toHaveBeenCalled();
+
+      deliverLate([stopped]);
+
+      expect(add).toHaveBeenLastCalledWith(expect.any(Function), [stopped], new Map([['task-1', 'Fix login']]), true, PROJECT_PATH);
+      await vi.waitFor(() => expect(removeWorktree).toHaveBeenCalledWith(WORKTREE, expect.anything()));
+      expect(updates).toContainEqual(expect.objectContaining({ id: 'task-1', worktree_path: null }));
+    } finally {
+      add.mockRestore();
+    }
+  });
+
+  it('retries no removal when the late answer stopped nothing', async () => {
+    taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+    const add = vi.spyOn(leftoverProcessReports, 'add').mockImplementation(() => {});
+    const { reapingContext, deliverLate } = reapContext();
+    try {
+      await reapTaskLeftovers(reapingContext, PROJECT_PATH, [{ id: 'task-1', worktree_path: WORKTREE, title: 'Fix login' }]);
+      const kept: LeftoverProcessEntry = { ...stopped, outcome: 'kept', reason: 'window' };
+      deliverLate([kept]);
+      expect(add).toHaveBeenLastCalledWith(expect.any(Function), [kept], expect.anything(), true, PROJECT_PATH);
+      // Wait out the task's lock queue: a retry would have joined it first, so it would have run by now.
+      await withTaskLock('task-1', async () => undefined);
+      expect(removeWorktree).not.toHaveBeenCalled();
+    } finally {
+      add.mockRestore();
+    }
   });
 });

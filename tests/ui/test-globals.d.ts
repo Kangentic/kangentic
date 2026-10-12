@@ -88,6 +88,10 @@ declare global {
 
     /** Pushes `leftoverProcesses:report`, which App.tsx turns into the leftover-process toast. Installed once `leftoverProcesses.onReport` has a subscriber, so wait for the app to mount. */
     __mockFireLeftoverReport?: (report: import('../../src/shared/types').LeftoverProcessReport) => void;
+    /** Pushes `leftoverProcesses:stopSettled`: the outcome of a Stop the host finished after main stopped waiting. Installed once `leftoverProcesses.onStopSettled` has a subscriber. */
+    __mockFireLeftoverStopSettled?: (settled: import('../../src/shared/types').LeftoverStopSettled) => void;
+    /** Subscribers of `leftoverProcesses.onStopSettled`. Internal to the mock. */
+    __mockLeftoverStopSettledListeners?: Array<(settled: import('../../src/shared/types').LeftoverStopSettled) => void>;
     /** Per process id, what `leftoverProcesses.stop` answers; unlisted ids answer 'stopped'. Read per call. */
     __mockLeftoverStopOutcomes?: Record<string, import('../../src/shared/types').LeftoverStopOutcome>;
     /** Every process id `leftoverProcesses.stop` was called with, in order. */

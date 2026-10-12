@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { LeftoverProcessReport } from '../../shared/types';
+import type { LeftoverProcessReport, LeftoverStopOutcome } from '../../shared/types';
 import type { LeftoverStopState } from '../lib/leftover-processes';
 
 /**
@@ -28,6 +28,13 @@ interface LeftoverProcessesStore {
   closeReport: () => void;
   /** Stop one listed process. The row reads `stopping` until main answers. */
   stopProcess: (processId: string) => Promise<void>;
+  /**
+   * The real outcome of a Stop main answered `failed` because it stopped
+   * waiting for the pty host, which finished it later. Only a row that still
+   * reads `failed` takes it: one a newer Stop is working on, or has answered,
+   * keeps that Stop's state.
+   */
+  settleStop: (processId: string, outcome: LeftoverStopOutcome) => void;
 }
 
 const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, get) => ({
@@ -84,6 +91,12 @@ const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, 
     // A newer report may have evicted this row's report while main answered,
     // and addReport dropped its state with it: do not bring it back.
     set((state) => (Object.hasOwn(state.stopStates, processId)
+      ? { stopStates: { ...state.stopStates, [processId]: outcome } }
+      : state));
+  },
+
+  settleStop: (processId, outcome) => {
+    set((state) => (state.stopStates[processId] === 'failed'
       ? { stopStates: { ...state.stopStates, [processId]: outcome } }
       : state));
   },

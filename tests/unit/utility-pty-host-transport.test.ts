@@ -1,9 +1,11 @@
 /**
  * UtilityPtyHostTransport: main's side of the `kangentic-pty-host` utility
  * process. The fork is faked; what is pinned is the lifecycle: the init
- * handshake, request matching and timeouts, a crash that reports, restarts and
- * replays, the in-process fallback past the crash cap, the heartbeat, and a
- * shutdown that never restarts.
+ * handshake, request matching and timeouts, the rejection types that tell a
+ * slow host from a lost one, the budget a queued reap or Stop gets back when its
+ * batch starts, a crash that reports, restarts and replays, the in-process
+ * fallback past the crash cap, the heartbeat, and a shutdown that never
+ * restarts.
  *
  * Tier: Unit.
  */
@@ -53,6 +55,13 @@ vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordSyncSpan: vi
 import { UtilityPtyHostTransport, ptyHostEntryPath } from '../../src/main/pty/host/utility-pty-host-transport';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import { UtilityRestartPolicy, resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
+import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host/pty-host-request-errors';
+import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
+
+const REAP_REQUEST: TaggedReapRequest = { tasks: [], mainPid: 1, stop: true };
+const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
+const STOP_REQUEST: StopProcessRequest = { pid: 4242, startKey: 'start-4242', mainPid: 1 };
+const STOP_ANSWER: StopProcessResult = { outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null };
 
 function latestChild(): FakeChild {
   const child = forks[forks.length - 1];
@@ -307,5 +316,239 @@ describe('UtilityPtyHostTransport', () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(forks).toHaveLength(1);
     expect(lifecycle.onHostDown).not.toHaveBeenCalled();
+  });
+
+  // A caller tells a slow host from a lost one by type, never by message: the
+  // task reap reports them as `host_timeout` and `host_exited` (DESKTOP-1X).
+  describe('typed rejections', () => {
+    it('rejects a request a running host never answers with PtyHostTimeoutError, keeping its message', async () => {
+      const { transport } = makeTransport();
+      const stuck = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 15_000 });
+      const assertion = expect(stuck).rejects.toBeInstanceOf(PtyHostTimeoutError);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await assertion;
+      await expect(stuck).rejects.toThrow('The pty host did not answer reapTaggedProcesses in time');
+    });
+
+    it('rejects what was pending with PtyHostExitedError when the host exits', async () => {
+      const { transport } = makeTransport();
+      transport.start();
+      const pending = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 15_000 });
+      const assertion = expect(pending).rejects.toBeInstanceOf(PtyHostExitedError);
+      latestChild().emit('exit', 1);
+      await assertion;
+    });
+
+    it('rejects a request whose budget ran out while the host was down with PtyHostExitedError: no running host ever had it', async () => {
+      const { transport } = makeTransport();
+      transport.start();
+      latestChild().emit('exit', 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(forks).toHaveLength(2);
+      // The second crash's restart waits out a 1 s backoff, so the request is queued, not posted.
+      latestChild().emit('exit', 1);
+      const queued = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 100 });
+      const assertion = expect(queued).rejects.toBeInstanceOf(PtyHostExitedError);
+      await vi.advanceTimersByTimeAsync(100);
+      await assertion;
+      expect(forks).toHaveLength(2);
+    });
+
+    it('rejects a host error reply as a plain error, even one whose text reads like a timeout', async () => {
+      const { transport } = makeTransport();
+      const failing = transport.request('stopReportedProcess', STOP_REQUEST, { timeoutMs: 15_000 });
+      const child = latestChild();
+      child.emit('message', { type: 'reply', id: lastRequestId(child), ok: false, error: { message: 'The pty host did not answer stopReportedProcess in time' } });
+      const error = await failing.catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(PtyHostTimeoutError);
+      expect(error).not.toBeInstanceOf(PtyHostExitedError);
+    });
+  });
+
+  // The host runs one reap batch at a time (TaggedReaper), and one Stop at a
+  // time. Main's clock used to start at the send, so a reap queued behind a
+  // running batch spent its own budget waiting (DESKTOP-1X). The host now says
+  // when each batch starts, and main restarts the budget of every request of
+  // that method still waiting.
+  describe('a reap or Stop queued behind a running batch', () => {
+    it('does not time out while the batch ahead of it is still inside its own budget', async () => {
+      const { transport, events } = makeTransport();
+      const first = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 15_000 });
+      const child = latestChild();
+      const firstId = lastRequestId(child);
+      child.emit('message', { type: 'batch-started', method: 'reapTaggedProcesses' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      const second = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 15_000 });
+      const secondId = lastRequestId(child);
+      let secondSettled = false;
+      second.then(() => { secondSettled = true; }, () => { secondSettled = true; });
+
+      // The first batch finishes inside its budget, and the host starts the second's.
+      await vi.advanceTimersByTimeAsync(13_000);
+      reply(child, firstId, EMPTY_REAP);
+      child.emit('message', { type: 'batch-started', method: 'reapTaggedProcesses' });
+      await expect(first).resolves.toEqual(EMPTY_REAP);
+
+      // 19 s after its send, past the 16 s mark where the old clock rejected it.
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(secondSettled).toBe(false);
+      reply(child, secondId, EMPTY_REAP);
+      await expect(second).resolves.toEqual(EMPTY_REAP);
+      // A control message: the client's event listener never sees it.
+      expect(events).toEqual([]);
+    });
+
+    it('times out a queued reap one full budget after its own batch started when that batch overruns', async () => {
+      const { transport } = makeTransport();
+      const first = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 15_000 });
+      const child = latestChild();
+      const firstId = lastRequestId(child);
+      child.emit('message', { type: 'batch-started', method: 'reapTaggedProcesses' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      const second = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 15_000 });
+      let secondSettled = false;
+      second.then(() => { secondSettled = true; }, () => { secondSettled = true; });
+      const secondAssertion = expect(second).rejects.toBeInstanceOf(PtyHostTimeoutError);
+
+      await vi.advanceTimersByTimeAsync(13_000);
+      reply(child, firstId, EMPTY_REAP);
+      child.emit('message', { type: 'batch-started', method: 'reapTaggedProcesses' });
+      await first;
+      // The second's batch started at 14 s and never finishes.
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(secondSettled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await secondAssertion;
+    });
+
+    it('restarts only the budgets of the method whose batch started', async () => {
+      const { transport } = makeTransport();
+      const reap = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 15_000 });
+      const stop = transport.request('stopReportedProcess', STOP_REQUEST, { timeoutMs: 15_000 });
+      const child = latestChild();
+      const stopId = lastRequestId(child);
+      const reapAssertion = expect(reap).rejects.toBeInstanceOf(PtyHostTimeoutError);
+      await vi.advanceTimersByTimeAsync(10_000);
+      child.emit('message', { type: 'batch-started', method: 'stopReportedProcess' });
+      // The reap's budget still runs from its send; the Stop's restarted at 10 s.
+      await vi.advanceTimersByTimeAsync(5_000);
+      await reapAssertion;
+      reply(child, stopId, STOP_ANSWER);
+      await expect(stop).resolves.toEqual(STOP_ANSWER);
+    });
+  });
+
+  // A timed-out request is not cancelled: the host may still finish a reap and
+  // kill what it found. Its answer used to be dropped, so those kills reached
+  // no report and no toast.
+  describe('the answer to a request main stopped waiting for', () => {
+    it('reaches the caller\'s onLateResult once, when the host answers after the budget ran out', async () => {
+      const { transport, events } = makeTransport();
+      const lateResults: unknown[] = [];
+      const request = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 15_000, onLateResult: (result) => { lateResults.push(result); } });
+      const child = latestChild();
+      const requestId = lastRequestId(child);
+      const assertion = expect(request).rejects.toBeInstanceOf(PtyHostTimeoutError);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await assertion;
+      expect(lateResults).toEqual([]);
+
+      reply(child, requestId, EMPTY_REAP);
+      reply(child, requestId, EMPTY_REAP);
+      expect(lateResults).toEqual([EMPTY_REAP]);
+      expect(events).toEqual([]);
+    });
+
+    it('passes on no late error reply, and nothing after the host that owed the answer exited', async () => {
+      const { transport } = makeTransport();
+      transport.start();
+      const onLateResult = vi.fn();
+      const failing = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 100, onLateResult });
+      const firstChild = latestChild();
+      const failingId = lastRequestId(firstChild);
+      const orphaned = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 100, onLateResult });
+      const orphanedId = lastRequestId(firstChild);
+      const assertions = [expect(failing).rejects.toBeInstanceOf(PtyHostTimeoutError), expect(orphaned).rejects.toBeInstanceOf(PtyHostTimeoutError)];
+      await vi.advanceTimersByTimeAsync(100);
+      await Promise.all(assertions);
+
+      firstChild.emit('message', { type: 'reply', id: failingId, ok: false, error: { message: 'the scan failed' } });
+      // The host that ran the second exits before answering. The restarted one
+      // never ran it, so an answer under its id is not the second's.
+      firstChild.emit('exit', 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(forks).toHaveLength(2);
+      reply(latestChild(), orphanedId, EMPTY_REAP);
+      expect(onLateResult).not.toHaveBeenCalled();
+    });
+
+    it('keeps no late callback for a request that never reached a running host', async () => {
+      const { transport } = makeTransport();
+      transport.start();
+      latestChild().emit('exit', 1);
+      await vi.advanceTimersByTimeAsync(0);
+      latestChild().emit('exit', 1);
+      const onLateResult = vi.fn();
+      const queued = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 100, onLateResult });
+      const assertion = expect(queued).rejects.toBeInstanceOf(PtyHostExitedError);
+      await vi.advanceTimersByTimeAsync(100);
+      await assertion;
+      // The restart does not post it (its caller was told it failed), so no host owes an answer.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(forks).toHaveLength(3);
+      expect(latestChild().postedTypes()).toEqual(['init']);
+      // A fresh transport's first request is id 1. An answer under it is not this request's.
+      reply(latestChild(), 1, EMPTY_REAP);
+      expect(onLateResult).not.toHaveBeenCalled();
+    });
+
+    it('contains a late callback that throws: the reply does not throw, a warning is logged, and the transport keeps serving requests', async () => {
+      const { transport } = makeTransport();
+      const onLateResult = vi.fn(() => { throw new Error('the caller could not handle the answer'); });
+      const request = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 100, onLateResult });
+      const child = latestChild();
+      const requestId = lastRequestId(child);
+      const assertion = expect(request).rejects.toBeInstanceOf(PtyHostTimeoutError);
+      await vi.advanceTimersByTimeAsync(100);
+      await assertion;
+
+      expect(() => reply(child, requestId, EMPTY_REAP)).not.toThrow();
+      expect(onLateResult).toHaveBeenCalledTimes(1);
+      expect(console.warn).toHaveBeenCalledWith('[pty-host] a late answer could not be handled:', expect.any(Error));
+
+      const next = transport.request('ping', {});
+      reply(child, lastRequestId(child), 'pong');
+      await expect(next).resolves.toBe('pong');
+    });
+
+    it('keeps at most 64 late callbacks and drops the oldest first', async () => {
+      const { transport } = makeTransport();
+      const requestCount = 65;
+      const lateCallbacks: Array<ReturnType<typeof vi.fn>> = [];
+      const requestIds: number[] = [];
+      const assertions: Array<Promise<void>> = [];
+      for (let index = 0; index < requestCount; index++) {
+        const onLateResult = vi.fn();
+        lateCallbacks.push(onLateResult);
+        const request = transport.request('reapTaggedProcesses', REAP_REQUEST, { timeoutMs: 100, onLateResult });
+        requestIds.push(lastRequestId(latestChild()));
+        // Attached before the timers run, so no rejection is ever unhandled.
+        assertions.push(expect(request).rejects.toBeInstanceOf(PtyHostTimeoutError));
+      }
+      await vi.advanceTimersByTimeAsync(100);
+      await Promise.all(assertions);
+
+      const child = latestChild();
+      reply(child, requestIds[0], EMPTY_REAP);
+      reply(child, requestIds[requestCount - 1], EMPTY_REAP);
+      reply(child, requestIds[1], EMPTY_REAP);
+
+      // The 65th timeout pushed the map past 64 and evicted the first request's callback, and only that one.
+      expect(lateCallbacks[0]).not.toHaveBeenCalled();
+      expect(lateCallbacks[requestCount - 1]).toHaveBeenCalledTimes(1);
+      expect(lateCallbacks[requestCount - 1]).toHaveBeenCalledWith(EMPTY_REAP);
+      expect(lateCallbacks[1]).toHaveBeenCalledTimes(1);
+    });
   });
 });

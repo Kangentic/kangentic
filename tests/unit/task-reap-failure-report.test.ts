@@ -29,8 +29,9 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError 
 
 import { reportTaskReapFailure, resetTaskReapFailureReports } from '../../src/main/pty/task-reap-failure-report';
 import { SessionManager } from '../../src/main/pty/session-manager';
-import type { StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
+import type { LeftoverProcessEntry, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 import { setOffMainExecutor } from '../../src/main/utility-process/off-main-exec';
+import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host/pty-host-request-errors';
 import type { HostExecRequest } from '../../src/main/pty/host/protocol';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
@@ -43,8 +44,8 @@ beforeEach(() => {
 });
 
 type HostStub = {
-  reapTaggedProcesses: (request: TaggedReapRequest, timeoutMs: number) => Promise<TaggedReapResult>;
-  stopReportedProcess: (request: unknown, timeoutMs: number) => Promise<StopProcessResult>;
+  reapTaggedProcesses: (request: TaggedReapRequest, timeoutMs: number, onLateResult?: (result: TaggedReapResult) => void) => Promise<TaggedReapResult>;
+  stopReportedProcess: (request: unknown, timeoutMs: number, onLateResult?: (result: StopProcessResult) => void) => Promise<StopProcessResult>;
 };
 
 function managerWithHost(host: Partial<HostStub>): SessionManager {
@@ -175,6 +176,26 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     warn.mockRestore();
   });
 
+  it('gives the host 30 s to answer a reap and 30 s to answer a Stop', async () => {
+    // The literal is the point: the budget is not imported, so a change to it must change this test.
+    const reapBudgets: number[] = [];
+    const stopBudgets: number[] = [];
+    const manager = managerWithHost({
+      reapTaggedProcesses: async (_request, timeoutMs) => {
+        reapBudgets.push(timeoutMs);
+        return EMPTY_REAP;
+      },
+      stopReportedProcess: async (_request, timeoutMs) => {
+        stopBudgets.push(timeoutMs);
+        return { outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null };
+      },
+    });
+    await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: false });
+    expect(await manager.stopReportedProcess(4242, 'start-4242')).toBe('stopped');
+    expect(reapBudgets).toEqual([30_000]);
+    expect(stopBudgets).toEqual([30_000]);
+  });
+
   it('reports nothing for a Stop that answered, a refusal or a survivor included', async () => {
     const manager = managerWithHost({
       stopReportedProcess: async () => ({ outcome: 'failed', failureCode: null, failurePass: null, failureReason: null }),
@@ -187,18 +208,105 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     expect(reportHandledError).not.toHaveBeenCalled();
   });
 
-  it('reports a host that failed or timed out, for a reap and for a Stop', async () => {
+  it('names how the host request failed: a timeout, a lost host, or anything else, for a reap and for a Stop, once each per launch', async () => {
+    // DESKTOP-1X arrived as `host_error`, which could not say which of the three it was.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const manager = managerWithHost({
-      reapTaggedProcesses: async () => { throw new Error('pty host request timed out'); },
-      stopReportedProcess: async () => { throw new Error('pty host request timed out'); },
-    });
-    expect(await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: false })).toEqual([]);
-    expect(await manager.stopReportedProcess(4242, 'start-4242')).toBe('failed');
+    const rejections: Error[] = [
+      new PtyHostTimeoutError('reapTaggedProcesses'),
+      new PtyHostExitedError(),
+      // A host error reply is rebuilt as a plain Error. Its text says "timed out", and is still not read.
+      new Error('pty host request timed out'),
+    ];
+    for (const rejection of [...rejections, ...rejections]) {
+      const manager = managerWithHost({
+        reapTaggedProcesses: async () => { throw rejection; },
+        stopReportedProcess: async () => { throw rejection; },
+      });
+      expect(await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: false })).toEqual([]);
+      expect(await manager.stopReportedProcess(4242, 'start-4242')).toBe('failed');
+    }
     expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([
+      { source: 'task_reap', stage: 'reap', code: 'host_timeout' },
+      { source: 'task_reap', stage: 'stop', code: 'host_timeout' },
+      { source: 'task_reap', stage: 'reap', code: 'host_exited' },
+      { source: 'task_reap', stage: 'stop', code: 'host_exited' },
       { source: 'task_reap', stage: 'reap', code: 'host_error' },
       { source: 'task_reap', stage: 'stop', code: 'host_error' },
     ]);
+    expect(reportHandledError.mock.calls.map((call) => (call[0] as Error).message)).toEqual([
+      'Task leftover reap failed: host_timeout',
+      'Task leftover stop failed: host_timeout',
+      'Task leftover reap failed: host_exited',
+      'Task leftover stop failed: host_exited',
+      'Task leftover reap failed: host_error',
+      'Task leftover stop failed: host_error',
+    ]);
+    warn.mockRestore();
+  });
+
+  it('hands the caller the answer of a reap it stopped waiting for, reported and logged as an answer in time would be', async () => {
+    // A timeout does not cancel the host's reap. Its kills used to land with no
+    // report and no toast.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let deliverLate: ((result: TaggedReapResult) => void) | undefined;
+    const manager = managerWithHost({
+      reapTaggedProcesses: async (_request, _timeoutMs, onLateResult) => {
+        deliverLate = onLateResult;
+        throw new PtyHostTimeoutError('reapTaggedProcesses');
+      },
+    });
+    const lateEntries: LeftoverProcessEntry[][] = [];
+    const entries = await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], {
+      stop: true,
+      onLateEntries: (late) => { lateEntries.push(late); },
+    });
+    expect(entries).toEqual([]);
+    expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([{ source: 'task_reap', stage: 'reap', code: 'host_timeout' }]);
+    expect(deliverLate).toBeTypeOf('function');
+
+    const stopped: LeftoverProcessEntry = { taskId: TASK, pid: 4242, startKey: 'start-4242', label: 'node (vite)', outcome: 'stopped', reason: null, place: 'project' };
+    deliverLate!({ ...EMPTY_REAP, killedPids: [4242], unreadableCount: 2, entries: [stopped], failureCode: 'connection_list', failureReason: 'GetExtendedTcpTable failed with 87', failurePass: 'last' });
+
+    expect(lateEntries).toEqual([[stopped]]);
+    // The count of processes the scan could not read is logged for a late answer too, as for one in time.
+    expect(log).toHaveBeenCalledWith('[TASK-REAP] 2 same-user process(es) had an unreadable environment and were not checked');
+    expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([
+      { source: 'task_reap', stage: 'reap', code: 'host_timeout' },
+      { source: 'task_reap', stage: 'reap', code: 'connection_list', pass: 'last' },
+    ]);
+    expect(JSON.stringify(reportHandledError.mock.calls)).not.toContain('GetExtendedTcpTable');
+    expect(log).toHaveBeenCalledWith('[TASK-REAP] a reap that timed out finished later: killed 1 leftover process(es) for 1 task(s): 4242');
+
+    // An answer with nothing to report reaches no caller.
+    deliverLate!(EMPTY_REAP);
+    expect(lateEntries).toHaveLength(1);
+    warn.mockRestore();
+    log.mockRestore();
+  });
+
+  it('hands the caller the outcome of a Stop it stopped waiting for, reported as an answer in time would be', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let deliverLate: ((result: StopProcessResult) => void) | undefined;
+    const manager = managerWithHost({
+      stopReportedProcess: async (_request, _timeoutMs, onLateResult) => {
+        deliverLate = onLateResult;
+        throw new PtyHostTimeoutError('stopReportedProcess');
+      },
+    });
+    const lateOutcomes: string[] = [];
+    expect(await manager.stopReportedProcess(4242, 'start-4242', (outcome) => { lateOutcomes.push(outcome); })).toBe('failed');
+    expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([{ source: 'task_reap', stage: 'stop', code: 'host_timeout' }]);
+
+    deliverLate!({ outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null });
+    deliverLate!({ outcome: 'failed', failureCode: 'window_list', failurePass: 'second', failureReason: 'lsappinfo list did not run' });
+
+    expect(lateOutcomes).toEqual(['stopped', 'failed']);
+    expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([
+      { source: 'task_reap', stage: 'stop', code: 'host_timeout' },
+      { source: 'task_reap', stage: 'stop', code: 'window_list', pass: 'second' },
+    ]);
+    expect(JSON.stringify(reportHandledError.mock.calls)).not.toContain('lsappinfo');
     warn.mockRestore();
   });
 
