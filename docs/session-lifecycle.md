@@ -490,6 +490,18 @@ of the pseudoconsole without closing it, so a later `kill()` finds nothing to cl
 upstream fix, microsoft/node-pty#990. With that fix the console's close also sends a still-attached
 agent `CTRL_CLOSE_EVENT`, which Claude Code 2.1.294 handles gracefully (the console-close row
 above), so the host's ask and the close then work together rather than against each other.
+Measured with `scripts/probe-conpty-exit-race.js --mode churn`, 1,500 of them in one process
+caused no failure, so the host leaves them; restarting it to close them would end every terminal
+it holds.
+
+The PTY's conout worker thread was a second, larger leftover. node-pty ends it only in `kill()`,
+and the host never killed a PTY that had exited, so each natural exit kept one: the probe's
+worker process grew from 36 MB to 688 MB over 100 exits on node-pty 1.1.0, and to 690 MB on
+1.2.0-beta.15. The host now kills such a PTY once nothing writes to it (`releaseExitedPty` in
+`pty-host-core.ts`): after the orphan cleanup, or at the exit when none runs, and only on
+Windows. With that kill the same 100 exits ended at 62 MB. The kill frees the worker and nothing
+else, since node-pty's native side forgot the PTY at the exit and the console-list shortcut
+returns no pid once the exit code is set.
 
 The **WSL exclusion covers a different failure than the others**: there the tree signal is
 UNREADABLE, not empty. A WSL session's PTY root is `wsl.exe`, and the agent is not a Win32

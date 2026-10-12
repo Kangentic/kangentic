@@ -148,7 +148,7 @@
     "better-sqlite3": "^13.0.3",
     "font-list": "^2.1.0",
     "koffi": "3.3.2",
-    "node-pty": "^1.1.0",
+    "node-pty": "1.2.0-beta.15",
     "sherpa-onnx-node": "^1.13.8",
     "sqlite-vec": "^0.1.9"
   },

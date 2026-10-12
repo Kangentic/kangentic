@@ -58,15 +58,16 @@ export interface ShutdownContext<S extends ShutdownSession = ShutdownSession> {
  * budget instead. Reporting only the pids let such a kill skip the drain for the
  * whole shutdown.
  *
- * Measured on node-pty 1.1.0 (Electron 41, ConPTY): no production path produces
- * that disagreement. `pid` is a synchronous one-shot read at construction
- * (`windowsPtyAgent.js:90` assigns `_innerPid` from `connect.pid` as the
- * constructor's last statement; nothing reassigns it), so a PTY killed before its
- * first data event still carries a real pid, and a spawn that fails throws rather
- * than yielding a wrapper reading 0, which leaves a `pty: null` placeholder the
- * loop below skips outright. So `killedCount` is a DEFENSIVE guard: it keeps the
- * drain armed if a future path ever kills a PTY it cannot name, rather than
- * covering one that exists today.
+ * Only a backstop produces that disagreement. node-pty 1.2 sets a ConPTY's pid
+ * only after `spawn()` returns, but the pty host answers a spawn only once the
+ * pid is set (`host/root-pid-gate.ts`), so a `RemotePty` main holds carries a
+ * real pid, including one killed before its first data event. A process that
+ * never started is answered as a failed spawn, which leaves a `pty: null`
+ * placeholder the loop below skips outright. The exception is the gate's 10 s
+ * backstop, which answers with pid 0, and logs, when node-pty reported neither
+ * a pid nor an exit; node-pty's own 5 s connect timeout should end such a PTY
+ * first. So `killedCount` is a DEFENSIVE guard: it keeps the drain armed for a
+ * PTY it cannot name, a case no measured spawn has reached.
  */
 export interface PtyKillReport {
   /** Child pids of the killed PTYs; each is probed until it is gone. */

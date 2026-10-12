@@ -59,9 +59,12 @@ window main is still waiting.
 A killed PTY whose child pid was unreadable has no probe, so the drain spends a fixed 400ms blind
 budget for it instead of waiting on liveness. `killAllSessions` therefore returns a `PtyKillReport`
 (pids plus a total kill count) rather than a bare pid list: an empty pid list must never be read as
-"no PTY was killed" when one was killed and simply could not be named. No production path produces
-that today (node-pty sets `pid` synchronously at construction, and a failed spawn throws instead of
-yielding a wrapper reading 0), so the count is a guard against a future one, not a live case.
+"no PTY was killed" when one was killed and simply could not be named. Only a backstop produces
+that today, so the count is a guard, not a live case. node-pty 1.2 sets a ConPTY's `pid` after
+`spawn()` returns, but the pty host answers a spawn only once it is set, and answers a process that
+never started as a failed spawn (`src/main/pty/host/root-pid-gate.ts`). The exception is the gate's
+10 s backstop. It answers with pid 0, and logs, when node-pty reported neither a pid nor an exit,
+which node-pty's own 5 s connect timeout should prevent.
 
 Why it exists (Sentry DESKTOP-C, symbolicated against node-pty's shipped `conpty.pdb`): node-pty
 delivers a PTY's exit through a native `Napi::ThreadSafeFunction`. When that callback is first

@@ -29,6 +29,7 @@ import {
   type OrphanProcessRow,
 } from '../../src/main/pty/host/dead-root-orphans';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
+import { ROOT_PID_POLL_MS } from '../../src/main/pty/host/root-pid-gate';
 import type { PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
 
 const ROOT_PID = 500;
@@ -354,7 +355,7 @@ function spawnParams(overrides: Partial<PtyHostSpawnParams> = {}): PtyHostSpawnP
   };
 }
 
-function makeCore(options: { platform?: NodeJS.Platform; withOrphanApi?: boolean; table?: FakeProcessTable } = {}) {
+function makeCore(options: { platform?: NodeJS.Platform; withOrphanApi?: boolean; table?: FakeProcessTable; latePid?: boolean } = {}) {
   let clock = SPAWNED_AT;
   const fakes = new Map<number, FakePty>();
   let nextPid = ROOT_PID;
@@ -366,7 +367,8 @@ function makeCore(options: { platform?: NodeJS.Platform; withOrphanApi?: boolean
     transcriptSinkFor: () => null,
     coalesceMs: 0,
     spawnPty: (() => {
-      const fake = createFakePty(nextPid);
+      // `latePid`: ConPTY on node-pty 1.2 reads 0 until the process is connected.
+      const fake = createFakePty(options.latePid ? 0 : nextPid);
       fakes.set(nextPid, fake);
       nextPid += 1;
       return fake.pty;
@@ -402,6 +404,41 @@ describe('PtyHostCore: a shell that exits on its own', () => {
     table.exit(600);
     await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS * 2);
     expect(table.terminated).toEqual([]);
+  });
+
+  it('releases the exited PTY only once the cleanup is done writing to its console', async () => {
+    const table = new FakeProcessTable([
+      { pid: 600, ppid: ROOT_PID, image: 'claude.exe', startedAtMs: SPAWNED_AT + 2_000 },
+    ]);
+    const rig = makeCore({ table });
+    rig.core.spawn(spawnParams());
+    rig.setClock(EXITED_AT);
+    rig.fakeFor(ROOT_PID).exit(1);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(rig.fakeFor(ROOT_PID).consoleInput).toEqual(CLAUDE_EXIT_SEQUENCE);
+    expect(rig.fakeFor(ROOT_PID).pty.kill).not.toHaveBeenCalled();
+    table.exit(600);
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS * 2);
+    expect(rig.fakeFor(ROOT_PID).pty.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks with the pid node-pty set after spawn() returned, not the 0 it read at the spawn', async () => {
+    const table = new FakeProcessTable([
+      { pid: 600, ppid: ROOT_PID, image: 'claude.exe', startedAtMs: SPAWNED_AT + 2_000 },
+    ]);
+    const rig = makeCore({ table, latePid: true });
+    const answer = Promise.resolve(rig.core.handleRequest('spawn', spawnParams()));
+    (rig.fakeFor(ROOT_PID).pty as { pid: number }).pid = ROOT_PID;
+    await vi.advanceTimersByTimeAsync(ROOT_PID_POLL_MS);
+    await expect(answer).resolves.toEqual({ ok: true, pid: ROOT_PID });
+
+    rig.setClock(EXITED_AT);
+    rig.fakeFor(ROOT_PID).exit(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(rig.loadOrphanApi).toHaveBeenCalledTimes(1);
+    expect(rig.fakeFor(ROOT_PID).consoleInput).toEqual(CLAUDE_EXIT_SEQUENCE);
   });
 
   it('terminates only the dead shell\'s own children still alive after the grace, never a live PTY root or a reused pid\'s child', async () => {
@@ -479,5 +516,62 @@ describe('PtyHostCore: a shell that exits on its own', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not end what session'), 'koffi failed to load');
     warn.mockRestore();
+  });
+
+  it.each([
+    {
+      failure: 'the orphan API cannot be loaded',
+      message: 'koffi failed to load',
+      arm: (rig: ReturnType<typeof makeCore>) => rig.loadOrphanApi.mockRejectedValueOnce(new Error('koffi failed to load')),
+    },
+    {
+      failure: 'the process listing fails after the API loaded',
+      message: 'snapshot failed',
+      arm: (rig: ReturnType<typeof makeCore>) => vi.spyOn(rig.table.api, 'listProcesses').mockRejectedValueOnce(new Error('snapshot failed')),
+    },
+  ])('still releases the exited PTY, once, when $failure', async ({ message, arm }) => {
+    const rig = makeCore();
+    arm(rig);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      rig.core.spawn(spawnParams());
+      const kill = rig.fakeFor(ROOT_PID).pty.kill;
+      rig.fakeFor(ROOT_PID).exit(1);
+      // The cleanup owns the release, so the exit itself does not release.
+      expect(kill).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS * 2);
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not end what session'), message);
+      expect(kill).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('releases a WSL root that exited on its own, once, without looking for orphans', async () => {
+    // A WSL root's children are Linux processes Win32 cannot see, so there is
+    // nothing to clean up. Its conout worker still has to be freed.
+    const rig = makeCore();
+    rig.core.spawn(spawnParams({ file: 'C:\\Windows\\System32\\wsl.exe' }));
+    rig.fakeFor(ROOT_PID).exit(1);
+
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS * 2);
+
+    expect(rig.loadOrphanApi).not.toHaveBeenCalled();
+    expect(rig.fakeFor(ROOT_PID).pty.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases a PTY that exits on its own after the shutdown command, once, without looking for orphans', async () => {
+    // The PTY already exited, so the release ends nothing and cuts no exit grace short.
+    const rig = makeCore();
+    rig.core.spawn(spawnParams());
+    rig.core.handleCommand({ type: 'shutdown' });
+    rig.fakeFor(ROOT_PID).exit(1);
+
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS * 2);
+
+    expect(rig.loadOrphanApi).not.toHaveBeenCalled();
+    expect(rig.fakeFor(ROOT_PID).pty.kill).toHaveBeenCalledTimes(1);
   });
 });

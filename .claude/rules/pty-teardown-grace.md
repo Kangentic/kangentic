@@ -41,9 +41,10 @@ still gets the 100 ms.
   without the `immediate` option and a reason (the agent-absence sweep is the one that exists:
   its agent is already gone, and it stamps `exited` at once). The PTY itself lives in the pty host
   ([[pty-host-out-of-process]]): `session.pty` is a `RemotePty` handle, a kill is a command the
-  host carries out, and the grace timer stays on main. The host's own `kill` handling is the one
-  allowlisted `.kill()` in `pty-host-core.ts`, and its `shutdown` kills nothing, so a parked
-  PTY's grace is never cut short there.
+  host carries out, and the grace timer stays on main. The host's own `kill` handling is
+  allowlisted in `pty-host-core.ts`, and its `shutdown` kills nothing, so a parked PTY's grace is
+  never cut short there. The file's other `.kill()` is `releaseExitedPty`, which runs only on a
+  Windows PTY whose process already exited on its own (see the next bullet), so it ends nothing.
 - **An agent whose shell exited on its own is asked to exit before anything is terminated
   (Windows).** node-pty never closes the pseudoconsole after a natural exit (microsoft/node-pty#965),
   so the agent the shell started keeps running with no session. The pty host ends it in
@@ -59,6 +60,17 @@ still gets the 100 ms.
   raised by a hook's own timeout). It runs in the utility host only (never the in-process core,
   whose fake PTYs carry real-looking pids), and never after a kill the host was sent, during a
   quit, or for a WSL root.
+- **A PTY that exited on its own is released once nothing writes to it (Windows).** node-pty ends
+  a ConPTY's conout worker thread only in `kill()`, so the host kept one per natural exit:
+  measured at about 6.5 MB each, 36 MB to 690 MB over 100 exits, on node-pty 1.1.0 and
+  1.2.0-beta.15 alike. `releaseExitedPty` kills the exited PTY after the orphan cleanup is done
+  with its console, or at the exit when none runs. That kill frees the worker and nothing else:
+  node-pty dropped its native handle at the exit, and the console-list shortcut returns no pid
+  once `_exitCode` is set. Never on POSIX, where a kill after the exit signals a pid that may name
+  another process by then. The pseudoconsole itself stays open until the host exits (#965): one
+  console host per natural exit, and 1,500 of them in one process measured no failure. Restarting
+  the host to close them was the alternative, rejected because it ends every terminal it holds.
+  Background and measurements: `docs/session-lifecycle.md`.
 - **A caller that touches the session's cwd or process tree after a kill waits for the process,
   not for the call.** `kill(id)`, then capture `awaitExit(id)`, THEN `remove(id)` (the row must
   still exist when the promise is made), then await it before any `rmSync`, `removeWorktree`, or
@@ -108,6 +120,9 @@ still gets the 100 ms.
   that it asks before it terminates and terminates nothing that exits within the grace, and that a
   kill, a quit, a WSL root, POSIX and the in-process core never run it;
   `tests/unit/exited-console-input.test.ts` pins the node-pty fields the ask writes through.
+  `tests/unit/pty-host-core.test.ts` pins the post-exit release (Windows only, once, never after
+  a kill main sent, raw PTYs too), and `dead-root-orphans.test.ts` pins that it waits for the
+  orphan cleanup to finish with the console.
 - **Review:** the `awaitExit` ordering is control flow the scan cannot see; `/code-review` flags a
   kill followed by filesystem work with no exit barrier.
 

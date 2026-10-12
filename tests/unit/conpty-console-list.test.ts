@@ -38,6 +38,11 @@ describe('skipConsoleListHelper', () => {
       // Once the shell has exited its pid may name an unrelated process: kill nothing by pid.
       agent._exitCode = 0;
       await expect(agent._getConsoleProcessList()).resolves.toEqual([]);
+      // Before node-pty has connected the process its pid reads 0, and on
+      // Windows process.kill(0) would end the calling process.
+      agent._innerPid = 0;
+      agent._exitCode = undefined;
+      await expect(agent._getConsoleProcessList()).resolves.toEqual([]);
     } finally {
       WindowsPtyAgent.prototype._getConsoleProcessList = original;
     }

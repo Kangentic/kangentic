@@ -26,6 +26,11 @@
  * to an unrelated process, and node-pty would `process.kill` it
  * (microsoft/node-pty#967). What the dead shell left running is ended by the
  * pty host instead (`host/dead-root-orphans.ts`).
+ *
+ * The list is empty too while `_innerPid` is still 0, before node-pty has
+ * connected the process (`host/root-pid-gate.ts`), as upstream's own version
+ * is. On Windows `process.kill(0)` is the calling process: the pty host would
+ * end itself and every terminal it holds.
  */
 import { WindowsPtyAgent } from 'node-pty/lib/windowsPtyAgent';
 
@@ -36,6 +41,6 @@ export function skipConsoleListHelper(): void {
   if (installed || process.platform !== 'win32') return;
   installed = true;
   WindowsPtyAgent.prototype._getConsoleProcessList = function shellPidOnly(this: WindowsPtyAgent): Promise<number[]> {
-    return Promise.resolve(this._exitCode === undefined ? [this._innerPid] : []);
+    return Promise.resolve(this._exitCode === undefined && this._innerPid > 0 ? [this._innerPid] : []);
   };
 }

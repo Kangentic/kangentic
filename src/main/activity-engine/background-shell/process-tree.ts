@@ -615,11 +615,10 @@ export function isShellLike(comm: string): boolean {
  * thing that makes the sweep work - `descendants.length === 0` would have been
  * sufficient there. It is kept because console-host parenting is an
  * unspecified Windows implementation detail that differs by console host and
- * launch path (a winpty fallback hosts its own console), and the cost of being
- * wrong is asymmetric: a stray console host would silently disable the sweep
- * for that session forever, while filtering costs ~0.3us per cycle for a whole
- * fleet. Do not "simplify" it back to an emptiness check on the strength of one
- * machine's process tree.
+ * launch path, and the cost of being wrong is asymmetric: a stray console host
+ * would silently disable the sweep for that session forever, while filtering
+ * costs ~0.3us per cycle for a whole fleet. Do not "simplify" it back to an
+ * emptiness check on the strength of one machine's process tree.
  *
  * POSIX has no equivalent process, so this list is inert there.
  *
