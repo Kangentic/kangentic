@@ -37,14 +37,13 @@ import { isTaskPaused, resumeBlockMessage, resumeBlockReasonForTask } from '../.
 import type { IpcContext } from '../ipc-context';
 import type { Task } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
-import { getProjectDb } from '../../db/database';
-import { WorkflowRepository } from '../../db/repositories/workflow-repository';
+import { workflowOfTask } from '../../workflows/workflow-home';
 
 /** The title of the paused workflow a task is in, or null (none, not paused, or unreadable). */
 function pausedWorkflowTitle(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): string | null {
   if (!task.workflow_id) return null;
   try {
-    const workflow = new WorkflowRepository(getProjectDb(task.workflow_project_id ?? projectId)).getById(task.workflow_id);
+    const workflow = workflowOfTask(task, projectId);
     return workflow?.state === 'paused' ? workflow.title : null;
   } catch {
     return null;

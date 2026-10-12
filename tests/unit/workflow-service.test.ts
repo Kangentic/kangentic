@@ -18,6 +18,7 @@ import type Database from 'better-sqlite3';
 
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
 vi.mock('../../src/main/db/database', () => ({
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   getProjectDb: (projectId: string) => {
     const db = harness.dbs.get(projectId);
     if (!db) throw new Error(`No database for ${projectId}`);
@@ -733,5 +734,30 @@ describe('workflow operations', () => {
     expect(result.released).toBe(3);
     expect(tasksOf('home').listByWorkflow(workflow.id)).toEqual([]);
     expect(tasksOf('mobile').listByWorkflow(workflow.id)).toEqual([]);
+  });
+
+  it('lets a task its deleted workflow left in Done join a new workflow, once it is back in To Do', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const homeDb = harness.dbs.get('home') as Database.Database;
+    const laneWithRole = (role: 'todo' | 'done') => lanesOf('home').find((lane) => lane.role === role)!.id;
+    const first = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', first.id, { title: 'First pass', tasks: [{ key: 'only', title: 'Budgets API' }], links: [] });
+    await service.startWorkflow(context, 'home', first.id);
+    const [shipped] = tasksOf('home').listByWorkflow(first.id);
+    homeDb.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(laneWithRole('done'), shipped.id);
+    service.deleteWorkflow(context, 'home', first.id);
+    // A deleted workflow's Done tasks keep their membership.
+    expect(tasksOf('home').getById(shipped.id)?.workflow_id).toBe(first.id);
+    homeDb.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(laneWithRole('todo'), shipped.id);
+
+    const second = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', second.id, {
+      title: 'Second pass',
+      tasks: [{ key: 'again', title: 'Budgets API', existingTask: shipped.id }],
+      links: [],
+    });
+    await service.startWorkflow(context, 'home', second.id);
+
+    expect(tasksOf('home').getById(shipped.id)?.workflow_id).toBe(second.id);
   });
 });

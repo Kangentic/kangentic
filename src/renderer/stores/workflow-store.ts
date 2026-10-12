@@ -9,10 +9,14 @@ import type {
   WorkflowSupersession,
   WorkflowTaskInput,
 } from '../../shared/types';
+import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { describeIpcError } from '../lib/ipc-error';
 import { useProjectStore } from './project-store';
 import { useSessionStore } from './session-store';
 import { useToastStore } from './toast-store';
+
+/** Why a watched workflow's latest read failed (see `watchedDetails`). */
+export type WatchedReadFailure = 'gone' | 'unreadable';
 
 /**
  * The Workflows view's state: the project's unfinished workflows (the picker,
@@ -115,9 +119,14 @@ interface WorkflowStore {
   /**
    * Workflows a task detail's workflow panel shows, by workflow id, kept
    * current on every change push while at least one panel watches it. Any
-   * workflow, whatever the Workflows view has selected.
+   * workflow, whatever the Workflows view has selected. `readFailure` says why
+   * the latest read failed, so the panel says so instead of waiting for a read
+   * that will never land: `gone` when main answered with the not-found refusal
+   * (the workflow was deleted, and its Done tasks keep their membership, or its
+   * home project was), `unreadable` for any other failure. A read that lands
+   * clears it.
    */
-  watchedDetails: Record<string, { homeProjectId: string; watchers: number; detail: WorkflowDetail | null }>;
+  watchedDetails: Record<string, { homeProjectId: string; watchers: number; detail: WorkflowDetail | null; readFailure: WatchedReadFailure | null }>;
   /** Start watching a workflow; the returned function stops. */
   watchDetail: (homeProjectId: string, workflowId: string) => () => void;
 
@@ -299,13 +308,22 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     try {
       detail = await window.electronAPI.workflows.get(watched.homeProjectId, workflowId);
     } catch (error) {
-      console.warn('[workflow-store] Failed to load a task\'s workflow:', describeIpcError(error));
+      const message = describeIpcError(error);
+      console.warn('[workflow-store] Failed to load a task\'s workflow:', message);
+      if (watchedGenerations.get(workflowId) !== generation) return;
+      const current = get().watchedDetails[workflowId];
+      // Only main's not-found refusal means the workflow is gone. Anything else
+      // (a locked database, a home that will not open) may pass, so the panel
+      // keeps a detail it already has and says the read failed only without one.
+      const readFailure: WatchedReadFailure = message.includes(WORKFLOW_REFUSALS.notFound(workflowId)) ? 'gone' : 'unreadable';
+      if (!current || current.readFailure === readFailure) return;
+      set({ watchedDetails: { ...get().watchedDetails, [workflowId]: { ...current, readFailure } } });
       return;
     }
     if (watchedGenerations.get(workflowId) !== generation) return;
     const current = get().watchedDetails[workflowId];
     if (!current) return;
-    set({ watchedDetails: { ...get().watchedDetails, [workflowId]: { ...current, detail: shareUnchanged(current.detail, detail) } } });
+    set({ watchedDetails: { ...get().watchedDetails, [workflowId]: { ...current, detail: shareUnchanged(current.detail, detail), readFailure: null } } });
   }
 
   /**
@@ -510,10 +528,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       set({
         watchedDetails: {
           ...get().watchedDetails,
-          [workflowId]: { homeProjectId, watchers: (existing?.watchers ?? 0) + 1, detail: existing?.detail ?? null },
+          [workflowId]: { homeProjectId, watchers: (existing?.watchers ?? 0) + 1, detail: existing?.detail ?? null, readFailure: existing?.readFailure ?? null },
         },
       });
-      if (!existing) void refreshWatched(workflowId);
+      // A panel opening over a failed read asks again rather than inherit a
+      // failure that may have passed.
+      if (!existing || existing.readFailure) void refreshWatched(workflowId);
       return () => {
         const current = get().watchedDetails[workflowId];
         if (!current) return;

@@ -7,7 +7,12 @@ Kangentic uses a two-database design:
 - **Global DB** (`<configDir>/index.db`) -- stores the project list, global configuration, and dev-server port reservations.
 - **Per-project DB** (`<configDir>/projects/<projectId>.db`) -- stores tasks, swimlanes, actions, and sessions for a single project.
 
-This separation keeps project data isolated. Deleting a project removes only its database file.
+This separation keeps project data isolated. Deleting a project removes its database file. First it
+takes its tasks out of the workflows other databases hold (`detachProjectFromWorkflows`): links in
+other homes that name its tasks go, tasks on other boards in a workflow it was home to become
+ordinary tasks, and a running or paused workflow homed elsewhere that is left with no task is
+deleted from its home database (only when every board could be read). Nothing else in another
+project's database changes.
 
 ## Database Locations
 
@@ -1223,6 +1228,9 @@ Operates on a per-project DB.
 | `setRoute(taskId, route)` | A workflow task's route (`route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`). Does not bump `updated_at` |
 | `setCanvasPosition(taskId, canvasX, canvasY)` | Where a hand placed the card on the Workflows canvas, or `null, null` for the auto layout. Never bumps `updated_at`, so a card drag costs no re-index |
 | `listByWorkflow(workflowId)` | Every task of a workflow on this board, archived (Done) included, by display id |
+| `listWorkflowMemberships()` | Distinct `{ workflow_id, workflow_project_id }` of this board's workflow tasks, archived included. What a project delete reads before its database goes |
+| `releaseAllWorkflowMembers()` | Take every task on this board out of its workflow (the deleted board's own tasks, on a project delete). Returns the count; no `updated_at` |
+| `releaseMembersOfHome(homeProjectId)` | Take this board's tasks out of every workflow homed in a deleted project, Done and archived included. Returns the count; no `updated_at` |
 | `reorderWithinSwimlane(swimlaneId, orderedTaskIds)` | Dense rewrite of one swimlane's task order to 0..N-1 in a single transaction. The write behind `kangentic_reorder_tasks` and `kangentic_move_task`'s same-column `position`. Unlike `move()`'s two-shift arithmetic it heals position gaps left by archiving; a stray id from another swimlane is a no-op (`swimlane_id` guard), and re-issuing the same order writes nothing (`position != ?` guard, so `updated_at` moves only on rows that actually shift) |
 | `archive(id)` | Set `archived_at` to now (soft-delete for Done column) |
 | `unarchive(id, targetSwimlaneId, position)` | Clear `archived_at`, move to target swimlane and position |
@@ -1326,6 +1334,7 @@ project's database, so nothing here reads a task.
 | `insert(link)` | Add a link; the same pair twice returns the link already there |
 | `delete(blockerTaskId, blockedTaskId)` | Remove one link; true when there was one |
 | `deleteForTask(taskId)` | Every link naming a task, either end (Remove from workflow) |
+| `deleteForProject(projectId)` | Every link with an end on a deleted project's board; returns the workflows that lost one, read in the same transaction |
 
 ### ActionRepository (legacy, still present)
 
@@ -1486,7 +1495,13 @@ no reservations".
 ## Connection Management
 
 - `getGlobalDb()` -- singleton, created on first access.
-- `getProjectDb(projectId)` -- cached per project ID, reused across the app lifecycle.
+- `getProjectDb(projectId)` -- cached per project ID, reused across the app lifecycle. On main it
+  creates, migrates and seeds a database that is not there.
+- `getExistingProjectDb(projectId)` reads an id another record stored (a workflow's home, a link's
+  far end, a planned task's board), which can outlive its project. It returns the open connection,
+  or opens one only when the file is there, and returns null otherwise. It never creates a file.
+- `getOpenProjectDb(projectId)` returns the open connection and never opens one, for a late
+  transcript flush.
 - `closeProjectDb(projectId)` -- close and remove from cache on project delete.
 - `closeAll()` -- close all connections on app shutdown.
 

@@ -27,13 +27,17 @@ import type Database from 'better-sqlite3';
 
 const harness = vi.hoisted(() => ({
   dbs: new Map<string, unknown>(),
+  /** Every project `getProjectDb` was asked for: on main it creates a database that is not there. */
+  getProjectDbCalls: [] as string[],
   adapter: null as unknown,
   notifyWorkflowChanged: vi.fn(),
   /** The retrieval worker's `call`, where the agent's turn tokens are indexed from. */
   retrievalCall: vi.fn(async (_method: string, _params: unknown) => ({ outcome: 'indexed' })),
 }));
 vi.mock('../../src/main/db/database', () => ({
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   getProjectDb: (projectId: string) => {
+    harness.getProjectDbCalls.push(projectId);
     const db = harness.dbs.get(projectId);
     if (!db) throw new Error(`No database for ${projectId}`);
     return db;
@@ -176,6 +180,7 @@ describe('a workflow\'s own agent starting over', () => {
     db.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(db);
     harness.dbs.set('home', db);
+    harness.getProjectDbCalls.length = 0;
     harness.notifyWorkflowChanged.mockReset();
     harness.retrievalCall.mockClear();
     describeStartupFailure = vi.fn(() => true);
@@ -523,6 +528,64 @@ describe('a workflow\'s own agent starting over', () => {
 
       expect(status).toEqual({ session: null, unavailable: 'This workflow no longer exists.' });
       expect(manager.spawn).not.toHaveBeenCalled();
+    });
+  });
+
+  // The home is the id a pane or a resume names, and it can outlive its project.
+  // `getProjectDb` on main creates, migrates and seeds a database for any id it is
+  // given, so reading a gone home through it would bring the deleted project's
+  // file back, empty. The mocked `getProjectDb` records each id and throws for one
+  // with no database; every read below sits in a try or returns a soft value, so
+  // the recorded ids are what show a read that opened the gone home.
+  describe('a home project that is gone', () => {
+    const entryPoints: Array<{ name: string; start: () => Promise<WorkflowAgentStatus> }> = [
+      { name: 'open', start: () => agent.openWorkflowAgent(context, 'deleted-home', workflowId, {}) },
+      { name: 'resume', start: () => agent.resumeWorkflowAgent(context, 'deleted-home', workflowId, {}) },
+    ];
+
+    it.each(entryPoints)('answers $name with the workflow gone, and neither starts an agent nor opens the home', async ({ start }) => {
+      const detect = (harness.adapter as { detect: ReturnType<typeof vi.fn> }).detect;
+
+      await expect(start()).resolves.toEqual({ session: null, unavailable: 'This workflow no longer exists.' });
+
+      expect(harness.getProjectDbCalls).not.toContain('deleted-home');
+      expect(detect).not.toHaveBeenCalled();
+      expect(manager.spawn).not.toHaveBeenCalled();
+    });
+
+    it('starts nothing over, and does not open the home, when the project is deleted while the dead session\'s scrollback is read', async () => {
+      const resumed = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      let finishScrollback!: () => void;
+      const scrollbackGate = new Promise<void>((resolve) => {
+        finishScrollback = resolve;
+      });
+      manager.getRawScrollback.mockImplementationOnce(async () => {
+        await scrollbackGate;
+        return 'No conversation found with session ID: conv-gone';
+      });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      manager.exitOnItsOwn(resumed.session!.id);
+      await vi.waitFor(() => expect(manager.getRawScrollback).toHaveBeenCalledTimes(1));
+
+      // The project is deleted while the last words are still being read: its
+      // database is closed and gone. Installed after the open, whose own start
+      // records the conversation through the same method.
+      (harness.dbs.get('home') as Database.Database).close();
+      harness.dbs.delete('home');
+      const conversationWrites = vi.spyOn(WorkflowRepository.prototype, 'setAgentConversation');
+      // After the exit above, whose listener reads the spend through `getProjectDb`.
+      harness.getProjectDbCalls.length = 0;
+
+      finishScrollback();
+      await vi.waitFor(() => expect(describeStartupFailure).toHaveBeenCalledTimes(1));
+      // The start-over, were it not skipped, spawns through microtasks only: one macrotask lets it run.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(harness.getProjectDbCalls).not.toContain('home');
+      expect(conversationWrites).not.toHaveBeenCalled();
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(harness.notifyWorkflowChanged).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('found no conversation'));
     });
   });
 });

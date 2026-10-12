@@ -104,6 +104,20 @@ export function applyProfileExclusivity(next: ExclusiveFields, requested: Partia
   return next;
 }
 
+/**
+ * The columns a workflow membership writes, in the order `writeWorkflowColumns`
+ * binds them. A release clears this same list, so a column added here is
+ * cleared by a project delete too, and a bind list out of step with it fails
+ * every write (better-sqlite3 refuses a parameter count that does not match).
+ */
+const WORKFLOW_COLUMNS = [
+  'workflow_id', 'workflow_project_id', 'route_start_swimlane_id',
+  'route_last_swimlane_id', 'skipped_swimlane_ids', 'canvas_x', 'canvas_y',
+] as const;
+
+/** What a release writes: every workflow column, cleared. No `updated_at`, as for membership. */
+const CLEAR_WORKFLOW_COLUMNS = `UPDATE tasks SET ${WORKFLOW_COLUMNS.map((column) => `${column} = NULL`).join(', ')}`;
+
 export class TaskRepository {
   constructor(private db: Database.Database) {}
 
@@ -457,12 +471,35 @@ export class TaskRepository {
     return rows.map(rowToTask);
   }
 
+  /** Which workflows this board's tasks are in, and each one's home, archived tasks included. */
+  listWorkflowMemberships(): Array<{ workflow_id: string; workflow_project_id: string | null }> {
+    return this.db.prepare(
+      'SELECT DISTINCT workflow_id, workflow_project_id FROM tasks WHERE workflow_id IS NOT NULL',
+    ).all() as Array<{ workflow_id: string; workflow_project_id: string | null }>;
+  }
+
+  /**
+   * Take every task on this board out of its workflow, as `setWorkflowMembership(id, null)`
+   * does for one. For a project delete: no workflow pass starts one of its tasks
+   * while its sessions are killed. Returns how many it released.
+   */
+  releaseAllWorkflowMembers(): number {
+    return this.db.prepare(`${CLEAR_WORKFLOW_COLUMNS} WHERE workflow_id IS NOT NULL`).run().changes;
+  }
+
+  /**
+   * Take this board's tasks out of every workflow homed in `homeProjectId`, Done
+   * and archived ones included. For a project delete: the workflow goes with its
+   * home, and nothing could show it again. Returns how many it released.
+   */
+  releaseMembersOfHome(homeProjectId: string): number {
+    return this.db.prepare(`${CLEAR_WORKFLOW_COLUMNS} WHERE workflow_project_id = ?`).run(homeProjectId).changes;
+  }
+
   private writeWorkflowColumns(taskId: string, membership: TaskWorkflowMembership | null): void {
-    this.db.prepare(`
-      UPDATE tasks SET workflow_id = ?, workflow_project_id = ?, route_start_swimlane_id = ?,
-        route_last_swimlane_id = ?, skipped_swimlane_ids = ?, canvas_x = ?, canvas_y = ?
-      WHERE id = ?
-    `).run(
+    this.db.prepare(
+      `UPDATE tasks SET ${WORKFLOW_COLUMNS.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`,
+    ).run(
       membership?.workflow_id ?? null,
       membership?.workflow_project_id ?? null,
       membership?.route_start_swimlane_id ?? null,

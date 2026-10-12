@@ -10,12 +10,13 @@ import type { Swimlane, Task, Workflow, WorkflowSummary } from '../../../src/sha
 const swimlanesList = vi.fn();
 const listSummaries = vi.fn();
 const workflowGetById = vi.fn();
+const existingProjectDb = vi.fn((_projectId: string): object | null => ({}));
 
 vi.mock('../../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: vi.fn(() => ({ swimlanes: { list: swimlanesList } })),
 }));
 vi.mock('../../../src/main/db/database', () => ({
-  getProjectDb: vi.fn(() => ({})),
+  getExistingProjectDb: (projectId: string) => existingProjectDb(projectId),
 }));
 vi.mock('../../../src/main/db/repositories/workflow-repository', () => ({
   WorkflowRepository: class {
@@ -66,6 +67,7 @@ describe('workflowWireFacts', () => {
     swimlanesList.mockReset().mockReturnValue(LANES);
     listSummaries.mockReset().mockReturnValue([]);
     workflowGetById.mockReset().mockReturnValue(undefined);
+    existingProjectDb.mockReset().mockReturnValue({});
   });
 
   it('reads nothing for a board with no workflow task', () => {
@@ -134,5 +136,14 @@ describe('workflowWireFacts', () => {
     workflowGetById.mockImplementation(() => { throw new Error('database will not open'); });
     const facts = workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1', workflow_project_id: 'proj-gone' })]);
     expect(facts.size).toBe(0);
+  });
+
+  it('sends no strip for a task whose home project was deleted, and reads no workflow there', () => {
+    existingProjectDb.mockImplementation((projectId: string) => (projectId === 'proj-deleted' ? null : {}));
+    workflowGetById.mockReturnValue(workflow({ state: 'done' }));
+    const facts = workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1', workflow_project_id: 'proj-deleted' })]);
+    expect(facts.size).toBe(0);
+    expect(existingProjectDb).toHaveBeenCalledWith('proj-deleted');
+    expect(workflowGetById).not.toHaveBeenCalled();
   });
 });

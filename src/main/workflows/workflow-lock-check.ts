@@ -3,12 +3,12 @@ import { DEFAULT_AGENT } from '../../shared/types';
 import { automationAgentChoice } from '../../shared/answer-agent';
 import { nextOnRoute } from '../../shared/workflow-route';
 import { getProjectDb } from '../db/database';
-import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { agentRegistry } from '../agent/agent-registry';
 import type { IpcContext } from '../ipc/ipc-context';
 import { workflowMoveRefusal, type WorkflowMoveOrigin } from '../../shared/workflow-lock';
+import { workflowOfTask } from './workflow-home';
 
 /**
  * Gather what `workflowMoveRefusal` needs for one move, from the databases and
@@ -31,12 +31,11 @@ export function checkWorkflowMove(
   // Falsy rather than `=== null`: a row assembled without the column carries
   // `undefined`, and that is an ordinary task too.
   if (!task.workflow_id) return null;
-  const homeProjectId = task.workflow_project_id ?? args.projectId;
   let workflowTitle: string;
   let workflowState;
   try {
-    const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(task.workflow_id);
-    // A workflow that is gone leaves an ordinary task behind.
+    const workflow = workflowOfTask(task, args.projectId);
+    // A workflow that is gone, or whose home project is, leaves an ordinary task behind.
     if (!workflow) return null;
     workflowTitle = workflow.title;
     workflowState = workflow.state;
@@ -87,9 +86,8 @@ export function checkWorkflowMoveForAgent(
   moverIsTaskAgent: boolean,
 ): string | null {
   if (!task.workflow_id) return null;
-  const homeProjectId = task.workflow_project_id ?? projectId;
   try {
-    const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(task.workflow_id);
+    const workflow = workflowOfTask(task, projectId);
     if (!workflow) return null;
     const toLane = new SwimlaneRepository(getProjectDb(projectId)).getById(toSwimlaneId);
     return workflowMoveRefusal({
@@ -116,8 +114,7 @@ export function checkWorkflowMoveForAgent(
 export function workflowTitleOf(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): string {
   if (!task.workflow_id) return 'its workflow';
   try {
-    const workflow = new WorkflowRepository(getProjectDb(task.workflow_project_id ?? projectId)).getById(task.workflow_id);
-    return workflow?.title ?? 'its workflow';
+    return workflowOfTask(task, projectId)?.title ?? 'its workflow';
   } catch {
     return 'its workflow';
   }

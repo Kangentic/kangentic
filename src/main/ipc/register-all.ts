@@ -42,6 +42,7 @@ import { registerTaskRuntimeOverrideHandlers } from './handlers/task-runtime-ove
 import { registerSessionHandlers } from './handlers/sessions';
 import { registerTurnEndAutomations } from '../automations/turn-end/turn-end-runner';
 import { registerWorkflowEngine } from '../workflows/workflow-engine-host';
+import { workflowOfTask } from '../workflows/workflow-home';
 import { registerWorkflowHandlers } from './handlers/workflows';
 import { registerLeftoverProcessHandlers } from './handlers/leftover-processes';
 import { startMetricsSnapshotTimer } from './handlers/metrics-snapshot-timer';
@@ -205,9 +206,8 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     resolveWorkflowTitle: (projectId, taskId) => {
       try {
         const task = getProjectRepos(requireContext(), projectId).tasks.getById(taskId);
-        if (!task?.workflow_id) return undefined;
-        const homeProjectId = task.workflow_project_id ?? projectId;
-        return getProjectRepos(requireContext(), homeProjectId).workflows.getById(task.workflow_id)?.title;
+        if (!task) return undefined;
+        return workflowOfTask(task, projectId)?.title;
       } catch {
         return undefined;
       }

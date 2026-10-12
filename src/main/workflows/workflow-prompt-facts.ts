@@ -1,6 +1,6 @@
 import type { Swimlane, Task } from '../../shared/types';
 import { doneColumn, routeColumns } from '../../shared/workflow-route';
-import { getProjectDb } from '../db/database';
+import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
@@ -20,8 +20,10 @@ import type { WorkflowXmlInput } from '../agent/shared/prompt-xml';
 export function readWorkflowPromptFacts(task: Task, projectId: string | null): WorkflowXmlInput | null {
   if (!task.workflow_id || !projectId) return null;
   try {
-    const homeProjectId = task.workflow_project_id ?? projectId;
-    const homeDb = getProjectDb(homeProjectId);
+    // The home and each link's far end are ids stored in a task or a link, so
+    // either can name a project deleted since: read, never created again.
+    const homeDb = getExistingProjectDb(task.workflow_project_id ?? projectId);
+    if (!homeDb) return null;
     const workflow = new WorkflowRepository(homeDb).getById(task.workflow_id);
     if (!workflow) return null;
     const ownLanes = new SwimlaneRepository(getProjectDb(projectId)).list();
@@ -30,7 +32,8 @@ export function readWorkflowPromptFacts(task: Task, projectId: string | null): W
     const lanesByProject = new Map<string, Swimlane[]>([[projectId, ownLanes]]);
     const describe = (otherProjectId: string, otherTaskId: string): { task: Task; column: string } | null => {
       try {
-        const db = getProjectDb(otherProjectId);
+        const db = getExistingProjectDb(otherProjectId);
+        if (!db) return null;
         const other = new TaskRepository(db).getById(otherTaskId);
         if (!other) return null;
         let lanes = lanesByProject.get(otherProjectId);

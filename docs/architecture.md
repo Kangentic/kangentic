@@ -1020,6 +1020,8 @@ src/main/workflows/
   workflow-complete.ts       # the workflow:completed push, and the phone's workflow-complete push
   workflow-prompt-facts.ts   # what {{workflow_xml}} tells a workflow task's agent
   workflow-tasks.ts          # every created task of a workflow, across projects (a plain read)
+  workflow-home.ts           # the workflow a task is in, read in its home, never creating a gone home's database
+  workflow-project-delete.ts # what a project delete does to the workflows it is part of
   workflow-agent.ts          # the workflow's own agent: open, resume, pause, end, start over on a lost resume,
                              #   read access to other projects, its spend captured for Stats
   workflow-agent-record.ts   # a SessionRecord built from the workflow row, so transcript readers reach its conversation
@@ -1045,6 +1047,20 @@ src/main/workflows/
   MCP URL whose caller segment is `workflow-<id>`, for which the server registers only the
   read-only tools and the planning tools, bound to that workflow (`workflow-agent-scope.ts`). It is
   not resumed at boot; the view's pane opens it.
+
+- **A stored project id can outlive its project.** A task's home (`workflow_project_id`), a link's
+  far end and a planned task's board are ids in another record, and `getProjectDb` on main creates
+  a database for any id it is given. Those reads go through `getExistingProjectDb`, which never
+  creates a file and reads a gone project as having nothing. A project delete first runs
+  `detachProjectFromWorkflows`, which does to its workflows what deleting each of its tasks would.
+  A workflow homed in it goes, and that workflow's tasks on other boards become ordinary tasks.
+  Links in other homes that name its tasks go. A running or paused workflow homed elsewhere that
+  is left with no task is deleted, but only when every board could be read. A finished one stays.
+  Start refuses a plan with a task on a board that is
+  no longer registered. A membership whose workflow is gone (a deleted workflow's Done tasks keep
+  theirs) is no membership to a check that protects a workflow (`isInWorkflow`): such a task can
+  be demoted to the Backlog, moved to another project, or join another workflow, and its Workflow
+  panel says the workflow no longer exists. A home that cannot be read still counts.
 
 - **The engine never polls.** The board bus (every move announces there), a freed agent slot
   (`session-removed`, `exit`), task deletes, and workflow writes wake it; a burst coalesces into

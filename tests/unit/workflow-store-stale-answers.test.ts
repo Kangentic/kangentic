@@ -19,7 +19,7 @@
  * project now on screen, and a workflow picked while a delete ran must keep its
  * selection.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Workflow, WorkflowDetail, WorkflowSummary, WorkflowViewTask } from '../../src/shared/types';
 
 // The project on screen, which a test changes to switch projects mid-call.
@@ -400,6 +400,28 @@ describe('watchDetail', () => {
     unwatchSecond();
   });
 
+  it('marks a workflow it cannot read as gone, so the panel stops waiting, and clears that once a read lands', async () => {
+    const bridge = installBridge();
+    // A deleted workflow's Done tasks keep their membership, so a panel can
+    // watch a workflow whose read fails every time.
+    bridge.get.mockRejectedValueOnce(new Error('No workflow "w-gone" in this project.'));
+
+    const unwatch = state().watchDetail('p', 'w-gone');
+    await vi.waitFor(() => {
+      expect(state().watchedDetails['w-gone']?.readFailure).toBe('gone');
+    });
+    expect(state().watchedDetails['w-gone']?.detail).toBeNull();
+
+    // A later change push whose read lands (the failure was passing) clears it.
+    bridge.get.mockResolvedValueOnce(detailOf('w-gone'));
+    state().handleChanged({ projectId: 'p', workflowId: 'w-gone' });
+    await vi.waitFor(() => {
+      expect(state().watchedDetails['w-gone']?.readFailure).toBeNull();
+    });
+    expect(state().watchedDetails['w-gone']?.detail?.workflow.id).toBe('w-gone');
+    unwatch();
+  });
+
   it('keeps the newer read when the older one answers first and the workflow was dropped between', async () => {
     const bridge = installBridge();
     const staleRead = deferred<WorkflowDetail>();
@@ -420,6 +442,161 @@ describe('watchDetail', () => {
       expect(state().watchedDetails['w-early']?.detail?.tasks.map((task) => task.key)).toEqual(['fresh']);
     });
     unwatchSecond();
+  });
+
+  // Only main's not-found refusal means a workflow is gone. A panel that took any
+  // other rejection for "gone" would tell the user a live workflow was deleted.
+  describe('a failed read', () => {
+    // Electron decorates a rejected invoke with the channel and the error class,
+    // so this is the sentence as the renderer receives it from a real main.
+    const NOT_FOUND_AS_SENT = 'Error invoking remote method \'workflows:get\': WorkflowRequestError: No workflow "w-sent" in this project. List them with kangentic_list_workflows.';
+
+    beforeEach(() => {
+      // Each failed read logs a warning by design; keep the run output readable.
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('is unreadable, never gone, when main refuses for any other reason', async () => {
+      const bridge = installBridge();
+      bridge.get.mockRejectedValueOnce(new Error('database is locked'));
+
+      const unwatch = state().watchDetail('p', 'w-locked');
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-locked']?.readFailure).not.toBeNull();
+      });
+
+      expect(state().watchedDetails['w-locked']?.readFailure).toBe('unreadable');
+      expect(state().watchedDetails['w-locked']?.detail).toBeNull();
+      unwatch();
+    });
+
+    it('keeps the detail the panel already has when a later read is refused for another reason', async () => {
+      const bridge = installBridge();
+      bridge.get.mockResolvedValueOnce(detailOf('w-kept', [viewTask('shown')]));
+      const unwatch = state().watchDetail('p', 'w-kept');
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-kept']?.detail?.tasks.map((task) => task.key)).toEqual(['shown']);
+      });
+
+      bridge.get.mockRejectedValueOnce(new Error('database is locked'));
+      state().handleChanged({ projectId: 'p', workflowId: 'w-kept' });
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-kept']?.readFailure).not.toBeNull();
+      });
+
+      expect(state().watchedDetails['w-kept']?.readFailure).toBe('unreadable');
+      expect(state().watchedDetails['w-kept']?.detail?.tasks.map((task) => task.key)).toEqual(['shown']);
+      unwatch();
+    });
+
+    it('is gone when the not-found refusal arrives as Electron sends it, channel and class prefix included', async () => {
+      const bridge = installBridge();
+      bridge.get.mockRejectedValueOnce(new Error(NOT_FOUND_AS_SENT));
+
+      const unwatch = state().watchDetail('p', 'w-sent');
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-sent']?.readFailure).not.toBeNull();
+      });
+
+      expect(state().watchedDetails['w-sent']?.readFailure).toBe('gone');
+      unwatch();
+    });
+
+    it('does not mark a workflow that was watched again, when the read from before the re-watch fails late', async () => {
+      const bridge = installBridge();
+      const staleRead = deferred<WorkflowDetail>();
+      const freshRead = deferred<WorkflowDetail>();
+      bridge.get.mockReturnValueOnce(staleRead.promise).mockReturnValueOnce(freshRead.promise);
+
+      state().watchDetail('p', 'w-stale-fail')();
+      const unwatchSecond = state().watchDetail('p', 'w-stale-fail');
+      expect(bridge.get).toHaveBeenCalledTimes(2);
+
+      // The first panel's read fails with the strongest verdict there is, the
+      // not-found refusal. It belongs to a watch that ended, so it says nothing
+      // about the workflow the second panel is reading.
+      staleRead.reject(new Error('No workflow "w-stale-fail" in this project.'));
+      await settleAnswers();
+      expect(state().watchedDetails['w-stale-fail']?.readFailure).toBeNull();
+
+      freshRead.resolve(detailOf('w-stale-fail', [viewTask('fresh')]));
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-stale-fail']?.detail?.tasks.map((task) => task.key)).toEqual(['fresh']);
+      });
+      expect(state().watchedDetails['w-stale-fail']?.readFailure).toBeNull();
+      unwatchSecond();
+    });
+
+    it.each([
+      ['gone', 'No workflow "w-again" in this project.'],
+      ['unreadable', 'database is locked'],
+    ] as const)('writes nothing when a read fails again with the same kind (%s)', async (kind, message) => {
+      const bridge = installBridge();
+      bridge.get.mockRejectedValueOnce(new Error(message));
+      const unwatch = state().watchDetail('p', 'w-again');
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-again']?.readFailure).toBe(kind);
+      });
+      const watchedBefore = state().watchedDetails;
+
+      // A change push reads again, and the read fails the same way.
+      bridge.get.mockRejectedValueOnce(new Error(message));
+      state().handleChanged({ projectId: 'p', workflowId: 'w-again' });
+      expect(bridge.get).toHaveBeenCalledTimes(2);
+      await settleAnswers();
+
+      // The same object, not an equal copy: every panel subscribed to the map would re-render for nothing.
+      expect(state().watchedDetails).toBe(watchedBefore);
+      unwatch();
+    });
+
+    it('is read again by a second watcher, which keeps showing the failure until the read lands', async () => {
+      const bridge = installBridge();
+      bridge.get.mockRejectedValueOnce(new Error('No workflow "w-retry" in this project.'));
+      const unwatchFirst = state().watchDetail('p', 'w-retry');
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-retry']?.readFailure).toBe('gone');
+      });
+      expect(bridge.get).toHaveBeenCalledTimes(1);
+
+      const secondRead = deferred<WorkflowDetail>();
+      bridge.get.mockReturnValueOnce(secondRead.promise);
+      const unwatchSecond = state().watchDetail('p', 'w-retry');
+
+      // The panel opens over the failure and asks again...
+      expect(bridge.get).toHaveBeenCalledTimes(2);
+      // ...without flashing Loading in the meantime: the failure carries over.
+      expect(state().watchedDetails['w-retry']).toMatchObject({ watchers: 2, readFailure: 'gone', detail: null });
+
+      secondRead.resolve(detailOf('w-retry', [viewTask('back')]));
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-retry']?.readFailure).toBeNull();
+      });
+      expect(state().watchedDetails['w-retry']?.detail?.tasks.map((task) => task.key)).toEqual(['back']);
+      unwatchSecond();
+      unwatchFirst();
+    });
+
+    it('is not asked again by a second watcher over a workflow that read fine (the control)', async () => {
+      const bridge = installBridge();
+      bridge.get.mockResolvedValueOnce(detailOf('w-fine'));
+      const unwatchFirst = state().watchDetail('p', 'w-fine');
+      await vi.waitFor(() => {
+        expect(state().watchedDetails['w-fine']?.detail).not.toBeNull();
+      });
+
+      const unwatchSecond = state().watchDetail('p', 'w-fine');
+      await settleAnswers();
+
+      expect(bridge.get).toHaveBeenCalledTimes(1);
+      expect(state().watchedDetails['w-fine']?.watchers).toBe(2);
+      unwatchSecond();
+      unwatchFirst();
+    });
   });
 });
 

@@ -43,6 +43,7 @@ import type Database from 'better-sqlite3';
 
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>(), adapter: null as unknown, retrievalCall: vi.fn() }));
 vi.mock('../../src/main/db/database', () => ({
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   getProjectDb: (projectId: string) => {
     const db = harness.dbs.get(projectId);
     if (!db) throw new Error(`No database for ${projectId}`);

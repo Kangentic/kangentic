@@ -18,6 +18,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { workflowTitleOf } from '../../workflows/workflow-lock-check';
+import { isInWorkflow } from '../../workflows/workflow-home';
 import type { IpcContext } from '../ipc-context';
 import type {
   BacklogTaskCreateInput,
@@ -323,7 +324,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
       if (!task) throw new Error(`Task ${input.taskId} not found`);
       // A demote deletes the task, which would drop it from its workflow and
       // unblock what waits for it, from a menu that says only "Backlog".
-      if (task.workflow_id) {
+      if (isInWorkflow(task, projectId)) {
         throw new Error(WORKFLOW_REFUSALS.removeFirst(`#${task.display_id}`, workflowTitleOf(task, projectId)));
       }
 

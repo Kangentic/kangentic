@@ -8,7 +8,7 @@ import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { isActive } from '../../shared/activity-state';
-import { getProjectDb } from '../db/database';
+import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { UsageHistoryRepository } from '../db/repositories/usage-history-repository';
 import { captureWorkflowAgentUsage } from '../ipc/handlers/session-metrics';
@@ -162,7 +162,10 @@ export function requestWorkflowAgentProjectAccess(
   if (!project) throw new Error('That project is no longer in Kangentic.');
   const projectRoot = resolveProjectRoot(project.path);
   if (projectId === homeProjectId) return { name: project.name, path: projectRoot, when: 'home' };
-  new WorkflowRepository(getProjectDb(homeProjectId)).addAgentReadProject(workflowId, projectId);
+  // The home is the id the agent's scope names, which can outlive its project.
+  const homeDb = getExistingProjectDb(homeProjectId);
+  if (!homeDb) throw new Error('This workflow no longer exists.');
+  new WorkflowRepository(homeDb).addAgentReadProject(workflowId, projectId);
   return { name: project.name, path: projectRoot, when: syncWorkflowAgentAccess(context, homeProjectId, workflowId) };
 }
 
@@ -195,7 +198,8 @@ function syncWorkflowAgentAccess(context: IpcContext, homeProjectId: string, wor
  * not started with, or null when the workflow is gone.
  */
 function missingCheckouts(context: IpcContext, homeProjectId: string, workflowId: string): ReadableProject[] | null {
-  const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId);
+  const homeDb = getExistingProjectDb(homeProjectId);
+  const workflow = homeDb ? new WorkflowRepository(homeDb).getById(workflowId) : undefined;
   if (!workflow) return null;
   const granted = grantedDirectories.get(workflowId) ?? new Set<string>();
   return readableProjectsOf(context, homeProjectId, workflow).filter((readable) => !granted.has(readable.path));
@@ -450,7 +454,10 @@ async function startWorkflowAgent(
   grid: WorkflowAgentGrid,
   continuation?: string,
 ): Promise<WorkflowAgentStatus> {
-  const repository = new WorkflowRepository(getProjectDb(homeProjectId));
+  // The home is the id a pane or a resume named, which can outlive its project.
+  const homeDb = getExistingProjectDb(homeProjectId);
+  if (!homeDb) return unavailable('This workflow no longer exists.');
+  const repository = new WorkflowRepository(homeDb);
   const workflow = repository.getById(workflowId);
   if (!workflow) return unavailable('This workflow no longer exists.');
   if (workflow.state === 'done') return unavailable(`${workflow.title} is complete.`);
@@ -671,7 +678,10 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
       const live = findWorkflowAgentSession(context, resumed.workflowId);
       if (live && live.id !== sessionId) return;
       try {
-        new WorkflowRepository(getProjectDb(resumed.homeProjectId)).setAgentConversation(resumed.workflowId, null);
+        // Read after an async scrollback read, by which time the home may be deleted.
+        const homeDb = getExistingProjectDb(resumed.homeProjectId);
+        if (!homeDb) return;
+        new WorkflowRepository(homeDb).setAgentConversation(resumed.workflowId, null);
       } catch {
         return;
       }

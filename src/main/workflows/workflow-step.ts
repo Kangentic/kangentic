@@ -1,7 +1,5 @@
 import type { Swimlane, Task } from '../../shared/types';
 import { nextOnRoute } from '../../shared/workflow-route';
-import { getProjectDb } from '../db/database';
-import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { conditionCheckDeps } from '../ipc/helpers/agent-spawn';
 import { handleTaskMove } from '../ipc/handlers/task-move';
@@ -9,6 +7,7 @@ import type { IpcContext } from '../ipc/ipc-context';
 import type { TurnEndedPayload } from '../pty/session-manager';
 import { checkAutomationConditions } from '../automations/condition-check/condition-check';
 import { describeStepRoute, workflowStepCondition } from './workflow-step-condition';
+import { workflowOfTask } from './workflow-home';
 
 /**
  * A workflow task's own step, at a turn end, after the column's turn-end rows.
@@ -42,8 +41,7 @@ export const WORKFLOW_STEP_CHECK_ID = 'workflow-step';
 export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): boolean {
   if (!task.workflow_id) return false;
   try {
-    const workflow = new WorkflowRepository(getProjectDb(task.workflow_project_id ?? projectId)).getById(task.workflow_id);
-    return workflow?.state === 'running';
+    return workflowOfTask(task, projectId)?.state === 'running';
   } catch {
     return false;
   }

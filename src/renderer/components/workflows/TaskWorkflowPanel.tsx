@@ -69,38 +69,47 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
     void useProjectStore.getState().openProject(linked.projectId);
   }, [detail, task.id]);
 
-  const body = !workflowId || !homeProjectId
-    ? <div className="p-4 text-sm text-fg-faint">This task is not in a workflow.</div>
-    : !detail
-      ? <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-loading">Loading...</div>
-      : !viewTask
-        ? <div className="p-4 text-sm text-fg-faint">This task is no longer in {detail.workflow.title}.</div>
-        : (
-          <WorkflowInspector
-            detail={detail}
-            selectedTaskKey={viewTask.key}
-            planHeld={false}
-            doneColumnColor={doneColumnColor}
-            visibleKeys={null}
-            variant="taskDetail"
-            onSelectTask={openLinked}
-            onOpenTask={openLinked}
-            onRequestRemove={() => setRemoving(true)}
-            onSetRoute={(key, columns) => { void useWorkflowStore.getState().setRouteIn(homeProjectId, workflowId, key, columns); }}
-            onSetLink={(blockerKey, blockedKey, linked) => { void useWorkflowStore.getState().setLinkIn(homeProjectId, workflowId, blockerKey, blockedKey, linked); }}
-            onRefuse={(message) => useToastStore.getState().addToast({ message, variant: 'warning' })}
-            // A popped-out window (the Agent Monitor's) has no Workflows view of its own.
-            onOpenWorkflow={inPopOut ? undefined : () => {
-              // Task detail is also hosted over the Agent Monitor, the Knowledge Graph
-              // and Stats; the view switches underneath them, so they make way first.
-              if (useMonitorStore.getState().monitorOpen) useMonitorStore.getState().close();
-              if (useKnowledgeGraphStore.getState().graphOpen) useKnowledgeGraphStore.getState().close();
-              if (useUsageDashboardStore.getState().statsOpen) useUsageDashboardStore.getState().close();
-              useBoardStore.getState().setActiveView('workflows');
-              useWorkflowStore.getState().openWorkflow(homeProjectId, workflowId, task.id);
-            }}
-          />
-        );
+  let body: React.ReactNode;
+  if (!workflowId || !homeProjectId) {
+    body = <div className="p-4 text-sm text-fg-faint">This task is not in a workflow.</div>;
+  } else if (watched?.readFailure === 'gone') {
+    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-gone">The workflow this task was in no longer exists.</div>;
+  } else if (!detail && watched?.readFailure === 'unreadable') {
+    // A read that failed for another reason keeps the last detail it had; only
+    // a panel with none says so, and the next change push reads again.
+    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-unreadable">The workflow this task is in could not be loaded.</div>;
+  } else if (!detail) {
+    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-loading">Loading...</div>;
+  } else if (!viewTask) {
+    body = <div className="p-4 text-sm text-fg-faint">This task is no longer in {detail.workflow.title}.</div>;
+  } else {
+    body = (
+      <WorkflowInspector
+        detail={detail}
+        selectedTaskKey={viewTask.key}
+        planHeld={false}
+        doneColumnColor={doneColumnColor}
+        visibleKeys={null}
+        variant="taskDetail"
+        onSelectTask={openLinked}
+        onOpenTask={openLinked}
+        onRequestRemove={() => setRemoving(true)}
+        onSetRoute={(key, columns) => { void useWorkflowStore.getState().setRouteIn(homeProjectId, workflowId, key, columns); }}
+        onSetLink={(blockerKey, blockedKey, linked) => { void useWorkflowStore.getState().setLinkIn(homeProjectId, workflowId, blockerKey, blockedKey, linked); }}
+        onRefuse={(message) => useToastStore.getState().addToast({ message, variant: 'warning' })}
+        // A popped-out window (the Agent Monitor's) has no Workflows view of its own.
+        onOpenWorkflow={inPopOut ? undefined : () => {
+          // Task detail is also hosted over the Agent Monitor, the Knowledge Graph
+          // and Stats; the view switches underneath them, so they make way first.
+          if (useMonitorStore.getState().monitorOpen) useMonitorStore.getState().close();
+          if (useKnowledgeGraphStore.getState().graphOpen) useKnowledgeGraphStore.getState().close();
+          if (useUsageDashboardStore.getState().statsOpen) useUsageDashboardStore.getState().close();
+          useBoardStore.getState().setActiveView('workflows');
+          useWorkflowStore.getState().openWorkflow(homeProjectId, workflowId, task.id);
+        }}
+      />
+    );
+  }
 
   return (
     <div

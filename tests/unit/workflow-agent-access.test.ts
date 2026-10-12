@@ -33,9 +33,15 @@ import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 
-const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
+const harness = vi.hoisted(() => ({
+  dbs: new Map<string, unknown>(),
+  /** Every project `getProjectDb` was asked for: on main it creates a database that is not there. */
+  getProjectDbCalls: [] as string[],
+}));
 vi.mock('../../src/main/db/database', () => ({
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   getProjectDb: (projectId: string) => {
+    harness.getProjectDbCalls.push(projectId);
     const db = harness.dbs.get(projectId);
     if (!db) throw new Error(`No database for ${projectId}`);
     return db;
@@ -89,6 +95,7 @@ describe('the workflow agent\'s reads across projects', () => {
     // Registered, but its checkout is gone from disk.
     paths.gone = path.join(root, 'gone');
     harness.dbs.clear();
+    harness.getProjectDbCalls.length = 0;
     for (const projectId of ['home', 'mobile', 'relay', 'gone']) {
       const db = openTestDatabase();
       db.exec('PRAGMA foreign_keys = ON');
@@ -154,6 +161,17 @@ describe('the workflow agent\'s reads across projects', () => {
     const result = agent.requestWorkflowAgentProjectAccess(context, 'home', workflow.id, 'relay');
     expect(result).toEqual({ name: 'kangentic-relay', path: paths.relay, when: 'next-start' });
     expect(read(workflow.id).agent_read_project_ids).toEqual(['relay']);
+  });
+
+  // The grant is written to the home project's database. The home is the id the
+  // agent's scope names, which can outlive its project, and `getProjectDb` on main
+  // would create an empty database for it. The live home is the test above.
+  it('refuses a request when the home project is gone, and does not open its database', () => {
+    // A registered project to read, and a home with no database and no registry row.
+    expect(() => agent.requestWorkflowAgentProjectAccess(context, 'deleted-home', 'workflow-of-a-deleted-project', 'relay'))
+      .toThrow('This workflow no longer exists.');
+
+    expect(harness.getProjectDbCalls).not.toContain('deleted-home');
   });
 
   // The working agent's restart at its turn's end is pinned in "the restart for new read access" below.
@@ -320,6 +338,31 @@ describe('the workflow agent\'s reads across projects', () => {
       manager.emit('activity', 'session-reprompted', 'idle');
       await vi.waitFor(() => expect(startAttempts).toHaveBeenCalledTimes(1));
       expect(suspend).toHaveBeenCalledWith('session-reprompted');
+    });
+
+    // The restart runs a tick after the request, and reads the workflow's home
+    // again to see what the agent still lacks. That home can be deleted in that
+    // tick, and `getProjectDb` on main would create an empty database for it. The
+    // mocked `getProjectDb` throws for it and the read sits in a try, so the
+    // recorded ids are what show a read that opened the gone home.
+    it('does not restart, and does not open the home, when the project is deleted between the request and the restart', async () => {
+      const workflowId = idleAgent('session-home-deleted');
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      spies.push(errorSpy);
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+
+      // The project is deleted before the restart runs: its database is closed and gone.
+      homeDb().close();
+      harness.dbs.delete('home');
+      // After the request, whose own reads of the home were of the live database.
+      harness.getProjectDbCalls.length = 0;
+      // The restart was queued first, so it has run by the time this resolves.
+      await nextTurn();
+
+      expect(harness.getProjectDbCalls).not.toContain('home');
+      expect(suspend).not.toHaveBeenCalled();
+      expect(startAttempts).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
     });
 
     it('owes the restart again when its suspend fails, so the next idle edge retries it and starts the agent', async () => {

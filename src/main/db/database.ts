@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { PATHS, ensureDirs } from '../config/paths';
@@ -203,6 +204,28 @@ export function openProjectDbIds(): string[] {
  *  project's file (a late transcript flush) can use it safely. */
 export function getOpenProjectDb(projectId: string): Database.Database | null {
   return projectDbs.get(projectId) ?? null;
+}
+
+/**
+ * A project's database for an id another record stored: a workflow's home, the
+ * far end of a link, a planned task's board. That id can outlive its project,
+ * and `getProjectDb` on main would create, migrate and seed a new empty file for
+ * it. This returns the open connection, or opens (and migrates) one only when
+ * the file is there, and returns null when it is not. It never creates a file.
+ *
+ * Not `getOpenProjectDb`: a live project that has not been opened yet this
+ * launch must still be read. A project delete has no `await` between closing
+ * the file and unlinking it, so nothing reopens it in between. An unlink that
+ * fails (a file another program holds open on Windows) leaves the file, and
+ * this then reads it as the project it was. That is why `startWorkflow` checks
+ * the project registry rather than this, and why a delete first detaches the
+ * project from every workflow (`detachProjectFromWorkflows`).
+ */
+export function getExistingProjectDb(projectId: string): Database.Database | null {
+  const open = projectDbs.get(projectId);
+  if (open) return open;
+  if (!fs.existsSync(projectDbPath(projectId))) return null;
+  return getProjectDb(projectId);
 }
 
 export function closeAll(): void {
