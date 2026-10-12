@@ -11,8 +11,9 @@ column** skill: it offloads the expensive and flaky test tiers (unit, UI, and th
 E2E tier) to GitHub Actions PR checks instead of running them on the local machine, then auto-fixes
 any failures and de-flakes any flaky tests until the PR is green and flake-free.
 
-It **never merges**. When the PR is green, the user manually moves the task Testing -> Merge, where
-`/merge-pull-request` merges it and pulls the result back into the local `main` checkout.
+It **never merges**. A green run ends on the line `PR: ready to merge`, and the Testing column's
+turn-end automation reads that line and moves the task Testing -> Merge, where `/merge-pull-request`
+merges it and pulls the result back into the local `main` checkout. See "Outcome line" below.
 
 **Usage:** `/pull-request [commit message]`
 
@@ -393,7 +394,9 @@ The PR is green and flake-free. Report:
 - PR URL (with link) and branch name.
 - Number of commits and any tests written (Step 3.5) or rewritten/removed (Step 7).
 - "All checks green, no flaky tests."
-- Next step: the user moves the task Testing -> Merge, where `/merge-pull-request` merges it.
+- The last line of the message, alone: `PR: ready to merge`. On the board that moves the task to
+  Merge, where `/merge-pull-request` merges it. Outside the Testing column nothing reads the line, so
+  the user moves the task.
 
 **Do NOT merge.** Merging is `/merge-pull-request`'s job.
 
@@ -406,6 +409,24 @@ half-finished rebase. Report concrete, learned recommendations so a human can fi
 - Specific recommendations, e.g. "remove test X - root cause Y, not fixable", "rewrite test Z to
   poll for <condition>", or "the regression is in `<file>:<line>`".
 - The PR URL and the current red/pending check summary.
+- The last line of the message, alone: `PR: blocked`. The task stays in Testing for a human.
+
+## Outcome line
+
+The Testing column's "On to Merge" automation (`kangentic.json`) judges the last line of your final
+message each time a turn ends, and moves the task to Merge when it reads `PR: ready to merge`. So the
+line is a contract:
+
+- `PR: ready to merge` comes only from Step 8: every check green and the Step 6b flake scan found no
+  test that passed on retry.
+- `PR: blocked` comes only from Step 8b.
+- Every other stop prints no outcome line. Each one still ends a turn, so the automation still
+  reads it: the Step 0 typecheck or lint failure, a failed `gh auth status`, a detached HEAD, the
+  Step 3 rebase-conflict question, and a push the lease rejects. Main repo mode, the `/merge-back`
+  fallback, prints none either. It opens no PR, so Merge would have nothing to merge.
+
+The `PR:` prefix is this column's own. Code Review ends on `Verdict: Ready`, and a separate token
+keeps each column's condition readable on its own.
 
 ## Rules
 

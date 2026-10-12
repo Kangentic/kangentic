@@ -101,6 +101,15 @@
             "message": "/pull-request",
             "mode": "immediate"
           }
+        ],
+        "onTurnEnd": [
+          {
+            "name": "On to Merge",
+            "type": "move_to_column",
+            "condition": "The final message's last line reads \"PR: ready to merge\".",
+            "maxRuns": 1,
+            "targetColumn": "Merge"
+          }
         ]
       }
     },
