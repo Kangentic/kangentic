@@ -77,10 +77,21 @@ export interface ManagedSession {
    * `/exit`), cleared by a later SessionStart (a `/clear` ends and starts in
    * one go). While it is set the agent-absence sweep may judge the session
    * inside its spawn grace and is asked to look soon, so a terminal whose agent
-   * exited ends within seconds instead of a minute or more. The process tree
-   * stays the judge: a set stamp never ends a terminal whose agent still runs.
+   * exited ends within seconds instead of a minute or more. Where the sweep can
+   * read the process tree it stays the judge: a set stamp never ends a terminal
+   * whose agent still runs. Where it cannot (a WSL shell, or the watcher off),
+   * a stamp that outlives the end settle with no SessionStart ends the
+   * terminal on its own (`COMMAND_TERMINAL_AGENT_END_SETTLE_MS`).
    */
   agentEndSignaledAt?: number | null;
+  /**
+   * For a transient session, epoch ms of the agent's first SessionStart hook.
+   * Set once and never cleared (a `/clear` starts again on a running agent).
+   * With `altScreenEnteredAt`, it is the evidence that the agent started which
+   * the agent-absence sweep waits for before it judges a Command Terminal, so
+   * a shell slow to reach the agent command is not ended as agentless.
+   */
+  agentStartObservedAt?: number | null;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at

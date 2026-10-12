@@ -6,9 +6,9 @@
  * The teardown order is the pty-teardown-grace one: kill, capture awaitExit
  * while the row still exists (it resolves at once for a row that is gone),
  * remove, and only after the captured exit delete the session directory. A
- * young session's kill waits out its exit-sequence grace, and deleting the
- * directory under a still-exiting Claude made its SessionEnd hook write into a
- * missing directory.
+ * young session's kill waits out its exit-sequence grace, and a still-exiting
+ * agent's SessionEnd hook writes into that directory, so `remove()` must not
+ * delete it on the way (the last describe drives that with real files).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -337,5 +337,80 @@ describe('a session spawned through a real SessionManager whose PTY exits', () =
       path.join(session.cwd, '.kangentic', 'sessions', 'task-001'),
       expect.anything(),
     );
+  });
+});
+
+describe('a Command Terminal\'s session directory on a Stop', () => {
+  // A Stop returns at once and the window closes, but the agent may still be
+  // exiting: a young session's kill waits out its exit-sequence grace, and its
+  // SessionEnd hook writes into the session directory. So the directory must
+  // outlive the shell. `remove()` used to delete it synchronously through
+  // SessionFileManager.detachAndDelete, which left the hook writing into a
+  // missing directory and made the deferred delete a no-op.
+  //
+  // The seeded rows above never register session files, so `remove()` had
+  // nothing to delete there; this drives a real spawn with a real directory
+  // and no `fs.promises.rm` mock.
+  //
+  // Red-green: removing the `detachPreservingFiles` call in endCommandTerminal
+  // turns the "still there after the Stop" assertion red.
+  //
+  // Tier: Unit - the in-process pty host over a mocked node-pty.
+
+  let manager: SessionManager;
+  let projectDirectory: string;
+
+  beforeEach(() => {
+    shuttingDown.value = false;
+    projectDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-command-terminal-dir-'));
+    manager = new SessionManager();
+  });
+
+  afterEach(() => {
+    manager.killAll();
+    fs.rmSync(projectDirectory, { recursive: true, force: true });
+  });
+
+  it('keeps the directory until the shell exits, then deletes it', async () => {
+    let exitHandler: ((exitEvent: { exitCode: number }) => void) | null = null;
+    vi.mocked(pty.spawn).mockReturnValue({
+      pid: 23456,
+      cols: 120,
+      rows: 30,
+      onData: vi.fn(),
+      onExit: vi.fn((callback: (exitEvent: { exitCode: number }) => void) => { exitHandler = callback; }),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    } as unknown as pty.IPty);
+    const sessionDirectory = path.join(projectDirectory, '.kangentic', 'sessions', 'made-up-uuid');
+    fs.mkdirSync(sessionDirectory, { recursive: true });
+    const session = await manager.spawn({
+      taskId: 'made-up-uuid',
+      command: '',
+      cwd: projectDirectory,
+      transient: true,
+      commandTerminalSlot: 'slot-1',
+      statusOutputPath: path.join(sessionDirectory, 'status.json'),
+      eventsOutputPath: path.join(sessionDirectory, 'activity.json'),
+    });
+    const timeline: string[] = [];
+    manager.on('exit', (sessionId: string) => { timeline.push(`exit:${sessionId}`); });
+
+    expect(manager.endCommandTerminal(session.id)).toBe('ended');
+
+    // The row is gone and the window may close, but the agent's last hook
+    // write still has somewhere to land.
+    expect(manager.getSession(session.id)).toBeUndefined();
+    expect(fs.existsSync(sessionDirectory)).toBe(true);
+
+    exitHandler!({ exitCode: 0 });
+
+    // The PTY's exit still reaches the awaitExit captured before the remove,
+    // so the delete follows the exit rather than its 10 s safety timeout.
+    await vi.waitFor(() => expect(timeline).toEqual([`exit:${session.id}`]));
+    // A real rm on a loaded Windows runner can pass waitFor's 1 s default;
+    // 3 s stays under the test's own 5 s timeout and far from the 10 s one.
+    await vi.waitFor(() => expect(fs.existsSync(sessionDirectory)).toBe(false), { timeout: 3_000 });
   });
 });

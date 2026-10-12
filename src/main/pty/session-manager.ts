@@ -238,8 +238,42 @@ const MOBILE_USABLE_MIN_ROWS = 20;
  * all - its process exists from the moment it launches, it has just not drawn
  * a frame yet, which is exactly the distinction that makes the process tree a
  * safer signal than a first-output timeout.
+ *
+ * A Command Terminal also waits for evidence its agent started (see
+ * COMMAND_TERMINAL_AGENT_START_CEILING_MS): a shell slower than this grace
+ * would otherwise lose the terminal outright.
  */
 const AGENT_SPAWN_GRACE_MS = 30_000;
+
+/**
+ * How long the agent-absence sweep waits, past the spawn grace, before it
+ * judges a Command Terminal whose agent never showed it started (no
+ * SessionStart, no alt-screen entry). Without a bound, a launch that failed
+ * (the CLI missing, a crash before any hook) would stay a bare shell forever;
+ * with it, that shell stays reachable for up to this long plus a sweep, where
+ * the plain grace allowed 30 s. A PTY-only adapter (no hooks, no alt screen)
+ * always waits this long, so its agent's exit inside the first two minutes
+ * ends the terminal later than the grace alone did.
+ */
+const COMMAND_TERMINAL_AGENT_START_CEILING_MS = 120_000;
+
+/**
+ * How long a Command Terminal the process tree cannot judge (a WSL shell, or
+ * the bg-shell watcher off) waits after its agent's SessionEnd for a
+ * SessionStart before it ends. `/clear` and a `/resume` choice each send
+ * SessionEnd then SessionStart with the agent still running, and this path has
+ * no tree to tell that from an exit, so the settle must outlast the gap.
+ *
+ * Measured on Claude Code 2.1.294 with `scripts/probe-claude-exit-paths.js`:
+ * `/clear` ran the two hooks 148 ms apart, and a `/resume` choice 116 ms
+ * apart. A `/resume` picker left open for 8 s ran no hook at all, so a user
+ * browsing it is not on the clock. 5 s is more than 30 times the larger gap,
+ * and it also outlasts Claude's own exit after the hook (its SessionEnd
+ * budget, 1.5 s by default, then about 0.6 s; see docs/session-lifecycle.md).
+ * Gemini CLI's hooks reference documents a SessionEnd and a SessionStart for
+ * `/clear` too, with no stated gap.
+ */
+const COMMAND_TERMINAL_AGENT_END_SETTLE_MS = 5_000;
 
 export class SessionManager extends EventEmitter {
   private registry = new SessionRegistry();
@@ -344,6 +378,11 @@ export class SessionManager extends EventEmitter {
    * scheduleRestingGridRestore.
    */
   private restingGridTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * Pending Command Terminal end settles, keyed by session. See
+   * noteCommandTerminalAgentEvent.
+   */
+  private agentEndSettleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /**
    * Per-renderer sets of sessions with an xterm MOUNTED, unioned into
    * mountedSessionIds below. Broader than focus on purpose: a PARKED terminal
@@ -928,6 +967,7 @@ export class SessionManager extends EventEmitter {
     // grace), within the bound killAll worked out from the drain's deadline.
     this.host.shutdown(this.hostExitWaitMs);
     for (const sessionId of [...this.restingGridTimers.keys()]) this.cancelRestingGridRestore(sessionId);
+    for (const sessionId of [...this.agentEndSettleTimers.keys()]) this.cancelAgentEndSettle(sessionId);
   }
 
   /**
@@ -1915,6 +1955,7 @@ export class SessionManager extends EventEmitter {
     this.firstOutputTracker.removeSession(sessionId);
     this.inAltScreen.delete(sessionId);
     this.bufferCols.delete(sessionId);
+    this.cancelAgentEndSettle(sessionId);
   }
 
   /**
@@ -1998,10 +2039,17 @@ export class SessionManager extends EventEmitter {
    * kill, capture the exit, THEN remove: awaitExit resolves at once for a row
    * that is gone, and a young session's kill waits out its exit-sequence grace
    * (see kill()). The call returns now, so a window closes at once; only the
-   * session directory's delete waits for the shell, because deleting it under a
-   * still-exiting Claude made its SessionEnd hook write into a missing
-   * directory. `remove()` emits `session-removed`, which is how the renderer
-   * closes the terminal's window and a subscribed phone gets `session-ended`.
+   * session directory's delete waits for the shell, so a still-exiting agent's
+   * SessionEnd hook writes into a directory that exists. The PTY's exit still
+   * reaches the captured wait after the remove, so the delete follows the exit
+   * (awaitExit's 10 s safety timeout bounds a PTY that never reports one).
+   * `remove()` emits `session-removed`, which is how the renderer closes the
+   * terminal's window and a subscribed phone gets `session-ended`.
+   *
+   * `remove()` deletes a session's files itself (SessionFileManager's
+   * `detachAndDelete`), so the files are detached first, keeping them on disk:
+   * that leaves the delete below as the only one. It also covers a Stop that
+   * lands mid-suspend, whose paths the suspend already detached.
    *
    * `immediate` skips the exit-sequence grace for a caller that knows the agent
    * is already gone (the sweep), where the sequence would only reach a shell.
@@ -2013,6 +2061,7 @@ export class SessionManager extends EventEmitter {
     const sessionDirectory = commandTerminalSessionDirectory(session);
     this.kill(sessionId, options);
     const sessionExited = this.awaitExit(sessionId);
+    this.sessionFiles.detachPreservingFiles(sessionId);
     this.remove(sessionId);
     void sessionExited.then(() => removeCommandTerminalDirectory(sessionDirectory));
     return 'ended';
@@ -2202,8 +2251,8 @@ export class SessionManager extends EventEmitter {
    * exited row: a phone must never be left typing into that shell. A transient
    * session whose agent signalled its own end (`agentEndSignaledAt`) skips the
    * spawn grace below, so a `/exit` inside the first 30 s still ends promptly.
-   * The WSL arm below still applies to it, so a WSL Command Terminal is never
-   * judged and outlives its agent as a bare shell until its PTY exits.
+   * The WSL arm below still applies to it: a WSL Command Terminal is ended by
+   * the end settle instead (`noteCommandTerminalAgentEvent`).
    *
    * Each arm below excludes a case where "no agent process under the shell" is
    * NOT a fault:
@@ -2221,6 +2270,15 @@ export class SessionManager extends EventEmitter {
    *   can stall even that. This is the one window where "no agent yet" is
    *   genuinely expected. A SLOW-STARTING agent is not in it: its process
    *   exists, it just has not drawn its first frame.
+   * - a Command Terminal with no evidence its agent started: a shell slower
+   *   than the grace to reach the agent command shows the same empty tree as
+   *   an agent that exited, and a terminal judged then is ended outright (a
+   *   task keeps a resumable row, so it loses nothing and keeps the plain
+   *   grace). Evidence is the agent's own SessionStart or its first alt-screen
+   *   entry, which no shell emits (the first-output latch is not evidence: a
+   *   pwsh preamble trips it). The ceiling bounds the wait for an agent that
+   *   reports neither (a PTY-only adapter, a launch that failed), which would
+   *   otherwise stay a bare shell forever.
    */
   private isAgentAbsenceCandidate(sessionId: string): boolean {
     const session = this.registry.get(sessionId);
@@ -2235,17 +2293,32 @@ export class SessionManager extends EventEmitter {
     // descendant set - indistinguishable from a phantom, and every guard above
     // passes. Judging one would force-kill live work, which is the severe
     // failure direction; refusing to judge it only leaves the pre-existing
-    // phantom, which is the status quo. Detection mirrors `resolveShellArgs`
-    // (pty-spawn.ts), the single owner of the `wsl -d <distro>` spec form.
-    const shellSpec = session.shell.toLowerCase();
-    if (shellSpec.startsWith('wsl ') || shellSpec.startsWith('wsl.exe ')) return false;
+    // phantom, which is the status quo. `canTreeJudgeAgent` holds that test
+    // (`parseWslShellSpec`, which also matches a bare `wsl` that
+    // `resolveShellArgs` does not split), so the end settle covers exactly the
+    // shells this arm refuses. Its watcher half is always true here: only the
+    // sweep, which lives in the watcher, asks.
+    if (!this.canTreeJudgeAgent(session)) return false;
     if (session.status !== 'running' || session.pty === null) return false;
     // The agent said it is ending, so it demonstrably ran: the grace, which
     // exists for an agent that has not started yet, no longer applies.
     if (session.transient && typeof session.agentEndSignaledAt === 'number') return true;
     const startedAtMs = Date.parse(session.startedAt);
     if (!Number.isFinite(startedAtMs)) return false;
-    return Date.now() - startedAtMs >= AGENT_SPAWN_GRACE_MS;
+    const elapsedMs = Date.now() - startedAtMs;
+    if (elapsedMs < AGENT_SPAWN_GRACE_MS) return false;
+    if (!session.transient) return true;
+    const agentStarted = typeof session.agentStartObservedAt === 'number' || session.altScreenEnteredAt !== undefined;
+    return agentStarted || elapsedMs >= COMMAND_TERMINAL_AGENT_START_CEILING_MS;
+  }
+
+  /**
+   * Can the agent-absence sweep's process tree judge this session? Not with
+   * the bg-shell watcher off (the sweep lives in it), and not under a WSL
+   * shell (see the WSL arm in `isAgentAbsenceCandidate`).
+   */
+  private canTreeJudgeAgent(session: ManagedSession): boolean {
+    return this.telemetry.hasAgentAbsenceSweep && parseWslShellSpec(session.shell) === null;
   }
 
   /**
@@ -2253,8 +2326,19 @@ export class SessionManager extends EventEmitter {
    * (a `/exit`) asks the agent-absence sweep to look now rather than at its
    * next 60 s turn, so the terminal ends within seconds of the agent leaving
    * and no bare shell lingers. A SessionStart clears the stamp and withdraws
-   * the request: `/clear` sends both, with the agent still running, and the
-   * sweep's process-tree check is what keeps such a terminal alive either way.
+   * the request: `/clear` and a `/resume` choice send both, with the agent
+   * still running, and the sweep's process-tree check is what keeps such a
+   * terminal alive either way.
+   * The first SessionStart is also the evidence the sweep waits for before it
+   * judges the terminal at all (`agentStartObservedAt`).
+   *
+   * Where the tree cannot judge (`canTreeJudgeAgent`), the SessionEnd is the
+   * only signal there is, so it arms the end settle instead: with no
+   * SessionStart inside `COMMAND_TERMINAL_AGENT_END_SETTLE_MS`, the terminal
+   * ends (`endCommandTerminalAfterAgentEndSettle`). There is no process-tree
+   * backstop on that path, which is why it never replaces the sweep where the
+   * sweep works. An agent with no SessionEnd hook, under WSL or with the
+   * watcher off, still outlives its agent until its PTY exits.
    *
    * Task sessions are untouched: the sweep's slower cadence is fine for a row
    * that only needs its status corrected.
@@ -2264,15 +2348,64 @@ export class SessionManager extends EventEmitter {
     const session = this.registry.get(sessionId);
     if (!session?.transient) return;
     if (event.type === EventType.SessionStart) {
+      session.agentStartObservedAt ??= Date.now();
       session.agentEndSignaledAt = null;
       this.telemetry.cancelAgentAbsenceCheck(sessionId);
+      this.cancelAgentEndSettle(sessionId);
       return;
     }
     // The synthetic SessionEnd a kill emits finds no live PTY and is no
     // candidate; only a running terminal's own end is worth a look.
     if (session.status !== 'running' || session.pty === null) return;
     session.agentEndSignaledAt = Date.now();
-    this.telemetry.requestAgentAbsenceCheck(sessionId);
+    if (this.canTreeJudgeAgent(session)) {
+      this.telemetry.requestAgentAbsenceCheck(sessionId);
+      return;
+    }
+    // A later SessionEnd restarts the settle: the timer that runs out is
+    // always the one armed by the latest SessionEnd.
+    this.cancelAgentEndSettle(sessionId);
+    const timer = setTimeout(() => {
+      this.agentEndSettleTimers.delete(sessionId);
+      this.endCommandTerminalAfterAgentEndSettle(sessionId);
+    }, COMMAND_TERMINAL_AGENT_END_SETTLE_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.agentEndSettleTimers.set(sessionId, timer);
+  }
+
+  private cancelAgentEndSettle(sessionId: string): void {
+    const timer = this.agentEndSettleTimers.get(sessionId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.agentEndSettleTimers.delete(sessionId);
+  }
+
+  /**
+   * The end settle ran out with no SessionStart after the agent's SessionEnd:
+   * the agent exited, so end the terminal. What keeps a live agent's terminal
+   * is the cancels: a SessionStart, a later SessionEnd's re-arm, and the row's
+   * removal each clear the timer. The row is re-checked here only because it
+   * may have been suspended, or its PTY may have exited, during the settle.
+   *
+   * Not `immediate`: unlike the sweep, nothing here saw the agent's process
+   * gone, so `kill()` decides as it does for a Stop (a young session gets the
+   * exit sequence and the grace; a mature one is killed at once).
+   */
+  private endCommandTerminalAfterAgentEndSettle(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.transient) return;
+    if (session.status !== 'running' || session.pty === null) return;
+    this.endCommandTerminalForAgentExit(sessionId, session);
+  }
+
+  /**
+   * End a Command Terminal whose agent exited, however that was noticed (the
+   * sweep, or the end settle). `agent-absent` goes first so the IPC layer can
+   * read the CLI's last words for a failure notice before the row is removed.
+   */
+  private endCommandTerminalForAgentExit(sessionId: string, session: ManagedSession, killOptions?: { immediate?: boolean }): void {
+    this.emit('agent-absent', sessionId, toSession(session));
+    this.endCommandTerminal(sessionId, killOptions);
   }
 
   /**
@@ -2301,6 +2434,15 @@ export class SessionManager extends EventEmitter {
     if (!this.isAgentAbsenceCandidate(sessionId)) return;
     const session = this.registry.get(sessionId);
     if (!session) return;
+    // A Command Terminal ENDS when its agent exits (desktop and phone alike):
+    // its window closes as it does on Stop, and no shell is left for a phone's
+    // `interactive-terminal` to type into. It has no record to resume and no
+    // task to report on, so the exit-code override and the kept `exited` row
+    // below do not apply. Immediate, since the tree saw the agent gone.
+    if (session.transient) {
+      this.endCommandTerminalForAgentExit(sessionId, session, { immediate: true });
+      return;
+    }
     // Say WHY the agent is gone while its last words are still readable. The
     // kill below arrives at the exit listener as INTENTIONAL (the CLI's own
     // end was the event; the sweep only noticed it late), and that listener
@@ -2311,15 +2453,6 @@ export class SessionManager extends EventEmitter {
     // raises the notice; the ring survives the kill, so ordering here is for
     // clarity rather than correctness.
     this.emit('agent-absent', sessionId, toSession(session));
-    // A Command Terminal ENDS when its agent exits (desktop and phone alike):
-    // its window closes as it does on Stop, and no shell is left for a phone's
-    // `interactive-terminal` to type into. It has no record to resume and no
-    // task to report on, so the exit-code override and the kept `exited` row
-    // below do not apply.
-    if (session.transient) {
-      this.endCommandTerminal(sessionId, { immediate: true });
-      return;
-    }
     session.overrideExitCode = 0;
     // Immediate: the agent is already gone, so the exit-sequence grace would
     // only type `/exit` into a bare shell, and the `exited` stamp below would

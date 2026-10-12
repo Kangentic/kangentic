@@ -421,6 +421,15 @@ export class SessionTelemetry {
     this.bgShellWatcher?.cancelAgentAbsenceCheck(sessionId);
   }
 
+  /**
+   * Does the agent-absence sweep run at all? It lives in the bg-shell watcher,
+   * so it is off whenever the watcher is, and a session it cannot judge needs
+   * another way to notice its agent exited (see SessionManager's end settle).
+   */
+  get hasAgentAbsenceSweep(): boolean {
+    return this.bgShellWatcher !== null;
+  }
+
   // ==== Idle-timeout sweep ====
 
   get idleTimeoutMinutes(): number {

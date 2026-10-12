@@ -382,9 +382,10 @@ capability and no agent-name branching. Two things make it correct rather than m
 
 `SessionManager.isAgentAbsenceCandidate` owns every session-shaped arm, so the watcher needs no
 session knowledge. It requires a `running` session with a live PTY, an agent adapter, a non-WSL
-shell, and an elapsed spawn grace. A slow-STARTING agent is not excluded by the grace and does not
-need to be - its process exists, it just has not drawn yet, which is exactly why the process tree is
-a safer signal than a first-output timeout.
+shell (`parseWslShellSpec`, which also matches a bare `wsl` spec), and an elapsed spawn grace. A
+slow-STARTING agent is not excluded by the grace and does not need to be - its process exists, it
+just has not drawn yet, which is exactly why the process tree is a safer signal than a first-output
+timeout. A slow-starting SHELL is another matter, and only a Command Terminal pays for it (below).
 
 **Command Terminals are judged too, and ended rather than kept.** A Command Terminal runs the
 project's agent CLI in a shell at the project root, the same shape as a task session, so the tree
@@ -393,7 +394,20 @@ root after `/exit` for anyone holding the session's input, a paired phone includ
 `retireAgentlessSession` emits `agent-absent` for it and then calls
 `SessionManager.endCommandTerminal(id, { immediate: true })`: the PTY is killed, the row is removed
 (a `session-removed` push, which closes the desktop window), and the session directory is deleted
-after the exit. A terminal has no task to resume into, so there is nothing to keep.
+after the exit. `remove()` would delete it at once through `SessionFileManager.detachAndDelete`, so
+`endCommandTerminal` detaches the files first (`detachPreservingFiles`) and leaves its own
+post-exit delete as the only one. A terminal has no task to resume into, so there is nothing to
+keep.
+
+Because a terminal is ended rather than kept, being judged too early costs it everything. A shell
+slower than the 30s grace to reach the agent command (a heavy profile, a cold machine) shows the
+same empty tree as an agent that exited, so a Command Terminal also waits for evidence that its
+agent started: its first SessionStart (`agentStartObservedAt`, sticky across `/clear`) or its
+first alt-screen entry (`altScreenEnteredAt`), which no shell emits. The first-output latch is not
+evidence, because a pwsh preamble trips it. With neither, the sweep judges the terminal once
+`COMMAND_TERMINAL_AGENT_START_CEILING_MS` (2 minutes) has passed. That ceiling is what still ends
+a launch that failed and an agent with no hooks and no alt screen. Either stays up to two minutes
+instead of 30 seconds. A task keeps the plain grace, since its retirement leaves a resumable row.
 
 The sweep's cadence alone would leave the shell for 1 to 2.5 minutes, so a Command Terminal has a
 fast path. The agent's SessionEnd hook (`onEvent` in `session-manager.ts`) stamps
@@ -404,6 +418,24 @@ confirm still holds, so the end lands about 4s after `/exit`. `/clear` fires Ses
 process stays alive, and the SessionStart that follows clears the stamp and withdraws the request
 (`cancelAgentAbsenceCheck`), so the terminal is kept and the remaining fast looks are not spent. An
 agent with no SessionEnd hook falls back to the plain sweep.
+
+Where the tree cannot judge, the SessionEnd is the only signal. That is a WSL shell, and any shell
+while the bg-shell watcher is off (`SessionTelemetry.hasAgentAbsenceSweep`). There the SessionEnd
+arms `COMMAND_TERMINAL_AGENT_END_SETTLE_MS` (5s) instead of asking the sweep. A SessionStart inside
+it cancels the end; otherwise the terminal emits `agent-absent` and is ended through
+`endCommandTerminal` without `immediate`, since nothing saw the agent's process gone, so `kill()`
+still gives a young session its exit sequence and grace. This path has no tree backstop: a SessionStart that landed after the
+settle would end a live agent. Measured with `scripts/probe-claude-exit-paths.js --mode clear` on
+Claude Code 2.1.294, `/clear` ran SessionEnd (reason `clear`) at 574 ms and SessionStart (source
+`clear`) at 722 ms, 148 ms apart, with Claude still running. In a preview on 2.1.296 under
+`wsl -d Ubuntu`, main received the two events 240 ms apart and kept the terminal, and a later
+`/exit` ended it through the settle. `--mode resume` on 2.1.294 measured the other live pair: a
+`/resume` picker left open for 8 s ran no hook, and choosing a session ran SessionEnd (reason
+`resume`) and SessionStart (source `resume`) 116 ms apart. Gemini CLI's hooks reference documents
+a SessionEnd and a SessionStart for `/clear` as well, with no stated gap.
+
+An agent with no SessionEnd hook, under WSL or with the watcher off, still outlives its agent
+until its PTY exits.
 
 A Command Terminal whose PTY exits on its own (a crash, or the shell killed) also ends: after the
 `exit` emit, the spawn flow's `onPtyExited` hook removes the row and deletes the directory, so a
@@ -1522,11 +1554,11 @@ budget, and no checkout while another running or queued session's cwd is the pro
 
 ### Kill Flow (`SESSION_KILL_TRANSIENT`)
 
-The handler calls `SessionManager.endCommandTerminal`, as a phone's stop and the agent-absence
-sweep do, and throws for a session that is not a Command Terminal.
+The handler calls `SessionManager.endCommandTerminal`, as a phone's stop, the agent-absence sweep
+and the end settle do, and throws for a session that is not a Command Terminal.
 
-1. `kill()` the session (a young one gets its exit sequence and the 1500 ms grace), capture `awaitExit`, then `remove()` it from `SessionManager`, which announces `session-removed`; the handler returns at once, so the window closes immediately
-2. Once the process has exited, delete the session directory from disk again (best-effort cleanup)
+1. `kill()` the session (a young one gets its exit sequence and the 1500 ms grace) and capture `awaitExit`, then detach the session files without deleting them (`detachPreservingFiles`) and `remove()` the row from `SessionManager`, which announces `session-removed`; the handler returns at once, so the window closes immediately
+2. Once the process has exited, delete the session directory from disk (best-effort). This is the only delete, so the agent's SessionEnd hook still has a directory to write into
 
 Transient sessions are counted by the `session_spawn` analytics event with `isTransient: true`
 (volume) and by `feature_used: command_terminal` (adoption); see [analytics.md](analytics.md).

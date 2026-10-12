@@ -1298,4 +1298,18 @@ describe('SessionTelemetry: agent-absence sweep wiring (isAgentAbsenceCandidate 
 
     expect(retired).toEqual([]);
   });
+
+  it('reports whether the sweep runs at all, which SessionManager reads to pick the end settle', () => {
+    // With the watcher off there is no sweep, so a Command Terminal's agent
+    // exit has to be noticed from its SessionEnd alone.
+    telemetry = buildTelemetry({});
+    expect(telemetry.hasAgentAbsenceSweep).toBe(true);
+    telemetry.dispose();
+
+    telemetry = new SessionTelemetry(
+      { ...makeCallbacks(log), getSessionRootPid: (sessionId) => rootPids.get(sessionId) },
+      { processTreeProbe: probe, disableBgShellWatcher: true },
+    );
+    expect(telemetry.hasAgentAbsenceSweep).toBe(false);
+  });
 });
