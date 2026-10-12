@@ -43,6 +43,14 @@ vi.mock('../../src/main/db/database', () => ({
     harness.opened.push(projectId);
     return harness.dbs.get(projectId) ?? null;
   },
+  // A project in the harness is open. One left out is a project that would not
+  // open, as a locked database is: the engine's look at it throws. Neither
+  // records an open, since only a read that would create or migrate does.
+  getOpenProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
+  peekProjectDb: (projectId: string) => {
+    if (!harness.dbs.has(projectId)) throw new Error(`database for ${projectId} is locked`);
+    return null;
+  },
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: harness.handleTaskMove }));
 vi.mock('../../src/main/git/fetch-throttle', () => ({ forgetRecentFetches: vi.fn() }));
@@ -196,6 +204,21 @@ describe('the workflow engine host and links to gone tasks', () => {
     expect(new WorkflowRepository(dbOf('home')).getById(workflowId)!.revision).toBe(revisionBefore);
   });
 
+  it('still drops a provably gone link, and starts its task, in a pass that cannot read some other board', async () => {
+    // The unread board withholds completions and starts that wait on a task
+    // there. A link to a task provably gone from a readable board is neither.
+    projects.push({ id: 'locked', name: 'locked-board', path: '/mock/locked' });
+    const { workflowId, blockerId, dependentId } = workflowAcrossBoards();
+    dbOf('mobile').prepare('DELETE FROM tasks WHERE id = ?').run(blockerId);
+
+    // Past the debounce, for the turn the pass yields between two looks at
+    // unopened boards.
+    await advance(DEBOUNCE_MS + 50);
+
+    expect(linksOf(workflowId)).toEqual([]);
+    expect(startsOf(dependentId)).toHaveLength(1);
+  });
+
   it('drops the link of a blocker whose task moved to another workflow', async () => {
     const { workflowId, blockerId, dependentId } = workflowAcrossBoards();
     dbOf('mobile').prepare("UPDATE tasks SET workflow_id = 'another-workflow' WHERE id = ?").run(blockerId);
@@ -239,11 +262,10 @@ describe('the workflow engine host and links to gone tasks', () => {
     expect(linksOf(workflowId)).toHaveLength(2);
     expect(startsOf(dependentId)).toHaveLength(0);
     expect(startsOf(secondDependent)).toHaveLength(0);
-    // A pass opens the project twice: once asking whether it homes a workflow,
-    // once reading this workflow's tasks. The link checks reuse that failure and
-    // open it no further, since a fresh open per link would wait out the busy
-    // timeout each time.
-    expect(harness.opened.filter((projectId) => projectId === 'mobile')).toHaveLength(2);
+    // A pass looks at the project once (the engine's look, which fails here) and
+    // opens it not at all. The link checks reuse that failure, since a fresh open
+    // per link would wait out the busy timeout each time.
+    expect(harness.opened.filter((projectId) => projectId === 'mobile')).toHaveLength(0);
     expect(emitBoardChanged).not.toHaveBeenCalled();
   });
 
