@@ -535,7 +535,7 @@ Resume is a subcommand in Codex (not a flag like Claude). Both forms emit the sa
 
 Codex reads MCP servers from the `mcp_servers.<name>` table in `~/.codex/config.toml`. Kangentic applies the same keys with `-c` for that invocation only, so the user's config file is never written. `env_http_headers` maps a header name to the NAME of an environment variable that Codex resolves at MCP-connect time, so the token travels via `CodexAdapter.buildEnv` as `KANGENTIC_MCP_TOKEN` and never appears in argv (argv is echoed into terminal scrollback the user can read).
 
-**The `-c` payloads deliberately contain no quotes, braces, or whitespace.** `quoteArg` escapes embedded double quotes as `\"` on Windows, which PowerShell does not accept when forwarding to a native command, so the natural TOML inline-table form fails there with `error: unexpected argument 'http://...\' found`. Two properties make the quote-free form work: a bare URL fails TOML parsing and is taken as a literal string, and TOML bare keys permit `-`, so the header name works as a dotted key segment. Verified against codex-cli 0.141.0 on PowerShell, cmd, and Git Bash. Do not "tidy" these into quoted TOML.
+**The `-c` payloads deliberately contain no quotes, braces, or whitespace.** `quoteArg` cannot deliver an embedded double quote on Windows: it writes one as `'` (see `escapeForDoubleQuotedShell` in [cross-platform.md](cross-platform.md)), so the natural TOML inline-table form cannot arrive as written. A `\"` escape breaks it under PowerShell with `error: unexpected argument 'http://...\' found`. Two properties make the quote-free form work: a bare URL fails TOML parsing and is taken as a literal string, and TOML bare keys permit `-`, so the header name works as a dotted key segment. Verified against codex-cli 0.141.0 on PowerShell, cmd, and Git Bash. Do not "tidy" these into quoted TOML.
 
 ### Directory Trust
 
@@ -807,6 +807,7 @@ aider --message "prompt text" --chat-mode <mode> --no-auto-commits
 
 - `--message` delivers the prompt (shell-safe quoting applied)
 - `--no-auto-commits` prevents Aider from auto-committing (Kangentic manages git)
+- `--notifications --notifications-command` runs `node <event-bridge> <events file> idle` when Aider waits for input. Aider runs it through its own shell, so the paths are written bare when they allow it. A path that cannot be carried through the outer shell drops the pair, and the prompt regex stays the idle signal (see `isBareShellToken` in [cross-platform.md](cross-platform.md))
 
 ### Permission Modes
 
@@ -820,7 +821,7 @@ aider --message "prompt text" --chat-mode <mode> --no-auto-commits
 ### Limitations
 
 - No session resume (no `--resume` equivalent)
-- No structured status or event output
+- No structured status output; idle comes from the notifications command above or the prompt regex
 - No hooks, settings merge, or trust mechanism
 - No TUI alternate screen - uses streaming text output
 

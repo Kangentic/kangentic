@@ -15,6 +15,7 @@ import path from 'node:path';
 import {
   escapeForDoubleQuotedShell,
   escapePercentForCmd,
+  isBareShellToken,
   isCmdShell,
   isPowerShellShell,
   isUnixLikeShell,
@@ -171,12 +172,17 @@ export function buildSpawnClearPrelude(shellName: string): string {
 
 /**
  * Convert the executable path at the start of a command string for the
- * target shell. Only transforms on Windows; returns unmodified on macOS/Linux.
+ * target shell.
  *
- *  - PowerShell: prefix with `& ` call operator
- *  - Git Bash:   C:\path → /c/path
- *  - WSL:        C:\path → /mnt/c/path
+ *  - PowerShell: prefix with `& ` call operator, on every platform
+ *  - Git Bash:   C:\path → /c/path (Windows only)
+ *  - WSL:        C:\path → /mnt/c/path (Windows only)
  *  - cmd:        no conversion
+ *
+ * PowerShell's `& ` applies on macOS and Linux too, where pwsh can be the login
+ * shell `getDefaultShell` returns. Its parser reads a quoted head followed by
+ * flags as a string expression and fails ("Unexpected token"), and quoteArg
+ * quotes any head outside the bare token set (a Homebrew `node@22` path).
  *
  * `platform` is injectable for tests (cross-platform parity); production
  * callers omit it.
@@ -186,13 +192,13 @@ export function adaptCommandForShell(
   shellName: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  if (platform !== 'win32') return cmd;
-
   const lower = shellName.toLowerCase();
 
   if (isPowerShellShell(lower)) {
     return '& ' + cmd;
   }
+
+  if (platform !== 'win32') return cmd;
 
   if (isUnixLikeShell(lower)) {
     const isWsl = lower.startsWith('wsl');
@@ -216,11 +222,14 @@ export function adaptCommandForShell(
  * When `shell` is provided, quoting style is chosen by shell type:
  *  - Unix-like shells (bash, zsh, fish, WSL): single-quotes (no expansion)
  *  - PowerShell: double-quotes, backtick escaping, backslash left alone
- *  - cmd.exe: double-quotes, C-runtime backslash escaping, backtick left alone,
- *    and each `%` broken out of the quotes so cmd cannot expand `%NAME%`
+ *  - cmd.exe: double-quotes, a trailing backslash run doubled for the C runtime,
+ *    backtick left alone, and each `%` broken out of the quotes so cmd cannot
+ *    expand `%NAME%`
  *
- * The two Windows branches are NOT interchangeable; `escapeForDoubleQuotedShell`
- * and `escapePercentForCmd` in `./shell-quote` carry the measured round-trips.
+ * Both Windows branches write a content `"` as `'`, the only form no Windows
+ * shell lets out of the argument. The two branches are otherwise NOT
+ * interchangeable; `escapeForDoubleQuotedShell` and `escapePercentForCmd` in
+ * `./shell-quote` carry the measured round-trips.
  *
  * When `shell` is omitted, falls back to platform detection:
  *  - Windows: the PowerShell branch
@@ -262,7 +271,7 @@ export function quoteArg(
   if (arg === '--' && shell !== undefined && isPowerShellShell(shell)) {
     return '"--"';
   }
-  if (/^[a-zA-Z0-9_./:-]+$/.test(arg)) {
+  if (isBareShellToken(arg)) {
     return arg;
   }
   const useDoubleQuotes = shell
@@ -352,8 +361,8 @@ export function convertWindowsExePath(cmd: string, isWsl: boolean): string {
   // backtracks exponentially on adversarial input.
 
   // Like the single-quoted branch below, the converted path is re-emitted
-  // quoted unconditionally: quoteArg's win32 fallback (a transient session
-  // with no shell hint) double-quotes the cliPath, and stripping the quotes
+  // quoted unconditionally: quoteArg's win32 fallback (a caller that passes
+  // no shell) double-quotes the cliPath, and stripping the quotes
   // on a spaceless path would let shell-active characters in a legal
   // Windows path (& parens) become live bash syntax.
   if (cmd.startsWith('"')) {

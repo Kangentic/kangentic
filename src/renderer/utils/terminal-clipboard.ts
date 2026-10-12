@@ -1,5 +1,5 @@
 import { Terminal } from '@xterm/xterm';
-import { escapeForDoubleQuotedShell, isCmdShell, isUnixLikeShell } from '../../shared/shell-quote';
+import { escapeForDoubleQuotedShell, isBareShellToken, isCmdShell, isUnixLikeShell } from '../../shared/shell-quote';
 import type { PastedImageCapability } from '../../shared/types';
 import { useAgentDriveStore } from '../stores/agent-drive-store';
 
@@ -150,10 +150,8 @@ export function convertPathForShell(filePath: string, shellName: string): string
  * renderer has no access to, hence the local fallback below.
  */
 export function quoteForShell(filePath: string, shellName?: string): string {
-  // Simple paths need no quoting (alphanumeric + common path chars).
-  // Backslashes excluded - they're escape chars in Unix-like shells.
-  // Regex matches quoteArg() in src/shared/paths.ts.
-  if (/^[a-zA-Z0-9_./:-]+$/.test(filePath)) return filePath;
+  // Simple paths need no quoting. The same test quoteArg uses.
+  if (isBareShellToken(filePath)) return filePath;
 
   if (!shellName) {
     // Fallback: quote if spaces present (best-effort without shell context)

@@ -217,9 +217,10 @@ export class GrokCommandBuilder {
 
   private quotePrompt(prompt: string, shell: string | undefined): string {
     // For double-quoted shells (PowerShell, cmd), replace double quotes with
-    // single quotes to prevent quoting breakage: quoteArg wraps in "..." and
-    // escapes " as \" which PowerShell misinterprets. Single-quoted shells
-    // (bash, zsh, WSL) preserve double quotes literally - no replacement.
+    // single quotes. quoteArg does the same for every value it quotes for
+    // those shells (escapeForDoubleQuotedShell).
+    // Single-quoted shells (bash, zsh, WSL) preserve double quotes literally,
+    // so they get no replacement.
     const needsDoubleQuoteReplacement = shell
       ? !isUnixLikeShell(shell)
       : process.platform === 'win32';

@@ -123,12 +123,11 @@ export function codexMcpWiringEnabled(
  * permit `-`, which lets the header name be a dotted key segment instead of an
  * inline table.
  *
- * Measured against codex-cli 0.141.0: the quoted form `url="http://..."`
- * becomes `url=\"http://...\"` after quoteArg's Windows escaping, and
- * PowerShell splits that into multiple argv tokens, so Codex dies with
- * `error: unexpected argument 'http://...\' found`. The form below was
- * verified on PowerShell, cmd, and Git Bash via `codex mcp list --json`, and
- * end to end against a live Kangentic MCP server.
+ * A quoted value such as `url="http://..."` cannot arrive as written on
+ * Windows, because quoteArg writes a content `"` as `'` there
+ * (escapeForDoubleQuotedShell). The form below was verified against codex-cli
+ * 0.141.0 on PowerShell, cmd, and Git Bash via `codex mcp list --json`, and end
+ * to end against a live Kangentic MCP server.
  */
 function buildMcpConfigArgs(options: CodexCommandOptions): string[] {
   if (!codexMcpWiringEnabled(options)) return [];

@@ -13,8 +13,8 @@ name: Shell quoting against real Windows shells
 # task-reap-real-processes.yml: ci.yml runs at its 21-job concurrency ceiling
 # (see the note at the top of that file), and this only has something to say
 # when the escapes, the code that builds the quoted line, or these tests change.
-# The Claude command builder is in the filter because the cmd round trip types
-# its real output.
+# The Claude command builder and the Aider adapter are in the filter because the
+# round trips type their real output.
 
 on:
   pull_request:
@@ -24,10 +24,12 @@ on:
       - 'src/shared/paths.ts'
       - 'src/main/agent/shared/cli-print.ts'
       - 'src/main/agent/adapters/claude/command-builder.ts'
+      - 'src/main/agent/adapters/aider/aider-adapter.ts'
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/auto-name-clean.test.ts'
       - 'tests/unit/shell-quote.test.ts'
+      - 'tests/unit/aider-adapter.test.ts'
       - 'vitest.config.ts'
       - '.github/workflows/shell-quoting-windows.yml'
   push:
@@ -37,10 +39,12 @@ on:
       - 'src/shared/paths.ts'
       - 'src/main/agent/shared/cli-print.ts'
       - 'src/main/agent/adapters/claude/command-builder.ts'
+      - 'src/main/agent/adapters/aider/aider-adapter.ts'
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/auto-name-clean.test.ts'
       - 'tests/unit/shell-quote.test.ts'
+      - 'tests/unit/aider-adapter.test.ts'
       - 'vitest.config.ts'
       - '.github/workflows/shell-quoting-windows.yml'
   workflow_dispatch:
@@ -78,4 +82,4 @@ jobs:
         # pwsh missing from the runner fails the run instead of skipping half of it.
         env:
           KANGENTIC_SHELL_PROBE_REQUIRE_ALL_HOSTS: '1'
-        run: npx vitest run tests/unit/command-builder.test.ts tests/unit/auto-name-clean.test.ts tests/unit/shell-quote.test.ts
+        run: npx vitest run tests/unit/command-builder.test.ts tests/unit/auto-name-clean.test.ts tests/unit/shell-quote.test.ts tests/unit/aider-adapter.test.ts

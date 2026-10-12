@@ -235,8 +235,8 @@ export class CommandBuilder {
     // The prompt as positional argument (omitted for resumed sessions)
     if (options.prompt) {
       // For double-quoted shells (PowerShell, cmd), replace double quotes
-      // with single quotes to prevent quoting breakage: quoteArg wraps in
-      // "..." and escapes " as \" which PowerShell misinterprets.
+      // with single quotes. quoteArg does the same for every value it quotes
+      // for those shells (escapeForDoubleQuotedShell).
       // For single-quoted shells (bash, zsh, WSL), double quotes inside
       // single-quoted strings are preserved literally - no replacement needed.
       const needsDoubleQuoteReplacement = shell
