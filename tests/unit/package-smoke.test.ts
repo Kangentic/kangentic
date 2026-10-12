@@ -172,7 +172,7 @@ describe('package smoke: the log check', () => {
       '{"level":"warn","args":["[retrieval-worker] sqlite-vec unavailable, semantic search disabled:","Error"]}',
       '{"level":"error","args":["[SHUTDOWN] hard-failsafe:fired"]}',
       '{"level":"warn","args":["[TASK-REAP] reap failed (non-fatal): Cannot find module koffi"]}',
-      '{"level":"warn","args":["[TASK-REAP] host reap failed (non-fatal):","Error: pty host request timed out"]}',
+      '{"level":"warn","args":["[TASK-REAP] host reap failed (non-fatal):","PtyHostTimeoutError: The pty host did not answer reapTaggedProcesses in time"]}',
       '{"level":"warn","args":["[PTY-HOST] Toolhelp process listing failed; the watcher falls back to the PowerShell probe:","Error"]}',
     ];
     const found = findFailureMarkers(lines);
