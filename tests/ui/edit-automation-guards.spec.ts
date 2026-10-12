@@ -343,6 +343,73 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(maxRunsLabel).toHaveAttribute('data-dimmed', 'true');
   });
 
+  // 1b - Maximum runs: the arrow keys step from what is typed ───────────────
+
+  /**
+   * Open a new Notify automation named Ping, turn Frequency on, and step
+   * Maximum runs to 3 with the plus button. A click commits, so 3 is the
+   * committed value and nothing is being typed yet. Returns the value input.
+   */
+  async function openMaximumRunsAtThree(): Promise<Locator> {
+    await openColumn('Executing');
+    await addThroughPicker('enter', 'notify');
+    await editDialog().locator('[data-testid="edit-automation-name"]').fill('Ping');
+    await card('frequency').getByText(FREQUENCY_DESCRIPTION).click();
+    const increment = editDialog().locator('[data-testid="edit-automation-max-runs-increment"]');
+    await increment.click();
+    await increment.click();
+    const maxRuns = editDialog().locator('[data-testid="edit-automation-max-runs-value"]');
+    await expect(maxRuns).toHaveValue('3');
+    return maxRuns;
+  }
+
+  test('ArrowUp in Maximum runs steps from what is typed and commits it, so the blur keeps the step', async () => {
+    const maxRuns = await openMaximumRunsAtThree();
+
+    // 7 is typed over the committed 3 and not yet committed. ArrowUp must step
+    // from the 7 (to 8) and clear the typed text. Stepping from the committed
+    // 3 left the typed 7 showing, and the blur then committed 7 over the step.
+    await maxRuns.fill('7');
+    await expect(maxRuns).toHaveValue('7');
+    await maxRuns.press('ArrowUp');
+    await expect(maxRuns).toHaveValue('8');
+
+    // After the blur the field shows the committed value, so this reads what
+    // the dialog's draft holds, not leftover typed text.
+    await maxRuns.blur();
+    await expect(maxRuns).toHaveValue('8');
+
+    // The draft carries it out of the dialog: the row's Frequency mark says 8.
+    await editDialog().locator('[data-testid="edit-automation-done"]').click();
+    await expect(editDialog()).toBeHidden();
+    await expect(frequencyMark('Ping')).toHaveAttribute('aria-label', 'Frequency: at most 8 times for each task.');
+  });
+
+  test('ArrowDown in Maximum runs steps from what is typed and commits it, so the blur keeps the step', async () => {
+    const maxRuns = await openMaximumRunsAtThree();
+
+    await maxRuns.fill('7');
+    await expect(maxRuns).toHaveValue('7');
+    await maxRuns.press('ArrowDown');
+    await expect(maxRuns).toHaveValue('6');
+
+    await maxRuns.blur();
+    await expect(maxRuns).toHaveValue('6');
+  });
+
+  test('an arrow key in Maximum runs with nothing typed steps from the committed value', async () => {
+    const maxRuns = await openMaximumRunsAtThree();
+
+    await maxRuns.press('ArrowUp');
+    await expect(maxRuns).toHaveValue('4');
+    await maxRuns.press('ArrowDown');
+    await expect(maxRuns).toHaveValue('3');
+
+    // Nothing was typed, so the blur has nothing to commit over the steps.
+    await maxRuns.blur();
+    await expect(maxRuns).toHaveValue('3');
+  });
+
   test('the guards set in the dialog show on the row, and Save persists them', async () => {
     await setAutomationAgent({ agent: 'claude', model: 'sonnet' });
     await openColumn('Executing');

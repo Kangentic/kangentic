@@ -285,6 +285,60 @@ describe('the Workflows view operations', () => {
       expect(byHand(api.id, 'Testing')).toMatch(/is locked while/);
     });
 
+    describe('when the lock cannot read the task\'s workflow', () => {
+      /** An agent that is not the task's own, moving it out of To Do: the lock's plain refusal while the workflow reads. */
+      async function startedTaskMove() {
+        const { api } = await started();
+        const task = new TaskRepository(homeDb()).getById(api.id)!;
+        const move = () => lock.checkWorkflowMove(context, {
+          projectId: 'home',
+          task,
+          toSwimlaneId: laneId('home', 'Executing'),
+          origin: 'agent',
+          moverIsTaskAgent: false,
+        });
+        return { task, move };
+      }
+
+      it('allows the move and logs the read failure, naming the workflow, the task and the error', async () => {
+        const { task, move } = await startedTaskMove();
+        // The control: the same move is refused while the workflow can be read.
+        expect(move()).toMatch(/is locked while/);
+
+        const readFailure = new Error('database disk image is malformed');
+        const readSpy = vi.spyOn(WorkflowRepository.prototype, 'getById').mockImplementation(() => {
+          throw readFailure;
+        });
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try {
+          expect(move()).toBeNull();
+
+          expect(warnSpy).toHaveBeenCalledTimes(1);
+          const [message, logged] = warnSpy.mock.calls[0];
+          expect(message).toMatch(/^\[WORKFLOW-LOCK\] Could not read workflow .*, so the move is allowed:$/);
+          expect(message).toContain(task.workflow_id);
+          expect(message).toContain(task.id.slice(0, 8));
+          expect(logged).toBe(readFailure);
+        } finally {
+          warnSpy.mockRestore();
+          readSpy.mockRestore();
+        }
+      });
+
+      it('allows the move without a log when the workflow is gone: an ordinary task, not a failed read', async () => {
+        const { move } = await startedTaskMove();
+        const readSpy = vi.spyOn(WorkflowRepository.prototype, 'getById').mockReturnValue(undefined);
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try {
+          expect(move()).toBeNull();
+          expect(warnSpy).not.toHaveBeenCalled();
+        } finally {
+          warnSpy.mockRestore();
+          readSpy.mockRestore();
+        }
+      });
+    });
+
     it('shows a moved task as current, the columns before it done and the rest ahead', async () => {
       const { workflow, api } = await started();
       const tasks = new TaskRepository(homeDb());

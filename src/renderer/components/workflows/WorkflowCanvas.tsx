@@ -15,6 +15,7 @@ import {
   type NodeChange,
   type NodeMouseHandler,
   type OnNodeDrag,
+  type XYPosition,
 } from '@xyflow/react';
 import type { WorkflowColumnEnd, WorkflowDetail } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
@@ -122,6 +123,13 @@ function reseedNodes(current: WorkflowFlowNode[], derived: WorkflowFlowNode[]): 
 export interface WorkflowCanvasTarget {
   homeProjectId: string;
   workflowId: string;
+}
+
+/** Arrow-key places waiting to be saved, each card's latest, and the workflow they were made on. */
+interface PendingKeyMoves {
+  workflow: WorkflowCanvasTarget;
+  positions: Map<string, XYPosition>;
+  timer: number;
 }
 
 interface WorkflowCanvasProps {
@@ -359,7 +367,7 @@ export function WorkflowCanvas({
   // supersedes them. A workflow switch unmounts the canvas after the store has
   // already selected the next workflow, so the save cannot ask the store whose
   // places these are.
-  const pendingKeyMoves = useRef<{ workflow: WorkflowCanvasTarget; positions: Map<string, { x: number; y: number }>; timer: number } | null>(null);
+  const pendingKeyMoves = useRef<PendingKeyMoves | null>(null);
   const onMoveCardsRef = useRef(onMoveCards);
   useEffect(() => { onMoveCardsRef.current = onMoveCards; }, [onMoveCards]);
   const takeKeyMoves = useCallback(() => {
@@ -396,7 +404,7 @@ export function WorkflowCanvas({
     // is that, at the drop, so the drag's start renders nothing.
     onSelectTask(draggedNode.id);
     // One save: any arrow-key place still waiting, then the drag's own places over it.
-    const positions = takeKeyMoves()?.positions ?? new Map<string, { x: number; y: number }>();
+    const positions = takeKeyMoves()?.positions ?? new Map<string, XYPosition>();
     for (const movedNode of moved) positions.set(movedNode.id, { x: movedNode.position.x, y: movedNode.position.y });
     onMoveCards([...positions].map(([key, position]) => ({ key, ...position })), { homeProjectId, workflowId });
   }, [onMoveCards, onSelectTask, takeKeyMoves, homeProjectId, workflowId]);
@@ -431,7 +439,7 @@ export function WorkflowCanvas({
     if (!node) return;
     const pending = pendingKeyMoves.current;
     if (pending) window.clearTimeout(pending.timer);
-    const positions = pending?.positions ?? new Map<string, { x: number; y: number }>();
+    const positions = pending?.positions ?? new Map<string, XYPosition>();
     positions.set(selectedTaskKey, { x: node.position.x, y: node.position.y });
     pendingKeyMoves.current = { workflow: { homeProjectId, workflowId }, positions, timer: window.setTimeout(saveKeyMoves, KEY_MOVE_SAVE_DELAY_MS) };
   }, [onSelectTask, selectedTaskKey, reactFlow, homeProjectId, workflowId, saveKeyMoves]);

@@ -75,6 +75,11 @@ export interface WorkflowTaskView {
   taskId: string | null;
   displayId: number | null;
   projectId: string;
+  /**
+   * Its board's project name when that is not the workflow's own project, else
+   * null. Task numbers count per board, so two boards can each have a #7.
+   */
+  board: string | null;
   title: string;
   /** Where it is: a column name, or "To Do (not created yet)" for a planned task. */
   column: string;
@@ -110,6 +115,9 @@ export { workflowTasks };
 
 export function readWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowView {
   const workflow = requireWorkflow(homeProjectId, workflowId);
+  const boardOf = (projectId: string): string | null => (
+    projectId === homeProjectId ? null : context.projectRepo.getById(projectId)?.name ?? projectId
+  );
   if (workflow.state === 'draft') {
     const draft = workflow.draft ?? { tasks: [], links: [] };
     const tasks = draft.tasks.map((planned): WorkflowTaskView => {
@@ -120,6 +128,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
         taskId: planned.existing_task_id,
         displayId: null,
         projectId,
+        board: boardOf(projectId),
         title: planned.title,
         column: 'To Do (created at Start)',
         place: 'planned',
@@ -134,9 +143,13 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
 
   const created = workflowTasks(context, homeProjectId, workflowId);
   const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflowId);
+  // A blocker on another board is named with its board, since its number alone
+  // can match a task on this one.
   const keyOf = (taskId: string): string => {
     const entry = created.find((candidate) => candidate.task.id === taskId);
-    return entry ? `#${entry.task.display_id}` : `(removed ${taskId.slice(0, 8)})`;
+    if (!entry) return `(removed ${taskId.slice(0, 8)})`;
+    const board = boardOf(entry.projectId);
+    return board === null ? `#${entry.task.display_id}` : `#${entry.task.display_id} on "${board}"`;
   };
   const tasks = created.map(({ projectId, task }): WorkflowTaskView => {
     const lanes = safeLanes(projectId);
@@ -147,6 +160,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       taskId: task.id,
       displayId: task.display_id,
       projectId,
+      board: boardOf(projectId),
       title: task.title,
       column: lane?.name ?? 'an unknown column',
       place,

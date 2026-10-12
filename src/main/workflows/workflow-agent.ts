@@ -267,6 +267,9 @@ export function openWorkflowAgent(
 ): Promise<WorkflowAgentStatus> {
   const existing = findWorkflowAgentSession(context, workflowId);
   if (existing) return Promise.resolve({ session: existing, unavailable: null });
+  // A Pause recorded with no agent to stop, or for one since gone, is not this
+  // new agent's: kept, it would turn away every restart for read access.
+  userPaused.delete(workflowId);
   return startOnce(context, homeProjectId, workflowId, grid);
 }
 

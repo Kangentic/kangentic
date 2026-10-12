@@ -9,7 +9,8 @@
  * - that restart waits out a turn the user started in the tick before it ran
  *   (the access stays owed), leaves a Pause the user pressed while the
  *   agent was stopping standing, and stays owed when the suspend fails, so
- *   the next idle edge retries it;
+ *   the next idle edge retries it, unless the agent is no longer running
+ *   by then (a Resume or a new start reads the grant from the row);
  * - a restart whose suspend worked but whose start then threw, after the new
  *   agent was already running, owes nothing: the new agent has the access, and
  *   owing it again would stop and respawn a healthy agent at every idle edge.
@@ -235,6 +236,42 @@ describe('the workflow agent\'s reads across projects', () => {
         expect(suspend).toHaveBeenLastCalledWith('session-suspend-fails');
         // The retry's own start fails here (the MCP server is off) and logs; let it settle before the spy goes.
         await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    // The agent left `running` while the restart's suspend was failing: the idle
+    // auto-suspend got there first, or the CLI exited under it. Whatever runs
+    // next, a Resume or a new start, reads the grant from the workflow row, so
+    // nothing is owed. Owing it anyway would stop that agent at its first idle edge.
+    it.each(['suspended', 'exited'])('owes nothing when its suspend fails with the agent %s, so an agent that runs again is left alone at its idle edge', async (statusAtFailure) => {
+      const sessionId = 'session-left-running';
+      const workflowId = idleAgent(sessionId);
+      const suspendFailure = new Error('the session was no longer running');
+      suspend.mockImplementationOnce(async (stoppedSessionId: string) => {
+        const stopped = sessions.find((session) => session.id === stoppedSessionId);
+        if (stopped) stopped.status = statusAtFailure;
+        throw suspendFailure;
+      });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+        await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Could not restart with the new project access'),
+          suspendFailure,
+        ));
+        expect(suspend).toHaveBeenCalledTimes(1);
+
+        // An agent runs again and goes idle. Were the access still owed, this edge would restart it.
+        const returning = sessions.find((session) => session.id === sessionId);
+        if (returning) returning.status = 'running';
+        manager.emit('activity', sessionId, 'idle');
+        // The restart, were it owed, was queued first, so it has run by the time this resolves.
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(startAttempts).not.toHaveBeenCalled();
       } finally {
         errorSpy.mockRestore();
       }

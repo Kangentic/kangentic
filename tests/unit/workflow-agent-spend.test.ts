@@ -24,6 +24,14 @@
  * records the effort the agent started with (until its session is removed), and
  * spawns at the size the pane last had: a measured grid wins, then the grid
  * recorded on the workflow row, then this run's last start.
+ *
+ * Restart for new checkouts. The restart runs through the whole start, so what
+ * it tells the new agent is observable on the command it built:
+ * - a Pause pressed with no agent to stop, or for one since gone, is not the
+ *   next agent's, so a pane open that starts one clears it and a request for
+ *   another checkout still restarts that agent;
+ * - when the restart's suspend fails, the older grant it carried never
+ *   overwrites a newer one a request stored while it was stopping.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -190,7 +198,7 @@ describe('a workflow\'s own agent: spend and conversation', () => {
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-workflow-spend-'));
-    paths = { home: path.join(root, 'home'), mobile: path.join(root, 'mobile') };
+    paths = { home: path.join(root, 'home'), mobile: path.join(root, 'mobile'), relay: path.join(root, 'relay') };
     for (const checkout of Object.values(paths)) fs.mkdirSync(checkout);
     harness.dbs.clear();
     for (const projectId of ['home', 'mobile']) {
@@ -214,6 +222,7 @@ describe('a workflow\'s own agent: spend and conversation', () => {
     projects = [
       { id: 'home', name: 'kangentic', path: paths.home, default_agent: null, default_model: null, default_effort: null as string | null },
       { id: 'mobile', name: 'kangentic-mobile', path: paths.mobile, default_agent: null, default_model: null, default_effort: null as string | null },
+      { id: 'relay', name: 'kangentic-relay', path: paths.relay, default_agent: null, default_model: null, default_effort: null as string | null },
     ];
     harness.retrievalCall.mockReset();
     harness.retrievalCall.mockResolvedValue({ outcome: 'indexed' });
@@ -608,6 +617,119 @@ describe('a workflow\'s own agent: spend and conversation', () => {
 
       expect(lastSpawn().cols).toBeUndefined();
       expect(lastSpawn().rows).toBeUndefined();
+    });
+  });
+
+  describe('the restart for new checkouts', () => {
+    interface BuiltCommand {
+      prompt?: string;
+      resume: boolean;
+      readableDirectories: string[];
+    }
+
+    beforeEach(() => {
+      // The lifecycle's activity listener is what restarts an agent at its next idle.
+      agent.registerWorkflowAgentLifecycle(context);
+    });
+
+    /** The options the nth start (0 is the first) built its command from. */
+    function builtCommand(startIndex: number): BuiltCommand {
+      return (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand.mock.calls[startIndex][0];
+    }
+
+    /** The pane's open starts the agent; it is then idle, the state a restart for a new checkout needs. */
+    async function openIdleAgent(): Promise<string> {
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      if (!status.session) throw new Error(`The agent did not start: ${status.unavailable}`);
+      manager.activity[status.session.id] = 'idle';
+      return status.session.id;
+    }
+
+    /** A macrotask turn: a restart runs one turn after the edge or request that queued it. */
+    const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
+
+    /** Asking an idle agent for the mobile checkout stops it and starts it again, on its conversation, told why. */
+    async function expectRestartedForMobile(agentSessionId: string): Promise<void> {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+
+      await vi.waitFor(() => expect(manager.suspend).toHaveBeenCalledWith(agentSessionId));
+      await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(2));
+      expect(builtCommand(1)).toMatchObject({ resume: true, readableDirectories: [paths.mobile] });
+      expect(builtCommand(1).prompt).toContain(`kangentic-mobile at ${paths.mobile}`);
+      // The spawn is the restart's last awaited step; a turn drains what follows it.
+      await nextTurn();
+      expect(errorSpy).not.toHaveBeenCalled();
+    }
+
+    describe('after a Pause the new agent never had', () => {
+      it('restarts the agent a pane open started after a Pause pressed with no agent to stop', async () => {
+        // Nothing runs, so there is no session to suspend: only the user's intent is recorded.
+        await agent.pauseWorkflowAgent(context, workflowId);
+        expect(manager.suspend).not.toHaveBeenCalled();
+
+        const agentSessionId = await openIdleAgent();
+
+        expect(manager.spawn).toHaveBeenCalledTimes(1);
+        await expectRestartedForMobile(agentSessionId);
+      });
+
+      it('restarts the agent a pane open started after the paused agent\'s session left the registry', async () => {
+        addAgentSession();
+        await agent.pauseWorkflowAgent(context, workflowId);
+        expect(manager.suspend).toHaveBeenCalledWith('pty-agent');
+        manager.remove('pty-agent');
+
+        const agentSessionId = await openIdleAgent();
+
+        expect(manager.spawn).toHaveBeenCalledTimes(1);
+        await expectRestartedForMobile(agentSessionId);
+      });
+    });
+
+    describe('when its suspend fails after a newer request stored its grant', () => {
+      it('keeps the newer grant, so the restart that follows tells the agent about every checkout it is owed', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const agentSessionId = await openIdleAgent();
+        const suspendFailure = new Error('the session would not suspend');
+        let failRestartSuspend!: (error: Error) => void;
+        manager.suspend.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+          failRestartSuspend = reject;
+        }));
+
+        // The older grant: the mobile checkout, owed to an idle agent, so its restart begins at once.
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+        await vi.waitFor(() => expect(manager.suspend).toHaveBeenCalledTimes(1));
+
+        // The newer grant, stored while that suspend is still stopping the agent. A turn is
+        // under way, so the request is owed to the turn's end and queues no restart of its own.
+        manager.activity[agentSessionId] = 'thinking';
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'relay').when).toBe('next-turn');
+
+        failRestartSuspend(suspendFailure);
+        await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Could not restart with the new project access'),
+          suspendFailure,
+        ));
+        expect(manager.spawn).toHaveBeenCalledTimes(1);
+
+        // The turn ends. The restart it owes says what the newer grant says: both checkouts.
+        // (Both grants name the same home project, so the line the agent is told after
+        // the restart is what tells the two apart. The readable directories do not: a
+        // start reads them from the workflow row, which holds both whichever grant won.)
+        manager.activity[agentSessionId] = 'idle';
+        manager.emit('activity', agentSessionId, 'idle');
+        await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(2));
+
+        const restart = builtCommand(1);
+        expect(restart.prompt).toContain(`kangentic-relay at ${paths.relay}`);
+        expect(restart.prompt).toContain(`kangentic-mobile at ${paths.mobile}`);
+        expect([...restart.readableDirectories].sort()).toEqual([paths.mobile, paths.relay].sort());
+        await nextTurn();
+        // Only the failed suspend logged: the restart that followed went through.
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

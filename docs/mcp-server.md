@@ -1006,8 +1006,10 @@ The project's workflows with their state (not started, running, paused) and prog
 
 One workflow: its state, its `revision`, and each task with its column, route and what it waits
 for. A workflow not started lists its planned tasks by key, each with any run setting that is not
-the default, in `kangentic_save_workflow`'s own names (`baseBranch "develop", useWorktree false,
-profile "Heavy"`), so a plan read and sent back keeps them. `data` carries every task's
+the default, in `kangentic_save_workflow`'s own names (`project "API", baseBranch "develop",
+useWorktree false, profile "Heavy"`), so a plan read and sent back keeps them. A started task on
+another project's board says which (`#7 ... In Review on board "API"`), and so does a blocker
+there (`Waits for #7 on "API"`), since task numbers count per board. `data` carries every task's
 `runSettings` in the task row's shape.
 
 | Parameter | Type | Required | Description |

@@ -70,7 +70,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_get_workflow',
     {
-      description: 'Read one workflow: its state, its revision (pass it back to kangentic_save_workflow), and each task with its column, route, what it waits for, and, before Start, any settings that are not the default (base branch, worktree, profile or agent override) in kangentic_save_workflow\'s own names.',
+      description: 'Read one workflow: its state, its revision (pass it back to kangentic_save_workflow), and each task with its column, its board when that is another project\'s, route, what it waits for, and, before Start, any settings that are not the default (project, base branch, worktree, profile or agent override) in kangentic_save_workflow\'s own names.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),

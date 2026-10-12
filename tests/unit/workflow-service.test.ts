@@ -192,6 +192,79 @@ describe('workflow operations', () => {
     expect(phone.waitsFor).toHaveLength(1);
   });
 
+  describe('which board a task is on, in the read model', () => {
+    // Task numbers count per board, so the home board's first task and the second
+    // board's first task are both #1. The read model names the board of a task
+    // that is not on the home board, and of a blocker that is not, so the
+    // agent-facing text can tell the two #1s apart.
+
+    /** api and ui on the home board, phone on the second. The phone task blocks api, and api blocks ui. */
+    function planAcrossBoards() {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, {
+        title: 'Usage budgets',
+        tasks: [
+          { key: 'api', title: 'Budgets API' },
+          { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' },
+          { key: 'ui', title: 'Budgets UI' },
+        ],
+        links: [{ blocker: 'phone', blocked: 'api' }, { blocker: 'api', blocked: 'ui' }],
+      });
+      return workflow;
+    }
+
+    const taskTitled = (view: service.WorkflowView, title: string): service.WorkflowTaskView => {
+      const task = view.tasks.find((candidate) => candidate.title === title);
+      if (!task) throw new Error(`No task "${title}" in the workflow.`);
+      return task;
+    };
+
+    it('names the project of a planned task on another board, and no project for one on the home board', () => {
+      const workflow = planAcrossBoards();
+
+      const view = service.readWorkflow(context, 'home', workflow.id);
+
+      expect(taskTitled(view, 'Budgets on the phone').board).toBe('kangentic-mobile');
+      expect(taskTitled(view, 'Budgets API').board).toBeNull();
+      expect(taskTitled(view, 'Budgets UI').board).toBeNull();
+    });
+
+    it('names the board of a started task on another board, and names a blocker there by it when its number matches a home task', async () => {
+      const workflow = planAcrossBoards();
+      await service.startWorkflow(context, 'home', workflow.id);
+
+      const view = service.readWorkflow(context, 'home', workflow.id);
+
+      const api = taskTitled(view, 'Budgets API');
+      const phone = taskTitled(view, 'Budgets on the phone');
+      const ui = taskTitled(view, 'Budgets UI');
+      // The pinned ambiguity: each board's first task is #1.
+      expect(phone.displayId).toBe(api.displayId);
+      expect(phone.board).toBe('kangentic-mobile');
+      expect(api.board).toBeNull();
+      expect(ui.board).toBeNull();
+      expect(api.waitsFor).toEqual([`#${phone.displayId} on "kangentic-mobile"`]);
+      // A blocker on the home board stays a bare number.
+      expect(ui.waitsFor).toEqual([`#${api.displayId}`]);
+    });
+
+    it('falls back to the project id when the board\'s project is no longer registered', async () => {
+      const workflow = planAcrossBoards();
+      await service.startWorkflow(context, 'home', workflow.id);
+      const registeredProject = context.projectRepo.getById.bind(context.projectRepo);
+      vi.spyOn(context.projectRepo, 'getById').mockImplementation((projectId: string) => (
+        projectId === 'mobile' ? undefined : registeredProject(projectId)
+      ));
+
+      const view = service.readWorkflow(context, 'home', workflow.id);
+
+      const api = taskTitled(view, 'Budgets API');
+      const phone = taskTitled(view, 'Budgets on the phone');
+      expect(phone.board).toBe('mobile');
+      expect(api.waitsFor).toEqual([`#${phone.displayId} on "mobile"`]);
+    });
+  });
+
   describe('the task a workflow was made from', () => {
     let wake: ReturnType<typeof vi.fn>;
 

@@ -880,8 +880,8 @@ board:
   what the migration did to the same row in the database.
 - A row filed under a trigger its type does not run on (a `move_to_column` row in `onEnter` or
   `onExit`) is skipped: it would run inside the move that fired it.
-- A `maxRuns` below 1 or not a number, or a blank `condition`, reads as off. A fraction is rounded
-  down.
+- A `maxRuns` below 1 or not a number reads as off, and a fraction is rounded down. Each one warns,
+  since the MCP writer refuses all three. A blank `condition` reads as off with no warning.
 - A second row with a name already used in the same column is renamed (`Notify 2`).
 - An `automations` value that is not an object, or an `onEnter` / `onTurnEnd` / `onExit` that is not a list
   (`{}`, or a single row written without brackets), keeps that column's current automations

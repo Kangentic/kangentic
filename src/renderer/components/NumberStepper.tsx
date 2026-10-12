@@ -34,6 +34,15 @@ export function NumberStepper({ value, onChange, min = 1, max = 999, disabled = 
     if (Number.isFinite(parsed)) onChange(clamp(parsed));
   };
 
+  // An arrow key steps from what is typed, when something is, and commits it:
+  // stepping from the committed value would leave the typed text showing, and
+  // the blur would then commit it over the step.
+  const stepBy = (delta: number): void => {
+    const parsed = typed === null ? Number.NaN : Number.parseInt(typed, 10);
+    setTyped(null);
+    onChange(clamp((Number.isFinite(parsed) ? parsed : value) + delta));
+  };
+
   const stepButtonClass = 'flex h-[30px] w-[30px] cursor-pointer select-none items-center justify-center text-fg-muted '
     + 'transition-colors hover:text-fg-secondary disabled:cursor-default disabled:text-fg-disabled';
 
@@ -63,8 +72,8 @@ export function NumberStepper({ value, onChange, min = 1, max = 999, disabled = 
         onBlur={commitTyped}
         onKeyDown={(event) => {
           if (event.key === 'Enter') commitTyped();
-          if (event.key === 'ArrowUp') { event.preventDefault(); onChange(clamp(value + 1)); }
-          if (event.key === 'ArrowDown') { event.preventDefault(); onChange(clamp(value - 1)); }
+          if (event.key === 'ArrowUp') { event.preventDefault(); stepBy(1); }
+          if (event.key === 'ArrowDown') { event.preventDefault(); stepBy(-1); }
         }}
         className="h-[30px] w-9 border-x border-edge-input bg-transparent text-center tabular-nums text-fg-secondary focus:outline-none disabled:cursor-default"
       />

@@ -251,8 +251,7 @@ export function resolveEffectiveAutoCommand(
  * one. `BoardProfileEntry.autoCommand` is the retired key that used to do it.
  */
 export function resolveColumnMessage(
-  automations: ReadonlyArray<Pick<ColumnAutomation, 'id' | 'type' | 'trigger' | 'enabled' | 'position' | 'config'>
-    & Partial<Pick<ColumnAutomation, 'condition' | 'max_runs'>>>,
+  automations: ReadonlyArray<Pick<ColumnAutomation, 'id' | 'type' | 'trigger' | 'enabled' | 'position' | 'config' | 'condition' | 'max_runs'>>,
 ): { id: string; message: string; mode: AutoCommandMode; guarded: boolean } | null {
   const row = [...automations]
     .filter((candidate) => candidate.type === 'send_message' && candidate.trigger === 'enter' && candidate.enabled)

@@ -33,7 +33,9 @@ import { setWorkflowRuntimeContext } from './workflow-runtime';
  * - **Never a timer of its own beyond a debounce.** It wakes on a board change,
  *   a freed agent slot, a turn end, a start or resume, and project open, and a
  *   burst of those coalesces into one pass after `DEBOUNCE_MS`. A pass that
- *   finds nothing running costs one indexed query per project.
+ *   finds nothing running costs one indexed query per project, once every
+ *   project's database is open. The first pass after launch opens, and
+ *   migrates, each registered project's database that is not open yet.
  * - **Never awaits a whole move.** A start is `handleTaskMove` with origin
  *   `'workflow'`; the host tracks it as in flight until it settles, so a pass in
  *   the meantime never issues it twice, and the next pass sees where it landed.

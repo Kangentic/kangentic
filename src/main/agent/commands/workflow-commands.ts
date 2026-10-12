@@ -95,7 +95,9 @@ export function formatWorkflow(view: WorkflowView): string {
       const waits = task.waitsFor.length > 0 ? ` Waits for ${task.waitsFor.join(', ')}.` : '';
       const route = task.route.length > 0 ? task.route.join(' > ') : '(no columns: straight to Done)';
       const settings = workflow.state === 'draft' ? describeRunSettings(task) : '';
-      lines.push(`- ${label} ${task.title}. In ${task.column}. Route: ${route}.${waits}${settings}`);
+      // A planned task's board is in its settings, as save_workflow's `project`.
+      const board = task.board !== null && workflow.state !== 'draft' ? ` on board "${task.board}"` : '';
+      lines.push(`- ${label} ${task.title}. In ${task.column}${board}. Route: ${route}.${waits}${settings}`);
     }
   }
   return lines.join('\n');
@@ -109,6 +111,7 @@ export function formatWorkflow(view: WorkflowView): string {
 function describeRunSettings(task: WorkflowTaskView): string {
   const settings = task.runSettings;
   const parts: string[] = [];
+  if (task.board !== null) parts.push(`project "${task.board}"`);
   if (settings.base_branch) parts.push(`baseBranch "${settings.base_branch}"`);
   if (settings.use_worktree !== null) parts.push(`useWorktree ${settings.use_worktree === 1}`);
   if (task.profileName) parts.push(`profile "${task.profileName}"`);
