@@ -15,7 +15,7 @@
  *   agent was already running, owes nothing: the new agent has the access, and
  *   owing it again would stop and respawn a healthy agent at every idle edge.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -136,7 +136,8 @@ describe('the workflow agent\'s reads across projects', () => {
     expect(read(workflow.id).agent_read_project_ids).toEqual(['relay']);
   });
 
-  it('restarts a working agent when its turn ends, and an idle one at once', async () => {
+  // The working agent's restart at its turn's end is pinned in "the restart for new read access" below.
+  it('leaves a working agent\'s turn alone, and restarts an idle one at once', async () => {
     const working = service.createWorkflow('home', {});
     sessions.push({ id: 'session-working', workflowId: working.id, status: 'running' });
     activity['session-working'] = 'thinking';
@@ -150,17 +151,28 @@ describe('the workflow agent\'s reads across projects', () => {
     activity['session-idle'] = 'idle';
     // The restart's own start fails here (no config in this context) and logs; the suspend is what matters.
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(agent.requestWorkflowAgentProjectAccess(context, 'home', idle.id, 'mobile').when).toBe('now');
-    await vi.waitFor(() => expect(suspend).toHaveBeenCalledWith('session-idle'));
-    errorSpy.mockRestore();
+    try {
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', idle.id, 'mobile').when).toBe('now');
+      await vi.waitFor(() => expect(suspend).toHaveBeenCalledWith('session-idle'));
+      // The start runs after the suspend resolves: let it log before the spy goes.
+      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Could not restart with the new project access'),
+        expect.anything(),
+      ));
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   describe('the restart for new read access', () => {
     /** Every call is a start the restart attempted: the start reads the config first, and finds the MCP server off. */
     let startAttempts: ReturnType<typeof vi.fn>;
     let manager: EventEmitter;
+    /** A start that comes back unavailable warns; quiet here, and read by the test that pins it. */
+    let warnSpy: MockInstance<typeof console.warn>;
 
     beforeEach(() => {
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       startAttempts = vi.fn(() => ({ mcpServer: { enabled: false }, agent: { cliPaths: {} } }));
       Object.assign(context.configManager, { getEffectiveConfig: startAttempts });
       // An emitter, so the lifecycle's activity listener (the next idle) can be driven.
@@ -173,6 +185,10 @@ describe('the workflow agent\'s reads across projects', () => {
       });
       Object.assign(context, { sessionManager: manager });
       agent.registerWorkflowAgentLifecycle(context);
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
     });
 
     /** An idle running agent for a new workflow, owed a restart for `mobile`'s checkout. */
@@ -190,6 +206,30 @@ describe('the workflow agent\'s reads across projects', () => {
 
       await vi.waitFor(() => expect(startAttempts).toHaveBeenCalledTimes(1));
       expect(suspend).toHaveBeenCalledWith('session-control');
+    });
+
+    it('leaves the agent suspended and says why when its start cannot run, and owes nothing', async () => {
+      const sessionId = 'session-start-unavailable';
+      const workflowId = idleAgent(sessionId);
+      // A suspend that works: the row stays, suspended.
+      suspend.mockImplementationOnce(async (stoppedSessionId: string) => {
+        const stopped = sessions.find((session) => session.id === stoppedSessionId);
+        if (stopped) stopped.status = 'suspended';
+      });
+
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+
+      // The start reads the config, finds the MCP server off, and comes back unavailable.
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/could not start again: .*MCP server/)));
+      expect(startAttempts).toHaveBeenCalledTimes(1);
+
+      // Nothing is owed: an agent that runs again is left alone at its idle edge.
+      const returning = sessions.find((session) => session.id === sessionId);
+      if (returning) returning.status = 'running';
+      manager.emit('activity', sessionId, 'idle');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(suspend).toHaveBeenCalledTimes(1);
+      expect(startAttempts).toHaveBeenCalledTimes(1);
     });
 
     it('does not suspend an agent whose turn began again before the restart ran, and restarts it at its next idle', async () => {
@@ -234,7 +274,7 @@ describe('the workflow agent\'s reads across projects', () => {
         await vi.waitFor(() => expect(startAttempts).toHaveBeenCalledTimes(1));
         expect(suspend).toHaveBeenCalledTimes(2);
         expect(suspend).toHaveBeenLastCalledWith('session-suspend-fails');
-        // The retry's own start fails here (the MCP server is off) and logs; let it settle before the spy goes.
+        // The retry's own start comes back unavailable here (the MCP server is off) and warns; let it settle.
         await new Promise((resolve) => setImmediate(resolve));
       } finally {
         errorSpy.mockRestore();

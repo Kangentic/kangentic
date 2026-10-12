@@ -217,12 +217,20 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
     if (userPaused.has(workflowId)) return;
     // An open already in flight (the user's Resume) starts it with the grant,
     // so this start joins that one, and the line is not said either.
-    await startOnce(context, pending.homeProjectId, workflowId, lastGrid.get(workflowId) ?? {}, pending.message);
+    const restarted = await startOnce(context, pending.homeProjectId, workflowId, lastGrid.get(workflowId) ?? {}, pending.message);
+    // A start that cannot run (the MCP server turned off, the CLI gone) leaves
+    // the agent suspended, as a Pause would, and the pane offers Resume, which
+    // shows the same reason. Nothing is owed: that start reads the grant.
+    if (!restarted.session) {
+      console.warn(`[WORKFLOW-AGENT] Stopped to read new project access, but could not start again: ${restarted.unavailable}`);
+    }
   } catch (error) {
     console.error('[WORKFLOW-AGENT] Could not restart with the new project access:', error);
     // A suspend that failed leaves the agent running without the access it was
-    // promised. Owe it again, so its next idle edge retries. A start that threw
-    // after its spawn left an agent that has the access, so nothing is owed.
+    // promised. Owe it again, so its next idle edge retries. Once the suspend
+    // worked nothing is owed: a start that threw after its spawn left an agent
+    // that has the access, and one that threw before it left the agent
+    // suspended, so its next start reads the grant from the workflow row.
     if (!suspended && findWorkflowAgentSession(context, workflowId)?.status === 'running' && !pendingAccess.has(workflowId)) {
       pendingAccess.set(workflowId, pending);
     }
