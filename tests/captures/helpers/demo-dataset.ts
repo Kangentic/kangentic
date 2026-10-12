@@ -630,10 +630,16 @@ export const DEMO_BACKLOG: DemoBacklogItem[] = [
  *   - Codex: no effort levels. Its effort is config.toml only, so Kangentic offers none
  *     (discoverCodexCapabilities), and its models come from session history: the one recorded.
  *   - Copilot: the --reasoning-effort choices its help lists, and its recorded model.
+ *
+ * `reportsTurnEnd` is each adapter's `runtime.reportsTurnEnd`, as main's agent list reports it,
+ * and the Column Manager reads it: Codex says nothing when a turn ends, so On agent turn end is
+ * blocked on a Codex column. The mock's own list leaves it out, which reads as runnable everywhere.
+ * tests/unit/scene-registry.test.ts holds every entry here to its adapter.
  */
 export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
   claude: {
     version: '2.1.270',
+    reportsTurnEnd: true,
     capabilities: {
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       supportsModelOverride: true,
@@ -642,12 +648,14 @@ export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
   },
   codex: {
     found: true, path: '/usr/local/bin/codex', version: '0.141.0',
+    reportsTurnEnd: false,
     capabilities: { supportsModelOverride: true, models: [CODEX.id], effortLevels: [] },
   },
-  gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0' },
-  opencode: { found: true, path: '/usr/local/bin/opencode', version: '1.18.30' },
+  gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0', reportsTurnEnd: true },
+  opencode: { found: true, path: '/usr/local/bin/opencode', version: '1.18.30', reportsTurnEnd: true },
   copilot: {
     found: true, path: '/usr/local/bin/copilot', version: '1.0.83',
+    reportsTurnEnd: true,
     capabilities: { supportsModelOverride: true, models: [COPILOT.id], effortLevels: ['low', 'medium', 'high', 'xhigh'] },
   },
 };

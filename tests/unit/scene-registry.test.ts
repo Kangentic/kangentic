@@ -75,6 +75,28 @@ function agentsWithAuthProbe(): Set<string> {
   return probed;
 }
 
+/**
+ * Each agent's `runtime.reportsTurnEnd`, read the same way from its `*-adapter.ts` file. Main's
+ * agent list reports it, and the Column Manager blocks On agent turn end on a column whose agent
+ * says false. The mock's own list leaves it out, which reads as true, so a demo agent that does
+ * not carry its adapter's value draws a turn-end group the desktop would refuse.
+ */
+function adapterTurnEndReports(): Map<string, boolean> {
+  const reports = new Map<string, boolean>();
+  for (const folder of fs.readdirSync(AGENT_ADAPTERS_ROOT, { withFileTypes: true })) {
+    if (!folder.isDirectory()) continue;
+    const folderPath = path.join(AGENT_ADAPTERS_ROOT, folder.name);
+    for (const fileName of fs.readdirSync(folderPath)) {
+      if (!fileName.endsWith('-adapter.ts')) continue;
+      const source = fs.readFileSync(path.join(folderPath, fileName), 'utf-8');
+      const agentName = source.match(/readonly name = '([^']+)'/)?.[1];
+      const reported = source.match(/^\s+reportsTurnEnd: (true|false),/m)?.[1];
+      if (agentName && reported) reports.set(agentName, reported === 'true');
+    }
+  }
+  return reports;
+}
+
 const DEMO_STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
 /** What a session patch may carry, and the values each field takes (DemoState.sessions). */
 const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
@@ -352,6 +374,54 @@ describe('scene registry', () => {
     }
     // Vacuity guard: welcome-setup is the scene that seeds a signed-out agent.
     expect(checked).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reports each agent\'s turn end as its adapter does', () => {
+    // The sample install's Code Review column runs Codex, which says nothing when a turn ends, so
+    // the desktop blocks On agent turn end there. Before the overrides carried the flag, every
+    // Column Manager scene showed that group as runnable.
+    const reports = adapterTurnEndReports();
+    expect(reports.get('claude'), 'the Claude adapter no longer declares reportsTurnEnd; was it renamed?').toBe(true);
+    expect(reports.get('codex'), 'the Codex adapter no longer declares reportsTurnEnd; was it renamed?').toBe(false);
+    for (const [agentName, override] of Object.entries(DEMO_AGENT_OVERRIDES)) {
+      expect(reports.has(agentName), `DEMO_AGENT_OVERRIDES names ${agentName}, which has no adapter declaring reportsTurnEnd`).toBe(true);
+      expect(override.reportsTurnEnd, `DEMO_AGENT_OVERRIDES.${agentName}.reportsTurnEnd`).toBe(reports.get(agentName));
+    }
+    // A scene's own agent list replaces the dataset's whole, so one that sets the flag is held to it too.
+    for (const scene of scenes) {
+      const agents = (scene.seeds?.__mockAgentListOverrides ?? {}) as Record<string, Record<string, unknown>>;
+      for (const [agentName, override] of Object.entries(agents)) {
+        if (override.reportsTurnEnd === undefined) continue;
+        expect(override.reportsTurnEnd, `${scene.name}.seeds.__mockAgentListOverrides.${agentName}.reportsTurnEnd`).toBe(reports.get(agentName));
+      }
+    }
+  });
+
+  it('links only workflow members the sample install seeds', () => {
+    // The mock leaves out a link whose end is not a task in its workflow, with no error: a renamed
+    // task id would drop a line from the canvas and a waiting card's Blocked by, and the figure
+    // would still boot. Every end must be a row the install seeds that the scene patches into
+    // the same workflow.
+    const taskIds = new Set(DEMO_TASKS.map((task) => task.id));
+    let checked = 0;
+    for (const scene of scenes) {
+      const seeds = (scene.seeds ?? {}) as {
+        __mockWorkflows?: Array<{ workflow: { id: string } }>;
+        __mockWorkflowLinks?: Array<{ workflow_id: string; blocker_task_id: string; blocked_task_id: string }>;
+      };
+      const workflowIds = new Set((seeds.__mockWorkflows ?? []).map((entry) => entry.workflow.id));
+      const memberOf = new Map((scene.tasks ?? []).map((patch) => [patch.id, patch.workflow_id]));
+      for (const link of seeds.__mockWorkflowLinks ?? []) {
+        checked += 1;
+        expect(workflowIds.has(link.workflow_id), `${scene.name} links tasks in ${link.workflow_id}, which it does not seed`).toBe(true);
+        for (const end of [link.blocker_task_id, link.blocked_task_id]) {
+          expect(taskIds.has(end), `${scene.name} links unknown task ${end}`).toBe(true);
+          expect(memberOf.get(end), `${scene.name} links ${end} without patching it into ${link.workflow_id}`).toBe(link.workflow_id);
+        }
+      }
+    }
+    // Vacuity guard: the workflows and board-workflow scenes both seed links.
+    expect(checked).toBeGreaterThanOrEqual(2);
   });
 
   it('has one settings scene per settings tab, and no other', () => {

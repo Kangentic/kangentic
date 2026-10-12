@@ -22,7 +22,7 @@ import { SCENES } from '../captures/scenes';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
-  SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_MIDDLEWARE, TASK_WEBSOCKET,
+  SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
@@ -35,6 +35,28 @@ const SWIMLANE_NAMES = DEMO_LANES_BY_PROJECT[PROJECT_CONTOSO].map((lane) => lane
 
 /** Every session in the sample install is a Monitor row, whichever project it belongs to. */
 const MONITOR_ROW_COUNT = DEMO_SESSIONS.length;
+
+/**
+ * How many stops each Harden the API card's step track draws (the workflows scenes' seed): To Do,
+ * each column on its route, and Done. Contoso has five route columns, and Refactor API error
+ * handling skips Planning. A route read across every project's columns drew about seventeen.
+ */
+const WORKFLOW_TRACK_STOPS: Record<string, number> = {
+  'task-cw-done-schema': 7,
+  'task-cw-done-logging': 7,
+  [TASK_MIDDLEWARE]: 7,
+  'task-cw-rate-limit': 7,
+  [TASK_AUTH]: 7,
+  'task-cw-api-errors': 6,
+};
+
+/** The stops each element's step track draws, keyed by the attribute that names its task. */
+async function trackStopCounts(elements: Locator, keyAttribute: string): Promise<Record<string, number>> {
+  return elements.evaluateAll((nodes, attribute) => Object.fromEntries(nodes.map((node) => [
+    node.getAttribute(attribute) ?? '',
+    node.querySelectorAll('[data-testid="workflow-step-track"] > [data-step-state]').length,
+  ])), keyAttribute);
+}
 
 type DemoServer = Awaited<ReturnType<typeof startDemoServer>>;
 
@@ -171,6 +193,12 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(dialog.locator('[data-testid="column-effort-override"]')).toHaveCount(0);
     // Automation-free on purpose: column-automation is the configured counterpart.
     await expect(dialog.locator('[data-testid="column-automation-row"]')).toHaveCount(0);
+    // Codex reports no turn end (its adapter, carried by DEMO_AGENT_OVERRIDES), so On agent turn
+    // end is blocked here as on the desktop, while enter still offers Add automation.
+    const group = (trigger: string): Locator => dialog.locator(`[data-testid="column-automation-group"][data-trigger="${trigger}"]`);
+    await expect(group('turn_end').locator('[data-testid="column-automation-group-blocked"]')).toContainText('can\'t report when it finishes a turn');
+    await expect(group('turn_end').locator('[data-testid="column-automation-add"]')).toHaveCount(0);
+    await expect(group('enter').locator('[data-testid="column-automation-add"]')).toBeVisible();
   },
   'column-automation': async (page) => {
     // The same column as edit-columns, plus the one row column-handoff counts in its On enter cell.
@@ -178,6 +206,71 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(dialog.locator('input[data-testid="column-agent-override"]')).toHaveValue('Codex CLI');
     await expect(dialog.locator('[data-testid="column-automation-row"]')).toHaveCount(1);
     await expect(dialog.locator('[data-testid="column-automation-row"]')).toContainText('Ask for a review pass');
+  },
+  'column-automation-turn-end': async (page) => {
+    // The review loop on Testing: two Move to column rows at the turn end, in the order the runner
+    // reads them, runnable because Claude reports a turn end, each with the marks
+    // describeAutomationMarks gives it.
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    const turnEnd = dialog.locator('[data-testid="column-automation-group"][data-trigger="turn_end"]');
+    const rows = turnEnd.locator('[data-testid="column-automation-row"]');
+    expect(await rows.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-name')))).toEqual(['Send findings back', 'On to Merge']);
+    await expect(turnEnd.locator('[data-testid="column-automation-row"][data-can-run="false"]')).toHaveCount(0);
+    await expect(turnEnd.locator('[data-testid="column-automation-group-blocked"]')).toHaveCount(0);
+    const expected = [
+      { marks: ['column-automation-condition-mark', 'column-automation-frequency-mark', 'column-automation-message-mark'], count: '3', sentence: 'Moves the task to Executing' },
+      { marks: ['column-automation-condition-mark', 'column-automation-frequency-mark'], count: '1', sentence: 'Moves the task to Merge' },
+    ];
+    for (const [index, row] of expected.entries()) {
+      const target = rows.nth(index);
+      const marks = await target.locator('[data-testid="column-automation-row-title"]').evaluate((line) =>
+        Array.from(line.querySelectorAll('[data-testid$="-mark"]')).map((mark) => mark.getAttribute('data-testid')));
+      expect(marks).toEqual(row.marks);
+      await expect(target.locator('[data-testid="column-automation-frequency-count"]')).toHaveText(row.count);
+      await expect(target.locator('[data-testid="column-automation-row-sentence"]')).toHaveText(row.sentence);
+    }
+    // Sibling negative: the Testing form's enter group holds none of the board's other rows.
+    await expect(dialog.locator('[data-testid="column-automation-group"][data-trigger="enter"] [data-testid="column-automation-row"]')).toHaveCount(0);
+  },
+  workflows: async (page) => {
+    const view = page.locator('[data-testid="workflows-view"]');
+    const cards = view.locator('[data-testid="workflow-canvas-card"]');
+    await expect(cards).toHaveCount(Object.keys(WORKFLOW_TRACK_STOPS).length);
+    // Nothing selected, so every link shows its own state: met where its blocker is done, open
+    // where it is not. A selection would restyle the links around it and fade the rest.
+    await expect(view.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveCount(0);
+    await expect(view.locator('path.react-flow__edge-path[data-link-state="satisfied"]')).toHaveCount(2);
+    await expect(view.locator('path.react-flow__edge-path[data-link-state="pending"]')).toHaveCount(3);
+    // Each track runs over contoso's own columns: the mock reads a route on the task's own board.
+    expect(await trackStopCounts(cards, 'data-workflow-task-key')).toEqual(WORKFLOW_TRACK_STOPS);
+    await expect(view.locator('[data-testid="workflow-run-order-row"]')).toHaveCount(Object.keys(WORKFLOW_TRACK_STOPS).length);
+    await expect(view.locator('[data-testid="workflow-agent-pane"]')).toHaveAttribute('data-collapsed', 'true');
+  },
+  'workflow-draft': async (page) => {
+    // A plan before Start: four planned cards (no board task behind any), the middle one selected,
+    // and every link lit around it, one it waits for and two that wait for it.
+    const view = page.locator('[data-testid="workflows-view"]');
+    const cards = view.locator('[data-testid="workflow-canvas-card"]');
+    await expect(cards).toHaveCount(4);
+    await expect(view.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveAttribute('data-workflow-task-key', 'task-2');
+    await expect(view.locator('[data-testid="workflow-inspector-title"]')).toContainText('Add the invoice PDF route');
+    await expect(view.locator('[data-testid="workflow-start"]')).toBeVisible();
+    await expect(view.locator('path.react-flow__edge-path[data-link-relation="blocker"]')).toHaveCount(1);
+    await expect(view.locator('path.react-flow__edge-path[data-link-relation="dependent"]')).toHaveCount(2);
+    // Planned tracks run over contoso's own columns too; the tests task starts at Executing.
+    expect(await trackStopCounts(cards, 'data-workflow-task-key')).toEqual({ 'task-1': 7, 'task-2': 7, 'task-3': 7, 'task-4': 6 });
+    await expect(view.locator('[data-testid="workflow-agent-pane"]')).toHaveAttribute('data-collapsed', 'true');
+  },
+  'board-workflow': async (page) => {
+    // The four members still on the board carry the strip; the two done ones are archived.
+    const live = [TASK_AUTH, 'task-cw-api-errors', TASK_MIDDLEWARE, 'task-cw-rate-limit'];
+    const cards = page.locator(live.map((id) => `[data-task-id="${id}"]`).join(', '));
+    await expect(page.locator('[data-testid="workflow-card-strip"]')).toHaveCount(live.length);
+    expect(await trackStopCounts(cards, 'data-task-id')).toEqual(Object.fromEntries(live.map((id) => [id, WORKFLOW_TRACK_STOPS[id]])));
+    // One blocker is named; two are counted (boardWaiting).
+    await expect(page.locator(`[data-task-id="${TASK_AUTH}"] [data-testid="workflow-status-bar"]`)).toContainText('Blocked by #4');
+    await expect(page.locator('[data-task-id="task-cw-api-errors"] [data-testid="workflow-status-bar"]')).toContainText('Blocked by 2 tasks');
+    await expect(page.locator('[data-testid="view-toggle-workflows-running"]')).toBeVisible();
   },
   'session-states': async (page) => {
     // The scene's `ready` selector (the Onboarding empty states card existing at all) resolves

@@ -262,7 +262,10 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `activity-overlay` | state | `config.developer.activityDebugOverlay`; the snapshot each panel draws is derived from that session's own seeded events by `activityStatsFor` (Activity stats below) |
 | `notification-toast` | state | `__mockInitialExit`, fired once when `sessions.onExit` registers, so App.tsx raises the toast itself; `notifications.toasts.durationSeconds` holds it up |
 | `board-config-change` | state | `__mockBoardConfigChanged`, fired once when `boardConfig.onChanged` registers, which App.tsx turns into its own reconciliation dialog |
-| `edit-columns`, `column-automation`, `column-handoff` | boot | the column's edit button (and, for `column-handoff`, the All columns tab), plus one shared `__mockSwimlanePatches` ladder (`COLUMN_LADDER` in `scenes.ts`) so the three describe one board: Claude Code plans on Opus 5 at xhigh and builds on Sonnet 5, Codex CLI reviews in an isolated session, Claude tests, and GitHub Copilot CLI merges, with handoff on at each change of agent. `column-automation` and `column-handoff` add the Code Review automation through `__mockAutomations`; `edit-columns` keeps both slots empty. Never the dataset: an automation draws a glyph in the BOARD column header, so seeding one there would change every figure already placed. The forms show Model and Effort because the sample install reports each agent's capabilities (`DEMO_AGENT_OVERRIDES`), and Codex has no Effort field because it takes none from Kangentic |
+| `edit-columns`, `column-automation`, `column-automation-turn-end`, `column-handoff` | boot | the column's edit button (and, for `column-handoff`, the All columns tab), plus one shared `__mockSwimlanePatches` ladder (`COLUMN_LADDER` in `scenes.ts`) so the four describe one board: Claude Code plans on Opus 5 at xhigh and builds on Sonnet 5, Codex CLI reviews in an isolated session, Claude tests, and GitHub Copilot CLI merges, with handoff on at each change of agent. `column-automation` and `column-handoff` add the Code Review automation through `__mockAutomations`; `edit-columns` keeps both slots empty. Never the dataset: an automation draws a glyph in the BOARD column header, so seeding one there would change every figure already placed. The forms show Model and Effort because the sample install reports each agent's capabilities (`DEMO_AGENT_OVERRIDES`), and Codex has no Effort field because it takes none from Kangentic. Codex also reports no turn end, which the dataset's agent list carries from its adapter, so Code Review's On agent turn end reads blocked as it does on the desktop. That is why `column-automation-turn-end` puts the review loop on Testing, where the ladder hands the review on to Claude. It holds two Move to column rows the runner reads in order, the shape of Code Review's pair in this repo's own `kangentic.json`: back to Executing with a Condition, a Frequency of three, and a Message carrying `{{agentReply}}`, then on to Merge, once. A move ends the group, so when the first row fires the second never runs |
+| `workflows` | boot | `__mockWorkflows` and `__mockWorkflowLinks` plus `tasks` patches that join six existing contoso cards to one running workflow (Workflows below); the Workflows toggle, the agent pane's collapse, Board, Workflows again, then a click on empty canvas |
+| `board-workflow` | state | the same seed, on the board: each member card's strip and step track, the To Do cards' waiting line, and the toggle's running mark |
+| `workflow-draft` | boot | a second `__mockWorkflows` seed, a workflow planned but not started (its tasks live in the draft, so nothing reaches the board); the same round trip as `workflows`, then a click that selects the middle planned task, so the inspector shows its route switches, what it waits for and what waits for it |
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab) |
 | `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more |
 | `task`, `browser` | state | `workspaceByProject` (a floating window sized to its session's recording, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below) |
@@ -281,6 +284,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `quick-find-results` | boot | the palette, then `type` a query; the seed answers with a keyword match over its own rows (Quick Find below) |
 | `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS`. An entry may carry config: `settings-dictation` switches dictation on, since off it greys out every row below the switch |
 | `card-drag`, `card-menu`, `window-dock` | driver | a held drag over Executing, a right-click on a card, a window dragged to the right edge |
+| `board-workflow-links` | driver | the `board-workflow` seed and a hover on Refactor API error handling: the board draws a workflow card's links only while the pointer rests on it, so no click reaches them |
 
 Three things the catalog corrected against the source while it was seeded, recorded so the next
 reader does not re-derive them: `lastSettingsTab` is renderer store state and never reaches
@@ -352,6 +356,34 @@ answers `search.everything` with a keyword match over the same rows it installed
 the palette asks (this project or all), and builds the `task`, `backlog`, and `session_event`
 hit shapes, so a visitor's query finds what the desktop's would and `quick-find-results` types
 one. Conversation hits (the memory index) have no rows to search here and do not appear.
+
+### Workflows
+
+The sample install seeds no workflow. A workflow card draws its strip and step track on the board,
+and the view toggle draws a running mark, so a workflow in the dataset would change every contoso
+figure. The `workflows` and `board-workflow` scenes seed one instead: Harden the API, running on
+contoso-web, over six cards the install already has. Two are done, two are mid-route, and two wait
+in To Do, so the canvas shows both a met link and an open one. The mock lists a started workflow's
+tasks by `workflow_id`, which the scenes' `tasks` patches set. `workflow-draft` seeds a different
+workflow, Invoice PDF export, planned from the contoso backlog item's ask and not started, so its
+four tasks are the draft's own and no board card changes.
+
+The mock reads a task's route against its own board's columns (`boardLanes`). The sample install
+tags each project's lanes, and a route read across all three drew about seventeen stops on every
+track. The smoke tier counts each card's stops.
+
+Two of the `workflows` steps answer the view's own behavior. The canvas fits its cards when a
+workflow opens and never on a resize, so the steps collapse the agent pane, leave the view, and
+open it again at its full width; the collapse is store state and survives the round trip. The view
+also selects the first task in run order when it opens, which restyles the links around that task
+and fades the rest. The last step clicks empty canvas, as a visitor would, so every link shows its
+own state and the inspector shows the run order.
+
+The pane is collapsed for a second reason. The workflow agent has no recording: the mock starts a
+session when the pane opens, and its terminal would be empty. The strip shows the agent's idle
+mark. A visitor who expands the pane sees that empty terminal, the one place this view is quieter
+than the desktop. Recording the workflow agent needs Kangentic's MCP server to plan against, which
+the capture matrix does not run.
 
 ### Knowledge Graph
 
@@ -560,7 +592,7 @@ cannot lag the way a vendored package does, which is the failure `@kangentic/bra
 A docs figure is an iframe of one scene, and before that frame boots, and instead of it in print,
 under no JS, on a phone, and in a browser without CSS trig functions, the figure shows a poster:
 a still of the same scene in the same theme. The site does not shoot its own (it would duplicate
-the rig, and it could never build the three `driver` scenes); the rig shoots them here and every
+the rig, and it could never build the `driver` scenes); the rig shoots them here and every
 release attaches the set:
 
 ```
