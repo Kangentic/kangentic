@@ -2,6 +2,42 @@
 
 <!-- releases -->
 
+## [protocol-v0.21.0] - 2026-10-12
+
+Adds workflows to the bridge: a workflow is a set of linked tasks that runs
+through its boards by itself, starting each task when the tasks it waits for
+reach Done and moving it along its route of columns. A phone can see a task's
+workflow on its card, see why a card cannot be moved, and pause or resume a
+workflow. Additive on the wire; `PROTOCOL_VERSION` stays '3'.
+
+`BoardTaskWire` gains an optional `workflow` (`BoardTaskWorkflowWire`, or null
+for an ordinary task): `id`, `title`, the home `project_id` (which may not be the
+board's), `state` (`running`, `paused`, `draft` or `done`; an unknown value reads
+as running), `color_slot` (1 to 6, the desktop's categorical color for the
+workflow's icon), `route` (the column ids it visits, in board order),
+`waiting_for` (the unfinished tasks it waits for, named by display id as the
+card's footer names them), `lock_reason` (the desktop's sentence for a refused
+move while the card is locked, null when a hand may move it) and
+`gate_target_id` (while the card waits in a column no agent judges, the one
+column a hand may move it to). `parseBoardTaskWorkflowWire` is lenient: an
+absent or malformed value reads as null, so an older desktop or a broken
+workflow costs the card its strip, never the board.
+
+`list_workflows` and `get_workflow` join `BOARD_TOOL_READ_NAMES`, and
+`pause_workflow` and `resume_workflow` join `BOARD_TOOL_WRITE_NAMES`. Planning,
+Start and Delete stay on the desktop.
+
+`PUSH_CATEGORIES` gains `workflow-complete`, sent when every task of a workflow
+reaches Done. Its `taskTitle` is the workflow's name, and its task and session
+ids are empty. A phone that predates it shows the generic placeholder.
+
+On the desktop side, with no wire change: `move-task` refuses a locked card
+before it commits, and `start-session` refuses a task in a paused workflow, both
+with the desktop's sentence.
+
+### Features
+- Add Workflows, linked tasks that run through the board on their own (f349d19a)
+
 ## [protocol-v0.20.0] - 2026-10-11
 
 Adds Command Terminals to the bridge: a phone can start an agent at a project's
