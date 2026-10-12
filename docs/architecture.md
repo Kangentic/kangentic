@@ -1011,6 +1011,7 @@ src/main/workflows/
     workflow-engine-core.ts  # pure: what is ready, start order up to free slots, completion, links to drop, loops
   workflow-engine-host.ts    # main: wake-ups, debounce, read every running workflow, carry out the plan
   workflow-board-announce.ts # the quiet board reload after a workflow writes a board's tasks or links
+  workflow-project-probe.ts  # what an unopened project holds that the engine reads, on a throwaway connection with no migrations
   workflow-lock-check.ts     # reads the databases and config the lock predicate needs
   workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it)
   workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?")
@@ -1109,8 +1110,10 @@ src/main/workflows/
   every database; read-write left none.
 
   This moves work out of the boot window rather than removing it. `activateAllProjects`, 5 s
-  later, still opens and migrates every registered project whose folder or database file exists
-  (it recovers the ones whose folder exists, and never creates a missing file), on purpose: the retrieval worker opens databases with migrations off and relies on it.
+  later, still opens and migrates every registered project whose folder or database file exists,
+  on purpose: the retrieval worker opens databases with migrations off and relies on it. A project
+  whose folder exists is also recovered, and gets a database if it has none, as on any open. One
+  whose folder is gone is only migrated, and never given a file.
   Making activation lazy as well was weighed and not built. A database probe cannot decide most of
   recovery (the leftover-process sweep runs on almost every board, and resume and auto-spawn fold
   in board profiles and global config). Deferring it is visible: agents running at quit stay
