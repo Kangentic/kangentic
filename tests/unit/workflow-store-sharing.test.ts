@@ -18,7 +18,7 @@ const { shareUnchanged, shareSummaries } = await import('../../src/renderer/stor
 function viewTask(key: string, canvasX: number | null = null): WorkflowViewTask {
   return {
     key, projectId: 'p', task: null, planned: null, title: `Task ${key}`, displayId: null, place: 'planned',
-    swimlaneId: null, steps: [], canvasX, canvasY: null,
+    swimlaneId: null, steps: [], canvasX, canvasY: null, unnamedBlockerCount: 0,
   };
 }
 

@@ -1008,8 +1008,9 @@ boards. A task's route (the columns it visits) is one pure shared module,
 ```
 src/main/workflows/
   engine/
-    workflow-engine-core.ts  # pure: what is ready, start order up to free slots, completion, loops
+    workflow-engine-core.ts  # pure: what is ready, start order up to free slots, completion, links to drop, loops
   workflow-engine-host.ts    # main: wake-ups, debounce, read every running workflow, carry out the plan
+  workflow-board-announce.ts # the quiet board reload after a workflow writes a board's tasks or links
   workflow-lock-check.ts     # reads the databases and config the lock predicate needs
   workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it)
   workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?")
@@ -1019,7 +1020,8 @@ src/main/workflows/
   workflow-changed.ts        # the coalesced workflow:changed push
   workflow-complete.ts       # the workflow:completed push, and the phone's workflow-complete push
   workflow-prompt-facts.ts   # what {{workflow_xml}} tells a workflow task's agent
-  workflow-tasks.ts          # every created task of a workflow, across projects (a plain read)
+  workflow-tasks.ts          # every created task of a workflow, across projects (a plain read), and
+                             #   linkEndState: whether a link's missing end is gone or still holds
   workflow-home.ts           # the workflow a task is in, read in its home, never creating a gone home's database
   workflow-project-delete.ts # what a project delete does to the workflows it is part of
   workflow-agent.ts          # the workflow's own agent: open, resume, pause, end, start over on a lost resume,
