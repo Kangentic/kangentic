@@ -55,17 +55,27 @@ async function createProjectKeepingChecklist(page: Page, name: string): Promise<
  * that gap and be dropped - reliably so on a loaded CI runner, where it stops being a flake
  * and just fails.
  *
- * Each round CHECKS FIRST and only presses if the checklist is still absent. That ordering is
- * the point: Escape is idempotent while the dialog is open, but once the checklist is back an
- * extra press would dismiss it and fail the very thing being asserted.
+ * Each round CHECKS FIRST and only presses if the checklist is still absent, then WAITS for the
+ * checklist to appear before it will call the press dropped. That wait is the point: the
+ * dialog stays mounted through its exit animation and the checklist mounts only when that ends,
+ * so re-checking on the next poll tick (tens of milliseconds later) read a press that had landed
+ * as a dropped one. The second Escape then arrived after the checklist had mounted, and the
+ * checklist is a dialog that closes on Escape, so it dismissed the very thing being asserted.
+ * One CI run failed exactly that way. A press is retried only after `PRESS_SETTLE_MS` of
+ * nothing happening, far longer than the exit animation, so a retry means the first press was
+ * dropped before its listener attached.
  */
+const PRESS_SETTLE_MS = 2500;
+
 async function pressEscapeUntilChecklistReturns(page: Page): Promise<void> {
   const checklist = page.locator('[data-testid="onboarding-checklist"]');
-  await expect.poll(async () => {
-    if (await checklist.count() > 0) return true;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (await checklist.count() > 0) return;
     await page.keyboard.press('Escape');
-    return await checklist.count() > 0;
-  }, { timeout: 10000 }).toBe(true);
+    const returned = await checklist.waitFor({ state: 'visible', timeout: PRESS_SETTLE_MS }).then(() => true, () => false);
+    if (returned) return;
+  }
+  await expect(checklist).toBeVisible({ timeout: PRESS_SETTLE_MS });
 }
 
 /**
