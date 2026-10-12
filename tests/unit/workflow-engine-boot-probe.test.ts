@@ -19,7 +19,9 @@
  * until a pass reads it, since today's snapshot would otherwise drop that
  * board's tasks and complete a workflow whose readable tasks are all Done. It
  * also keeps a task from starting when a task on that board holds it up, and
- * keeps a failed start's backoff, and it is logged once a launch. A board is
+ * keeps a failed start's backoff, and it is logged once a launch. While a board
+ * stays unread the engine tries it again on a backoff, so a board that comes
+ * back lets the workflow go on with no other event. A board is
  * unread when the look at it fails (a file that is not a database) or when a
  * read on its open connection throws, and each of those reads is pinned
  * separately. The engine stops reading once disposed, even between two looks.
@@ -293,6 +295,72 @@ describe('the workflow engine at boot', () => {
     expect(unreadWarnings()).toHaveLength(1);
   });
 
+  it('tries an unreadable board again on a backoff, completes the workflow once it reads with no other event, and then stops', async () => {
+    const running = workflowIn('home');
+    workflowTask('home', 'Done', running, 'home');
+    closeAll();
+    fs.writeFileSync(PATHS.projectDb('broken'), 'not a database '.repeat(512));
+    register(['home', 'broken']);
+    const looksAtBroken = () => probedProjectIds().filter((projectId) => projectId === 'broken').length;
+
+    boot();
+    await pass();
+    expect(looksAtBroken()).toBe(1);
+
+    // Tried again 5 s on, then 30 s after that. Nothing else wakes the engine.
+    await advance(5_000 + DEBOUNCE_MS);
+    expect(looksAtBroken()).toBe(2);
+    await advance(29_000);
+    expect(looksAtBroken()).toBe(2);
+    await advance(1_000 + DEBOUNCE_MS);
+    expect(looksAtBroken()).toBe(3);
+    expect(harness.announceWorkflowComplete).not.toHaveBeenCalled();
+
+    // Repaired between two tries: the next one, a minute on, reads it.
+    fs.rmSync(PATHS.projectDb('broken'), { force: true });
+    const repaired = new Database(PATHS.projectDb('broken'));
+    repaired.exec('CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL)');
+    repaired.close();
+    await advance(60_000 + DEBOUNCE_MS);
+
+    expect(harness.announceWorkflowComplete).toHaveBeenCalledTimes(1);
+    expect(new WorkflowRepository(getProjectDb('home')).getById(running)!.state).toBe('done');
+    // Every board read, so nothing is left to try.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('ends the pass on a read failure that is no database error, rather than reading the board as unread', async () => {
+    const running = workflowIn('home');
+    workflowTask('home', 'Done', running, 'home');
+    closeAll();
+    register(['home', 'member']);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(probeWorkflowProject).mockImplementationOnce(() => {
+      throw new TypeError('probeWorkflowProject is not a function');
+    });
+
+    boot();
+    await pass();
+
+    const evaluationFailures = vi.mocked(console.error).mock.calls.filter(([message]) => String(message).includes('Evaluation failed'));
+    expect(evaluationFailures).toHaveLength(1);
+    expect(evaluationFailures[0][1]).toBeInstanceOf(TypeError);
+    expect(unreadWarnings()).toEqual([]);
+    // Not a board to try again on a backoff.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('arms no retry when every registered board reads', async () => {
+    register(['home']);
+    const running = workflowIn('home');
+    workflowTask('home', 'Executing', running, 'home');
+
+    boot();
+    await pass();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('starts no task that waits on a task of a board it could not read, though that board still reads the Done blocker', async () => {
     register(['home', 'member']);
     const running = workflowIn('home');
@@ -329,6 +397,32 @@ describe('the workflow engine at boot', () => {
     engine.wake();
     await pass();
     expect(startedTaskIds()).toEqual([unlinked, blocked]);
+  });
+
+  it('starts a task held by a blocker on a board it could not read once that board reads, with no other event', async () => {
+    register(['home', 'member']);
+    const running = workflowIn('home');
+    const blocker = workflowTask('member', 'Done', running, 'home');
+    const blocked = workflowTask('home', 'To Do', running, 'home');
+    new TaskLinkRepository(getProjectDb('home')).insert({
+      workflow_id: running,
+      blocker_project_id: 'member',
+      blocker_task_id: blocker,
+      blocked_project_id: 'home',
+      blocked_task_id: blocked,
+    });
+
+    boot();
+    const memberDb = getProjectDb('member');
+    memberDb.exec(BREAKS.activeWorkflows.break);
+    await pass();
+    expect(startedTaskIds()).toEqual([]);
+
+    // The lock clears. No move, slot or write follows; the retry 5 s on reads it.
+    memberDb.exec(BREAKS.activeWorkflows.heal);
+    await advance(5_000 + DEBOUNCE_MS);
+
+    expect(startedTaskIds()).toEqual([blocked]);
   });
 
   it.each([

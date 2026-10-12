@@ -1,5 +1,6 @@
 import type { Task } from '../../shared/types';
 import { getExistingProjectDb } from '../db/database';
+import { isSqliteError } from '../db/sqlite-error';
 import { TaskRepository } from '../db/repositories/task-repository';
 import type { IpcContext } from '../ipc/ipc-context';
 
@@ -15,9 +16,14 @@ export function workflowTasks(context: IpcContext, homeProjectId: string, workfl
 }
 
 /**
- * `workflowTasks`, plus the projects whose database would not open during the
- * read. A task on one of those is missing from `tasks` without being gone, which
- * is what `linkEndState` needs to tell apart.
+ * `workflowTasks`, plus the projects whose database would not open or read
+ * during the read. A task on one of those is missing from `tasks` without being
+ * gone, which is what `linkEndState` needs to tell apart.
+ *
+ * Only a SQLite failure (a locked, corrupt or half-migrated file) makes a
+ * project unread. Anything else is a bug, and reaches the caller: a bare catch
+ * here once let four unit suites whose database mock had no
+ * `getExistingProjectDb` read an empty task list and pass.
  */
 export function readWorkflowTasks(
   context: IpcContext,
@@ -32,7 +38,8 @@ export function readWorkflowTasks(
       const db = getExistingProjectDb(project.id);
       if (!db) continue;
       tasks = new TaskRepository(db).listByWorkflow(workflowId);
-    } catch {
+    } catch (error) {
+      if (!isSqliteError(error)) throw error;
       unreadProjectIds.add(project.id);
       continue;
     }
@@ -62,6 +69,9 @@ export function readWorkflowTasks(
  * in this read, and `getProjectDb`'s busy timeout would stall main for seconds
  * a link. An unregistered project is never opened, so no database is created
  * for a stale id.
+ *
+ * Only a SQLite failure of the lookup holds, as in `readWorkflowTasks`; any
+ * other failure is a bug and reaches the caller.
  */
 export function linkEndState(
   context: IpcContext,
@@ -81,7 +91,8 @@ export function linkEndState(
     const task = new TaskRepository(projectDb).getById(end.taskId);
     if (!task || task.workflow_id !== workflowId) return 'gone';
     return 'held';
-  } catch {
+  } catch (error) {
+    if (!isSqliteError(error)) throw error;
     return 'held';
   }
 }

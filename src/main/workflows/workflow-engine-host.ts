@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 import type { Swimlane, Task, Workflow } from '../../shared/types';
 import { startColumn } from '../../shared/workflow-route';
 import { getExistingProjectDb, getOpenProjectDb, getProjectDb } from '../db/database';
+import { isSqliteError } from '../db/sqlite-error';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { setHomeLinkRemover } from '../db/repositories/workflow-home-links';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -34,10 +35,12 @@ import { setWorkflowRuntimeContext } from './workflow-runtime';
  * workflow into the core's plain shape, asks the core what to do
  * (`planPass`), and carries the answer out through the one move path.
  *
- * - **Never a timer of its own beyond a debounce.** It wakes on a board change,
- *   a freed agent slot, a turn end, a start or resume, and launch, and a burst
- *   of those coalesces into one pass after `DEBOUNCE_MS`. A pass that finds
- *   nothing running costs one indexed query per open project.
+ * - **Never polls.** It wakes on a board change, a freed agent slot, a turn
+ *   end, a start or resume, and launch, and a burst of those coalesces into one
+ *   pass after `DEBOUNCE_MS`. A pass that finds nothing running costs one
+ *   indexed query per open project. Its only other timers are one-shot retries
+ *   on a backoff: of a start that failed, and of a board it could not read
+ *   (both below).
  * - **Reads only open databases, and opens only what a workflow touches.** A
  *   registered project whose database is not open is looked at once, on a
  *   throwaway connection with no migrations (`probeWorkflowProject`), one per
@@ -49,6 +52,11 @@ import { setWorkflowRuntimeContext } from './workflow-runtime';
  * - **Completes nothing it could not read in full.** A pass that could not read
  *   a registered board plans no completion (that board's tasks may not be
  *   Done) and no start that waits on a task there, until a pass reads it.
+ *   While a board stays unread the engine wakes itself on a backoff (5 s,
+ *   30 s, 1 m, 2 m, then every 5 m), one timer at a time, so a lock that clears
+ *   or a board that is repaired or removed lets the workflows go on with no
+ *   other event and nothing shown to the user. The first pass that reads every
+ *   registered board stops it.
  * - **Never awaits a whole move.** A start is `handleTaskMove` with origin
  *   `'workflow'`; the host tracks it as in flight until it settles, so a pass in
  *   the meantime never issues it twice, and the next pass sees where it landed.
@@ -68,6 +76,11 @@ import { setWorkflowRuntimeContext } from './workflow-runtime';
 const DEBOUNCE_MS = 150;
 /** The waits between retries of a start that failed: 30 s, 1 m, 2 m, then every 5 m. */
 const START_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 300_000];
+/**
+ * The waits between passes while a registered board cannot be read: 5 s, since
+ * a lock usually clears within a second, then 30 s, 1 m, 2 m, and every 5 m.
+ */
+const UNREAD_RETRY_DELAYS_MS = [5_000, 30_000, 60_000, 120_000, 300_000];
 const TIMING_WINDOW = 200;
 
 interface FailedStart {
@@ -111,6 +124,10 @@ export class WorkflowEngineHost {
   private readonly unopened = new Map<string, WorkflowProjectProbe>();
   /** Projects whose failed read has been logged, so a broken one logs once a launch. */
   private readonly unreadReported = new Set<string>();
+  /** The pass that tries an unread board again, armed while one stays unread. */
+  private unreadRetry: ReturnType<typeof setTimeout> | null = null;
+  /** How many of those passes have been armed since every board last read. */
+  private unreadRetries = 0;
   private disposed = false;
 
   constructor(private readonly context: IpcContext) {}
@@ -140,6 +157,8 @@ export class WorkflowEngineHost {
     this.disposed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.unreadRetry) clearTimeout(this.unreadRetry);
+    this.unreadRetry = null;
     for (const failure of this.failedStarts.values()) {
       if (failure.timer) clearTimeout(failure.timer);
     }
@@ -223,6 +242,7 @@ export class WorkflowEngineHost {
       const { intents, titles, taskCounts } = this.evaluate(projectIds, unreadProjectIds);
       this.recordDuration(performance.now() - startedAt);
       for (const intent of intents) this.carryOut(intent, titles, taskCounts);
+      this.retryUnreadLater(unreadProjectIds.size > 0);
     } catch (error) {
       console.error('[WORKFLOW] Evaluation failed:', error);
     } finally {
@@ -232,6 +252,33 @@ export class WorkflowEngineHost {
         this.wake();
       }
     }
+  }
+
+  /**
+   * After a pass: while a registered board could not be read, arm one pass to
+   * try it again, on the backoff. Keyed on any unread board, not only on a
+   * running workflow the pass could see: the board that would not read may be
+   * the home of one. Nothing else wakes the engine when the board comes back
+   * (activation opening it, a lock clearing, a repaired file), so without this
+   * a finished workflow stayed running until some unrelated board change. A
+   * pass that reads every board clears it and starts the backoff over.
+   */
+  private retryUnreadLater(anyUnread: boolean): void {
+    if (!anyUnread) {
+      if (this.unreadRetry) clearTimeout(this.unreadRetry);
+      this.unreadRetry = null;
+      this.unreadRetries = 0;
+      return;
+    }
+    if (this.unreadRetry || this.disposed) return;
+    const delayMs = UNREAD_RETRY_DELAYS_MS[Math.min(this.unreadRetries, UNREAD_RETRY_DELAYS_MS.length - 1)];
+    this.unreadRetries += 1;
+    this.unreadRetry = setTimeout(() => {
+      this.unreadRetry = null;
+      this.wake();
+    }, delayMs);
+    // A pending retry never keeps the app from quitting.
+    this.unreadRetry.unref?.();
   }
 
   private recordDuration(durationMs: number): void {
@@ -271,11 +318,20 @@ export class WorkflowEngineHost {
     }
   }
 
+  /**
+   * A read of `projectId` failed. A SQLite failure (locked, corrupt, half
+   * migrated) makes the board unread for this pass. Anything else is a bug and
+   * is rethrown, ending the pass with "Evaluation failed": read as unread, it
+   * would hold every workflow from completing and retry every 5 minutes with
+   * one warning a launch, the way a bare catch once hid broken test mocks in
+   * `readWorkflowTasks`.
+   */
   private noteUnread(unreadProjectIds: Set<string>, projectId: string, error: unknown): void {
+    if (!isSqliteError(error)) throw error;
     unreadProjectIds.add(projectId);
     if (this.unreadReported.has(projectId)) return;
     this.unreadReported.add(projectId);
-    console.warn(`[WORKFLOW] Could not read project ${projectId.slice(0, 8)}; no workflow completes until it can be read:`, error);
+    console.warn(`[WORKFLOW] Could not read project ${projectId.slice(0, 8)}; no workflow completes until it can be read, and the engine keeps trying:`, error);
   }
 
   /**

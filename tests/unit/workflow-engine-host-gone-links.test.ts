@@ -48,7 +48,8 @@ vi.mock('../../src/main/db/database', () => ({
   // records an open, since only a read that would create or migrate does.
   getOpenProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   peekProjectDb: (projectId: string) => {
-    if (!harness.dbs.has(projectId)) throw new Error(`database for ${projectId} is locked`);
+    // What better-sqlite3 throws for a locked file: an error carrying its SQLite code.
+    if (!harness.dbs.has(projectId)) throw Object.assign(new Error(`database for ${projectId} is locked`), { code: 'SQLITE_BUSY' });
     return null;
   },
 }));
