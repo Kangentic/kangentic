@@ -4,6 +4,7 @@ import { isUncPath, isCmdShell, isPowerShellShell } from '../../../shared/paths'
 import { escapeForPowerShellSingleQuoted, escapePercentForCmd } from '../../../shared/shell-quote';
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
+import { parseWslShellSpec } from '../process-tag/task-process-tag';
 
 /** Shell executable + args, split from a user-facing shell spec. */
 export interface ShellInvocation {
@@ -16,14 +17,17 @@ export interface ShellInvocation {
  * into the executable path plus the argv prefix we want to use.
  *
  * WSL specs are `wsl -d <distro>` style - we split into exe + args so
- * node-pty sees them correctly. cmd/pwsh take no args. Fish and Nushell
- * skip `--login` because they handle init differently. Everything else
- * (bash, zsh) gets `--login` so user rc files load.
+ * node-pty sees them correctly. `parseWslShellSpec` decides what is WSL, the
+ * same detector the tag, the absence sweep, the end settle and the reap use,
+ * so a bare `wsl` spawns `wsl.exe` with no args (the default distro).
+ * cmd/pwsh take no args. Fish and Nushell skip `--login` because they handle
+ * init differently. Everything else (bash, zsh) gets `--login` so user rc
+ * files load.
  */
 export function resolveShellArgs(shell: string): ShellInvocation {
   const shellName = shell.toLowerCase();
-  if (shellName.startsWith('wsl ') || shellName.startsWith('wsl.exe ')) {
-    const parts = shell.split(/\s+/);
+  if (parseWslShellSpec(shell) !== null) {
+    const parts = shell.trim().split(/\s+/);
     // node-pty's ConPTY resolver needs the extension: a bare `wsl` fails its
     // executable search ("File not found", session exits -1 with no output)
     // while `wsl.exe` resolves. Every other picker entry stores a full path;

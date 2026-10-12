@@ -16,6 +16,7 @@ import {
   SCROLL_SPEED_ENV_KEY,
 } from '../../src/main/pty/spawn/pty-spawn';
 import { buildSpawnClearPrelude } from '../../src/shared/paths';
+import { parseWslShellSpec } from '../../src/main/pty/process-tag/task-process-tag';
 
 describe('buildSpawnClearPrelude', () => {
   // The prelude makes the SHELL erase its own startup preamble and command
@@ -60,6 +61,26 @@ describe('resolveShellArgs', () => {
     // The gate lowercases the spec to decide whether it is a WSL invocation,
     // but the returned exe keeps the caller's original casing.
     expect(resolveShellArgs('WSL.EXE -d Ubuntu')).toEqual({ exe: 'WSL.EXE', args: ['-d', 'Ubuntu'] });
+  });
+
+  it('spawns a bare wsl or wsl.exe as wsl.exe with no args (the default distro)', () => {
+    // A bare name used to fall through to the catch-all and spawn as
+    // `wsl --login`, which the ConPTY resolver cannot find, while the absence
+    // sweep and end settle already treated it as WSL.
+    expect(resolveShellArgs('wsl')).toEqual({ exe: 'wsl.exe', args: [] });
+    expect(resolveShellArgs('wsl.exe')).toEqual({ exe: 'wsl.exe', args: [] });
+  });
+
+  it('trims surrounding whitespace from a WSL spec instead of passing an empty arg', () => {
+    expect(resolveShellArgs('  wsl -d Ubuntu ')).toEqual({ exe: 'wsl.exe', args: ['-d', 'Ubuntu'] });
+  });
+
+  it('agrees with parseWslShellSpec on every spec, so spawn and judging share one detector', () => {
+    const specs = ['wsl', 'wsl.exe', ' wsl -d Ubuntu', 'WSL.EXE -d Ubuntu', 'pwsh', 'cmd.exe', '/bin/bash', 'wslbash'];
+    for (const spec of specs) {
+      const spawnsWsl = resolveShellArgs(spec).exe.toLowerCase() === 'wsl.exe';
+      expect(spawnsWsl, spec).toBe(parseWslShellSpec(spec) !== null);
+    }
   });
 
   it('returns cmd with no args', () => {
