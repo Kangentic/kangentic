@@ -15,6 +15,14 @@
  * - Past the crash cap it does not latch off: it falls back to the host core
  *   running inside main (`InProcessPtyHostTransport`), which is how every
  *   terminal ran before the host existed. A slower app beats no terminals.
+ * - A request with no answer rejects by type: `PtyHostTimeoutError` when a
+ *   running host let its budget run out, `PtyHostExitedError` when the host
+ *   exited first or was still down. An error the host sends back stays a plain
+ *   `Error`. A timeout cancels nothing in the host, so a caller can ask for the
+ *   late answer (`onLateResult`): a reap main gave up on may still kill.
+ * - The host runs reaps and Stops one batch at a time. It posts
+ *   `batch-started` as each starts, and every request of that method still
+ *   waiting gets its budget back, so time spent queued never counts.
  * - A heartbeat (VS Code's intervals) logs a host that stops answering.
  * - Quit posts `shutdown`; the host flushes, kills, waits for the exit
  *   callbacks and exits itself. Its pid joins the before-quit drain.
@@ -27,7 +35,7 @@ import { unpacked } from '../../utility-process/paths';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
-import type { PtyHostLifecycleListener, PtyHostTransport } from './pty-host-client';
+import type { PtyHostLifecycleListener, PtyHostRequestOptions, PtyHostTransport } from './pty-host-client';
 import {
   type FromPtyHostMessage,
   type PtyHostCommand,
@@ -35,9 +43,11 @@ import {
   type PtyHostMethod,
   type PtyHostRequest,
   type PtyHostRequestMap,
+  type QueuedPtyHostMethod,
   type ToPtyHostMessage,
   fromPtyHostError,
 } from './protocol';
+import { PtyHostExitedError, PtyHostTimeoutError } from './pty-host-request-errors';
 
 const SERVICE_NAME = 'kangentic-pty-host';
 /** VS Code's pty host restart cap. */
@@ -52,6 +62,9 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** VS Code's heartbeat: a beat every 5 s, unresponsive after 11 s. */
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const HEARTBEAT_UNRESPONSIVE_MS = 11_000;
+/** Late answers kept waiting at once. A live host whose reap hung never answers,
+ *  so past this the oldest entry goes rather than one per reap for the run. */
+const MAX_LATE_RESULTS = 64;
 
 /**
  * Where to fork the host from. Windows and Linux fork it from the unpacked
@@ -70,8 +83,13 @@ export function ptyHostEntryPath(bundleDirectory: string, platform: NodeJS.Platf
 }
 
 interface PendingRequest {
+  method: PtyHostMethod;
+  /** The request's budget, restarted in full when a batch of its method starts. */
+  budgetMs: number;
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
+  /** Where the answer goes if it arrives after the budget ran out. */
+  onLateResult?: (result: unknown) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -83,6 +101,12 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   private child: UtilityProcess | null = null;
   private childStderr: StderrTail | null = null;
   private readonly pending = new Map<number, PendingRequest>();
+  /**
+   * Timed-out requests the running host may still answer, by id, oldest first.
+   * An entry goes when its answer arrives, with the host that owed it, or as
+   * the oldest once `MAX_LATE_RESULTS` are waiting.
+   */
+  private readonly lateResults = new Map<number, (result: unknown) => void>();
   private nextRequestId = 1;
   private listener: ((event: PtyHostEvent) => void) | null = null;
   private lifecycle: PtyHostLifecycleListener | null = null;
@@ -147,21 +171,82 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   request<M extends PtyHostMethod>(
     method: M,
     params: PtyHostRequestMap[M]['params'],
-    options?: { timeoutMs?: number },
+    options?: PtyHostRequestOptions<PtyHostRequestMap[M]['result']>,
   ): Promise<PtyHostRequestMap[M]['result']> {
     if (this.fallback) return this.fallback.request(method, params, options);
     const requestId = this.nextRequestId;
     this.nextRequestId += 1;
     return new Promise<PtyHostRequestMap[M]['result']>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (!this.pending.delete(requestId)) return;
-        reject(new Error(`The pty host did not answer ${method} in time`));
-      }, options?.timeoutMs ?? REQUEST_TIMEOUT_MS);
-      timer.unref();
-      this.pending.set(requestId, { resolve: resolve as (result: unknown) => void, reject, timer });
+      const budgetMs = options?.timeoutMs ?? REQUEST_TIMEOUT_MS;
+      this.pending.set(requestId, {
+        method,
+        budgetMs,
+        resolve: resolve as (result: unknown) => void,
+        reject,
+        onLateResult: options?.onLateResult as ((result: unknown) => void) | undefined,
+        timer: this.armTimer(requestId, budgetMs),
+      });
       const message: PtyHostRequest<M> = { type: 'request', id: requestId, method, params };
       this.send(message);
     });
+  }
+
+  /**
+   * A request's timeout. A request still queued for a host that is down never
+   * reached a running one, so it fails as a lost host, not a slow one: the
+   * task reap reports the two apart (`host_exited`, `host_timeout`). A running
+   * host keeps working on a request that timed out, so a caller that asked for
+   * its late answer still gets it.
+   */
+  private armTimer(requestId: number, budgetMs: number): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(() => {
+      const entry = this.pending.get(requestId);
+      if (!entry) return;
+      this.pending.delete(requestId);
+      const neverPosted = this.queuedWhileDown.some((queued) => queued.type === 'request' && queued.id === requestId);
+      if (neverPosted) {
+        entry.reject(new PtyHostExitedError(`The pty host exited and did not answer ${entry.method} in time`));
+        return;
+      }
+      if (entry.onLateResult) {
+        this.lateResults.set(requestId, entry.onLateResult);
+        if (this.lateResults.size > MAX_LATE_RESULTS) {
+          const oldestId = this.lateResults.keys().next().value;
+          if (oldestId !== undefined) this.lateResults.delete(oldestId);
+        }
+      }
+      entry.reject(new PtyHostTimeoutError(entry.method));
+    }, budgetMs);
+    timer.unref();
+    return timer;
+  }
+
+  /** Hand a late answer to the caller that asked for it, once. An error answer has nothing to report. */
+  private deliverLateResult(requestId: number, ok: boolean, result: unknown): void {
+    const onLateResult = this.lateResults.get(requestId);
+    if (!onLateResult) return;
+    this.lateResults.delete(requestId);
+    if (!ok) return;
+    try {
+      onLateResult(result);
+    } catch (error) {
+      console.warn('[pty-host] a late answer could not be handled:', error);
+    }
+  }
+
+  /**
+   * The host started a reap batch or a Stop: every request of that method
+   * still waiting gets its full budget again from now. The host runs them one
+   * at a time, so a request queued behind a healthy batch is charged only for
+   * its own; it times out when the batch running overruns, or when the host
+   * stops answering.
+   */
+  private restartBudgets(method: QueuedPtyHostMethod): void {
+    for (const [requestId, entry] of this.pending) {
+      if (entry.method !== method) continue;
+      clearTimeout(entry.timer);
+      entry.timer = this.armTimer(requestId, entry.budgetMs);
+    }
   }
 
   shutdown(exitWaitMs?: number): void {
@@ -236,7 +321,10 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     switch (record.type) {
       case 'reply': {
         const entry = this.pending.get(record.id);
-        if (!entry) return;
+        if (!entry) {
+          this.deliverLateResult(record.id, record.ok, record.ok ? record.result : null);
+          return;
+        }
         this.pending.delete(record.id);
         clearTimeout(entry.timer);
         if (record.ok) entry.resolve(record.result);
@@ -257,6 +345,9 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
       case 'slow-span':
         recordSyncSpan(`pty-host:${record.label}`, record.ms);
         return;
+      case 'batch-started':
+        this.restartBudgets(record.method);
+        return;
       default:
         this.listener?.(record);
     }
@@ -267,12 +358,14 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     this.child = null;
     this.childStderr = null;
     this.stopHeartbeat();
-    const lost = new Error('The pty host exited');
+    const lost = new PtyHostExitedError();
     for (const [requestId, entry] of this.pending) {
       clearTimeout(entry.timer);
       entry.reject(lost);
       this.pending.delete(requestId);
     }
+    // The late answers this host owed died with it.
+    this.lateResults.clear();
     if (this.shuttingDown) return;
     this.lostSinceReady = true;
     console.error(`[pty-host] exited unexpectedly (code ${exitCode}); every terminal it held has ended`);

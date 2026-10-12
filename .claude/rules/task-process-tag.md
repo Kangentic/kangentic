@@ -105,13 +105,34 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   reader (`local-connections.ts`) and returns `LocalConnectionRead`: the pairs and the listening
   pids. No address or port leaves a reader or reaches a log. It never spawns a tool
   (`GetExtendedTcpTable` on Windows, `/proc/net/tcp` and fd links on Linux, libproc on macOS).
-- **A failed reap reports a fixed code, never its text.** A reap or Stop that fails kills nothing
-  after the failure: one that fails after its graceful pass skips the force pass and reports what
-  it signalled as not stopped (an empty later scan is a failure too, never "all gone"). Main
+- **A failed reap reports a fixed code, never its text.** A reap or Stop that fails in the host
+  kills nothing after the failure: one that fails after its graceful pass skips the force pass and
+  reports what it signalled as not stopped (an empty later scan is a failure too, never "all
+  gone"). The exception is `host_timeout`: main stopped waiting, but the host did not stop running
+  (see the late-answer bullet below). Main
   reports it once per stage and code per launch through `reportTaskReapFailure`
-  (`task-reap-failure-report.ts`) with `ReapFailureCode`, `host_error` or `wsl_error`. `failureReason` stays in
+  (`task-reap-failure-report.ts`) with `ReapFailureCode`, a host code or `wsl_error`. `failureReason` stays in
   local logs: it can come from a scan. The one text that leaves is a `reader_load` error, path
   stripped, since it is about this install and not about a process.
+- **A host request that got no result is named by the transport's error type, never its text.**
+  `UtilityPtyHostTransport` rejects with `PtyHostTimeoutError` when a running host let the budget
+  run out, and with `PtyHostExitedError` when the host exited first or was still down
+  (`host/pty-host-request-errors.ts`). `hostFailureCodeOf` maps them to `host_timeout` and
+  `host_exited`, and anything else to `host_error`. The budget (`TASK_REAP_TIMEOUT_MS`) is one
+  batch's, counted from when that batch starts: the host runs reaps and Stops one at a time, posts
+  `batch-started` as each starts, and the transport gives every waiting request of that method its
+  full budget back. Do not time a reap or a Stop from its send: a reap queued behind a batch
+  measured 7.4 to 8.2 s of waiting on one contended core.
+- **A timed-out reap is still reported when it finishes.** A timeout cancels nothing in the host,
+  so the reap may still kill. The transport hands its late answer to the caller
+  (`onLateResult`, then `reapTaskProcesses`' `onLateEntries`), which logs and reports it as an
+  answer in time would be and puts what it did in the toast. For a task it stopped something of,
+  `reapTaskLeftovers` retries the Done worktree removal (`retryDoneWorktreeRemoval`), which the
+  process may have failed while the reap ran. A Stop from the list is the same: it answers
+  `failed` at the budget, and when the host finishes it the real outcome is pushed to its row
+  (`leftoverProcesses:stopSettled`, taken only while the row still reads failed) and the removal is
+  retried once the process is gone. Neither adds a notice. A late answer never comes from a host
+  that exited.
 - **A reader names the scan step that failed by type, never by message.** It throws
   `ScanStepError` (`process-scan.ts`) with a fixed code (`process_list`, `window_list`,
   `connection_list`), and the
@@ -211,7 +232,17 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   pass (none for a refusal or a survivor);
   `tests/unit/task-reap-failure-report.test.ts` pins the once-per-launch latch, the
   fixed message, that no other failure's text reaches the event, and SessionManager's reports,
-  the WSL one included. `tests/unit/wsl-reap-script-budget.test.ts` pins that a WSL reap whose
+  the WSL one included and the three host codes by error type.
+  `tests/unit/utility-pty-host-transport.test.ts` pins the rejection types, that a request
+  queued behind a batch inside its budget does not time out, and that a late answer reaches its
+  caller once and never from a host that exited; `task-reap-failure-report.test.ts`,
+  `leftover-worktree-retry.test.ts` and `terminal-task-leftover-sweep.test.ts` pin that a late
+  answer is reported, reaches the toast and retries the Done worktree;
+  `leftover-process-stop-handler.test.ts`, `leftover-processes-store.test.ts` and
+  `tests/ui/leftover-processes.spec.ts` pin that a late Stop corrects its row and retries the
+  removal; `task-tagged-reap.test.ts` and
+  `pty-host-core-tagged-reap.test.ts` pin that each batch and Stop says when it starts, once,
+  and that a throw there strands no request. `tests/unit/wsl-reap-script-budget.test.ts` pins that a WSL reap whose
   shared script budget runs out reports it once and still returns what earlier batches killed.
 - **Packaged smoke:** `scripts/package-smoke.mjs` (`package-smoke.yml`, on Windows, macOS and
   Linux whenever `process-tag/` changes) deletes a task whose terminal left a detached process in

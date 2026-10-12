@@ -189,6 +189,32 @@ test.describe('Leftover processes', () => {
     }
   });
 
+  test('a stop that read failed because main stopped waiting corrects itself when the host finishes it', async () => {
+    // Main answers `failed` when a Stop runs past its budget, but the host still
+    // finishes it and main pushes the real outcome (`onStopSettled`).
+    const { browser, page } = await launchPage();
+    try {
+      await page.evaluate(() => { window.__mockLeftoverStopOutcomes = { 'kept-chrome': 'failed' }; });
+      await fireReport(page, ONE_TASK);
+      await openReview(page, 'are still running.');
+
+      await row(page, 'chrome').getByRole('button', { name: 'Stop chrome' }).click();
+      await expect(row(page, 'chrome')).toHaveAttribute('data-state', 'failed', { timeout: 5000 });
+
+      await expect
+        .poll(() => page.evaluate(() => typeof window.__mockFireLeftoverStopSettled === 'function'), { timeout: 5000 })
+        .toBe(true);
+      await page.evaluate(() => window.__mockFireLeftoverStopSettled?.({ processId: 'kept-chrome', outcome: 'stopped' }));
+
+      await expect(row(page, 'chrome')).toHaveAttribute('data-state', 'stopped', { timeout: 5000 });
+      await expect(row(page, 'chrome').locator('[data-testid="leftover-process-stop"]')).toHaveText('Stopped');
+      // The push named one row: the other running row is untouched.
+      await expect(row(page, 'tmux')).toHaveAttribute('data-state', 'running');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a report that spans tasks is one toast, with the list grouped by task', async () => {
     const { browser, page } = await launchPage();
     try {

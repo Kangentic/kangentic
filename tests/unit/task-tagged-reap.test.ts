@@ -845,6 +845,67 @@ describe('TaggedReaper', () => {
     expect(alsoKillingResult.killedPids).toEqual([3001]);
     expect(reader.kills.filter((kill) => kill.pid === 3001 && kill.strength === 'graceful')).toHaveLength(2);
   });
+
+  // Main restarts a waiting request's budget when its batch starts, so a reap
+  // queued behind a running batch is not charged for the wait (DESKTOP-1X).
+  it('says when each batch starts, once per batch however many requests it merged, and never for a request still queued', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)]]);
+    const starts: string[] = [];
+    let releaseFirstWait: () => void = () => {};
+    let blocked = true;
+    const reaper = new TaggedReaper({
+      reader,
+      liveRootPids: () => [],
+      caseInsensitivePaths: false,
+      wait: () => (blocked ? new Promise<void>((resolve) => { blocked = false; releaseFirstWait = resolve; }) : Promise.resolve()),
+      onBatchStart: (kind) => { starts.push(kind); },
+    });
+    const first = reaper.request({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    // The first batch is held in its grace wait.
+    expect(starts).toEqual(['reap']);
+    const second = reaper.request({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true });
+    const third = reaper.request({ tasks: [reapTask(OTHER_TASK, OTHER_PROJECT)], mainPid: MAIN_PID, stop: true });
+    expect(starts).toEqual(['reap']);
+    releaseFirstWait();
+    await Promise.all([first, second, third]);
+    // The second and third merged into one batch, which started once.
+    expect(starts).toEqual(['reap', 'reap']);
+  });
+
+  it('says when each Stop starts, and not while it waits for the Stop ahead of it', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK), tagged(2002, TASK)], [], [tagged(2002, TASK)], []]);
+    const starts: string[] = [];
+    let releaseFirstWait: () => void = () => {};
+    let blocked = true;
+    const reaper = new TaggedReaper({
+      reader,
+      liveRootPids: () => [],
+      caseInsensitivePaths: false,
+      wait: () => (blocked ? new Promise<void>((resolve) => { blocked = false; releaseFirstWait = resolve; }) : Promise.resolve()),
+      onBatchStart: (kind) => { starts.push(kind); },
+    });
+    const first = reaper.stop({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID });
+    const second = reaper.stop({ pid: 2002, startKey: 'start-2002', mainPid: MAIN_PID });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(starts).toEqual(['stop']);
+    releaseFirstWait();
+    await Promise.all([first, second]);
+    expect(starts).toEqual(['stop', 'stop']);
+  });
+
+  it('answers every request when saying a batch started throws: a reap never throws', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)], []]);
+    const reaper = new TaggedReaper({
+      ...deps(reader),
+      onBatchStart: () => { throw new Error('the port is closed'); },
+    });
+    const result = await reaper.request({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true });
+    expect(result.killedPids).toEqual([2001]);
+    expect(result.failureCode).toBeNull();
+    // 2001 is gone from the next scan, so the Stop finds nothing to stop.
+    expect((await reaper.stop({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID })).outcome).toBe('ended');
+  });
 });
 
 describe('stopProcessTree', () => {

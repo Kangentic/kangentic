@@ -60,14 +60,26 @@ export interface PtyHostLifecycleListener {
   onHostUp(restarted: boolean): void;
 }
 
+/** How one request is waited for. */
+export interface PtyHostRequestOptions<Result> {
+  /** Replaces the transport's default budget for this request. */
+  timeoutMs?: number;
+  /**
+   * The answer of a request whose budget ran out while the host still ran it.
+   * A timeout cancels nothing in the host, so a reap it gave up on can still
+   * kill; this is how that answer reaches a report. Called at most once, and
+   * never for a request no running host had, or once the host that had it exits.
+   */
+  onLateResult?: (result: Result) => void;
+}
+
 export interface PtyHostTransport {
   /** Send a command. Commands and requests keep their order. */
   post(command: PtyHostCommand): void;
-  /** `timeoutMs` replaces the transport's default budget for this request. */
   request<M extends PtyHostMethod>(
     method: M,
     params: PtyHostRequestMap[M]['params'],
-    options?: { timeoutMs?: number },
+    options?: PtyHostRequestOptions<PtyHostRequestMap[M]['result']>,
   ): Promise<PtyHostRequestMap[M]['result']>;
   /** Install the one listener every host event goes to. */
   setEventListener(listener: (event: PtyHostEvent) => void): void;
@@ -511,14 +523,28 @@ export class PtyHostClient {
     return this.transport.request('listProcesses', {});
   }
 
-  /** Kill what the given tasks left running (see `process-tag/tagged-reap.ts`). */
-  reapTaggedProcesses(request: TaggedReapRequest, timeoutMs: number): Promise<TaggedReapResult> {
-    return this.transport.request('reapTaggedProcesses', request, { timeoutMs });
+  /**
+   * Kill what the given tasks left running (see `process-tag/tagged-reap.ts`).
+   * `onLateResult` gets the answer of a reap that ran past `timeoutMs`.
+   */
+  reapTaggedProcesses(
+    request: TaggedReapRequest,
+    timeoutMs: number,
+    onLateResult?: (result: TaggedReapResult) => void,
+  ): Promise<TaggedReapResult> {
+    return this.transport.request('reapTaggedProcesses', request, { timeoutMs, onLateResult });
   }
 
-  /** Stop one process a reap reported (see `process-tag/tagged-reap.ts`). */
-  stopReportedProcess(request: StopProcessRequest, timeoutMs: number): Promise<StopProcessResult> {
-    return this.transport.request('stopReportedProcess', request, { timeoutMs });
+  /**
+   * Stop one process a reap reported (see `process-tag/tagged-reap.ts`).
+   * `onLateResult` gets the answer of a Stop that ran past `timeoutMs`.
+   */
+  stopReportedProcess(
+    request: StopProcessRequest,
+    timeoutMs: number,
+    onLateResult?: (result: StopProcessResult) => void,
+  ): Promise<StopProcessResult> {
+    return this.transport.request('stopReportedProcess', request, { timeoutMs, onLateResult });
   }
 
   getDiagnostics(): Promise<PtyHostDiagnostics> {

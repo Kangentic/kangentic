@@ -101,6 +101,7 @@ function initialize(message: PtyHostInitMessage): void {
     closeProject: (projectId) => closeProjectDb(projectId),
     coalesceMs: COALESCE_MS,
     loadOrphanApi: () => loadWin32OrphanApi(),
+    onBatchStarted: (method) => post({ type: 'batch-started', method }),
   });
   if (__KANGENTIC_DEV__) {
     relaySlowSyncSpans((label, elapsedMs) => post({ type: 'slow-span', label, ms: Math.round(elapsedMs) }));

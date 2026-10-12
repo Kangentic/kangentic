@@ -335,7 +335,14 @@ export type FromPtyHostMessage =
   /** A console line, for main's log. */
   | { type: 'log'; level: 'log' | 'info' | 'warn' | 'error'; text: string }
   /** A span of 16 ms or more on the host's thread (dev builds only). */
-  | { type: 'slow-span'; label: string; ms: number };
+  | { type: 'slow-span'; label: string; ms: number }
+  /** A reap batch or a Stop started running. Main restarts the budget of every
+   *  request of `method` still waiting, so time spent queued behind a batch
+   *  never counts against it. The transport consumes it; no listener sees it. */
+  | { type: 'batch-started'; method: QueuedPtyHostMethod };
+
+/** The requests the host runs one at a time, in its own queue (`TaggedReaper`). */
+export type QueuedPtyHostMethod = 'reapTaggedProcesses' | 'stopReportedProcess';
 
 export function toPtyHostError(error: unknown): PtyHostError {
   if (error instanceof Error) {

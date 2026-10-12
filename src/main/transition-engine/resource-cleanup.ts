@@ -151,18 +151,22 @@ export async function sweepTerminalTaskLeftovers(
       for (const task of taskRepo.list(lane.id)) terminalTasks.set(task.id, { worktreePath: task.worktree_path, title: task.title });
     }
     if (terminalTasks.size === 0) return;
-    const entries = await sessionManager.reapTaskProcesses(
-      projectPath,
-      [...terminalTasks].map(([id, task]) => ({ id, worktreePath: task.worktreePath })),
-      { stop: true },
-    );
     // Only what this sweep did. A process it left running (a window, a tmux
     // server) was reported when its task ended and is still there at every
     // launch; naming it again would put the same toast up on every start.
-    const acted = entries.filter((entry) => entry.outcome !== 'kept');
-    if (acted.length > 0) {
-      leftovers.onReport(acted, new Map([...terminalTasks].map(([id, task]) => [id, task.title])), true);
-    }
+    const reportActed = (entries: LeftoverProcessEntry[]): void => {
+      const acted = entries.filter((entry) => entry.outcome !== 'kept');
+      if (acted.length > 0) {
+        leftovers.onReport(acted, new Map([...terminalTasks].map(([id, task]) => [id, task.title])), true);
+      }
+    };
+    const entries = await sessionManager.reapTaskProcesses(
+      projectPath,
+      [...terminalTasks].map(([id, task]) => ({ id, worktreePath: task.worktreePath })),
+      // A reap the host finishes after main stopped waiting is reported then.
+      { stop: true, onLateEntries: reportActed },
+    );
+    reportActed(entries);
   } catch (error) {
     // Let a later open this launch try again.
     sweptProjectPaths.delete(projectPath);

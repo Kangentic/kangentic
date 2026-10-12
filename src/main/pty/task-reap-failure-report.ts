@@ -22,14 +22,27 @@
 import { reportHandledError, type ErrorReportContexts } from '../analytics/error-reporting';
 import { sanitizeErrorMessage } from '../analytics/analytics';
 import { redactPaths } from '../../shared/sentry-breadcrumbs';
+import { PtyHostExitedError, PtyHostTimeoutError } from './host/pty-host-request-errors';
 import type { ReapFailureCode, ReapPass } from './process-tag/tagged-reap';
 
+/** Why the request to the pty host failed, when it got no result back. */
+export type HostRequestFailure = 'host_timeout' | 'host_exited' | 'host_error';
+
 /**
- * A reap's own codes, plus two main sees itself. `host_error`: the pty host
- * request failed or timed out. `wsl_error`: the in-distro reap for a WSL shell
- * failed (`wsl-reap.ts`).
+ * A reap's own codes, plus what main sees itself. `host_timeout`: a running
+ * pty host did not answer within the budget, which starts when the request's
+ * batch starts. `host_exited`: the host exited before it answered, or was still
+ * down. `host_error`: any other rejection of the request. `wsl_error`: the
+ * in-distro reap for a WSL shell failed (`wsl-reap.ts`).
  */
-export type TaskReapFailure = ReapFailureCode | 'host_error' | 'wsl_error';
+export type TaskReapFailure = ReapFailureCode | HostRequestFailure | 'wsl_error';
+
+/** The code for a rejected host request, by the transport's error type and never its message. */
+export function hostFailureCodeOf(error: unknown): HostRequestFailure {
+  if (error instanceof PtyHostTimeoutError) return 'host_timeout';
+  if (error instanceof PtyHostExitedError) return 'host_exited';
+  return 'host_error';
+}
 
 /** `reap`: a terminal transition or the startup sweep. `stop`: the user's Stop on one listed process. */
 export type TaskReapStage = 'reap' | 'stop';

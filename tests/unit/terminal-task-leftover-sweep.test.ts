@@ -115,7 +115,31 @@ describe('sweepTerminalTaskLeftovers', () => {
     expect([...taskIds].sort()).toEqual(['archived-1', 'archived-2', 'todo-1']);
     expect(taskIds).not.toContain('mid-board-1');
     expect(reaped).toContainEqual({ id: 'archived-1', worktreePath: '/mock/project/.kangentic/worktrees/archived-1' });
-    expect(options).toEqual({ stop: true });
+    expect(options).toEqual({ stop: true, onLateEntries: expect.any(Function) });
+  });
+
+  it('reports what a reap that finished after main stopped waiting stopped or failed to stop, and nothing it kept', async () => {
+    const { taskRepo, swimlaneRepo } = makeRepos();
+    let deliverLate: ((entries: LeftoverProcessEntry[]) => void) | undefined;
+    const reapTaskProcesses = vi.fn(async (_projectPath: string, _tasks: unknown, reapOptions: { stop: boolean; onLateEntries?: (entries: LeftoverProcessEntry[]) => void }) => {
+      deliverLate = reapOptions.onLateEntries;
+      return [];
+    });
+    const options = leftovers(true);
+
+    await sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, options);
+    expect(options.onReport).not.toHaveBeenCalled();
+
+    const stopped: LeftoverProcessEntry = { taskId: 'archived-1', pid: 4001, startKey: 'k1', label: 'node (vite)', outcome: 'stopped', reason: null, place: 'worktree' };
+    const kept: LeftoverProcessEntry = { ...stopped, pid: 4003, startKey: 'k3', label: 'chrome', outcome: 'kept', reason: 'window' };
+    deliverLate!([kept]);
+    expect(options.onReport).not.toHaveBeenCalled();
+    deliverLate!([stopped, kept]);
+    expect(options.onReport).toHaveBeenCalledTimes(1);
+    const [entries, titles, stoppingEnabled] = options.onReport.mock.calls[0] as [LeftoverProcessEntry[], ReadonlyMap<string, string>, boolean];
+    expect(entries).toEqual([stopped]);
+    expect(titles.get('archived-1')).toBe('Fix login');
+    expect(stoppingEnabled).toBe(true);
   });
 
   it('reports only what it stopped or failed to stop, under each task\'s title', async () => {
@@ -224,7 +248,7 @@ describe('cleanupStaleResourcesAsync: the sweep comes first', () => {
     );
 
     expect(tail.reapTaskProcesses).toHaveBeenCalledTimes(1);
-    expect(tail.reapTaskProcesses).toHaveBeenCalledWith(PROJECT_PATH, [{ id: 'archived-1', worktreePath: null }], { stop: true });
+    expect(tail.reapTaskProcesses).toHaveBeenCalledWith(PROJECT_PATH, [{ id: 'archived-1', worktreePath: null }], { stop: true, onLateEntries: expect.any(Function) });
     const reapOrder = tail.reapTaskProcesses.mock.invocationCallOrder[0];
 
     // The backlog pass is the first to remove a worktree. Its read of the To Do

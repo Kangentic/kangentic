@@ -4,7 +4,8 @@
  * young session whose kill main deferred for its exit grace is never
  * force-killed by a reap of the same task. A raw PTY (a probe's) is held in a
  * table of its own and is protected the same way. Once a PTY has exited, what
- * it left behind is fair game.
+ * it left behind is fair game. The core also says when each reap batch and
+ * Stop starts, which restarts main's budget for a request queued behind one.
  */
 import { describe, it, expect, vi } from 'vitest';
 import type * as nodePty from 'node-pty';
@@ -187,5 +188,21 @@ describe('PtyHostCore reapTaggedProcesses', () => {
       outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
     });
     expect(reader.kills).toEqual([]);
+  });
+
+  it('says when each reap batch and each Stop starts, by the request method main restarts the budget of', async () => {
+    const reader = new TableReader([row(MAIN_PID, 900, null)]);
+    const started: string[] = [];
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => reader,
+      onBatchStarted: (method) => { started.push(method); },
+    });
+    await core.reapTaggedProcesses(REQUEST);
+    await core.stopReportedProcess({ pid: 5000, startKey: 'start-5000', mainPid: MAIN_PID });
+    expect(started).toEqual(['reapTaggedProcesses', 'stopReportedProcess']);
   });
 });

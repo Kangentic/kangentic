@@ -16,7 +16,9 @@
  *  - `stopProcess` writes `stopping` at once, then whatever outcome the bridge
  *    answers, and `failed` when the bridge rejects, except that a row whose
  *    report a newer report evicted while main was still answering gets no
- *    outcome back (the final write checks the row is still in `stopStates`).
+ *    outcome back (the final write checks the row is still in `stopStates`);
+ *  - `settleStop` corrects only a row a timed-out Stop left `failed`, with the
+ *    outcome the host reached after main stopped waiting.
  *
  * `window.electronAPI.leftoverProcesses.stop` is stubbed per test with
  * `vi.stubGlobal`, mirroring config-store-project-override.test.ts for a Node
@@ -334,6 +336,36 @@ describe('leftover-processes-store stopProcess while newer reports arrive', () =
 
     held.fail(new Error('ipc channel closed'));
     await expect(pending).resolves.toBeUndefined();
+
+    expect(useLeftoverProcessesStore.getState().stopStates).toEqual({});
+  });
+});
+
+// A Stop that ran past main's budget reads `failed`, but the host still
+// finishes it. Main pushes the real outcome when it arrives (`onStopSettled`),
+// and the row corrects itself: no notice, nothing for the user to do.
+describe('leftover-processes-store settleStop', () => {
+  it('corrects a row a timed-out Stop left failed to the outcome the host reached later', async () => {
+    stopMock.mockResolvedValue('failed');
+    await useLeftoverProcessesStore.getState().stopProcess('process-a');
+    expect(useLeftoverProcessesStore.getState().stopStates['process-a']).toBe('failed');
+
+    useLeftoverProcessesStore.getState().settleStop('process-a', 'stopped');
+
+    expect(useLeftoverProcessesStore.getState().stopStates['process-a']).toBe('stopped');
+  });
+
+  it('leaves a row alone that a newer Stop is working on or has answered', () => {
+    useLeftoverProcessesStore.setState({ stopStates: { 'process-retrying': 'stopping', 'process-ended': 'ended' } });
+
+    useLeftoverProcessesStore.getState().settleStop('process-retrying', 'stopped');
+    useLeftoverProcessesStore.getState().settleStop('process-ended', 'stopped');
+
+    expect(useLeftoverProcessesStore.getState().stopStates).toEqual({ 'process-retrying': 'stopping', 'process-ended': 'ended' });
+  });
+
+  it('never brings back a row whose report is gone', () => {
+    useLeftoverProcessesStore.getState().settleStop('process-evicted', 'stopped');
 
     expect(useLeftoverProcessesStore.getState().stopStates).toEqual({});
   });

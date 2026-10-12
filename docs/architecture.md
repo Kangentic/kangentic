@@ -533,11 +533,12 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
 | `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/analytics.md` |
 
-### Leftover processes (2 channels)
+### Leftover processes (3 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `leftoverProcesses:report` | push | What a burst of terminal transitions stopped, could not stop, and left running (`LeftoverProcessReport`), one report per burst so a bulk delete is one toast, stamped with when it was sent (`reportedAt`, UTC) for the age the sticky toast and the list header show. Main window only. Never sent when nothing was left running. See `src/main/ipc/helpers/leftover-process-reports.ts` |
 | `leftoverProcesses:stop` | invoke | Stop one reported process, with everything under it, by the id its report minted (never a pid). Resolves `'stopped'`, `'ended'` or `'failed'`. Not project-scoped: the id carries its own identity |
+| `leftoverProcesses:stopSettled` | push | The real outcome of a Stop that `stop` answered `'failed'` because main stopped waiting for the pty host, which finished it anyway (`LeftoverStopSettled`). The row takes it only while it still reads failed; no toast. Main window only |
 
 ### Host memory pressure (2 channels)
 | Channel | Pattern | Purpose |
@@ -825,7 +826,7 @@ Shell-specific adaptations:
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children and the pty host process are gone. The host exits itself once every exit callback has run there, within the drain's deadline less 200 ms, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
-| Pty host request timeout | 15 s (an exec: its own timeout plus 5 s) | A request the host never answers rejects; an exec then runs locally |
+| Pty host request timeout | 15 s (an exec: its own timeout plus 5 s, or 10 min for a child with none; a task reap or Stop: 30 s from when its batch starts) | A request the host never answers rejects with `PtyHostTimeoutError` (`PtyHostExitedError` when the host exited or was down). An exec rejects like a failed child and is never rerun locally, since it may already have run. The host posts `batch-started` as each reap batch or Stop starts, and every request of that method still waiting gets its budget back. A timed-out reap's late answer still reaches its report (`onLateResult`) |
 | Pty host heartbeat | 5 s beat, 11 s unresponsive | VS Code's intervals; an unresponsive host is logged |
 | Pty host restarts | at once, then 1, 5, 15 s; 5 crashes per 5 min | Past the cap the host core runs in main for the rest of the run |
 | KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
