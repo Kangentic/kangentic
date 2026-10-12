@@ -41,7 +41,7 @@ const { runProjectMigrations } = await import('../../src/main/db/migrations/proj
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const service = await import('../../src/main/workflows/workflow-service');
-const { createWorkflowForView, listWorkflowSummaries, listWorkflowSupersessions } = await import('../../src/main/workflows/workflow-view-service');
+const { createWorkflowForView, listWorkflowSummaries, listWorkflowSupersessions, readWorkflowDetail, setViewRoute } =await import('../../src/main/workflows/workflow-view-service');
 const { isInWorkflow, workflowOfTask } = await import('../../src/main/workflows/workflow-home');
 const { SUPERSEDED_MOVE_REASON_PREFIX, WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const { checkWorkflowMove, checkWorkflowMoveForAgent, workflowTitleOf } = await import('../../src/main/workflows/workflow-lock-check');
@@ -374,6 +374,35 @@ describe('reads of a project id that workflow data stores, after that project is
       const view = service.readWorkflow(context, 'home', workflow.id);
 
       expect(taskTitled(view, 'Budgets on the phone').route).toEqual([]);
+      expect(harness.getProjectDbCalls).not.toContain('mobile');
+    });
+
+    it('reads for the canvas with the task kept, no steps and no columns for its board, and that board is not opened', () => {
+      const workflow = planAcrossBoards(service, context);
+      deleteProject('mobile');
+
+      const detail = readWorkflowDetail(context, 'home', workflow.id);
+      const phone = detail.tasks.find((candidate) => candidate.title === 'Budgets on the phone')!;
+
+      expect(phone.projectId).toBe('mobile');
+      expect(phone.steps).toEqual([]);
+      expect(detail.boardEnds.mobile).toEqual({ todo: null, done: null });
+      // The control: the board that is still there keeps its columns.
+      expect(detail.boardEnds.home.todo).not.toBeNull();
+      expect(detail.projectNames.mobile).toBe('Another project');
+      expect(detail.tasks).toHaveLength(3);
+      expect(harness.getProjectDbCalls).not.toContain('mobile');
+    });
+
+    it('refuses a route switch on it for having no column to visit, leaves the plan as saved, and does not open that board', () => {
+      const workflow = planAcrossBoards(service, context);
+      const phone = taskTitled(service.readWorkflow(context, 'home', workflow.id), 'Budgets on the phone');
+      const savedPlan = service.requireWorkflow('home', workflow.id).draft;
+      deleteProject('mobile');
+
+      expect(() => setViewRoute(context, 'home', workflow.id, phone.key, ['any-column'])).toThrow(WORKFLOW_REFUSALS.routeEmpty);
+
+      expect(service.requireWorkflow('home', workflow.id).draft).toEqual(savedPlan);
       expect(harness.getProjectDbCalls).not.toContain('mobile');
     });
 
