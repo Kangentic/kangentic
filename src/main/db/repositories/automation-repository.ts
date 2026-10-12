@@ -8,6 +8,7 @@ import type {
   ColumnAutomation,
 } from '../../../shared/types';
 import { AUTOMATION_MANIFEST, isAutomationTrigger } from '../../../shared/automation-manifest';
+import { columnNameKey } from '../../automations/move-target';
 import { writeTransaction } from '../transaction';
 
 interface AutomationRow {
@@ -144,25 +145,27 @@ export class AutomationRepository {
  * inside the rename's own transaction. The fields come from the manifest, so a
  * second type that names a column needs no change here.
  *
- * Case-blind and blind to surrounding whitespace on both names, like
- * `resolveMoveTarget`, which is how the name is read back: a row it would move
- * to the old column follows the rename. SQLite's one-argument TRIM strips only
- * spaces, so the tab, line breaks, vertical tab and form feed are named.
+ * A stored name matches through `columnNameKey`, the function
+ * `resolveMoveTarget` reads it back with, so a row that would move a task to
+ * the old column follows the rename. The match runs here, not in SQL: SQLite's
+ * TRIM and LOWER know only ASCII, so padding JavaScript trims (a no-break
+ * space) or a letter only it lowercases would leave the row on the old name.
  */
 export function renameAutomationColumnReferences(db: Database.Database, oldName: string, newName: string): number {
-  const whitespace = 'char(32, 9, 10, 13, 11, 12)';
+  const oldKey = columnNameKey(oldName);
+  const update = db.prepare('UPDATE column_automations SET config_json = json_set(config_json, ?, ?) WHERE id = ?');
   let changed = 0;
   for (const [type, entry] of Object.entries(AUTOMATION_MANIFEST)) {
     for (const field of entry.fields) {
       if (field.kind !== 'column') continue;
       const path = `$.${field.key}`;
-      changed += db
-        .prepare(
-          `UPDATE column_automations SET config_json = json_set(config_json, ?, ?)
-           WHERE type = ? AND json_valid(config_json)
-             AND LOWER(TRIM(json_extract(config_json, ?), ${whitespace})) = LOWER(TRIM(?, ${whitespace}))`,
-        )
-        .run(path, newName, type, path, oldName).changes;
+      const rows = db
+        .prepare('SELECT id, json_extract(config_json, ?) AS target FROM column_automations WHERE type = ? AND json_valid(config_json)')
+        .all(path, type) as Array<{ id: string; target: string | number | bigint | null }>;
+      for (const row of rows) {
+        if (row.target === null || columnNameKey(String(row.target)) !== oldKey) continue;
+        changed += update.run(path, newName, row.id).changes;
+      }
     }
   }
   return changed;

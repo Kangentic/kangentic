@@ -10,7 +10,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, computedColor, settleFrames } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -93,18 +93,6 @@ test('opening a workflow opens its agent in the pane, and Pause and Resume stop 
     await browser.close();
   }
 });
-
-/** A CSS color as the page computes it, so a token and an element's own color compare as one string. */
-async function computedColor(page: Page, cssColor: string): Promise<string> {
-  return page.evaluate((value) => {
-    const probe = document.createElement('span');
-    probe.style.color = value;
-    document.body.appendChild(probe);
-    const color = getComputedStyle(probe).color;
-    probe.remove();
-    return color;
-  }, cssColor);
-}
 
 test('the pane\'s header sits on the raised fill, and its collapse control is named Collapse agent', async () => {
   const { browser, page } = await launch();
@@ -441,6 +429,101 @@ test('a width that fails to save snaps back to the stored width, with no unhandl
     // Console events cross the debugging protocol after the page logs them, so poll for the one.
     await expect.poll(() => warnings.some((warning) => warning.includes('Could not save the pane width'))).toBe(true);
     expect(warnings.find((warning) => warning.includes('Could not save the pane width'))).toContain('The settings file is read only');
+  } finally {
+    await browser.close();
+  }
+});
+
+/**
+ * Hold every pane-width save in the page until the test lets it go. The patch is
+ * made after boot and takes only a payload that carries `workflows.agentPaneWidth`,
+ * so the app's other config writes pass straight through. Each held save is
+ * recorded in `__widthSaves` (the width it asks for) and released by its index in
+ * that list; a released save goes through to the mock unchanged.
+ */
+async function holdWidthSaves(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const held = window as unknown as { __widthSaves: number[]; __widthSaveGates: Array<() => void> };
+    held.__widthSaves = [];
+    held.__widthSaveGates = [];
+    const set = window.electronAPI.config.set;
+    window.electronAPI.config.set = async (partial) => {
+      const requested = partial.workflows?.agentPaneWidth;
+      if (requested === undefined) return set(partial);
+      held.__widthSaves.push(requested);
+      await new Promise<void>((resolve) => { held.__widthSaveGates.push(resolve); });
+      return set(partial);
+    };
+  });
+}
+
+/** The widths the held saves ask for, in the order they were made. */
+async function heldWidthSaves(page: Page): Promise<number[]> {
+  return page.evaluate(() => (window as unknown as { __widthSaves: number[] }).__widthSaves);
+}
+
+/** Let the held save at `index` go through to the mock. */
+async function releaseWidthSave(page: Page, index: number): Promise<void> {
+  await page.evaluate((gateIndex) => (window as unknown as { __widthSaveGates: Array<() => void> }).__widthSaveGates[gateIndex](), index);
+}
+
+/** The width the config store holds for the pane: what a save has stored and the store has read back. */
+async function storedPaneWidth(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores: { config: { getState: () => { config: { workflows?: { agentPaneWidth?: number } } } } };
+    }).__zustandStores;
+    return stores.config.getState().config.workflows?.agentPaneWidth ?? null;
+  });
+}
+
+test('a drag pressed while the last one\'s save is pending starts from the width on screen, and only the newest save lets go of it', async () => {
+  const { browser, page } = await launch();
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    await expect(pane).toHaveAttribute('data-floating', 'false');
+    const widthOf = () => pane.evaluate((element) => element.getBoundingClientRect().width);
+    // 0 when the pane is within a pixel of `expected`, else how far off it is, so a failure names the width.
+    const offBy = (expected: number) => async () => {
+      const difference = (await widthOf()) - expected;
+      return Math.abs(difference) <= 1 ? 0 : difference;
+    };
+    const start = await widthOf();
+    await holdWidthSaves(page);
+
+    // Drag 1 widens the pane by 100 and releases; its save is held, so nothing is stored yet.
+    expect(await dragPaneEdge(page, 100)).toEqual([]);
+    await expect.poll(async () => (await heldWidthSaves(page)).length).toBe(1);
+    const [firstSave] = await heldWidthSaves(page);
+    expect(Math.abs(firstSave - (start + 100))).toBeLessThanOrEqual(1);
+    await expect.poll(offBy(start + 100)).toBe(0);
+    expect(await storedPaneWidth(page)).toBeNull();
+
+    // Drag 2 is pressed while save 1 is still pending. It starts from the width
+    // on screen, so it ends 10 past it. Started from the stored width (none, so
+    // the default) it would end 10 past that, and the pane would shrink.
+    await settleFrames(page);
+    expect(await dragPaneEdge(page, 10)).toEqual([]);
+    await expect.poll(async () => (await heldWidthSaves(page)).length).toBe(2);
+    const [, secondSave] = await heldWidthSaves(page);
+    expect(Math.abs(secondSave - (start + 110))).toBeLessThanOrEqual(1);
+    await expect.poll(offBy(start + 110)).toBe(0);
+
+    // Save 1 lands while save 2 is pending. Only the newest save lets go of the
+    // width a drag set, so the pane stays where drag 2 left it. Wait for the
+    // store to read save 1 back (the step before the save's `finally`), then the
+    // frames a snap-back would need, then look once.
+    await releaseWidthSave(page, 0);
+    await expect.poll(() => storedPaneWidth(page)).toBe(firstSave);
+    await settleFrames(page, 3);
+    expect(await offBy(start + 110)()).toBe(0);
+
+    // Save 2 lands: the newest save lets go, and the setting it stored is the width.
+    await releaseWidthSave(page, 1);
+    await expect.poll(() => storedPaneWidth(page)).toBe(secondSave);
+    await settleFrames(page, 3);
+    expect(await offBy(start + 110)()).toBe(0);
+    expect(await page.evaluate(async () => (await window.electronAPI.config.getGlobal()).workflows?.agentPaneWidth ?? null)).toBe(secondSave);
   } finally {
     await browser.close();
   }

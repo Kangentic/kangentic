@@ -9,7 +9,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, computedColor } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -119,18 +119,6 @@ const port = (page: Page, key: string, side: 'left' | 'right') =>
 /** The ports sit on the title row, so the node sets where from its own inline `top`, state rather than measured pixels. */
 const portTop = (offset: number) => new RegExp(`(^|;)\\s*top:\\s*${offset}px`);
 
-/** A theme token's color as this page computes it, so a style check holds in every theme. */
-async function tokenColor(page: Page, token: string): Promise<string> {
-  return page.evaluate((name) => {
-    const probe = document.createElement('div');
-    probe.style.color = `var(${name})`;
-    document.body.appendChild(probe);
-    const value = getComputedStyle(probe).color;
-    probe.remove();
-    return value;
-  }, token);
-}
-
 test.describe('Workflows canvas', () => {
   test('a project with no workflows shows the empty state', async () => {
     const { browser, page } = await launch(false);
@@ -155,11 +143,11 @@ test.describe('Workflows canvas', () => {
       expect(states).toEqual(['done', 'running', 'running', 'waiting']);
       await expect(illustration.locator('[data-illustration-link="satisfied"]')).toHaveCount(2);
       await expect(illustration.locator('[data-illustration-link="pending"]')).toHaveCount(2);
-      const active = await tokenColor(page, '--color-active');
+      const active = await computedColor(page, 'var(--color-active)');
       await expect(illustration.locator('[data-illustration-card="done"] [data-illustration-frame]')).toHaveCSS('stroke', active);
       await expect(illustration.locator('[data-illustration-link="satisfied"]').first()).toHaveCSS('stroke', active);
-      await expect(illustration.locator('[data-illustration-card="waiting"] [data-illustration-frame]')).toHaveCSS('stroke', await tokenColor(page, '--color-edge'));
-      await expect(illustration.locator('[data-illustration-card="waiting"] [data-illustration-frame]')).toHaveCSS('fill', await tokenColor(page, '--color-surface-raised'));
+      await expect(illustration.locator('[data-illustration-card="waiting"] [data-illustration-frame]')).toHaveCSS('stroke', await computedColor(page, 'var(--color-edge)'));
+      await expect(illustration.locator('[data-illustration-card="waiting"] [data-illustration-frame]')).toHaveCSS('fill', await computedColor(page, 'var(--color-surface-raised)'));
       // Static: nothing in the empty state animates.
       expect(await empty.evaluate((element) => element.getAnimations({ subtree: true }).length)).toBe(0);
     } finally {
@@ -190,8 +178,8 @@ test.describe('Workflows canvas', () => {
         await expect(port(page, key, 'right')).toHaveAttribute('style', portTop(49));
       }
       // A port is a dot ringed in the accent on the canvas's own fill (boards 1, 10).
-      const accentForeground = await tokenColor(page, '--color-accent-fg');
-      const surface = await tokenColor(page, '--color-surface');
+      const accentForeground = await computedColor(page, 'var(--color-accent-fg)');
+      const surface = await computedColor(page, 'var(--color-surface)');
       for (const side of ['left', 'right'] as const) {
         await expect(port(page, 'task-2', side)).toHaveCSS('border-top-color', accentForeground);
         await expect(port(page, 'task-2', side)).toHaveCSS('border-top-width', '2px');
@@ -221,8 +209,8 @@ test.describe('Workflows canvas', () => {
       // The name reads at 12px in the tertiary grey, its folder in the muted grey.
       const projectLabel = card(page, 'task-1').locator('[data-testid="workflow-card-project"]');
       await expect(projectLabel).toHaveCSS('font-size', '12px');
-      await expect(projectLabel).toHaveCSS('color', await tokenColor(page, '--color-fg-tertiary'));
-      await expect(projectLabel.locator('svg')).toHaveCSS('color', await tokenColor(page, '--color-fg-muted'));
+      await expect(projectLabel).toHaveCSS('color', await computedColor(page, 'var(--color-fg-tertiary)'));
+      await expect(projectLabel.locator('svg')).toHaveCSS('color', await computedColor(page, 'var(--color-fg-muted)'));
     } finally {
       await browser.close();
     }
@@ -252,9 +240,9 @@ test.describe('Workflows canvas', () => {
       await card(page, 'task-2').click();
       await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'true');
       await expect.poll(() => look('task-1', 'task-2')).toMatchObject({ relation: 'blocker', opacity: '1', flowing: true, animated: true, layered: true });
-      expect((await look('task-1', 'task-2')).stroke).toBe(await tokenColor(page, '--color-fg-muted'));
+      expect((await look('task-1', 'task-2')).stroke).toBe(await computedColor(page, 'var(--color-fg-muted)'));
       await expect.poll(() => look('task-2', 'task-3')).toMatchObject({ relation: 'dependent', opacity: '1', flowing: true });
-      expect((await look('task-2', 'task-3')).stroke).toBe(await tokenColor(page, '--color-accent-fg'));
+      expect((await look('task-2', 'task-3')).stroke).toBe(await computedColor(page, 'var(--color-accent-fg)'));
 
       // Another selection: the link it has no part in fades back and holds still.
       await card(page, 'task-1').click();
@@ -288,9 +276,9 @@ test.describe('Workflows canvas', () => {
       // Selected (sign-off S3): the theme's accent at the border's own 1px,
       // with no ring or halo outside it. An unselected planned card draws like
       // any To Do card: a solid 1px edge, no dash (Final 3).
-      const edge = await tokenColor(page, '--color-edge');
+      const edge = await computedColor(page, 'var(--color-edge)');
       await expect(card(page, 'task-2')).toHaveCSS('border-top-width', '1px');
-      await expect(card(page, 'task-2')).toHaveCSS('border-top-color', await tokenColor(page, '--color-accent'));
+      await expect(card(page, 'task-2')).toHaveCSS('border-top-color', await computedColor(page, 'var(--color-accent)'));
       await expect(card(page, 'task-2')).toHaveCSS('border-top-style', 'solid');
       await expect(card(page, 'task-2')).toHaveCSS('box-shadow', 'none');
       await expect(card(page, 'task-1')).toHaveCSS('border-top-width', '1px');

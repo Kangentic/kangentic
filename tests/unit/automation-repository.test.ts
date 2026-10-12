@@ -273,6 +273,27 @@ describe('AutomationRepository', () => {
       expect(automations.listForColumn(columnId).map((row) => row.config.targetColumn)).toEqual(['Verify', 'Verify']);
     });
 
+    // SQLite's TRIM and LOWER know only ASCII; resolveMoveTarget's trim and
+    // lowercase do not, so the rename matches through the same function.
+    it('points a row at the new name when its stored target is padded with a space only JavaScript trims, as resolveMoveTarget reads it', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      automations.replaceForColumn(columnId, [moveTo('No-break', 'Testing '), moveTo('Em space', ' testing')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(automations.listForColumn(columnId).map((row) => row.config.targetColumn)).toEqual(['Verify', 'Verify']);
+    });
+
+    it('points a row at the new name when its stored target differs only in the case of a letter outside ASCII', () => {
+      const { lanes, automations, columnId, testing } = renamableSetup();
+      lanes.update({ id: testing.id, name: 'Prüfung' });
+      automations.replaceForColumn(columnId, [moveTo('Umlaut', 'PRÜFUNG')]);
+
+      lanes.update({ id: testing.id, name: 'Verify' });
+
+      expect(targetOf(automations, columnId)).toBe('Verify');
+    });
+
     it('points a row at the new name when its stored target is the column\'s exact name (the control)', () => {
       const { lanes, automations, columnId, testing } = renamableSetup();
       automations.replaceForColumn(columnId, [moveTo('Hand off', 'Testing')]);

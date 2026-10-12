@@ -18,9 +18,9 @@ import type Database from 'better-sqlite3';
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: (projectId: string) => {
-    const db = harness.dbs.get(projectId);
-    if (!db) throw new Error(`No database for ${projectId}`);
-    return db;
+    const projectDatabase = harness.dbs.get(projectId);
+    if (!projectDatabase) throw new Error(`No database for ${projectId}`);
+    return projectDatabase;
   },
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
@@ -41,10 +41,10 @@ describe('formatWorkflow: which board a task is on', () => {
   beforeEach(() => {
     harness.dbs.clear();
     for (const projectId of ['home', 'mobile']) {
-      const db = openTestDatabase();
-      db.exec('PRAGMA foreign_keys = ON');
-      runProjectMigrations(db);
-      harness.dbs.set(projectId, db);
+      const projectDatabase = openTestDatabase();
+      projectDatabase.exec('PRAGMA foreign_keys = ON');
+      runProjectMigrations(projectDatabase);
+      harness.dbs.set(projectId, projectDatabase);
     }
     const projects = [
       { id: 'home', name: 'kangentic', path: '/projects/home' },

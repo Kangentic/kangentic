@@ -5172,15 +5172,26 @@
           var todo = todoLane();
           var idByKey = {};
           draft.tasks.forEach(function (planned) {
-            // Main's Start creates each task with its planned run settings.
-            var row = buildTaskRow(Object.assign(
-              { title: planned.title, description: planned.description, swimlane_id: todo.id, labels: planned.labels, priority: planned.priority },
-              runSettingsCreateInput(planned),
-            ), tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
+            var row;
+            if (planned.existing_task_id) {
+              // Main's Start takes a board task in where it is (setWorkflowMembership)
+              // and creates nothing; one that left To Do refuses the Start.
+              row = tasks.find(function (task) { return task.id === planned.existing_task_id; });
+              var lane = row ? laneOf(row.swimlane_id) : null;
+              if (!row || row.archived_at || !lane || lane.role !== 'todo' || row.workflow_id) {
+                throw new Error('"' + planned.title + '" takes in a board task that is no longer in To Do. Save the plan again without it.');
+              }
+            } else {
+              // Main's Start creates every other task with its planned run settings.
+              row = buildTaskRow(Object.assign(
+                { title: planned.title, description: planned.description, swimlane_id: todo.id, labels: planned.labels, priority: planned.priority },
+                runSettingsCreateInput(planned),
+              ), tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
+              tasks.push(row);
+            }
             membership(row, entry, planned);
             row.canvas_x = planned.canvas_x;
             row.canvas_y = planned.canvas_y;
-            tasks.push(row);
             idByKey[planned.key] = row.id;
           });
           draft.links.forEach(function (link) {

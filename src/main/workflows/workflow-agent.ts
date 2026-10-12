@@ -421,6 +421,7 @@ function startOnce(
 /**
  * `continuation` is the message a resumed agent gets on starting, when
  * Kangentic restarted it for a reason it should hear (new checkouts to read).
+ * Only that restart passes one, so it also marks the start as Kangentic's own.
  */
 async function startWorkflowAgent(
   context: IpcContext,
@@ -517,11 +518,12 @@ async function startWorkflowAgent(
   // Read again after the awaits above: the workflow may have finished, or been
   // deleted with its project, while the CLI was being found.
   if (!workflowStillOpen(context, homeProjectId, workflowId)) return unavailable('This workflow no longer exists.');
-  // A `continuation` marks a start Kangentic made on its own, the restart for
-  // read access. A Pause pressed while it found the CLI reached an agent that
-  // already read suspended, so it stopped nothing, and it stands: the agent
-  // stays suspended, and its next start reads the grant from the workflow row.
-  if (continuation !== undefined && userPaused.has(workflowId)) {
+  // The restart for read access is the one start Kangentic makes on its own. A
+  // Pause pressed while it found the CLI reached an agent that already read
+  // suspended, so it stopped nothing, and it stands: the agent stays suspended,
+  // and its next start reads the grant from the workflow row.
+  const restartForAccess = continuation !== undefined;
+  if (restartForAccess && userPaused.has(workflowId)) {
     return { session: findWorkflowAgentSession(context, workflowId), unavailable: null };
   }
   // The rows this start replaces leave the registry with no removal push (the
@@ -558,9 +560,8 @@ async function startWorkflowAgent(
     agentActivity.delete(replacedId);
     resumedSessions.delete(replacedId);
   }
-  // Recorded on every start, so a conversation from before `agent_cwd` existed
-  // gains its checkout on its next resume.
-  repository.setAgentConversation(workflow.id, { agentName, agentSessionId, cwd: projectRoot });
+  // The running agent's own bookkeeping comes before the one write below that
+  // can throw, so a failed write still leaves an agent that is tracked.
   recordWorkflowAgentEffort(session.id, commandOptions.effort ?? null);
   // A resume that sends nothing is idle by contract, but `--resume` reloads the
   // conversation with no hooks while its token count grows, and the status
@@ -575,7 +576,37 @@ async function startWorkflowAgent(
     // fails too starts over again, which says it again.
     startedOverSessions.delete(workflow.id);
   }
-  return { session, unavailable: null };
+  try {
+    // Recorded on every start, so a conversation from before `agent_cwd` existed
+    // gains its checkout on its next resume. Recorded before a Pause below stops
+    // the agent, so Resume finds the conversation to resume.
+    repository.setAgentConversation(workflow.id, { agentName, agentSessionId, cwd: projectRoot });
+  } finally {
+    await honorPausePressedDuringSpawn(context, workflow.id, session.id);
+  }
+  return { session: context.sessionManager.getSession(session.id) ?? session, unavailable: null };
+}
+
+/**
+ * A Pause pressed while a start spawned found the row that start replaces,
+ * already suspended, or no row at all, so it stopped nothing. It stands: the
+ * new agent is suspended as soon as it exists. An open and a Resume clear the
+ * Pause before they start and the restart for read access checks it, so one
+ * recorded now was pressed during this start, or, for a start-over, during the
+ * resume that failed. The row is read from the registry, since a Pause that
+ * reached it suspended it already. Never throws: the start it ends has an agent
+ * to report either way.
+ */
+async function honorPausePressedDuringSpawn(context: IpcContext, workflowId: string, sessionId: string): Promise<void> {
+  if (!userPaused.has(workflowId)) return;
+  const started = context.sessionManager.getSession(sessionId);
+  if (!started || started.status === 'suspended' || started.status === 'exited') return;
+  try {
+    captureSpend(context, started);
+    await context.sessionManager.suspend(started.id);
+  } catch (error) {
+    console.error('[WORKFLOW-AGENT] Could not pause the agent a Pause reached while it started:', error);
+  }
 }
 
 /** The workflow is still there, unfinished, in a project still in Kangentic. */

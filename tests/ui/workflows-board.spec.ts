@@ -12,7 +12,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, computedColor } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -193,18 +193,6 @@ async function keepLinks(page: Page, id: string): Promise<void> {
   }, { taskId: id, projectId: PROJECT_ID });
 }
 
-/** A theme token's color as the page computes it, to compare against a computed style. */
-async function tokenColor(page: Page, token: string): Promise<string> {
-  return page.evaluate((value) => {
-    const probe = document.createElement('span');
-    probe.style.color = value;
-    document.body.appendChild(probe);
-    const color = getComputedStyle(probe).color;
-    probe.remove();
-    return color;
-  }, token);
-}
-
 async function openMenu(page: Page, id: string): Promise<void> {
   await boardCard(page, id).click({ button: 'right' });
   await byTestId(page, 'task-context-menu').waitFor({ state: 'visible' });
@@ -286,7 +274,7 @@ test.describe('Workflow tasks on the board', () => {
       await expect(current).toHaveCSS('height', '6px');
       await expect(strip.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
       // A stop it has passed is the faint grey, whatever its column's color.
-      const faint = await tokenColor(page, 'var(--color-fg-faint)');
+      const faint = await computedColor(page, 'var(--color-fg-faint)');
       await expect(strip.locator('[data-step-state="done"]')).toHaveCount(2);
       for (const passed of await strip.locator('[data-step-state="done"]').all()) await expect(passed).toHaveCSS('background-color', faint);
       // A stop still ahead carries its column's color, so it is not the grey.
@@ -506,7 +494,7 @@ test.describe('Workflow tasks on the board', () => {
       await expect(overlay.locator('[data-link="out:t417"]')).toHaveCount(1);
       // The focused card wears the accent border the canvas gives its selected
       // card; no other card changes, the Done column included.
-      await expect(boardCard(page, 't414')).toHaveCSS('border-top-color', await tokenColor(page, 'var(--color-accent)'));
+      await expect(boardCard(page, 't414')).toHaveCSS('border-top-color', await computedColor(page, 'var(--color-accent)'));
       for (const id of ['t419', 't417']) await expect(boardCard(page, id)).toHaveCSS('opacity', '1');
       await expect(boardCard(page, 't417')).toHaveCSS('outline-style', 'none');
       await expect(page.locator('[data-board-lanes] [data-done-drop-zone]')).toHaveCSS('opacity', '1');
@@ -515,7 +503,7 @@ test.describe('Workflow tasks on the board', () => {
 
       await page.keyboard.press('Escape');
       await expect(overlay).toHaveCount(0);
-      await expect(boardCard(page, 't414')).not.toHaveCSS('border-top-color', await tokenColor(page, 'var(--color-accent)'));
+      await expect(boardCard(page, 't414')).not.toHaveCSS('border-top-color', await computedColor(page, 'var(--color-accent)'));
     } finally {
       await browser.close();
     }
@@ -820,7 +808,7 @@ test.describe('Workflow tasks on the board', () => {
         await expect(overlay).toHaveAttribute('data-phase', 'shown');
         await expect(overlay.locator('[data-link="out:t417"]')).toHaveCount(1);
         // The card wears the canvas's selected border while its links show.
-        await expect(boardCard(page, 't414')).toHaveCSS('border-top-color', await tokenColor(page, 'var(--color-accent)'));
+        await expect(boardCard(page, 't414')).toHaveCSS('border-top-color', await computedColor(page, 'var(--color-accent)'));
         // No button on the strip: the card itself is the way in.
         await expect(page.locator('[data-testid="workflow-links-button"]')).toHaveCount(0);
 

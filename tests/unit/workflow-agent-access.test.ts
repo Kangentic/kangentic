@@ -14,6 +14,9 @@
  * - a Pause pressed later still, while the restart's start is finding the CLI,
  *   also stands: the start spawns nothing and the agent stays suspended. A
  *   Resume pressed after that Pause joins the start in flight and spawns it;
+ * - a Pause pressed later still, while a start is spawning, finds no row or only
+ *   the one the start replaces, so the start suspends the new agent once it
+ *   exists (once, when the Pause reached its row first, and never an exited one);
  * - a restart whose suspend worked but whose start then threw, after the new
  *   agent was already running, owes nothing: the new agent has the access, and
  *   owing it again would stop and respawn a healthy agent at every idle edge.
@@ -52,6 +55,15 @@ interface FakeSession {
   workflowId: string;
   status: string;
   projectId?: string;
+}
+
+/**
+ * One macrotask turn. A restart for read access is scheduled with
+ * `setImmediate` by the request or idle edge that owes it, so it has run once
+ * this resolves.
+ */
+function nextTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 describe('the workflow agent\'s reads across projects', () => {
@@ -146,7 +158,7 @@ describe('the workflow agent\'s reads across projects', () => {
     activity['session-working'] = 'thinking';
     expect(agent.requestWorkflowAgentProjectAccess(context, 'home', working.id, 'mobile').when).toBe('next-turn');
     // Nothing is cut short mid-turn.
-    await new Promise((resolve) => setImmediate(resolve));
+    await nextTurn();
     expect(suspend).not.toHaveBeenCalled();
 
     const idle = service.createWorkflow('home', {});
@@ -173,6 +185,13 @@ describe('the workflow agent\'s reads across projects', () => {
     let manager: EventEmitter;
     /** A start that comes back unavailable warns; quiet here, and read by the test that pins it. */
     let warnSpy: MockInstance<typeof console.warn>;
+    // Set by `makeStartsReachSpawn`, for the restarts that get past the start's config check and on to its spawn.
+    let spawn: ReturnType<typeof vi.fn>;
+    let getShell: ReturnType<typeof vi.fn>;
+    let buildCommand: ReturnType<typeof vi.fn>;
+    let markIdleAuthoritative: ReturnType<typeof vi.fn>;
+    /** Spies a test installed, restored after it. */
+    const spies: Array<{ mockRestore: () => void }> = [];
 
     beforeEach(() => {
       warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -202,12 +221,6 @@ describe('the workflow agent\'s reads across projects', () => {
       activity[sessionId] = 'idle';
       return workflow.id;
     }
-
-    // The restarts below that get past the start's config check and on to its spawn.
-    let spawn: ReturnType<typeof vi.fn>;
-    let getShell: ReturnType<typeof vi.fn>;
-    let buildCommand: ReturnType<typeof vi.fn>;
-    const spies: Array<{ mockRestore: () => void }> = [];
 
     /** Lets a start run end to end: a usable adapter, the MCP server on, a suspend that works, a spawn that replaces the row. */
     function makeStartsReachSpawn(): void {
@@ -244,7 +257,8 @@ describe('the workflow agent\'s reads across projects', () => {
         return spawned;
       });
       getShell = vi.fn(async () => 'bash');
-      Object.assign(manager, { getShell, spawn });
+      markIdleAuthoritative = vi.fn();
+      Object.assign(manager, { getShell, spawn, markIdleAuthoritative });
     }
 
     /** A conversation to resume, so a start has no first message to build. */
@@ -280,7 +294,7 @@ describe('the workflow agent\'s reads across projects', () => {
       const returning = sessions.find((session) => session.id === sessionId);
       if (returning) returning.status = 'running';
       manager.emit('activity', sessionId, 'idle');
-      await new Promise((resolve) => setImmediate(resolve));
+      await nextTurn();
       expect(suspend).toHaveBeenCalledTimes(1);
       expect(startAttempts).toHaveBeenCalledTimes(1);
     });
@@ -292,7 +306,7 @@ describe('the workflow agent\'s reads across projects', () => {
       // The user's prompt starts a turn in the tick between the idle edge and the restart.
       activity['session-reprompted'] = 'thinking';
       // The restart was queued first, so it has run by the time this resolves.
-      await new Promise((resolve) => setImmediate(resolve));
+      await nextTurn();
       expect(suspend).not.toHaveBeenCalled();
       expect(startAttempts).not.toHaveBeenCalled();
 
@@ -328,7 +342,7 @@ describe('the workflow agent\'s reads across projects', () => {
         expect(suspend).toHaveBeenCalledTimes(2);
         expect(suspend).toHaveBeenLastCalledWith('session-suspend-fails');
         // The retry's own start comes back unavailable here (the MCP server is off) and warns; let it settle.
-        await new Promise((resolve) => setImmediate(resolve));
+        await nextTurn();
       } finally {
         errorSpy.mockRestore();
       }
@@ -361,7 +375,7 @@ describe('the workflow agent\'s reads across projects', () => {
         if (returning) returning.status = 'running';
         manager.emit('activity', sessionId, 'idle');
         // The restart, were it owed, was queued first, so it has run by the time this resolves.
-        await new Promise((resolve) => setImmediate(resolve));
+        await nextTurn();
 
         expect(suspend).toHaveBeenCalledTimes(1);
         expect(startAttempts).not.toHaveBeenCalled();
@@ -388,8 +402,8 @@ describe('the workflow agent\'s reads across projects', () => {
 
       /** Two macrotask turns: a restart runs one turn after the edge or request that scheduled it, and the second lets it finish. */
       async function settle(): Promise<void> {
-        await new Promise((resolve) => setImmediate(resolve));
-        await new Promise((resolve) => setImmediate(resolve));
+        await nextTurn();
+        await nextTurn();
       }
 
       it('owes nothing, so the next idle edge leaves the running agent alone instead of stopping and spawning it again', async () => {
@@ -453,6 +467,10 @@ describe('the workflow agent\'s reads across projects', () => {
         expect(spawn).toHaveBeenCalledTimes(1);
         expect(spawn.mock.calls[0][0]).toMatchObject({ cols: 100, rows: 40 });
         expect(sessions.map((session) => [session.id, session.status])).toEqual([['session-restarted', 'running']]);
+        // The running agent's own bookkeeping runs before the write that threw: a
+        // resume that sends nothing is still asserted idle, or it would read as
+        // working, with every plan edit held, until the stale-thinking watchdog.
+        expect(markIdleAuthoritative).toHaveBeenCalledWith('session-restarted');
 
         // The restart for a new checkout starts from the size the last start recorded.
         activity['session-restarted'] = 'idle';
@@ -481,7 +499,7 @@ describe('the workflow agent\'s reads across projects', () => {
       await agent.pauseWorkflowAgent(context, workflowId);
       finishRestartSuspend();
       // The restart's continuation is microtasks only: one macrotask lets it run to its end.
-      await new Promise((resolve) => setImmediate(resolve));
+      await nextTurn();
 
       expect(startAttempts).not.toHaveBeenCalled();
     });
@@ -565,6 +583,197 @@ describe('the workflow agent\'s reads across projects', () => {
       });
     });
 
+    // The wait after the one above: the spawn itself. A Pause pressed there finds
+    // only the row the start replaces (the restart suspended it already) or no row
+    // at all (a fresh open), so it stops nothing and only records itself. The
+    // start reads it once the new agent exists, and suspends that agent.
+    describe('a Pause pressed while a start is spawning', () => {
+      interface FakeSpawnOptions {
+        workflowId: string;
+        projectId: string;
+      }
+
+      let errorSpy: MockInstance<typeof console.error>;
+
+      beforeEach(() => {
+        makeStartsReachSpawn();
+        errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        spies.push(errorSpy);
+      });
+
+      /**
+       * Holds the next spawn open until `release` is called. It resolves with a
+       * snapshot of the new row, as the real one does (`toSession`), taken when the
+       * row is registered, so whatever the start learns of the row afterwards has
+       * to come from the registry.
+       * `registersRowFirst` puts the new row in the registry before the spawn
+       * resolves, which is where the real spawn has it for a Pause to find.
+       * `newRowStatus` is the status that row arrives with.
+       */
+      function holdNextSpawn(held: { registersRowFirst?: boolean; newRowStatus?: string } = {}): { release: () => void } {
+        const spawnWithoutHold: (options: FakeSpawnOptions) => Promise<FakeSession> = spawn.getMockImplementation()!;
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        spawn.mockImplementationOnce(async (options: FakeSpawnOptions) => {
+          if (held.registersRowFirst) {
+            const registered = await spawnWithoutHold(options);
+            registered.status = held.newRowStatus ?? registered.status;
+            const snapshot = { ...registered };
+            await gate;
+            return snapshot;
+          }
+          await gate;
+          const registered = await spawnWithoutHold(options);
+          registered.status = held.newRowStatus ?? registered.status;
+          return { ...registered };
+        });
+        return { release };
+      }
+
+      /**
+       * Starts the restart for `mobile`'s checkout and holds its start inside the
+       * spawn. The old agent's row, suspended by the restart, is the only one there.
+       */
+      async function holdRestartInItsSpawn(sessionId: string) {
+        const workflowId = idleAgent(sessionId);
+        recordConversation(workflowId);
+        const { release } = holdNextSpawn();
+
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(sessions.map((session) => [session.id, session.status])).toEqual([[sessionId, 'suspended']]);
+        return { workflowId, release };
+      }
+
+      /** A workflow with a conversation to resume and no agent row, as a fresh open finds it. */
+      function workflowWithNoAgent(): string {
+        const workflowId = service.createWorkflow('home', {}).id;
+        recordConversation(workflowId);
+        return workflowId;
+      }
+
+      it('suspends the agent the restart spawned: the Pause reached only the row the start replaces', async () => {
+        const { workflowId, release } = await holdRestartInItsSpawn('session-paused-mid-spawn');
+
+        // The old agent reads suspended already, so the Pause stops nothing.
+        await agent.pauseWorkflowAgent(context, workflowId);
+        expect(suspend).toHaveBeenCalledTimes(1);
+
+        release();
+        await vi.waitFor(() => expect(suspend).toHaveBeenCalledWith('session-restarted'));
+        // The start returns after the suspend; let it end before reading what it logged.
+        await nextTurn();
+
+        expect(suspend).toHaveBeenCalledTimes(2);
+        expect(sessions.map((session) => [session.id, session.status])).toEqual([['session-restarted', 'suspended']]);
+        // A start that suspended its agent is a start that worked: nothing warns or logs.
+        expect(warnSpy).not.toHaveBeenCalled();
+        expect(errorSpy).not.toHaveBeenCalled();
+      });
+
+      it('suspends the agent a fresh open spawned, and the open reports it suspended', async () => {
+        const workflowId = workflowWithNoAgent();
+        const { release } = holdNextSpawn();
+
+        const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        // No row exists yet, so the Pause finds no agent to stop.
+        await agent.pauseWorkflowAgent(context, workflowId);
+        expect(suspend).not.toHaveBeenCalled();
+
+        release();
+        const status = await opened;
+
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(suspend).toHaveBeenCalledWith('session-restarted');
+        // The spawn resolved with a snapshot that reads running: the status comes from the registry.
+        expect(status.unavailable).toBeNull();
+        expect(status.session).toMatchObject({ id: 'session-restarted', status: 'suspended' });
+        expect(sessions.map((session) => [session.id, session.status])).toEqual([['session-restarted', 'suspended']]);
+        expect(errorSpy).not.toHaveBeenCalled();
+      });
+
+      it('leaves the agent the restart spawned running when nobody paused it (the control)', async () => {
+        const { release } = await holdRestartInItsSpawn('session-unpaused-mid-spawn');
+        const conversationWrites = vi.spyOn(WorkflowRepository.prototype, 'setAgentConversation');
+        spies.push(conversationWrites);
+
+        release();
+        // The write is the start's last step before the check for a Pause; one turn lets that check run.
+        await vi.waitFor(() => expect(conversationWrites).toHaveBeenCalledTimes(1));
+        await nextTurn();
+
+        // Only the restart's own suspend, of the old agent, ever ran.
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(suspend).not.toHaveBeenCalledWith('session-restarted');
+        expect(sessions.map((session) => [session.id, session.status])).toEqual([['session-restarted', 'running']]);
+      });
+
+      it('suspends the new agent once, not twice, when the Pause already reached its row', async () => {
+        const workflowId = workflowWithNoAgent();
+        // The spawn has registered the new row but has not resolved yet.
+        const { release } = holdNextSpawn({ registersRowFirst: true });
+
+        const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+        await vi.waitFor(() => expect(sessions.map((session) => session.id)).toEqual(['session-restarted']));
+        // This Pause finds the new row running and suspends it.
+        await agent.pauseWorkflowAgent(context, workflowId);
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(suspend).toHaveBeenCalledWith('session-restarted');
+
+        release();
+        const status = await opened;
+
+        // The spawn's snapshot, taken before the Pause, still reads running. The start reads
+        // the registry, where the row is suspended, so it leaves it be and reports that row.
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(status.session).toMatchObject({ id: 'session-restarted', status: 'suspended' });
+        expect(errorSpy).not.toHaveBeenCalled();
+      });
+
+      it('leaves a new agent that already exited alone: there is nothing to suspend', async () => {
+        const workflowId = workflowWithNoAgent();
+        const { release } = holdNextSpawn({ newRowStatus: 'exited' });
+
+        const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        await agent.pauseWorkflowAgent(context, workflowId);
+
+        release();
+        const status = await opened;
+
+        expect(suspend).not.toHaveBeenCalled();
+        expect(status.session).toMatchObject({ id: 'session-restarted', status: 'exited' });
+        expect(errorSpy).not.toHaveBeenCalled();
+      });
+
+      it('logs a suspend that fails and still reports the new agent, rather than failing the start', async () => {
+        const workflowId = workflowWithNoAgent();
+        const suspendFailure = new Error('the session would not suspend');
+        suspend.mockRejectedValueOnce(suspendFailure);
+        const { release } = holdNextSpawn();
+
+        const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        await agent.pauseWorkflowAgent(context, workflowId);
+
+        release();
+        const status = await opened;
+
+        expect(suspend).toHaveBeenCalledWith('session-restarted');
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Could not pause the agent a Pause reached while it started'),
+          suspendFailure,
+        );
+        // The row stays running, as the real suspend leaves it when it fails: the start still has an agent to report.
+        expect(status.unavailable).toBeNull();
+        expect(status.session).toMatchObject({ id: 'session-restarted', status: 'running' });
+      });
+    });
+
     // In these two the fake's suspend leaves the row running, as in the tests
     // above, so a Resume finds a live agent and starts nothing: what is pinned
     // is whether the user's Pause still stands when the restart is owed.
@@ -575,7 +784,7 @@ describe('the workflow agent\'s reads across projects', () => {
 
       expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
       // The restart was queued first, so it has run by the time this resolves.
-      await new Promise((resolve) => setImmediate(resolve));
+      await nextTurn();
 
       expect(suspend).toHaveBeenCalledTimes(1);
       expect(startAttempts).not.toHaveBeenCalled();

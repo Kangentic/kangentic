@@ -23,6 +23,16 @@ function onBoard(column: Swimlane): boolean {
   return (!column.is_archived || column.role === 'done') && !column.is_ghost;
 }
 
+/**
+ * How a column's name is matched: blind to case and to surrounding whitespace.
+ * The column rename (`renameAutomationColumnReferences`) matches stored names
+ * through it too, so a name this reads as a column is one a rename of that
+ * column rewrites.
+ */
+export function columnNameKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 export function resolveMoveTarget(
   columns: ReadonlyArray<Swimlane>,
   fromColumnId: string,
@@ -32,7 +42,7 @@ export function resolveMoveTarget(
   const board = columns.filter(onBoard).slice().sort((left, right) => left.position - right.position);
   const from = columns.find((column) => column.id === fromColumnId) ?? null;
 
-  if (requested === null || requested.trim().toLowerCase() === 'next') {
+  if (requested === null || columnNameKey(requested) === 'next') {
     if (!from) return { ok: false, reason: 'The task is in a column that no longer exists.' };
     if (route) {
       const onRoute = nextOnRoute(columns, route, from.id);
@@ -44,8 +54,8 @@ export function resolveMoveTarget(
     return { ok: true, column: next };
   }
 
-  const wanted = requested.trim().toLowerCase();
-  const named = board.find((column) => column.name.trim().toLowerCase() === wanted);
+  const wanted = columnNameKey(requested);
+  const named = board.find((column) => columnNameKey(column.name) === wanted);
   if (!named) {
     const names = board.map((column) => column.name).join(', ');
     return { ok: false, reason: `No column named "${requested.trim()}" on this board. Columns: ${names}.` };

@@ -15,7 +15,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, computedColor } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -161,22 +161,6 @@ async function launch(seed: Seed, options: { width?: number; sidebarWidth?: numb
 
 const byTestId = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]`);
 const card = (page: Page, key: string) => page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${key}"]`);
-
-/**
- * A CSS color as the page computes it, so a token, a hex and an element's own
- * color compare as one string. `property` is the style property the value is
- * resolved through: `color` by default, `backgroundColor` to compare a fill.
- */
-async function computedColor(page: Page, cssColor: string, property: 'color' | 'backgroundColor' = 'color'): Promise<string> {
-  return page.evaluate(({ value, styleProperty }) => {
-    const probe = document.createElement('span');
-    probe.style[styleProperty] = value;
-    document.body.appendChild(probe);
-    const resolved = getComputedStyle(probe)[styleProperty];
-    probe.remove();
-    return resolved;
-  }, { value: cssColor, styleProperty: property });
-}
 
 /**
  * Presses a canvas card and drags it by hand: a stepped move down and to the
@@ -496,10 +480,13 @@ test.describe('Workflows header', () => {
       }
       await page.keyboard.press('Escape');
 
-      // Resume clears the time; Pause stamps today's.
+      // Resume takes the paused note away; Pause stamps today's time. The row is
+      // read as running first, so the note's absence is the resumed row's, not a
+      // row that never rendered.
       await byTestId(page, 'workflow-resume').click();
       await expect(byTestId(page, 'workflow-pause')).toBeVisible();
       await byTestId(page, 'workflow-picker').click();
+      await expect(pausedRow.locator('[data-testid="workflow-state-chip"]')).toHaveAttribute('data-state', 'running');
       await expect(pausedRow.locator('[data-testid="workflow-picker-note"]')).not.toHaveText(/^Paused/);
       await page.keyboard.press('Escape');
       await byTestId(page, 'workflow-pause').click();

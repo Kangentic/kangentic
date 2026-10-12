@@ -11,7 +11,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, computedColor, settleFrames } from './helpers';
 
 // Each test launches its own browser, which is slow under a full gate's load.
 test.describe.configure({ mode: 'parallel', timeout: 30_000 });
@@ -122,18 +122,6 @@ const incomingPort = (page: Page, key: string) => node(page, key).locator('.work
 const outgoingPort = (page: Page, key: string) => node(page, key).locator('.workflow-port-out');
 const cardTarget = (page: Page, key: string) => node(page, key).locator('.react-flow__handle[data-handleid="card"]');
 
-/** A theme token's color as this page computes it, so a style check holds in every theme. */
-async function tokenColor(page: Page, token: string): Promise<string> {
-  return page.evaluate((name) => {
-    const probe = document.createElement('div');
-    probe.style.color = `var(${name})`;
-    document.body.appendChild(probe);
-    const value = getComputedStyle(probe).color;
-    probe.remove();
-    return value;
-  }, token);
-}
-
 async function centerOf(page: Page, locator: ReturnType<Page['locator']>): Promise<{ x: number; y: number }> {
   const box = await locator.boundingBox();
   if (!box || box.width === 0) throw new Error('element not laid out');
@@ -218,6 +206,69 @@ async function startLinkFrom(page: Page, key: string): Promise<void> {
 /** The first hint after a drag, given room for a loaded machine. */
 const HINT_TIMEOUT = { timeout: 15_000 };
 
+/** Draw a link from one card's outgoing port onto another card, releasing once the canvas offers it. */
+async function drawLink(page: Page, blockerKey: string, blockedKey: string): Promise<void> {
+  await startLinkFrom(page, blockerKey);
+  const target = await centerOf(page, card(page, blockedKey));
+  await page.mouse.move(target.x, target.y, { steps: 12 });
+  await expect(node(page, blockedKey).locator('[data-testid="workflow-link-hint"]'))
+    .toHaveAttribute('data-link-verdict', 'valid', HINT_TIMEOUT);
+  await page.mouse.up();
+}
+
+interface HeldLinkSave {
+  workflowId: string;
+  blockerKey: string;
+  blockedKey: string;
+}
+
+/**
+ * Make main take a link save only when the test says so. The renderer reads
+ * `window.electronAPI.workflows.setLink` at call time, so a patch made after boot
+ * holds the next save in flight: it is recorded, waits for `releaseLinkSave`, and
+ * then goes through to the mock unchanged, so the workflow changes only on release.
+ */
+async function holdLinkSaves(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const held = window as unknown as { __heldLinkSaves: HeldLinkSave[]; __releaseLinkSave: (() => void) | null };
+    held.__heldLinkSaves = [];
+    held.__releaseLinkSave = null;
+    const workflowsApi = window.electronAPI.workflows;
+    const original = workflowsApi.setLink;
+    workflowsApi.setLink = async (projectId, workflowId, blockerKey, blockedKey, linked) => {
+      held.__heldLinkSaves.push({ workflowId, blockerKey, blockedKey });
+      await new Promise<void>((resolve) => { held.__releaseLinkSave = resolve; });
+      return original.call(workflowsApi, projectId, workflowId, blockerKey, blockedKey, linked);
+    };
+  });
+}
+
+/** The saves `holdLinkSaves` has taken in, in order. */
+async function heldLinkSaves(page: Page): Promise<HeldLinkSave[]> {
+  return page.evaluate(() => (window as unknown as { __heldLinkSaves: HeldLinkSave[] }).__heldLinkSaves);
+}
+
+/** Let the held save go to main. Its answer arrives after this returns: poll for what it changed. */
+async function releaseLinkSave(page: Page): Promise<void> {
+  await page.evaluate(() => (window as unknown as { __releaseLinkSave: (() => void) | null }).__releaseLinkSave?.());
+}
+
+/** The workflow and task the Workflows view has selected, read off its store. */
+async function workflowSelection(page: Page): Promise<{ selectedWorkflowId: string | null; selectedTaskKey: string | null }> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores: { workflow: { getState: () => { selectedWorkflowId: string | null; selectedTaskKey: string | null } } };
+    }).__zustandStores;
+    const { selectedWorkflowId, selectedTaskKey } = stores.workflow.getState();
+    return { selectedWorkflowId, selectedTaskKey };
+  });
+}
+
+/** The links main holds for a workflow of the seeded project. */
+async function savedLinks(page: Page, workflowId: string): Promise<Array<{ blockerKey: string; blockedKey: string }>> {
+  return page.evaluate(async ({ projectId, id }) => (await window.electronAPI.workflows.get(projectId, id)).links, { projectId: PROJECT_ID, id: workflowId });
+}
+
 test.describe('Workflows canvas gestures', () => {
   test('a link drag keeps only the ports that can take it and draws a dashed accent line, with a hint over empty canvas', async () => {
     const { browser, page } = await launch('draft');
@@ -271,8 +322,8 @@ test.describe('Workflows canvas gestures', () => {
       // A neutral menu box, left-aligned with the card and 44px above it.
       await expect(hint).toHaveCSS('top', '-44px');
       await expect(hint).toHaveCSS('left', '0px');
-      await expect(hint).toHaveCSS('border-top-color', await tokenColor(page, '--color-edge-input'));
-      await expect(hint).toHaveCSS('background-color', await tokenColor(page, '--color-surface-raised'));
+      await expect(hint).toHaveCSS('border-top-color', await computedColor(page, 'var(--color-edge-input)'));
+      await expect(hint).toHaveCSS('background-color', await computedColor(page, 'var(--color-surface-raised)'));
       // The ring with its 7px halo, and the incoming port filled at 14px in the accent.
       const ring = node(page, 'task-3').locator('[data-testid="workflow-link-target"]');
       await expect(ring).toHaveCount(1);
@@ -280,7 +331,7 @@ test.describe('Workflows canvas gestures', () => {
       const filledPort = node(page, 'task-3').locator('[data-testid="workflow-link-target-port"]');
       await expect(filledPort).toBeVisible();
       await expect(filledPort).toHaveCSS('width', '14px');
-      await expect(filledPort).toHaveCSS('background-color', await tokenColor(page, '--color-accent'));
+      await expect(filledPort).toHaveCSS('background-color', await computedColor(page, 'var(--color-accent)'));
       await expect(byTestId(page, 'workflow-link-canvas-hint')).toHaveCount(0);
       // The card with the hint sits over its neighbors, so the hint above it is never under another card.
       await expect(node(page, 'task-3')).toHaveCSS('z-index', '2000');
@@ -312,7 +363,7 @@ test.describe('Workflows canvas gestures', () => {
       await expect(hint).toHaveText('That link closes a loop. A workflow\'s links cannot go in a circle.', HINT_TIMEOUT);
       await expect(hint).toHaveAttribute('data-link-verdict', 'refused');
       // The same neutral box as an offer: no accent anywhere on a refusal.
-      await expect(hint).toHaveCSS('border-top-color', await tokenColor(page, '--color-edge-input'));
+      await expect(hint).toHaveCSS('border-top-color', await computedColor(page, 'var(--color-edge-input)'));
       await expect(node(page, 'task-1').locator('[data-testid="workflow-link-target"]')).toHaveCount(0);
       await expect(cardTarget(page, 'task-1')).toHaveClass(/\bconnectingto\b/);
       await expect(cardTarget(page, 'task-1')).not.toHaveClass(/\bvalid\b/);
@@ -321,6 +372,71 @@ test.describe('Workflows canvas gestures', () => {
       await page.mouse.up();
       await expect(byTestId(page, 'workflow-link-hint')).toHaveCount(0);
       await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a link whose save is still on its way selects the task that now waits, once the save lands', async () => {
+    // The control for the next test: the same held save, with no workflow picked
+    // meanwhile. It also proves the hold itself passes the save through to main
+    // and answers it as saved, so the next test's "nothing selected" cannot be a
+    // save that quietly failed.
+    const { browser, page } = await launch('two-drafts');
+    try {
+      await holdLinkSaves(page);
+      await drawLink(page, 'task-1', 'task-3');
+      await expect.poll(() => heldLinkSaves(page)).toEqual([{ workflowId: 'wf-draft', blockerKey: 'task-1', blockedKey: 'task-3' }]);
+
+      // The selection is the save's to make: with the save held, the task that
+      // now waits is not selected yet.
+      await settleFrames(page);
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'false');
+      expect(await savedLinks(page, 'wf-draft')).toEqual([{ blockerKey: 'task-1', blockedKey: 'task-2' }]);
+
+      await releaseLinkSave(page);
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
+      expect(await workflowSelection(page)).toEqual({ selectedWorkflowId: 'wf-draft', selectedTaskKey: 'task-3' });
+      expect(await savedLinks(page, 'wf-draft')).toContainEqual({ blockerKey: 'task-1', blockedKey: 'task-3' });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a link saved after another workflow is picked leaves that workflow\'s own selection alone', async () => {
+    // A task key names a task only within its own workflow, and both drafts here
+    // have a task-3. The link is drawn in "Theme tokens" and its save is held;
+    // "Relay notes" is picked while it is on its way. When the save lands, the
+    // view must not select "Relay notes"' task-3 because "Theme tokens"' task-3
+    // is the one that now waits.
+    const { browser, page } = await launch('two-drafts');
+    try {
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Theme tokens');
+      await holdLinkSaves(page);
+      await drawLink(page, 'task-1', 'task-3');
+      await expect.poll(() => heldLinkSaves(page)).toEqual([{ workflowId: 'wf-draft', blockerKey: 'task-1', blockedKey: 'task-3' }]);
+
+      await byTestId(page, 'workflow-picker').click();
+      await page.locator('[data-testid="workflow-picker-option"][data-workflow-id="wf-other"]').click();
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Relay notes');
+      // The keys collide across the two drafts, so wait on a card only "Relay notes" has.
+      await expect(card(page, 'task-3')).toContainText('Note docs');
+      // A selection of its own that is not the task the link names, so the
+      // view's pick of a first task on opening cannot decide this test.
+      await card(page, 'task-1').click();
+      await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'true');
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'false');
+      expect(await workflowSelection(page)).toEqual({ selectedWorkflowId: 'wf-other', selectedTaskKey: 'task-1' });
+
+      await releaseLinkSave(page);
+      // The save landed in the workflow it was drawn in...
+      await expect.poll(async () => (await savedLinks(page, 'wf-draft')).some((link) => link.blockerKey === 'task-1' && link.blockedKey === 'task-3')).toBe(true);
+      // ...and the frames its answer needs to select anything have passed.
+      await settleFrames(page, 3);
+      expect(await workflowSelection(page)).toEqual({ selectedWorkflowId: 'wf-other', selectedTaskKey: 'task-1' });
+      await expect(card(page, 'task-3')).toContainText('Note docs');
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'false');
+      await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'true');
     } finally {
       await browser.close();
     }
@@ -547,7 +663,7 @@ test.describe('Workflows canvas gestures', () => {
       expect(await node(page, 'task-3').evaluate((element) => element.matches(':focus-visible'))).toBe(true);
       await expect(node(page, 'task-3')).toHaveCSS('outline-style', 'none');
       await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('outline-style', 'solid');
-      await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('outline-color', await tokenColor(page, '--color-accent'));
+      await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('outline-color', await computedColor(page, 'var(--color-accent)'));
     } finally {
       await browser.close();
     }

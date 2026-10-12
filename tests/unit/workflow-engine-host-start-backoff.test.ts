@@ -44,9 +44,9 @@ const harness = vi.hoisted(() => ({
 
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: (projectId: string) => {
-    const db = harness.dbs.get(projectId);
-    if (!db) throw new Error(`No database for ${projectId}`);
-    return db;
+    const projectDatabase = harness.dbs.get(projectId);
+    if (!projectDatabase) throw new Error(`No database for ${projectId}`);
+    return projectDatabase;
   },
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: harness.handleTaskMove }));
@@ -89,11 +89,11 @@ describe('the workflow engine host', () => {
   let freeAgentSlots: number;
 
   function database(projectId: string): Database.Database {
-    const db = openTestDatabase();
-    db.exec('PRAGMA foreign_keys = ON');
-    runProjectMigrations(db);
-    harness.dbs.set(projectId, db);
-    return db;
+    const projectDatabase = openTestDatabase();
+    projectDatabase.exec('PRAGMA foreign_keys = ON');
+    runProjectMigrations(projectDatabase);
+    harness.dbs.set(projectId, projectDatabase);
+    return projectDatabase;
   }
 
   const dbOf = (projectId: string) => harness.dbs.get(projectId) as Database.Database;
@@ -275,15 +275,15 @@ describe('the workflow engine host', () => {
       const backoffDuringMove: Array<number | null> = [];
       harness.handleTaskMove.mockImplementation(async (_context: unknown, input: MoveInput, _origin: string, projectId: string) => {
         startTimes.push(Date.now());
-        const db = dbOf(projectId);
-        db.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(input.targetSwimlaneId, input.taskId);
+        const projectDatabase = dbOf(projectId);
+        projectDatabase.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(input.targetSwimlaneId, input.taskId);
         const evaluationsBefore = engine.stats().samples;
         announceBoardChange({ projectId, change: 'task-updated', ids: [input.taskId] });
         await new Promise<void>((resolve) => { setTimeout(resolve, midMoveMs); });
         // Slow work done, still failing: what the host made of the task meanwhile.
         evaluationsDuringMove.push(engine.stats().samples - evaluationsBefore);
         backoffDuringMove.push(engine.failedStart(projectId, input.taskId)?.attempts ?? null);
-        db.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(todoOf(projectId).id, input.taskId);
+        projectDatabase.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(todoOf(projectId).id, input.taskId);
         failedAt.push(Date.now());
         throw new Error('git exploded');
       });

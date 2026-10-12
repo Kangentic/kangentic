@@ -79,6 +79,8 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   // The width a finished drag set, held until the setting it saved comes back;
   // null otherwise, which reads the setting.
   const [dragWidth, setDragWidth] = useState<number | null>(null);
+  // Counts the width saves, so only the newest one lets go of `dragWidth`.
+  const widthSaveSerialRef = useRef(0);
   const width = workflowAgentPaneWidth(dragWidth ?? storedWidth);
   const outerRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
@@ -113,10 +115,16 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
       onRelease: () => {
         if (latest === startWidth) return;
         setDragWidth(latest);
+        // An earlier save that lands while a later drag's save is on its way
+        // leaves the width alone: letting go then would show its own width.
+        widthSaveSerialRef.current += 1;
+        const saveSerial = widthSaveSerialRef.current;
         // A failed save puts the stored width back, which is all a user can see of it.
         void updateConfig({ workflows: { agentPaneWidth: latest } })
           .catch((error: unknown) => console.warn('[WORKFLOW-AGENT-PANE] Could not save the pane width:', error))
-          .finally(() => setDragWidth(null));
+          .finally(() => {
+            if (widthSaveSerialRef.current === saveSerial) setDragWidth(null);
+          });
       },
     });
   }, [floating, dragWidth, storedWidth, updateConfig]);
