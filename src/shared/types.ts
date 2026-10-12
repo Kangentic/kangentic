@@ -5027,6 +5027,12 @@ export interface WorkflowViewTask {
   /** Where a hand placed its card on the canvas; null is the automatic layout. */
   canvasX: number | null;
   canvasY: number | null;
+  /**
+   * Tasks it waits for that the read could not name: their links hold, but their
+   * project's database would not open. Not in `WorkflowDetail.links`, which only
+   * joins tasks the detail has. 0 before Start.
+   */
+  unnamedBlockerCount: number;
 }
 
 /** "blocked waits for blocker", by `WorkflowViewTask.key`. */
@@ -5098,7 +5104,10 @@ export interface WorkflowAgentSummary {
 
 /** A started workflow's task as its board card shows it: the footer and the lock. */
 export interface WorkflowBoardTask {
-  /** The tasks it waits for that are not done, as the footer names them ("#413"). */
+  /**
+   * The tasks it waits for that are not done, as the footer names them: "#413",
+   * or "a task" for one whose project's database would not open.
+   */
   waitingFor: string[];
   /**
    * While the workflow runs and the task sits in a human gate (a column whose

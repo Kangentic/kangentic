@@ -1,6 +1,7 @@
 import type { Swimlane, Task, Workflow, WorkflowBoardTask, WorkflowState, WorkflowSummary } from '../../shared/types';
 import { workflowMoveRefusal } from '../../shared/workflow-lock';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
+import { waitingLabel } from '../../shared/workflow-waiting';
 
 /**
  * A workflow task as its board card reads it: the workflow's name, color and
@@ -128,8 +129,5 @@ export function sendAwayRefusal(workflow: BoardWorkflow | null, task: Pick<Task,
 /** What a workflow task's footer says while it sits in To Do with no session. */
 export function boardWaiting(workflow: BoardWorkflow | null): { label: string; paused: boolean } | null {
   if (!workflow || workflow.state === 'draft' || workflow.state === 'done') return null;
-  if (workflow.waitingFor.length === 1) return { label: `Blocked by ${workflow.waitingFor[0]}...`, paused: false };
-  if (workflow.waitingFor.length > 1) return { label: `Blocked by ${workflow.waitingFor.length} tasks...`, paused: false };
-  if (workflow.state === 'paused') return { label: 'Paused', paused: true };
-  return { label: 'Queued...', paused: false };
+  return waitingLabel(workflow.waitingFor, workflow.state === 'paused');
 }

@@ -528,7 +528,9 @@ Columns can only be deleted when empty (no tasks).
 
 A workflow is a set of linked tasks that runs through the board on its own. Each task follows a
 route (the columns it visits, every column between To Do and Done unless it skips some) and starts
-when every task it waits for has reached Done, as agent slots allow.
+when every task it waits for has reached Done, as agent slots allow. Deleting a task it waits for,
+or removing that task's project, takes the link away on the engine's next pass, and the task
+stops waiting for it.
 
 **The Workflows view.** Workflows is the third segment of the Board / Backlog toggle
 (Mod+Shift+L). Its header picks the workflow and holds Rename, the lifecycle button (Start,

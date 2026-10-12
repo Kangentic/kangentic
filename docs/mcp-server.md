@@ -1009,8 +1009,11 @@ for. A workflow not started lists its planned tasks by key, each with any run se
 the default, in `kangentic_save_workflow`'s own names (`project "API", baseBranch "develop",
 useWorktree false, profile "Heavy"`), so a plan read and sent back keeps them. A started task on
 another project's board says which (`#7 ... In Review on board "API"`), and so does a blocker
-there (`Waits for #7 on "API"`), since task numbers count per board. `data` carries every task's
-`runSettings` in the task row's shape.
+there (`Waits for #7 on "API"`), since task numbers count per board. A blocker whose project's
+database will not open reads `a task on "API" that could not be read`, and still holds its task. A
+link to a deleted task, to one in a removed project, or to one that has left the workflow is left
+out: the engine drops it on its next pass. `data`
+carries every task's `runSettings` in the task row's shape.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

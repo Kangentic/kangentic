@@ -13,9 +13,14 @@ import type { WorkflowState } from '../../../shared/types';
  *
  * The rules it encodes (the plan's "Gates and starting"):
  * - A task starts when every task it waits for is in Done. There is no early
- *   start. A link whose blocker is gone (deleted without the link being
- *   removed) never counts as done, so dependents wait for the user rather than
- *   starting unannounced.
+ *   start. A blocker missing from the snapshot never counts as done: its
+ *   project's database may only be failing to open for a moment, with the
+ *   blocker still running there.
+ * - A link with an end that is provably gone (its task deleted, or its project
+ *   removed, with the link left behind because its removal failed) is dropped,
+ *   as the delete would have dropped it. The host decides "provably"
+ *   (`linkEndState`) and hands those links over as `goneLinks`, apart from
+ *   `links`, so they hold nothing in the pass that drops them.
  * - Ready tasks start in To Do order, up to the free agent slots. To Do is the
  *   durable queue, so a large workflow never fills the in-memory spawn queue.
  * - A workflow is complete when every task in it is in Done.
@@ -52,6 +57,8 @@ export interface CoreWorkflow {
   startedAt: string | null;
   tasks: CoreTask[];
   links: CoreLink[];
+  /** Links with an end that is provably gone: dropped, and never read as holding a task. */
+  goneLinks: CoreLink[];
 }
 
 export type CoreIntent =
@@ -65,7 +72,8 @@ export type CoreIntent =
     /** Whether the start spends an agent slot, so the host can hold one back while it is in flight. */
     takesSlot: boolean;
   }
-  | { kind: 'complete'; workflowId: string; homeProjectId: string };
+  | { kind: 'complete'; workflowId: string; homeProjectId: string }
+  | { kind: 'drop-links'; workflowId: string; homeProjectId: string; links: CoreLink[] };
 
 function taskKey(projectId: string, taskId: string): string {
   return `${projectId}\n${taskId}`;
@@ -78,7 +86,8 @@ export function blockersOf(workflow: CoreWorkflow, task: Pick<CoreTask, 'project
 
 /**
  * Is every task `task` waits for in Done? A blocker missing from the workflow's
- * tasks (deleted, or its project gone) is not done.
+ * tasks is not done: a provably gone one arrives in `goneLinks` instead, so what
+ * is left missing here is one the host could not read.
  */
 export function blockersDone(workflow: CoreWorkflow, task: Pick<CoreTask, 'projectId' | 'taskId'>): boolean {
   const placeByKey = new Map(workflow.tasks.map((entry) => [taskKey(entry.projectId, entry.taskId), entry.place]));
@@ -100,8 +109,8 @@ export function isComplete(workflow: CoreWorkflow): boolean {
 }
 
 /**
- * One pass over every running workflow: which tasks to start and which
- * workflows are complete.
+ * One pass over every running workflow: which links to drop, which tasks to
+ * start, and which workflows are complete.
  *
  * `freeSlots` is the app-wide count of agent slots not in use; a start into a
  * column that starts no agent takes none. The host passes it net of the starts
@@ -122,6 +131,9 @@ export function planPass(
     .sort((left, right) => (left.startedAt ?? '').localeCompare(right.startedAt ?? ''));
   for (const workflow of ordered) {
     if (workflow.state !== 'running' && workflow.state !== 'paused') continue;
+    if (workflow.goneLinks.length > 0) {
+      intents.push({ kind: 'drop-links', workflowId: workflow.workflowId, homeProjectId: workflow.homeProjectId, links: workflow.goneLinks });
+    }
     if (isComplete(workflow)) {
       intents.push({ kind: 'complete', workflowId: workflow.workflowId, homeProjectId: workflow.homeProjectId });
       continue;

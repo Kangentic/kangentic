@@ -4699,7 +4699,10 @@
     // Workflows. In-memory, on the mock's one set of swimlanes. Seed from a spec
     // (read lazily on the first call, like __mockAutomations):
     //   window.__mockWorkflows = [ { workflow: <Workflow row>, projectId?: 'p1' } ]
-    //   window.__mockWorkflowLinks = [ { workflow_id, blocker_task_id, blocked_task_id } ]
+    //   window.__mockWorkflowLinks = [ { workflow_id, blocker_task_id, blocked_task_id, blocker_project_id? } ]
+    // A link whose blocker is not a task here reads as main's linkEndState reads
+    // it: held (named 'a task') when window.__mockUnreadableProjects lists its
+    // blocker_project_id, else gone (left out, as the engine drops it).
     // A started workflow's tasks are ordinary task fixtures carrying workflow_id.
     // The engine does not run here: Start creates the tasks in To Do and stops.
     // window.__mockFireWorkflowChanged({ projectId, workflowId }) pushes a change.
@@ -4783,6 +4786,10 @@
       }
 
       function homeOf(entry) { return entry.projectId || currentProjectId; }
+
+      function blockerHeld(link) {
+        return (window.__mockUnreadableProjects || []).indexOf(link.blocker_project_id) !== -1;
+      }
 
       function requireEntry(projectId, workflowId) {
         hydrate();
@@ -4918,6 +4925,7 @@
                 key: planned.key, projectId: taskProjectId, task: null, planned: Object.assign({}, planned),
                 title: planned.title, displayId: null, place: 'planned', swimlaneId: null,
                 steps: stepsOf(planned, 'planned'), canvasX: planned.canvas_x, canvasY: planned.canvas_y,
+                unnamedBlockerCount: 0,
               };
             }),
             links: draft.links.map(function (link) { return { blockerKey: link.blocker, blockedKey: link.blocked }; }),
@@ -4940,6 +4948,9 @@
               key: task.id, projectId: taskProjectId, task: withAttachmentCount(task), planned: null,
               title: task.title, displayId: task.display_id, place: place, swimlaneId: task.swimlane_id,
               steps: stepsOf(task, place), canvasX: task.canvas_x == null ? null : task.canvas_x, canvasY: task.canvas_y == null ? null : task.canvas_y,
+              unnamedBlockerCount: links.filter(function (link) {
+                return link.workflow_id === workflow.id && link.blocked_task_id === task.id && keys.indexOf(link.blocker_task_id) === -1 && blockerHeld(link);
+              }).length,
             };
           }),
           links: links.filter(function (link) {
@@ -4984,10 +4995,11 @@
           var waitingFor = links.filter(function (link) {
             if (link.workflow_id !== workflow.id || link.blocked_task_id !== task.id) return false;
             var blocker = created.find(function (candidate) { return candidate.id === link.blocker_task_id; });
-            return !blocker || placeOf(blocker) !== 'done';
+            return blocker ? placeOf(blocker) !== 'done' : blockerHeld(link);
           }).map(function (link) {
             var blocker = created.find(function (candidate) { return candidate.id === link.blocker_task_id; });
-            return blocker ? '#' + blocker.display_id : 'a removed task';
+            // 'a task' is UNNAMED_BLOCKER_LABEL (src/shared/workflow-waiting.ts), which this plain script cannot import.
+            return blocker ? '#' + blocker.display_id : 'a task';
           });
           counts[waitingFor.length > 0 ? 'blocked' : 'queued'] += 1;
           boardTasks[task.id] = { waitingFor: waitingFor, humanGateTargetId: null, hasLinks: hasLinks(task.id) };

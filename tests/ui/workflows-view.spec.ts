@@ -49,6 +49,9 @@ function plannedTask(key: string, title: string): Record<string, unknown> {
 const OTHER_PROJECT_ID = 'workflows-view-mobile';
 const OTHER_DONE_COLOR = '#a855f7';
 
+/** The project of a blocker no board here has: see `SeedExtras.missingBlocker`. */
+const MISSING_PROJECT_ID = 'workflows-view-missing';
+
 /**
  * `paused`: board 11's pair, the running workflow paused yesterday at 18:20
  * beside the draft. `across-boards`: the running workflow with one more task,
@@ -63,6 +66,11 @@ interface SeedExtras {
   sessionTaskId?: string;
   /** The "Delete task" confirm is skipped, as after its "Don't ask again". */
   skipDeleteConfirm?: boolean;
+  /**
+   * #419 also waits for a task no board here has, on a project that is either
+   * unreadable (its link holds) or gone (the engine drops its link).
+   */
+  missingBlocker?: 'unreadable' | 'gone';
 }
 
 function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | null = null, extras: SeedExtras = {}): string {
@@ -95,9 +103,13 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
          created_at: seededAt, updated_at: seededAt,
        });`
     : '';
-  const links = hasRunning
+  const links: Array<Record<string, string>> = hasRunning
     ? RUNNING_LINKS.map(([blocker, blocked]) => ({ workflow_id: 'wf-usage', blocker_task_id: `t${blocker}`, blocked_task_id: `t${blocked}` }))
     : [];
+  if (extras.missingBlocker) {
+    links.push({ workflow_id: 'wf-usage', blocker_task_id: 't900', blocked_task_id: 't419', blocker_project_id: MISSING_PROJECT_ID });
+  }
+  const unreadable = extras.missingBlocker === 'unreadable' ? `window.__mockUnreadableProjects = ['${MISSING_PROJECT_ID}'];` : '';
   // Lane 6 is Done: `all-done` puts every one of the running workflow's tasks there.
   const tasks = seed === 'all-done' ? RUNNING_TASKS.map(([number, title]) => [number, title, 6]) : hasRunning ? RUNNING_TASKS : [];
   const sessionSeed = extras.sessionTaskId
@@ -116,6 +128,7 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
     window.__mockWorkflows = ${JSON.stringify(workflows)};
     ${pausedAt}
     window.__mockWorkflowLinks = ${JSON.stringify(links)};
+    ${unreadable}
     window.__mockPreConfigure(function (state) {
       var seededAt = new Date().toISOString();
       state.config.sidebar = { width: ${sidebarWidth} };
@@ -151,6 +164,7 @@ async function launch(seed: Seed, options: { width?: number; sidebarWidth?: numb
   await page.addInitScript(seedScript(seed, options.sidebarWidth ?? 240, options.iconlessColumn ?? null, {
     sessionTaskId: options.sessionTaskId,
     skipDeleteConfirm: options.skipDeleteConfirm,
+    missingBlocker: options.missingBlocker,
   }));
   await gotoVite(page, VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -813,6 +827,31 @@ test.describe('Workflows inspector', () => {
       await page.locator('[data-testid="workflow-add-blocker-option"][data-task-key="t414"]').click();
       await expect(page.locator('[data-testid="workflow-link-row"][data-task-key="t414"]')).toBeVisible();
       await expect(card(page, 't419')).toContainText('Blocked by #414...');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // A link can outlive its blocker. One whose project will not open still holds
+  // its task, and the card says so in its plain words; one whose task is gone
+  // is dropped by the engine, so the card reads as if it never was.
+  test('a blocker whose project cannot be read holds its task, in the card\'s plain words', async () => {
+    const { browser, page } = await launch('running', { missingBlocker: 'unreadable' });
+    try {
+      await expect(card(page, 't419')).toContainText('Blocked by a task...');
+      await card(page, 't419').click();
+      // Nothing to open or remove: the inspector lists only what it can name.
+      await expect(page.locator('[data-testid="workflow-link-row"]')).toHaveCount(1);
+      await expect(page.locator('[data-testid="workflow-link-row"][data-task-key="t418"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a blocker that is gone holds nothing: its task reads as queued', async () => {
+    const { browser, page } = await launch('running', { missingBlocker: 'gone' });
+    try {
+      await expect(card(page, 't419')).toContainText('Queued...');
     } finally {
       await browser.close();
     }

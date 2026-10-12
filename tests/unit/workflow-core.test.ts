@@ -108,7 +108,7 @@ function link(blocker: string, blocked: string) {
 }
 
 function workflow(tasks: CoreTask[], links = [] as ReturnType<typeof link>[], extra: Partial<CoreWorkflow> = {}): CoreWorkflow {
-  return { workflowId: 'w1', homeProjectId: 'home', state: 'running', startedAt: '2026-10-04T00:00:00.000Z', tasks, links, ...extra };
+  return { workflowId: 'w1', homeProjectId: 'home', state: 'running', startedAt: '2026-10-04T00:00:00.000Z', tasks, links, goneLinks: [], ...extra };
 }
 
 describe('the start and completion plan', () => {
@@ -120,10 +120,35 @@ describe('the start and completion plan', () => {
     expect(readyTasks(plan).map((task) => task.taskId)).toEqual(['t3']);
   });
 
-  it('never counts a blocker that is gone as done', () => {
-    const plan = workflow([coreTask('t2', 'todo')], [link('deleted', 't2')]);
+  it('never counts a blocker missing from the snapshot as done', () => {
+    // What is left missing in `links` is a blocker the host could not read: its
+    // project's database may be failing to open for a moment.
+    const plan = workflow([coreTask('t2', 'todo')], [link('unread', 't2')]);
     expect(blockersDone(plan, plan.tasks[0])).toBe(false);
     expect(readyTasks(plan)).toEqual([]);
+    expect(planPass([plan], 4, new Set())).toEqual([]);
+  });
+
+  it('drops a link whose end is provably gone, and starts its task in the same pass', () => {
+    const plan = workflow([coreTask('t2', 'todo')], [], { goneLinks: [link('deleted', 't2')] });
+    expect(planPass([plan], 1, new Set())).toEqual([
+      { kind: 'drop-links', workflowId: 'w1', homeProjectId: 'home', links: [link('deleted', 't2')] },
+      { kind: 'start', workflowId: 'w1', homeProjectId: 'home', projectId: 'home', taskId: 't2', toSwimlaneId: 'executing', takesSlot: true },
+    ]);
+  });
+
+  it('drops gone links of a paused workflow too, and starts nothing there', () => {
+    const plan = workflow([coreTask('t2', 'todo')], [], { state: 'paused', goneLinks: [link('deleted', 't2')] });
+    expect(planPass([plan], 1, new Set()).map((intent) => intent.kind)).toEqual(['drop-links']);
+  });
+
+  it('keeps a task waiting on a live blocker after its gone link is dropped', () => {
+    const plan = workflow(
+      [coreTask('t1', 'working'), coreTask('t2', 'todo')],
+      [link('t1', 't2')],
+      { goneLinks: [link('deleted', 't2')] },
+    );
+    expect(planPass([plan], 4, new Set()).map((intent) => intent.kind)).toEqual(['drop-links']);
   });
 
   it('starts in To Do order, up to the free slots', () => {

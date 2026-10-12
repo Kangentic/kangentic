@@ -21,12 +21,13 @@ import {
   unlinkRefusal,
   waitingOf,
 } from '../../src/renderer/components/workflows/workflow-graph';
+import { boardWaiting, type BoardWorkflow } from '../../src/renderer/utils/board-workflow';
 import { WORKFLOW_REFUSALS } from '../../src/shared/workflow-refusals';
 
-function viewTask(key: string, displayId: number, place: WorkflowTaskPlace, steps: WorkflowRouteStep[] = []): WorkflowViewTask {
+function viewTask(key: string, displayId: number, place: WorkflowTaskPlace, steps: WorkflowRouteStep[] = [], unnamedBlockerCount = 0): WorkflowViewTask {
   return {
     key, projectId: 'p', task: null, planned: null, title: `Task ${key}`, displayId, place,
-    swimlaneId: null, steps, canvasX: null, canvasY: null,
+    swimlaneId: null, steps, canvasX: null, canvasY: null, unnamedBlockerCount,
   };
 }
 
@@ -74,6 +75,34 @@ describe('workflow rules in the view', () => {
     expect(waitingOf(detail('running', tasks, [['a', 'c']]), tasks[2])).toEqual({ label: 'Queued...', paused: false });
     expect(waitingOf(detail('paused', tasks, []), tasks[2])).toEqual({ label: 'Paused', paused: true });
     expect(waitingOf(running, tasks[1])).toBeNull();
+  });
+
+  it('counts a blocker the read could not name, alone and beside a live one, and never as queued or paused', () => {
+    const waiting = viewTask('e', 416, 'todo', [], 1);
+    const withTasks = [...tasks, waiting];
+    expect(waitingOf(detail('running', withTasks, []), waiting)).toEqual({ label: 'Blocked by a task...', paused: false });
+    expect(waitingOf(detail('running', withTasks, [['b', 'e']]), waiting)).toEqual({ label: 'Blocked by 2 tasks...', paused: false });
+    expect(waitingOf(detail('paused', withTasks, []), waiting)).toEqual({ label: 'Blocked by a task...', paused: false });
+    // A done blocker beside it does not count.
+    expect(waitingOf(detail('running', withTasks, [['a', 'e']]), waiting)).toEqual({ label: 'Blocked by a task...', paused: false });
+  });
+
+  it('words a task\'s wait the same on its canvas card as on its board card, which reads the summary', () => {
+    // The summary names the same blockers: a live one by number, an unnamed one as "a task".
+    const waiting = viewTask('e', 416, 'todo', [], 1);
+    const withTasks = [...tasks, waiting];
+    const cases: Array<{ state: 'running' | 'paused'; links: Array<[string, string]>; waitingFor: string[] }> = [
+      { state: 'running', links: [], waitingFor: ['a task'] },
+      { state: 'running', links: [['b', 'e']], waitingFor: ['#413', 'a task'] },
+      { state: 'paused', links: [['b', 'e']], waitingFor: ['#413', 'a task'] },
+    ];
+    for (const { state, links, waitingFor } of cases) {
+      const board: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state, waitingFor, humanGateTargetId: null, hasLinks: true };
+      expect(waitingOf(detail(state, withTasks, links), waiting)).toEqual(boardWaiting(board));
+    }
+    const single = viewTask('f', 417, 'todo');
+    const live: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state: 'running', waitingFor: ['#413'], humanGateTargetId: null, hasLinks: true };
+    expect(waitingOf(detail('running', [...tasks, single], [['b', 'f']]), single)).toEqual(boardWaiting(live));
   });
 
   it('lets only a task that has not started wait, and only an unfinished one block', () => {
