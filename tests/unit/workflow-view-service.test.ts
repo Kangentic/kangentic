@@ -264,6 +264,120 @@ describe('the Workflows view operations', () => {
       expect(after.workflow).toMatchObject({ id: workflow.id, state: 'running' });
     });
 
+    describe('when a blocker on another board is missing from the read', () => {
+      /** Budgets UI waits for Budgets API, which is on the mobile board. */
+      async function startedAcrossBoards() {
+        const workflow = service.createWorkflow('home', {});
+        service.savePlan(context, 'home', workflow.id, {
+          tasks: [
+            { key: 'api', title: 'Budgets API', project: 'mobile' },
+            { key: 'ui', title: 'Budgets UI' },
+          ],
+          links: [{ blocker: 'api', blocked: 'ui' }],
+        });
+        await service.startWorkflow(context, 'home', workflow.id);
+        const api = new TaskRepository(harness.dbs.get('mobile') as Database.Database).listByWorkflow(workflow.id)[0];
+        const ui = new TaskRepository(homeDb()).listByWorkflow(workflow.id)[0];
+        return { workflow, api, ui };
+      }
+
+      const uiOf = (workflowId: string, uiId: string) => view.readWorkflowDetail(context, 'home', workflowId).tasks.find((task) => task.key === uiId)!;
+      const summaryOf = (workflowId: string) => view.listWorkflowSummaries(context, 'home').find((summary) => summary.workflow.id === workflowId)!;
+      const waitsForOf = (workflowId: string, uiId: string) =>
+        service.readWorkflow(context, 'home', workflowId).tasks.find((task) => task.taskId === uiId)!.waitsFor;
+
+      it('names a live blocker by its number, on its board', async () => {
+        const { workflow, api, ui } = await startedAcrossBoards();
+        expect(uiOf(workflow.id, ui.id).unnamedBlockerCount).toBe(0);
+        expect(summaryOf(workflow.id).boardTasks[ui.id].waitingFor).toEqual([`#${api.display_id}`]);
+        expect(waitsForOf(workflow.id, ui.id)).toEqual([`#${api.display_id} on "kangentic-mobile"`]);
+      });
+
+      it('leaves out a blocker that is provably gone, since the engine drops its link', async () => {
+        const { workflow, api, ui } = await startedAcrossBoards();
+        // Deleted without the remover: what a delete whose home write threw leaves.
+        (harness.dbs.get('mobile') as Database.Database).prepare('DELETE FROM tasks WHERE id = ?').run(api.id);
+
+        const detail = view.readWorkflowDetail(context, 'home', workflow.id);
+        expect(detail.links).toEqual([]);
+        expect(detail.tasks.find((task) => task.key === ui.id)!.unnamedBlockerCount).toBe(0);
+        const summary = summaryOf(workflow.id);
+        expect(summary.boardTasks[ui.id].waitingFor).toEqual([]);
+        expect(summary).toMatchObject({ queuedCount: 1, blockedCount: 0 });
+        expect(waitsForOf(workflow.id, ui.id)).toEqual([]);
+      });
+
+      it('counts a blocker whose project will not open as an unnamed one that still holds', async () => {
+        const { workflow, ui } = await startedAcrossBoards();
+        (harness.dbs.get('mobile') as Database.Database).close();
+        harness.dbs.delete('mobile');
+
+        const detail = view.readWorkflowDetail(context, 'home', workflow.id);
+        expect(detail.links).toEqual([]);
+        expect(detail.tasks.find((task) => task.key === ui.id)!.unnamedBlockerCount).toBe(1);
+        const summary = summaryOf(workflow.id);
+        expect(summary.boardTasks[ui.id].waitingFor).toEqual(['a task']);
+        expect(summary).toMatchObject({ queuedCount: 0, blockedCount: 1 });
+        expect(waitsForOf(workflow.id, ui.id)).toEqual(['a task on "kangentic-mobile" that could not be read']);
+      });
+
+      it('counts two blockers on one task as two, one per missing blocker', async () => {
+        const workflow = service.createWorkflow('home', {});
+        service.savePlan(context, 'home', workflow.id, {
+          tasks: [
+            { key: 'api', title: 'Budgets API', project: 'mobile' },
+            { key: 'schema', title: 'Budgets schema', project: 'mobile' },
+            { key: 'ui', title: 'Budgets UI' },
+          ],
+          links: [{ blocker: 'api', blocked: 'ui' }, { blocker: 'schema', blocked: 'ui' }],
+        });
+        await service.startWorkflow(context, 'home', workflow.id);
+        const ui = new TaskRepository(homeDb()).listByWorkflow(workflow.id)[0];
+        const mobileTasks = new TaskRepository(harness.dbs.get('mobile') as Database.Database).listByWorkflow(workflow.id);
+        expect(mobileTasks).toHaveLength(2);
+        // The control: both blockers read, so both are named and none is unnamed.
+        expect(uiOf(workflow.id, ui.id).unnamedBlockerCount).toBe(0);
+        expect(summaryOf(workflow.id).boardTasks[ui.id].waitingFor).toHaveLength(2);
+
+        (harness.dbs.get('mobile') as Database.Database).close();
+        harness.dbs.delete('mobile');
+
+        expect(uiOf(workflow.id, ui.id).unnamedBlockerCount).toBe(2);
+        const summary = summaryOf(workflow.id);
+        expect(summary.boardTasks[ui.id].waitingFor).toEqual(['a task', 'a task']);
+        expect(summary).toMatchObject({ queuedCount: 0, blockedCount: 1 });
+        expect(waitsForOf(workflow.id, ui.id)).toEqual([
+          'a task on "kangentic-mobile" that could not be read',
+          'a task on "kangentic-mobile" that could not be read',
+        ]);
+      });
+
+      it('names a held blocker on this board as "this board", since the home board has no name to give', async () => {
+        const workflow = service.createWorkflow('home', {});
+        service.savePlan(context, 'home', workflow.id, {
+          tasks: [
+            { key: 'api', title: 'Budgets API' },
+            { key: 'ui', title: 'Budgets UI' },
+          ],
+          links: [{ blocker: 'api', blocked: 'ui' }],
+        });
+        await service.startWorkflow(context, 'home', workflow.id);
+        const tasks = new TaskRepository(homeDb()).listByWorkflow(workflow.id);
+        const api = tasks.find((task) => task.title === 'Budgets API')!;
+        const ui = tasks.find((task) => task.title === 'Budgets UI')!;
+        // The control: read, a blocker on this board is named by its number alone.
+        expect(waitsForOf(workflow.id, ui.id)).toEqual([`#${api.display_id}`]);
+
+        // The blocker keeps this workflow's id, so it is held, but its row names another
+        // home, so the read leaves it out: missing from the read without being gone.
+        homeDb().prepare('UPDATE tasks SET workflow_project_id = ? WHERE id = ?').run('elsewhere', api.id);
+
+        expect(waitsForOf(workflow.id, ui.id)).toEqual(['a task on "this board" that could not be read']);
+        expect(uiOf(workflow.id, ui.id).unnamedBlockerCount).toBe(1);
+        expect(summaryOf(workflow.id).boardTasks[ui.id].waitingFor).toEqual(['a task']);
+      });
+    });
+
     it('lets a hand drag a started task out of a gate, and never a task out of To Do', async () => {
       const { api, ui, docs } = await started();
       const tasks = new TaskRepository(homeDb());

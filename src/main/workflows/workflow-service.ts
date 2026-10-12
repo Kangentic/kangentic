@@ -13,7 +13,6 @@ import type {
   WorkflowDraftTask,
   WorkflowTaskRunSettings,
 } from '../../shared/types';
-import { IPC } from '../../shared/ipc-channels';
 import { routeCandidates, routeColumns, todoColumn, doneColumn } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, PERMISSION_MODES, RUN_MODES, hasRunSettings, isPermissionMode, isRunMode } from '../../shared/workflow-run-settings';
@@ -32,14 +31,14 @@ import { validateSpawnOverrides } from '../agent/mcp-http/spawn-override-validat
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { pauseTaskSession } from '../ipc/handlers/session-pause';
 import { resumeTaskSession } from '../ipc/handlers/session-resume';
-import { sendToRenderer } from '../ipc/send-to-renderer';
 import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { MAX_WORKFLOW_TASKS } from './workflow-limits';
 import { wakeWorkflowEngine } from './workflow-wake';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { announceBoardChange } from './workflow-board-announce';
 import { endWorkflowAgent } from './workflow-agent';
-import { workflowTasks } from './workflow-tasks';
+import { linkEndState, readWorkflowTasks, workflowTasks } from './workflow-tasks';
 import { isInWorkflow } from './workflow-home';
 
 /**
@@ -156,15 +155,22 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
     return { workflow, homeProjectId, tasks };
   }
 
-  const created = workflowTasks(context, homeProjectId, workflowId);
+  const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflowId);
+  const present = new Set(created.map(({ task }) => task.id));
   const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflowId);
   // A blocker on another board is named with its board, since its number alone
-  // can match a task on this one.
-  const keyOf = (taskId: string): string => {
-    const entry = created.find((candidate) => candidate.task.id === taskId);
-    if (!entry) return `(removed ${taskId.slice(0, 8)})`;
-    const board = boardOf(entry.projectId);
-    return board === null ? `#${entry.task.display_id}` : `#${entry.task.display_id} on "${board}"`;
+  // can match a task on this one. One the read could not find is named by its
+  // board when it still holds (its project would not open), and left out when
+  // it is provably gone, since the engine drops that link.
+  const blockerKeys = (link: TaskLink): string[] => {
+    const entry = created.find((candidate) => candidate.task.id === link.blocker_task_id);
+    if (entry) {
+      const board = boardOf(entry.projectId);
+      return [board === null ? `#${entry.task.display_id}` : `#${entry.task.display_id} on "${board}"`];
+    }
+    const blocker = { projectId: link.blocker_project_id, taskId: link.blocker_task_id };
+    if (linkEndState(context, blocker, workflowId, present, unreadProjectIds) === 'gone') return [];
+    return [`a task on "${boardOf(link.blocker_project_id) ?? 'this board'}" that could not be read`];
   };
   const tasks = created.map(({ projectId, task }): WorkflowTaskView => {
     const lanes = safeLanes(projectId);
@@ -180,7 +186,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       column: lane?.name ?? 'an unknown column',
       place,
       route: routeColumns(lanes, task).map((candidate) => candidate.name),
-      waitsFor: links.filter((link) => link.blocked_task_id === task.id).map((link) => keyOf(link.blocker_task_id)),
+      waitsFor: links.filter((link) => link.blocked_task_id === task.id).flatMap(blockerKeys),
       runSettings: runSettingsOf(task),
       profileName: profileNameOn(context, projectId, task.profile_id),
     };
@@ -873,16 +879,6 @@ async function supersedeSourceTask(context: IpcContext, homeProjectId: string, w
 function announceWorkflowBoards(context: IpcContext, homeProjectId: string, workflowId: string): void {
   const projects = new Set(workflowTasks(context, homeProjectId, workflowId).map(({ projectId }) => projectId));
   for (const projectId of projects) announceBoardChange(context, projectId);
-}
-
-/** A quiet board reload for a board whose tasks a workflow wrote. */
-export function announceBoardChange(context: IpcContext, projectId: string): void {
-  try {
-    context.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [] });
-  } catch {
-    // Announcing is best effort.
-  }
-  sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_AUTOMATION, projectId);
 }
 
 // ---------------------------------------------------------------------------

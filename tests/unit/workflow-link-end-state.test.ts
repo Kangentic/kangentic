@@ -23,6 +23,12 @@ vi.mock('../../src/main/db/database', () => ({
     if (!projectDatabase) throw new Error(`database is locked for ${projectId}`);
     return projectDatabase;
   },
+  // Null when the project has no file, as the real one answers; a locked one throws.
+  getExistingProjectDb: (projectId: string) => {
+    harness.opened.push(projectId);
+    if (projectId === 'locked') throw new Error('database is locked for locked');
+    return harness.dbs.get(projectId) ?? null;
+  },
 }));
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
@@ -71,7 +77,7 @@ describe('linkEndState', () => {
   beforeEach(() => {
     harness.dbs.clear();
     harness.opened.length = 0;
-    registeredProjectIds = new Set(['home', 'broken']);
+    registeredProjectIds = new Set(['home', 'broken', 'locked']);
     context = {
       projectRepo: {
         getById: (id: string) => (registeredProjectIds.has(id) ? { id, name: id, path: `/mock/${id}` } : undefined),
@@ -133,12 +139,19 @@ describe('linkEndState', () => {
     expect(state).toBe('held');
   });
 
-  it('holds an end when the lookup itself throws, for a registered project that was not unread', () => {
+  it('holds an end whose registered project has no database file, rather than reading it as gone', () => {
     // 'broken' is registered and absent from the unread set, so the check reaches
-    // its own lookup, where the open throws (no database is held for it).
+    // its own lookup, which answers null for a project with no file.
     const state = linkEndState(context, { projectId: 'broken', taskId: 'task-1' }, WORKFLOW_ID, NO_TASK_IDS, NO_PROJECT_IDS);
 
     expect(harness.opened).toEqual(['broken']);
+    expect(state).toBe('held');
+  });
+
+  it('holds an end when the lookup itself throws, for a registered project that was not unread', () => {
+    const state = linkEndState(context, { projectId: 'locked', taskId: 'task-1' }, WORKFLOW_ID, NO_TASK_IDS, NO_PROJECT_IDS);
+
+    expect(harness.opened).toEqual(['locked']);
     expect(state).toBe('held');
   });
 });

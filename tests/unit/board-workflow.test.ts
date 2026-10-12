@@ -62,6 +62,9 @@ describe('the footer of a card in To Do', () => {
   it('names one blocker, counts several, else says paused or queued', () => {
     expect(boardWaiting(boardWorkflow({ waitingFor: ['#413'] }))).toEqual({ label: 'Blocked by #413...', paused: false });
     expect(boardWaiting(boardWorkflow({ waitingFor: ['#1', '#2', '#3'] }))).toEqual({ label: 'Blocked by 3 tasks...', paused: false });
+    // A blocker whose board could not be read is named in plain words, never by where it is.
+    expect(boardWaiting(boardWorkflow({ waitingFor: ['a task'] }))).toEqual({ label: 'Blocked by a task...', paused: false });
+    expect(boardWaiting(boardWorkflow({ state: 'paused', waitingFor: ['#413', 'a task'] }))).toEqual({ label: 'Blocked by 2 tasks...', paused: false });
     expect(boardWaiting(boardWorkflow({ state: 'paused' }))).toEqual({ label: 'Paused', paused: true });
     expect(boardWaiting(boardWorkflow())).toEqual({ label: 'Queued...', paused: false });
     expect(boardWaiting(null)).toBeNull();

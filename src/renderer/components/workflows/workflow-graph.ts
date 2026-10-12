@@ -1,5 +1,6 @@
 import type { WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSALS, workflowTaskLabel } from '../../../shared/workflow-refusals';
+import { UNNAMED_BLOCKER_LABEL, waitingLabel } from '../../../shared/workflow-waiting';
 import type { WorkflowWaiting } from './WorkflowCanvasCard';
 
 /**
@@ -55,14 +56,15 @@ export function pendingBlockers(detail: WorkflowDetail, key: string): WorkflowVi
     .filter((blocker): blocker is WorkflowViewTask => blocker !== null && blocker.place !== 'done');
 }
 
-/** Why a started workflow's task in To Do has not started: what it waits for, a free slot, or the pause. */
+/**
+ * Why a started workflow's task in To Do has not started: what it waits for, a
+ * free slot, or the pause. Worded by `waitingLabel`, as the board card is.
+ */
 export function waitingOf(detail: WorkflowDetail, task: WorkflowViewTask): WorkflowWaiting | null {
   if (task.place !== 'todo' || detail.workflow.state === 'draft') return null;
-  const pending = pendingBlockers(detail, task.key);
-  if (pending.length === 1) return { label: `Blocked by ${taskLabel(pending[0])}...`, paused: false };
-  if (pending.length > 1) return { label: `Blocked by ${pending.length} tasks...`, paused: false };
-  if (detail.workflow.state === 'paused') return { label: 'Paused', paused: true };
-  return { label: 'Queued...', paused: false };
+  const pending = pendingBlockers(detail, task.key).map(taskLabel);
+  for (let index = 0; index < task.unnamedBlockerCount; index += 1) pending.push(UNNAMED_BLOCKER_LABEL);
+  return waitingLabel(pending, detail.workflow.state === 'paused');
 }
 
 /** A task can be made to wait while it has not started: planned, or in To Do. */

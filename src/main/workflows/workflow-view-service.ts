@@ -19,6 +19,7 @@ import type {
 import { boardEnds, nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, hasRunSettings } from '../../shared/workflow-run-settings';
+import { UNNAMED_BLOCKER_LABEL } from '../../shared/workflow-waiting';
 import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { TaskMoveRepository } from '../db/repositories/task-move-repository';
@@ -30,6 +31,7 @@ import { notifyWorkflowChanged } from './workflow-changed';
 import { isHumanGate } from './workflow-lock-check';
 import { isInWorkflow } from './workflow-home';
 import { workflowAgentSummary } from './workflow-agent';
+import { linkEndState, readWorkflowTasks } from './workflow-tasks';
 import {
   MAX_WORKFLOW_TASKS,
   WorkflowRequestError,
@@ -113,13 +115,26 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
         steps: plannedSteps(safeLanes(projectId), planned),
         canvasX: planned.canvas_x,
         canvasY: planned.canvas_y,
+        unnamedBlockerCount: 0,
       };
     });
     const links = draft.links.map((link): WorkflowViewLink => ({ blockerKey: link.blocker, blockedKey: link.blocked }));
     return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
   }
 
-  const created = workflowTasks(context, homeProjectId, workflowId);
+  const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflowId);
+  const present = new Set(created.map(({ task }) => task.id));
+  const linkRows = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflowId);
+  // A blocker the read could not name, because its project would not open,
+  // still holds its task, and the card says so. One that is provably gone is
+  // skipped: the engine drops its link.
+  const unnamedBlockers = new Map<string, number>();
+  for (const link of linkRows) {
+    if (present.has(link.blocker_task_id) || !present.has(link.blocked_task_id)) continue;
+    const blocker = { projectId: link.blocker_project_id, taskId: link.blocker_task_id };
+    if (linkEndState(context, blocker, workflowId, present, unreadProjectIds) !== 'held') continue;
+    unnamedBlockers.set(link.blocked_task_id, (unnamedBlockers.get(link.blocked_task_id) ?? 0) + 1);
+  }
   const tasks = created.map(({ projectId, task }): WorkflowViewTask => {
     noteProject(projectId);
     const lanes = safeLanes(projectId);
@@ -136,12 +151,12 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
       steps: routeSteps(lanes, task, place === 'todo' ? new Map() : leftAtByColumn(projectId, task.id)),
       canvasX: task.canvas_x,
       canvasY: task.canvas_y,
+      unnamedBlockerCount: unnamedBlockers.get(task.id) ?? 0,
     };
   });
-  const present = new Set(tasks.map((task) => task.key));
-  // A link whose end left the board (a deleted task) has nothing to draw. The
-  // engine still never reads it as satisfied (`blockersDone`).
-  const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflowId)
+  // A link with an end the detail does not have has nothing to draw: it is
+  // counted above when it still holds, and dropped by the engine when it is gone.
+  const links = linkRows
     .filter((link) => present.has(link.blocker_task_id) && present.has(link.blocked_task_id))
     .map((link): WorkflowViewLink => ({ blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }));
   return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
@@ -182,13 +197,14 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
       agent: workflowAgentSummary(context, workflow.id),
     };
   }
-  const created = workflowTasks(context, homeProjectId, workflow.id);
+  const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflow.id);
   const places = new Map<string, Exclude<WorkflowTaskPlace, 'planned'>>();
   const displayIds = new Map<string, number>();
   for (const { projectId, task } of created) {
     places.set(task.id, taskPlace(safeLanes(projectId), task));
     displayIds.set(task.id, task.display_id);
   }
+  const present = new Set(displayIds.keys());
   const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflow.id);
   const linked = new Set(links.flatMap((link) => [link.blocker_task_id, link.blocked_task_id]));
   let doneCount = 0;
@@ -205,12 +221,16 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
       inProgressCount += 1;
       humanGateTargetId = humanGateExit(context, projectId, task, workflow);
     } else {
-      // A blocker that left every board (deleted) still holds the task, as the engine reads it.
+      // A blocker the read could not name, because its project would not open,
+      // holds the task as the engine reads it. One that is provably gone does
+      // not: the engine drops its link.
       waitingFor = links
         .filter((link) => link.blocked_task_id === task.id && places.get(link.blocker_task_id) !== 'done')
-        .map((link) => {
+        .flatMap((link) => {
           const displayId = displayIds.get(link.blocker_task_id);
-          return displayId ? `#${displayId}` : 'a removed task';
+          if (displayId) return [`#${displayId}`];
+          const blocker = { projectId: link.blocker_project_id, taskId: link.blocker_task_id };
+          return linkEndState(context, blocker, workflow.id, present, unreadProjectIds) === 'held' ? [UNNAMED_BLOCKER_LABEL] : [];
         });
       if (waitingFor.length > 0) blockedCount += 1;
       else queuedCount += 1;

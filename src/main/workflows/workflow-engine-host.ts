@@ -15,10 +15,13 @@ import {
   inFlightKey,
   planPass,
   type CoreIntent,
+  type CoreLink,
   type CorePlace,
   type CoreTask,
   type CoreWorkflow,
 } from './engine/workflow-engine-core';
+import { announceBoardChange } from './workflow-board-announce';
+import { linkEndState } from './workflow-tasks';
 import { announceWorkflowComplete } from './workflow-complete';
 import { endWorkflowAgent } from './workflow-agent';
 import { notifyWorkflowChanged, setWorkflowChangedWindow } from './workflow-changed';
@@ -80,6 +83,8 @@ export class WorkflowEngineHost {
    */
   private readonly inFlightSlots = new Set<string>();
   private readonly failedStarts = new Map<string, FailedStart>();
+  /** Workflows whose gone links would not delete, logged once until a delete goes through. */
+  private readonly failedDrops = new Set<string>();
   private readonly durationsMs: number[] = [];
 
   constructor(private readonly context: IpcContext) {}
@@ -245,6 +250,7 @@ export class WorkflowEngineHost {
 
   private snapshot(homeProjectId: string, workflow: Workflow, projectIds: string[]): CoreWorkflow {
     const tasks: CoreTask[] = [];
+    const unreadProjectIds = new Set<string>();
     for (const projectId of projectIds) {
       let projectTasks: Task[];
       let lanes: Swimlane[];
@@ -255,16 +261,30 @@ export class WorkflowEngineHost {
         if (projectTasks.length === 0) continue;
         lanes = new SwimlaneRepository(db).list();
       } catch {
+        unreadProjectIds.add(projectId);
         continue;
       }
       for (const task of projectTasks) tasks.push(coreTask(projectId, task, lanes));
     }
-    const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflow.id).map((link) => ({
-      blockerProjectId: link.blocker_project_id,
-      blockerTaskId: link.blocker_task_id,
-      blockedProjectId: link.blocked_project_id,
-      blockedTaskId: link.blocked_task_id,
-    }));
+    // A link with an end missing from the read is checked once more: provably
+    // gone goes to `goneLinks` to be dropped, anything else keeps holding.
+    // Usually there is none, so the check costs a set lookup per link end.
+    const presentTaskIds = new Set(tasks.map((task) => task.taskId));
+    const links: CoreLink[] = [];
+    const goneLinks: CoreLink[] = [];
+    for (const link of new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflow.id)) {
+      const ends = [
+        { projectId: link.blocker_project_id, taskId: link.blocker_task_id },
+        { projectId: link.blocked_project_id, taskId: link.blocked_task_id },
+      ];
+      const gone = ends.some((end) => linkEndState(this.context, end, workflow.id, presentTaskIds, unreadProjectIds) === 'gone');
+      (gone ? goneLinks : links).push({
+        blockerProjectId: link.blocker_project_id,
+        blockerTaskId: link.blocker_task_id,
+        blockedProjectId: link.blocked_project_id,
+        blockedTaskId: link.blocked_task_id,
+      });
+    }
     return {
       workflowId: workflow.id,
       homeProjectId,
@@ -272,10 +292,45 @@ export class WorkflowEngineHost {
       startedAt: workflow.started_at,
       tasks,
       links,
+      goneLinks,
     };
   }
 
+  /**
+   * Drop links whose task is gone, finishing the delete that left them. No
+   * revision bump, as `TaskRepository.delete` removes links without one: a
+   * workflow agent's save built on its last read still goes through. Announced
+   * only for what was deleted, since an announce wakes the engine: a write that
+   * keeps failing logs once and then stays quiet, rather than waking every pass.
+   */
+  private dropLinks(intent: Extract<CoreIntent, { kind: 'drop-links' }>): void {
+    const blockedProjectIds = new Set<string>();
+    let dropped = 0;
+    try {
+      const repository = new TaskLinkRepository(getProjectDb(intent.homeProjectId));
+      for (const link of intent.links) {
+        if (!repository.delete(link.blockerTaskId, link.blockedTaskId)) continue;
+        dropped += 1;
+        blockedProjectIds.add(link.blockedProjectId);
+      }
+      this.failedDrops.delete(intent.workflowId);
+    } catch (error) {
+      if (!this.failedDrops.has(intent.workflowId)) {
+        this.failedDrops.add(intent.workflowId);
+        console.error(`[WORKFLOW] Could not drop the links to removed tasks of workflow ${intent.workflowId.slice(0, 8)}:`, error);
+      }
+    }
+    if (dropped === 0) return;
+    console.log(`[WORKFLOW] Dropped ${dropped} ${dropped === 1 ? 'link' : 'links'} to removed tasks of workflow ${intent.workflowId.slice(0, 8)}`);
+    for (const projectId of blockedProjectIds) announceBoardChange(this.context, projectId);
+    notifyWorkflowChanged(intent.homeProjectId, intent.workflowId);
+  }
+
   private carryOut(intent: CoreIntent, titles: Map<string, string>, taskCounts: Map<string, number>): void {
+    if (intent.kind === 'drop-links') {
+      this.dropLinks(intent);
+      return;
+    }
     if (intent.kind === 'complete') {
       try {
         new WorkflowRepository(getProjectDb(intent.homeProjectId)).setState(intent.workflowId, 'done');

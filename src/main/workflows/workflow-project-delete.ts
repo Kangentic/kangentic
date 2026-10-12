@@ -4,7 +4,8 @@ import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import type { IpcContext } from '../ipc/ipc-context';
 import { notifyWorkflowChanged } from './workflow-changed';
-import { announceBoardChange, deleteWorkflow } from './workflow-service';
+import { announceBoardChange } from './workflow-board-announce';
+import { deleteWorkflow } from './workflow-service';
 import { wakeWorkflowEngine } from './workflow-wake';
 
 /**
