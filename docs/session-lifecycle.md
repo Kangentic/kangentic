@@ -382,7 +382,7 @@ capability and no agent-name branching. Two things make it correct rather than m
 
 `SessionManager.isAgentAbsenceCandidate` owns every session-shaped arm, so the watcher needs no
 session knowledge. It requires a `running` session with a live PTY, an agent adapter, a non-WSL
-shell (`parseWslShellSpec`, which also matches a bare `wsl` spec), and an elapsed spawn grace. A
+shell (`parseWslShellSpec`, the same detector the spawn uses), and an elapsed spawn grace. A
 slow-STARTING agent is not excluded by the grace and does not need to be - its process exists, it
 just has not drawn yet, which is exactly why the process tree is a safer signal than a first-output
 timeout. A slow-starting SHELL is another matter, and only a Command Terminal pays for it (below).

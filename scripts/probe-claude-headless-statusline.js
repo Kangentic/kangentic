@@ -115,8 +115,11 @@ function buildSpawnEnv() {
 /** Replica of resolveShellArgs for the shells the probe supports. */
 function resolveShellArgs(shell) {
   const lower = shell.toLowerCase();
-  if (lower.startsWith('wsl ') || lower.startsWith('wsl.exe ')) {
-    const parts = shell.split(/\s+/);
+  // Mirror parseWslShellSpec (task-process-tag.ts): a first token of `wsl` or
+  // `wsl.exe` is WSL, bare or with a distro.
+  const parts = shell.trim().split(/\s+/);
+  const firstToken = parts[0].toLowerCase();
+  if (firstToken === 'wsl' || firstToken === 'wsl.exe') {
     // Mirror src/main/pty/spawn/pty-spawn.ts: node-pty's ConPTY resolver
     // cannot resolve the extension-less bare `wsl`, so append `.exe`.
     const executable = parts[0].toLowerCase().endsWith('.exe') ? parts[0] : `${parts[0]}.exe`;
