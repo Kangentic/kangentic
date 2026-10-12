@@ -36,6 +36,12 @@ export const WORKFLOW_REFUSALS = {
   pausedStart: (label: string, workflowTitle: string) => `${label} is in ${workflowTitle}, which is paused. Resume the workflow to start its tasks again.`,
   /** Sending a workflow task to the backlog or the archive. */
   removeFirst: (label: string, workflowTitle: string) => `Remove ${label} from ${workflowTitle} first.`,
+  /**
+   * A workflow its home does not hold: deleted, or its home project is. A task
+   * detail's workflow panel reads this sentence in a failed read to tell a
+   * workflow that is gone from one that could not be read this time.
+   */
+  notFound: (workflowSelector: string) => `No workflow "${workflowSelector}" in this project.`,
 } as const;
 
 /** How a task is named in a refusal: its number once it exists, its title before Start. */
