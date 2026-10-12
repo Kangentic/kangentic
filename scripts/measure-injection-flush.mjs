@@ -415,12 +415,10 @@ function spawnAgent(agent, workspace, env) {
   const args = agent.buildArgs();
   const options = { cwd: workspace, env, cols: 120, rows: 40, name: 'xterm-256color' };
   if (process.platform === 'win32') {
-    // This script runs from a bare `node` process with no attached console, and
-    // ConPTY's console-list agent calls AttachConsole, which fails there and
-    // kills the child immediately. The app itself does not need this (it runs
-    // under Electron with a console); the winpty backend has no such
-    // requirement, so force it for the harness only.
-    options.useConpty = false;
+    // Before node-pty 1.2 this forced the winpty backend, because ConPTY's
+    // console-list agent calls AttachConsole, which fails under a bare `node`
+    // process with no console. node-pty 1.2 has no winpty backend and ignores
+    // `useConpty`, so the harness spawns through ConPTY, as the app does.
     return nodePty.spawn('cmd.exe', ['/c', agent.binary, ...args], options);
   }
   return nodePty.spawn(agent.binary, args, options);
