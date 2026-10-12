@@ -26,7 +26,18 @@
       "autoSpawn": true,
       "permissionMode": "auto",
       "modelOverride": "opus",
-      "effortOverride": "xhigh"
+      "effortOverride": "xhigh",
+      "automations": {
+        "onTurnEnd": [
+          {
+            "name": "Back to review",
+            "type": "move_to_column",
+            "condition": "The final message says the agent finished the steps a Code Review pass sent back, and it asks the user nothing.",
+            "maxRuns": 3,
+            "targetColumn": "Code Review"
+          }
+        ]
+      }
     },
     {
       "id": "623a36ef-9045-4437-b9c8-f67312dc5437",
@@ -46,6 +57,23 @@
             "type": "send_message",
             "message": "/code-review {{baseBranch}}",
             "mode": "immediate"
+          }
+        ],
+        "onTurnEnd": [
+          {
+            "name": "Back for revisions",
+            "type": "move_to_column",
+            "condition": "The final message's verdict line reads \"Verdict: Blocked\".",
+            "maxRuns": 3,
+            "targetColumn": "Executing",
+            "message": "Code Review sent this back. Do the numbered steps under its verdict, commit, then end your turn.\n\n{{agentReply}}"
+          },
+          {
+            "name": "On to Testing",
+            "type": "move_to_column",
+            "condition": "The final message's verdict line reads \"Verdict: Ready\".",
+            "maxRuns": 1,
+            "targetColumn": "Testing"
           }
         ]
       }
@@ -86,6 +114,15 @@
             "type": "send_message",
             "message": "/merge-pull-request",
             "mode": "immediate"
+          }
+        ],
+        "onTurnEnd": [
+          {
+            "name": "Finish",
+            "type": "move_to_column",
+            "condition": "The pull request is merged.",
+            "maxRuns": 1,
+            "targetColumn": "Done"
           }
         ]
       }
