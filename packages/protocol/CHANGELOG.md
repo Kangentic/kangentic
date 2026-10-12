@@ -2,6 +2,60 @@
 
 <!-- releases -->
 
+## [protocol-v0.20.0] - 2026-10-11
+
+Adds Command Terminals to the bridge: a phone can start an agent at a project's
+root, stop one, list them with their activity, and read a project folder's diff.
+Additive on the wire; `PROTOCOL_VERSION` stays '3'. One TypeScript type changes
+(see Types below), which a consumer sees at its version bump.
+
+New verb `command-terminal` (the 13th in `CAPABILITY_VERBS`). The request is
+`{ action: 'start', projectId }` or `{ action: 'stop', sessionId }`, and the
+parser copies out only those fields, so a branch, model or effort never reaches
+the desktop. Start answers `{ ok: true, sessionId, slot, name }` once the spawn
+returns, with `slot` 1 to 4 and `name` the terminal's display name. Stop answers
+`{ ok: true }`. It starts an agent, never a shell, and the desktop ends the
+session when the agent exits. `parseCommandTerminalStartResponsePayload` is the
+phone-side parser. The verb rides each device's own grant like every other verb.
+
+Typed refusals, each with an exported constant: `unknown-project`,
+`unknown-session` (a stop for a terminal that already ended, which a phone treats
+as stopped), `command-terminal-limit` (the project already runs four),
+`not-command-terminal` (a stop that named a task's agent, nothing stopped),
+`agent-unavailable` (the project's agent CLI is not installed) and
+`command-terminal-start-failed` (anything else, with `error` kept for logs). A
+phone shows a generic line for a code it does not know.
+
+The `read-board` snapshot, in the full view and in `view: 'sessions'`, gains
+`commandTerminals` (`CommandTerminalWire`: `sessionId`, `projectId`, `slot`,
+`name`, `named`, and the raw `activity` state and reason for the first paint) and
+`commandTerminalsOffered`, true when the device holds the verb. Both parse through
+`parseCommandTerminalWire` and `parseReadBoardResponsePayload`.
+
+The board event gains the change `command-terminals-changed`, with `ids` set to
+`[sessionId]` and no `taskId`. It fires on a terminal's start, end and rename
+only, never on an activity change: a phone subscribes `read-stream` for each
+terminal's `sessionId` and gets live state and reason from that stream.
+
+The push envelope gains an optional `sessionKind`, `'command-terminal'`
+(`PUSH_SESSION_KINDS`, `isPushSessionKind`), with the terminal's name in
+`taskTitle`. The parser drops an unknown kind instead of throwing.
+
+`read-diff` with no `taskId` diffs the project folder against the project's
+default base branch, and its subscription pings carry `projectId`. `filePath`
+stays limited to the diff's own file list.
+
+### Types
+- `ReadDiffRequestPayload.taskId` is optional.
+- `DiffEvent` carries exactly one of `taskId` and `projectId`, and the event
+  validator rejects both or neither.
+
+### Features
+- Run Command Terminals over the bridge and end them with their agent (9e6831b4)
+
+### Fixes
+- Harden Command Terminal starts, ends and naming tests (fd92746c)
+
 ## [protocol-v0.19.0] - 2026-10-08
 
 Adds the code a desktop puts on a refusal for a response that would not fit the
