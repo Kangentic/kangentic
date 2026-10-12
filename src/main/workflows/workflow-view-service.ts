@@ -19,7 +19,7 @@ import type {
 import { boardEnds, nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, hasRunSettings } from '../../shared/workflow-run-settings';
-import { getProjectDb } from '../db/database';
+import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { TaskMoveRepository } from '../db/repositories/task-move-repository';
 import { TaskLinkRepository } from '../db/repositories/task-link-repository';
@@ -28,6 +28,7 @@ import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { isHumanGate } from './workflow-lock-check';
+import { isInWorkflow } from './workflow-home';
 import { workflowAgentSummary } from './workflow-agent';
 import {
   MAX_WORKFLOW_TASKS,
@@ -146,9 +147,15 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
   return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
 }
 
-/** The picker's rows: every workflow of the project that has not finished, newest first. */
+/**
+ * The picker's rows: every workflow of the project that has not finished,
+ * newest first. A board asks for the homes its tasks name, and a home that is
+ * gone lists none rather than having its database created again.
+ */
 export function listWorkflowSummaries(context: IpcContext, homeProjectId: string): WorkflowSummary[] {
-  const workflows = new WorkflowRepository(getProjectDb(homeProjectId)).listOpen();
+  const homeDb = getExistingProjectDb(homeProjectId);
+  if (!homeDb) return [];
+  const workflows = new WorkflowRepository(homeDb).listOpen();
   return workflows.map((workflow) => summarize(context, homeProjectId, workflow));
 }
 
@@ -158,7 +165,8 @@ export function listWorkflowSummaries(context: IpcContext, homeProjectId: string
  * when most superseded tasks sit in Done.
  */
 export function listWorkflowSupersessions(homeProjectId: string): WorkflowSupersession[] {
-  return new WorkflowRepository(getProjectDb(homeProjectId)).listSupersessions();
+  const homeDb = getExistingProjectDb(homeProjectId);
+  return homeDb ? new WorkflowRepository(homeDb).listSupersessions() : [];
 }
 
 function summarize(context: IpcContext, homeProjectId: string, workflow: Workflow): WorkflowSummary {
@@ -280,7 +288,7 @@ export function createWorkflowForView(context: IpcContext, homeProjectId: string
   const db = getProjectDb(homeProjectId);
   const source = new TaskRepository(db).getById(sourceTaskId);
   if (!source || source.archived_at) throw new WorkflowRequestError('That task is no longer on the board.');
-  if (source.workflow_id) throw new WorkflowRequestError(`#${source.display_id} is already in a workflow.`);
+  if (isInWorkflow(source, homeProjectId)) throw new WorkflowRequestError(`#${source.display_id} is already in a workflow.`);
   const lane = safeLanes(homeProjectId).find((candidate) => candidate.id === source.swimlane_id);
   if (lane?.role !== 'todo') throw new WorkflowRequestError(`#${source.display_id} has started. Only a task in To Do can become a workflow.`);
   const brief = [source.title.trim(), source.description.trim()].filter(Boolean).join('\n\n');

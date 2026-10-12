@@ -238,6 +238,17 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
   },
 }));
 
+// What a project delete does to the workflows it is part of is covered against
+// real databases in workflow-project-delete.test.ts. Here only that
+// cleanupProject runs it, on both branches, and ends the workflow agents.
+vi.mock('../../src/main/workflows/workflow-project-delete', () => ({
+  detachProjectFromWorkflows: vi.fn(),
+}));
+vi.mock('../../src/main/workflows/workflow-agent', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/workflows/workflow-agent')>()),
+  endWorkflowAgentsOfProject: vi.fn(async () => {}),
+}));
+
 // ---------------------------------------------------------------------------
 // Import under test (after all vi.mock declarations)
 // ---------------------------------------------------------------------------
@@ -259,6 +270,8 @@ import {
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../src/main/transition-engine/session-startup';
 import { ensureGitignore } from '../../src/main/ipc/helpers';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
+import { detachProjectFromWorkflows } from '../../src/main/workflows/workflow-project-delete';
+import { endWorkflowAgentsOfProject } from '../../src/main/workflows/workflow-agent';
 import { IPC, PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project } from '../../src/shared/types';
@@ -874,6 +887,49 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
     await cleanupProject(asIpcContext(context), project.id, project.path);
 
     expect(vi.mocked(gitFetchScheduler.stop)).toHaveBeenCalledWith(project.id);
+  });
+
+  it('cleanupProject takes a project whose folder is gone out of its workflows, and ends its workflow agents', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    Object.assign(context.boardConfigManager, { detach: vi.fn() });
+    vi.mocked(detachProjectFromWorkflows).mockClear();
+    vi.mocked(endWorkflowAgentsOfProject).mockClear();
+    // Not in state.existingPaths: the path-exists guard's early return.
+
+    await cleanupProject(asIpcContext(context), project.id, project.path);
+
+    expect(detachProjectFromWorkflows).toHaveBeenCalledWith(asIpcContext(context), project.id);
+    expect(endWorkflowAgentsOfProject).toHaveBeenCalledWith(asIpcContext(context), project.id);
+  });
+
+  it('cleanupProject takes the project out of its workflows before it kills a session, so no workflow starts one of its tasks meanwhile', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    Object.assign(context.boardConfigManager, { detach: vi.fn() });
+    state.existingPaths.add(project.path);
+    Object.assign(context.sessionManager, {
+      kill: vi.fn(),
+      awaitExit: vi.fn(async () => {}),
+      remove: vi.fn(),
+      removeByTaskId: vi.fn(async () => {}),
+    });
+    vi.mocked(detachProjectFromWorkflows).mockClear();
+    vi.mocked(endWorkflowAgentsOfProject).mockClear();
+    const tasks = [{ id: 'task-1', session_id: 'session-1', worktree_path: null }];
+    (TaskRepository.prototype as unknown as { list: () => typeof tasks }).list = () => tasks;
+
+    try {
+      await cleanupProject(asIpcContext(context), project.id, project.path);
+    } finally {
+      delete (TaskRepository.prototype as unknown as { list?: unknown }).list;
+    }
+
+    expect(detachProjectFromWorkflows).toHaveBeenCalledWith(asIpcContext(context), project.id);
+    const detachOrder = vi.mocked(detachProjectFromWorkflows).mock.invocationCallOrder[0];
+    const killOrder = vi.mocked(context.sessionManager.kill as (sessionId: string) => void).mock.invocationCallOrder[0];
+    expect(detachOrder).toBeLessThan(killOrder);
+    expect(endWorkflowAgentsOfProject).toHaveBeenCalledWith(asIpcContext(context), project.id);
   });
 
   it('kills and captures awaitExit for every task session before removing any, and removes wait for both exits', async () => {

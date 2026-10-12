@@ -52,7 +52,7 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
+vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})), getExistingProjectDb: vi.fn(() => ({})) }));
 
 // Per-repo state captured at module scope so the test can drive return
 // values and assert mock-call patterns directly.
@@ -186,7 +186,7 @@ import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 import { IPC } from '../../src/shared/ipc-channels';
 import { WORKFLOW_REFUSALS } from '../../src/shared/workflow-refusals';
-import { getProjectDb } from '../../src/main/db/database';
+import { getExistingProjectDb, getProjectDb } from '../../src/main/db/database';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { WorkflowRepository } from '../../src/main/db/repositories/workflow-repository';
 import { openTestDatabase } from './helpers/test-database';
@@ -646,9 +646,13 @@ describe('BACKLOG_DEMOTE refuses a task in a workflow', () => {
       },
     });
 
+    // The re-fetch at the end of a demote that goes through.
+    backlogRepoMock.getById.mockReturnValue(undefined);
+
     database = openTestDatabase();
     runProjectMigrations(database);
     vi.mocked(getProjectDb).mockReturnValue(database as never);
+    vi.mocked(getExistingProjectDb).mockReturnValue(database as never);
 
     context = createMockContext();
     registerBacklogHandlers(context as never);
@@ -658,7 +662,62 @@ describe('BACKLOG_DEMOTE refuses a task in a workflow', () => {
     // clearAllMocks keeps implementations, so put the file-wide default back
     // before the next describe reads it.
     vi.mocked(getProjectDb).mockReturnValue({} as never);
+    vi.mocked(getExistingProjectDb).mockReturnValue({} as never);
     database.close();
+  });
+
+  it('demotes a task whose workflow was deleted: its Done tasks keep the membership, and nothing is left to protect', async () => {
+    const workflows = new WorkflowRepository(database);
+    const workflow = workflows.create({ title: WORKFLOW_TITLE });
+    workflows.markStarted(workflow.id);
+    workflows.delete(workflow.id);
+    taskRepoMock.getById.mockReturnValue({
+      id: 'task-of-a-deleted-workflow',
+      display_id: 414,
+      title: 'Budgets API',
+      description: 'desc',
+      labels: [],
+      priority: 0,
+      external_id: null,
+      external_source: null,
+      external_url: null,
+      session_id: null,
+      workflow_id: workflow.id,
+      workflow_project_id: null,
+    });
+    backlogRepoMock.createFromTask.mockReturnValue({ id: 'backlog-demoted', title: 'Budgets API', description: 'desc' });
+
+    const handler = capturedHandlers.get(IPC.BACKLOG_DEMOTE);
+    if (!handler) throw new Error('BACKLOG_DEMOTE handler not registered');
+    await handler(null, { taskId: 'task-of-a-deleted-workflow' });
+
+    expect(backlogRepoMock.createFromTask).toHaveBeenCalledTimes(1);
+    expect(taskRepoMock.delete).toHaveBeenCalledWith('task-of-a-deleted-workflow');
+  });
+
+  it('still refuses when the workflow\'s home cannot be read, so the refusal keeps protecting it', async () => {
+    vi.mocked(getExistingProjectDb).mockImplementation(() => { throw new Error('database is locked'); });
+    taskRepoMock.getById.mockReturnValue({
+      id: 'task-unreadable-home',
+      display_id: 414,
+      title: 'Budgets API',
+      description: 'desc',
+      labels: [],
+      priority: 0,
+      external_id: null,
+      external_source: null,
+      external_url: null,
+      session_id: null,
+      workflow_id: 'workflow-in-a-locked-home',
+      workflow_project_id: 'locked-home',
+    });
+
+    const handler = capturedHandlers.get(IPC.BACKLOG_DEMOTE);
+    if (!handler) throw new Error('BACKLOG_DEMOTE handler not registered');
+
+    await expect(Promise.resolve(handler(null, { taskId: 'task-unreadable-home' })))
+      .rejects.toThrow(new Error(WORKFLOW_REFUSALS.removeFirst('#414', 'its workflow')));
+    expect(taskRepoMock.delete).not.toHaveBeenCalled();
   });
 
   it('throws the workflow refusal and deletes, cleans up and creates nothing', async () => {

@@ -18,7 +18,7 @@ import { routeCandidates, routeColumns, todoColumn, doneColumn } from '../../sha
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, PERMISSION_MODES, RUN_MODES, hasRunSettings, isPermissionMode, isRunMode } from '../../shared/workflow-run-settings';
 import { isValidGitBranchName } from '../../shared/git-utils';
-import { getProjectDb } from '../db/database';
+import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { writeTransaction } from '../db/transaction';
 import { TaskRepository, applyProfileExclusivity } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -40,6 +40,7 @@ import { wakeWorkflowEngine } from './workflow-wake';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { endWorkflowAgent } from './workflow-agent';
 import { workflowTasks } from './workflow-tasks';
+import { isInWorkflow } from './workflow-home';
 
 /**
  * The operations on a workflow: everything an agent (over MCP) or the
@@ -97,14 +98,22 @@ export interface WorkflowView {
   tasks: WorkflowTaskView[];
 }
 
+/**
+ * A board's database, tasks and columns. The id can come from a plan, which
+ * outlives a board that is deleted later, so the read never creates the
+ * database again; Start refuses such a board by name before it gets here.
+ */
 function projectRepos(projectId: string): { db: Database.Database; tasks: TaskRepository; lanes: Swimlane[] } {
-  const db = getProjectDb(projectId);
+  const db = getExistingProjectDb(projectId);
+  if (!db) throw new WorkflowRequestError('That board is no longer in Kangentic.');
   return { db, tasks: new TaskRepository(db), lanes: new SwimlaneRepository(db).list() };
 }
 
+/** A workflow in its home. A home that is gone has none, and its database is not created again. */
 export function requireWorkflow(homeProjectId: string, workflowId: string): Workflow {
-  const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId);
-  if (!workflow) throw new WorkflowRequestError(`No workflow "${workflowId}" in this project. List them with kangentic_list_workflows.`);
+  const homeDb = getExistingProjectDb(homeProjectId);
+  const workflow = homeDb ? new WorkflowRepository(homeDb).getById(workflowId) : undefined;
+  if (!workflow) throw new WorkflowRequestError(`${WORKFLOW_REFUSALS.notFound(workflowId)} List them with kangentic_list_workflows.`);
   return workflow;
 }
 
@@ -208,9 +217,11 @@ function profileNameOn(context: IpcContext, projectId: string, profileId: string
   return boardProfilesOf(context, projectId).find((profile) => profile.id === profileId)?.name ?? null;
 }
 
+/** A board's columns, or none when its database cannot be read or its project is gone. */
 export function safeLanes(projectId: string): Swimlane[] {
   try {
-    return new SwimlaneRepository(getProjectDb(projectId)).list();
+    const db = getExistingProjectDb(projectId);
+    return db ? new SwimlaneRepository(db).list() : [];
   } catch {
     return [];
   }
@@ -593,7 +604,7 @@ function validatePlan(context: IpcContext, homeProjectId: string, previous: Work
       if (lane?.role !== 'todo' || existing.archived_at) {
         throw new WorkflowRequestError(`${label}: #${existing.display_id} is in ${lane?.name ?? 'another column'}. Only a task in To Do can join a workflow.`);
       }
-      if (existing.workflow_id) throw new WorkflowRequestError(`${label}: #${existing.display_id} is already in a workflow.`);
+      if (isInWorkflow(existing, projectId)) throw new WorkflowRequestError(`${label}: #${existing.display_id} is already in a workflow.`);
       if (takenExisting.has(existing.id)) throw new WorkflowRequestError(`${label}: #${existing.display_id} is in the plan twice.`);
       takenExisting.add(existing.id);
       existingTaskId = existing.id;
@@ -685,6 +696,11 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
   const byProject = new Map<string, WorkflowDraftTask[]>();
   for (const planned of draft.tasks) {
     const projectId = planned.project_id ?? homeProjectId;
+    // A plan outlives a board deleted after it was saved. Checked against the
+    // registry, not the file, so a file a failed delete left behind gets no tasks.
+    if (!context.projectRepo.getById(projectId)) {
+      throw new WorkflowRequestError(`"${planned.title}" goes on a board that is no longer in Kangentic. Save the plan again without it.`);
+    }
     const { tasks, lanes } = projectRepos(projectId);
     if (!todoColumn(lanes) || !doneColumn(lanes)) {
       throw new WorkflowRequestError(`"${planned.title}" goes on a board with no To Do or no Done column, which a workflow needs.`);
@@ -692,7 +708,7 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
     if (planned.existing_task_id) {
       const existing = tasks.getById(planned.existing_task_id);
       const lane = existing ? lanes.find((candidate) => candidate.id === existing.swimlane_id) : undefined;
-      if (!existing || existing.archived_at || lane?.role !== 'todo' || existing.workflow_id) {
+      if (!existing || existing.archived_at || lane?.role !== 'todo' || isInWorkflow(existing, projectId)) {
         throw new WorkflowRequestError(`"${planned.title}" takes in a board task that is no longer in To Do. Save the plan again without it.`);
       }
     }
@@ -860,7 +876,7 @@ function announceWorkflowBoards(context: IpcContext, homeProjectId: string, work
 }
 
 /** A quiet board reload for a board whose tasks a workflow wrote. */
-function announceBoardChange(context: IpcContext, projectId: string): void {
+export function announceBoardChange(context: IpcContext, projectId: string): void {
   try {
     context.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [] });
   } catch {
@@ -1236,5 +1252,5 @@ export function resolveWorkflow(homeProjectId: string, selector: string): Workfl
   const matches = repository.listAll().filter((workflow) => workflow.title.trim().toLowerCase() === wanted);
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) throw new WorkflowRequestError(`More than one workflow is named "${selector}". Use its id.`);
-  throw new WorkflowRequestError(`No workflow "${selector}" in this project. List them with kangentic_list_workflows.`);
+  throw new WorkflowRequestError(`${WORKFLOW_REFUSALS.notFound(selector)} List them with kangentic_list_workflows.`);
 }

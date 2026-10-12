@@ -38,12 +38,21 @@ interface MoveInput {
 
 const harness = vi.hoisted(() => ({
   dbs: new Map<string, unknown>(),
+  /** Every project `getProjectDb` was asked for: on main it creates a database that is not there. */
+  getProjectDbCalls: [] as string[],
+  /** Every project `getExistingProjectDb` was asked for: it opens none that is not there. */
+  getExistingProjectDbCalls: [] as string[],
   handleTaskMove: vi.fn(),
   notifySpawnBlocked: vi.fn(),
 }));
 
 vi.mock('../../src/main/db/database', () => ({
+  getExistingProjectDb: (projectId: string) => {
+    harness.getExistingProjectDbCalls.push(projectId);
+    return harness.dbs.get(projectId) ?? null;
+  },
   getProjectDb: (projectId: string) => {
+    harness.getProjectDbCalls.push(projectId);
     const projectDatabase = harness.dbs.get(projectId);
     if (!projectDatabase) throw new Error(`No database for ${projectId}`);
     return projectDatabase;
@@ -398,6 +407,50 @@ describe('the workflow engine host', () => {
 
       expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['agent', 'the spawn queue is gone', 'home']);
     });
+
+    it('shows nothing, and does not open the database, for a start whose project was deleted while the move ran', async () => {
+      // A workflow homed on `home` with its one task on `mobile`. The toast reads the
+      // task after the move failed, by which time `mobile` may be deleted, and
+      // `getProjectDb` on main would create an empty database for it again.
+      const { workflowId } = runningWorkflow('Usage budgets', 0);
+      const taskId = new TaskRepository(dbOf('mobile')).create({
+        title: 'Budgets on the phone',
+        description: '',
+        swimlane_id: todoOf('mobile').id,
+        workflow: {
+          workflow_id: workflowId,
+          workflow_project_id: 'home',
+          route_start_swimlane_id: null,
+          route_last_swimlane_id: null,
+          skipped_swimlane_ids: [],
+          canvas_x: null,
+          canvas_y: null,
+        },
+      }).id;
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      harness.handleTaskMove.mockImplementation(async () => {
+        startTimes.push(Date.now());
+        // The project goes while its move runs: its database is closed and gone.
+        dbOf('mobile').close();
+        harness.dbs.delete('mobile');
+        // After the start's own reads of it, so what is recorded from here is the toast's.
+        harness.getProjectDbCalls.length = 0;
+        harness.getExistingProjectDbCalls.length = 0;
+        throw new Error('git exploded');
+      });
+
+      // The pass, the move, and the failure recorded; the wake that failure arms has not run.
+      await advance(DEBOUNCE_MS);
+
+      // The failed start reached the toast, which looked for the task and found no
+      // database: without this, "no toast" would prove nothing.
+      expect(startTimes).toHaveLength(1);
+      expect(engine.failedStart('mobile', taskId)?.attempts).toBe(1);
+      expect(harness.getExistingProjectDbCalls).toContain('mobile');
+      expect(harness.notifySpawnBlocked).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Could not report a failed start'), expect.anything());
+      expect(harness.getProjectDbCalls).not.toContain('mobile');
+    });
   });
 
   describe('the backoff is dropped', () => {
@@ -632,6 +685,33 @@ describe('the workflow engine host', () => {
       const remaining = links.listForWorkflow(workflowId);
       expect(remaining.map((link) => [link.blocker_task_id, link.blocked_task_id])).toEqual([[homeTaskId, otherPhoneTaskId]]);
       expect(new TaskRepository(dbOf('mobile')).getById(phoneTaskId)).toBeUndefined();
+    });
+
+    it('deletes a task whose workflow home was deleted, without opening a database for that home', () => {
+      // A home whose project was deleted took its links with it. Opening it
+      // through getProjectDb would create an empty database file for it on main.
+      const taskId = new TaskRepository(dbOf('mobile')).create({
+        title: 'Orphaned phone task',
+        description: '',
+        swimlane_id: todoOf('mobile').id,
+        workflow: {
+          workflow_id: 'workflow-of-a-deleted-project',
+          workflow_project_id: 'deleted-project',
+          route_start_swimlane_id: null,
+          route_last_swimlane_id: null,
+          skipped_swimlane_ids: [],
+          canvas_x: null,
+          canvas_y: null,
+        },
+      }).id;
+      harness.getProjectDbCalls.length = 0;
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      new TaskRepository(dbOf('mobile')).delete(taskId);
+
+      expect(new TaskRepository(dbOf('mobile')).getById(taskId)).toBeUndefined();
+      expect(harness.getProjectDbCalls).not.toContain('deleted-project');
+      expect(warn).not.toHaveBeenCalled();
     });
   });
 });

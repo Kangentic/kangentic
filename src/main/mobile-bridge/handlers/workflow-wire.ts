@@ -2,11 +2,10 @@ import type { BoardTaskWorkflowWire } from '@kangentic/protocol';
 import type { Task, Workflow, WorkflowSummary } from '../../../shared/types';
 import { routeColumns } from '../../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
-import { getProjectDb } from '../../db/database';
-import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import type { IpcContext } from '../../ipc/ipc-context';
 import { listWorkflowSummaries } from '../../workflows/workflow-view-service';
+import { workflowOfTask } from '../../workflows/workflow-home';
 
 /**
  * The workflow facts of one board's tasks, as the phone draws them: the strip,
@@ -34,19 +33,19 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
       try {
         for (const summary of listWorkflowSummaries(context, homeId)) summaries.set(summary.workflow.id, summary);
       } catch {
-        // The home project is unreadable (removed, or its database will not
-        // open): its tasks here go without a strip rather than failing the board.
+        // The home's database will not open: its tasks here go without a strip
+        // rather than failing the board. A home that is gone lists none.
       }
       summariesByHome.set(homeId, summaries);
     }
     return summaries;
   };
 
-  const finishedWorkflow = (homeId: string, workflowId: string): Workflow | null => {
+  const finishedWorkflow = (task: Task, workflowId: string): Workflow | null => {
     if (!finishedById.has(workflowId)) {
       let workflow: Workflow | null;
       try {
-        workflow = new WorkflowRepository(getProjectDb(homeId)).getById(workflowId) ?? null;
+        workflow = workflowOfTask(task, projectId);
       } catch {
         workflow = null;
       }
@@ -59,7 +58,7 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
     const workflowId = task.workflow_id!;
     const homeId = task.workflow_project_id ?? projectId;
     const summary = summariesOf(homeId).get(workflowId);
-    const workflow = summary?.workflow ?? finishedWorkflow(homeId, workflowId);
+    const workflow = summary?.workflow ?? finishedWorkflow(task, workflowId);
     if (!workflow) continue;
     const boardTask = summary?.boardTasks[task.id];
     const gateTargetId = boardTask?.humanGateTargetId ?? null;

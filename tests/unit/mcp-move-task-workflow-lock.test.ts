@@ -25,6 +25,7 @@ import type Database from 'better-sqlite3';
 
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
 vi.mock('../../src/main/db/database', () => ({
+  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   getProjectDb: (projectId: string) => {
     const database = harness.dbs.get(projectId);
     if (!database) throw new Error(`No database for ${projectId}`);
@@ -36,7 +37,7 @@ import { runProjectMigrations } from '../../src/main/db/migrations/project-schem
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { WorkflowRepository } from '../../src/main/db/repositories/workflow-repository';
-import { handleMoveTask } from '../../src/main/agent/commands/task-commands';
+import { handleMoveTask, handleMoveTaskToProject } from '../../src/main/agent/commands/task-commands';
 import { WORKFLOW_REFUSALS } from '../../src/shared/workflow-refusals';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { Task } from '../../src/shared/types';
@@ -252,6 +253,68 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
       expect(onTaskMove).not.toHaveBeenCalled();
       expect(onTasksReordered).not.toHaveBeenCalled();
       expect(tasks.getById(task.id)?.swimlane_id).toBe(laneIds['Planning']);
+    });
+  });
+
+  // kangentic_move_task_to_project refuses a workflow task, since the relocated
+  // copy would leave the workflow's links naming a task that is gone. A deleted
+  // workflow's Done tasks keep their membership, and one moved back to To Do
+  // has no workflow left to protect.
+  describe('kangentic_move_task_to_project and a task\'s workflow', () => {
+    const TARGET_PROJECT_ID = 'project-2';
+    let targetDatabase: Database.Database;
+    let target: CommandContext;
+
+    beforeEach(() => {
+      targetDatabase = openTestDatabase();
+      runProjectMigrations(targetDatabase);
+      harness.dbs.set(TARGET_PROJECT_ID, targetDatabase);
+      target = { ...context, projectId: TARGET_PROJECT_ID, getProjectDb: () => targetDatabase, getProjectPath: () => '/mock/project-2' } as unknown as CommandContext;
+    });
+
+    afterEach(() => {
+      targetDatabase.close();
+    });
+
+    function toDoTaskIn(memberOf: string): Task {
+      return tasks.create({
+        title: 'Budgets API',
+        description: '',
+        swimlane_id: laneIds['To Do'],
+        workflow: {
+          workflow_id: memberOf,
+          workflow_project_id: PROJECT_ID,
+          route_start_swimlane_id: null,
+          route_last_swimlane_id: null,
+          skipped_swimlane_ids: [],
+          canvas_x: null,
+          canvas_y: null,
+        },
+      });
+    }
+
+    it('refuses a task in a workflow that exists', () => {
+      const task = toDoTaskIn(workflowId);
+
+      const response = handleMoveTaskToProject({ taskId: task.id }, context, target);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('is in a workflow and cannot be moved to another project');
+      expect(tasks.getById(task.id)).toBeDefined();
+    });
+
+    it('moves a task whose workflow was deleted', () => {
+      const workflows = new WorkflowRepository(database);
+      const deleted = workflows.create({ title: 'Deleted plan' }).id;
+      workflows.markStarted(deleted);
+      workflows.delete(deleted);
+      const task = toDoTaskIn(deleted);
+
+      const response = handleMoveTaskToProject({ taskId: task.id }, context, target);
+
+      expect(response.success).toBe(true);
+      expect(tasks.getById(task.id)).toBeUndefined();
+      expect(new TaskRepository(targetDatabase).list().map((moved) => moved.title)).toEqual(['Budgets API']);
     });
   });
 });

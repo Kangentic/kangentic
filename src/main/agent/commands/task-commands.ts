@@ -10,6 +10,7 @@ import { resolveTask } from './task-resolver';
 import { MOVE_MESSAGE_MAX_CHARS } from './move-message-limit';
 import { resolveMoveTarget, routeOf } from '../../automations/move-target';
 import { checkWorkflowMoveForAgent } from '../../workflows/workflow-lock-check';
+import { isInWorkflow } from '../../workflows/workflow-home';
 import {
   clampSlot,
   computeIdsWithTaskAtSlot,
@@ -1065,7 +1066,7 @@ export function handleMoveTaskToProject(
   }
   // A relocation makes a NEW task (new id, new number), which would orphan the
   // task's workflow links. A workflow already puts a task on any board it needs.
-  if (task.workflow_id) {
+  if (isInWorkflow(task, source.projectId)) {
     return {
       success: false,
       error: `Task #${task.display_id} is in a workflow and cannot be moved to another project. Remove it from the workflow first (kangentic_remove_from_workflow).`,

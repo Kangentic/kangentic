@@ -60,6 +60,11 @@ interface Options {
   unlinkedTask?: boolean;
   /** A link from #413 to #418, which #413 to #415 to #418 already covers. */
   impliedLink?: boolean;
+  /**
+   * #421 sits in To Do still carrying the membership of a workflow that was
+   * deleted: a deleted workflow's Done tasks keep theirs, and this one was moved back.
+   */
+  orphanTask?: boolean;
   viewport?: { width: number; height: number };
 }
 
@@ -121,6 +126,7 @@ function seedScript(options: Options): string {
       // An ordinary task beside them, in To Do.
       state.tasks.push(row(500, 'Split the settings search index', 0, null));
       if (${options.unlinkedTask ? 'true' : 'false'}) state.tasks.push(row(420, 'Rate limit the budgets API', 0, 'wf-usage'));
+      if (${options.orphanTask ? 'true' : 'false'}) state.tasks.push(row(421, 'Left by a deleted workflow', 0, 'wf-deleted'));
       // Number each column's cards from zero in task-number order, as the app
       // does: the mock's reorder shifts positions as if they run 0, 1, 2.
       var lanes = {};
@@ -211,6 +217,36 @@ async function holdNextWorkflowGet(page: Page): Promise<void> {
     delete windowHandle.__mockReleaseWorkflowGet;
     windowHandle.__mockHoldNextWorkflowGet = true;
   });
+}
+
+/** The bridge's workflow read and the mock's change push, as the unreadable-panel test swaps and fires them. */
+interface WorkflowReadWindow {
+  electronAPI: { workflows: { get: (projectId: string, workflowId: string) => Promise<unknown> } };
+  __mockFireWorkflowChanged: (event: { projectId: string; workflowId: string }) => void;
+  __testRealWorkflowGet?: (projectId: string, workflowId: string) => Promise<unknown>;
+}
+
+/**
+ * Make every `workflows.get` from here on fail as a locked database would: a
+ * rejection that is not main's not-found refusal. Every call fails, not one, so
+ * the panel's mount cannot slip a second, successful read past the failure.
+ */
+async function failWorkflowReads(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const windowHandle = window as unknown as WorkflowReadWindow;
+    const workflows = windowHandle.electronAPI.workflows;
+    windowHandle.__testRealWorkflowGet = workflows.get;
+    workflows.get = () => Promise.reject(new Error('database is locked'));
+  });
+}
+
+/** Put the real read back, then push a change for the workflow so the watching panel reads it again. */
+async function recoverWorkflowReads(page: Page, workflowId: string): Promise<void> {
+  await page.evaluate(({ projectId, id }) => {
+    const windowHandle = window as unknown as WorkflowReadWindow;
+    if (windowHandle.__testRealWorkflowGet) windowHandle.electronAPI.workflows.get = windowHandle.__testRealWorkflowGet;
+    windowHandle.__mockFireWorkflowChanged({ projectId, workflowId: id });
+  }, { projectId: PROJECT_ID, id: workflowId });
 }
 
 /** The held call is in flight: the mock only defines the release while it holds an answer. */
@@ -1306,6 +1342,42 @@ test.describe('Workflow tasks on the board', () => {
       await expect(panel.locator('[data-testid="workflow-add-blocker"]')).toBeEnabled();
       await page.locator('[data-testid="task-workflow-panel-close"]').click();
       await expect(panel).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a task whose workflow was deleted gets a Workflow panel that says so, not one that loads forever', async () => {
+    const { browser, page } = await launch({ orphanTask: true });
+    try {
+      await boardCard(page, 't421').click();
+      await byTestId(page, 'task-detail-edit-scroll').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="task-detail-dialog"] [data-testid="workflow-toggle"]').click();
+      const panel = byTestId(page, 'task-workflow-panel');
+      await expect(panel.locator('[data-testid="workflow-panel-gone"]')).toHaveText('The workflow this task was in no longer exists.');
+      await expect(panel.locator('[data-testid="workflow-panel-loading"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a task whose workflow cannot be read right now gets a Workflow panel that says so, not "gone" or a load that never ends, and the next change brings the workflow back', async () => {
+    // #415 is in the live workflow, so the failure is a passing one, not a deletion.
+    const { browser, page } = await launch();
+    try {
+      await failWorkflowReads(page);
+      await boardCard(page, 't415').click();
+      await byTestId(page, 'task-detail-edit-scroll').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="task-detail-dialog"] [data-testid="workflow-toggle"]').click();
+      const panel = byTestId(page, 'task-workflow-panel');
+      await expect(panel.locator('[data-testid="workflow-panel-unreadable"]')).toHaveText('The workflow this task is in could not be loaded.');
+      await expect(panel.locator('[data-testid="workflow-panel-loading"]')).toHaveCount(0);
+      await expect(panel.locator('[data-testid="workflow-panel-gone"]')).toHaveCount(0);
+
+      // The failure was passing: the next change push reads again and the inspector replaces the message.
+      await recoverWorkflowReads(page, 'wf-usage');
+      await expect(panel.locator('[data-testid="workflow-link-row"][data-task-key="t413"]')).toBeVisible();
+      await expect(panel.locator('[data-testid="workflow-panel-unreadable"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

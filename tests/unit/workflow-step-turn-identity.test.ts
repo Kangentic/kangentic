@@ -55,7 +55,7 @@ const COLUMNS = [
   { id: 'lane-done', name: 'Done', position: 3, role: 'done', is_archived: false, is_ghost: false, description: null },
 ];
 
-vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
+vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})), getExistingProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/workflow-repository', () => ({
   WorkflowRepository: class {
     getById = vi.fn(() => ({ id: 'workflow-1', state: hoisted.workflowState }));

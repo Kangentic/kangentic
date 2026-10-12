@@ -76,9 +76,9 @@ vi.mock('../../src/main/ipc/handlers/session-resume', () => ({
   },
 }));
 const mockWorkflowGetById = vi.fn();
-const mockGetProjectDb = vi.fn((projectId: string) => ({ projectId }));
+const mockGetExistingProjectDb = vi.fn((projectId: string): { projectId: string } | null => ({ projectId }));
 vi.mock('../../src/main/db/database', () => ({
-  getProjectDb: (projectId: string) => mockGetProjectDb(projectId),
+  getExistingProjectDb: (projectId: string) => mockGetExistingProjectDb(projectId),
 }));
 vi.mock('../../src/main/db/repositories/workflow-repository', () => ({
   WorkflowRepository: class {
@@ -147,8 +147,24 @@ describe('startTaskSession', () => {
 
     await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID))
       .rejects.toThrow('#414 is in Usage budgets, which is paused. Resume the workflow to start its tasks again.');
-    expect(mockGetProjectDb).toHaveBeenLastCalledWith('proj-home');
+    expect(mockGetExistingProjectDb).toHaveBeenLastCalledWith('proj-home');
     expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
+  });
+
+  it('starts a task whose workflow home was deleted, as an ordinary task, without reading a workflow there', async () => {
+    mockWorkflowGetById.mockClear();
+    mockWorkflowGetById.mockReturnValue({ id: 'wf-1', title: 'Usage budgets', state: 'paused' });
+    mockGetExistingProjectDb.mockReturnValueOnce(null);
+    mockReconcileTaskSessionRef.mockReturnValue({
+      task: makeTask({ display_id: 414, workflow_id: 'wf-1', workflow_project_id: 'proj-deleted' }),
+      liveSession: null,
+    });
+
+    const result = await startTaskSession(makeContext(), PROJECT_ID, TASK_ID);
+
+    expect(result.outcome).toBe('starting');
+    expect(mockGetExistingProjectDb).toHaveBeenLastCalledWith('proj-deleted');
+    expect(mockWorkflowGetById).not.toHaveBeenCalled();
   });
 
   it('starts a task in a running workflow as it would any task', async () => {

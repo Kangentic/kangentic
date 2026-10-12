@@ -679,7 +679,7 @@ echoes the first 25 display IDs.
 
 ### kangentic_move_task_to_project
 
-Relocate a task from the To Do column of one project's board to a different project's board. Only tasks in To Do can be moved - a task outside To Do may have a live session or worktree that cannot cross projects, so move it to To Do first (the tool also rejects a nominally-To-Do task that still has a live `session_id` or an on-disk worktree, as a defensive check). Preserves title, description, labels, priority, creation time, and attachments; assigns a new task ID and display number in the target project. Lands in the target board's To Do column by default. Landing in an `auto_spawn`-enabled `column` on the destination board spawns an agent there, the same as `kangentic_create_task`. `targetProject` must differ from the resolved source project - a same-project call is rejected with a pointer to `kangentic_move_task` instead. If any attachment fails to copy to the destination, the whole move is rolled back (the newly-created target task and its copied attachments are removed) and the source task is left untouched, so a partial-copy failure never duplicates or loses a task.
+Relocate a task from the To Do column of one project's board to a different project's board. Only tasks in To Do can be moved - a task outside To Do may have a live session or worktree that cannot cross projects, so move it to To Do first (the tool also rejects a nominally-To-Do task that still has a live `session_id` or an on-disk worktree, as a defensive check). It also refuses a task that is still in a workflow, and names [kangentic_remove_from_workflow](#kangentic_remove_from_workflow) as the way out; a task whose workflow was deleted is not in one, so it moves. Preserves title, description, labels, priority, creation time, and attachments; assigns a new task ID and display number in the target project. Lands in the target board's To Do column by default. Landing in an `auto_spawn`-enabled `column` on the destination board spawns an agent there, the same as `kangentic_create_task`. `targetProject` must differ from the resolved source project - a same-project call is rejected with a pointer to `kangentic_move_task` instead. If any attachment fails to copy to the destination, the whole move is rolled back (the newly-created target task and its copied attachments are removed) and the source task is left untouched, so a partial-copy failure never duplicates or loses a task.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1176,7 +1176,8 @@ its directories.
 ### kangentic_delete_workflow
 
 Delete a workflow. One not started loses its plan and nothing else changes. A started one's
-unfinished tasks stay where they are as ordinary tasks, and its tasks in Done stay in Done.
+unfinished tasks stay where they are as ordinary tasks, and its tasks in Done stay in Done. Those
+Done tasks are no longer in a workflow once it is deleted.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

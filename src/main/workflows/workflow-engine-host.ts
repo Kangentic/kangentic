@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import type { Swimlane, Task, Workflow } from '../../shared/types';
 import { startColumn } from '../../shared/workflow-route';
-import { getProjectDb } from '../db/database';
+import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { setHomeLinkRemover } from '../db/repositories/workflow-home-links';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -159,7 +159,9 @@ export class WorkflowEngineHost {
   /** The toast a failed move shows the user, for a start nobody dragged. */
   private toastFailedStart(intent: Extract<CoreIntent, { kind: 'start' }>, error: unknown): void {
     try {
-      const task = new TaskRepository(getProjectDb(intent.projectId)).getById(intent.taskId);
+      // Read after the move failed, by which time its project may be deleted.
+      const db = getExistingProjectDb(intent.projectId);
+      const task = db ? new TaskRepository(db).getById(intent.taskId) : undefined;
       if (!task) return;
       const { step, cause } = spawnFailureOf(error);
       notifySpawnBlocked(this.context, task, step, cause, intent.projectId);
@@ -366,9 +368,11 @@ export function registerWorkflowEngine(context: IpcContext): WorkflowEngineHost 
   context.sessionManager.on('session-removed', wake);
   context.sessionManager.on('exit', wake);
   // A task deleted on another board takes its links with it, in the home
-  // database that holds them, as a delete on the home board does.
+  // database that holds them, as a delete on the home board does. A home that
+  // is gone took its links with it, and its database is not created again.
   setHomeLinkRemover((task) => {
-    new TaskLinkRepository(getProjectDb(task.workflow_project_id!)).deleteForTask(task.id);
+    const homeDb = getExistingProjectDb(task.workflow_project_id!);
+    if (homeDb) new TaskLinkRepository(homeDb).deleteForTask(task.id);
   });
   setWorkflowWake((retryWorkflowId) => {
     if (retryWorkflowId) engine.retryFailedStarts(retryWorkflowId);

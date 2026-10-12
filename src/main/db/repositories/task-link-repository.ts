@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { TaskLink } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 /**
  * `task_links`: "blocked waits for blocker to reach Done", in the workflow's
@@ -9,7 +10,9 @@ import type { TaskLink } from '../../../shared/types';
  * Either end can be a task in another project's database, so nothing here
  * reads a task: the engine resolves each end through its own project
  * (`blocker_project_id`, `blocked_project_id`). A task delete removes the links
- * that name it in `TaskRepository.delete`, the one path every delete takes.
+ * that name it in `TaskRepository.delete`, the one path every delete takes. A
+ * project delete removes the links naming any of its tasks (`deleteForProject`),
+ * since it deletes its database file without deleting its tasks one by one.
  */
 export class TaskLinkRepository {
   constructor(private db: Database.Database) {}
@@ -69,5 +72,20 @@ export class TaskLinkRepository {
     return this.db
       .prepare('DELETE FROM task_links WHERE blocker_task_id = ? OR blocked_task_id = ?')
       .run(taskId, taskId).changes;
+  }
+
+  /**
+   * Every link with an end on a deleted project's board, as if each of its
+   * tasks were deleted. Returns the workflows that lost a link, read in the
+   * same transaction as the delete so the two agree.
+   */
+  deleteForProject(projectId: string): string[] {
+    return writeTransaction(this.db, () => {
+      const workflowIds = (this.db
+        .prepare('SELECT DISTINCT workflow_id FROM task_links WHERE blocker_project_id = ? OR blocked_project_id = ?')
+        .all(projectId, projectId) as Array<{ workflow_id: string }>).map((row) => row.workflow_id);
+      this.db.prepare('DELETE FROM task_links WHERE blocker_project_id = ? OR blocked_project_id = ?').run(projectId, projectId);
+      return workflowIds;
+    })();
   }
 }

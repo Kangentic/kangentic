@@ -565,7 +565,13 @@ base branch and profile. Start creates the tasks, with those settings, in To Do
 (the ones with nothing to wait for start at once) and moves the To Do task the workflow was made
 from, if any, to Done. A task can go on another project's board; the inspector then names each
 task's board. Delete removes a workflow that has not started, with its planned tasks; once
-started, its unfinished tasks stay where they are as ordinary tasks.
+started, its unfinished tasks stay where they are as ordinary tasks. Its tasks in Done stay in Done,
+and once the workflow is gone they are ordinary tasks, so Backlog, Move to and New workflow work on
+them as on any task. Deleting a project does to its workflows what deleting each of its tasks would.
+A workflow it was home to goes, and its tasks on other boards become ordinary tasks. A task
+elsewhere that waited only on its tasks starts. A running or paused workflow left with no task is
+deleted; a finished one stays. A plan with a task on that board refuses to start until you save it
+again without that task.
 
 **The workflow agent.** The pane on the left is the workflow's own agent, the project's default
 agent launched read-only: it reads the code and the board and changes only this workflow's plan,
@@ -615,7 +621,8 @@ let go while the pointer stays on the card. A refused move shows them too, and k
 Escape or a click on empty board space. Open workflow in the card's right-click menu shows every
 link on the Workflows canvas. Task detail has a Workflow panel (the linked-cards button
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the
-inspector.
+inspector. If the task's workflow was deleted, the panel says "The workflow this task was in no
+longer exists." instead.
 
 **Locked while it runs.** A running workflow's cards cannot be moved to another column by hand: a
 drag stays in the card's own column, where you can still reorder it. The exception is a card you

@@ -19,6 +19,7 @@ import { PATHS } from '../../config/paths';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { ensureGitignore, leftoverSweepOptions, reapTaskLeftovers } from '../helpers';
 import { endWorkflowAgentsOfProject } from '../../workflows/workflow-agent';
+import { detachProjectFromWorkflows } from '../../workflows/workflow-project-delete';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone, bucketTaskCount } from '../../analytics/usage';
@@ -113,9 +114,22 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   gitFetchScheduler.stop(projectId);
   retrievalService.stop(projectId);
 
+  // Out of every workflow first, while its database is open: its tasks stop
+  // counting in workflows homed elsewhere, its own workflows' tasks on other
+  // boards become ordinary, and no engine pass starts one of its tasks while
+  // the sessions below are killed. Synchronous, and before the guard, so a
+  // missing folder runs it too.
+  try {
+    detachProjectFromWorkflows(context, projectId);
+  } catch (error) {
+    console.error('[PROJECT_DELETE] Failed to detach the project from its workflows:', error);
+  }
+
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
     console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} -- skipping filesystem cleanup`);
+    // An agent started before the folder went still runs.
+    await endWorkflowAgentsOfProject(context, projectId);
     // The retrieval worker and the pty host each hold their own connection,
     // and Windows will not unlink a file another process has open.
     await retrievalClient.closeProject(projectId);
