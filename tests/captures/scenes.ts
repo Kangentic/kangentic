@@ -349,6 +349,144 @@ const REVIEW_PASS_AUTOMATION = {
   config: { message: 'Review the diff against main and fix anything you would block a pull request on.', mode: 'immediate' },
 };
 
+/**
+ * The review loop, at Testing's turn end: two rows the runner reads in order, the shape this
+ * repo's own kangentic.json gives Code Review (Back for revisions, then On to Testing). Codex
+ * reviews in Code Review and its adapter reports no turn end, so the desktop blocks On agent turn
+ * end on that column (DEMO_AGENT_OVERRIDES carries the flag). The ladder hands the review on to
+ * Claude in Testing, and that is where the loop can run. When the review found work, the first row
+ * sends the task back to Executing with Claude's reply, and a move ends the group, so the second
+ * never runs; otherwise the second moves it on to Merge. Snake case `max_runs`, because the mock
+ * copies a seeded row's keys as they are.
+ */
+const TESTING_TURN_END_AUTOMATIONS = [
+  {
+    swimlane_id: demoLaneId(PROJECT_CONTOSO, 'testing'),
+    name: 'Send findings back',
+    type: 'move_to_column',
+    trigger: 'turn_end',
+    position: 0,
+    condition: 'The review found work the implementer can do',
+    max_runs: 3,
+    config: {
+      targetColumn: 'Executing',
+      message: 'Code Review found work before this can merge. Fix it, then move the task on.\n\n{{agentReply}}',
+    },
+  },
+  {
+    swimlane_id: demoLaneId(PROJECT_CONTOSO, 'testing'),
+    name: 'On to Merge',
+    type: 'move_to_column',
+    trigger: 'turn_end',
+    position: 1,
+    condition: 'The tests pass and the review left nothing to fix',
+    max_runs: 1,
+    config: { targetColumn: 'Merge' },
+  },
+];
+
+/**
+ * One running workflow on contoso-web, shared by the workflows and board-workflow scenes. A scene
+ * seed, never the dataset: a workflow card draws its strip and step track on the BOARD, and the
+ * view toggle draws a running mark, so seeding it into the sample install would change every
+ * contoso figure already placed. Its members are cards the install already has, joined by a task
+ * patch (the mock lists a started workflow's tasks by `workflow_id`): two done, two mid-route,
+ * and two waiting in To Do, so the canvas shows both a met link and an open one.
+ *
+ * `started_at` stays unset: nothing in the view renders it, and a date written here would drift.
+ * The agent's conversation id is the mock's to fill in when the pane first opens, as main
+ * records it on every start.
+ */
+const WORKFLOW_HARDEN_API = 'wf-cw-harden-api';
+const TASK_SCHEMA = 'task-cw-done-schema';
+const TASK_LOGGING = 'task-cw-done-logging';
+const TASK_RATE_LIMIT = 'task-cw-rate-limit';
+const TASK_API_ERRORS = 'task-cw-api-errors';
+const WORKFLOW_HARDEN_API_SEEDS = {
+  __mockWorkflows: [{
+    projectId: PROJECT_CONTOSO,
+    workflow: {
+      id: WORKFLOW_HARDEN_API,
+      title: 'Harden the API',
+      brief: 'Put auth and rate limits in front of every API route, then make the errors those layers return consistent.',
+      state: 'running',
+      draft: null,
+      // The slot main gives a project's first workflow.
+      color_slot: 1,
+      agent_name: 'claude',
+    },
+  }],
+  __mockWorkflowLinks: [
+    [TASK_SCHEMA, TASK_MIDDLEWARE],
+    [TASK_LOGGING, TASK_RATE_LIMIT],
+    [TASK_MIDDLEWARE, TASK_AUTH],
+    [TASK_MIDDLEWARE, TASK_API_ERRORS],
+    [TASK_RATE_LIMIT, TASK_API_ERRORS],
+  ].map(([blocker, blocked]) => ({
+    workflow_id: WORKFLOW_HARDEN_API,
+    blocker_project_id: PROJECT_CONTOSO,
+    blocker_task_id: blocker,
+    blocked_task_id: blocked,
+  })),
+};
+/**
+ * A workflow planned but not started, for the workflow-draft scene: the plan the workflow agent
+ * writes from a brief, before Start makes any of it a board task. The brief is the contoso backlog
+ * item's own ask, and the scaffold already serves invoices (server/store.ts), so the plan is work
+ * this repo could take. Planned tasks live in the draft, not on the board, so seeding it changes
+ * no other figure; it is still a scene seed, as every workflow is.
+ */
+const WORKFLOW_INVOICE_PDF = 'wf-cw-invoice-pdf';
+/** The planned task the workflow-draft scene selects: it waits for one task and two wait for it. */
+const PLANNED_PDF_ROUTE = 'task-2';
+function plannedTask(key: string, title: string, description: string, labels: string[], routeStart: string | null = null): Record<string, unknown> {
+  return {
+    key, title, description, labels, priority: 0,
+    project_id: null, existing_task_id: null,
+    route_start_swimlane_id: routeStart, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+    canvas_x: null, canvas_y: null,
+  };
+}
+const WORKFLOW_INVOICE_DRAFT_SEEDS = {
+  __mockWorkflows: [{
+    projectId: PROJECT_CONTOSO,
+    workflow: {
+      id: WORKFLOW_INVOICE_PDF,
+      title: 'Invoice PDF export',
+      brief: 'Customers ask for a downloadable invoice from the billing page.',
+      state: 'draft',
+      // The slot main gives a project's first workflow.
+      color_slot: 1,
+      agent_name: 'claude',
+      draft: {
+        tasks: [
+          plannedTask('task-1', 'Render an invoice as a PDF', 'A server module that turns one invoice from the store into a PDF: its number, line items, and total.', ['feature']),
+          plannedTask(PLANNED_PDF_ROUTE, 'Add the invoice PDF route', 'GET /api/invoices/:id/pdf in server/routes.ts, behind the auth middleware, sent as a download.', ['feature']),
+          plannedTask('task-3', 'Download button on the billing page', 'A Download PDF button on each invoice row that calls the new route.', ['feature']),
+          plannedTask('task-4', 'Tests for the PDF route', 'Route tests for a known invoice, an unknown id, and a request with no session.', ['tests'], demoLaneId(PROJECT_CONTOSO, 'executing')),
+        ],
+        links: [
+          { blocker: 'task-1', blocked: PLANNED_PDF_ROUTE },
+          { blocker: PLANNED_PDF_ROUTE, blocked: 'task-3' },
+          { blocker: PLANNED_PDF_ROUTE, blocked: 'task-4' },
+        ],
+      },
+    },
+  }],
+};
+
+/** The member patches. Refactor API error handling starts at Executing, so its route skips Planning. */
+const WORKFLOW_HARDEN_API_MEMBERS = [TASK_SCHEMA, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_AUTH, TASK_API_ERRORS].map((id) => ({
+  id,
+  workflow_id: WORKFLOW_HARDEN_API,
+  workflow_project_id: PROJECT_CONTOSO,
+  route_start_swimlane_id: id === TASK_API_ERRORS ? demoLaneId(PROJECT_CONTOSO, 'executing') : null,
+  route_last_swimlane_id: null,
+  skipped_swimlane_ids: [],
+  canvas_x: null,
+  canvas_y: null,
+}));
+
 const SETTINGS_PANEL = '[data-testid="settings-panel"]';
 
 /**
@@ -930,7 +1068,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'edit-columns': {
     name: 'edit-columns',
     reach: 'boot',
-    description: 'The Column Manager (the docs call it Edit Columns) on the Code Review column of the configured board the three Column Manager scenes share, where Codex CLI reviews on its own model. No automation is configured here, so both slots read Add automation. The column-automation scene is the configured counterpart.',
+    description: 'The Column Manager (the docs call it Edit Columns) on the Code Review column of the configured board the four Column Manager scenes share, where Codex CLI reviews on its own model. No automation is configured here, so the enter and exit slots read Add automation, and On agent turn end says the column\'s agent cannot report a turn end, because Codex does not. The column-automation scene is the configured counterpart.',
     alt: 'The Column Manager dialog with the Code Review column selected: its name, icon, and color, Codex CLI on gpt-5.5 as the agent that starts when a task enters it, and empty automation slots for entering and leaving the column.',
     seeds: { __mockSwimlanePatches: COLUMN_LADDER },
     ready: '[data-testid="board-manager-dialog"]',
@@ -956,6 +1094,19 @@ export const SCENES: Record<string, SceneDefinition> = {
     focus: '[data-testid="board-manager-dialog"]',
     steps: [{ click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
   },
+  'column-automation-turn-end': {
+    name: 'column-automation-turn-end',
+    reach: 'boot',
+    description: 'The Column Manager on Testing with two Move to column automations on agent turn end, run in order, for the landing page\'s Automations tab and the Workflows docs: the review loop sending findings back, then the move on. The shape of Code Review\'s pair in this repo\'s kangentic.json. Codex CLI reviews in Code Review and reports no turn end, so the desktop blocks that trigger there; the ladder hands the review on to Claude in Testing, which is where the loop runs. A scene seed on the same configured board as the other Column Manager scenes, which keeps their Code Review automation too.',
+    alt: 'The Column Manager on the Testing column, where Claude Code runs on Sonnet 5. On agent turn end holds two rows in order: Send findings back to Executing, with a condition, a limit of three runs and a message, then On to Merge, with its own condition, once.',
+    seeds: {
+      __mockSwimlanePatches: COLUMN_LADDER,
+      __mockAutomations: [REVIEW_PASS_AUTOMATION, ...TESTING_TURN_END_AUTOMATIONS],
+    },
+    ready: '[data-testid="column-automation-group"][data-trigger="turn_end"] [data-testid="column-automation-row"][data-name="On to Merge"]',
+    focus: '[data-testid="board-manager-dialog"]',
+    steps: [{ click: '[data-swimlane-name="Testing"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
+  },
   'column-handoff': {
     name: 'column-handoff',
     reach: 'boot',
@@ -975,6 +1126,55 @@ export const SCENES: Record<string, SceneDefinition> = {
     steps: [
       { click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' },
       { click: '[data-testid="board-manager-tab-all"]', waitFor: '[data-testid="board-manager-tab-all"][aria-selected="true"]' },
+    ],
+  },
+
+  // ---------------------------------------------------------------- workflows
+  // One running workflow, seeded per scene for the reason WORKFLOW_HARDEN_API_SEEDS gives.
+  'workflows': {
+    name: 'workflows',
+    reach: 'boot',
+    description: 'The Workflows view on a running workflow, for the landing page\'s Workflows tab and the Workflows docs page. Six existing contoso cards joined by task patches. The steps collapse the agent pane and then open the view again: the canvas fits its cards only when a workflow opens, never on a resize, so this is how it opens at its full width. The pane is collapsed because the mock\'s workflow agent has no recording. The last click, on empty canvas, clears the task the view selects on open, so every link shows its own state and the inspector shows the run order.',
+    alt: 'The Workflows view on Harden the API, a running workflow of six linked cards: two done, two in progress, and two waiting in To Do. Green links run from the done cards and grey links into the waiting ones, beside the run order.',
+    seeds: WORKFLOW_HARDEN_API_SEEDS,
+    tasks: WORKFLOW_HARDEN_API_MEMBERS,
+    ready: '[data-testid="workflow-run-order"]',
+    focus: '[data-testid="workflows-view"]',
+    steps: [
+      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-agent-pane-collapse"]' },
+      { click: '[data-testid="workflow-agent-pane-collapse"]', waitFor: '[data-testid="workflow-agent-pane"][data-collapsed="true"]' },
+      { click: '[data-testid="view-toggle-board"]', waitFor: '[data-swimlane-name="To Do"]' },
+      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-inspector-title"]' },
+      { click: '.react-flow__pane', waitFor: '[data-testid="workflow-run-order"]' },
+    ],
+  },
+  'board-workflow': {
+    name: 'board-workflow',
+    reach: 'state',
+    description: 'The board with the workflows scene\'s running workflow seeded, for the figure of workflow cards on the board: each member card\'s strip and step track, the To Do cards\' waiting line, and the view toggle\'s running mark. Nothing is clicked.',
+    alt: 'The contoso-web board with Harden the API running: each of its cards carries the workflow\'s strip and a step track through the columns, the two in To Do say what they are blocked by, and the Workflows toggle shows a running mark.',
+    seeds: WORKFLOW_HARDEN_API_SEEDS,
+    tasks: WORKFLOW_HARDEN_API_MEMBERS,
+    ready: `[data-task-id="${TASK_MIDDLEWARE}"] [data-testid="workflow-card-strip"]`,
+    focus: [TASK_AUTH, TASK_API_ERRORS, TASK_MIDDLEWARE, TASK_RATE_LIMIT].map((id) => `[data-task-id="${id}"]`).join(', '),
+  },
+  'workflow-draft': {
+    name: 'workflow-draft',
+    reach: 'boot',
+    description: 'The Workflows view on a workflow planned but not started, for the part of the Workflows docs that shows how one is made: planned cards, the links between them, the selected task\'s route and blockers in the inspector, and Start in the header. The same round trip as the workflows scene opens the canvas at its full width with the agent pane collapsed, and the last click selects the middle task, so every link is lit and the inspector shows both what it waits for and what waits for it.',
+    alt: 'The Workflows view on Invoice PDF export, planned but not started, with Start in its header: four planned cards and their links, and Add the invoice PDF route selected, the inspector showing the columns it will visit, what it waits for and what waits for it.',
+    seeds: WORKFLOW_INVOICE_DRAFT_SEEDS,
+    ready: '[data-testid="workflow-inspector-title"]',
+    focus: '[data-testid="workflows-view"]',
+    steps: [
+      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-agent-pane-collapse"]' },
+      { click: '[data-testid="workflow-agent-pane-collapse"]', waitFor: '[data-testid="workflow-agent-pane"][data-collapsed="true"]' },
+      { click: '[data-testid="view-toggle-board"]', waitFor: '[data-swimlane-name="To Do"]' },
+      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-inspector-title"]' },
+      {
+        click: `[data-testid="workflow-canvas-card"][data-workflow-task-key="${PLANNED_PDF_ROUTE}"]`,
+        waitFor: `[data-testid="workflow-canvas-card"][data-workflow-task-key="${PLANNED_PDF_ROUTE}"][data-selected="true"]`,
+      },
     ],
   },
 
@@ -1008,6 +1208,21 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="task-context-menu"]',
     focus: '[data-testid="task-context-menu"]',
     steps: [{ contextmenu: `[data-task-id="${TASK_AUTH}"]`, waitFor: '[data-testid="task-context-menu"]' }],
+  },
+  // The board draws a workflow card's links only while the pointer rests on the card
+  // (card-links-preview.ts: a mouse pointerenter, then a 400ms dwell) or after a refused move, so
+  // no click reaches it and the scene is the rig's. Refactor API error handling is the card that
+  // reads "Blocked by 2 tasks", and resting on it draws which two.
+  'board-workflow-links': {
+    name: 'board-workflow-links',
+    reach: 'driver',
+    description: 'The board-workflow scene with the pointer resting on Refactor API error handling, so the board draws that card\'s workflow links: one from each card it waits for. A hover is a real pointer gesture, so the rig plays it.',
+    alt: 'The contoso-web board with the pointer resting on Refactor API error handling, a To Do card blocked by two tasks: lines run into it from Extract auth middleware in Executing and from Add rate limiting in Code Review, and the card is outlined.',
+    seeds: WORKFLOW_HARDEN_API_SEEDS,
+    tasks: WORKFLOW_HARDEN_API_MEMBERS,
+    ready: '[data-testid="workflow-link-line"]',
+    focus: [TASK_API_ERRORS, TASK_MIDDLEWARE, TASK_RATE_LIMIT].map((id) => `[data-task-id="${id}"]`).join(', '),
+    steps: [{ hover: `[data-task-id="${TASK_API_ERRORS}"]`, waitFor: '[data-testid="workflow-link-line"]' }],
   },
   'window-dock': {
     name: 'window-dock',

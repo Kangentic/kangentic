@@ -4724,7 +4724,8 @@
       descriptor: null,
     },
 
-    // Workflows. In-memory, on the mock's one set of swimlanes. Seed from a spec
+    // Workflows. In-memory, on each task's own board's swimlanes (boardLanes:
+    // a UI spec's untagged set, or one project's tagged set). Seed from a spec
     // (read lazily on the first call, like __mockAutomations):
     //   window.__mockWorkflows = [ { workflow: <Workflow row>, projectId?: 'p1' } ]
     //   window.__mockWorkflowLinks = [ { workflow_id, blocker_task_id, blocked_task_id, blocker_project_id? } ]
@@ -4898,14 +4899,28 @@
         return live.id;
       };
 
+      // A board's columns, as main reads them from that project's own database.
+      // Where the lanes are tagged by project (the web build's sample install
+      // seeds three boards), a project has only its own; untagged lanes (a UI
+      // spec's one set) belong to every project.
+      function boardLanes(projectId) {
+        var tagged = swimlanes.filter(function (lane) { return lane.projectId === projectId; });
+        return tagged.length > 0 ? tagged : swimlanes.filter(function (lane) { return !lane.projectId; });
+      }
+      // The board a workflow task sits on: a task row's projectId tag, a
+      // planned task's project_id, else the workflow's home.
+      function boardOf(entry, task) {
+        return task.projectId || task.project_id || homeOf(entry);
+      }
+
       // KEEP IN SYNC with src/shared/workflow-route.ts.
-      function candidates() {
-        return swimlanes.filter(function (lane) {
+      function candidates(projectId) {
+        return boardLanes(projectId).filter(function (lane) {
           return !lane.is_archived && !lane.is_ghost && lane.role !== 'todo' && lane.role !== 'done';
         }).sort(function (left, right) { return left.position - right.position; });
       }
-      function routeColumns(route) {
-        var list = candidates();
+      function routeColumns(route, projectId) {
+        var list = candidates(projectId);
         if (list.length === 0) return [];
         var start = route.route_start_swimlane_id ? list.findIndex(function (lane) { return lane.id === route.route_start_swimlane_id; }) : 0;
         var last = route.route_last_swimlane_id ? list.findIndex(function (lane) { return lane.id === route.route_last_swimlane_id; }) : list.length - 1;
@@ -4915,8 +4930,8 @@
         var skipped = route.skipped_swimlane_ids || [];
         return list.slice(from, to + 1).filter(function (lane) { return skipped.indexOf(lane.id) === -1; });
       }
-      function routeFromColumns(ids) {
-        var list = candidates();
+      function routeFromColumns(ids, projectId) {
+        var list = candidates(projectId);
         var first = list.findIndex(function (lane) { return ids.indexOf(lane.id) !== -1; });
         if (first < 0) return null;
         var last = first;
@@ -4928,8 +4943,8 @@
         };
       }
       function laneOf(id) { return swimlanes.find(function (lane) { return lane.id === id; }); }
-      function todoLane() { return swimlanes.find(function (lane) { return lane.role === 'todo'; }); }
-      function doneLane() { return swimlanes.find(function (lane) { return lane.role === 'done'; }); }
+      function todoLane(projectId) { return boardLanes(projectId).find(function (lane) { return lane.role === 'todo'; }); }
+      function doneLane(projectId) { return boardLanes(projectId).find(function (lane) { return lane.role === 'done'; }); }
       function step(lane, state) {
         return { swimlaneId: lane.id, name: lane.name, color: lane.color || null, icon: lane.icon || null, state: state, finishedAt: null };
       }
@@ -4942,10 +4957,10 @@
         if (task.archived_at || (lane && lane.role === 'done')) return 'done';
         return lane && lane.role === 'todo' ? 'todo' : 'working';
       }
-      function stepsOf(task, place) {
-        var onRoute = routeColumns(task).map(function (lane) { return lane.id; });
+      function stepsOf(task, place, projectId) {
+        var onRoute = routeColumns(task, projectId).map(function (lane) { return lane.id; });
         var current = laneOf(task.swimlane_id);
-        return candidates().map(function (lane) {
+        return candidates(projectId).map(function (lane) {
           if (place === 'working' && current && lane.id === current.id) return step(lane, 'current');
           if (onRoute.indexOf(lane.id) === -1) return step(lane, 'skipped');
           if (place === 'done') return step(lane, 'done');
@@ -4955,15 +4970,12 @@
       }
 
       // A board's To Do and Done columns, as main's readWorkflowDetail reads
-      // them (boardEnds): a lane tagged with that project wins over an
-      // untagged (every-project) one.
+      // them (boardEnds), on that board's own lanes (boardLanes).
       function boardEndsOf(projectId) {
-        function endOf(role) {
-          var tagged = swimlanes.find(function (lane) { return lane.role === role && lane.projectId === projectId; });
-          var lane = tagged || swimlanes.find(function (candidate) { return candidate.role === role && !candidate.projectId; });
+        function endOf(lane) {
           return lane ? { swimlaneId: lane.id, name: lane.name, color: lane.color || null, icon: lane.icon || null } : null;
         }
-        return { todo: endOf('todo'), done: endOf('done') };
+        return { todo: endOf(todoLane(projectId)), done: endOf(doneLane(projectId)) };
       }
 
       function detail(entry) {
@@ -4991,12 +5003,12 @@
             tasks: draft.tasks.map(function (planned) {
               // A planned task names its board as main's read model does: its own
               // project_id, else the workflow's home.
-              var taskProjectId = planned.project_id || home;
+              var taskProjectId = boardOf(entry, planned);
               noteProject(taskProjectId);
               return {
                 key: planned.key, projectId: taskProjectId, task: null, planned: Object.assign({}, planned),
                 title: planned.title, displayId: null, place: 'planned', swimlaneId: null,
-                steps: stepsOf(planned, 'planned'), canvasX: planned.canvas_x, canvasY: planned.canvas_y,
+                steps: stepsOf(planned, 'planned', taskProjectId), canvasX: planned.canvas_x, canvasY: planned.canvas_y,
                 unnamedBlockerCount: 0,
               };
             }),
@@ -5014,12 +5026,12 @@
             var place = placeOf(task);
             // A task row tagged with a projectId is on that project's board, as
             // tasks.list scopes it; an untagged one is on the workflow's home.
-            var taskProjectId = task.projectId || home;
+            var taskProjectId = boardOf(entry, task);
             noteProject(taskProjectId);
             return {
               key: task.id, projectId: taskProjectId, task: withAttachmentCount(task), planned: null,
               title: task.title, displayId: task.display_id, place: place, swimlaneId: task.swimlane_id,
-              steps: stepsOf(task, place), canvasX: task.canvas_x == null ? null : task.canvas_x, canvasY: task.canvas_y == null ? null : task.canvas_y,
+              steps: stepsOf(task, place, taskProjectId), canvasX: task.canvas_x == null ? null : task.canvas_x, canvasY: task.canvas_y == null ? null : task.canvas_y,
               unnamedBlockerCount: links.filter(function (link) {
                 return link.workflow_id === workflow.id && link.blocked_task_id === task.id && keys.indexOf(link.blocker_task_id) === -1 && blockerHeld(link);
               }).length,
@@ -5061,7 +5073,7 @@
           if (place === 'done') { counts.done += 1; return; }
           if (place === 'working') {
             counts.working += 1;
-            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task), hasLinks: hasLinks(task.id) };
+            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task, boardOf(entry, task)), hasLinks: hasLinks(task.id) };
             return;
           }
           var waitingFor = links.filter(function (link) {
@@ -5085,12 +5097,12 @@
 
       // Main's human gate also counts a column whose agent reports no turn end, or no
       // Automation agent; the mock has neither, so a column that starts no agent is its gate.
-      function humanGateExit(workflow, task) {
+      function humanGateExit(workflow, task, projectId) {
         if (workflow.state !== 'running') return null;
         var column = laneOf(task.swimlane_id);
         if (!column || column.auto_spawn) return null;
-        var after = routeColumns(task).find(function (lane) { return lane.position > column.position; });
-        var next = after || doneLane();
+        var after = routeColumns(task, projectId).find(function (lane) { return lane.position > column.position; });
+        var next = after || doneLane(projectId);
         return next ? next.id : null;
       }
 
@@ -5253,9 +5265,10 @@
           var draft = entry.workflow.draft || { tasks: [], links: [] };
           if (entry.workflow.state !== 'draft') throw new Error('"' + entry.workflow.title + '" has already started.');
           if (draft.tasks.length === 0) throw new Error('"' + entry.workflow.title + '" has no tasks yet.');
-          var todo = todoLane();
           var idByKey = {};
           draft.tasks.forEach(function (planned) {
+            // Each task starts in its own board's To Do.
+            var todo = todoLane(boardOf(entry, planned));
             var row;
             if (planned.existing_task_id) {
               // Main's Start takes a board task in where it is (setWorkflowMembership)
@@ -5285,8 +5298,9 @@
           // Main's supersedeSourceTask: only a source still in To Do moves to
           // Done, and only that move makes it superseded (listSupersessions).
           entry.supersededSource = false;
-          if (source && laneOf(source.swimlane_id) && laneOf(source.swimlane_id).role === 'todo' && doneLane()) {
-            source.swimlane_id = doneLane().id;
+          var sourceDone = source ? doneLane(boardOf(entry, source)) : null;
+          if (source && laneOf(source.swimlane_id) && laneOf(source.swimlane_id).role === 'todo' && sourceDone) {
+            source.swimlane_id = sourceDone.id;
             source.archived_at = now();
             entry.supersededSource = true;
           }
@@ -5335,7 +5349,7 @@
             });
             return key;
           }
-          var todo = todoLane();
+          var todo = todoLane(input.projectId || homeOf(entry));
           // A real task in To Do with the settings the form chose, as main's addViewTask makes it.
           var row = buildTaskRow(Object.assign(
             { title: title, description: input.description, swimlane_id: todo.id, labels: input.labels, priority: input.priority },
@@ -5423,17 +5437,22 @@
         },
         setRoute: async function (projectId, workflowId, key, swimlaneIds) {
           var entry = requireEntry(projectId, workflowId);
-          var route = routeFromColumns(swimlaneIds || []);
-          if (!route) throw new Error('A task visits at least one column.');
+          // A route is read against the columns of the task's own board.
+          function routeOn(task) {
+            var route = routeFromColumns(swimlaneIds || [], boardOf(entry, task));
+            if (!route) throw new Error('A task visits at least one column.');
+            return route;
+          }
           if (entry.workflow.state === 'draft') {
             editDraft(entry, function (draft) {
               var planned = draft.tasks.find(function (task) { return task.key === key; });
               if (!planned) throw new Error('That task is no longer in the plan.');
-              Object.assign(planned, route);
+              Object.assign(planned, routeOn(planned));
             });
             return;
           }
-          Object.assign(requireTask(entry, key), route);
+          var task = requireTask(entry, key);
+          Object.assign(task, routeOn(task));
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, true);
         },
