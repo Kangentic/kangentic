@@ -592,9 +592,19 @@ test.describe('Workflows canvas gestures', () => {
     const { browser, page } = await launch('two-drafts', { fakeClock: true });
     try {
       await expect(byTestId(page, 'workflow-picker')).toContainText('Theme tokens');
+      // Paused BEFORE the click, not after. The workflow agent's terminal takes
+      // focus from a requestAnimationFrame it queues when it arrives, and that
+      // frame is the page clock's: pausing is what fires any still queued, and
+      // a clock that stays paused fires none later. Paused after the click, a
+      // starved runner still had one queued, so the pause itself handed focus to
+      // the terminal after the click had given it to the card, and the arrow key
+      // went to xterm (12 of 12 runs at 12x CPU throttle).
+      await page.clock.pauseAt(new Date(Date.now() + 1000));
       await card(page, 'task-3').click();
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
-      await page.clock.pauseAt(new Date(Date.now() + 1000));
+      // The arrow key goes to the focused element, and React Flow moves a card
+      // only from its own node: assert the click left focus there.
+      await expect(node(page, 'task-3')).toBeFocused();
 
       const placedKeys = (workflowId: string) => page.evaluate(async ({ projectId, id }) => {
         const detail = await window.electronAPI.workflows.get(projectId, id);
