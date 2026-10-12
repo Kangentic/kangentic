@@ -1060,7 +1060,9 @@ src/main/workflows/
   no longer registered. A membership whose workflow is gone (a deleted workflow's Done tasks keep
   theirs) is no membership to a check that protects a workflow (`isInWorkflow`): such a task can
   be demoted to the Backlog, moved to another project, or join another workflow, and its Workflow
-  panel says the workflow no longer exists. A home that cannot be read still counts.
+  panel says the workflow no longer exists. A home that cannot be read still counts, and the panel
+  says "The workflow this task is in could not be loaded." unless it already holds the workflow. A
+  gone home's summaries and supersessions read as empty, not as an error.
 
 - **The engine never polls.** The board bus (every move announces there), a freed agent slot
   (`session-removed`, `exit`), task deletes, and workflow writes wake it; a burst coalesces into

@@ -645,7 +645,7 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 
 - **`stripKangenticHooks()`** -- Removes all Kangentic hooks from `.claude/settings.local.json`. Backs up the file before modification, restores on error. Removes empty settings files and `.claude/` directories if they only contained our hooks.
 - **`cleanupProject()`** -- Kills all PTYs, detaches worktrees, strips hooks, removes `.kangentic/` directory and DB files, removes `.kangentic/` from `.gitignore`.
-- **`detachProjectFromWorkflows()`** runs first in `cleanupProject()`, before any PTY is killed and whether or not the folder still exists. It takes the project's tasks out of every workflow, drops links in other homes that name them, and releases the tasks on other boards of a workflow the project was home to. When the folder is already gone, `cleanupProject()` also ends the project's workflow agents (`endWorkflowAgentsOfProject`) on that branch.
+- **`detachProjectFromWorkflows()`** runs first in `cleanupProject()`, before any PTY is killed and whether or not the folder still exists. It takes the project's tasks out of every workflow, drops links in other homes that name them, and releases the tasks on other boards of a workflow the project was home to. A running or paused workflow homed elsewhere that is left with no task is deleted, but only when every board could be read. `cleanupProject()` ends the project's workflow agents (`endWorkflowAgentsOfProject`) on both paths, before the project's database closes.
 
 ### On Task Delete
 
