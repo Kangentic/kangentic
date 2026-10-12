@@ -511,12 +511,15 @@ export class WorkflowEngineHost {
  * completes, since the unread board may hold its unfinished tasks and nothing
  * says which workflows those are. No task starts that waits on a task there:
  * today the core reads a blocker it cannot see as not done, and this keeps
- * that true whatever the core comes to say about a vanished blocker.
+ * that true whatever the core comes to say about a vanished blocker. A drop of
+ * links goes through: it names only links whose end is provably gone, and
+ * `linkEndState` holds any end on a board that could not be read.
  */
 function withoutUnreadOutcomes(intents: CoreIntent[], snapshots: CoreWorkflow[], unreadProjectIds: ReadonlySet<string>): CoreIntent[] {
   const linksByWorkflow = new Map(snapshots.map((snapshot) => [snapshot.workflowId, snapshot.links]));
   return intents.filter((intent) => {
     if (intent.kind === 'complete') return false;
+    if (intent.kind === 'drop-links') return true;
     return !(linksByWorkflow.get(intent.workflowId) ?? []).some((link) => (
       link.blockedProjectId === intent.projectId
       && link.blockedTaskId === intent.taskId
