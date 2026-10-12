@@ -255,13 +255,13 @@ export class WorkflowEngineHost {
   }
 
   /**
-   * After a pass: while a registered board could not be read, arm one pass to
+   * After a pass, while a registered board could not be read, arm one pass to
    * try it again, on the backoff. Keyed on any unread board, not only on a
-   * running workflow the pass could see: the board that would not read may be
-   * the home of one. Nothing else wakes the engine when the board comes back
-   * (activation opening it, a lock clearing, a repaired file), so without this
-   * a finished workflow stayed running until some unrelated board change. A
-   * pass that reads every board clears it and starts the backoff over.
+   * running workflow the pass could see, since the board that would not read
+   * may be the home of one. Nothing else wakes the engine when the board comes
+   * back (activation opening it, a lock clearing, a repaired file), so without
+   * this a finished workflow stayed running until some unrelated board change.
+   * A pass that reads every board clears it and starts the backoff over.
    */
   private retryUnreadLater(anyUnread: boolean): void {
     if (!anyUnread) {
@@ -321,10 +321,9 @@ export class WorkflowEngineHost {
   /**
    * A read of `projectId` failed. A SQLite failure (locked, corrupt, half
    * migrated) makes the board unread for this pass. Anything else is a bug and
-   * is rethrown, ending the pass with "Evaluation failed": read as unread, it
-   * would hold every workflow from completing and retry every 5 minutes with
-   * one warning a launch, the way a bare catch once hid broken test mocks in
-   * `readWorkflowTasks`.
+   * is rethrown, ending the pass with "Evaluation failed". Read as unread, a
+   * bug would hold every workflow from completing and retry every 5 minutes
+   * behind one warning a launch.
    */
   private noteUnread(unreadProjectIds: Set<string>, projectId: string, error: unknown): void {
     if (!isSqliteError(error)) throw error;

@@ -1092,11 +1092,12 @@ src/main/workflows/
   `getProjectDb` on main, which opens it, and main closes a database only when its project is
   deleted. A second instance sharing the config dir can write a board unseen, until activation
   opens every registered board a few seconds after launch. A pass that cannot read a registered board completes no workflow, since that board may
-  hold its unfinished tasks, and starts no task that waits on a task there. It logs the board once a
-  launch and shows the user nothing. While any registered board stays unread it wakes itself on a
-  backoff (5 s, 30 s, 1 m, 2 m, then every 5 m), one timer at a time, because nothing else would:
-  activation opening the board, a lock clearing, or a repaired file announces nothing, and a
-  finished workflow used to stay running until some unrelated board change. The first pass that
+  hold its unfinished tasks, and starts no task that waits on a task there. Only a SQLite failure
+  makes a board unread: a lock, or a corrupt or half-migrated file. Any other error is a bug, and it
+  ends the pass. The engine logs an unread board once a launch and shows the user nothing. While any
+  registered board stays unread it wakes itself on a backoff (5 s, 30 s, 1 m, 2 m, then every 5 m),
+  one timer at a time, because nothing else would. Activation opening the board, a lock clearing,
+  or a repaired file announces nothing, and a finished workflow used to stay running until some unrelated board change. The first pass that
   reads every registered board, including after the broken project is removed, stops the retries.
   The timer is keyed on any unread board, not only on a running workflow the pass could see, since
   the board that would not read may home one. A board that stays broken costs one pass every 5

@@ -21,7 +21,9 @@
  * also keeps a task from starting when a task on that board holds it up, and
  * keeps a failed start's backoff, and it is logged once a launch. While a board
  * stays unread the engine tries it again on a backoff, so a board that comes
- * back lets the workflow go on with no other event. A board is
+ * back lets the workflow go on with no other event. The backoff's steps and
+ * its 5 m cap, its single timer, its restart and its cancellation by a full
+ * read or by dispose are each pinned. A board is
  * unread when the look at it fails (a file that is not a database) or when a
  * read on its open connection throws, and each of those reads is pinned
  * separately. The engine stops reading once disposed, even between two looks.
@@ -83,6 +85,8 @@ const { listWorkflowSummaries, listWorkflowSupersessions } = await import('../..
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 const DEBOUNCE_MS = 150;
+/** The fake clock runs a setImmediate scheduled during a tick 1 ms on, so a pass looks that long after its debounce fires. */
+const YIELD_MS = 1;
 const PROJECT_IDS = ['home', 'member', 'idle', 'missing', 'old', 'broken'];
 
 const membership = (workflowId: string, homeProjectId: string) => ({
@@ -179,6 +183,46 @@ describe('the workflow engine at boot', () => {
   function boot(): ReturnType<typeof registerWorkflowEngine> {
     closeAll();
     return registerWorkflowEngine(context);
+  }
+
+  /** Make `broken` a file that is not a database, so every look at it fails. */
+  function corruptBroken(): void {
+    fs.mkdirSync(PATHS.projectsDir, { recursive: true });
+    fs.writeFileSync(PATHS.projectDb('broken'), 'not a database '.repeat(512));
+  }
+
+  /** `broken` back as a real, readable database. */
+  function repairBroken(): void {
+    fs.rmSync(PATHS.projectDb('broken'), { force: true });
+    const repaired = new Database(PATHS.projectDb('broken'));
+    repaired.exec('CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL)');
+    repaired.close();
+  }
+
+  /** The fake-clock time of each look at `broken`, oldest first. */
+  function recordLooksAtBroken(): number[] {
+    const looks: number[] = [];
+    const realProbe = vi.mocked(probeWorkflowProject).getMockImplementation()!;
+    vi.mocked(probeWorkflowProject).mockImplementation((projectId) => {
+      if (projectId === 'broken') looks.push(Date.now());
+      return realProbe(projectId);
+    });
+    return looks;
+  }
+
+  /**
+   * The next look at `broken` after the pass that looked at `armedAt` comes
+   * `waitMs` plus the debounce and the yield on (the retry timer, then the
+   * wake, then the turn before the look), to the millisecond. A look 1 ms early
+   * or late fails. Returns when it came.
+   */
+  async function nextLookAt(looks: number[], armedAt: number, waitMs: number, label: string): Promise<number> {
+    const looksBefore = looks.length;
+    await advance(armedAt + waitMs + DEBOUNCE_MS + YIELD_MS - 1 - Date.now());
+    expect(looks.length, `${label}: looked 1 ms early`).toBe(looksBefore);
+    await advance(1);
+    expect(looks.length, `${label}: did not look on time`).toBe(looksBefore + 1);
+    return looks[looksBefore];
   }
 
   beforeEach(() => {
@@ -327,6 +371,117 @@ describe('the workflow engine at boot', () => {
     expect(new WorkflowRepository(getProjectDb('home')).getById(running)!.state).toBe('done');
     // Every board read, so nothing is left to try.
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('waits 5 s, 30 s, 1 m, 2 m and then 5 m between looks at an unreadable board, and stays at 5 m', async () => {
+    register(['broken']);
+    corruptBroken();
+    const looks = recordLooksAtBroken();
+
+    boot();
+    await pass();
+    expect(looks).toHaveLength(1);
+
+    // The list ends at 5 m, so the step that reaches it and the two after it all wait 5 m.
+    let lastLookAt = looks[0];
+    const waitsMs = [5_000, 30_000, 60_000, 120_000, 300_000, 300_000, 300_000];
+    for (const [index, waitMs] of waitsMs.entries()) {
+      lastLookAt = await nextLookAt(looks, lastLookAt, waitMs, `step ${index + 1} (${waitMs} ms)`);
+    }
+    expect(looks).toHaveLength(waitsMs.length + 1);
+  });
+
+  it('starts the backoff over at 5 s when a board goes unreadable again after a pass that read every board', async () => {
+    register(['member']);
+    const engine = boot();
+    // Open, and broken and healed under the engine. A board it has read once is
+    // not looked at again, so a file rewritten as garbage would go unnoticed.
+    const memberDb = getProjectDb('member');
+    memberDb.exec(BREAKS.activeWorkflows.break);
+    const passes = () => engine.stats().samples;
+
+    // The 5 s and 30 s retries run, and a 1 m one is left pending.
+    await pass();
+    await advance(5_000 + DEBOUNCE_MS);
+    await advance(30_000 + DEBOUNCE_MS);
+    expect(passes()).toBe(3);
+
+    memberDb.exec(BREAKS.activeWorkflows.heal);
+    engine.wake();
+    await pass();
+    expect(passes()).toBe(4);
+    expect(vi.getTimerCount()).toBe(0);
+
+    memberDb.exec(BREAKS.activeWorkflows.break);
+    engine.wake();
+    await pass();
+    expect(passes()).toBe(5);
+
+    // 5 s again, not the 2 m that the three tries before the repair would lead to.
+    await advance(5_000 + DEBOUNCE_MS);
+    expect(passes()).toBe(6);
+  });
+
+  it('arms one retry however many passes run while it is pending, and those passes do not move the backoff on', async () => {
+    register(['broken']);
+    corruptBroken();
+    const looks = recordLooksAtBroken();
+
+    const engine = boot();
+    await pass();
+    const armedAt = looks[0];
+    expect(vi.getTimerCount()).toBe(1);
+
+    // Other events wake the engine inside the 5 s wait. Each pass finds the board
+    // still unread, and neither adds a timer nor takes a step of the backoff.
+    for (let extraPass = 0; extraPass < 3; extraPass += 1) {
+      engine.wake();
+      await pass();
+      expect(vi.getTimerCount()).toBe(1);
+    }
+    expect(looks).toHaveLength(4);
+
+    // The retry is still the one the first pass armed, and the next waits 30 s.
+    const firstRetryAt = await nextLookAt(looks, armedAt, 5_000, 'first retry');
+    await nextLookAt(looks, firstRetryAt, 30_000, 'second retry');
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('cancels a pending retry of an unreadable board when the engine is disposed', async () => {
+    register(['broken']);
+    corruptBroken();
+    const looks = recordLooksAtBroken();
+
+    const engine = boot();
+    await pass();
+    expect(looks).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    engine.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    // Well past the 5 s the retry waits. A disposed engine ignores a wake, so the
+    // timer count above is what shows the retry was cancelled.
+    await advance(60_000);
+    expect(looks).toHaveLength(1);
+  });
+
+  it('cancels a pending retry when a pass that reads every board runs before it fires', async () => {
+    register(['broken']);
+    corruptBroken();
+
+    const engine = boot();
+    await pass();
+    expect(vi.getTimerCount()).toBe(1);
+
+    repairBroken();
+    engine.wake();
+    await pass();
+    expect(vi.getTimerCount()).toBe(0);
+
+    // The 5 s retry would have woken a pass by now.
+    const passesBefore = engine.stats().samples;
+    await advance(5_000 + DEBOUNCE_MS);
+    expect(engine.stats().samples).toBe(passesBefore);
   });
 
   it('ends the pass on a read failure that is no database error, rather than reading the board as unread', async () => {

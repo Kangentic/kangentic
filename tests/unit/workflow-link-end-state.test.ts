@@ -172,7 +172,7 @@ describe('readWorkflowTasks', () => {
   let homeDatabase: Database.Database;
 
   const contextWith = (projectIds: string[]): IpcContext => ({
-    projectRepo: { list: () => projectIds.map((id) => ({ id, name: id, path: `/mock/${id}` })) },
+    projectRepo: { list: () => projectIds.map((projectId) => ({ id: projectId, name: projectId, path: `/mock/${projectId}` })) },
   }) as unknown as IpcContext;
 
   beforeEach(() => {
