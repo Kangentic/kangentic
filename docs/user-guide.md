@@ -622,7 +622,10 @@ Escape or a click on empty board space. Open workflow in the card's right-click 
 link on the Workflows canvas. Task detail has a Workflow panel (the linked-cards button
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the
 inspector. If the task's workflow was deleted, the panel says "The workflow this task was in no
-longer exists." instead.
+longer exists." instead, even when it had the workflow loaded. If the workflow could not be read and
+the panel has nothing to show yet, it says "The workflow this task is in could not be loaded." A
+panel already showing the workflow keeps it through a failed read. The next read that succeeds
+clears either message.
 
 **Locked while it runs.** A running workflow's cards cannot be moved to another column by hand: a
 drag stays in the card's own column, where you can still reorder it. The exception is a card you

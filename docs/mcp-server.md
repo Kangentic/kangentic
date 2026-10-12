@@ -1177,7 +1177,7 @@ its directories.
 
 Delete a workflow. One not started loses its plan and nothing else changes. A started one's
 unfinished tasks stay where they are as ordinary tasks, and its tasks in Done stay in Done. Those
-Done tasks are no longer in a workflow once it is deleted.
+Done tasks stay in Done as ordinary tasks once it is deleted.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
