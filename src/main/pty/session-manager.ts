@@ -2294,10 +2294,9 @@ export class SessionManager extends EventEmitter {
     // passes. Judging one would force-kill live work, which is the severe
     // failure direction; refusing to judge it only leaves the pre-existing
     // phantom, which is the status quo. `canTreeJudgeAgent` holds that test
-    // (`parseWslShellSpec`, which also matches a bare `wsl` that
-    // `resolveShellArgs` does not split), so the end settle covers exactly the
-    // shells this arm refuses. Its watcher half is always true here: only the
-    // sweep, which lives in the watcher, asks.
+    // through `parseWslShellSpec`, the same detector the spawn uses, so the end
+    // settle covers exactly the shells this arm refuses. Its watcher half is
+    // always true here: only the sweep, which lives in the watcher, asks.
     if (!this.canTreeJudgeAgent(session)) return false;
     if (session.status !== 'running' || session.pty === null) return false;
     // The agent said it is ending, so it demonstrably ran: the grace, which

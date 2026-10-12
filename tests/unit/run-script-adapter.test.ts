@@ -146,6 +146,13 @@ describe('resolveScriptInvocation', () => {
     expect(args).toEqual(['-d', 'Ubuntu', '--', 'bash', '-lc', 'echo hi']);
   });
 
+  it('runs a script under a bare wsl spec in the default distro', () => {
+    expect(resolveScriptInvocation('wsl', 'echo hi')).toEqual({
+      exe: 'wsl.exe',
+      args: ['--', 'bash', '-lc', 'echo hi'],
+    });
+  });
+
   it('never returns the interactive argv, which is what kept the shell alive', () => {
     for (const shell of ['pwsh', 'cmd.exe', '/bin/bash', '/bin/zsh']) {
       const { args } = resolveScriptInvocation(shell, 'echo hi');

@@ -37,8 +37,12 @@ export interface WslShellSpec {
 
 /**
  * Parse a user-facing shell spec (`wsl -d Ubuntu`, `wsl.exe`, `wsl`) as a WSL
- * shell. Returns null for any other shell. Mirrors the spec form
- * `resolveShellArgs` (pty-spawn.ts) splits.
+ * shell. Returns null for any other shell. The spawn (`resolveShellArgs`,
+ * `resolveScriptInvocation`), the tag, the absence sweep, the end settle and
+ * the reap all ask it, so those five agree on every spec. The pty host's
+ * `isWslRoot` checks the spawned executable by path instead, and the
+ * `startsWith('wsl')` tests in `adaptCommandForShell`, `isWslShell` and the
+ * renderer's clipboard also accept a hand-edited name such as `wslbash`.
  */
 export function parseWslShellSpec(shell: string): WslShellSpec | null {
   const parts = shell.trim().split(/\s+/);

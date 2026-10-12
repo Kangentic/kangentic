@@ -1,5 +1,6 @@
 import { isCmdShell, isPowerShellShell } from '../../../shared/paths';
 import { resolveShellArgs, type ShellInvocation } from './pty-spawn';
+import { parseWslShellSpec } from '../process-tag/task-process-tag';
 
 /**
  * Resolve a shell spec plus a script into the argv that RUNS the script and
@@ -36,10 +37,10 @@ const POWERSHELL_EXIT_CODE_PROPAGATION = '\nif ($null -ne $LASTEXITCODE) { exit 
 export function resolveScriptInvocation(shell: string, script: string): ShellInvocation {
   const shellName = shell.toLowerCase();
 
-  // WSL: `wsl.exe -d <distro> -- <command>` runs inside the distro and exits.
+  // WSL: `wsl.exe [-d <distro>] -- <command>` runs inside the distro and exits.
   // The login shell is explicit (`-lc`) so the user's rc files load, matching
   // what the interactive form gets from `--login`.
-  if (shellName.startsWith('wsl ') || shellName.startsWith('wsl.exe ')) {
+  if (parseWslShellSpec(shell) !== null) {
     const { exe, args } = resolveShellArgs(shell);
     return { exe, args: [...args, '--', 'bash', '-lc', script] };
   }
