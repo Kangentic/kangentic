@@ -32,6 +32,12 @@
  *   orphan-console-input   shell killed, then the exit sequence through the agent's input pipe
  *                          (what the pty host does; spawn/exited-console-input.ts)
  *   orphan-conhost         shell killed, then the console host terminated
+ *   clear                  /clear, then /exit: the gap between /clear's SessionEnd and the
+ *                          SessionStart that follows it, which the Command Terminal end settle
+ *                          (COMMAND_TERMINAL_AGENT_END_SETTLE_MS in session-manager.ts) must outlast
+ *   resume                 /resume left open as a user browsing it would, then another session
+ *                          chosen, then /exit: whether the open picker alone runs SessionEnd (no
+ *                          settle could outlast a user's browsing), and the choice's own gap
  *
  * Measured 2026-10-11 on Claude Code 2.1.294, Windows 11 build 26200, node-pty 1.1.0:
  *   graceful              hook 191 ms (prompt_input_exit), exit 622 ms, transcript +3 lines
@@ -41,13 +47,18 @@
  *   orphan-ipty-write     never arrived; still running at 15 s
  *   orphan-console-input  hook ran (prompt_input_exit), exit about 600 ms after the write, +3 lines
  *   orphan-conhost        still running at 15 s
+ *   clear                 /clear: SessionEnd 574 ms (clear), SessionStart 722 ms (clear), 148 ms
+ *                         apart, Claude still running; the /exit after it: hook 174 ms, exit 593 ms
+ *   resume                picker open 8 s: no hook, Claude running; the choice: SessionEnd 423 ms
+ *                         (resume), SessionStart 539 ms (resume), 116 ms apart, Claude still
+ *                         running; the /exit after it: hook 250 ms, exit 654 ms
  */
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 
-const MODES = ['graceful', 'close', 'suspend', 'orphan-terminate', 'orphan-ipty-write', 'orphan-console-input', 'orphan-conhost'];
+const MODES = ['graceful', 'close', 'suspend', 'orphan-terminate', 'orphan-ipty-write', 'orphan-console-input', 'orphan-conhost', 'clear', 'resume'];
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -64,6 +75,8 @@ if (!fs.existsSync(probeCwd)) throw new Error(`--cwd ${probeCwd} does not exist;
 
 const MATURE_WAIT_MS = 16000; // the canary record is withdrawn 10 s after the first frame
 const ANSWER_WAIT_MS = 25000;
+const CLEAR_WAIT_MS = 8000; // long enough for /clear's SessionEnd and SessionStart hooks to land
+const RESUME_PICKER_WAIT_MS = 8000; // longer than the end settle, as a user reading the list takes
 
 // Run in reverse when a run throws, so a failed run leaves no shell, no Claude
 // session and no temp folder behind.
@@ -128,6 +141,31 @@ function transcriptState(transcriptPath) {
   return { found: true, lines: lines.length, lastLineParses };
 }
 
+/** The hook marker's lines written at or after `sinceMs`, oldest first. */
+function hookLinesSince(markerPath, sinceMs) {
+  if (!fs.existsSync(markerPath)) return [];
+  return fs.readFileSync(markerPath, 'utf8').trim().split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const fields = line.split(' ');
+      return { at: Number(fields[0]), label: fields[1], reason: fields.slice(2).join(' ') };
+    })
+    .filter((hookLine) => hookLine.at >= sinceMs);
+}
+
+/** End and start hook timings for one step, relative to when the step began. */
+function endStartGap(hookLines, stepAt) {
+  const end = hookLines.find((hookLine) => hookLine.label === 'end');
+  const start = hookLines.find((hookLine) => hookLine.label === 'start');
+  return {
+    endMsAfterStep: end ? end.at - stepAt : null,
+    endReason: end ? end.reason : null,
+    startMsAfterStep: start ? start.at - stepAt : null,
+    startSource: start ? start.reason : null,
+    endToStartGapMs: end && start ? start.at - end.at : null,
+  };
+}
+
 function canaryRecordFor(pid) {
   const state = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
   return Boolean(state.fullscreenBootPending && Object.prototype.hasOwnProperty.call(state.fullscreenBootPending, String(pid)));
@@ -145,7 +183,7 @@ async function main() {
     "process.stdin.on('data', (chunk) => { input += chunk; });",
     "process.stdin.on('end', () => {",
     "  let reason = '';",
-    "  try { reason = JSON.parse(input).reason || ''; } catch { /* no payload */ }",
+    "  try { const payload = JSON.parse(input); reason = payload.reason || payload.source || ''; } catch { /* no payload */ }",
     '  fs.appendFileSync(markerPath, `${Date.now()} ${label} ${reason}\\n`);',
     '});',
   ].join('\n'));
@@ -189,9 +227,40 @@ async function main() {
   const transcriptBefore = transcriptState(newestTranscript(startedAt));
   const canaryBefore = canaryRecordFor(claudePid);
 
-  const actionAt = Date.now();
+  let actionAt = Date.now();
   let pollFrom = actionAt;
-  if (mode === 'graceful') {
+  let stepResult = null;
+  if (mode === 'clear') {
+    shell.write('/clear');
+    await sleep(400);
+    shell.write('\r');
+    await sleep(CLEAR_WAIT_MS);
+    stepResult = { ...endStartGap(hookLinesSince(markerPath, actionAt), actionAt), claudeAlive: isAlive(claudePid) };
+  } else if (mode === 'resume') {
+    shell.write('/resume');
+    await sleep(400);
+    shell.write('\r');
+    await sleep(RESUME_PICKER_WAIT_MS);
+    const pickerOpen = { hookLines: hookLinesSince(markerPath, actionAt), claudeAlive: isAlive(claudePid) };
+    // Choose the entry below the highlighted one: another session in this folder.
+    const chosenAt = Date.now();
+    shell.write('\x1b[B');
+    await sleep(300);
+    shell.write('\r');
+    await sleep(CLEAR_WAIT_MS);
+    stepResult = {
+      pickerOpen,
+      chosen: { ...endStartGap(hookLinesSince(markerPath, chosenAt), chosenAt), claudeAlive: isAlive(claudePid) },
+      screenTail: output.slice(-1500).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''),
+    };
+  }
+  if (stepResult) {
+    // Then end it as a user would; the fields below describe this exit.
+    actionAt = Date.now();
+    pollFrom = actionAt;
+    shell.write('\x03');
+    shell.write('/exit\r');
+  } else if (mode === 'graceful') {
     shell.write('\x03');
     shell.write('/exit\r');
   } else if (mode === 'close') {
@@ -233,17 +302,17 @@ async function main() {
   await sleep(2500);
   if (shellExitedAt === null) shell.kill();
 
-  const marker = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, 'utf8').trim().split('\n') : [];
-  const endLine = marker.find((line) => line.split(' ')[1] === 'end');
+  const endLine = hookLinesSince(markerPath, actionAt).find((hookLine) => hookLine.label === 'end');
   console.log(JSON.stringify({
     mode,
+    ...(stepResult ? { [mode]: stepResult } : {}),
     claudeVersion: spawnSync(claudeExe, ['--version'], { encoding: 'utf8' }).stdout.trim(),
     claudeExitedMsAfterAction: claudeExitedAt === null ? null : claudeExitedAt - actionAt,
     claudeExitedMsAfterOrphanStep: claudeExitedAt === null || pollFrom === actionAt ? null : claudeExitedAt - pollFrom,
     forcedAfter15s: forced,
     sessionEndHookRan: Boolean(endLine),
-    sessionEndHookMsAfterAction: endLine ? Number(endLine.split(' ')[0]) - actionAt : null,
-    sessionEndReason: endLine ? endLine.split(' ').slice(2).join(' ') : null,
+    sessionEndHookMsAfterAction: endLine ? endLine.at - actionAt : null,
+    sessionEndReason: endLine ? endLine.reason : null,
     transcriptBefore,
     transcriptAfter: transcriptState(newestTranscript(startedAt)),
     canaryRecordBefore: canaryBefore,

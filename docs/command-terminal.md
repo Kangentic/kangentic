@@ -67,11 +67,25 @@ The agent-absence sweep (see [Session Lifecycle](session-lifecycle.md#a-session-
 is what notices, and the agent's SessionEnd hook asks it to look at once, so `/exit` closes the
 window in about 4 seconds. `/clear` also fires SessionEnd, but its process stays alive and the
 process tree keeps the terminal. Every end, a desktop Stop included, goes through
-`SessionManager.endCommandTerminal`, which refuses a task's session.
+`SessionManager.endCommandTerminal`, which refuses a task's session. The session directory
+outlives the shell: a Stop returns at once, but the directory is deleted only after the PTY
+exits, so a still-exiting agent's SessionEnd hook writes into a directory that exists.
 
-One gap remains. The sweep never judges a WSL shell, since its agent is not a Win32 descendant of
-`wsl.exe`, so a WSL terminal outlives its agent as a bare shell until the PTY exits. A suspend (the
-idle timeout, a project relocate) ends a terminal outright, since there is no record to resume.
+The sweep waits for evidence that the agent started before it judges a terminal: the agent's
+first SessionStart, or its first alt-screen entry, which no shell emits. A shell slow to reach the
+agent command (a heavy profile, a cold machine) used to be ended 30 seconds in, before its agent
+ran. Without either signal the sweep judges the terminal after a two-minute ceiling anyway. That
+covers a launch that failed and an agent with neither hooks nor an alt screen, at the cost of
+leaving those up to two minutes longer than before.
+
+The sweep cannot read a WSL shell's tree (its agent is not a Win32 descendant of `wsl.exe`), and
+it does not run at all with the background-shell watcher off. There the agent's SessionEnd is the
+only signal, so a SessionEnd with no SessionStart within 5 seconds ends the terminal. `/clear`
+sends its SessionStart 148 ms after its SessionEnd, and a `/resume` choice 116 ms after (Claude
+Code 2.1.294), well inside that settle. An open `/resume` picker sends neither, so browsing it
+costs nothing. An agent with no SessionEnd hook in either case still outlives its agent until the PTY
+exits. A suspend (the idle timeout, a project relocate) ends a terminal outright, since there is
+no record to resume.
 
 Nothing in the renderer used to close a window when main ended its session, since `App.tsx`
 ignores an intentional exit. `useCloseCommandWindowOnRemoval` (`CommandTerminalLayer.tsx`, mounted

@@ -39,14 +39,19 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   `slot-taken` throw. Never pick or cap slots from the window store alone: a phone terminal has
   no window.
 - **A terminal ENDS when its agent exits, and every end goes through
-  `SessionManager.endCommandTerminal`.** It kills, awaits the exit, removes the row and deletes
-  the session directory, and refuses a task's session. The agent-absence sweep judges Command
-  Terminals (do not reintroduce a transient exclusion in `isAgentAbsenceCandidate`), a SessionEnd
-  hook fast-paths it, and a PTY that exits on its own removes its row in the spawn flow's
-  `onPtyExited`. A Command Terminal must never be left as a bare shell a paired phone can type
-  into. Known gap: the sweep never judges a WSL shell (its agent is not a Win32 descendant of
-  `wsl.exe`), and it does not run with the background-shell watcher off, so in either case a
-  terminal outlives its agent until its PTY exits.
+  `SessionManager.endCommandTerminal`.** It kills, removes the row, and deletes the session
+  directory only after the exit (the files are detached first so `remove()` keeps them, and a
+  still-exiting agent's SessionEnd hook has somewhere to write). It refuses a task's session. A
+  PTY that exits on its own removes its row in the spawn flow's `onPtyExited`. A Command Terminal
+  must never be left as a bare shell a paired phone can type into.
+- **The agent-absence sweep judges Command Terminals, and the SessionEnd hook fast-paths it.** Do
+  not reintroduce a transient exclusion in `isAgentAbsenceCandidate`. The sweep judges a terminal
+  only once its agent showed it started (its first SessionStart, or its first alt-screen entry) or
+  the start ceiling has passed, so a slow shell is not ended before its agent runs. Where the tree
+  cannot judge (`canTreeJudgeAgent`: a WSL shell, or the background-shell watcher off), a
+  SessionEnd with no SessionStart inside the end settle ends the terminal instead. Known gap: an
+  agent with no SessionEnd hook, under WSL or with the watcher off, outlives its agent until its
+  PTY exits.
 - **The desktop window follows a main-initiated end through ONE removal subscriber.**
   `useCloseCommandWindowOnRemoval` (mounted in `AppLayout`) closes the slot's window when a
   `session-removed` push names a session the `transientSessions` map still points at. A
@@ -129,10 +134,13 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   the cold-spawn checkout guard, the trust write, and the branch and label round-trips. The
   dirty-guard file also pins main's slot allocation, the cap, concurrent reservations and the
   unattended start's guards.
-- **Test (ending):** `tests/unit/session-manager-end-command-terminal.test.ts` (the end order and
-  the task-session refusal), `session-manager-agent-absence.test.ts` (terminals are judged and
-  ended, the SessionEnd fast path, `/clear` survives), `session-spawn-flow.test.ts` (the PTY-exit
-  removal), `transient-session-kill-by-slot.test.ts` (scrub before kill), and
+- **Test (ending):** `tests/unit/session-manager-end-command-terminal.test.ts` (the end order, the
+  directory kept until the exit with real files, and the task-session refusal),
+  `session-manager-agent-absence.test.ts` (terminals are judged and ended, the start-evidence
+  gate and its ceiling, the SessionEnd fast path, the WSL and watcher-off end settle, `/clear`
+  survives), `session-telemetry-wiring.test.ts` (`hasAgentAbsenceSweep`, which picks the end
+  settle), `session-spawn-flow.test.ts` (the PTY-exit removal),
+  `transient-session-kill-by-slot.test.ts` (scrub before kill), and
   `command-terminal-namer.test.ts`.
 - **Test (UI):** `tests/ui/command-terminal.spec.ts`, `command-terminal-branch.spec.ts`, and
   `sidebar-command-terminals.spec.ts` cover the window chrome, the branch pill, and the sidebar
