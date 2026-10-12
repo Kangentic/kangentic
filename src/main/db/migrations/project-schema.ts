@@ -1853,7 +1853,7 @@ export function runProjectMigrations(db: Database.Database): void {
  * One transaction, like the `run_mode` and usage-lineage migrations. The
  * workflow engine's probe (`probeWorkflowProject`) checks only for the
  * `workflows` table before it reads `tasks.workflow_id`, so the table and the
- * column must land together: a run that failed between them used to leave a
+ * column must land together. A run that failed between them used to leave a
  * board the probe could not read until the next open finished the migration.
  */
 function runWorkflowsMigration(db: Database.Database): void {

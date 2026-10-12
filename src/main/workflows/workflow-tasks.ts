@@ -21,9 +21,8 @@ export function workflowTasks(context: IpcContext, homeProjectId: string, workfl
  * gone, which is what `linkEndState` needs to tell apart.
  *
  * Only a SQLite failure (a locked, corrupt or half-migrated file) makes a
- * project unread. Anything else is a bug, and reaches the caller: a bare catch
- * here once let four unit suites whose database mock had no
- * `getExistingProjectDb` read an empty task list and pass.
+ * project unread. Anything else is a bug and reaches the caller. Swallowed, it
+ * would read as a board holding none of the workflow's tasks and hide the bug.
  */
 export function readWorkflowTasks(
   context: IpcContext,
