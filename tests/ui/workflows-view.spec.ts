@@ -84,15 +84,15 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
   const workflows = seed === 'running' || seed === 'across-boards' || seed === 'all-done' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
   // A task row and a Done column tagged with the other project are on its board.
   const otherBoard = seed === 'across-boards'
-    ? `state.projects.push({ id: '${OTHER_PROJECT_ID}', name: 'kangentic-mobile', path: '/mock/kangentic-mobile', github_url: null, default_agent: 'claude', group_id: null, position: 1, last_opened: ts, created_at: ts });
-       state.swimlanes.push(Object.assign({}, state.DEFAULT_SWIMLANES[6], { id: 'mobile-done', position: 6, color: '${OTHER_DONE_COLOR}', projectId: '${OTHER_PROJECT_ID}', created_at: ts }));
+    ? `state.projects.push({ id: '${OTHER_PROJECT_ID}', name: 'kangentic-mobile', path: '/mock/kangentic-mobile', github_url: null, default_agent: 'claude', group_id: null, position: 1, last_opened: seededAt, created_at: seededAt });
+       state.swimlanes.push(Object.assign({}, state.DEFAULT_SWIMLANES[6], { id: 'mobile-done', position: 6, color: '${OTHER_DONE_COLOR}', projectId: '${OTHER_PROJECT_ID}', created_at: seededAt }));
        state.tasks.push({
          id: 't420', display_id: 420, title: 'Budgets on the phone', description: 'Planned by the workflow agent.',
          swimlane_id: 'mobile-done', position: 0, agent: 'claude', session_id: null, worktree_path: null, branch_name: null,
          pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: 0, labels: [], priority: 0,
-         attachment_count: 0, archived_at: ts, workflow_id: 'wf-usage', workflow_project_id: '${PROJECT_ID}', projectId: '${OTHER_PROJECT_ID}',
+         attachment_count: 0, archived_at: seededAt, workflow_id: 'wf-usage', workflow_project_id: '${PROJECT_ID}', projectId: '${OTHER_PROJECT_ID}',
          route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
-         created_at: ts, updated_at: ts,
+         created_at: seededAt, updated_at: seededAt,
        });`
     : '';
   const links = hasRunning
@@ -104,7 +104,7 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
     ? `state.tasks.find(function (task) { return task.id === '${extras.sessionTaskId}'; }).session_id = 'sess-${extras.sessionTaskId}';
        state.sessions.push({
          id: 'sess-${extras.sessionTaskId}', taskId: '${extras.sessionTaskId}', projectId: '${PROJECT_ID}',
-         pid: 9414, status: 'running', shell: 'bash', cwd: '/mock/kangentic', startedAt: ts, exitCode: null,
+         pid: 9414, status: 'running', shell: 'bash', cwd: '/mock/kangentic', startedAt: seededAt, exitCode: null,
        });`
     : '';
   // Yesterday at 18:20 in the page's own time zone, so the note's day is the page's.
@@ -117,13 +117,13 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
     ${pausedAt}
     window.__mockWorkflowLinks = ${JSON.stringify(links)};
     window.__mockPreConfigure(function (state) {
-      var ts = new Date().toISOString();
+      var seededAt = new Date().toISOString();
       state.config.sidebar = { width: ${sidebarWidth} };
       state.config.sidebarVisible = true;
       ${extras.skipDeleteConfirm ? 'state.config.skipDeleteConfirm = true;' : ''}
-      state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
+      state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: seededAt, created_at: seededAt });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
-        state.swimlanes.push(Object.assign({}, swimlane, { id: 'lane-' + index, position: index, created_at: ts }));
+        state.swimlanes.push(Object.assign({}, swimlane, { id: 'lane-' + index, position: index, created_at: seededAt }));
       });
       ${iconlessColumn ? `state.swimlanes.forEach(function (lane) { if (lane.name === ${JSON.stringify(iconlessColumn)}) lane.icon = null; });` : ''}
       ${JSON.stringify(tasks)}.forEach(function (row, index) {
@@ -131,9 +131,9 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
           id: 't' + row[0], display_id: row[0], title: row[1], description: 'Planned by the workflow agent.',
           swimlane_id: 'lane-' + row[2], position: index, agent: 'claude', session_id: null, worktree_path: null, branch_name: null,
           pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: 0, labels: [], priority: 0,
-          attachment_count: 0, archived_at: row[2] === 6 ? ts : null, workflow_id: 'wf-usage', workflow_project_id: '${PROJECT_ID}',
+          attachment_count: 0, archived_at: row[2] === 6 ? seededAt : null, workflow_id: 'wf-usage', workflow_project_id: '${PROJECT_ID}',
           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
-          created_at: ts, updated_at: ts,
+          created_at: seededAt, updated_at: seededAt,
         });
       });
       ${otherBoard}

@@ -683,63 +683,76 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
 
   // Create, one transaction per board. Start is not one transaction: a board's
   // tasks and the home database's links and state are separate files, which no
-  // single transaction spans. The window is the home write below: if it fails,
-  // the boards hold the new tasks while the workflow stays a draft, and a retry
-  // of Start creates them again. Both writes are local SQLite, and the
-  // re-checks above have already run, so the window needs a disk failure.
+  // single transaction spans. A write that fails after an earlier board
+  // committed (a later board, or the home write) undoes what those boards
+  // hold, so the workflow stays a draft that a retry of Start can start: a
+  // taken-in task still a member would fail the re-check above, and a created
+  // one would be created twice. Every write is local SQLite and the re-checks
+  // have run, so getting here needs a disk failure.
   const idByKey = new Map<string, { projectId: string; taskId: string }>();
-  for (const [projectId, plannedTasks] of byProject) {
-    const { db, tasks, lanes } = projectRepos(projectId);
-    const todo = todoColumn(lanes)!;
-    writeTransaction(db, () => {
-      for (const planned of plannedTasks) {
-        const membership = {
-          workflow_id: workflow.id,
-          workflow_project_id: homeProjectId,
-          route_start_swimlane_id: planned.route_start_swimlane_id,
-          route_last_swimlane_id: planned.route_last_swimlane_id,
-          skipped_swimlane_ids: planned.skipped_swimlane_ids,
-          canvas_x: planned.canvas_x,
-          canvas_y: planned.canvas_y,
-        };
-        if (planned.existing_task_id) {
-          tasks.setWorkflowMembership(planned.existing_task_id, membership);
-          idByKey.set(planned.key, { projectId, taskId: planned.existing_task_id });
-        } else {
-          const created = tasks.create({
-            title: planned.title,
-            description: planned.description,
-            swimlane_id: todo.id,
-            labels: planned.labels,
-            priority: planned.priority,
-            // Base branch, Worktree or Project, and Column Settings or Agent Override, as planned.
-            ...runSettingsCreateInput(planned),
-            workflow: membership,
-          });
-          idByKey.set(planned.key, { projectId, taskId: created.id });
+  const committed: StartBoardWrite[] = [];
+  try {
+    for (const [projectId, plannedTasks] of byProject) {
+      const { db, tasks, lanes } = projectRepos(projectId);
+      const todo = todoColumn(lanes)!;
+      const written: StartBoardWrite = { projectId, createdTaskIds: [], takenInTaskIds: [] };
+      writeTransaction(db, () => {
+        for (const planned of plannedTasks) {
+          const membership = {
+            workflow_id: workflow.id,
+            workflow_project_id: homeProjectId,
+            route_start_swimlane_id: planned.route_start_swimlane_id,
+            route_last_swimlane_id: planned.route_last_swimlane_id,
+            skipped_swimlane_ids: planned.skipped_swimlane_ids,
+            canvas_x: planned.canvas_x,
+            canvas_y: planned.canvas_y,
+          };
+          if (planned.existing_task_id) {
+            tasks.setWorkflowMembership(planned.existing_task_id, membership);
+            idByKey.set(planned.key, { projectId, taskId: planned.existing_task_id });
+            written.takenInTaskIds.push(planned.existing_task_id);
+          } else {
+            const created = tasks.create({
+              title: planned.title,
+              description: planned.description,
+              swimlane_id: todo.id,
+              labels: planned.labels,
+              priority: planned.priority,
+              // Base branch, Worktree or Project, and Column Settings or Agent Override, as planned.
+              ...runSettingsCreateInput(planned),
+              workflow: membership,
+            });
+            idByKey.set(planned.key, { projectId, taskId: created.id });
+            written.createdTaskIds.push(created.id);
+          }
         }
-      }
-    })();
-  }
-
-  // Links and the state, in the home database.
-  const homeDb = getProjectDb(homeProjectId);
-  const linkRepository = new TaskLinkRepository(homeDb);
-  writeTransaction(homeDb, () => {
-    for (const link of draft.links) {
-      const blocker = idByKey.get(link.blocker);
-      const blocked = idByKey.get(link.blocked);
-      if (!blocker || !blocked) continue;
-      linkRepository.insert({
-        workflow_id: workflow.id,
-        blocker_project_id: blocker.projectId,
-        blocker_task_id: blocker.taskId,
-        blocked_project_id: blocked.projectId,
-        blocked_task_id: blocked.taskId,
-      });
+      })();
+      // Only once the board's transaction has committed: one that threw rolled itself back.
+      committed.push(written);
     }
-    new WorkflowRepository(homeDb).markStarted(workflow.id);
-  })();
+
+    // Links and the state, in the home database.
+    const homeDb = getProjectDb(homeProjectId);
+    const linkRepository = new TaskLinkRepository(homeDb);
+    writeTransaction(homeDb, () => {
+      for (const link of draft.links) {
+        const blocker = idByKey.get(link.blocker);
+        const blocked = idByKey.get(link.blocked);
+        if (!blocker || !blocked) continue;
+        linkRepository.insert({
+          workflow_id: workflow.id,
+          blocker_project_id: blocker.projectId,
+          blocker_task_id: blocker.taskId,
+          blocked_project_id: blocked.projectId,
+          blocked_task_id: blocked.taskId,
+        });
+      }
+      new WorkflowRepository(homeDb).markStarted(workflow.id);
+    })();
+  } catch (error) {
+    undoStartWrites(committed);
+    throw error;
+  }
 
   for (const projectId of byProject.keys()) announceBoardChange(context, projectId);
 
@@ -764,6 +777,33 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
     linkCount: draft.links.length,
     supersededSource,
   };
+}
+
+/** What Start wrote to one board, committed. */
+interface StartBoardWrite {
+  projectId: string;
+  createdTaskIds: string[];
+  takenInTaskIds: string[];
+}
+
+/**
+ * Take back what a Start that failed part way had committed to its boards:
+ * the tasks it created are deleted, and the board tasks it took in leave the
+ * workflow. Best effort, and it never throws: the failure that got here may be
+ * the disk under one of these boards too, and that error is the one to report.
+ */
+function undoStartWrites(committed: ReadonlyArray<StartBoardWrite>): void {
+  for (const { projectId, createdTaskIds, takenInTaskIds } of committed) {
+    try {
+      const { db, tasks } = projectRepos(projectId);
+      writeTransaction(db, () => {
+        for (const taskId of takenInTaskIds) tasks.setWorkflowMembership(taskId, null);
+      })();
+      for (const taskId of createdTaskIds) tasks.delete(taskId);
+    } catch (undoError) {
+      console.error(`[WORKFLOW] Could not undo a failed Start on project ${projectId.slice(0, 8)}:`, undoError);
+    }
+  }
 }
 
 async function supersedeSourceTask(context: IpcContext, homeProjectId: string, workflow: Workflow): Promise<number | null> {

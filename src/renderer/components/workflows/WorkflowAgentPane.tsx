@@ -112,7 +112,9 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         if (latest === startWidth) return;
         setDragWidth(latest);
         // A failed save puts the stored width back, which is all a user can see of it.
-        void updateConfig({ workflows: { agentPaneWidth: latest } }).catch(() => undefined).finally(() => setDragWidth(null));
+        void updateConfig({ workflows: { agentPaneWidth: latest } })
+          .catch((error: unknown) => console.warn('[WORKFLOW-AGENT-PANE] Could not save the pane width:', error))
+          .finally(() => setDragWidth(null));
       },
     });
   }, [floating, storedWidth, updateConfig]);

@@ -8,6 +8,7 @@ import {
   renameWorkflow,
   resumeWorkflow,
   startWorkflow,
+  WorkflowRequestError,
 } from '../../workflows/workflow-service';
 import {
   addViewTask,
@@ -97,7 +98,12 @@ export function registerWorkflowHandlers(context: IpcContext): void {
   ipcMain.handle(
     IPC.WORKFLOW_SET_POSITIONS,
     (_, projectId: string, workflowId: string, positions: WorkflowCanvasPosition[] | null) => {
-      setViewPositions(context, projectId, workflowId, Array.isArray(positions) ? positions : null);
+      // Null clears every hand-placed card, so only an explicit null may: a
+      // malformed payload is refused rather than read as that.
+      if (positions !== null && !Array.isArray(positions)) {
+        throw new WorkflowRequestError('Card places must be a list, or null to clear them.');
+      }
+      setViewPositions(context, projectId, workflowId, positions);
     },
   );
 

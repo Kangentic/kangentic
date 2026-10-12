@@ -217,6 +217,9 @@ export class WorkflowEngineHost {
       }
     }
     // A backoff lasts only while its task still waits in To Do of an open workflow.
+    // A retry in flight keeps it: the move announces the task in its new column
+    // before the slow work that can still fail and roll it back, and a backoff
+    // dropped then would start the count over on every retry.
     const waiting = new Set<string>();
     for (const snapshot of snapshots) {
       for (const task of snapshot.tasks) {
@@ -224,7 +227,7 @@ export class WorkflowEngineHost {
       }
     }
     for (const key of [...this.failedStarts.keys()]) {
-      if (!waiting.has(key)) this.forgetFailedStart(key);
+      if (!waiting.has(key) && !this.inFlight.has(key)) this.forgetFailedStart(key);
     }
     if (snapshots.length === 0) return { intents: [], titles, taskCounts };
     const now = Date.now();

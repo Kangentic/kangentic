@@ -11,11 +11,14 @@
  * The backoff is 30 s, 60 s, 120 s, then 300 s after each further failure. A
  * wake before the backoff ends starts nothing, but the retry timer's own wake
  * counts as the backoff ended, even when the clock has not quite reached the
- * stored retry time. A success, a task that leaves To
- * Do, a workflow that is done, or a deleted task drops it; Resume (through
- * `wakeWorkflowEngine(workflowId)`) clears that workflow's entries so the next
- * pass retries at once; Pause keeps them. The failure toast is `notifySpawnBlocked`
- * once per reason, with the step the error names.
+ * stored retry time. A success, a task that leaves To Do, a workflow that is
+ * done, or a deleted task drops it, except that a retry still in flight keeps
+ * it: the move commits the task into its target column and announces that before
+ * the slow work that can still fail and roll it back, so a pass in between must
+ * not start the count over. Resume (through `wakeWorkflowEngine(workflowId)`)
+ * clears that workflow's entries so the next pass retries at once; Pause keeps
+ * them. The failure toast is `notifySpawnBlocked` once per reason, with the step
+ * the error names.
  *
  * Also here: the home-link remover `registerWorkflowEngine` installs, so a task
  * deleted on another board takes its links out of the home project's database,
@@ -254,6 +257,56 @@ describe('the workflow engine host', () => {
       expect(vi.getTimerCount()).toBe(0);
       await advance(10 * 60_000);
       expect(movesOf(taskId)).toHaveLength(2);
+    });
+
+    it('keeps its backoff while a retry is in flight, so a move that left To Do and rolls back is the next attempt, not a first one', async () => {
+      // The real move commits the task into its target column and announces it on
+      // the board bus BEFORE its slow work (worktree, spawn), and that announcement
+      // wakes the host. The pass the wake causes runs while the task is outside To
+      // Do and the move is still in flight. If the move then fails, it puts the task
+      // back in To Do. A pass that forgot the backoff mid-move would count the
+      // failure as a first one: always the 30 s delay, and a toast on every retry.
+      const { taskIds: [taskId] } = runningWorkflow('Usage budgets');
+      const announceBoardChange = vi.mocked(context.boardEvents.onBoardChanged).mock.calls[0][0];
+      // Longer than the debounce, so the pass the announcement wakes runs before the move settles.
+      const midMoveMs = DEBOUNCE_MS + 100;
+      const failedAt: number[] = [];
+      const evaluationsDuringMove: number[] = [];
+      const backoffDuringMove: Array<number | null> = [];
+      harness.handleTaskMove.mockImplementation(async (_context: unknown, input: MoveInput, _origin: string, projectId: string) => {
+        startTimes.push(Date.now());
+        const db = dbOf(projectId);
+        db.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(input.targetSwimlaneId, input.taskId);
+        const evaluationsBefore = engine.stats().samples;
+        announceBoardChange({ projectId, change: 'task-updated', ids: [input.taskId] });
+        await new Promise<void>((resolve) => { setTimeout(resolve, midMoveMs); });
+        // Slow work done, still failing: what the host made of the task meanwhile.
+        evaluationsDuringMove.push(engine.stats().samples - evaluationsBefore);
+        backoffDuringMove.push(engine.failedStart(projectId, input.taskId)?.attempts ?? null);
+        db.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(todoOf(projectId).id, input.taskId);
+        failedAt.push(Date.now());
+        throw new Error('git exploded');
+      });
+      const delays = [30_000, 60_000, 120_000];
+
+      await advance(DEBOUNCE_MS + midMoveMs);
+
+      for (let attempt = 1; attempt <= delays.length; attempt += 1) {
+        expect(startTimes).toHaveLength(attempt);
+        const failure = engine.failedStart('home', taskId)!;
+        expect(failure.attempts).toBe(attempt);
+        expect(failure.retryAt).toBe(failedAt[attempt - 1] + delays[attempt - 1]);
+        if (attempt < delays.length) {
+          await advance(failure.retryAt - Date.now() + DEBOUNCE_MS + midMoveMs);
+        }
+      }
+
+      // Every move was overtaken by a pass while the task sat outside To Do, and
+      // from the second move on that pass found the earlier failure still recorded.
+      expect(evaluationsDuringMove.every((evaluations) => evaluations >= 1)).toBe(true);
+      expect(backoffDuringMove).toEqual([null, 1, 2]);
+      // The same reason each time, so one toast.
+      expect(harness.notifySpawnBlocked).toHaveBeenCalledTimes(1);
     });
 
     it('is retried by a one-shot timer that never keeps the app from quitting, and dispose clears it', async () => {

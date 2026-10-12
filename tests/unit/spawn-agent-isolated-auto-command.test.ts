@@ -81,12 +81,15 @@ vi.mock('../../src/main/transition-engine/turn-completion', () => ({
  */
 const columnMessages = vi.hoisted(() => new Map<string, string>());
 
+/** A message row's Condition and Frequency limit, as the automations table holds them. */
+type MessageGuard = { condition: string | null; max_runs: number | null };
+
 /**
  * The Condition and Frequency limit a column's seeded message row carries, per
  * column. Absent means a plain row (null for both), which is every case outside
  * the guarded-message describe at the end of the file.
  */
-const columnMessageGuards = vi.hoisted(() => new Map<string, { condition: string | null; max_runs: number | null }>());
+const columnMessageGuards = vi.hoisted(() => new Map<string, MessageGuard>());
 
 vi.mock('../../src/main/db/repositories/automation-repository', () => ({
   AutomationRepository: class {
@@ -788,7 +791,7 @@ describe('spawnAgent handoff branch: a column message with a Condition or a Freq
   }
 
   /** A codex destination column with the given message, and the guard its row carries. */
-  function makeHandoffLane(message: string, guard?: { condition: string | null; max_runs: number | null }): Swimlane {
+  function makeHandoffLane(message: string, guard?: MessageGuard): Swimlane {
     const lane = makeSwimlane('lane-codex', {
       session_target: 'main',
       auto_command: message,
@@ -814,7 +817,7 @@ describe('spawnAgent handoff branch: a column message with a Condition or a Freq
     vi.mocked(agentRegistry.get).mockReturnValue(null as never);
   });
 
-  const GUARDED_CASES: Array<{ label: string; message: string; guard: { condition: string | null; max_runs: number | null } }> = [
+  const GUARDED_CASES: Array<{ label: string; message: string; guard: MessageGuard }> = [
     { label: 'a Condition', message: '/merge-back', guard: { condition: 'The PR is ready to merge.', max_runs: null } },
     { label: 'a Frequency limit', message: '/merge-back', guard: { condition: null, max_runs: 1 } },
     { label: 'a Frequency limit of zero', message: '/merge-back', guard: { condition: null, max_runs: 0 } },
@@ -837,7 +840,7 @@ describe('spawnAgent handoff branch: a column message with a Condition or a Freq
     expect(deps.submitContent).not.toHaveBeenCalled();
   });
 
-  const UNGUARDED_CASES: Array<{ label: string; guard?: { condition: string | null; max_runs: number | null } }> = [
+  const UNGUARDED_CASES: Array<{ label: string; guard?: MessageGuard }> = [
     { label: 'no Condition and no Frequency limit' },
     { label: 'a blank Condition and a null Frequency limit', guard: { condition: '   ', max_runs: null } },
   ];

@@ -140,12 +140,28 @@ async function centerOf(page: Page, locator: ReturnType<Page['locator']>): Promi
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
+/** The place in a React Flow node's `translate(...)` transform, or null when it has none. */
+function parseTranslate(transform: string): { x: number; y: number } | null {
+  const match = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(transform);
+  return match ? { x: Number(match[1]), y: Number(match[2]) } : null;
+}
+
 /** Where React Flow has put a card, from the translate it writes on the node: state, not a measured box. */
 async function translateOf(page: Page, key: string): Promise<{ x: number; y: number }> {
   const style = await node(page, key).evaluate((element) => (element as HTMLElement).style.transform);
-  const match = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(style);
-  if (!match) throw new Error(`card ${key} has no translate: "${style}"`);
-  return { x: Number(match[1]), y: Number(match[2]) };
+  const place = parseTranslate(style);
+  if (!place) throw new Error(`card ${key} has no translate: "${style}"`);
+  return place;
+}
+
+/** Press a card by hand, below its title, and move it by `dx`, `dy` with the button still down. */
+async function pressAndMoveCard(page: Page, key: string, dx: number, dy: number, steps: number): Promise<void> {
+  const box = await card(page, key).boundingBox();
+  if (!box || box.width === 0) throw new Error('card not laid out');
+  const start = { x: box.x + box.width / 2, y: box.y + 60 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + dx, start.y + dy, { steps });
 }
 
 /** Make a card `extra` pixels taller than it is now (0 puts it back), the way new content would: React Flow's observer measures it. */
@@ -319,11 +335,7 @@ test.describe('Workflows canvas gestures', () => {
       await expect(card(page, 'task-3')).toHaveCSS('cursor', 'pointer');
       await expect(page.locator('.workflow-canvas .react-flow__pane')).toHaveCSS('cursor', 'grab');
 
-      const box = await card(page, 'task-3').boundingBox();
-      if (!box) throw new Error('no card to move');
-      await page.mouse.move(box.x + box.width / 2, box.y + 60);
-      await page.mouse.down();
-      await page.mouse.move(box.x + box.width / 2 + 60, box.y + 140, { steps: 8 });
+      await pressAndMoveCard(page, 'task-3', 60, 80, 8);
       await expect(page.locator('.react-flow__node.dragging')).toHaveCount(1);
       await expect(node(page, 'task-3')).toHaveClass(/\bdragging\b/);
       await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('box-shadow', /0px 18px 40px/);
@@ -344,11 +356,7 @@ test.describe('Workflows canvas gestures', () => {
     const { browser, page } = await launch('draft', { fakeClock: true });
     try {
       const canvas = byTestId(page, 'workflow-canvas');
-      const placed = await card(page, 'task-3').boundingBox();
-      if (!placed || placed.width === 0) throw new Error('card not laid out');
-      await page.mouse.move(placed.x + placed.width / 2, placed.y + 60);
-      await page.mouse.down();
-      await page.mouse.move(placed.x + placed.width / 2 + 60, placed.y + 140, { steps: 8 });
+      await pressAndMoveCard(page, 'task-3', 60, 80, 8);
       await page.mouse.up();
       await expect(byTestId(page, 'workflow-auto-layout')).toBeEnabled();
 
@@ -362,11 +370,7 @@ test.describe('Workflows canvas gestures', () => {
       }, { timeout: 10_000 }).toBe('');
 
       // The slide is on. Grab a card that is not sliding, and move it.
-      const grabbed = await card(page, 'task-1').boundingBox();
-      if (!grabbed || grabbed.width === 0) throw new Error('card not laid out');
-      await page.mouse.move(grabbed.x + grabbed.width / 2, grabbed.y + 60);
-      await page.mouse.down();
-      await page.mouse.move(grabbed.x + grabbed.width / 2 + 40, grabbed.y + 100, { steps: 6 });
+      await pressAndMoveCard(page, 'task-1', 40, 40, 6);
       await expect(node(page, 'task-1')).toHaveClass(/\bdragging\b/);
       await expect(canvas).not.toHaveAttribute('data-arranging');
       await page.mouse.up();
@@ -400,11 +404,7 @@ test.describe('Workflows canvas gestures', () => {
       await expect.poll(async () => near((await translateOf(page, 'task-3')).y, rest.docs.y)).toBe(true);
 
       // Press Token docs, move it off its slot, and hold.
-      const pressed = await card(page, 'task-3').boundingBox();
-      if (!pressed || pressed.width === 0) throw new Error('card not laid out');
-      await page.mouse.move(pressed.x + pressed.width / 2, pressed.y + 60);
-      await page.mouse.down();
-      await page.mouse.move(pressed.x + pressed.width / 2 + 60, pressed.y + 140, { steps: 8 });
+      await pressAndMoveCard(page, 'task-3', 60, 80, 8);
       await expect(node(page, 'task-3')).toHaveClass(/\bdragging\b/);
       const held = await translateOf(page, 'task-3');
       expect(near(held.y, rest.docs.y)).toBe(false);
@@ -432,9 +432,9 @@ test.describe('Workflows canvas gestures', () => {
       // Never drawn back in its slot on the way: every place it was given is the drop's.
       const seen = await page.evaluate(() => (window as unknown as { __droppedTransforms: string[] }).__droppedTransforms);
       for (const transform of seen) {
-        const match = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(transform);
-        expect(match, transform).not.toBeNull();
-        expect(near(Number(match![1]), held.x) && near(Number(match![2]), held.y), transform).toBe(true);
+        const place = parseTranslate(transform);
+        expect(place, transform).not.toBeNull();
+        expect(near(place!.x, held.x) && near(place!.y, held.y), transform).toBe(true);
       }
     } finally {
       await browser.close();

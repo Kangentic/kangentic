@@ -149,5 +149,10 @@ export async function runWorkflowStep(
     record(true, `Step done, but the move to ${next.name} failed: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
   }
+  // A move a newer one superseded returns without moving the task.
+  if (repos.tasks.getById(task.id)?.swimlane_id !== next.id) {
+    record(true, `Step done, but the task was moved elsewhere before it reached ${next.name}.`);
+    return;
+  }
   record(true, next.role === 'done' ? 'Step done. The route is finished, so the task moved to Done.' : `Step done. Moved on to ${next.name}.`);
 }

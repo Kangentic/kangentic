@@ -19,6 +19,10 @@
  *
  * The run-log row a successful step writes waits for the move's outcome, so it
  * names a move that happened (or the one that failed), never one only intended.
+ * The step reads the task back after the move resolves: a move a newer one
+ * superseded returns without moving the task, and the row then says the task was
+ * moved elsewhere. The mocked move puts the task in its target column, as the
+ * real one does.
  * The check's input also carries the PR's merge readiness.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -33,6 +37,16 @@ const hoisted = vi.hoisted(() => ({
   /** The state the workflow row reads, which a test moves to pause it. */
   workflowState: 'running',
 }));
+
+interface MoveInput {
+  taskId: string;
+  targetSwimlaneId: string;
+}
+
+/** What a move does to the task row: the task is in the target column afterwards. */
+function moveTaskTo(swimlaneId: string): void {
+  hoisted.task = { ...hoisted.task, swimlane_id: swimlaneId };
+}
 
 const COLUMNS = [
   { id: 'lane-todo', name: 'To Do', position: 0, role: 'todo', is_archived: false, is_ghost: false, description: null },
@@ -114,7 +128,10 @@ describe('the workflow step and the turn it judged', () => {
       ok: true,
       answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: true, reason: 'The work is done.' }]]),
     }));
-    hoisted.handleTaskMove.mockImplementation(async () => undefined);
+    // The real move puts the task in its target column, and the step reads it back.
+    hoisted.handleTaskMove.mockImplementation(async (_context: unknown, input: MoveInput) => {
+      moveTaskTo(input.targetSwimlaneId);
+    });
     context = {
       sessionManager: {
         getActivityCache: () => activity,
@@ -214,7 +231,12 @@ describe('the workflow step and the turn it judged', () => {
   describe('the step\'s run-log row records the move\'s outcome, not its intent', () => {
     it('writes the succeeded row only after the move resolves', async () => {
       let finishMove: () => void = () => {};
-      hoisted.handleTaskMove.mockImplementation(() => new Promise<void>((resolve) => { finishMove = resolve; }));
+      hoisted.handleTaskMove.mockImplementation((_context: unknown, input: MoveInput) => new Promise<void>((resolve) => {
+        finishMove = () => {
+          moveTaskTo(input.targetSwimlaneId);
+          resolve();
+        };
+      }));
 
       const stepping = runStep();
       await vi.waitFor(() => expect(hoisted.handleTaskMove).toHaveBeenCalledTimes(1));
@@ -254,6 +276,45 @@ describe('the workflow step and the turn it judged', () => {
         met: true,
         detail: 'Step done. The route is finished, so the task moved to Done.',
       }));
+    });
+
+    // A move a newer one superseded returns without moving the task, and it does
+    // not reject, so the step reads the task back to see whether it got there.
+    describe('when the move resolves but the task is not in the column it was moved to', () => {
+      const stepDetails = () => hoisted.recordWorkflowStep.mock.calls.map(([row]) => (row as { detail: string }).detail);
+
+      it.each([
+        ['stays where it was', null],
+        ['is in a different column', 'lane-done'],
+      ] as const)('records that the task was moved elsewhere, not that it moved on, when the task %s', async (_label, otherColumn) => {
+        hoisted.handleTaskMove.mockImplementation(async () => {
+          if (otherColumn) moveTaskTo(otherColumn);
+        });
+
+        await runStep();
+
+        expect(hoisted.handleTaskMove).toHaveBeenCalledTimes(1);
+        expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+        expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+          met: true,
+          detail: 'Step done, but the task was moved elsewhere before it reached Code Review.',
+        }));
+        expect(stepDetails().some((detail) => detail.includes('Moved on'))).toBe(false);
+      });
+
+      it('does not say the task moved to Done when the move toward Done left it in its column', async () => {
+        hoisted.task = { ...hoisted.task, swimlane_id: 'lane-review' };
+        hoisted.handleTaskMove.mockImplementation(async () => undefined);
+
+        await runStep('lane-review');
+
+        expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+        expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+          met: true,
+          detail: 'Step done, but the task was moved elsewhere before it reached Done.',
+        }));
+        expect(stepDetails().some((detail) => detail.includes('moved to Done'))).toBe(false);
+      });
     });
 
     it('records the failure and rethrows when the move is refused', async () => {

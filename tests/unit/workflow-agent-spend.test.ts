@@ -7,6 +7,9 @@
  * session manager's live usage, so every stop that Kangentic makes (Pause, a
  * restart for new checkouts, the end of the workflow) has to write that row
  * first, and a stop the CLI makes (its exit) writes it from the exit listener.
+ * The agent-absence sweep is the third: it emits `agent-absent`, then kills the
+ * session, so its exit arrives intentional and the exit listener skips it; the
+ * `agent-absent` edge writes the spend instead.
  * The fake session manager clears the live usage on suspend, kill and remove as
  * the real one does, which is what makes "before" observable: a capture that ran
  * after the stop finds nothing to write and leaves no row.
@@ -344,11 +347,32 @@ describe('a workflow\'s own agent: spend and conversation', () => {
       expect(ledgerRows('pty-agent')).toHaveLength(0);
     });
 
+    it('when the sweep retires an agent whose CLI is gone: captured at the agent-absent edge, since the intentional exit after it skips it', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession();
+
+      // The sweep emits agent-absent, then kills the session (which drops its live usage), and the exit arrives intentional.
+      manager.emit('agent-absent', 'pty-agent');
+      manager.kill('pty-agent');
+      manager.emit('exit', 'pty-agent', 0, true);
+
+      expectBookedOnce('pty-agent');
+    });
+
     it('not for a task\'s session, which has a sessions row and its own writer', () => {
       agent.registerWorkflowAgentLifecycle(context);
       addAgentSession({ id: 'pty-task', taskId: 'task-1', workflowId: undefined, transient: false });
 
       manager.emit('exit', 'pty-task', 1, false);
+
+      expect(ledgerRows('pty-task')).toHaveLength(0);
+    });
+
+    it('not for a task\'s session the sweep retires either, which has its own writer', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession({ id: 'pty-task', taskId: 'task-1', workflowId: undefined, transient: false });
+
+      manager.emit('agent-absent', 'pty-task');
 
       expect(ledgerRows('pty-task')).toHaveLength(0);
     });
@@ -414,11 +438,33 @@ describe('a workflow\'s own agent: spend and conversation', () => {
       expect(harness.retrievalCall).not.toHaveBeenCalled();
     });
 
+    it('when the sweep retires an agent whose CLI is gone, at the agent-absent edge', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession();
+
+      manager.emit('agent-absent', 'pty-agent');
+      manager.kill('pty-agent');
+      // The exit that follows is intentional, so it asks for nothing more.
+      manager.emit('exit', 'pty-agent', 0, true);
+
+      expect(harness.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(harness.retrievalCall.mock.calls[0]).toEqual(TURNS_CALL(paths.home));
+    });
+
     it('not for a task\'s session, which the conversation indexer already records', () => {
       agent.registerWorkflowAgentLifecycle(context);
       addAgentSession({ id: 'pty-task', taskId: 'task-1', workflowId: undefined, transient: false });
 
       manager.emit('exit', 'pty-task', 1, false);
+
+      expect(harness.retrievalCall).not.toHaveBeenCalled();
+    });
+
+    it('not for a task\'s session the sweep retires either', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession({ id: 'pty-task', taskId: 'task-1', workflowId: undefined, transient: false });
+
+      manager.emit('agent-absent', 'pty-task');
 
       expect(harness.retrievalCall).not.toHaveBeenCalled();
     });

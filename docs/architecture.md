@@ -231,7 +231,7 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 | `workflow:removeTask` | invoke | Remove a task from the workflow (a planned one is gone; a created one stays on its board) |
 | `workflow:setLink` | invoke | Link or unlink two tasks (one waits for the other to reach Done) |
 | `workflow:setRoute` | invoke | A task's route, as the column ids it visits |
-| `workflow:setPositions` | invoke | Where hands placed cards, or null for the automatic layout; changes no plan revision |
+| `workflow:setPositions` | invoke | Where hands placed cards, or null for the automatic layout; any other payload is refused; changes no plan revision |
 | `workflow:agentOpen` | invoke | The pane shows the workflow agent: an existing session as it is (a paused one stays paused), else a start that resumes its conversation by id or sends the first message (`src/main/workflows/workflow-agent.ts`) |
 | `workflow:agentResume` | invoke | The pane's Resume: start the paused agent again on its own conversation |
 | `workflow:agentPause` | invoke | The pane's Pause: suspend the agent, keeping its conversation (its spend is captured first) |

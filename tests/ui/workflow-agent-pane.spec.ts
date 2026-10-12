@@ -401,6 +401,10 @@ test('a width that fails to save snaps back to the stored width, with no unhandl
 
     const pageErrors: string[] = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
+    const warnings: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'warning') warnings.push(message.text());
+    });
     await page.evaluate(() => {
       // A rejection that nothing catches is a promise event, not a window error,
       // so `dragPaneEdge`'s error listener cannot see it.
@@ -433,6 +437,10 @@ test('a width that fails to save snaps back to the stored width, with no unhandl
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     expect(await page.evaluate(() => (window as unknown as { __unhandledRejections: string[] }).__unhandledRejections)).toEqual([]);
     expect(pageErrors).toEqual([]);
+    // The refusal is not swallowed: the pane logs that the width was not saved, with the reason.
+    // Console events cross the debugging protocol after the page logs them, so poll for the one.
+    await expect.poll(() => warnings.some((warning) => warning.includes('Could not save the pane width'))).toBe(true);
+    expect(warnings.find((warning) => warning.includes('Could not save the pane width'))).toContain('The settings file is read only');
   } finally {
     await browser.close();
   }

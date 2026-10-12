@@ -8,6 +8,10 @@
  * session handlers are mocked: Start moves only the source task, and most
  * workflows here have none. The ones that do pin that a source task that cannot
  * move to Done never fails a Start that has already run.
+ *
+ * Start is several writes (one transaction per board, then the home database),
+ * so a write that throws after an earlier board committed undoes what those
+ * boards hold. The cases below make each of those writes throw, on real SQLite.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
@@ -34,6 +38,7 @@ const { runProjectMigrations } = await import('../../src/main/db/migrations/proj
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
+const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const service = await import('../../src/main/workflows/workflow-service');
 const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake');
 
@@ -274,6 +279,128 @@ describe('workflow operations', () => {
     const result = await service.startWorkflow(context, 'home', workflow.id);
     expect(result.createdCount).toBe(0);
     expect(tasksOf('home').getById(existing.id)!.workflow_id).toBe(workflow.id);
+  });
+
+  describe('a Start whose write fails after an earlier board committed', () => {
+    // Start writes one transaction per board, then the home database's links and
+    // state: separate files, so no single transaction spans them. A write that
+    // throws part way undoes what the committed boards hold (the tasks it
+    // created are deleted, the board tasks it took in leave the workflow), so
+    // the workflow stays a draft and a retry of Start can start it.
+    const diskFull = new Error('disk full');
+
+    /**
+     * A taken-in home task, a new home task, then a new task on the second board.
+     * Boards are written in the plan's order, so the home board commits before the
+     * second one is touched: a failure on the second board has something to undo.
+     */
+    function plannedAcrossBoards() {
+      const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+      const takenIn = tasksOf('home').create({ title: 'Already here', description: '', swimlane_id: todo.id });
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, {
+        title: 'Usage budgets',
+        tasks: [
+          { key: 'old', title: 'Already here', existingTask: String(takenIn.display_id) },
+          { key: 'api', title: 'Budgets API' },
+          { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' },
+        ],
+        links: [{ blocker: 'old', blocked: 'api' }, { blocker: 'api', blocked: 'phone' }],
+      });
+      return { workflow, takenIn, todoId: todo.id };
+    }
+
+    const homeLinks = () => new TaskLinkRepository(harness.dbs.get('home') as Database.Database);
+    const titlesOn = (projectId: string) => tasksOf(projectId).list().map((task) => task.title).sort();
+
+    /** Nothing of the failed Start is left: a draft with its plan, and the boards as they were. */
+    function expectBoardsAsBeforeStart(workflowId: string, takenInId: string, todoId: string): void {
+      const workflow = service.requireWorkflow('home', workflowId);
+      expect(workflow.state).toBe('draft');
+      expect(workflow.draft?.tasks).toHaveLength(3);
+      // Created tasks are gone, and the one taken in is an ordinary task in To Do again.
+      expect(titlesOn('home')).toEqual(['Already here']);
+      expect(titlesOn('mobile')).toEqual([]);
+      const takenIn = tasksOf('home').getById(takenInId)!;
+      expect(takenIn.workflow_id).toBeNull();
+      expect(takenIn.workflow_project_id).toBeNull();
+      expect(takenIn.swimlane_id).toBe(todoId);
+      expect(tasksOf('home').listByWorkflow(workflowId)).toEqual([]);
+      expect(homeLinks().listForWorkflow(workflowId)).toEqual([]);
+    }
+
+    /** The retry the undo exists for: it succeeds, and each planned task exists exactly once. */
+    async function expectRetryStartsOnce(workflowId: string, takenInId: string): Promise<void> {
+      const result = await service.startWorkflow(context, 'home', workflowId);
+
+      expect(result.workflow.state).toBe('running');
+      expect(result.createdCount).toBe(2);
+      expect(titlesOn('home')).toEqual(['Already here', 'Budgets API']);
+      expect(titlesOn('mobile')).toEqual(['Budgets on the phone']);
+      expect(tasksOf('home').getById(takenInId)!.workflow_id).toBe(workflowId);
+      expect(tasksOf('home').listByWorkflow(workflowId)).toHaveLength(2);
+      expect(tasksOf('mobile').listByWorkflow(workflowId)).toHaveLength(1);
+      expect(homeLinks().listForWorkflow(workflowId)).toHaveLength(2);
+    }
+
+    it('undoes the home board\'s writes when the second board\'s write throws, and a retry of Start succeeds', async () => {
+      const { workflow, takenIn, todoId } = plannedAcrossBoards();
+      const createTask = TaskRepository.prototype.create;
+      // Only the second board's task fails; the home board's own creates run for real.
+      const createSpy = vi.spyOn(TaskRepository.prototype, 'create').mockImplementation(function (this: InstanceType<typeof TaskRepository>, input) {
+        if (input.title === 'Budgets on the phone') throw diskFull;
+        return createTask.call(this, input);
+      });
+
+      await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toBe(diskFull);
+
+      // The home board committed first, so the failure came after real writes.
+      expect(createSpy.mock.calls.map(([input]) => input.title)).toEqual(['Budgets API', 'Budgets on the phone']);
+      expectBoardsAsBeforeStart(workflow.id, takenIn.id, todoId);
+
+      createSpy.mockRestore();
+      await expectRetryStartsOnce(workflow.id, takenIn.id);
+    });
+
+    it.each([
+      ['a link write', () => vi.spyOn(TaskLinkRepository.prototype, 'insert')],
+      ['marking the workflow started', () => vi.spyOn(WorkflowRepository.prototype, 'markStarted')],
+    ])('undoes both boards\' writes when the home write throws (%s), and a retry of Start succeeds', async (_label, spyOnWrite) => {
+      const { workflow, takenIn, todoId } = plannedAcrossBoards();
+      const writeSpy = spyOnWrite().mockImplementation(() => {
+        throw diskFull;
+      });
+
+      await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toBe(diskFull);
+
+      // Both boards had committed their tasks by then: the home board's and the second board's.
+      expect(writeSpy).toHaveBeenCalled();
+      expectBoardsAsBeforeStart(workflow.id, takenIn.id, todoId);
+
+      writeSpy.mockRestore();
+      await expectRetryStartsOnce(workflow.id, takenIn.id);
+    });
+
+    it('reports the write\'s own error, not the undo\'s, when the undo cannot reach a board', async () => {
+      // The failure that got here may be the disk under one of the boards too:
+      // the error to report is the Start's, and the undo only logs its own.
+      const { workflow, takenIn } = plannedAcrossBoards();
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      vi.spyOn(WorkflowRepository.prototype, 'markStarted').mockImplementation(() => {
+        throw diskFull;
+      });
+      const setMembership = TaskRepository.prototype.setWorkflowMembership;
+      const membershipSpy = vi.spyOn(TaskRepository.prototype, 'setWorkflowMembership').mockImplementation(function (this: InstanceType<typeof TaskRepository>, taskId, membership) {
+        // Start joins tasks to the workflow for real; only the undo's release (null) fails.
+        if (membership === null) throw new Error('undo failed');
+        setMembership.call(this, taskId, membership);
+      });
+
+      await expect(service.startWorkflow(context, 'home', workflow.id)).rejects.toBe(diskFull);
+
+      expect(membershipSpy).toHaveBeenCalledWith(takenIn.id, null);
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining('Could not undo a failed Start'), expect.objectContaining({ message: 'undo failed' }));
+    });
   });
 
   it('only lets a task in To Do wait, and removes a task with its links', async () => {

@@ -283,17 +283,33 @@ describe('the workflow agent\'s reads across projects', () => {
         for (const spy of spies.splice(0)) spy.mockRestore();
       });
 
-      it('owes nothing, so the next idle edge leaves the running agent alone instead of stopping and spawning it again', async () => {
-        const workflowId = idleAgent('session-before-restart');
-        // A conversation to resume, so the start has no first message to build.
+      /** A conversation to resume, so a start has no first message to build. */
+      function recordConversation(workflowId: string): void {
         new WorkflowRepository(homeDb()).setAgentConversation(workflowId, { agentName: 'claude', agentSessionId: 'conversation-1', cwd: paths.home });
-        // The start's last step after its spawn fails: the new agent is already running.
+      }
+
+      /** Makes the start's step after its spawn (recording the conversation) throw, and quiets the log it ends in. */
+      function failStartsAfterTheirSpawn() {
         const startFailure = new Error('the conversation could not be recorded');
         spies.push(vi.spyOn(WorkflowRepository.prototype, 'setAgentConversation').mockImplementation(() => {
           throw startFailure;
         }));
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
         spies.push(errorSpy);
+        return { startFailure, errorSpy };
+      }
+
+      /** Two macrotask turns: a restart runs one turn after the edge or request that scheduled it, and the second lets it finish. */
+      async function settle(): Promise<void> {
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      it('owes nothing, so the next idle edge leaves the running agent alone instead of stopping and spawning it again', async () => {
+        const workflowId = idleAgent('session-before-restart');
+        recordConversation(workflowId);
+        // The start's last step after its spawn fails: the new agent is already running.
+        const { startFailure, errorSpy } = failStartsAfterTheirSpawn();
 
         expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
 
@@ -311,13 +327,56 @@ describe('the workflow agent\'s reads across projects', () => {
         // The new agent goes idle. Were the access still owed, this edge would restart it again.
         activity['session-restarted'] = 'idle';
         manager.emit('activity', 'session-restarted', 'idle');
-        // A restart runs a macrotask after the edge: the second lets one that was scheduled finish.
-        await new Promise((resolve) => setImmediate(resolve));
-        await new Promise((resolve) => setImmediate(resolve));
+        await settle();
 
         expect(suspend).toHaveBeenCalledTimes(1);
         expect(spawn).toHaveBeenCalledTimes(1);
         expect(startAttempts).toHaveBeenCalledTimes(1);
+      });
+
+      it('records the checkouts the new agent reads before the step that threw, so asking for one it has finds nothing missing', async () => {
+        const workflowId = idleAgent('session-before-restart');
+        recordConversation(workflowId);
+        const { startFailure, errorSpy } = failStartsAfterTheirSpawn();
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+        await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Could not restart with the new project access'),
+          startFailure,
+        ));
+        expect(spawn).toHaveBeenCalledTimes(1);
+
+        // The new agent, idle, was started with the mobile checkout. A start that recorded nothing
+        // would read it as missing here, answer 'now', and stop and spawn a healthy agent.
+        activity['session-restarted'] = 'idle';
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('already');
+        await settle();
+
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(startAttempts).toHaveBeenCalledTimes(1);
+      });
+
+      it('records the size it started at before the step that threw, so the next restart keeps the pane\'s size', async () => {
+        const workflowId = service.createWorkflow('home', {}).id;
+        recordConversation(workflowId);
+        const { errorSpy } = failStartsAfterTheirSpawn();
+
+        // The pane's own start, at a size it measured: the workflow row records none.
+        await expect(agent.openWorkflowAgent(context, 'home', workflowId, { cols: 100, rows: 40 })).rejects.toThrow('the conversation could not be recorded');
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(spawn.mock.calls[0][0]).toMatchObject({ cols: 100, rows: 40 });
+        expect(sessions.map((session) => [session.id, session.status])).toEqual([['session-restarted', 'running']]);
+
+        // The restart for a new checkout starts from the size the last start recorded.
+        activity['session-restarted'] = 'idle';
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+        expect(spawn.mock.calls[1][0]).toMatchObject({ cols: 100, rows: 40 });
+        // The restart's own start throws after its spawn too, and logs; let it settle before the spies go.
+        await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Could not restart with the new project access'),
+          expect.any(Error),
+        ));
       });
     });
 

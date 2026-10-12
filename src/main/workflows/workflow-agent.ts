@@ -618,8 +618,13 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
     });
   };
   // The sweep that retires a session whose CLI is gone kills it on purpose, so
-  // its exit arrives intentional; this is the moment the CLI's last words are read.
-  context.sessionManager.on('agent-absent', (sessionId: string) => startOverIfResumeFailed(sessionId, 0));
+  // its exit arrives intentional; this is the moment the CLI's last words are
+  // read, and its spend too, since the exit listener skips an intentional exit.
+  context.sessionManager.on('agent-absent', (sessionId: string) => {
+    const absent = context.sessionManager.getSession(sessionId);
+    if (absent?.workflowId) captureSpend(context, absent);
+    startOverIfResumeFailed(sessionId, 0);
+  });
   // An agent owed new checkouts restarts when it goes idle, which is when the
   // turn that asked for them has ended. A transient session gets no
   // 'turn-ended', so this reads the idle edge itself; an interrupt ends the
