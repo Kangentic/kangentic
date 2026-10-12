@@ -3,7 +3,7 @@ import { CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { useConfigStore } from '../../../stores/config-store';
 import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityResolution';
-import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
+import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
 import { resolveAnswerAgent, type AgentJobChoice } from '../../../../shared/answer-agent';
@@ -53,6 +53,9 @@ export function AnswerAgentRows({ choice, agents, capableAgents, onChange, setti
   const { models, effortLevels } = useAgentCapabilityResolution(chosenName);
   const contextWindows = useModelContextWindows(chosenName);
   const displayNames = useModelDisplayNames(chosenName);
+  // The floating aliases (Claude's `haiku`), listed as Latest like every other
+  // model picker, so a run set to one follows each new release on its own.
+  const modelAliases = useModelAliases(chosenName);
   // Whether this agent's run takes a model, as its adapter declares it. When it
   // does, the model is required: nothing runs on a default nobody chose.
   const takesModel = chosen?.answerCapabilities?.model === true;
@@ -95,6 +98,7 @@ export function AnswerAgentRows({ choice, agents, capableAgents, onChange, setti
             onOpen={() => useConfigStore.getState().rescanModels()}
             contextWindows={contextWindows}
             modelDisplayNames={displayNames}
+            modelAliases={modelAliases}
           />
         </CardRow>
       ) : null}

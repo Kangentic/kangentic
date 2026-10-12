@@ -27,14 +27,16 @@
  *   - the context bar popover (checkmarks, footer, live alias id, Command Terminal);
  *   - the Column Manager All columns table (picked, saved, other-agent lanes,
  *     discovered-only newer version);
- *   - the Settings > Agent default-model combobox.
+ *   - the Settings > Agent default-model combobox;
+ *   - the answer-agent Model rows (Settings > Workflows' Automation agent and
+ *     the Knowledge Graph card), one shared component.
  * Each test that is not in a shared-page describe launches its own page, so no
  * state crosses tests.
  */
 import { test, expect, chromium } from '@playwright/test';
 import path from 'node:path';
 import { launchPage, createProject, waitForBoard, waitForViteReady, gotoVite } from './helpers';
-import type { Browser, Page } from '@playwright/test';
+import type { Browser, Locator, Page } from '@playwright/test';
 
 // Most cases launch their own browser, so a busy parallel shard can spend most
 // of the default 15s on the launch alone (seen under --repeat-each=3).
@@ -1039,6 +1041,134 @@ test.describe('Settings > Agent default model with floating aliases', () => {
       await expect(menu.locator('[data-model-alias-target]')).toHaveText(['Opus 5.5', 'Fable 5.1', 'Sonnet 5.5']);
     });
   });
+});
+
+// ---------------------------------------------------------------------------
+// The answer-agent Model rows (Automation agent, Knowledge Graph)
+// ---------------------------------------------------------------------------
+
+test.describe('Answer-agent model pickers with floating aliases', () => {
+  type AnswerAgentSection = 'automation' | 'knowledgeGraph';
+
+  interface AnswerAgentPicker {
+    name: string;
+    section: AnswerAgentSection;
+    tabId: string;
+    testIdPrefix: string;
+    /** Written before the tab opens: the Model row renders only once an agent is chosen. */
+    setup: Record<string, unknown>;
+  }
+
+  const ANSWER_AGENT_PICKERS: AnswerAgentPicker[] = [
+    {
+      name: 'Settings > Workflows Automation agent',
+      section: 'automation',
+      tabId: 'workflows',
+      testIdPrefix: 'automation-agent',
+      setup: { agent: 'claude' },
+    },
+    {
+      // The card's rows also wait for indexing and the feature's own switch.
+      name: 'Settings > Knowledge Graph',
+      section: 'knowledgeGraph',
+      tabId: 'knowledgeGraph',
+      testIdPrefix: 'knowledge-graph-answer',
+      setup: { indexingEnabled: true, enabled: true, agent: 'claude' },
+    },
+  ];
+
+  /** The config store as these helpers reach it in the page, one shape for every read. */
+  type ConfigStoreWindow = {
+    __zustandStores?: {
+      config: {
+        getState: () => {
+          loadConfig: () => Promise<void>;
+          globalConfig: Record<string, Record<string, unknown> | undefined>;
+        };
+      };
+    };
+  };
+
+  /** Write one global config section through the path the settings UI uses, and wait for the store to hold it. */
+  async function setGlobalSection(page: Page, section: AnswerAgentSection, partial: Record<string, unknown>): Promise<void> {
+    await page.evaluate(
+      ({ key, value }) => window.electronAPI.config.set({ [key]: value }),
+      { key: section, value: partial },
+    );
+    await page.evaluate(() => (window as unknown as ConfigStoreWindow).__zustandStores?.config.getState().loadConfig());
+    await expect.poll(() => page.evaluate(({ key, value }) => {
+      const held = (window as unknown as ConfigStoreWindow).__zustandStores?.config.getState().globalConfig[key];
+      return Object.entries(value).every(([field, expected]) => held?.[field] === expected);
+    }, { key: section, value: partial })).toBe(true);
+  }
+
+  async function readGlobalModel(page: Page, section: AnswerAgentSection): Promise<unknown> {
+    return page.evaluate(
+      (key) => (window as unknown as ConfigStoreWindow).__zustandStores?.config.getState().globalConfig[key]?.model ?? null,
+      section,
+    );
+  }
+
+  /** Open Settings on one tab, retrying the clicks until the field it holds is visible. */
+  async function openSettingsTab(page: Page, tabId: string, field: Locator): Promise<void> {
+    const panel = page.getByTestId('settings-panel');
+    await expect(async () => {
+      if (!(await panel.isVisible())) await page.getByTestId('settings-button').click();
+      await expect(panel).toBeVisible({ timeout: 2000 });
+      await page.getByTestId(`settings-tab-${tabId}`).click({ timeout: 2000 });
+      await expect(field).toBeVisible({ timeout: 2000 });
+    }).toPass({ timeout: 12_000 });
+  }
+
+  for (const picker of ANSWER_AGENT_PICKERS) {
+    test(`${picker.name}: leads with the Latest group, and picking an alias stores its id`, async () => {
+      await withAliasPage(async (page) => {
+        await setGlobalSection(page, picker.section, picker.setup);
+        const input = page.locator(`input[data-testid="${picker.testIdPrefix}-model"]`);
+        await openSettingsTab(page, picker.tabId, input);
+
+        await input.click();
+        const menu = page.locator(`[data-testid="${picker.testIdPrefix}-model-menu"]`);
+        await expect(menu).toBeVisible({ timeout: 3000 });
+        await expect(menu.locator('button[data-model-alias]')).toHaveCount(3);
+        const aliasIds = await menu
+          .locator('button[data-model-alias]')
+          .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('data-model-alias')));
+        expect(aliasIds).toEqual(['opus', 'fable', 'sonnet']);
+        await expect(menu.locator('[data-model-alias-target]')).toHaveText(['Opus 5.5', 'Fable 5.1', 'Sonnet 5.5']);
+        // The alias ids are no longer plain rows, so the footer is the versions
+        // section, with the same count as the New Task picker.
+        await expect(menu.locator('[data-model-pinned-toggle]')).toHaveText(/Specific versions \(7\)/);
+
+        await menu.locator('button[data-model-alias="sonnet"]').click();
+        await expect(input).toHaveValue('Sonnet');
+        await expect(input).toHaveAttribute('title', 'Latest Sonnet, currently Sonnet 5.5');
+        // The CLI's own selector is what the run passes to `--model`.
+        await expect.poll(() => readGlobalModel(page, picker.section)).toBe('sonnet');
+      });
+    });
+  }
+
+  // A value saved before the aliases arrived. Each host builds its own choice
+  // from config, so each host is checked.
+  for (const picker of ANSWER_AGENT_PICKERS) {
+    test(`${picker.name}: a stored specific version still reads as itself and opens expanded`, async () => {
+      await withAliasPage(async (page) => {
+        await setGlobalSection(page, picker.section, { ...picker.setup, model: 'claude-sonnet-5-5' });
+        const input = page.locator(`input[data-testid="${picker.testIdPrefix}-model"]`);
+        await openSettingsTab(page, picker.tabId, input);
+
+        await expect(input).toHaveValue('Sonnet 5.5');
+        await expect(input).not.toHaveAttribute('title');
+
+        await input.click();
+        const menu = page.locator(`[data-testid="${picker.testIdPrefix}-model-menu"]`);
+        await expect(menu).toBeVisible({ timeout: 3000 });
+        await expect(menu.locator('button[data-model-alias]')).toHaveCount(3);
+        await expect(menu.locator('[data-model-option][title="claude-sonnet-5-5"]')).toBeVisible();
+      });
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
