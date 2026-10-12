@@ -337,7 +337,6 @@ async function main() {
     rows: options.rows,
     cwd: options.cwd,
     env: buildEnv(),
-    useConpty: true,
   });
 
   child.onData((data) => {
