@@ -193,7 +193,7 @@ function resolveSentryEsbuildPlugins() {
 /**
  * Upload node-pty's shipped Windows PDBs to Sentry as debug files, under the
  * same token gate as the sourcemaps above. Kangentic ships node-pty's npm
- * prebuilds (conpty.node, pty.node, conpty_console_list.node) unchanged, and
+ * prebuilds (conpty.node, conpty_console_list.node) unchanged, and
  * the tarball carries their PDBs next to them, so the debug ids in a native
  * crash's module list match these files exactly. Without the upload a crash
  * inside conpty.node arrives as raw addresses (DESKTOP-C had to be resolved

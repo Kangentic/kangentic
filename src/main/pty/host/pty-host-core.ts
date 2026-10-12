@@ -26,6 +26,7 @@ import { SessionIdScanner } from '../lifecycle/session-id-manager';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { HostProcessTable } from './host-process-table';
 import { endDeadRootOrphans, type DeadRootOrphanApi } from './dead-root-orphans';
+import { RootPidGate, processNotStartedError, type RootPidOutcome } from './root-pid-gate';
 import { writeToExitedConsole } from '../spawn/exited-console-input';
 import { traceTerminal } from '../terminal-trace';
 import { launchesOwnBinary, runHostExec } from './host-exec';
@@ -119,6 +120,24 @@ function isWslRoot(file: string): boolean {
   return /(^|[\\/])wsl(\.exe)?$/i.test(file.trim());
 }
 
+/**
+ * Subscribe to a new PTY's output and exit. With a pid gate, both are held
+ * until the spawn has been answered (`root-pid-gate.ts`).
+ */
+function subscribeThroughGate(
+  pty: nodePty.IPty,
+  pidGate: RootPidGate | null,
+  handleData: (data: string) => void,
+  handleExit: (exitCode: number, signal: number | undefined) => void,
+): nodePty.IDisposable[] {
+  const onData = pidGate ? pidGate.gateOutput(handleData) : handleData;
+  const onExit = pidGate ? pidGate.gateExit(handleExit) : handleExit;
+  return [
+    pty.onData(onData),
+    pty.onExit(({ exitCode, signal }) => onExit(exitCode, signal)),
+  ];
+}
+
 interface HostSession {
   sessionId: string;
   projectId: string;
@@ -143,8 +162,6 @@ interface PtyEntry {
    *  corrupts its heap on Windows. */
   killed: boolean;
   disposables: nodePty.IDisposable[];
-  /** The shell's pid, kept after its exit for the orphan cleanup. */
-  rootPid: number;
   /** Wall clock just before the spawn: a child of this shell was created after it. */
   spawnedAtMs: number;
   /** A WSL root: the orphan cleanup has nothing to look at. */
@@ -232,7 +249,11 @@ export class PtyHostCore {
 
   // --- Requests -------------------------------------------------------------
 
-  spawn(params: PtyHostSpawnParams): PtyHostSpawnResult {
+  /**
+   * Answers at once when node-pty set the pid at the spawn (POSIX), and once
+   * it has set it otherwise (Windows ConPTY; `root-pid-gate.ts`).
+   */
+  spawn(params: PtyHostSpawnParams): PtyHostSpawnResult | Promise<PtyHostSpawnResult> {
     // The carry-over is copied, so a resume shows unbroken history (see
     // performSpawn). The source's own state stays until main removes it, which
     // it does only once the spawn is known not to have been cancelled.
@@ -276,6 +297,9 @@ export class PtyHostCore {
       params.transient,
     );
 
+    // Holds the PTY's events while the answer waits for node-pty to set the
+    // pid (Windows; `root-pid-gate.ts`). Null when it was set at the spawn.
+    const pidGate = pty.pid > 0 ? null : new RootPidGate(pty);
     const entry: PtyEntry = {
       ptyId: params.ptyId,
       sessionId: params.sessionId,
@@ -283,15 +307,44 @@ export class PtyHostCore {
       exited: false,
       killed: false,
       disposables: [],
-      rootPid: pty.pid,
       spawnedAtMs,
       wslRoot: isWslRoot(params.file),
       exitSequence: params.exitSequence ?? ['\x03'],
     };
     this.ptys.set(params.ptyId, entry);
-    entry.disposables.push(pty.onData((data: string) => timeSyncWork('pty:data', () => this.onPtyData(entry, data))));
-    entry.disposables.push(pty.onExit(({ exitCode }: { exitCode: number }) => this.onPtyExit(entry, exitCode)));
-    return { ok: true, pid: pty.pid };
+    entry.disposables.push(...subscribeThroughGate(
+      pty,
+      pidGate,
+      (data) => timeSyncWork('pty:data', () => this.onPtyData(entry, data)),
+      (exitCode) => this.onPtyExit(entry, exitCode),
+    ));
+    if (!pidGate) return { ok: true, pid: pty.pid };
+    return pidGate.outcome.then((outcome) => this.answerGatedSpawn(entry, pidGate, outcome, previousScrollback));
+  }
+
+  /** Answer a spawn whose pid node-pty had not set yet (see `spawn`). */
+  private answerGatedSpawn(
+    entry: PtyEntry,
+    pidGate: RootPidGate,
+    outcome: RootPidOutcome,
+    previousScrollback: string,
+  ): PtyHostSpawnResult {
+    if (outcome.kind === 'failed') {
+      // Nothing started, so this is a failed spawn, not a session that ended:
+      // main hears no exit, and the host forgets the session as if the spawn
+      // had thrown. Main's failure path seeds the session's ring again.
+      pidGate.discard();
+      entry.exited = true;
+      for (const disposable of entry.disposables) disposable.dispose();
+      this.ptys.delete(entry.ptyId);
+      if (this.sessions.get(entry.sessionId)?.livePtyId === entry.ptyId) this.dropSession(entry.sessionId);
+      return { ok: false, error: toPtyHostError(processNotStartedError(outcome.exitCode)), previousScrollback };
+    }
+    if (outcome.kind === 'timedOut') {
+      console.warn(`[pty-host] session ${entry.sessionId.slice(0, 8)}'s PTY reported no pid and no exit within the wait; answering without its pid`);
+    }
+    pidGate.release();
+    return { ok: true, pid: entry.pty.pid };
   }
 
   async getScrollback(sessionId: string, settle: boolean): Promise<string> {
@@ -365,7 +418,7 @@ export class PtyHostCore {
   ): PtyHostRequestMap[M]['result'] | Promise<PtyHostRequestMap[M]['result']> {
     switch (method) {
       case 'spawn':
-        return this.spawn(params as PtyHostSpawnParams) as PtyHostRequestMap[M]['result'];
+        return this.spawn(params as PtyHostSpawnParams) as PtyHostRequestMap[M]['result'] | Promise<PtyHostRequestMap[M]['result']>;
       case 'getScrollback': {
         const { sessionId, settle } = params as PtyHostRequestMap['getScrollback']['params'];
         return this.getScrollback(sessionId, settle) as Promise<PtyHostRequestMap[M]['result']>;
@@ -399,7 +452,7 @@ export class PtyHostCore {
       case 'stopReportedProcess':
         return this.stopReportedProcess(params as StopProcessRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'spawnRaw':
-        return this.spawnRaw(params as PtyHostRawSpawnParams) as PtyHostRequestMap[M]['result'];
+        return this.spawnRaw(params as PtyHostRawSpawnParams) as PtyHostRequestMap[M]['result'] | Promise<PtyHostRequestMap[M]['result']>;
       default: {
         const unknownMethod: never = method;
         throw new Error(`unknown pty host method: ${String(unknownMethod)}`);
@@ -589,7 +642,7 @@ export class PtyHostCore {
    * Spawn a raw PTY: output goes back as `rawData` per chunk, with none of
    * the session pipeline. For the short probes that drive a CLI's TUI.
    */
-  spawnRaw(params: PtyHostRawSpawnParams): PtyHostRawSpawnResult {
+  spawnRaw(params: PtyHostRawSpawnParams): PtyHostRawSpawnResult | Promise<PtyHostRawSpawnResult> {
     let rawPty: nodePty.IPty;
     try {
       refuseOwnExecutable(params.file);
@@ -605,12 +658,32 @@ export class PtyHostCore {
     }
     const { ptyId } = params;
     this.rawPtys.set(ptyId, { pty: rawPty, killed: false });
-    rawPty.onData((data) => this.deps.emit({ type: 'rawData', ptyId, data }));
-    rawPty.onExit(({ exitCode, signal }) => {
-      this.rawPtys.delete(ptyId);
-      this.deps.emit({ type: 'rawExit', ptyId, exitCode, signal: signal ?? null });
+    // Answered once node-pty has set the pid, as a session spawn is (`spawn`).
+    const pidGate = rawPty.pid > 0 ? null : new RootPidGate(rawPty);
+    subscribeThroughGate(
+      rawPty,
+      pidGate,
+      (data) => this.deps.emit({ type: 'rawData', ptyId, data }),
+      (exitCode, signal) => {
+        const killed = this.rawPtys.get(ptyId)?.killed === true;
+        this.rawPtys.delete(ptyId);
+        this.deps.emit({ type: 'rawExit', ptyId, exitCode, signal: signal ?? null });
+        if (!killed) this.releaseExitedPty(rawPty);
+      },
+    );
+    if (!pidGate) return { ok: true, pid: rawPty.pid };
+    return pidGate.outcome.then((outcome): PtyHostRawSpawnResult => {
+      if (outcome.kind === 'failed') {
+        pidGate.discard();
+        this.rawPtys.delete(ptyId);
+        return { ok: false, error: toPtyHostError(processNotStartedError(outcome.exitCode)) };
+      }
+      if (outcome.kind === 'timedOut') {
+        console.warn(`[pty-host] raw PTY ${ptyId} reported no pid and no exit within the wait; answering without its pid`);
+      }
+      pidGate.release();
+      return { ok: true, pid: rawPty.pid };
     });
-    return { ok: true, pid: rawPty.pid };
   }
 
   // --- Internals ------------------------------------------------------------
@@ -769,7 +842,35 @@ export class PtyHostCore {
     // exit handler did.
     this.transcriptWriter.finalize(entry.sessionId);
     this.deps.emit({ type: 'exit', ptyId: entry.ptyId, sessionId: entry.sessionId, exitCode });
-    this.endOrphansOf(entry);
+    // The orphan cleanup writes through the exited PTY, so it releases it
+    // when it is done; otherwise release it now. A PTY main killed is released.
+    if (!this.endOrphansOf(entry) && !entry.killed) this.releaseExitedPty(entry.pty);
+  }
+
+  /**
+   * Free what node-pty still holds for a PTY that exited on its own (Windows).
+   *
+   * node-pty ends a ConPTY's conout worker thread only in kill(), never after
+   * the process exits by itself, so the host kept one worker per such exit for
+   * its whole life. Measured over 100 exits with
+   * `scripts/probe-conpty-exit-race.js --mode churn`: the worker process grew
+   * from 36 MB to 688 MB on node-pty 1.1.0 and to 690 MB on 1.2.0-beta.15, and
+   * stayed at 62 MB with a kill after each exit.
+   *
+   * The kill frees that and nothing else. node-pty dropped its native handle
+   * at the exit, so the native kill is a no-op and the pseudoconsole stays open
+   * (microsoft/node-pty#965), and the console-list shortcut returns no pid once
+   * `_exitCode` is set, so nothing is killed by pid (`conpty-console-list.ts`).
+   * Never on POSIX, where a kill after the exit signals a pid that may name
+   * another process by then.
+   */
+  private releaseExitedPty(pty: nodePty.IPty): void {
+    if ((this.deps.platform ?? process.platform) !== 'win32') return;
+    try {
+      pty.kill();
+    } catch {
+      // Nothing left to free.
+    }
   }
 
   /**
@@ -778,13 +879,17 @@ export class PtyHostCore {
    * The agent is asked to exit through that console first and terminated only
    * if it is still running after the grace. A kill we sent closed the console
    * itself, and a quit's exits are main's kills, so neither is looked at.
+   * True when a cleanup started; it releases the PTY when it ends.
    */
-  private endOrphansOf(entry: PtyEntry): void {
+  private endOrphansOf(entry: PtyEntry): boolean {
     const loadOrphanApi = this.deps.loadOrphanApi;
-    if (!loadOrphanApi || (this.deps.platform ?? process.platform) !== 'win32') return;
-    if (entry.killed || this.shuttingDown || entry.wslRoot || entry.rootPid <= 0) return;
+    if (!loadOrphanApi || (this.deps.platform ?? process.platform) !== 'win32') return false;
+    // Read at the exit, not the spawn: on Windows node-pty sets the pid after
+    // spawn() returns (`root-pid-gate.ts`), and keeps it after the exit.
+    if (entry.killed || this.shuttingDown || entry.wslRoot || entry.pty.pid <= 0) return false;
     const exitedAtMs = this.now();
     void this.runOrphanCleanup(entry, exitedAtMs, loadOrphanApi);
+    return true;
   }
 
   private async runOrphanCleanup(entry: PtyEntry, exitedAtMs: number, loadOrphanApi: () => Promise<DeadRootOrphanApi>): Promise<void> {
@@ -793,7 +898,7 @@ export class PtyHostCore {
       const result = await endDeadRootOrphans(
         await loadOrphanApi(),
         {
-          rootPid: entry.rootPid,
+          rootPid: entry.pty.pid,
           spawnedAtMs: entry.spawnedAtMs,
           exitedAtMs,
           protectedPids: new Set([process.pid, process.ppid, ...this.liveRootPids()]),
@@ -819,6 +924,8 @@ export class PtyHostCore {
       }
     } catch (error) {
       console.warn(`[pty-host] could not end what session ${shortSessionId}'s exited shell left running:`, error instanceof Error ? error.message : String(error));
+    } finally {
+      this.releaseExitedPty(entry.pty);
     }
   }
 

@@ -102,7 +102,7 @@ Requires:
 - C++ build tools, on Linux and macOS only
   - **Windows:** none. Every native module ships a prebuilt Windows binary
   - **macOS:** Xcode Command Line Tools (`xcode-select --install`), which a macOS package build needs for node-pty's `spawn-helper`
-  - **Linux:** `build-essential` and `python3` (`sudo apt install build-essential python3`), because node-pty ships no Linux binary and compiles on install
+  - **Linux:** `build-essential` and `python3` (`sudo apt install build-essential python3`), needed only on an architecture node-pty ships no binary for (it ships x64 and arm64)
 
 ## Troubleshooting
 
@@ -149,7 +149,7 @@ xattr -cr /Applications/Kangentic.app
 
 If `npm install` fails on native modules:
 
-- On Linux, ensure `build-essential` and `python3` are installed (see [From Source](#from-source) above). node-pty is the one module that compiles there.
+- On Linux, ensure `build-essential` and `python3` are installed (see [From Source](#from-source) above). node-pty compiles there only on an architecture it ships no binary for (it ships x64 and arm64).
 - Try clearing the npm cache: `npm cache clean --force` then `npm install` again.
 
 ## Uninstall

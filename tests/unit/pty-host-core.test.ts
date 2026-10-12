@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
+import { ROOT_PID_POLL_MS, ROOT_PID_WAIT_LIMIT_MS } from '../../src/main/pty/host/root-pid-gate';
 import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
 import { setMainExecutable } from '../../src/main/pty/host/host-exec';
 import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
@@ -25,6 +26,10 @@ interface FakePty {
   exit(exitCode: number): void;
   write: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
+  /** Called when the host disposes its onData subscription. */
+  disposeData: ReturnType<typeof vi.fn>;
+  /** Called when the host disposes its onExit subscription. */
+  disposeExit: ReturnType<typeof vi.fn>;
 }
 
 function createFakePty(pid = 4242): FakePty {
@@ -32,17 +37,19 @@ function createFakePty(pid = 4242): FakePty {
   let exitListener: ((event: { exitCode: number }) => void) | null = null;
   const write = vi.fn();
   const kill = vi.fn();
+  const disposeData = vi.fn();
+  const disposeExit = vi.fn();
   const pty = {
     pid,
     cols: 120,
     rows: 30,
     onData: (listener: (data: string) => void) => {
       dataListener = listener;
-      return { dispose: () => { dataListener = null; } };
+      return { dispose: () => { disposeData(); dataListener = null; } };
     },
     onExit: (listener: (event: { exitCode: number }) => void) => {
       exitListener = listener;
-      return { dispose: () => { exitListener = null; } };
+      return { dispose: () => { disposeExit(); exitListener = null; } };
     },
     write,
     resize: vi.fn(),
@@ -56,6 +63,8 @@ function createFakePty(pid = 4242): FakePty {
     exit: (exitCode) => exitListener?.({ exitCode }),
     write,
     kill,
+    disposeData,
+    disposeExit,
   };
 }
 
@@ -92,7 +101,7 @@ function rawSpawnParams(overrides: Partial<PtyHostRawSpawnParams> = {}): PtyHost
   };
 }
 
-function makeCore(options: { coalesceMs?: number; agent?: AgentParser; fake?: FakePty } = {}) {
+function makeCore(options: { coalesceMs?: number; agent?: AgentParser; fake?: FakePty; platform?: NodeJS.Platform } = {}) {
   const events: PtyHostEvent[] = [];
   const fake = options.fake ?? createFakePty();
   const appended: Array<{ sessionId: string; chunk: string }> = [];
@@ -103,6 +112,9 @@ function makeCore(options: { coalesceMs?: number; agent?: AgentParser; fake?: Fa
     transcriptSinkFor: () => ({ appendChunk: (sessionId, chunk) => appended.push({ sessionId, chunk }) }),
     coalesceMs: options.coalesceMs ?? 0,
     spawnPty: spawnPty as unknown as typeof nodePty.spawn,
+    // Linux unless a test asks, so the Windows-only paths (the post-exit
+    // release) run the same on a Windows machine as on CI.
+    platform: options.platform ?? 'linux',
   });
   return { core, events, fake, appended, spawnPty };
 }
@@ -439,6 +451,300 @@ describe('PtyHostCore', () => {
 
       expect(spawnPty).toHaveBeenCalledTimes(2);
       expect(spawnPty.mock.calls.map((call) => call[0])).toEqual(['bash', 'claude']);
+    });
+  });
+
+  describe('a PTY whose pid node-pty sets after spawn() returns (ConPTY on node-pty 1.2)', () => {
+    /** node-pty connects the process from its conout worker, so pid reads 0 until then. */
+    function latePidFake(): FakePty & { connect(pid: number): void } {
+      const fake = createFakePty(0);
+      return { ...fake, connect: (pid) => { (fake.pty as { pid: number }).pid = pid; } };
+    }
+
+    it('answers the spawn with the pid once it is set, not the 0 read at the spawn', async () => {
+      const fake = latePidFake();
+      const { core } = makeCore({ fake });
+      const answer = Promise.resolve(core.handleRequest('spawn', spawnParams()));
+      let answered = false;
+      void answer.then(() => { answered = true; });
+      await vi.advanceTimersByTimeAsync(ROOT_PID_POLL_MS * 3);
+      expect(answered).toBe(false);
+
+      fake.connect(5150);
+      await vi.advanceTimersByTimeAsync(ROOT_PID_POLL_MS);
+      await expect(answer).resolves.toEqual({ ok: true, pid: 5150 });
+    });
+
+    it('sends main no event for the PTY before the answer, then everything held, in order', async () => {
+      const fake = latePidFake();
+      const { core, events } = makeCore({ fake });
+      core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+      let eventsAtAnswer: PtyHostEvent[] | null = null;
+      const answer = Promise.resolve(core.handleRequest('spawn', spawnParams())).then((result) => {
+        eventsAtAnswer = [...events];
+        return result;
+      });
+
+      // The pid is set when the output pipe connects, and output follows.
+      fake.connect(5150);
+      fake.feed('first ');
+      fake.feed('output');
+      await expect(answer).resolves.toEqual({ ok: true, pid: 5150 });
+      expect(eventsAtAnswer).toEqual([]);
+
+      await flush();
+      expect(events.filter((event) => event.type === 'outputSeen')).toEqual([
+        { type: 'outputSeen', sessionId: 'session-1', chunks: 1 },
+        { type: 'outputSeen', sessionId: 'session-1', chunks: 1 },
+      ]);
+      expect(events).toContainEqual({ type: 'data', sessionId: 'session-1', data: 'first output' });
+    });
+
+    it('reports an exit that came after the pid, but only after the answer', async () => {
+      const fake = latePidFake();
+      const { core, events } = makeCore({ fake });
+      let eventsAtAnswer: PtyHostEvent[] | null = null;
+      const answer = Promise.resolve(core.handleRequest('spawn', spawnParams())).then((result) => {
+        eventsAtAnswer = [...events];
+        return result;
+      });
+
+      fake.connect(5150);
+      fake.exit(0);
+      await expect(answer).resolves.toEqual({ ok: true, pid: 5150 });
+      expect(eventsAtAnswer).toEqual([]);
+
+      await flush();
+      expect(events).toContainEqual({ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 0 });
+      expect(core.livePtyCount).toBe(0);
+    });
+
+    it('answers an exit before the pid as a failed spawn: nothing started, so no exit event', async () => {
+      const fake = latePidFake();
+      const { core, events } = makeCore({ fake });
+      const answer = Promise.resolve(core.handleRequest('spawn', spawnParams()));
+
+      // CreateProcessW failed (267: the directory name is invalid); node-pty
+      // reports it as an exit carrying the error code.
+      fake.exit(267);
+      await expect(answer).resolves.toMatchObject({
+        ok: false,
+        error: { message: 'Cannot create process, error code: 267' },
+        previousScrollback: '',
+      });
+      await flush();
+      expect(events.filter((event) => event.type === 'exit')).toEqual([]);
+      expect(core.livePtyCount).toBe(0);
+    });
+
+    it('answers without the pid, and stops holding, if neither the pid nor an exit ever arrives', async () => {
+      const fake = latePidFake();
+      const { core, events } = makeCore({ fake });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const answer = Promise.resolve(core.handleRequest('spawn', spawnParams()));
+
+      await vi.advanceTimersByTimeAsync(ROOT_PID_WAIT_LIMIT_MS);
+      await expect(answer).resolves.toEqual({ ok: true, pid: 0 });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('reported no pid and no exit'));
+      warn.mockRestore();
+
+      await flush();
+      fake.feed('late output');
+      expect(events).toContainEqual({ type: 'outputSeen', sessionId: 'session-1', chunks: 1 });
+    });
+
+    it('does the same for a raw PTY: the pid in the answer, its output after it, and a failed start as a failed spawn', async () => {
+      const started = latePidFake();
+      const startedCore = makeCore({ fake: started });
+      let eventsAtAnswer: PtyHostEvent[] | null = null;
+      const answer = Promise.resolve(startedCore.core.handleRequest('spawnRaw', rawSpawnParams())).then((result) => {
+        eventsAtAnswer = [...startedCore.events];
+        return result;
+      });
+      started.connect(5150);
+      started.feed('probe output');
+      await expect(answer).resolves.toEqual({ ok: true, pid: 5150 });
+      expect(eventsAtAnswer).toEqual([]);
+      await flush();
+      expect(startedCore.events).toEqual([{ type: 'rawData', ptyId: 9, data: 'probe output' }]);
+
+      const failed = latePidFake();
+      const failedCore = makeCore({ fake: failed });
+      const failedAnswer = Promise.resolve(failedCore.core.handleRequest('spawnRaw', rawSpawnParams()));
+      failed.exit(2);
+      await expect(failedAnswer).resolves.toMatchObject({ ok: false, error: { message: 'Cannot create process, error code: 2' } });
+      await flush();
+      expect(failedCore.events).toEqual([]);
+      expect(failedCore.core.livePtyCount).toBe(0);
+    });
+
+    it('still reports the exit of a PTY whose first held chunk makes its agent parser throw', async () => {
+      // The throw happens synchronously inside the output handler, which is how a
+      // malformed chunk reaches an adapter's parser in production.
+      const throwingAgent = {
+        detectFirstOutput: () => false,
+        runtime: {
+          streamOutput: {
+            createParser: () => ({
+              parseTelemetry: () => {
+                throw new Error('telemetry parser failed');
+              },
+            }),
+          },
+        },
+      } as unknown as AgentParser;
+      const fake = latePidFake();
+      const { core, events } = makeCore({ fake, agent: throwingAgent });
+      const answer = Promise.resolve(core.handleRequest('spawn', spawnParams({ agentName: 'fake' })));
+
+      // Output, then the exit, both held until the answer has gone out.
+      fake.connect(5150);
+      fake.feed('first chunk');
+      fake.exit(0);
+      await expect(answer).resolves.toEqual({ ok: true, pid: 5150 });
+      expect(events).toEqual([]);
+
+      // The drain surfaces the parser's error, as node-pty's own emitter would.
+      expect(() => vi.advanceTimersByTime(0)).toThrow('telemetry parser failed');
+
+      // The exit was not dropped with the chunk that threw. Main hears of it, after the output.
+      expect(events.map((event) => event.type)).toEqual(['outputSeen', 'exit']);
+      expect(events).toContainEqual({ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 0 });
+      expect(core.livePtyCount).toBe(0);
+    });
+
+    it('drops a failed spawn\'s session state, table entry and listeners, and hands the carry-over back', async () => {
+      const ptyTable = (target: PtyHostCore) => (target as unknown as { ptys: Map<number, unknown> }).ptys;
+      const fake = latePidFake();
+      const { core } = makeCore({ fake });
+      core.handleCommand({ type: 'initSession', sessionId: 'old-session', scrollback: 'old bytes', cols: 120 });
+      const answer = Promise.resolve(core.handleRequest('spawn', spawnParams({ carryoverFromSessionId: 'old-session' })));
+
+      // As a control, the host holds all of it while the spawn is pending, so the
+      // empty state below is the failure's doing.
+      expect(core.getRawScrollback('session-1')).toBe('old bytes');
+      expect(core.getDiagnostics().pipeline.map((entry) => entry.sessionId).sort()).toEqual(['old-session', 'session-1']);
+      expect(ptyTable(core).has(1)).toBe(true);
+      expect(fake.disposeData).not.toHaveBeenCalled();
+      expect(fake.disposeExit).not.toHaveBeenCalled();
+
+      // CreateProcessW failed (267), so node-pty reported the error code as an exit.
+      fake.exit(267);
+      await expect(answer).resolves.toMatchObject({
+        ok: false,
+        error: { message: 'Cannot create process, error code: 267' },
+        previousScrollback: 'old bytes',
+      });
+
+      // The failed session's ring is gone. The carry-over source stays until main removes it.
+      expect(core.getRawScrollback('session-1')).toBe('');
+      expect(core.getDiagnostics().pipeline.map((entry) => entry.sessionId)).toEqual(['old-session']);
+      expect(core.getRawScrollback('old-session')).toBe('old bytes');
+      // No public read reaches the table entry (every one skips an exited PTY), so
+      // it is read the way the coalesce-window test reads its private map.
+      expect(ptyTable(core).has(1)).toBe(false);
+      expect(fake.disposeData).toHaveBeenCalledTimes(1);
+      expect(fake.disposeExit).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the session state a newer spawn of the same session id owns when an older gated spawn of it fails', async () => {
+      const ptyTable = (target: PtyHostCore) => (target as unknown as { ptys: Map<number, unknown> }).ptys;
+      const olderFake = latePidFake();
+      const newerFake = createFakePty(6161);
+      const { core, events, spawnPty } = makeCore({ fake: olderFake });
+      const olderAnswer = Promise.resolve(core.handleRequest('spawn', spawnParams({ ptyId: 1 })));
+
+      // The same session id is spawned again while the first spawn still waits
+      // for its pid. The second spawn replaces the session's row and ring, so
+      // from here the session belongs to PTY 2.
+      spawnPty.mockReturnValueOnce(newerFake.pty);
+      expect(core.spawn(spawnParams({ ptyId: 2 }))).toEqual({ ok: true, pid: 6161 });
+      newerFake.feed('newer spawn output');
+      expect(core.getRawScrollback('session-1')).toBe('newer spawn output');
+
+      // The older PTY now fails to start (CreateProcessW error 267).
+      olderFake.exit(267);
+      await expect(olderAnswer).resolves.toMatchObject({
+        ok: false,
+        error: { message: 'Cannot create process, error code: 267' },
+      });
+
+      // The failed answer went out, but it dropped only the older PTY's own entry.
+      expect(ptyTable(core).has(1)).toBe(false);
+      expect(ptyTable(core).has(2)).toBe(true);
+      expect(core.livePtyCount).toBe(1);
+      // The session is still the newer PTY's, with its ring and pipeline entry intact.
+      expect(core.getRawScrollback('session-1')).toBe('newer spawn output');
+      expect(core.getDiagnostics().pipeline.map((entry) => entry.sessionId)).toEqual(['session-1']);
+      // Its row survives too, so the newer PTY's output is still reported.
+      events.length = 0;
+      newerFake.feed(' and more');
+      expect(events.filter((event) => event.type === 'outputSeen')).toHaveLength(1);
+    });
+
+    it('answers a raw PTY that reports no pid and no exit within the wait with pid 0, logs it, and delivers its output', async () => {
+      const fake = latePidFake();
+      const { core, events } = makeCore({ fake });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const answer = Promise.resolve(core.handleRequest('spawnRaw', rawSpawnParams()));
+        // Held through the wait, as the session spawn's output is.
+        fake.feed('held probe output');
+
+        await vi.advanceTimersByTimeAsync(ROOT_PID_WAIT_LIMIT_MS);
+        await expect(answer).resolves.toEqual({ ok: true, pid: 0 });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('raw PTY 9 reported no pid and no exit'));
+
+        await flush();
+        expect(events).toEqual([{ type: 'rawData', ptyId: 9, data: 'held probe output' }]);
+
+        // The gate is open once released. Later output arrives as it is fed.
+        fake.feed('live probe output');
+        expect(events.at(-1)).toEqual({ type: 'rawData', ptyId: 9, data: 'live probe output' });
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
+  describe('a PTY that exited on its own is released (node-pty frees its conout worker only in kill())', () => {
+    it('kills a session PTY once after it exited on its own, on Windows', () => {
+      const { core, fake } = makeCore({ platform: 'win32' });
+      core.spawn(spawnParams());
+      expect(fake.kill).not.toHaveBeenCalled();
+
+      fake.exit(0);
+      expect(fake.kill).toHaveBeenCalledTimes(1);
+    });
+
+    it('never kills a PTY main killed a second time', () => {
+      const { core, fake } = makeCore({ platform: 'win32' });
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'kill', ptyId: 1 });
+
+      fake.exit(1);
+      expect(fake.kill).toHaveBeenCalledTimes(1);
+    });
+
+    it('never kills after the exit on POSIX, where the pid may name another process by then', () => {
+      const { core, fake } = makeCore({ platform: 'linux' });
+      core.spawn(spawnParams());
+
+      fake.exit(0);
+      expect(fake.kill).not.toHaveBeenCalled();
+    });
+
+    it('releases a raw PTY that exited on its own, and kills one it killed only once', () => {
+      const natural = makeCore({ platform: 'win32' });
+      natural.core.spawnRaw(rawSpawnParams());
+      natural.fake.exit(0);
+      expect(natural.fake.kill).toHaveBeenCalledTimes(1);
+
+      const killed = makeCore({ platform: 'win32' });
+      killed.core.spawnRaw(rawSpawnParams());
+      killed.core.handleCommand({ type: 'kill', ptyId: 9 });
+      killed.fake.exit(1);
+      expect(killed.fake.kill).toHaveBeenCalledTimes(1);
     });
   });
 

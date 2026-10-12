@@ -762,7 +762,7 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 1. Check concurrency limit → queue if full (returns placeholder with `status: 'queued'`)
 2. Drain every existing registry row for the task (kill each PTY, preserve its files, carry scrollback over from the most recently started one) so the registry holds one row per task; the full step list is in [session-lifecycle.md](session-lifecycle.md#spawn-flow)
 3. Resolve shell and arguments (platform-specific)
-4. Spawn the PTY in the pty host (a `spawn` request; node-pty runs there, and the reply carries the pid)
+4. Spawn the PTY in the pty host (a `spawn` request; node-pty runs there, and the reply carries the pid). On Windows node-pty sets the pid after `spawn()` returns, so the host replies once it is set and holds the PTY's output until then; a process that never started replies as a failed spawn (`src/main/pty/host/root-pid-gate.ts`)
 5. Start two file watchers (status, events)
 6. The host runs the output handler (16ms batched flush)
 7. After 100ms delay, write the CLI command to PTY stdin (agent spawns are prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient sessions, Command Terminals and a workflow's agent, are not)
