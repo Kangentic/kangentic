@@ -100,6 +100,14 @@ declare global {
     __mockLeftoverStopGate?: Promise<void>;
     /** Settles `__mockLeftoverStopGate`. Set by the spec that creates the gate; the mock never reads it. */
     __mockReleaseLeftoverStopGate?: () => void;
+    /** Process ids `leftoverProcesses.check` answers as ended; every other id is still running. Read per call. */
+    __mockLeftoverEndedIds?: string[];
+    /** The ids of every `leftoverProcesses.check` call, one array per call, in order. */
+    __mockLeftoverCheckCalls?: string[][];
+    /** When set to a promise, `leftoverProcesses.check` awaits it (after recording the call) before answering, so a spec can hold a recheck in flight. Unset by default: the answer comes at once. Read per call. */
+    __mockLeftoverCheckGate?: Promise<void>;
+    /** Settles `__mockLeftoverCheckGate`. Set by the spec that creates the gate; the mock never reads it. */
+    __mockReleaseLeftoverCheckGate?: () => void;
 
     /** Forces `config.set` / `setProjectOverrides` / `setProjectOverridesByPath` to resolve `{ persisted: false }`, the "write did not reach disk" path the settings panel toasts. Read per call, so it can be flipped mid-test. Set in addInitScript or at runtime. */
     __mockConfigSetPersisted?: boolean;

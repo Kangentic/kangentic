@@ -206,3 +206,39 @@ describe('PtyHostCore reapTaggedProcesses', () => {
     expect(started).toEqual(['reapTaggedProcesses', 'stopReportedProcess']);
   });
 });
+
+describe('PtyHostCore checkReportedProcesses', () => {
+  it('answers through the reader\'s identity check, with no scan, and starts no queued batch', async () => {
+    const reader = new TableReader([row(MAIN_PID, 900, null)]);
+    const scan = vi.spyOn(reader, 'scan');
+    const isRunning = vi.fn(async (target: Pick<ScannedProcess, 'pid' | 'startKey'>) => target.pid === 5000);
+    Object.assign(reader, { isRunning });
+    const started: string[] = [];
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => reader,
+      onBatchStarted: (method) => { started.push(method); },
+    });
+
+    const answers = await core.handleRequest('checkReportedProcesses', { identities: [{ pid: 5000, startKey: 'start-5000' }, { pid: 5001, startKey: 'start-5001' }] });
+
+    expect(answers).toEqual([true, false]);
+    expect(isRunning).toHaveBeenCalledTimes(2);
+    expect(scan).not.toHaveBeenCalled();
+    expect(started).toEqual([]);
+  });
+
+  it('answers unknown for every identity on a platform with no reader', async () => {
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => null,
+    });
+    await expect(core.checkReportedProcesses([{ pid: 5000, startKey: 'start-5000' }])).resolves.toEqual([null]);
+  });
+});

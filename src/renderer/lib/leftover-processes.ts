@@ -75,10 +75,10 @@ export function splitProcessLabel(label: string): { program: string; script: str
   return match ? { program: match[1], script: match[2] } : { program: label, script: null };
 }
 
-/** Where a row stands: from the report, then from the user's Stop. */
+/** Where a row stands: from the report, then from the user's Stop or a recheck. */
 export type LeftoverRowState = 'running' | 'stopping' | 'stopped' | 'ended' | 'failed';
 
-/** What the user's Stop changed a row to, if anything. */
+/** What the user's Stop, or a recheck that found the process gone (`ended`), changed a row to. */
 export type LeftoverStopState = Exclude<LeftoverRowState, 'running'>;
 
 export function rowStateOf(entry: LeftoverProcess, stopState: LeftoverStopState | undefined): LeftoverRowState {
@@ -86,6 +86,69 @@ export function rowStateOf(entry: LeftoverProcess, stopState: LeftoverStopState 
   if (entry.outcome === 'stopped') return 'stopped';
   if (entry.outcome === 'failed') return 'failed';
   return 'running';
+}
+
+/**
+ * Whether a report's toast has stopped saying anything true: it named a
+ * process that was still running or could not be stopped, and every such row
+ * has since stopped or ended. A report that only ever named stopped processes
+ * never settles this way; its toast closes on its own.
+ */
+export function reportHasSettled(report: LeftoverProcessReport, stopStates: Readonly<Record<string, LeftoverStopState>>): boolean {
+  const named = report.processes.filter((entry) => entry.outcome !== 'stopped');
+  return named.length > 0 && named.every((entry) => {
+    const state = rowStateOf(entry, stopStates[entry.id]);
+    return state === 'stopped' || state === 'ended';
+  });
+}
+
+/** The recheck's pace while the youngest watched report is new: a process that outlived its task often exits seconds later. */
+export const LEFTOVER_RECHECK_FAST_MS = 5_000;
+/** The pace after that. A toast that waits to be closed can sit for hours. */
+export const LEFTOVER_RECHECK_SLOW_MS = 30_000;
+/** How long a report counts as new. */
+export const LEFTOVER_RECHECK_FAST_WINDOW_MS = 60_000;
+
+/** The wait before the next recheck, from the youngest watched report's age. */
+export function recheckDelayMs(youngestReportedAt: string, now: number): number {
+  const age = now - Date.parse(youngestReportedAt);
+  return Number.isFinite(age) && age < LEFTOVER_RECHECK_FAST_WINDOW_MS ? LEFTOVER_RECHECK_FAST_MS : LEFTOVER_RECHECK_SLOW_MS;
+}
+
+/** What the leftover store holds that a recheck reads. */
+export interface RecheckInput {
+  reports: Readonly<Record<string, LeftoverProcessReport>>;
+  reportToasts: Readonly<Record<string, string>>;
+  openReportId: string | null;
+  stopStates: Readonly<Record<string, LeftoverStopState>>;
+  /** The toasts on screen now. */
+  visibleToastIds: ReadonlySet<string>;
+}
+
+/**
+ * The rows a recheck asks main about: those still claiming a live process
+ * (`running`, or `failed`), in a report the user can see, through its toast
+ * or its open list. Nothing on screen, nothing asked.
+ */
+export function rowsToRecheck(input: RecheckInput): { processIds: string[]; youngestReportedAt: string | null } {
+  const processIds: string[] = [];
+  let youngestReportedAt: string | null = null;
+  for (const [reportId, report] of Object.entries(input.reports)) {
+    const toastId = input.reportToasts[reportId];
+    const onScreen = reportId === input.openReportId || (toastId !== undefined && input.visibleToastIds.has(toastId));
+    if (!onScreen) continue;
+    let watched = false;
+    for (const entry of report.processes) {
+      const state = rowStateOf(entry, input.stopStates[entry.id]);
+      if (state !== 'running' && state !== 'failed') continue;
+      processIds.push(entry.id);
+      watched = true;
+    }
+    if (watched && (youngestReportedAt === null || Date.parse(report.reportedAt) > Date.parse(youngestReportedAt))) {
+      youngestReportedAt = report.reportedAt;
+    }
+  }
+  return { processIds, youngestReportedAt };
 }
 
 /** The line under a row's name, and whether it reads as a failure. */

@@ -18,6 +18,7 @@ import {
   deleteTaskWorktree,
   reapTaskLeftovers,
   reportAutomationFailures,
+  scheduleDoneWorktreeRemovalRetry,
   spawnAgent,
 } from '../helpers';
 import { showDesktopNotification } from './system';
@@ -881,7 +882,10 @@ export async function handleTaskMove(
           if (worktreeDeleted) {
             console.log(`[TASK_MOVE] Deleted worktree for task ${task.id.slice(0, 8)} (moved to Done; branch + session preserved)`);
           } else {
-            console.warn(`[TASK_MOVE] Partial worktree delete for task ${task.id.slice(0, 8)} (moved to Done; directory could not be deleted - will retry on next startup)`);
+            console.warn(`[TASK_MOVE] Partial worktree delete for task ${task.id.slice(0, 8)} (moved to Done; directory could not be deleted - will retry shortly, then on next startup)`);
+            // A holder on its way out (a process still closing files in the
+            // directory) is usually gone seconds later.
+            scheduleDoneWorktreeRemovalRetry(context, resolvedProjectPath ?? null, task.id);
           }
           if (resolvedProjectPath) {
             WorktreeManager.scheduleBackgroundPrune(resolvedProjectPath);

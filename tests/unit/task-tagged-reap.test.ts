@@ -9,10 +9,12 @@ import { describe, it, expect, vi } from 'vitest';
 import os from 'node:os';
 import {
   TaggedReaper,
+  leftoverLogLine,
   reapTaggedOnce,
   stopProcessTree,
   REAP_GRACE_MS,
   SURVIVOR_CHECK_MS,
+  type LeftoverProcessEntry,
   type TaggedReapTask,
 } from '../../src/main/pty/process-tag/tagged-reap';
 import {
@@ -43,6 +45,8 @@ function reapTask(taskId: string, directory = PROJECT, worktreePath: string | nu
 class FakeReader implements TaggedProcessReader {
   scans: ProcessScan[];
   scanCount = 0;
+  /** Absent unless a test sets it: the recheck must work without a scan fallback. */
+  isRunning?: (target: Pick<ScannedProcess, 'pid' | 'startKey'>) => Promise<boolean | null>;
   kills: Array<{ pid: number; startKey: string; strength: KillStrength }> = [];
   described: number[] = [];
   failScan = false;
@@ -233,8 +237,8 @@ describe('reapTaggedOnce report', () => {
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK, PROJECT, WORKTREE)], mainPid: MAIN_PID, stop: true }, deps(reader));
     expect(result.killedPids).toEqual([2001, 2002, 2003]);
     expect(result.entries).toEqual([
-      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'worktree' },
-      { taskId: TASK, pid: 2003, startKey: 'start-2003', label: 'python3 (http.server)', outcome: 'stopped', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, because: null, place: 'worktree' },
+      { taskId: TASK, pid: 2003, startKey: 'start-2003', label: 'python3 (http.server)', outcome: 'stopped', reason: null, because: null, place: 'project' },
     ]);
     // Only the reported processes are described: the command line is read for nothing else.
     expect(reader.described.sort()).toEqual([2001, 2003]);
@@ -265,8 +269,8 @@ describe('reapTaggedOnce report', () => {
     expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
     // The root is stopped. The child is reported under its own tag's task, with its own label, since no reported root owns it.
     expect(result.entries).toEqual([
-      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
-      { taskId: TASK, pid: 2002, startKey: 'start-2002', label: 'node (vite)', outcome: 'failed', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, because: null, place: 'project' },
+      { taskId: TASK, pid: 2002, startKey: 'start-2002', label: 'node (vite)', outcome: 'failed', reason: null, because: null, place: 'project' },
     ]);
   });
 
@@ -285,8 +289,8 @@ describe('reapTaggedOnce report', () => {
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2003:force', '2004:force']);
     expect(result.entries).toEqual([
-      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
-      { taskId: TASK, pid: 2004, startKey: 'start-2004', label: 'esbuild', outcome: 'failed', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, because: null, place: 'project' },
+      { taskId: TASK, pid: 2004, startKey: 'start-2004', label: 'esbuild', outcome: 'failed', reason: null, because: null, place: 'project' },
     ]);
   });
 
@@ -305,8 +309,8 @@ describe('reapTaggedOnce report', () => {
     // The child was force-killed and is still listed, so it really is a survivor the report folds away.
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`).sort()).toEqual(['2001:graceful', '2003:force', '2004:force']);
     expect(result.entries).toEqual([
-      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
-      { taskId: TASK, pid: 2003, startKey: 'start-2003', label: 'node (supervisor)', outcome: 'failed', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, because: null, place: 'project' },
+      { taskId: TASK, pid: 2003, startKey: 'start-2003', label: 'node (supervisor)', outcome: 'failed', reason: null, because: null, place: 'project' },
     ]);
     // Only the top is described: the command line is read for nothing under it.
     expect(reader.described).not.toContain(2004);
@@ -333,8 +337,8 @@ describe('reapTaggedOnce report', () => {
     // The old root is gone, so it is stopped. The new process is its own failed entry for the task,
     // not folded into the old root. Matching by pid alone reports the root as failed and never names the new one.
     expect(result.entries).toEqual([
-      { taskId: TASK, pid: 2001, startKey: 'start-A', label: 'process', outcome: 'stopped', reason: null, place: 'project' },
-      { taskId: TASK, pid: 2001, startKey: 'start-B', label: 'process', outcome: 'failed', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-A', label: 'process', outcome: 'stopped', reason: null, because: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-B', label: 'process', outcome: 'failed', reason: null, because: null, place: 'project' },
     ]);
   });
 
@@ -355,8 +359,8 @@ describe('reapTaggedOnce report', () => {
     ]);
     // Labels are keyed by pid, so a survivor's label merged into the root's would read as the root's label.
     expect(result.entries).toEqual([
-      { taskId: TASK, pid: 2001, startKey: 'start-A', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
-      { taskId: TASK, pid: 2001, startKey: 'start-B', label: 'esbuild', outcome: 'failed', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-A', label: 'node (npm)', outcome: 'stopped', reason: null, because: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-B', label: 'esbuild', outcome: 'failed', reason: null, because: null, place: 'project' },
     ]);
   });
 
@@ -386,7 +390,7 @@ describe('reapTaggedOnce report', () => {
     expect(reader.kills.filter((kill) => kill.strength === 'force').map((kill) => kill.pid).sort()).toEqual([2001, 2002]);
     expect(reader.scanCount).toBe(3);
     expect(result.entries).toEqual([
-      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'failed', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'failed', reason: null, because: null, place: 'project' },
     ]);
     expect(reader.described).not.toContain(2002);
   });
@@ -400,7 +404,7 @@ describe('reapTaggedOnce report', () => {
     expect(reader.kills.filter((kill) => kill.strength === 'force').map((kill) => kill.pid).sort()).toEqual([2001, 2002, 2003]);
     expect(reader.scanCount).toBe(3);
     expect(result.entries).toEqual([
-      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'failed', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'failed', reason: null, because: null, place: 'project' },
     ]);
   });
 
@@ -565,6 +569,127 @@ describe('reapTaggedOnce over the macOS reader names the scan step and the pass 
     });
     expect(signals).toEqual([]);
   });
+
+  it('isRunning: the same start time is running, another is ended, and an unlisted pid is ended', async () => {
+    const reader = new DarwinTaggedProcessReader({ uid: OWN_UID, loadKernel: async () => fakeKernel() });
+    expect(await reader.isRunning({ pid: 2001, startKey: '1790000001.000000' })).toBe(true);
+    expect(await reader.isRunning({ pid: 2001, startKey: '1790000000.999999' })).toBe(false);
+    expect(await reader.isRunning({ pid: 2002, startKey: '1790000002.000000' })).toBe(false);
+  });
+
+  it('isRunning: a listed pid with no row (a zombie, or a failed read) is unknown, and a kernel that will not load is unknown', async () => {
+    const listedWithoutRow = new DarwinTaggedProcessReader({ uid: OWN_UID, loadKernel: async () => fakeKernel({ processRow: () => null }) });
+    expect(await listedWithoutRow.isRunning({ pid: 2001, startKey: '1790000001.000000' })).toBeNull();
+    const unloadable = new DarwinTaggedProcessReader({ uid: OWN_UID, loadKernel: async () => { throw new Error('libproc missing'); } });
+    expect(await unloadable.isRunning({ pid: 2001, startKey: '1790000001.000000' })).toBeNull();
+  });
+});
+
+/**
+ * Windows lists a terminating process until its last thread is gone, after
+ * its exit code is set. The reader marks it `exited`, and every "is it still
+ * there?" check reads it as gone: a kill that landed is not a failure, and a
+ * Stop of one that ended on its own is not either.
+ */
+describe('a process still listed while it terminates', () => {
+  const exitedCopy = (scanned: ScannedProcess): ScannedProcess => ({ ...scanned, exited: true, tagValue: null, workingDirectory: null });
+
+  it('a reaped root still listed as exited in the last scan is reported stopped, not failed', async () => {
+    const root = tagged(2001, TASK);
+    const reader = new FakeReader([
+      [root],
+      // It ignored the graceful pass, so the force pass runs and a last scan follows.
+      [root],
+      [exitedCopy(root)],
+    ]);
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:stopped']);
+  });
+
+  it('a Stop of a process that already exited answers ended and kills nothing', async () => {
+    const target = tagged(2001, TASK);
+    const reader = new FakeReader([[exitedCopy(target)]]);
+
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toEqual({
+      outcome: 'ended', failureCode: null, failurePass: null, failureReason: null,
+    });
+    expect(reader.kills).toEqual([]);
+  });
+
+  it('a Stop whose process is still listed, exited, after the kill answers stopped', async () => {
+    const target = tagged(2001, TASK);
+    const reader = new FakeReader([[target], [exitedCopy(target)]]);
+
+    expect((await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).outcome).toBe('stopped');
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful']);
+  });
+
+  it('a Stop whose survivor is still listed, exited, after the force kill answers stopped', async () => {
+    const target = tagged(2001, TASK);
+    // It survived the graceful kill, so the force kill runs; the last scan lists it again, already exited.
+    const reader = new FakeReader([[target], [target], [exitedCopy(target)]]);
+    const waits: number[] = [];
+
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).toEqual({
+      outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null,
+    });
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
+    expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
+    expect(reader.scanCount).toBe(3);
+  });
+
+  it('a reaped root listed as exited in the second scan is stopped without the survivor check or a third scan', async () => {
+    const root = tagged(2001, TASK);
+    const reader = new FakeReader([
+      [root],
+      // It exited on the graceful pass but is still listed, its tag no longer readable, so the second plan has no target.
+      [exitedCopy(root)],
+      // Sentinel: lists the root running. Reading it would report the root failed, so it must never be read.
+      [root],
+    ]);
+    const waits: number[] = [];
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader, waits));
+
+    expect(reader.scanCount).toBe(2);
+    expect(waits).toEqual([REAP_GRACE_MS]);
+    expect(reader.kills).toEqual([{ pid: 2001, startKey: 'start-2001', strength: 'graceful' }]);
+    expect(result.failureCode).toBeNull();
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:stopped']);
+  });
+});
+
+describe('TaggedReaper.checkRunning: the leftover list\'s recheck', () => {
+  it('asks the reader for each identity, outside the reap queue, and turns a throw into unknown', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)]]);
+    const asked: string[] = [];
+    reader.isRunning = async (target) => {
+      asked.push(`${target.pid}:${target.startKey}`);
+      if (target.pid === 2003) throw new Error('read failed');
+      return target.pid === 2001;
+    };
+    const reaper = new TaggedReaper(deps(reader));
+
+    const answers = await reaper.checkRunning([
+      { pid: 2001, startKey: 'start-2001' },
+      { pid: 2002, startKey: 'start-2002' },
+      { pid: 2003, startKey: 'start-2003' },
+    ]);
+
+    expect(answers).toEqual([true, false, null]);
+    expect(asked).toEqual(['2001:start-2001', '2002:start-2002', '2003:start-2003']);
+    // Identity reads only: no scan of every process's environment.
+    expect(reader.scanCount).toBe(0);
+  });
+
+  it('answers unknown for every identity, and scans nothing, when the reader cannot check one', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)]]);
+    const reaper = new TaggedReaper(deps(reader));
+
+    expect(await reaper.checkRunning([{ pid: 2001, startKey: 'start-2001' }])).toEqual([null]);
+    expect(reader.scanCount).toBe(0);
+  });
 });
 
 /** A fake reader that also answers `connections`, one read per call, in order; an Error is thrown. */
@@ -608,6 +733,8 @@ describe('reapTaggedOnce with the connections another task holds', () => {
       { pid: 2002, startKey: 'start-2002', strength: 'force' },
     ]);
     expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}:${entry.reason}`)).toEqual(['2002:stopped:null', '2001:kept:shared']);
+    // What the kept one rests on reaches main's log line; a stopped one carries none.
+    expect(result.entries.map((entry) => entry.because)).toEqual([null, { basis: 'connection', evidencePid: 3001, evidenceLabel: null }]);
   });
 
   it('keeps what the first pass kept when the client\'s command ended inside the grace', async () => {
@@ -1033,5 +1160,94 @@ describe('stopProcessTree', () => {
     const reader = new FakeReader([[tagged(2001, TASK), tagged(3000, TASK, 'start-3000', PROJECT, 2001)], []]);
     expect((await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, [], [3000]))).outcome).toBe('stopped');
     expect(reader.kills.map((kill) => kill.pid)).toEqual([2001]);
+  });
+});
+
+describe('leftoverLogLine: the local log names what the reap left running, and why', () => {
+  const entry = (overrides: Partial<LeftoverProcessEntry>): LeftoverProcessEntry => ({
+    taskId: TASK,
+    pid: 63776,
+    startKey: 'start-63776',
+    label: 'cmd',
+    outcome: 'kept',
+    reason: 'shared',
+    because: { basis: 'descendant', evidencePid: 118916, evidenceLabel: 'node (preview-trash-delete.js)' },
+    place: 'project',
+    ...overrides,
+  });
+
+  it('names a shared process with the descendant that made it shared, as the stopping /preview\'s shell was', () => {
+    expect(leftoverLogLine(entry({}))).toBe(
+      "kept cmd (pid 63776) of task 7a1f2c3d in the project: shared, by descendant node (preview-trash-delete.js) (pid 118916), which works outside the task's directories or does not carry its tag",
+    );
+  });
+
+  it('names the client of a connection, the role of a window, and a launcher kept for its children', () => {
+    expect(leftoverLogLine(entry({ because: { basis: 'connection', evidencePid: 3001, evidenceLabel: null } }))).toBe(
+      'kept cmd (pid 63776) of task 7a1f2c3d in the project: shared, by a connection from process (pid 3001)',
+    );
+    expect(leftoverLogLine(entry({ label: 'chrome', reason: 'window', because: { basis: 'role', evidencePid: null, evidenceLabel: null }, place: 'worktree' }))).toBe(
+      'kept chrome (pid 63776) of task 7a1f2c3d in the worktree: window',
+    );
+    expect(leftoverLogLine(entry({ reason: 'window', because: { basis: 'children', evidencePid: null, evidenceLabel: null } }))).toBe(
+      'kept cmd (pid 63776) of task 7a1f2c3d in the project: window, because every child it has is kept',
+    );
+  });
+
+  it('labels the descendant behind a shared verdict through the reader, as it labels a reported process', async () => {
+    // A stopping /preview, as captured: a tab shell, the exited dev.js under it, and the deleter in the temp folder.
+    const reader = new FakeReader([[
+      { pid: 2001, ppid: 1, startKey: 'start-2001', startedAtMs: 100, tagValue: TASK, workingDirectory: PROJECT },
+      { pid: 2002, ppid: 2001, startKey: 'start-2002', startedAtMs: 200, tagValue: null, environmentUnreadable: true, workingDirectory: null },
+      { pid: 2003, ppid: 2002, startKey: 'start-2003', startedAtMs: 300, tagValue: TASK, workingDirectory: '/tmp' },
+    ]], { 2001: 'cmd', 2003: 'node (preview-trash-delete.js)' });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+
+    expect(result.entries).toEqual([expect.objectContaining({
+      pid: 2001,
+      outcome: 'kept',
+      reason: 'shared',
+      because: { basis: 'descendant', evidencePid: 2003, evidenceLabel: 'node (preview-trash-delete.js)' },
+    })]);
+    // Labeled, never reported: the report names only the kept shell.
+    expect(result.entries.map((reported) => reported.pid)).toEqual([2001]);
+  });
+
+  it('describes the process behind two shared verdicts once, and both log lines name its label', async () => {
+    // Two listeners of the task, both held by connections from the same client of another task.
+    const firstListener = tagged(2001, TASK);
+    const secondListener = tagged(2002, TASK);
+    const sharedClient = tagged(3001, OTHER_TASK, 'start-3001', OTHER_PROJECT);
+    const reader = new ConnectionReader([[firstListener, secondListener, sharedClient]], [{
+      pairs: [{ listenerPid: 2001, clientPid: 3001 }, { listenerPid: 2002, clientPid: 3001 }],
+      listeningPids: [2001, 2002],
+    }]);
+    reader.labelsByIdentity = {
+      '2001:start-2001': 'adb (server)',
+      '2002:start-2002': 'node (vite)',
+      '3001:start-3001': 'java (gradle)',
+    };
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+
+    // Both listeners are kept, so there is nothing to kill.
+    expect(reader.kills).toEqual([]);
+    const keptEntries = [...result.entries].sort((left, right) => left.pid - right.pid);
+    expect(keptEntries.map((reported) => `${reported.pid}:${reported.outcome}:${reported.reason}`)).toEqual(['2001:kept:shared', '2002:kept:shared']);
+    // Each process is described exactly once: the two kept listeners and the one client behind both verdicts.
+    expect([...reader.described].sort()).toEqual([2001, 2002, 3001]);
+    expect(keptEntries.map((reported) => reported.because)).toEqual([
+      { basis: 'connection', evidencePid: 3001, evidenceLabel: 'java (gradle)' },
+      { basis: 'connection', evidencePid: 3001, evidenceLabel: 'java (gradle)' },
+    ]);
+    expect(keptEntries.map((reported) => leftoverLogLine(reported))).toEqual([
+      'kept adb (server) (pid 2001) of task 7a1f2c3d in the project: shared, by a connection from java (gradle) (pid 3001)',
+      'kept node (vite) (pid 2002) of task 7a1f2c3d in the project: shared, by a connection from java (gradle) (pid 3001)',
+    ]);
+  });
+
+  it('says what could not be stopped and what stopping-off left, and nothing for a stopped process', () => {
+    expect(leftoverLogLine(entry({ outcome: 'failed', reason: null, because: null }))).toBe('could not stop cmd (pid 63776) of task 7a1f2c3d in the project');
+    expect(leftoverLogLine(entry({ reason: null, because: null }))).toBe('left cmd (pid 63776) of task 7a1f2c3d in the project running: stopping is off');
+    expect(leftoverLogLine(entry({ outcome: 'stopped', reason: null, because: null }))).toBeNull();
   });
 });

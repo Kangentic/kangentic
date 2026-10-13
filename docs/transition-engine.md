@@ -325,7 +325,7 @@ Two special roles affect behavior:
 | Role | Behavior |
 |------|----------|
 | `todo` | Task moves here → session killed (not suspended), leftover processes reaped, worktree removed |
-| `done` | Task moves here → session suspended (resumable), leftover processes reaped, task archived |
+| `done` | Task moves here → session suspended (resumable), leftover processes reaped, worktree directory removed (retried once 10 s later if the removal fails), task archived |
 
 Both roles still run their On EXIT group (in Phase 1, before the kill or the suspend), and neither runs an On enter group: the Column Manager offers only the exit group there, and `canColumnRun` blocks an enter row written by hand.
 

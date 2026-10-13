@@ -8,15 +8,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
-const { removeWorktree, taskRows, updates, getOpenProjectDb, getProjectDb } = vi.hoisted(() => ({
+const { removeWorktree, taskRows, updates, getOpenProjectDb, getProjectDb, shutdown } = vi.hoisted(() => ({
   removeWorktree: vi.fn(async (): Promise<boolean> => true),
   taskRows: new Map<string, { id: string; swimlane_id: string; worktree_path: string | null; branch_name: string | null }>(),
   updates: [] as Array<Record<string, unknown>>,
   getOpenProjectDb: vi.fn((): object | null => ({})),
   getProjectDb: vi.fn(() => ({})),
+  shutdown: { inProgress: false },
 }));
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
+vi.mock('../../src/main/shutdown-state', () => ({ isShuttingDown: () => shutdown.inProgress }));
 vi.mock('../../src/main/db/database', () => ({ getOpenProjectDb, getProjectDb }));
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: vi.fn(() => ({
@@ -44,7 +46,12 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
   },
 }));
 
-import { reapTaskLeftovers, retryDoneWorktreeRemoval } from '../../src/main/ipc/helpers/task-cleanup';
+import {
+  DONE_REMOVAL_RETRY_DELAY_MS,
+  reapTaskLeftovers,
+  retryDoneWorktreeRemoval,
+  scheduleDoneWorktreeRemovalRetry,
+} from '../../src/main/ipc/helpers/task-cleanup';
 import { leftoverProcessReports } from '../../src/main/ipc/helpers/leftover-process-reports';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 import type { LeftoverProcessEntry } from '../../src/main/pty/process-tag/tagged-reap';
@@ -60,6 +67,7 @@ function context(): IpcContext {
 }
 
 beforeEach(() => {
+  shutdown.inProgress = false;
   taskRows.clear();
   updates.length = 0;
   removeWorktree.mockClear();
@@ -142,6 +150,68 @@ describe('retryDoneWorktreeRemoval', () => {
       expect(removeWorktree).not.toHaveBeenCalled();
       expect(updates).toEqual([]);
     });
+  });
+});
+
+// A Done move's removal that failed on a holder already on its way out
+// (measured: a /preview's cleanup helper still deleting inside the worktree
+// for about 3 s) is tried once more a little later, instead of waiting for the
+// next project open.
+describe('scheduleDoneWorktreeRemovalRetry', () => {
+  it('retries the removal once, after the delay and not before', async () => {
+    vi.useFakeTimers();
+    try {
+      taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+      scheduleDoneWorktreeRemovalRetry(context(), PROJECT_PATH, 'task-1');
+
+      await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS - 1);
+      expect(removeWorktree).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(removeWorktree).toHaveBeenCalledTimes(1));
+      expect(updates).toContainEqual(expect.objectContaining({ id: 'task-1', worktree_path: null }));
+
+      // One attempt only.
+      await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS * 3);
+      expect(removeWorktree).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries nothing during a quit, though the timer was armed', async () => {
+    vi.useFakeTimers();
+    try {
+      taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+      scheduleDoneWorktreeRemovalRetry(context(), PROJECT_PATH, 'task-1');
+      // The Done row is still removable, so only the quit stops the attempt.
+      expect(vi.getTimerCount()).toBe(1);
+      shutdown.inProgress = true;
+
+      await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS * 2);
+      expect(removeWorktree).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('arms no timer without a project path', async () => {
+    vi.useFakeTimers();
+    try {
+      // No quit in progress: the timer count is what pins the guard in
+      // scheduleDoneWorktreeRemovalRetry. Without it a timer would arm and its
+      // retry would still find nothing to remove (retryDoneWorktreeRemoval
+      // answers false for a null path itself), so the removal assertion alone
+      // cannot tell the two apart.
+      taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+      scheduleDoneWorktreeRemovalRetry(context(), null, 'task-1');
+      expect(vi.getTimerCount()).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS * 2);
+      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(updates).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

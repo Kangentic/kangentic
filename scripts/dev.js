@@ -9,6 +9,7 @@ const { writeExitRecord } = require('./preview-exit-record');
 const {
   previewGitCeilingDirectories,
   stoppingMarkerPathFor,
+  isWorktreeRemovalStop,
   moveIntoTrash,
   listTrashDirs,
   spawnTrashDeleter,
@@ -69,9 +70,18 @@ function markStopping() {
   }
 }
 
+// Set when a task's leftover reap wrote the stop file
+// (scripts/preview-isolation.js, isWorktreeRemovalStop): the task is ending and
+// its worktree is removed next, so cleanup() deletes nothing. The detached
+// trash deleter it would start carries the task's tag and works outside the
+// worktree, which made the reap read the tab's shell as shared, and its open
+// files failed that removal.
+let worktreeRemovalFollows = false;
+
 const stopWatcher = setInterval(() => {
   if (fs.existsSync(stopFilePath)) {
-    console.log('[dev] Stop requested via stop file - shutting down');
+    worktreeRemovalFollows = isWorktreeRemovalStop(stopFilePath);
+    console.log(`[dev] Stop requested via stop file - shutting down${worktreeRemovalFollows ? ' (the worktree is being removed)' : ''}`);
     markStopping();
     clearInterval(stopWatcher);
     // Ask Electron to quit through its own quit path first; cleanup() kills
@@ -569,7 +579,11 @@ function cleanup(exitCode) {
   // which tell the launcher this preview is still shutting down, and earlier
   // trash a previous exit's deleter is still working on.
   let trashDir = null;
-  if (ephemeral) {
+  if (ephemeral && isWorktreeCheckout && worktreeRemovalFollows) {
+    // The worktree goes next, with everything in it. If its removal fails,
+    // the next preview boot clears the data dir and sweeps any trash.
+    logSync('[dev] Ephemeral cleanup skipped: the task is removing this worktree');
+  } else if (ephemeral) {
     if (isWorktreeCheckout) {
       const kanDir = path.join(projectDir, '.kangentic');
       const viteDir = path.join(projectDir, '.vite');

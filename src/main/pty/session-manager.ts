@@ -41,7 +41,7 @@ import { createWriteQueue, type WriteQueue } from './write-queue';
 import { PromptDraftLedger, type WriteOrigin } from './prompt-draft-ledger';
 import { recordTerminalTrace, traceTerminal } from './terminal-trace';
 import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
-import type { HostExecRequest, HostExecResult, PtyHostEvent, SeedFrameResult } from './host/protocol';
+import type { HostExecRequest, HostExecResult, HostProcessInfo, PtyHostEvent, SeedFrameResult } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import { EventType } from '../../shared/types';
 import type {
@@ -63,7 +63,7 @@ import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec } from './
 import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
-import type { LeftoverProcessEntry, StopProcessOutcome, StopProcessResult, TaggedReapResult } from './process-tag/tagged-reap';
+import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessResult, type TaggedReapResult } from './process-tag/tagged-reap';
 
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
  *  1 s grace between them, the kills and a survivor check. Counted from when
@@ -83,6 +83,9 @@ const SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS = 2_000;
 /** How long a teardown waits for a spawn it cancelled to settle, matching
  *  awaitExit's own safety timeout for a PTY that never reports its exit. */
 const SPAWN_SETTLE_TIMEOUT_MS = 10_000;
+/** The leftover list's recheck: one handle read per process, so a host this
+ *  slow is busy, and the next recheck asks again. */
+const REPORTED_PROCESS_CHECK_TIMEOUT_MS = 5_000;
 
 /** A Command Terminal's per-session directory, created by `startCommandTerminal`. */
 function commandTerminalSessionDirectory(session: ManagedSession): string {
@@ -110,6 +113,12 @@ function noteHostReapResult(result: TaggedReapResult): void {
   // tag unseen. A count only: never which ones, never their contents.
   if (result.unreadableCount > 0) {
     console.log(`[TASK-REAP] ${result.unreadableCount} same-user process(es) had an unreadable environment and were not checked`);
+  }
+  // What was left running, and why, so a kept process can be explained from
+  // the log alone. The killed ones are logged by pid where the reap returns.
+  for (const entry of result.entries) {
+    const line = leftoverLogLine(entry);
+    if (line) console.log(`[TASK-REAP] ${line}`);
   }
 }
 
@@ -2239,6 +2248,20 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Every process as pid, parent pid and name, from the pty host's table
+   * (Toolhelp on Windows, `ps` on POSIX); no process is opened. [] when the
+   * host cannot answer, which a caller must read as "no table", never as
+   * "nothing is running".
+   */
+  async listProcesses(): Promise<HostProcessInfo[]> {
+    try {
+      return await this.host.listProcesses();
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Kill what the given tasks left running: every process carrying a task's
    * `KANGENTIC_TASK_ID` tag and working inside that task's project or worktree
    * (see `process-tag/reap-plan.ts` for what is spared: shared processes,
@@ -2395,6 +2418,23 @@ export class SessionManager extends EventEmitter {
     }
     noteHostStopResult(result);
     return result.outcome;
+  }
+
+  /**
+   * Whether each process a report named still runs, by pid and start key:
+   * `true`, `false` (it ended), or `null` (the host could not tell). The
+   * leftover list asks while it, or a toast that names a running process, is
+   * on screen. Never throws: a host that cannot answer answers `null` for
+   * every one, which changes no row.
+   */
+  async checkReportedProcesses(identities: Array<{ pid: number; startKey: string }>): Promise<Array<boolean | null>> {
+    if (identities.length === 0) return [];
+    try {
+      const answers = await this.host.checkReportedProcesses(identities, REPORTED_PROCESS_CHECK_TIMEOUT_MS);
+      return identities.map((_identity, index) => answers[index] ?? null);
+    } catch {
+      return identities.map(() => null);
+    }
   }
 
   /**

@@ -10,6 +10,7 @@ import type { IpcContext } from '../ipc-context';
 import { leftoverProcessReports, publishLeftoverProcesses } from './leftover-process-reports';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { isShuttingDown } from '../../shutdown-state';
 import type { LeftoverSweepOptions } from '../../transition-engine/resource-cleanup';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-stop';
@@ -58,9 +59,14 @@ export async function reapTaskLeftovers(
     // A /preview of a task worktree stops through its own stop file first, so
     // its Electron quits through the real quit path and its terminal tab
     // closes. Killed by the reap, it would leave that window on a dead dev
-    // server, holding the worktree.
+    // server, holding the worktree. The stop also waits for the rest of the
+    // preview's tree (the tab's shell outlives dev.js), so the scan below never
+    // reads a half-exited preview as shared.
     if (__KANGENTIC_DEV__ && stoppingEnabled) {
-      await stopWorktreePreviews(tasks.flatMap((task) => (task.worktree_path ? [task.worktree_path] : [])));
+      await stopWorktreePreviews(
+        tasks.flatMap((task) => (task.worktree_path ? [task.worktree_path] : [])),
+        { listProcesses: () => context.sessionManager.listProcesses() },
+      );
     }
     const taskTitles = new Map<string, string>();
     for (const task of tasks) if (task.title) taskTitles.set(task.id, task.title);
@@ -137,6 +143,39 @@ export async function retryDoneWorktreeRemoval(
     console.warn(`[TASK-REAP] Worktree removal retry after a stop failed for ${taskId.slice(0, 8)} (non-fatal):`, error);
     return false;
   }
+}
+
+/**
+ * How long after a Done move's failed worktree removal its one automatic retry
+ * waits. A holder that is already on its way out clears within seconds: a
+ * `/preview`'s cleanup helper deleting inside the worktree measured about 3 s.
+ */
+export const DONE_REMOVAL_RETRY_DELAY_MS = 10_000;
+
+/**
+ * Retry a Done move's worktree removal once, a little later, when it failed.
+ * On Windows any process still closing files in the directory fails the
+ * removal ("Permission denied"), and one that is on its way out is gone
+ * seconds later; without this the worktree waited for the next project open
+ * (`retryFailedDoneCleanups`). One attempt, best-effort and quiet: a retry
+ * that fails again leaves the worktree to that startup retry, as before. A
+ * task that has left Done by then is left alone (`retryDoneWorktreeRemoval`
+ * re-checks under the task lock), and nothing is retried during a quit.
+ */
+export function scheduleDoneWorktreeRemovalRetry(
+  context: IpcContext,
+  projectPath: string | null,
+  taskId: string,
+  delayMs: number = DONE_REMOVAL_RETRY_DELAY_MS,
+): void {
+  if (!projectPath) return;
+  const timer = setTimeout(() => {
+    if (isShuttingDown()) return;
+    void retryDoneWorktreeRemoval(context, projectPath, taskId).then((removed) => {
+      if (removed) console.log(`[TASK_MOVE] Deleted worktree for task ${taskId.slice(0, 8)} on its retry after the Done move`);
+    });
+  }, delayMs);
+  timer.unref?.();
 }
 
 /**

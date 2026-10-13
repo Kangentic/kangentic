@@ -9,12 +9,17 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { __setLocaleForTests } from '../../src/renderer/lib/datetime';
 import {
+  LEFTOVER_RECHECK_FAST_MS,
+  LEFTOVER_RECHECK_SLOW_MS,
   describeLeftoverReport,
   groupByTask,
+  recheckDelayMs,
   reportAgeOf,
+  reportHasSettled,
   reportTitleOf,
   rowDetailOf,
   rowStateOf,
+  rowsToRecheck,
   sectionsOf,
   splitProcessLabel,
 } from '../../src/renderer/lib/leftover-processes';
@@ -178,5 +183,54 @@ describe('the list', () => {
   it('titles the list by its task, or by how many tasks', () => {
     expect(reportTitleOf(report([leftoverProcess()]))).toBe('Processes from "Fix login"');
     expect(reportTitleOf(report([leftoverProcess(), leftoverProcess({ taskId: 'task-b' })]))).toBe('Processes from 2 tasks');
+  });
+});
+
+describe('the recheck: what it asks about, how often, and when a toast has gone stale', () => {
+  it('settles a report once every row it kept or failed to stop has stopped or ended', () => {
+    const kept = leftoverProcess({ outcome: 'kept', reason: 'shared', label: 'cmd' });
+    const failed = leftoverProcess({ outcome: 'failed' });
+    const stopped = leftoverProcess();
+    const subject = report([stopped, kept, failed]);
+
+    expect(reportHasSettled(subject, {})).toBe(false);
+    expect(reportHasSettled(subject, { [kept.id]: 'ended' })).toBe(false);
+    // A Stop still in flight is not settled: the toast waits for its answer.
+    expect(reportHasSettled(subject, { [kept.id]: 'ended', [failed.id]: 'stopping' })).toBe(false);
+    expect(reportHasSettled(subject, { [kept.id]: 'ended', [failed.id]: 'stopped' })).toBe(true);
+  });
+
+  it('never settles a report that only ever named stopped processes: its toast closes on its own', () => {
+    expect(reportHasSettled(report([leftoverProcess(), leftoverProcess()]), {})).toBe(false);
+  });
+
+  it('asks about the rows that claim a live process, in reports on screen through a toast or the open list', () => {
+    const toastRow = leftoverProcess({ outcome: 'kept', reason: 'window' });
+    const toastStopped = leftoverProcess();
+    const openRow = leftoverProcess({ outcome: 'failed' });
+    const hiddenRow = leftoverProcess({ outcome: 'kept', reason: 'shared' });
+    const endedRow = leftoverProcess({ outcome: 'kept', reason: 'shared' });
+    const input = {
+      reports: {
+        'report-toast': { id: 'report-toast', stoppingEnabled: true, processes: [toastRow, toastStopped, endedRow], reportedAt: '2026-10-06T19:59:00.000Z' },
+        'report-open': { id: 'report-open', stoppingEnabled: true, processes: [openRow], reportedAt: '2026-10-06T19:58:00.000Z' },
+        'report-hidden': { id: 'report-hidden', stoppingEnabled: true, processes: [hiddenRow], reportedAt: '2026-10-06T20:00:00.000Z' },
+      },
+      reportToasts: { 'report-toast': 'toast-1', 'report-hidden': 'toast-closed' },
+      openReportId: 'report-open',
+      stopStates: { [endedRow.id]: 'ended' as const },
+      visibleToastIds: new Set(['toast-1']),
+    };
+
+    expect(rowsToRecheck(input)).toEqual({ processIds: [toastRow.id, openRow.id], youngestReportedAt: '2026-10-06T19:59:00.000Z' });
+    // Nothing on screen, nothing asked.
+    expect(rowsToRecheck({ ...input, openReportId: null, visibleToastIds: new Set() })).toEqual({ processIds: [], youngestReportedAt: null });
+  });
+
+  it('rechecks every few seconds while a report is new, and slower once it is a minute old', () => {
+    const reportedAt = Date.parse(REPORTED_AT);
+    expect(recheckDelayMs(REPORTED_AT, reportedAt + 10_000)).toBe(LEFTOVER_RECHECK_FAST_MS);
+    expect(recheckDelayMs(REPORTED_AT, reportedAt + 61_000)).toBe(LEFTOVER_RECHECK_SLOW_MS);
+    expect(recheckDelayMs('not a time', reportedAt)).toBe(LEFTOVER_RECHECK_SLOW_MS);
   });
 });

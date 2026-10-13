@@ -203,6 +203,27 @@ describe('Linux reader', () => {
     expect(await reader.describe([{ ...target, startKey: '778' }])).toEqual(new Map());
   });
 
+  it('isRunning: one stat read says running, ended (no entry, a new start time, a zombie), or unknown', async () => {
+    const procRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-proc-'));
+    temporaryRoots.push(procRoot);
+    const writeStat = (pid: number, state: string, startTicks: number) => {
+      fs.mkdirSync(path.join(procRoot, String(pid)));
+      fs.writeFileSync(path.join(procRoot, String(pid), 'stat'), `${pid} (node) ${state} 1 ${pid} 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 ${startTicks} 0 0`);
+    };
+    writeStat(30, 'S', 500);
+    writeStat(31, 'Z', 600);
+    // A directory in place of `stat`: a read that fails for a reason other than the pid being gone.
+    fs.mkdirSync(path.join(procRoot, '32', 'stat'), { recursive: true });
+    const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000 });
+
+    expect(await reader.isRunning({ pid: 30, startKey: '500' })).toBe(true);
+    expect(await reader.isRunning({ pid: 30, startKey: '499' })).toBe(false);
+    expect(await reader.isRunning({ pid: 31, startKey: '600' })).toBe(false);
+    expect(await reader.isRunning({ pid: 33, startKey: '700' })).toBe(false);
+    expect(await reader.isRunning({ pid: 32, startKey: '700' })).toBeNull();
+    expect(await reader.isRunning({ pid: 30, startKey: '' })).toBeNull();
+  });
+
   it('returns an empty scan, and does not throw, when its proc root cannot be read', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-proc-'));
     temporaryRoots.push(root);
@@ -1012,6 +1033,42 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))('local T
       for (const child of children) child.kill('SIGKILL');
     }
   });
+});
+
+describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))('isRunning on a real process', () => {
+  function platformReader(): TaggedProcessReader {
+    if (process.platform === 'win32') return new Win32TaggedProcessReader();
+    if (process.platform === 'darwin') return new DarwinTaggedProcessReader();
+    return new LinuxTaggedProcessReader();
+  }
+
+  it('reads a running child as running, under another start key as ended, and as ended once it has exited', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true, env: { ...process.env, [TASK_TAG]: TASK } });
+    try {
+      const reader = platformReader();
+      // The start key comes from a scan, as a report's does. A fresh child can be missing from
+      // the first scan or listed with no start key yet, so scan until it shows one.
+      let startKey = '';
+      await expect.poll(async () => {
+        const scanned = (await reader.scan()).processes.find((entry) => entry.pid === child.pid);
+        startKey = scanned?.startKey ?? '';
+        return startKey;
+      }, { timeout: 5000, interval: 100, message: 'the scan did not read the child\'s start key' }).toBeTruthy();
+      const identity = { pid: child.pid!, startKey };
+
+      expect(await reader.isRunning!(identity)).toBe(true);
+      expect(await reader.isRunning!({ ...identity, startKey: `${identity.startKey}9` })).toBe(false);
+
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.kill('SIGKILL');
+      await exited;
+      // The parent reaps it at the exit event on POSIX; on Windows the exit code says it.
+      await expect.poll(() => reader.isRunning!(identity), { timeout: 5000 }).toBe(false);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+    // Two polls of up to 5 s each can outlast vitest's 5 s default, which would hide their own failure messages.
+  }, 30_000);
 });
 
 describe.runIf(process.platform === 'win32')('Windows Toolhelp listing (real)', () => {

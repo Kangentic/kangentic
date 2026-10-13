@@ -49,6 +49,19 @@ export interface ScannedProcess {
   /** The environment could not be read at all (elevated, non-dumpable). */
   environmentUnreadable?: boolean;
   /**
+   * Windows only: listed, but its exit code is already set. A terminating
+   * process stays in the Toolhelp listing, creation time and all, until its
+   * last thread is gone (measured: a `/preview`'s `dev.js` was still listed at
+   * least 75 ms after its exit code was set, with its memory already
+   * unreadable; a process that has finished exiting is not listed, even while
+   * another holds a handle to it). Kept in the scan so parent links through it
+   * still reach what runs under it for the protection walks; its environment
+   * and directory are not read, and an identity check that asks whether a
+   * process is still running never counts it. The Linux and macOS readers
+   * leave a zombie out instead, since an orphan is reparented there.
+   */
+  exited?: boolean;
+  /**
    * What the process is, where that changes how the reap treats it:
    * - `visible-app`: it shows UI (a visible top-level window with area on
    *   Windows, a UI app registered with LaunchServices on macOS, a GUI toolkit
@@ -170,6 +183,15 @@ export interface TaggedProcessReader {
    * process it cannot read is absent from the map. Never throws.
    */
   describe(targets: readonly ScannedProcess[]): Promise<Map<number, string>>;
+  /**
+   * Whether the process a report named is still running: the same pid with
+   * the same start key, not exited. `false` only on positive evidence (the pid
+   * is not listed, its start key changed, it has exited); `null` when the read
+   * cannot tell, so a failed read never reads as "ended". Reads no
+   * environment and no command line, and lists processes only when it must
+   * (Windows, when the pid will not open). Never throws.
+   */
+  isRunning?(target: Pick<ScannedProcess, 'pid' | 'startKey'>): Promise<boolean | null>;
   /**
    * Which of `clients` holds an established loopback TCP connection to a port
    * one of `listeners` listens on, and which of `listeners` listen at all

@@ -33,6 +33,7 @@ import { useLeftoverProcessesStore } from '../../src/renderer/stores/leftover-pr
 const RETAINED_REPORT_COUNT = 20;
 
 const stopMock = vi.fn<(processId: string) => Promise<LeftoverStopOutcome>>();
+const checkMock = vi.fn<(processIds: string[]) => Promise<string[]>>();
 
 function makeProcess(id: string): LeftoverProcess {
   return {
@@ -64,7 +65,8 @@ function reportIds(): string[] {
 
 beforeEach(() => {
   stopMock.mockReset();
-  vi.stubGlobal('window', { electronAPI: { leftoverProcesses: { stop: stopMock } } });
+  checkMock.mockReset();
+  vi.stubGlobal('window', { electronAPI: { leftoverProcesses: { stop: stopMock, check: checkMock } } });
   useLeftoverProcessesStore.setState({ reports: {}, reportToasts: {}, openReportId: null, stopStates: {} });
 });
 
@@ -368,5 +370,69 @@ describe('leftover-processes-store settleStop', () => {
     useLeftoverProcessesStore.getState().settleStop('process-evicted', 'stopped');
 
     expect(useLeftoverProcessesStore.getState().stopStates).toEqual({});
+  });
+});
+
+// A kept process can exit on its own. The recheck asks main which listed
+// processes have ended and marks only those rows that still claim a live one.
+describe('leftover-processes-store recheck', () => {
+  it('marks the rows main says ended, and only those', async () => {
+    useLeftoverProcessesStore.getState().addReport(makeReport('report-a', ['process-gone', 'process-alive']));
+    checkMock.mockResolvedValue(['process-gone']);
+
+    await useLeftoverProcessesStore.getState().recheck(['process-gone', 'process-alive']);
+
+    expect(checkMock).toHaveBeenCalledWith(['process-gone', 'process-alive']);
+    expect(useLeftoverProcessesStore.getState().stopStates).toEqual({ 'process-gone': 'ended' });
+  });
+
+  it('corrects a failed row, and leaves a Stop in flight or answered alone', async () => {
+    useLeftoverProcessesStore.getState().addReport(makeReport('report-a', ['process-failed', 'process-stopping', 'process-stopped']));
+    useLeftoverProcessesStore.setState({ stopStates: { 'process-failed': 'failed', 'process-stopping': 'stopping', 'process-stopped': 'stopped' } });
+    checkMock.mockResolvedValue(['process-failed', 'process-stopping', 'process-stopped']);
+
+    await useLeftoverProcessesStore.getState().recheck(['process-failed', 'process-stopping', 'process-stopped']);
+
+    expect(useLeftoverProcessesStore.getState().stopStates).toEqual({
+      'process-failed': 'ended',
+      'process-stopping': 'stopping',
+      'process-stopped': 'stopped',
+    });
+  });
+
+  it('brings back no row whose report was evicted while main answered', async () => {
+    useLeftoverProcessesStore.getState().addReport(makeReport('report-target', ['process-target']));
+    let answer: (endedIds: string[]) => void = () => {};
+    checkMock.mockImplementation(() => new Promise<string[]>((resolve) => { answer = resolve; }));
+
+    const pending = useLeftoverProcessesStore.getState().recheck(['process-target']);
+    addNumberedReports(RETAINED_REPORT_COUNT);
+    answer(['process-target']);
+    await pending;
+
+    expect(useLeftoverProcessesStore.getState().stopStates).toEqual({});
+  });
+
+  it('changes nothing when the bridge rejects, and asks nothing for an empty list', async () => {
+    useLeftoverProcessesStore.getState().addReport(makeReport('report-a', ['process-a']));
+    checkMock.mockRejectedValue(new Error('ipc channel closed'));
+
+    await expect(useLeftoverProcessesStore.getState().recheck(['process-a'])).resolves.toBeUndefined();
+    await useLeftoverProcessesStore.getState().recheck([]);
+
+    expect(useLeftoverProcessesStore.getState().stopStates).toEqual({});
+    expect(checkMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('leftover-processes-store releaseToast', () => {
+  it('drops a report\'s toast link, so its eviction closes nothing twice', () => {
+    useLeftoverProcessesStore.getState().addReport(makeReport('report-a'), 'toast-a');
+
+    useLeftoverProcessesStore.getState().releaseToast('report-a');
+    useLeftoverProcessesStore.getState().releaseToast('report-missing');
+
+    expect(useLeftoverProcessesStore.getState().reportToasts).toEqual({});
+    expect(useLeftoverProcessesStore.getState().reports['report-a']).toBeDefined();
   });
 });

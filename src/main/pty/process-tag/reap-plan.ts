@@ -275,12 +275,12 @@ function protectedPidsOf(input: Pick<ReapPlanInput, 'processes' | 'mainPid' | 'l
 }
 
 /**
- * Whether anything under `root` shows it serves more than this task (see the
- * module comment). `taskId` is null for a macOS withheld root, whose
- * descendants may read untagged on a SIP-off machine; only a cleared tag,
- * another task's tag or a directory outside counts there.
+ * The descendant that shows `root` serves more than this task (see the module
+ * comment), or null when nothing under it does. `taskId` is null for a macOS
+ * withheld root, whose descendants may read untagged on a SIP-off machine;
+ * only a cleared tag, another task's tag or a directory outside counts there.
  */
-function isShared(
+function shareEvidenceOf(
   root: ScannedProcess,
   children: Map<number, ScannedProcess[]>,
   protectedPids: ReadonlySet<number>,
@@ -288,7 +288,7 @@ function isShared(
   taskId: string | null,
   reapedTaskIds: ReadonlySet<string>,
   caseInsensitive: boolean,
-): boolean {
+): ScannedProcess | null {
   const visited = new Set<number>([root.pid]);
   const queue: ScannedProcess[] = [root];
   while (queue.length > 0) {
@@ -301,15 +301,15 @@ function isShared(
       if (protectedPids.has(child.pid)) continue;
       queue.push(child);
       if (child.role === 'console-host' || !child.workingDirectory) continue;
-      if (!isInsideAny(child.workingDirectory, scope, caseInsensitive)) return true;
+      if (!isInsideAny(child.workingDirectory, scope, caseInsensitive)) return child;
       const environmentKnown = !child.environmentUnreadable && !child.environmentWithheld;
       if (!environmentKnown) continue;
-      if (taskId !== null && child.tagValue !== taskId) return true;
+      if (taskId !== null && child.tagValue !== taskId) return child;
       // A cleared tag ('') is the documented opt-out, not an absent one.
-      if (taskId === null && child.tagValue !== null && !reapedTaskIds.has(child.tagValue)) return true;
+      if (taskId === null && child.tagValue !== null && !reapedTaskIds.has(child.tagValue)) return child;
     }
   }
-  return false;
+  return null;
 }
 
 /**
@@ -339,11 +339,27 @@ function rootScope(
 /** Why a reaped task's own process was left running. */
 export type KeptReason = 'window' | 'multiplexer' | 'shared';
 
+/**
+ * What a kept process's reason rests on, for the local log only: its own role
+ * (a window, a tmux server), a descendant that works elsewhere or carries
+ * another tag, a connection from other work, or children that were all kept.
+ */
+export type KeptBasis = 'role' | 'descendant' | 'connection' | 'children';
+
+/** The basis of a kept process, with the pid that showed it (the descendant or the client), where there is one. */
+export interface KeptBecause {
+  basis: KeptBasis;
+  evidencePid: number | null;
+}
+
 /** One process a plan reports, and the task it is reported under. */
 export interface ReportedProcess {
   process: ScannedProcess;
   taskId: string;
 }
+
+/** A process a plan left running on purpose, and why. */
+export type KeptProcess = ReportedProcess & { reason: KeptReason; because: KeptBecause };
 
 export interface ReapPlan {
   /** Every process to kill. */
@@ -357,7 +373,7 @@ export interface ReapPlan {
    * pane or a pm2 app can be the user's own). Kangentic's tree and the held
    * PTYs are never here.
    */
-  kept: Array<ReportedProcess & { reason: KeptReason }>;
+  kept: KeptProcess[];
   /**
    * Everything this plan left running on purpose, by `processIdentity`: what
    * it spared as shared, with everything under it, and each process kept
@@ -474,7 +490,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
   const byPid = indexByPid(input.processes);
   const reapedTaskIds = new Set(input.tasks.keys());
   const roots: Array<{ scanned: ScannedProcess; scope: readonly string[]; taskId: string | null; ownerTaskId: string }> = [];
-  const sharedRoots: ReportedProcess[] = [];
+  const sharedRoots: Array<ReportedProcess & { because: KeptBecause }> = [];
   // The task each kill root belongs to, shared or not, so a process under one
   // is reported under that task.
   const rootTaskByPid = new Map<number, string>();
@@ -496,9 +512,10 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     const root = rootScope(scanned, input, caseInsensitive);
     if (!root) continue;
     rootTaskByPid.set(scanned.pid, root.ownerTaskId);
-    if (isShared(scanned, children, protectedPids, root.scope, root.taskId, reapedTaskIds, caseInsensitive)) {
+    const evidence = shareEvidenceOf(scanned, children, protectedPids, root.scope, root.taskId, reapedTaskIds, caseInsensitive);
+    if (evidence) {
       collectSubtree(scanned, children, sparedPids, protectedPids);
-      sharedRoots.push({ process: scanned, taskId: root.ownerTaskId });
+      sharedRoots.push({ process: scanned, taskId: root.ownerTaskId, because: { basis: 'descendant', evidencePid: evidence.pid } });
     } else {
       roots.push({ scanned, ...root });
     }
@@ -557,7 +574,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
           targetPids.delete(pid);
         }
         const taskId = owningTaskOf(listener);
-        if (taskId !== null) sharedRoots.push({ process: listener, taskId });
+        if (taskId !== null) sharedRoots.push({ process: listener, taskId, because: { basis: 'connection', evidencePid: client.pid } });
         changed = true;
       }
     }
@@ -606,7 +623,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
   // Reported as left running: the task's own windows, tmux servers and shared
   // roots, never Kangentic's tree or a held PTY.
   const safetyPids = buildSafetyProtectedPids(input);
-  const keptByPid = new Map<number, ReportedProcess & { reason: KeptReason }>();
+  const keptByPid = new Map<number, KeptProcess>();
   for (const scanned of input.processes) {
     if (safetyPids.has(scanned.pid) || targetPids.has(scanned.pid)) continue;
     if (scanned.role !== 'visible-app' && scanned.role !== 'multiplexer') continue;
@@ -616,6 +633,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
       process: scanned,
       taskId: scanned.tagValue as string,
       reason: scanned.role === 'visible-app' ? 'window' : 'multiplexer',
+      because: { basis: 'role', evidencePid: null },
     });
   }
   for (const shared of sharedRoots) {
@@ -638,7 +656,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     const scanned = byPid.get(pid);
     const taskId = scanned ? owningTaskOf(scanned) : null;
     if (!scanned || taskId === null || safetyPids.has(pid)) continue;
-    keptByPid.set(pid, { process: scanned, taskId, reason: reasonOf(scanned, 0) ?? 'shared' });
+    keptByPid.set(pid, { process: scanned, taskId, reason: reasonOf(scanned, 0) ?? 'shared', because: { basis: 'children', evidencePid: null } });
   }
   const kept = [...keptByPid.values()].filter((entry) => {
     for (const ancestor of ancestorsOf(entry.process, byPid)) {

@@ -3075,6 +3075,20 @@
           if (index !== -1) listeners.splice(index, 1);
         };
       },
+      // The recheck. Nothing has ended unless a test lists ids in
+      // window.__mockLeftoverEndedIds; every call's ids are recorded in
+      // window.__mockLeftoverCheckCalls, so a test can see what was asked and when.
+      // A test may hold every answer open by setting window.__mockLeftoverCheckGate
+      // to a promise, so a check can be observed while it is still in flight; the
+      // call is recorded BEFORE the wait. Unset (the default, and always in the web
+      // demo) the answer comes at once and nothing here awaits.
+      check: async function (processIds) {
+        if (!window.__mockLeftoverCheckCalls) window.__mockLeftoverCheckCalls = [];
+        window.__mockLeftoverCheckCalls.push(processIds.slice());
+        if (window.__mockLeftoverCheckGate) await window.__mockLeftoverCheckGate;
+        var ended = window.__mockLeftoverEndedIds || [];
+        return processIds.filter(function (processId) { return ended.indexOf(processId) !== -1; });
+      },
     },
 
     keybindings: {

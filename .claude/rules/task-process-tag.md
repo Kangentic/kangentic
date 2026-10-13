@@ -43,7 +43,11 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   calls it too, with the project path and each task's `worktree_path`. In a dev build, with
   stopping on, `reapTaskLeftovers` first stops a `/preview` running in each task worktree through
   the launcher's stop file (`src/devtools/main/worktree-preview-stop.ts`), so its Electron quits
-  through the real quit path instead of outliving a terminate on a dead dev server.
+  through the real quit path instead of outliving a terminate on a dead dev server. That stop file
+  says `worktree-removal`, so `dev.js` starts no detached trash deleter (tagged, working in the
+  temp folder, it made the tab's `cmd` read as shared), and the stop waits, bounded, for the rest
+  of the preview's tree from the pty host's process listing before the reap scans: `dev.js`
+  exiting is not the preview being gone.
 - **A Command Terminal's end reaps its leftovers, after any exiting agent has finished.**
   `CommandTerminalLeftoverReaper` (`ipc/helpers/command-terminal-leftovers.ts`) calls
   `reapTaskLeftovers` with the terminal's folder and its own task id, named for the report, on its
@@ -92,12 +96,32 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   id `leftover-process-reports.ts` minted; main resolves it to the pid and start key the scan saw,
   and `stopProcessTree` re-checks that identity and keeps Kangentic's tree and every held PTY out
   of reach. Do not add a path that stops a pid the renderer supplies.
+- **A row that claims a live process is rechecked by identity, never by a scan.** While a kept or
+  not-stopped row is on screen (its toast, or its open list), the renderer asks
+  `leftoverProcesses:check` by report id; main resolves the pid and start key, and the host answers
+  through the reader's `isRunning`, which reads that one process and no environment. It answers
+  ended only on evidence (a changed start key, an exit code, a zombie, a pid the listing no longer
+  has) and unknown when a read fails, which changes no row. A reader without `isRunning` answers
+  unknown for every one: do not fall back to a scan on a timer. An ended process retries its Done
+  task's worktree removal, as a Stop does.
+- **The reap logs what it left running, by what the report already carries.** One
+  `[TASK-REAP] kept` (or `could not stop`) line per entry (`leftoverLogLine`): the label, pid,
+  short task id, place, reason, and the plan's basis for it (`KeptExplanation`: the role, or the
+  pid and label of the descendant or client that made it shared, or children all kept). Nothing
+  more of a command line, and `because` never reaches the renderer.
+- **A Windows process still listed while it terminates is `exited`, not running.** Its exit code
+  is set before it leaves the Toolhelp listing (a `/preview`'s `dev.js` was still listed at least
+  75 ms after). The scan reads the exit code on the limited handle it already opens and reads nothing
+  more; the process stays in the scan for the protection walks, but every survivor and identity
+  check (`runningIdentitiesOf`, a Stop's target) counts it as gone. Do not drop it from the scan:
+  a held PTY root that is terminating would then stop protecting what runs under it.
 - **Environment contents never leave a reader.** A reader sees every same-user process's
   environment, which holds other applications' secrets. It matches the tag inside the raw buffer
   and returns only the tag's value. Never return, log, or retain environment text, including a
   record or line that fails to parse.
 - **A command line never leaves a reader either.** It can carry a token. `describe` reads it only
-  for the processes a report names, parses it in place, and returns only `labelProcess`'s result:
+  for the processes a report names, and for the one process behind each `shared` verdict, whose
+  label goes to the local log line alone. It parses it in place, and returns only `labelProcess`'s result:
   the program's name and at most one more short name (an existing script's file or package name,
   the module after `-m`, or the first word of a title the process set). Do not widen the label to
   any other argument.
@@ -209,8 +233,30 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
 - **Test (preview stop):** `tests/unit/worktree-preview-stop.test.ts` runs the dev-build preview
   stop against a real child speaking `dev.js`'s side of the stop file, pins the file names and
   bounds against the scripts, and checks that `reapTaskLeftovers` calls it under
-  `__KANGENTIC_DEV__` before the host reap (a source check, since unit tests build with the flag
-  off).
+  `__KANGENTIC_DEV__` before the host reap, with the host's listing (a source check, since unit
+  tests build with the flag off). It pins the `worktree-removal` reason against
+  `scripts/preview-isolation.js` (whose `isWorktreeRemovalStop` `dev.js` reads it through, run on
+  real stop-file payloads by `preview-isolation.test.ts`) and that `dev.js` skips its trash move
+  on it, and drives the tree wait over a scripted listing: a
+  launcher `cmd` that outlives `dev.js`, a child that appears during the quit, the bound, and a
+  parent that is not the launcher. `tests/unit/task-reap-plan.test.ts` replays the captured
+  stopping-preview shape (tab `cmd`, exited `dev.js`, deleter in the temp folder) and pins the `because` of every
+  kept kind; `task-tagged-reap.test.ts` pins `leftoverLogLine`.
+- **Test (recheck):** `tests/unit/win32-reader-gates.test.ts` pins `isRunning` on the fake API
+  (running, exited but openable, a reused pid, another session, unlisted, listed but refused, an
+  empty listing never read as ended, an unreadable exit code read as unknown there and as not
+  exited by the scan, one listing reused across a recheck and never kept when empty);
+  `task-process-readers.test.ts` pins the Linux `stat` read
+  and runs `isRunning` on a real child on each OS; `task-tagged-reap.test.ts` pins the macOS
+  read and that `checkRunning` never scans; `pty-host-core-tagged-reap.test.ts`,
+  `leftover-process-stop-handler.test.ts`, `leftover-processes-store.test.ts`,
+  `leftover-processes-copy.test.ts` and `tests/ui/leftover-processes.spec.ts` pin the request, the
+  handler (unknown is not ended, an unminted id is never asked), the store, the pace, and a row
+  turning Ended with its toast closing. `win32-reader-gates.test.ts` pins that an exited process
+  is marked and read no further, and `task-tagged-reap.test.ts` that a killed root still listed
+  exited is reported stopped and a Stop of an exited process answers ended.
+  `leftover-worktree-retry.test.ts` pins the Done move's one delayed removal retry, and
+  `session-leftover-reap-wiring.test.ts` that the Done move schedules it only when its removal failed.
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached
   processes and spares what it must (a live child, another task, a cleared tag, a process outside
   the project, an opt-out child's parent, a tmux server, a server another task holds a TCP

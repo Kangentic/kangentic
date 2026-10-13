@@ -5,6 +5,7 @@ import { CountBadge } from '../CountBadge';
 import { useLeftoverProcessesStore } from '../../stores/leftover-processes-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useNow } from '../../hooks/useNow';
+import { useLeftoverRecheck } from '../../hooks/useLeftoverRecheck';
 import { formatDateTime } from '../../lib/datetime';
 import {
   groupByTask,
@@ -22,9 +23,11 @@ import {
  * running when it ended, Still running first (the rows a user can act on),
  * then Stopped. Each row keeps one button slot in one place: Stop, Stopping,
  * Stopped, Ended, or Stop again after a failure, and a row never moves between
- * sections while the list is open.
+ * sections while the list is open. A row whose process exits on its own turns
+ * Ended by itself (`useLeftoverRecheck`, which this always-mounted host runs).
  */
 export function LeftoverProcessesDialog() {
+  useLeftoverRecheck();
   const report = useLeftoverProcessesStore((state) => (state.openReportId ? state.reports[state.openReportId] ?? null : null));
   const closeReport = useLeftoverProcessesStore((state) => state.closeReport);
   if (!report) return null;

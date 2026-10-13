@@ -15,7 +15,7 @@ interface LeftoverProcessesStore {
   reportToasts: Record<string, string>;
   /** The report the list shows, or null when it is closed. */
   openReportId: string | null;
-  /** What the user's Stop did to a row, by process id. */
+  /** What the user's Stop did to a row, or `ended` when a recheck found its process gone, by process id. */
   stopStates: Record<string, LeftoverStopState>;
   /**
    * Keep a report for Review, with the id of the toast that links to it.
@@ -35,6 +35,16 @@ interface LeftoverProcessesStore {
    * keeps that Stop's state.
    */
   settleStop: (processId: string, outcome: LeftoverStopOutcome) => void;
+  /**
+   * Ask main which of these rows' processes have ended (pid and start key)
+   * and mark those `ended`. Only a row that still claims a live process takes
+   * it: no state yet, or `failed`. A Stop in flight or answered keeps its own,
+   * and a row of a report evicted meanwhile gets nothing back. A failed ask
+   * changes nothing.
+   */
+  recheck: (processIds: string[]) => Promise<void>;
+  /** Drop a report's link to its toast, once that toast has been closed for it. */
+  releaseToast: (reportId: string) => void;
 }
 
 const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, get) => ({
@@ -99,6 +109,37 @@ const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, 
     set((state) => (state.stopStates[processId] === 'failed'
       ? { stopStates: { ...state.stopStates, [processId]: outcome } }
       : state));
+  },
+
+  recheck: async (processIds) => {
+    if (processIds.length === 0) return;
+    let endedIds: string[];
+    try {
+      endedIds = await window.electronAPI.leftoverProcesses.check(processIds);
+    } catch {
+      return;
+    }
+    if (endedIds.length === 0) return;
+    set((state) => {
+      const retainedProcessIds = new Set(Object.values(state.reports).flatMap((report) => report.processes.map((entry) => entry.id)));
+      let stopStates: Record<string, LeftoverStopState> | null = null;
+      for (const processId of endedIds) {
+        const current = state.stopStates[processId];
+        if (!retainedProcessIds.has(processId) || (current !== undefined && current !== 'failed')) continue;
+        stopStates ??= { ...state.stopStates };
+        stopStates[processId] = 'ended';
+      }
+      return stopStates ? { stopStates } : state;
+    });
+  },
+
+  releaseToast: (reportId) => {
+    set((state) => {
+      if (!Object.hasOwn(state.reportToasts, reportId)) return state;
+      const reportToasts = { ...state.reportToasts };
+      delete reportToasts[reportId];
+      return { reportToasts };
+    });
   },
 }));
 
