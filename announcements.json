@@ -23,6 +23,30 @@
       "publishedAt": "2026-10-07T00:00:00Z",
       "expiresAt": "2026-11-11T00:00:00Z",
       "priority": 10
+    },
+    {
+      "id": "workflows-automations-2026-10",
+      "title": "Meet Workflows and let your board run itself",
+      "body": "This release adds Workflows, and column automations that run when an agent finishes a turn. Either one can move a task to its next column without you dragging the card.",
+      "sections": [
+        {
+          "heading": "Workflows",
+          "body": "A workflow is a set of linked tasks. Its agent plans the tasks from your brief. Each task starts when the tasks it waits for reach Done, and moves to its next column when the work there is done.\n\nOpen **Workflows** next to Board and Backlog. Settings > Workflows holds the two agents it runs on: the **Workflow agent**, which plans, and the **Automation agent**, which decides when a column's work is done.",
+          "links": [
+            { "label": "Workflows docs", "url": "https://kangentic.com/features/workflows/" }
+          ]
+        },
+        {
+          "heading": "Column automations",
+          "body": "Automations can now run when the column's agent finishes a turn. The new **Move to column** row sends the task on to another column. Any row can check a **Condition** with the Automation agent first, or cap its runs with **Frequency**. Send message to agent, Run script, Call webhook and Notify me work as before.\n\nClick a column header to open the Column Manager. Automations are on the right.",
+          "links": [
+            { "label": "Automations docs", "url": "https://kangentic.com/features/columns-and-automations/#automations" }
+          ]
+        }
+      ],
+      "minVersion": "0.46.0",
+      "expiresAt": "2026-11-25T00:00:00Z",
+      "priority": 20
     }
   ]
 }
