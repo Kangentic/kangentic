@@ -1,7 +1,9 @@
 /**
  * Unit coverage for `buildAgentList` copying an adapter's pasted-image
  * capability fields (`pastedImageNativeExtensions`, `pastedImageReferenceTemplate`)
- * into the `AgentDetectionInfo` entry `listAgents()` returns.
+ * into the `AgentDetectionInfo` entry `listAgents()` returns, and deriving its
+ * `supportsWorkflowAgent` flag from the adapter's read-only and session-id
+ * capabilities.
  *
  * `agent-registry` is mocked with a single fake adapter whose `detect()`
  * resolves `found: false` so nothing spawns a real CLI, and no `probeAuth` /
@@ -56,5 +58,30 @@ describe('listAgents - pasted-image capability fields', () => {
     expect(entry.supportsSummarize).toBe(false);
     // The runtime's turn-end capability rides the entry, for the column dialogs.
     expect(entry.reportsTurnEnd).toBe(true);
+  });
+});
+
+// Settings > Workflows offers only the agents the entry flags, so the flag has to
+// be the adapter's own two capabilities together, through the real build.
+describe('listAgents - supportsWorkflowAgent', () => {
+  it('flags an agent that launches read-only on a session id Kangentic chose, and no other', async () => {
+    const adaptersByName: Record<string, object> = {
+      capable: { ...buildFakeAdapter(), supportsReadOnlyLaunch: true, supportsCallerSessionId: true },
+      'no-session-id': { ...buildFakeAdapter(), supportsReadOnlyLaunch: true, supportsCallerSessionId: false },
+      'not-read-only': { ...buildFakeAdapter(), supportsReadOnlyLaunch: false, supportsCallerSessionId: true },
+      'read-only-undeclared': { ...buildFakeAdapter(), supportsCallerSessionId: true },
+    };
+    mockRegistryList.mockReturnValue(Object.keys(adaptersByName));
+    mockGetOrThrow.mockImplementation((name: string) => adaptersByName[name]);
+
+    const agents = await listAgents({});
+
+    const flagByName = Object.fromEntries(agents.map((entry) => [entry.name, entry.supportsWorkflowAgent]));
+    expect(flagByName).toEqual({
+      capable: true,
+      'no-session-id': false,
+      'not-read-only': false,
+      'read-only-undeclared': false,
+    });
   });
 });
