@@ -136,6 +136,18 @@ interface WorkflowStore {
    * cannot run, from its last open, by workflow id.
    */
   agentUnavailable: Record<string, string>;
+  /**
+   * Workflows whose last open or resume main refused because the Workflow agent
+   * setting is not complete (`WorkflowAgentStatus.setupNeeded`), by workflow id.
+   * The pane asks for the setting while one is here.
+   */
+  agentSetupNeeded: Record<string, true>;
+  /**
+   * Forget main's last refusal for one workflow, either kind (`agentUnavailable`,
+   * `agentSetupNeeded`): the user opened Settings, where most reasons are fixed
+   * (the Workflow agent, the MCP server, the CLI's path), so the pane may try again.
+   */
+  clearAgentRefusal: (workflowId: string) => void;
   /** The session whose terminal the pane has mounted, so main streams its bytes here. */
   agentPaneSessionId: string | null;
   setAgentPaneSessionId: (sessionId: string | null) => void;
@@ -334,7 +346,11 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
   function applyAgentStatus(workflowId: string, status: WorkflowAgentStatus): void {
     if (status.session) useSessionStore.getState().upsertSession(status.session);
     const { [workflowId]: _previous, ...rest } = get().agentUnavailable;
-    set({ agentUnavailable: status.unavailable ? { ...rest, [workflowId]: status.unavailable } : rest });
+    const { [workflowId]: _previousSetup, ...restSetup } = get().agentSetupNeeded;
+    set({
+      agentUnavailable: status.unavailable ? { ...rest, [workflowId]: status.unavailable } : rest,
+      agentSetupNeeded: status.setupNeeded ? { ...restSetup, [workflowId]: true } : restSetup,
+    });
   }
 
   /** One change against a workflow named by its home and id. */
@@ -361,6 +377,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     linkFocusLoading: false,
     watchedDetails: {},
     agentUnavailable: {},
+    agentSetupNeeded: {},
     agentPaneSessionId: null,
     agentPaneCollapsed: false,
 
@@ -369,6 +386,14 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     },
 
     setAgentPaneCollapsed: (collapsed) => set({ agentPaneCollapsed: collapsed }),
+
+    clearAgentRefusal: (workflowId) => {
+      const { agentUnavailable, agentSetupNeeded } = get();
+      if (!(workflowId in agentUnavailable) && !agentSetupNeeded[workflowId]) return;
+      const { [workflowId]: _clearedReason, ...restUnavailable } = agentUnavailable;
+      const { [workflowId]: _clearedSetup, ...restSetup } = agentSetupNeeded;
+      set({ agentUnavailable: restUnavailable, agentSetupNeeded: restSetup });
+    },
 
     openAgent: async (grid) => {
       const { projectId, selectedWorkflowId } = get();

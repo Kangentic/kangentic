@@ -30,9 +30,13 @@ const harness = vi.hoisted(() => ({
   /** Every project `getProjectDb` was asked for: on main it creates a database that is not there. */
   getProjectDbCalls: [] as string[],
   adapter: null as unknown,
+  /** An adapter registered under one name only, for a test where the agents differ. Every other name gets `adapter`. */
+  adapterByName: new Map<string, unknown>(),
   notifyWorkflowChanged: vi.fn(),
   /** The retrieval worker's `call`, where the agent's turn tokens are indexed from. */
   retrievalCall: vi.fn(async (_method: string, _params: unknown) => ({ outcome: 'indexed' })),
+  /** Settings > Workflows > Workflow agent, as `getEffectiveConfig` returns it. */
+  workflows: {} as { agent?: string | null; model?: string | null; effort?: string | null },
 }));
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
@@ -44,7 +48,17 @@ vi.mock('../../src/main/db/database', () => ({
   },
 }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
-vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: () => harness.adapter, list: () => [] } }));
+vi.mock('../../src/main/agent/agent-registry', () => ({
+  agentRegistry: { get: (name: string) => harness.adapterByName.get(name) ?? harness.adapter, list: () => [] },
+}));
+// The cached agent inventory the Workflow agent setting is checked against:
+// Claude can be a workflow's agent, Codex is installed but cannot.
+vi.mock('../../src/main/agent/agent-list', () => ({
+  listAgents: async () => [
+    { name: 'claude', found: true, supportsWorkflowAgent: true, capabilities: { supportsModelOverride: true } },
+    { name: 'codex', found: true, supportsWorkflowAgent: false, capabilities: { supportsModelOverride: true } },
+  ],
+}));
 vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: harness.retrievalCall } }));
 vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: async (options: { agentPath: string; prompt?: string }) => ({ agentPath: options.agentPath, prompt: options.prompt }),
@@ -181,6 +195,7 @@ describe('a workflow\'s own agent starting over', () => {
     runProjectMigrations(db);
     harness.dbs.set('home', db);
     harness.getProjectDbCalls.length = 0;
+    harness.adapterByName.clear();
     harness.notifyWorkflowChanged.mockReset();
     harness.retrievalCall.mockClear();
     describeStartupFailure = vi.fn(() => true);
@@ -198,6 +213,7 @@ describe('a workflow\'s own agent starting over', () => {
       describeStartupFailure,
     };
     const projects = [{ id: 'home', name: 'kangentic', path: home, default_agent: null, default_model: null, default_effort: null }];
+    harness.workflows = { agent: 'claude', model: 'haiku', effort: null };
     manager = new FakeSessionManager();
     context = {
       projectRepo: {
@@ -207,7 +223,7 @@ describe('a workflow\'s own agent starting over', () => {
       sessionManager: manager,
       configManager: {
         load: () => ({}),
-        getEffectiveConfig: () => ({ mcpServer: { enabled: true }, agent: { cliPaths: {} } }),
+        getEffectiveConfig: () => ({ mcpServer: { enabled: true }, agent: { cliPaths: {} }, workflows: harness.workflows }),
       },
       mcpServerHandle: { urlForProject: (projectId: string) => `http://127.0.0.1:9/mcp/${projectId}`, token: 'test-token' },
     } as unknown as IpcContext;
@@ -438,10 +454,163 @@ describe('a workflow\'s own agent starting over', () => {
     });
   });
 
+  // The bug: with the Automation agent on Haiku at low, a new workflow's agent
+  // started on Opus at xhigh, the project's default. The workflow agent now runs
+  // on its own setting (Settings > Workflows > Workflow agent), with no fallback,
+  // and nothing starts until that setting is complete.
+  describe('the Workflow agent setting', () => {
+    function buildCommandOptions(callIndex: number): { model?: string; effort?: string; resume: boolean } {
+      const buildCommand = (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
+      return buildCommand.mock.calls[callIndex][0] as { model?: string; effort?: string; resume: boolean };
+    }
+
+    function newWorkflow(): string {
+      return new WorkflowRepository(harness.dbs.get('home') as Database.Database).create({ title: 'Release notes' }).id;
+    }
+
+    it.each([
+      { name: 'no agent is chosen', workflows: {} },
+      { name: 'the agent takes a model and none is chosen', workflows: { agent: 'claude', model: null } },
+      { name: 'the chosen agent is not one that can be a workflow agent', workflows: { agent: 'codex', model: 'gpt-5' } },
+    ])('starts nothing and asks for the setting when $name', async ({ workflows }) => {
+      harness.workflows = workflows;
+      const detect = (harness.adapter as { detect: ReturnType<typeof vi.fn> }).detect;
+
+      const status = await agent.openWorkflowAgent(context, 'home', newWorkflow(), {});
+
+      expect(status).toEqual({ session: null, unavailable: null, setupNeeded: true });
+      expect(detect).not.toHaveBeenCalled();
+      expect(manager.spawn).not.toHaveBeenCalled();
+    });
+
+    it('starts a new workflow on the chosen model and effort, not the project default', async () => {
+      const project = context.projectRepo.getById('home') as unknown as { default_model: string; default_effort: string };
+      project.default_model = 'opus';
+      project.default_effort = 'xhigh';
+      harness.workflows = { agent: 'claude', model: 'haiku', effort: 'low' };
+
+      const status = await agent.openWorkflowAgent(context, 'home', newWorkflow(), {});
+
+      expect(status.setupNeeded).toBe(false);
+      expect(buildCommandOptions(0)).toMatchObject({ resume: false, model: 'haiku', effort: 'low' });
+      expect(agentEffort.workflowAgentEffort(status.session!.id)).toBe('low');
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+    });
+
+    it('runs at the CLI\'s own effort when none is chosen', async () => {
+      harness.workflows = { agent: 'claude', model: 'haiku', effort: null };
+
+      const status = await agent.openWorkflowAgent(context, 'home', newWorkflow(), {});
+
+      expect(buildCommandOptions(0).model).toBe('haiku');
+      expect(buildCommandOptions(0).effort).toBeUndefined();
+      expect(agentEffort.workflowAgentEffort(status.session!.id)).toBeNull();
+    });
+
+    it('resumes a paused agent on the setting as it is now, so a change reaches the next start', async () => {
+      harness.workflows = { agent: 'claude', model: 'haiku', effort: 'low' };
+      const first = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      expect(buildCommandOptions(0)).toMatchObject({ resume: true, model: 'haiku', effort: 'low' });
+
+      await agent.pauseWorkflowAgent(context, workflowId);
+      harness.workflows = { agent: 'claude', model: 'sonnet', effort: 'medium' };
+      const second = await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(buildCommandOptions(1)).toMatchObject({ resume: true, model: 'sonnet', effort: 'medium' });
+      agentEffort.forgetWorkflowAgentEffort(first.session!.id);
+      agentEffort.forgetWorkflowAgentEffort(second.session!.id);
+    });
+
+    it('leaves a paused agent paused when the setting is no longer complete', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      await agent.pauseWorkflowAgent(context, workflowId);
+      harness.workflows = {};
+
+      const resumed = await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(resumed).toEqual({ session: null, unavailable: null, setupNeeded: true });
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(agent.findWorkflowAgentSession(context, workflowId)?.status).toBe('suspended');
+    });
+
+    /** The harness adapter with its own name and spies, registered under `agentName` only. */
+    function registerAdapterFor(agentName: string, displayName: string, overrides: Record<string, unknown> = {}) {
+      const adapter = {
+        ...(harness.adapter as Record<string, unknown>),
+        name: agentName,
+        displayName,
+        detect: vi.fn(async () => ({ found: true, path: `/mock/bin/${agentName}` })),
+        ensureTrust: vi.fn(async () => undefined),
+        buildCommand: vi.fn((_options: unknown) => `mock-${agentName}-command`),
+        ...overrides,
+      };
+      harness.adapterByName.set(agentName, adapter);
+      return adapter;
+    }
+
+    /** Record the workflow's conversation as held by `agentName`, as a start does after it spawns. */
+    function recordConversationOn(agentName: string, agentSessionId: string): void {
+      new WorkflowRepository(harness.dbs.get('home') as Database.Database)
+        .setAgentConversation(workflowId, { agentName, agentSessionId, cwd: path.join(root, 'home') });
+    }
+
+    // A conversation belongs to the agent that holds it, so a resume keeps that
+    // agent after the Workflow agent setting changed to another. The setting's
+    // model and effort are that setting's agent's (a model id means nothing to
+    // another CLI), so the kept agent runs at its own defaults.
+    it('resumes a conversation kept on another agent at that agent\'s own model and effort, not the setting\'s', async () => {
+      harness.workflows = { agent: 'claude', model: 'haiku', effort: 'low' };
+      const keptAgent = registerAdapterFor('gemini', 'Gemini CLI');
+      recordConversationOn('gemini', 'conv-gemini');
+      const settingAgent = harness.adapter as { buildCommand: ReturnType<typeof vi.fn> };
+
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(status).toMatchObject({ unavailable: null, setupNeeded: false });
+      // The recorded agent's adapter built the command, on its own conversation.
+      expect(settingAgent.buildCommand).not.toHaveBeenCalled();
+      expect(keptAgent.buildCommand).toHaveBeenCalledTimes(1);
+      const options = keptAgent.buildCommand.mock.calls[0][0] as { model?: string; effort?: string; resume: boolean; sessionId: string };
+      expect(options.resume).toBe(true);
+      expect(options.sessionId).toBe('conv-gemini');
+      expect(options.model).toBeUndefined();
+      expect(options.effort).toBeUndefined();
+      // Stats reads the effort the agent started with back: none was passed.
+      expect(agentEffort.workflowAgentEffort(status.session!.id)).toBeNull();
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+    });
+
+    // Only a recorded conversation's agent can fail this: the setting's agent
+    // passed the setup check. So the way out is the canvas, not the setting.
+    it.each([
+      { name: 'does not declare read-only launch', flags: { supportsReadOnlyLaunch: undefined, supportsCallerSessionId: true } },
+      { name: 'cannot launch read-only', flags: { supportsReadOnlyLaunch: false, supportsCallerSessionId: true } },
+      { name: 'cannot take a session id Kangentic chose', flags: { supportsReadOnlyLaunch: true, supportsCallerSessionId: false } },
+    ])('refuses to resume a conversation kept on an agent that $name, and starts nothing', async ({ flags }) => {
+      const keptAgent = registerAdapterFor('codex', 'Codex CLI', flags);
+      recordConversationOn('codex', 'conv-codex');
+      const settingAgent = harness.adapter as { detect: ReturnType<typeof vi.fn>; buildCommand: ReturnType<typeof vi.fn> };
+
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(status).toEqual({
+        session: null,
+        unavailable: 'This workflow\'s conversation is on Codex CLI, which Kangentic cannot launch read-only. Plan this workflow on the canvas.',
+        setupNeeded: false,
+      });
+      // Neither agent was looked for, trusted or launched.
+      expect(keptAgent.detect).not.toHaveBeenCalled();
+      expect(keptAgent.buildCommand).not.toHaveBeenCalled();
+      expect(settingAgent.detect).not.toHaveBeenCalled();
+      expect(settingAgent.buildCommand).not.toHaveBeenCalled();
+      expect(manager.spawn).not.toHaveBeenCalled();
+    });
+  });
+
   describe('the effort a start replaces', () => {
     it('is forgotten with the session the start replaces, and kept for the new one', async () => {
-      // The project's effort tier is what the agent starts with, and what Stats reads back.
-      (context.projectRepo.getById('home') as unknown as { default_effort: string }).default_effort = 'high';
+      // The Workflow agent's effort is what the agent starts with, and what Stats reads back.
+      harness.workflows.effort = 'high';
       const first = await agent.openWorkflowAgent(context, 'home', workflowId, {});
       expect(agentEffort.workflowAgentEffort(first.session!.id)).toBe('high');
 
@@ -526,7 +695,7 @@ describe('a workflow\'s own agent starting over', () => {
       finishDetect();
       const status = await opened;
 
-      expect(status).toEqual({ session: null, unavailable: 'This workflow no longer exists.' });
+      expect(status).toEqual({ session: null, unavailable: 'This workflow no longer exists.', setupNeeded: false });
       expect(manager.spawn).not.toHaveBeenCalled();
     });
   });
@@ -546,7 +715,7 @@ describe('a workflow\'s own agent starting over', () => {
     it.each(entryPoints)('answers $name with the workflow gone, and neither starts an agent nor opens the home', async ({ start }) => {
       const detect = (harness.adapter as { detect: ReturnType<typeof vi.fn> }).detect;
 
-      await expect(start()).resolves.toEqual({ session: null, unavailable: 'This workflow no longer exists.' });
+      await expect(start()).resolves.toEqual({ session: null, unavailable: 'This workflow no longer exists.', setupNeeded: false });
 
       expect(harness.getProjectDbCalls).not.toContain('deleted-home');
       expect(detect).not.toHaveBeenCalled();

@@ -1048,7 +1048,7 @@ test.describe('Settings > Agent default model with floating aliases', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Answer-agent model pickers with floating aliases', () => {
-  type AnswerAgentSection = 'automation' | 'knowledgeGraph';
+  type AnswerAgentSection = 'automation' | 'knowledgeGraph' | 'workflows';
 
   interface AnswerAgentPicker {
     name: string;
@@ -1065,6 +1065,14 @@ test.describe('Answer-agent model pickers with floating aliases', () => {
       section: 'automation',
       tabId: 'workflows',
       testIdPrefix: 'automation-agent',
+      setup: { agent: 'claude' },
+    },
+    {
+      // The same rows, read off the CLI's own model support rather than an answer run's.
+      name: 'Settings > Workflows Workflow agent',
+      section: 'workflows',
+      tabId: 'workflows',
+      testIdPrefix: 'workflow-agent-setting',
       setup: { agent: 'claude' },
     },
     {

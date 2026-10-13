@@ -187,6 +187,9 @@ export interface AgentDetectionInfo {
   /** What that answer run can do beyond the base, as the adapter declares it.
    *  Absent when the agent cannot answer at all. */
   answerCapabilities?: AnswerCapabilities;
+  /** True if Kangentic can run the agent as a workflow's agent: launched read-only, on a
+   *  session id Kangentic chose. The Workflow agent setting offers only these. */
+  supportsWorkflowAgent?: boolean;
   /** Discovered at detection time; absent for adapters that do not implement discovery. */
   capabilities?: AgentCapabilities;
   /** Present when the adapter can attach to a user-run server instead of spawning locally.
@@ -3745,7 +3748,8 @@ export interface AppConfig {
   /**
    * The Automation agent: which agent, model and effort answer an automation's
    * Condition (and, with workflows, judge whether a column's work is done).
-   * GLOBAL, in Settings > Workflows, first card.
+   * GLOBAL, in Settings > Workflows. Not the Workflow agent, which plans a
+   * workflow and has its own choice (`workflows.agent`).
    *
    * Its own choice, not the Knowledge Graph's and not the project's default
    * agent: a user may run workflows without the Knowledge Graph, and a check
@@ -3771,8 +3775,18 @@ export interface AppConfig {
    * column prompt). Unset, or blank, sends `DEFAULT_WORKFLOW_AGENT_PROMPT`
    * (`src/shared/workflow-agent-prompt.ts`). An edit applies to workflows whose
    * agent starts after it; a running conversation keeps what it was sent.
+   *
+   * `agent`, `model` and `effort` are the Workflow agent: what every workflow's
+   * own agent runs on. Required before any workflow agent starts, with no
+   * fallback to the project's default agent (`src/shared/workflow-agent-choice.ts`):
+   * the pane asks for it until it is set. `model` is cleared whenever `agent`
+   * changes and is required when the agent's CLI takes one; `effort` is optional
+   * (unset runs at the CLI's own level). Read on every start, a Resume included.
    */
   workflows?: {
+    agent?: string | null;
+    model?: string | null;
+    effort?: string | null;
     agentPrompt?: string | null;
     /** The Workflows view's agent pane width in px, set by dragging its edge. Unset is the default (560). */
     agentPaneWidth?: number | null;
@@ -5074,6 +5088,9 @@ export interface WorkflowAgentStatus {
   session: Session | null;
   /** Why the workflow agent cannot run, written for the user; null when it can. */
   unavailable: string | null;
+  /** True when nothing started because the Workflow agent setting is not complete
+   *  (`workflowAgentSetupGap`): the pane asks for it instead. */
+  setupNeeded: boolean;
 }
 
 /** One row of the Workflows picker, with the counts the header shows. */

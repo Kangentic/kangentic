@@ -575,10 +575,13 @@ elsewhere that waited only on its tasks starts. A running or paused workflow lef
 deleted; a finished one stays. A plan with a task on that board refuses to start until you save it
 again without that task.
 
-**The workflow agent.** The pane on the left is the workflow's own agent, the project's default
-agent launched read-only: it reads the code and the board and changes only this workflow's plan,
-never a file. A new workflow's agent starts with the first message (Settings > Workflows >
-Workflow agent prompt, which you can edit), reads the brief, plans the tasks, and saves them;
+**The workflow agent.** The pane on the left is the workflow's own agent, launched read-only: it
+reads the code and the board and changes only this workflow's plan, never a file. It runs on the
+agent, model and effort chosen in Settings > Workflows > Workflow agent, not on the project's
+default agent. A conversation kept from an earlier agent runs at that CLI's own defaults. Until that is chosen the pane says so in place of the terminal, with an Open
+Settings button, and starts the agent on its own once you choose and close Settings. A new
+workflow's agent starts with the first message (Settings > Workflows > Workflow agent prompt,
+which you can edit), reads the brief, plans the tasks, and saves them;
 made from nothing, it first asks what you want to build. Talk to it in its terminal to reshape the
 plan. While it works, the canvas says so and the controls that would change its plan (Start, Add
 task, links, routes, Remove) wait until its turn ends; moving cards does not. The toggle in its

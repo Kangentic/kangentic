@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Bot, Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, Settings, X } from 'lucide-react';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
+import { workflowAgentChoice, workflowAgentSetupGap } from '../../../shared/workflow-agent-choice';
+import { openWorkflowAgentSettings } from './open-workflow-agent-settings';
 import { useSessionStore } from '../../stores/session-store';
 import { selectAgentSession, useWorkflowAgentWorking } from '../../hooks/useWorkflowAgentWorking';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { useConfigStore } from '../../stores/config-store';
-import { useProjectStore } from '../../stores/project-store';
 import { useTerminal } from '../../hooks/useTerminal';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
@@ -27,6 +28,10 @@ import { startPanelDrag } from '../../hooks/panel-drag';
  * conversation or, for a new workflow, sends the first message. It keeps
  * running when the view closes, and its terminal mounts only while the pane
  * shows it.
+ *
+ * Until the Workflow agent is chosen in Settings > Workflows, nothing starts:
+ * the pane asks for the choice where the terminal would be, and starts the agent
+ * on its own once the choice is made and Settings is closed.
  */
 
 /**
@@ -150,14 +155,69 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   // Re-renders the pane when a line is closed; `dismissedStartOvers` keeps it closed across remounts.
   const [, setDismissedStartOver] = useState<string | null>(null);
 
-  // Open the agent of the workflow on screen, once per workflow.
+  // What the Workflow agent setting still lacks, by the rule main checks. Read
+  // only once the agent list is in, so a boot shows the starting line rather
+  // than a flash of the setup state.
+  const agentList = useConfigStore((state) => state.agentList);
+  const agentListLoaded = useConfigStore((state) => state.agentListLoaded);
+  const workflowsConfig = useConfigStore((state) => state.config.workflows);
+  const settingsOpen = useConfigStore((state) => state.settingsOpen);
+  const choice = useMemo(() => workflowAgentChoice(workflowsConfig), [workflowsConfig]);
+  const setupGap = useMemo(
+    () => (agentListLoaded ? workflowAgentSetupGap({ agents: agentList, choice }) : null),
+    [agentListLoaded, agentList, choice],
+  );
+  // Main refused the last start for want of the setting, which the pane's own
+  // read missed (its agent list was out of date, or not in yet).
+  const mainSetupNeeded = useWorkflowStore((state) => state.agentSetupNeeded[workflowId] === true);
+  const clearAgentRefusal = useWorkflowStore((state) => state.clearAgentRefusal);
+  // Main refused the last start, for want of the setting or for a reason it gave.
+  const refused = mainSetupNeeded || unavailable !== null;
+  // The agent the terminal runs, as main picks it: the one holding the
+  // conversation, else the setting's (a new workflow's first start).
+  const recordedAgent = useWorkflowStore((state) => (
+    state.summaries.find((summary) => summary.workflow.id === workflowId)?.workflow.agent_name ?? null
+  ));
+  const terminalAgent = recordedAgent ?? choice.agent;
+
+  // Open the agent of the workflow on screen, once per mount, when nothing holds
+  // it back: the Workflow agent setting is complete as far as the pane knows,
+  // Settings is closed, and main has not just refused a start. It does not wait
+  // for the agent list: main checks the setting itself and answers
+  // `setupNeeded`, so a list that never loads cannot strand the pane. Closing
+  // Settings is what starts a pane that waited, so an Effort picked after the
+  // Model still makes the first run. The ref (which survives StrictMode's second
+  // effect run) keeps a later Settings close from opening again: main resumes an
+  // exited agent's conversation on an open, which the user did not ask for.
+  //
+  // A start main refuses (the setting incomplete, the CLI not found, the MCP
+  // server off) leaves the pane waiting again: the second effect clears the ref.
+  // Opening Settings forgets the refusal, since that is where each is fixed, so
+  // the close that follows tries once more. Nothing else retries, so there is no
+  // loop.
+  const openedWorkflowRef = useRef<string | null>(null);
   useEffect(() => {
+    if (openedWorkflowRef.current === workflowId) return;
+    if (setupGap !== null || settingsOpen || refused) return;
+    openedWorkflowRef.current = workflowId;
     void openAgent();
-  }, [workflowId, openAgent]);
+  }, [workflowId, openAgent, setupGap, settingsOpen, refused]);
+  useEffect(() => {
+    if (!refused) return;
+    openedWorkflowRef.current = null;
+    if (settingsOpen) clearAgentRefusal(workflowId);
+  }, [refused, settingsOpen, workflowId, clearAgentRefusal]);
 
   const running = session?.status === 'running';
   const queued = session?.status === 'queued';
   const live = running || queued;
+  // A live agent keeps its terminal whatever the setting says. Any other asks
+  // for the setting while it is incomplete or main refused for want of it.
+  const settingIncomplete = setupGap !== null || mainSetupNeeded;
+  // With no agent yet and Settings open, the open above is held until Settings
+  // closes, so the pane says it will start then rather than that it is starting.
+  const heldForSettings = agentListLoaded && settingsOpen && session === null;
+  const showSetup = !live && (settingIncomplete || heldForSettings);
   const working = running && isActive(activity);
   const waiting = running && requiresUserInteraction(activity);
   // Only for the session the pane shows, so a summary that has not caught up
@@ -210,7 +270,8 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
     );
   }
 
-  const canToggle = unavailable === null && session !== null;
+  // A Resume while the setting is not complete is one main would refuse.
+  const canToggle = unavailable === null && session !== null && !showSetup;
 
   const pane = (
     <div
@@ -220,7 +281,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
       data-testid="workflow-agent-pane"
       data-collapsed="false"
       data-floating={floating ? 'true' : 'false'}
-      data-agent-state={unavailable ? 'unavailable' : working ? 'working' : waiting ? 'waiting' : session?.status ?? 'starting'}
+      data-agent-state={unavailable ? 'unavailable' : showSetup ? 'setup' : working ? 'working' : waiting ? 'waiting' : session?.status ?? 'starting'}
     >
       <div className="flex h-10 flex-shrink-0 items-center gap-2 border-b border-edge bg-surface-raised px-3" data-testid="workflow-agent-pane-header">
         {canToggle && (
@@ -302,12 +363,14 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
             <span>{unavailable}</span>
           </div>
         ) : running && session ? (
-          <WorkflowAgentTerminal key={session.id} sessionId={session.id} shell={session.shell} />
+          <WorkflowAgentTerminal key={session.id} sessionId={session.id} shell={session.shell} agentName={terminalAgent} />
         ) : queued ? (
           <PaneNotice testId="workflow-agent-queued">
             <Loader2 size={14} className="animate-spin" />
             Waiting for a free agent slot...
           </PaneNotice>
+        ) : showSetup ? (
+          <WorkflowAgentSetup chosen={!settingIncomplete} />
         ) : session ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface/50">
             <button
@@ -354,6 +417,44 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   );
 }
 
+/**
+ * Where the terminal would be while no Workflow agent is chosen: what to do and
+ * the way to Settings > Workflows. The pane starts the agent on its own once the
+ * choice is made and Settings is closed, so the user never comes back to press
+ * anything. The button is the paused agent's Resume button in shape.
+ *
+ * `chosen` is the same place once the setting is complete but Settings is still
+ * open, which holds the start: it says when the agent starts, and needs no way
+ * into a Settings panel that is already open.
+ */
+function WorkflowAgentSetup({ chosen }: { chosen: boolean }) {
+  return (
+    <div
+      className="flex h-full flex-col items-center justify-center gap-3 bg-surface/50 px-12 text-center"
+      data-testid="workflow-agent-setup"
+      data-setting={chosen ? 'chosen' : 'needed'}
+    >
+      <Bot size={28} className="text-fg-faint" aria-hidden="true" />
+      <h2 className="text-base font-semibold text-fg">{chosen ? 'Workflow agent chosen' : 'Choose a workflow agent'}</h2>
+      {/* One line at the pane's default width; a narrowed pane wraps it evenly. */}
+      <p className="text-balance text-sm text-fg-muted">
+        {chosen ? 'It starts when you close Settings.' : 'It plans your workflows, and starts when you close Settings.'}
+      </p>
+      {!chosen && (
+        <button
+          type="button"
+          onClick={openWorkflowAgentSettings}
+          data-testid="workflow-agent-setup-open-settings"
+          className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-accent/40 bg-accent/20 px-6 py-3 text-base text-accent-fg transition-colors hover:bg-accent/30"
+        >
+          <Settings size={16} />
+          Open Settings
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PaneNotice({ children, testId }: { children: ReactNode; testId: string }) {
   return (
     <div className="flex h-full items-center justify-center gap-2 text-sm text-fg-muted" data-testid={testId}>
@@ -367,12 +468,12 @@ function PaneNotice({ children, testId }: { children: ReactNode; testId: string 
  * unmount, so a new session needs a new host). It publishes itself to the
  * workflow store while mounted, which is what has main stream its bytes here.
  */
-function WorkflowAgentTerminal({ sessionId, shell }: { sessionId: string; shell: string }) {
+function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: string; shell: string; agentName: string | null }) {
   const config = useConfigStore((state) => state.config);
-  const projectAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
-  // The project default agent's paste capability, as the Command Terminal reads it:
-  // the workflow agent runs that agent and has no task to resolve through.
-  const pasteImageCapability = useConfigStore((state) => state.agentList.find((agent) => agent.name === projectAgent));
+  // The paste capability of the agent this session runs (the pane resolves it as
+  // main does), not the project's default agent: the workflow agent has its own
+  // setting, and no task to resolve through.
+  const pasteImageCapability = useConfigStore((state) => state.agentList.find((agent) => agent.name === agentName));
   const setAgentPaneSessionId = useWorkflowStore((state) => state.setAgentPaneSessionId);
 
   const mayFocusOnArrival = useCallback(

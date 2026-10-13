@@ -61,6 +61,8 @@ function seedScript(): string {
     window.__mockBoardProfilesByProject = { '${OTHER_PROJECT_ID}': [{ id: 'profile-phone', name: 'Phone', columns: {} }] };
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
+      // The Workflow agent, which no workflow agent starts without.
+      state.config.workflows = { agent: 'claude', model: 'haiku', effort: null };
       state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
       state.projects.push({ id: '${OTHER_PROJECT_ID}', name: 'kangentic-mobile', path: '/mock/kangentic-mobile', github_url: null, default_agent: 'codex', group_id: null, position: 1, last_opened: ts, created_at: ts });
       // Its default base branch, and its Worktrees switch off.

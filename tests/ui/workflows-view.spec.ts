@@ -133,6 +133,8 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
       var seededAt = new Date().toISOString();
       state.config.sidebar = { width: ${sidebarWidth} };
       state.config.sidebarVisible = true;
+      // The Workflow agent, so each workflow's agent starts as in a set-up install.
+      state.config.workflows = { agent: 'claude', model: 'haiku', effort: null };
       ${extras.skipDeleteConfirm ? 'state.config.skipDeleteConfirm = true;' : ''}
       state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: seededAt, created_at: seededAt });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {

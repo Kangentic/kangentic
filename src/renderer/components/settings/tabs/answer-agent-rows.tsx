@@ -6,7 +6,7 @@ import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityR
 import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
-import { resolveAnswerAgent, type AgentJobChoice } from '../../../../shared/answer-agent';
+import type { AgentJobChoice } from '../../../../shared/answer-agent';
 import type { AgentDetectionInfo } from '../../../../shared/types';
 
 /** What the rows write: any of the three, null clearing it. */
@@ -17,10 +17,17 @@ export interface AnswerAgentPatch {
 }
 
 export interface AnswerAgentRowsProps {
-  /** The current choice (`agentJobChoice`, `automationAgentChoice`). */
+  /** The current choice (`agentJobChoice`, `automationAgentChoice`, `workflowAgentChoice`). */
   choice: AgentJobChoice;
-  agents: AgentDetectionInfo[];
-  /** Installed agents that can answer: the Agent row's options. */
+  /**
+   * Which run the choice is for, and so which capabilities decide the Model and
+   * Effort rows. `'answer'` (the default): a background answer run, read from the
+   * adapter's `answerCapabilities`. `'interactive'`: an agent in a terminal (the
+   * Workflow agent), read from the CLI's own `--model` and effort support, as
+   * Settings > Agent's Project defaults are.
+   */
+  capability?: 'answer' | 'interactive';
+  /** Installed agents that can do the job (found, and capable of this run): the Agent row's options. */
   capableAgents: AgentDetectionInfo[];
   onChange: (patch: AnswerAgentPatch) => void;
   /** The registry ids the three rows read their label and description from. */
@@ -30,40 +37,45 @@ export interface AnswerAgentRowsProps {
 }
 
 /**
- * Agent, Model and Effort for an agent that answers in the background: the
- * Knowledge Graph's (questions and task summaries) and the Automation agent
- * (an automation's Condition). One component, so the two choices behave the
- * same way: the same three controls as Settings > Agent's Project Defaults and
- * the column manager (Combobox, ModelCombobox, Combobox).
+ * Agent, Model and Effort for an agent chosen once in Settings: the Knowledge
+ * Graph's (questions and task summaries), the Automation agent (an automation's
+ * Condition) and the Workflow agent (a workflow's planner). One component, so
+ * the choices behave the same way: the same three controls as Settings > Agent's
+ * Project Defaults and the column manager (Combobox, ModelCombobox, Combobox).
+ * The name is from the first two, which are background answer runs; the
+ * Workflow agent reuses the rows through `capability: 'interactive'`.
  *
  * No Permissions: these runs are read-only by construction, so a permission
  * choice would be one the run must ignore. Agent and Model start EMPTY and,
  * where the run takes a model, are both required: nothing spends on an agent
  * nobody chose, and there is no project fallback.
  */
-export function AnswerAgentRows({ choice, agents, capableAgents, onChange, settingIds, testIdPrefix }: AnswerAgentRowsProps) {
-  // The chosen agent, resolved through the SAME rule main uses: the configured
-  // one, or nothing. There is no project fallback, so an unset row reads as
-  // unset.
+export function AnswerAgentRows({ choice, capability = 'answer', capableAgents, onChange, settingIds, testIdPrefix }: AnswerAgentRowsProps) {
+  // The chosen agent: the configured one when it is installed and capable (the
+  // caller's `capableAgents`), so a choice the picker cannot offer reads as
+  // unset. There is no project fallback.
   const chosen = useMemo(
-    () => resolveAnswerAgent({ agents, configured: choice.agent, requireFound: true }),
-    [agents, choice.agent],
+    () => capableAgents.find((agent) => agent.name === choice.agent) ?? null,
+    [capableAgents, choice.agent],
   );
   const chosenName = chosen?.name ?? null;
-  const { models, effortLevels } = useAgentCapabilityResolution(chosenName);
+  const { models, effortLevels, supportsModelOverride } = useAgentCapabilityResolution(chosenName);
   const contextWindows = useModelContextWindows(chosenName);
   const displayNames = useModelDisplayNames(chosenName);
   // The floating aliases (Claude's `haiku`), listed as Latest like every other
   // model picker, so a run set to one follows each new release on its own.
   const modelAliases = useModelAliases(chosenName);
-  // Whether this agent's run takes a model, as its adapter declares it. When it
-  // does, the model is required: nothing runs on a default nobody chose.
-  const takesModel = chosen?.answerCapabilities?.model === true;
+  const interactive = capability === 'interactive';
+  // Whether this agent's run takes a model: as the adapter declares it for an
+  // answer run, as the CLI reports it for an interactive one. When it does, the
+  // model is required: nothing runs on a default nobody chose.
+  const takesModel = chosen !== null && (interactive ? supportsModelOverride : chosen.answerCapabilities?.model === true);
   // Effort shows wherever the run passes it on AND the CLI reports levels.
-  // Unset runs at the adapter's recommended level, shown as the placeholder, so
-  // leaving it alone is a choice the user can see.
-  const takesEffort = chosen?.answerCapabilities?.effort === true && effortLevels.length > 0;
-  const recommendedEffort = chosen?.answerCapabilities?.defaultEffort;
+  // Unset runs at the adapter's recommended level (an answer run) or the CLI's
+  // own (an interactive one), shown as the placeholder, so leaving it alone is a
+  // choice the user can see.
+  const takesEffort = chosen !== null && (interactive || chosen.answerCapabilities?.effort === true) && effortLevels.length > 0;
+  const recommendedEffort = interactive ? undefined : chosen?.answerCapabilities?.defaultEffort;
   const effortDefault = recommendedEffort && effortLevels.includes(recommendedEffort) ? recommendedEffort : null;
 
   return (

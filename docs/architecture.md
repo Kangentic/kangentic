@@ -232,8 +232,8 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 | `workflow:setLink` | invoke | Link or unlink two tasks (one waits for the other to reach Done) |
 | `workflow:setRoute` | invoke | A task's route, as the column ids it visits |
 | `workflow:setPositions` | invoke | Where hands placed cards, or null for the automatic layout; any other payload is refused; changes no plan revision |
-| `workflow:agentOpen` | invoke | The pane shows the workflow agent: an existing session as it is (a paused one stays paused), else a start that resumes its conversation by id or sends the first message (`src/main/workflows/workflow-agent.ts`) |
-| `workflow:agentResume` | invoke | The pane's Resume: start the paused agent again on its own conversation |
+| `workflow:agentOpen` | invoke | The pane shows the workflow agent: an existing session as it is (a paused one stays paused), else a start that resumes its conversation by id or sends the first message (`src/main/workflows/workflow-agent.ts`). A start with the Workflow agent setting incomplete spawns nothing and answers `setupNeeded`, and the pane asks for the setting |
+| `workflow:agentResume` | invoke | The pane's Resume: start the paused agent again on its own conversation, on the Workflow agent's current model and effort, for a conversation on the chosen agent (`setupNeeded` as for an open) |
 | `workflow:agentPause` | invoke | The pane's Pause: suspend the agent, keeping its conversation (its spend is captured first) |
 | `workflow:changed` | on | A workflow or its tasks changed, whoever changed it; an open view reloads it |
 
@@ -412,7 +412,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, capabilities, remoteExecution, launchOptions) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, supportsWorkflowAgent, capabilities, remoteExecution, launchOptions) |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 
 ### Handoffs (1 channel)

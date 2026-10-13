@@ -18,6 +18,7 @@
 
 import { createCachedSingleton } from '../shared/cached-singleton';
 import { agentRegistry } from './agent-registry';
+import { canBeWorkflowAgent } from './shared/workflow-agent-capability';
 import type { AgentDetectionInfo } from '../../shared/types';
 
 type CliPathOverrides = Record<string, string | null | undefined>;
@@ -63,6 +64,7 @@ async function buildAgentList(
         reportsTurnEnd: adapter.runtime.reportsTurnEnd,
         supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
         answerCapabilities: adapter.answerCapabilities,
+        supportsWorkflowAgent: canBeWorkflowAgent(adapter),
         capabilities,
         remoteExecution: adapter.remoteExecution?.info,
         launchOptions: adapter.launchOptions,
