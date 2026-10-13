@@ -16,6 +16,7 @@ import * as path from 'node:path';
 import { ActivityEngine } from '../../src/main/activity-engine/engine';
 import { EventType, IdleReason } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 
 const SESSION_ID = 'turn-end-session';
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures', 'replay');
@@ -273,6 +274,40 @@ describe('onTurnEnded', () => {
     harness.send(EventType.BackgroundShellEnd, { detail: 'shell-1' });
     expect(harness.engine.getState(SESSION_ID)?.activity).toBe('idle');
     expect(harness.turnEnds).toHaveLength(1);
+    harness.engine.dispose();
+  });
+
+  // A dev server the agent leaves running in the background (`npm run
+  // demo:serve`) is alive for hours. Untagged, it held a task's turn open
+  // through every Stop, so the column's turn-end automations never ran.
+  // CLAUDE.md tells the agent to tag it, as a trailing shell comment when the
+  // program rejects unknown flags, so that exact form is pinned here.
+  function startBackgroundServer(harness: Harness, command: string): void {
+    // PreToolUse carries the command; PostToolUse carries the assigned shell id.
+    harness.send(EventType.BackgroundShellStart, { tool: 'Bash', toolId: 'server', detail: command });
+    harness.send(EventType.BackgroundShellStart, { tool: 'Bash', toolId: 'server', detail: 'shell-server' });
+  }
+
+  it('ends the turn at its Stop when the server it left running carries the no-hold flag in a trailing comment', () => {
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    startBackgroundServer(harness, `npm run demo:serve # ${NO_ACTIVITY_HOLD_FLAG}`);
+    harness.send(EventType.Idle);
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('idle');
+    expect(harness.turnEnds).toHaveLength(1);
+    harness.engine.dispose();
+  });
+
+  it('holds the turn through every Stop while an untagged server runs (the control)', () => {
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    startBackgroundServer(harness, 'npm run demo:serve');
+    harness.send(EventType.Idle);
+    vi.advanceTimersByTime(60_000);
+    harness.send(EventType.Prompt);
+    harness.send(EventType.Idle);
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('thinking');
+    expect(harness.turnEnds).toHaveLength(0);
     harness.engine.dispose();
   });
 

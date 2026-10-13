@@ -54,7 +54,10 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
       countRuns: () => 0,
       hasWorkflowStepSince: hoisted.hasWorkflowStepSince,
     },
-    taskMoves: { visitStartedAt: hoisted.visitStartedAt },
+    taskMoves: {
+      visitStartedAt: hoisted.visitStartedAt,
+      currentVisit: () => ({ at: hoisted.visitStartedAt(), origin: 'renderer' }),
+    },
     attachments: {},
   })),
 }));

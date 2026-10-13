@@ -250,7 +250,10 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   idles, a permission prompt, every watchdog and silence timer, and a resume's idle seed.
 - **`turnStartedAt`** is stamped on every idle-to-thinking commit, and at spawn when the session is
   seeded thinking. A permission prompt resolving back to thinking keeps it, since that is the same
-  turn. The turn-end runner uses it to ignore a turn that began before the task entered its column.
+  turn. The turn-end runner uses it to ignore a turn that began before the task entered its column,
+  except when a plan approval moved it there: the approval answers the agent's plan prompt without
+  ending the turn, so the agent implements in the turn that planned, and that turn counts in the new
+  column.
 - **`workSerial`** is the turn's identity. It counts the turn-initiating events (`TURN_INITIATING_EVENTS`)
   `processEvent` has handled, and rides the turn end beside `turnStartedAt`.
   `SessionManager.isLatestTurn(sessionId, workSerial)` is true only while the agent has reported no
@@ -365,6 +368,8 @@ This exists because the engine cannot distinguish two genuinely different things
 ```
 node scripts/worktree-preview.js --wait --port=5174 --kangentic-no-activity-hold
 ```
+
+A dev server the agent starts in the background and leaves running is the same case. Without the flag it holds the task active through every Stop, so the column's On agent turn end automations never run. The workflow prompt (`buildWorkflowXml`) and this repo's `CLAUDE.md` tell the agent to add it, as a trailing shell comment when the program rejects unknown flags (`npm run demo:serve # --kangentic-no-activity-hold`). The flag is matched as a substring of the command, so the comment form works.
 
 Mechanics, and why they are shaped this way:
 

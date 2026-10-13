@@ -77,6 +77,13 @@ repo. Always run `npm install` in a worktree before running any npm scripts (`np
 typecheck`, `npm run build`, `npx playwright test`, etc.). Without it, binaries like `tsc`
 won't be found.
 
+**Background servers carry `--kangentic-no-activity-hold`:** a server or watcher you start in
+the background and leave running (`npm run demo:serve`, a scratchpad HTTP server) puts that
+flag in its command, as a trailing shell comment when the program rejects unknown flags
+(`npm run demo:serve # --kangentic-no-activity-hold`). Without it the activity engine holds the
+task active for as long as the server lives: the board shows it working through every Stop,
+and the column's On agent turn end automations never run.
+
 ## Architecture
 
 ### Data Flow

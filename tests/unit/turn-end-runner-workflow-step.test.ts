@@ -57,7 +57,7 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
     swimlanes: { getById: () => hoisted.column, list: () => [] },
     automations: { getForTrigger: () => hoisted.rows },
     automationRuns: { hasRunSince: () => false, hasSkipSince: () => false, countRuns: () => 0 },
-    taskMoves: { visitStartedAt: () => null },
+    taskMoves: { visitStartedAt: () => null, currentVisit: () => null },
     attachments: {},
   })),
 }));
