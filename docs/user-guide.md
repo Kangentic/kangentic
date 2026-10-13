@@ -37,7 +37,7 @@ board, not from the defaults. A column's message to its agent is one kind of aut
 
 ### Create a Task
 
-Click the **+** button on any column header, or **New Task** in the backlog toolbar. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
+Click the **+** button on any column header, or **New Task** in the backlog toolbar. Enter a title and optional description. A **Name from prompt** button beside the title suggests one from the description, and a task still carrying a placeholder title such as `fix` gets the same suggestion as a toast 30 seconds after its agent starts. Both appear only when an Automation agent is set up in Settings > Workflows. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
 Pasted screenshots are capped at a 2000px long edge, which bounds a multi-monitor grab without costing the detail an agent needs to read small text. Oversized pastes are re-encoded as WebP, stepping quality down until each image lands under a ~1.5MB target, so a large grab is not rejected by the API. Small pastes (under 500KB), GIFs, SVGs, and PNGs already inside the cap are attached as-is.
 
@@ -470,7 +470,8 @@ variable** button. A known variable is highlighted; an unknown one is flagged an
 **Condition and Frequency.** Any row can carry a **Condition**, a sentence in plain words ("the
 review found work the implementer can do"). An agent checks it before the row runs, and a no means
 the row did not run: it is checked again next time. The agent that checks is the **Automation
-agent**, chosen in Settings > Workflows; until one is set up, Condition stays off. **Frequency**
+agent**, chosen in Settings > Workflows; until one is set up, Condition stays off. The same agent names
+tasks and Command Terminals, and without one naming is off. **Frequency**
 caps how many times a row runs on one task, across every visit, which is what keeps a review loop
 from bouncing a task forever. Both start off.
 
@@ -1075,7 +1076,7 @@ The status bar runs along the bottom of the window, providing at-a-glance metric
 Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift+U`. It replaces the old status-bar token/cost strip with a full-page view of agent usage:
 
 - **Scope** - the current project, or an app-wide rollup across every registered project (with a per-project comparison table).
-- **Metric** - toggle between cost and tokens. The two views chart different things. The Cost view shows cost per day by model and the cumulative spend. The Tokens view reads the same per-turn ledger as the Tokens tile, so its bars add up to that tile: tokens per bucket by model, then the cache hit rate per bucket (cache read over all input), which is what makes a week expensive without more work. The breakdown lists rank by the selected metric, with the other one in each row's tooltip. In the per-project table the Tokens view swaps Cost and Cost Share for Cache Read and Token Share.
+- **Metric** - toggle between cost and tokens. The two views chart different things. The Cost view shows cost per day by model and the cumulative spend. The Tokens view reads the same per-turn ledger as the Tokens tile, so its bars add up to that tile: tokens per bucket by model, then the cache hit rate per bucket (cache read over all input), which is what makes a week expensive without more work. The Burn Rate tile and its sparkline follow the metric too, with the other rate as its sub-line. The breakdown lists rank by the selected metric, with the other one in each row's tooltip. In the per-project table the Tokens view swaps Cost and Cost Share for Cache Read and Token Share.
 - **Range** - Live (trailing 2 hours), Today, This Week, This Month, All Time, or a custom month range. Click a day in a chart to drill into that single day.
 - **Breakdowns** - by model, by agent, by reasoning effort, and, when a session fanned out to subagents, by subagent type, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, files, cache reads, compactions, burn rate, average active time, subagent tokens) with "vs previous period" deltas. The Subagents tile's tooltip adds how many of those subagents another subagent spawned, and names any agent in the range that cannot report subagent usage at all - only Claude can today, so a Codex or Gemini range says so rather than showing a dash that looks like "nothing fanned out".
 
@@ -1392,7 +1393,7 @@ Each session shows its owning project and column, the task title and ticket numb
 
 The slot under each card's title follows the same Card Preview setting as the board card (Settings > Task), and renders it the same way. A session with an agent on it shows what that agent is doing, in a shaded terminal panel: its latest message wrapped, or its recent messages one line each. When it has not said anything yet, or it is a Command Terminal with no task, that same panel carries a **live output peek** instead, the last few rendered lines of the session's terminal. The peek updates in place as the agent works (at most twice a second, and only when the visible text actually changes), so you can see what a session is saying without opening it. A paused or finished session shows the task description instead, as does every card when Card Preview is set to the task description. A Command Terminal has no task to describe, so it keeps its last output peek in both of those cases. The terminal panel is a fixed height whichever of the two it carries, so a card never resizes as messages land.
 
-Command Terminals (`Mod+Shift+P`) appear here too. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible. Each is titled `Command Terminal N` (matching the number on its own window), draws a terminal-shaped activity glyph rather than the agent one, and names the **branch** it is working on where a task card names its column.
+Command Terminals (`Mod+Shift+P`) appear here too. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible. Each starts as `Command Terminal N` (matching the number on its own window) and takes a name from its first prompt when an Automation agent is set up in Settings > Workflows, and keeps the number without one. It draws a terminal-shaped activity glyph rather than the agent one, and names the **branch** it is working on where a task card names its column.
 
 You choose how it looks, and the choice is remembered (including across a restart):
 

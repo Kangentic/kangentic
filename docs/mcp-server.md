@@ -468,7 +468,7 @@ Codex or Gemini range reports an empty breakdown that otherwise reads as a measu
 adapters declare the capability, not from agent names in the reporting layer.
 
 Reads the durable usage ledgers (`usage_history` per-session cost and
-`conversation_turn_usage` per-turn tokens), so totals survive task and session deletion.
+`conversation_turn_usage` per-turn tokens, plus `background_calls` for the Background line below), so totals survive task and session deletion.
 Usage from in-flight sessions is excluded until they finalize.
 
 Tokens are reported as four DISJOINT types - fresh input, output, cache write, cache
