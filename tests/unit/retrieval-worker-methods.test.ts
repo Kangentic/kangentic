@@ -3,6 +3,7 @@ import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { retrievalHandlers, type WorkerContext } from '../../src/main/retrieval/worker/methods';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+import { BackgroundCallRepository } from '../../src/main/db/repositories/background-call-repository';
 import { openTestDatabase } from './helpers/test-database';
 
 /**
@@ -116,5 +117,40 @@ describe('retrieval worker methods', () => {
     const groups = await handler({ projectId: 'project-1', read: 'listTurnGroups', args: [null, 86_400_000, null, null, null] }, context);
     expect(groups).toEqual([expect.objectContaining({ inputTokens: 30, outputTokens: 10, turnCount: 2 })]);
     expect(() => handler({ projectId: 'project-1', read: 'constructor' as never, args: [] }, context)).toThrow(/Unknown usage read/);
+  });
+
+  // The worker opens a project's database with migrations off, so a project main
+  // has not opened since the background_calls table arrived has no such table.
+  // The dashboard reads every project in one pass, so this one read must answer
+  // empty there, not reject and drop the whole dashboard.
+  //
+  // Red-green: make `hasBackgroundCallsTable` return true unconditionally. The
+  // unmigrated read then throws `no such table: background_calls`.
+  it('usage.read answers listBackgroundCallGroups from the ledger, and empty from a database with no table yet', async () => {
+    const migrated = openProject();
+    new BackgroundCallRepository(migrated).record({
+      id: 'call-1',
+      job: 'condition_check',
+      taskId: null,
+      swimlaneId: null,
+      agent: 'claude',
+      requestedModel: 'claude-haiku-5-5',
+      effort: 'low',
+      usage: { model: 'claude-haiku-5-5', inputTokens: 2, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 35, costUsd: 0.0005 },
+      durationMs: 900,
+      outcome: 'succeeded',
+      detail: null,
+      startedAt: '2026-10-13T14:02:11.402Z',
+    });
+    // Never migrated: the shape of a project database main has not opened since the upgrade.
+    const unmigrated = openTestDatabase();
+    openDatabases.push(unmigrated);
+    const handler = retrievalHandlers['usage.read'];
+    const context = contextFor(new Map([['migrated', migrated], ['unmigrated', unmigrated]]));
+    const fifteenMinutes = 15 * 60_000;
+
+    const groups = await handler({ projectId: 'migrated', read: 'listBackgroundCallGroups', args: [null, null, fifteenMinutes] }, context);
+    expect(groups).toEqual([expect.objectContaining({ job: 'condition_check', agent: 'claude', modelId: 'claude-haiku-5-5', calls: 1, outputTokens: 35 })]);
+    expect(await handler({ projectId: 'unmigrated', read: 'listBackgroundCallGroups', args: [null, null, fifteenMinutes] }, context)).toEqual([]);
   });
 });
