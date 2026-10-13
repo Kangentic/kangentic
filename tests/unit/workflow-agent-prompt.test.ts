@@ -25,6 +25,16 @@ describe('workflow agent first message', () => {
     for (const name of used) expect(offered).toContain(name);
   });
 
+  // Read-only launch is an enhancement an adapter adds where it can enforce it
+  // (`supportsReadOnlyLaunch`). Every agent launched without those tools is
+  // held to the plan only by this paragraph, and it runs in the user's own
+  // checkout, so dropping it from the default leaves those agents free to edit
+  // files while they plan.
+  it('asks the agent to leave files and the repository as they are', () => {
+    expect(DEFAULT_WORKFLOW_AGENT_PROMPT).toContain('leave every file and the repository as they are');
+    expect(DEFAULT_WORKFLOW_AGENT_PROMPT).toContain('This is the user\'s own checkout');
+  });
+
   it('falls back to the default for an unset or blank setting', () => {
     expect(workflowAgentPromptTemplate(undefined)).toBe(DEFAULT_WORKFLOW_AGENT_PROMPT);
     expect(workflowAgentPromptTemplate('   ')).toBe(DEFAULT_WORKFLOW_AGENT_PROMPT);

@@ -30,7 +30,7 @@ vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() 
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const service = await import('../../src/main/workflows/workflow-service');
-const { formatWorkflow } = await import('../../src/main/agent/commands/workflow-commands');
+const { formatWorkflow } = await import('../../src/main/workflows/workflow-format');
 
 import { openTestDatabase } from './helpers/test-database';
 import { planAcrossBoards, taskTitled } from './helpers/workflow-plans';
