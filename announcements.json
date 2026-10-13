@@ -40,7 +40,7 @@
           "heading": "Column automations",
           "body": "Automations can now run when the column's agent finishes a turn. The new **Move to column** row sends the task on to another column. Any row can check a **Condition** with the Automation agent first, or cap its runs with **Frequency**. Send message to agent, Run script, Call webhook and Notify me work as before.\n\nClick a column header to open the Column Manager. Automations are on the right.",
           "links": [
-            { "label": "Automations docs", "url": "https://kangentic.com/features/columns-and-automations/#automations" }
+            { "label": "Automations docs", "url": "https://kangentic.com/features/columns-and-automations/" }
           ]
         }
       ],
