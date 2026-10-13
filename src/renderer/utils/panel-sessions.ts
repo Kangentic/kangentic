@@ -43,8 +43,8 @@ export interface PanelSessions {
  * entirely rather than keeping a tab whose body renders nothing. Opening a task
  * therefore reads the same way wherever you do it: the terminal detaches to the
  * surface you opened it on (or the phone that took it), and returns as a tab
- * when that surface lets go. Once no tab is left the panel collapses (see
- * `shouldForceCollapseTerminal`).
+ * when that surface lets go. Once no tab is left the panel collapses to zero
+ * height (see `resolveTerminalForceCollapse`).
  *
  * Shared by the panel (what to render), `AppLayout` (whether to collapse) and
  * `useFocusedSessionsSync` (which sessions main must stream PTY bytes for), so

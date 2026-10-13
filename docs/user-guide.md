@@ -176,7 +176,7 @@ The bottom panel shows terminal output for running sessions.
 
 Each running session gets a tab. Click a tab to switch between sessions. The active tab is highlighted. Double-click a tab to open the corresponding task detail dialog.
 
-Opening a task's detail moves its terminal out of the panel, so that tab disappears while the detail is open - on the board and in the [Agent Monitor](#agent-monitor) alike. The other tabs stay where they are. Close the detail and the tab comes back, still selected. When the last tab goes, the panel collapses to its thin strip.
+Opening a task's detail moves its terminal out of the panel, so that tab disappears while the detail is open - on the board and in the [Agent Monitor](#agent-monitor) alike. The other tabs stay where they are. Close the detail and the tab comes back, still selected. When the last tab goes because its detail is open, the panel closes completely and the board takes its space. It comes back when you close the detail.
 
 Tab indicators show session state at a glance:
 - **Green spinner** - agent is actively working

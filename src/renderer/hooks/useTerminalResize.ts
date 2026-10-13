@@ -141,7 +141,6 @@ export function useTerminalResize(
   const effectiveCollapsed = collapsed || forceCollapsed;
 
   const latestHeightRef = useRef(height);
-  const terminalConfigRef = useRef(config.terminal);
   const effectiveCollapsedRef = useRef(effectiveCollapsed);
   // Mirrored for `onToggleCollapse`, which has no deps and would otherwise close
   // over a stale value. A toggle while `forceCollapsed` holds flips only the
@@ -152,34 +151,39 @@ export function useTerminalResize(
   // not a discrete event, a frame can cancel the expand's transition before that effect
   // runs, and the reveal would then read the stale expanded value.
   const committedCollapsedRef = useRef(effectiveCollapsed);
-  // The three mirrors are written on commit, in a layout effect that runs ahead
+  // The two mirrors are written on commit, in a layout effect that runs ahead
   // of every passive effect and handler below that reads them; never during
   // render, which the compiler rules forbid.
   useLayoutEffect(() => {
-    terminalConfigRef.current = config.terminal;
     forceCollapsedRef.current = forceCollapsed;
     committedCollapsedRef.current = effectiveCollapsed;
   });
   const availableHeightRef = useRef(0);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync from config when it changes. A render-time adjustment on the config
-  // transition (React's "adjusting state when a prop changes" pattern) rather
-  // than an effect, so the panel never paints the old height for a frame. The
-  // initial state already comes from the mount-time config.
-  const [syncedConfig, setSyncedConfig] = useState(config);
-  if (config !== syncedConfig) {
-    setSyncedConfig(config);
-    const saved = config.terminal?.panelHeight;
-    if (typeof saved === 'number' && saved >= MIN_HEIGHT) setHeight(saved);
+  // Adopt the saved height when IT changes. A render-time adjustment (React's
+  // "adjusting state when a prop changes" pattern) rather than an effect, so the
+  // panel never paints the old height for a frame. The initial state already comes
+  // from the mount-time config.
+  //
+  // Keyed on the value, never on the config object. The drag below persists its
+  // height straight to main, so the renderer's config store keeps the height it
+  // loaded, and every unrelated config write rebuilds that object around the stale
+  // value. A window layout save is one, and opening a task's detail makes one, so
+  // a sync on the object put the panel back to its loaded height whenever a task
+  // was opened after a drag.
+  const savedHeight = config.terminal?.panelHeight;
+  const [syncedSavedHeight, setSyncedSavedHeight] = useState(savedHeight);
+  if (savedHeight !== syncedSavedHeight) {
+    setSyncedSavedHeight(savedHeight);
+    if (typeof savedHeight === 'number' && savedHeight >= MIN_HEIGHT) setHeight(savedHeight);
   }
-  // The ref half of that sync, which render cannot do. Keyed on the config, like
-  // the state half, so it stays the config's write and not a mirror of every
+  // The ref half of that sync, which render cannot do. Keyed on the saved value,
+  // like the state half, so it stays the config's write and not a mirror of every
   // `height` (the drag and clamp paths write the ref themselves).
   useLayoutEffect(() => {
-    const saved = config.terminal?.panelHeight;
-    if (typeof saved === 'number' && saved >= MIN_HEIGHT) latestHeightRef.current = saved;
-  }, [config]);
+    if (typeof savedHeight === 'number' && savedHeight >= MIN_HEIGHT) latestHeightRef.current = savedHeight;
+  }, [savedHeight]);
 
   // Enable transitions after first frame to prevent animation on mount
   useEffect(() => {
@@ -299,11 +303,12 @@ export function useTerminalResize(
 
     // Only the user's preference flips here; the showContent timing is driven by
     // the effectiveCollapsed effect above (which also reacts to windows opening).
+    // The write names only the field it changes. Main merges `terminal`, and a full
+    // object spread from the config store would carry the store's stale height and
+    // overwrite the one the last drag saved.
     setCollapsed((prev) => {
       const newCollapsed = !prev;
-      window.electronAPI.config.set({
-        terminal: { ...terminalConfigRef.current, panelCollapsed: newCollapsed },
-      });
+      window.electronAPI.config.set({ terminal: { panelCollapsed: newCollapsed } });
       return newCollapsed;
     });
   }, []);
@@ -323,16 +328,15 @@ export function useTerminalResize(
         latestHeightRef.current = newHeight;
       },
       onRelease: () => {
-        window.electronAPI.config.set({
-          terminal: { ...config.terminal, panelHeight: latestHeightRef.current },
-        });
+        // Only the height, for the same reason as the collapse toggle's write.
+        window.electronAPI.config.set({ terminal: { panelHeight: latestHeightRef.current } });
         setIsResizing(false);
         // Explicit refit signal. The debounced ResizeObserver also handles this,
         // but the explicit event gives a faster 50ms response.
         window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
       },
     });
-  }, [height, config.terminal, clampHeight]);
+  }, [height, clampHeight]);
 
   return { height, collapsed: effectiveCollapsed, isResizing, showContent, ready, suppressTransition, onToggleCollapse, onResizeStart };
 }

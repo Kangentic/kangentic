@@ -13,19 +13,27 @@
  * per .claude/rules/cross-platform-parity.md. Drag input is driven from the
  * divider's live boundingBox.
  *
- * All four tests share one Chromium launch; page.goto() in beforeEach resets the
+ * All five tests share one Chromium launch; page.goto() in beforeEach resets the
  * in-memory mock config so each test starts from a known open sidebar (default
  * sidebarVisible: true, sidebar.width: 224).
+ *
+ * The fifth pins that a dragged width survives an unrelated config write. The drag
+ * persists straight to main, so the config store keeps the width it loaded, and
+ * opening a task saves the window layout, which rebuilds the config object around
+ * that stale width. The hook used to adopt the width on any new config object, so
+ * the sidebar slid back to its loaded width. RED against `useSidebarResize.ts`
+ * syncing the saved width on `config !== syncedConfig`.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, readSavedWindowCount, readSidebarStyleWidth } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
 const PROJECT_ID = 'divider-proj';
+const TASK_TITLE = 'Divider Task';
 const DEFAULT_SIDEBAR_WIDTH = 224; // matches the mock config default
 
 /** One project with swimlanes, active, so the board and sidebar (with divider) render. */
@@ -46,12 +54,34 @@ function oneProjectScript(): string {
         created_at: ts,
       });
 
+      var todoLaneId = null;
       state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        if (s.name === 'To Do') todoLaneId = 'divider-lane-' + i;
         state.swimlanes.push(Object.assign({}, s, {
           id: 'divider-lane-' + i,
           position: i,
           created_at: ts,
         }));
+      });
+
+      // A task with no session, so opening it makes a window without moving any terminal.
+      state.tasks.push({
+        id: 'divider-task',
+        display_id: 1,
+        title: '${TASK_TITLE}',
+        description: '',
+        swimlane_id: todoLaneId,
+        position: 0,
+        agent: 'claude',
+        session_id: null,
+        worktree_path: null,
+        branch_name: null,
+        pr_number: null,
+        pr_url: null,
+        base_branch: null,
+        archived_at: null,
+        created_at: ts,
+        updated_at: ts,
       });
 
       return { currentProjectId: '${PROJECT_ID}' };
@@ -167,5 +197,23 @@ test.describe('Sidebar resize divider', () => {
     expect(after.sidebarVisible).toBe(true);
     // Width increased (tolerance-based: assert it grew, not an exact pixel value).
     expect(after.sidebar.width).toBeGreaterThan(DEFAULT_SIDEBAR_WIDTH + 30);
+  });
+
+  test('a dragged width survives opening a task window', async () => {
+    const center = await dividerCenter(page);
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down();
+    await page.mouse.move(center.x + 80, center.y, { steps: 10 });
+    await page.mouse.up();
+    const draggedWidth = (await getConfig(page)).sidebar.width;
+    expect(draggedWidth).toBeGreaterThan(DEFAULT_SIDEBAR_WIDTH + 30);
+
+    // Opening the task saves the window layout, which rebuilds the config object.
+    await page.locator('[data-swimlane-name="To Do"]').locator(`text=${TASK_TITLE}`).first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+    await expect.poll(() => readSavedWindowCount(page, PROJECT_ID), { timeout: 5000 }).toBe(1);
+
+    // The store update re-renders synchronously, so this read already reflects it.
+    expect(Math.abs((await readSidebarStyleWidth(page)) - draggedWidth)).toBeLessThanOrEqual(1);
   });
 });

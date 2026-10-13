@@ -11,7 +11,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, computedColor, settleFrames } from './helpers';
+import { waitForViteReady, gotoVite, computedColor, settleFrames, pressPortToStartLink } from './helpers';
 
 // Each test launches its own browser, which is slow under a full gate's load.
 test.describe.configure({ mode: 'parallel', timeout: 30_000 });
@@ -190,17 +190,14 @@ async function framesUntilMoved(page: Page, key: string, limit = 300): Promise<n
 }
 
 /**
- * Press on a card's outgoing port and take a first step, then wait until the
- * canvas says a link is being drawn (`data-linking`), so the next moves draw
- * it. Under a full gate's load (the unit, UI and E2E tiers at once) the moves
- * that follow could otherwise run ahead of the drag's start and leave no hint.
+ * Press on a card's outgoing port and take a first step, returning once the
+ * canvas says a link is being drawn (`data-linking`), so the next moves draw it.
+ * Under a full gate's load (the unit, UI and E2E tiers at once) the moves that
+ * follow could otherwise run ahead of the drag's start and leave no hint, and a
+ * press could start no link at all, which `pressPortToStartLink` re-presses.
  */
 async function startLinkFrom(page: Page, key: string): Promise<void> {
-  const start = await centerOf(page, outgoingPort(page, key));
-  await page.mouse.move(start.x, start.y);
-  await page.mouse.down();
-  await page.mouse.move(start.x + 8, start.y + 8, { steps: 2 });
-  await expect(byTestId(page, 'workflow-canvas')).toHaveAttribute('data-linking', '', { timeout: 15_000 });
+  await pressPortToStartLink(page, outgoingPort(page, key));
 }
 
 /** The first hint after a drag, given room for a loaded machine. */

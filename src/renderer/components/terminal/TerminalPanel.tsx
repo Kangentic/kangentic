@@ -12,6 +12,7 @@ import { slugify } from '../../utils/slugify';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { derivePanelSessions } from '../../utils/panel-sessions';
 import { derivePanelSessionId } from '../../utils/focused-sessions';
+import { isEveryPanelSessionDetached } from '../../utils/terminal-force-collapse';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
 import { ACTIVITY_TAB } from '../../../shared/types';
 import type { ActivityState } from '../../../shared/types';
@@ -111,9 +112,12 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   // selection: leave the stored id pointing at it so closing that window returns the
   // user to the tab they left, rather than to whichever agent the panel fell back to
   // meanwhile. The fallback still RENDERS as active; only the store write is skipped.
+  const everyPanelSessionDetached = isEveryPanelSessionDetached({
+    activeSessionCount: activeSessions.length,
+    visibleSessionCount: visibleSessions.length,
+  });
   const selectionDetached =
-    (activeSessionId !== null && ownedSessionIds.has(activeSessionId)) ||
-    (activeSessions.length > 0 && visibleSessions.length === 0);
+    (activeSessionId !== null && ownedSessionIds.has(activeSessionId)) || everyPanelSessionDetached;
 
   // Sync the store when the effective ID differs (stale or first auto-select)
   useEffect(() => {
@@ -150,17 +154,17 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   if (visibleSessions.length === 0) {
     // Two different nothings. With no sessions at all, the hint is the only place a
     // new user is told how to start an agent, so it stays. When every session is
-    // detached to a detail window the panel is force-collapsed to a thin strip
-    // (`shouldForceCollapseTerminal`), and that hint would be a lie - those agents
-    // are running, just somewhere else - so the strip stays blank.
-    const detached = activeSessions.length > 0;
+    // detached to a detail window the panel is force-collapsed and takes no height
+    // (AppLayout sizes the container to 0, see `isEveryPanelSessionDetached`), and that
+    // hint would be a lie - those agents are running, just somewhere else - so this
+    // stays blank.
     return (
       <div
         data-testid="terminal-panel-empty"
-        data-state={detached ? 'detached' : 'no-sessions'}
+        data-state={everyPanelSessionDetached ? 'detached' : 'no-sessions'}
         className="h-full bg-surface flex items-center justify-center text-fg-disabled text-sm"
       >
-        {detached ? null : 'No active sessions. Drag a task into a column that starts an agent.'}
+        {everyPanelSessionDetached ? null :'No active sessions. Drag a task into a column that starts an agent.'}
       </div>
     );
   }
