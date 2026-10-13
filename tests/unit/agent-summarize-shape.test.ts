@@ -54,18 +54,18 @@ describe('Adapter summarize() invocation shapes', () => {
   });
 
   // Each adapter takes the model the way its own answerFromContext already does,
-  // and the trust flag that run needs in the answer home, a folder it never saw.
+  // the trust flag that run needs in the answer home, a folder it never saw,
+  // and those of the answer run's read-only and no-session flags that leave its
+  // mode alone. A mode change waits for a title measured in that mode.
+  const GROK_DENY = ['--deny', 'Write', '--deny', 'Edit', '--deny', 'Bash', '--no-subagents', '--disable-web-search', '--no-memory'];
   type Summarizer = { summarize: (prompt: string, cliPath: string, cwd: string, options?: { model?: string | null; effort?: string | null }) => Promise<string> };
   const summarizers: Array<[string, () => Promise<Summarizer>, string[]]> = [
-    ['codex', async () => new (await import('../../src/main/agent/adapters/codex/codex-adapter')).CodexAdapter(), ['exec', '--skip-git-repo-check', '--model', 'm1']],
+    ['codex', async () => new (await import('../../src/main/agent/adapters/codex/codex-adapter')).CodexAdapter(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'm1']],
     ['kimi', async () => new (await import('../../src/main/agent/adapters/kimi/kimi-adapter')).KimiAdapter(), ['--print', '--quiet', '--model', 'm1']],
-    ['qwen', async () => new (await import('../../src/main/agent/adapters/qwen-code/qwen-adapter')).QwenAdapter(), ['--output-format', 'text', '--model', 'm1']],
-    ['opencode', async () => new (await import('../../src/main/agent/adapters/opencode/opencode-adapter')).OpenCodeAdapter(), ['run', '--model', 'm1']],
+    ['qwen', async () => new (await import('../../src/main/agent/adapters/qwen-code/qwen-adapter')).QwenAdapter(), ['--output-format', 'text', '--chat-recording=false', '--model', 'm1']],
     ['droid', async () => new (await import('../../src/main/agent/adapters/droid/droid-adapter')).DroidAdapter(), ['exec', '-o', 'text', '--model', 'm1']],
-    ['gemini', async () => new (await import('../../src/main/agent/adapters/gemini/gemini-adapter')).GeminiAdapter(), ['--skip-trust', '--output-format', 'text', '--model', 'm1']],
     ['cursor', async () => new (await import('../../src/main/agent/adapters/cursor/cursor-adapter')).CursorAdapter(), ['--trust', '--output-format', 'text', '--model', 'm1', '-p']],
-    ['grok', async () => new (await import('../../src/main/agent/adapters/grok/grok-adapter')).GrokAdapter(), ['--output-format', 'plain', '--model', 'm1', '--reasoning-effort', 'low', '-p']],
-    ['copilot', async () => new (await import('../../src/main/agent/adapters/copilot/copilot-adapter')).CopilotAdapter(), ['--silent', '--model', 'm1', '--reasoning-effort', 'low', '-p']],
+    ['grok', async () => new (await import('../../src/main/agent/adapters/grok/grok-adapter')).GrokAdapter(), ['--output-format', 'plain', ...GROK_DENY, '--model', 'm1', '--reasoning-effort', 'low', '-p']],
   ];
   it.each(summarizers)('%s passes the chosen model as its answer run does', async (_name, create, expectedArgs) => {
     const adapter = await create();
@@ -84,39 +84,21 @@ describe('Adapter summarize() invocation shapes', () => {
     expect(call.promptVia).toBeUndefined();
   });
 
-  it('Codex uses exec --skip-git-repo-check via stdin', async () => {
+  it('Codex uses exec --skip-git-repo-check, read-only and kept out of its sessions, via stdin', async () => {
     const { CodexAdapter } = await import('../../src/main/agent/adapters/codex/codex-adapter');
     const adapter = new CodexAdapter();
     await adapter.summarize('debug flaky test', '/usr/bin/codex', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['exec', '--skip-git-repo-check']);
+    expect(call.args).toEqual(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral']);
     expect(call.promptVia).toBeUndefined();
   });
 
-  it('Gemini skips the folder-trust check and asks for text via stdin', async () => {
-    const { GeminiAdapter } = await import('../../src/main/agent/adapters/gemini/gemini-adapter');
-    const adapter = new GeminiAdapter();
-    await adapter.summarize('summarize architecture', '/usr/bin/gemini', '/cwd');
-    const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['--skip-trust', '--output-format', 'text']);
-    expect(call.promptVia).toBeUndefined();
-  });
-
-  it('Qwen uses --output-format text via stdin', async () => {
+  it('Qwen uses --output-format text with no chat saved, via stdin', async () => {
     const { QwenAdapter } = await import('../../src/main/agent/adapters/qwen-code/qwen-adapter');
     const adapter = new QwenAdapter();
     await adapter.summarize('explain bug', '/usr/bin/qwen', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['--output-format', 'text']);
-    expect(call.promptVia).toBeUndefined();
-  });
-
-  it('OpenCode uses run via stdin, without -q, which printed nothing', async () => {
-    const { OpenCodeAdapter } = await import('../../src/main/agent/adapters/opencode/opencode-adapter');
-    const adapter = new OpenCodeAdapter();
-    await adapter.summarize('rename variable', '/usr/bin/opencode', '/cwd');
-    const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['run']);
+    expect(call.args).toEqual(['--output-format', 'text', '--chat-recording=false']);
     expect(call.promptVia).toBeUndefined();
   });
 
@@ -138,32 +120,64 @@ describe('Adapter summarize() invocation shapes', () => {
     expect(call.promptVia).toBe('arg');
   });
 
-  it('Grok uses --output-format plain -p via positional arg', async () => {
+  it('Grok uses --output-format plain with the answer run\'s deny rules, -p via positional arg', async () => {
     const { GrokAdapter } = await import('../../src/main/agent/adapters/grok/grok-adapter');
     const adapter = new GrokAdapter();
     await adapter.summarize('triage crash report', '/usr/bin/grok', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['--output-format', 'plain', '-p']);
-    expect(call.promptVia).toBe('arg');
-  });
-
-  it('Copilot uses --silent -p via positional arg', async () => {
-    const { CopilotAdapter } = await import('../../src/main/agent/adapters/copilot/copilot-adapter');
-    const adapter = new CopilotAdapter();
-    await adapter.summarize('write commit message', '/usr/bin/copilot', '/cwd');
-    const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['--silent', '-p']);
+    expect(call.args).toEqual(['--output-format', 'plain', ...GROK_DENY, '-p']);
     expect(call.promptVia).toBe('arg');
   });
 
   it('all adapters with summarize wrap the prompt via buildSummarizePrompt', async () => {
     // Pick one to spot-check: the wrapped prompt should contain the system prefix.
-    const { GeminiAdapter } = await import('../../src/main/agent/adapters/gemini/gemini-adapter');
-    const adapter = new GeminiAdapter();
-    await adapter.summarize('user description text', '/usr/bin/gemini', '/cwd');
+    const { CodexAdapter } = await import('../../src/main/agent/adapters/codex/codex-adapter');
+    const adapter = new CodexAdapter();
+    await adapter.summarize('user description text', '/usr/bin/codex', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
     expect(call.prompt).toContain('Summarize the following');
     expect(call.prompt).toContain('user description text');
+  });
+});
+
+// Three agents title on their own answer run, which carries their read-only
+// flags and removes the session it leaves (pinned in answer-run-delivery.test.ts).
+// Each was measured turning the title prompt into a clean title on it, on
+// 2026-10-13: Gemini in 3.6 s, OpenCode in 7.1 s, Copilot in 8.0 s.
+describe('Adapters that title on their answer run', () => {
+  type AnswerRunSummarizer = {
+    summarize: (prompt: string, cliPath: string, cwd: string, options?: { model?: string | null; effort?: string | null; runDirectory?: string; onUsage?: () => void }) => Promise<string>;
+    answerFromContext: (...args: unknown[]) => Promise<string>;
+  };
+  const answerRunSummarizers: Array<[string, () => Promise<AnswerRunSummarizer>, boolean]> = [
+    ['gemini', async () => new (await import('../../src/main/agent/adapters/gemini/gemini-adapter')).GeminiAdapter(), false],
+    ['copilot', async () => new (await import('../../src/main/agent/adapters/copilot/copilot-adapter')).CopilotAdapter(), true],
+    ['opencode', async () => new (await import('../../src/main/agent/adapters/opencode/opencode-adapter')).OpenCodeAdapter(), false],
+  ];
+
+  it.each(answerRunSummarizers)('%s hands the wrapped prompt, model, run directory and usage sink to answerFromContext', async (_name, create, takesEffort) => {
+    const adapter = await create();
+    const answer = vi.spyOn(adapter, 'answerFromContext').mockResolvedValue('  "Fix the Login Timeout."  ');
+    const onUsage = vi.fn();
+    const title = await adapter.summarize('fix the login timeout', '/usr/bin/agent', '/answer-home', { model: 'm1', effort: 'low', runDirectory: '/run', onUsage });
+    expect(title).toBe('Fix the Login Timeout');
+    expect(runCliPrintSummarizeMock).not.toHaveBeenCalled();
+    const [prompt, cliPath, cwd, model, options] = answer.mock.calls[0] as [string, string, string, string, Record<string, unknown>];
+    expect(prompt).toContain('Summarize the following');
+    expect(prompt).toContain('fix the login timeout');
+    expect([cliPath, cwd, model]).toEqual(['/usr/bin/agent', '/answer-home', 'm1']);
+    expect(options.runDirectory).toBe('/run');
+    expect(options.onUsage).toBe(onUsage);
+    expect(options.effort).toBe(takesEffort ? 'low' : undefined);
+    // Neither streaming nor search: a title is one line from what it was handed.
+    expect(options.onEvent).toBeUndefined();
+    expect(options.retrieval).toBeUndefined();
+  });
+
+  it.each(answerRunSummarizers)('%s throws when its answer leaves nothing title-shaped', async (_name, create) => {
+    const adapter = await create();
+    vi.spyOn(adapter, 'answerFromContext').mockResolvedValue('```\nno title text here\n```');
+    await expect(adapter.summarize('fix the login timeout', '/usr/bin/agent', '/answer-home')).rejects.toThrow('the agent produced empty output');
   });
 });
 

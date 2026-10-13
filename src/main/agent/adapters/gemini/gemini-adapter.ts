@@ -8,7 +8,7 @@ import { migrateGeminiProjectData } from './project-relocation';
 import { GeminiStatusParser } from './status-parser';
 import { discoverGeminiCapabilities } from './capability-discovery';
 import { randomUUID } from 'node:crypto';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
@@ -225,17 +225,16 @@ export class GeminiAdapter implements AgentAdapter {
     return sequence;
   }
 
+  /**
+   * A title on the answer run: plan mode, and the chat it saves removed after.
+   * The plain run this replaced kept every title as a chat for 30 days.
+   * Measured on the title prompt in an empty folder: a clean title in 3.6 s.
+   */
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
-    // Gemini's headless mode triggers automatically in non-TTY environments. We pipe
-    // the prompt via stdin and request plain text output. `--skip-trust` for the
-    // same reason as `answerFromContext`: the answer home is a folder Gemini was
-    // never asked to trust, and the headless run would stop at the trust check.
-    return runCliPrintSummarize({
-      cliPath,
-      args: ['--skip-trust', '--output-format', 'text', ...(options?.model ? ['--model', options.model] : [])],
-      prompt: buildSummarizePrompt(prompt),
-      cwd,
-    });
+    return titleFromAnswer(await this.answerFromContext(buildSummarizePrompt(prompt), cliPath, cwd, options?.model, {
+      runDirectory: options?.runDirectory,
+      onUsage: options?.onUsage,
+    }));
   }
 
   /**

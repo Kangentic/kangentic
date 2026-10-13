@@ -43,7 +43,7 @@ describe('antigravityConversationId', () => {
 });
 
 /**
- * `removeAntigravityConversation` deletes a folder and two files, recursively,
+ * `removeAntigravityConversation` deletes a folder and three files, recursively,
  * from a conversation id read off the CLI's own output. What the id may be is
  * all that stands between a malformed line and a delete of a whole folder of the
  * user's conversations, so these run against a real directory tree under a
@@ -76,19 +76,21 @@ describe('removeAntigravityConversation', () => {
     return filePath;
   }
 
-  /** What one conversation leaves in the data root: its transcript folder, its database, its presence lock. */
+  /** What one conversation leaves in the data root: its transcript folder, its database, its
+   *  presence lock, and the title the current CLI writes for it. */
   function makeConversation(conversationId: string) {
     return {
       brainFolder: path.dirname(path.dirname(path.dirname(writeFile('brain', conversationId, '.system_generated', 'logs', 'transcript.jsonl')))),
       database: writeFile('conversations', `${conversationId}.db`),
       lock: writeFile('presence', `${conversationId}.lock`),
+      annotation: writeFile('annotations', `${conversationId}.pbtxt`),
     };
   }
 
   /** Every file and folder in the data root, so a test can tell nothing was touched. */
   const snapshot = (): string[] => fs.readdirSync(dataRoot, { recursive: true }).map(String).sort();
 
-  it('removes the brain folder, the conversation database and the presence lock of its own id, and nothing else', async () => {
+  it('removes the brain folder, the conversation database, the presence lock and the title of its own id, and nothing else', async () => {
     const own = makeConversation(ID);
     const other = makeConversation(OTHER_ID);
     const settings = writeFile('settings.json');
@@ -99,9 +101,11 @@ describe('removeAntigravityConversation', () => {
     expect(fs.existsSync(own.brainFolder)).toBe(false);
     expect(fs.existsSync(own.database)).toBe(false);
     expect(fs.existsSync(own.lock)).toBe(false);
+    expect(fs.existsSync(own.annotation)).toBe(false);
     expect(fs.existsSync(other.brainFolder)).toBe(true);
     expect(fs.existsSync(other.database)).toBe(true);
     expect(fs.existsSync(other.lock)).toBe(true);
+    expect(fs.existsSync(other.annotation)).toBe(true);
     expect(fs.existsSync(settings)).toBe(true);
     expect(fs.existsSync(lastConversations)).toBe(true);
   });

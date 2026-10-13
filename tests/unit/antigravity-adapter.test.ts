@@ -82,7 +82,7 @@ import {
 } from '../../src/main/agent/adapters/antigravity/capability-discovery';
 import { AntigravityStatusParser } from '../../src/main/agent/adapters/antigravity/status-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
-import { extractPrintResponse, runAntigravityPrint } from '../../src/main/agent/adapters/antigravity/print-runner';
+import { extractPrintResponse, extractPrintResult, runAntigravityPrint } from '../../src/main/agent/adapters/antigravity/print-runner';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import {
   agentDisplayName,
@@ -464,6 +464,20 @@ describe('print-runner response extraction', () => {
       + '{"conversation_id":"a2-result-blob","status":"done","response":"final title","usage":{}}';
     expect(extractPrintResponse(raw)).toBe('final title');
   });
+
+  it('reads the conversation to remove and the usage off the real 1.1.13 result, which has no cache count', () => {
+    const raw = '\x1b[2J\x1b[H{"conversation_id":"02d4959d-354d-4a2d-ae40-3d7f9875a3ed","status":"SUCCESS","response":"ok\\n","usage":{"input_tokens":14931,"output_tokens":115}}\r\n\x1b]0;powershell\x07';
+    expect(extractPrintResult(raw)).toEqual({
+      response: 'ok\n',
+      conversationId: '02d4959d-354d-4a2d-ae40-3d7f9875a3ed',
+      usage: { model: null, inputTokens: 14_931, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 115, costUsd: null },
+    });
+  });
+
+  it('reports no usage when the result carries no token counts', () => {
+    const raw = '{"conversation_id":"a2-result-blob","status":"done","response":"final title","usage":{}}';
+    expect(extractPrintResult(raw)?.usage).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -487,6 +501,17 @@ describe('AntigravityAdapter.summarize', () => {
     const [cliPath, prompt] = runAntigravityPrintMock.mock.calls[0] as [string, string];
     expect(cliPath).toBe('/usr/local/bin/agy');
     expect(prompt).toContain('fix the login timeout bug');
+  });
+
+  it('hands the print run its usage sink, so a title is recorded with what it cost', async () => {
+    runAntigravityPrintMock.mockResolvedValue('Fix the login timeout bug');
+    const onUsage = vi.fn();
+
+    await adapter.summarize('fix the login timeout bug', '/usr/local/bin/agy', '/project', { model: 'gemini-3.8-flash-low', onUsage });
+
+    const [, , flags, sink] = runAntigravityPrintMock.mock.calls[0] as [string, string, string[], unknown];
+    expect(flags).toEqual(['--model', 'gemini-3.8-flash-low']);
+    expect(sink).toBe(onUsage);
   });
 
   it('throws "summarize produced empty output" when cleanup strips the print run down to nothing', async () => {

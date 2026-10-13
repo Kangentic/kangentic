@@ -17,7 +17,7 @@ import { runAntigravityPrint } from './print-runner';
 import { buildSummarizePrompt, cleanSummarizeOutput } from '../../shared/auto-name';
 import { forwardStreamLines, runCliPrintAnswer, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { antigravityAnswerEvents, antigravityConversationId, removeAntigravityConversation } from './answer-stream';
+import { antigravityAnswerEvents, antigravityConversationId, antigravityStreamUsage, removeAntigravityConversation } from './answer-stream';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -286,6 +286,12 @@ export class AntigravityAdapter implements AgentAdapter {
    * (upstream #318), so the shared child_process summarize runner cannot be
    * used. Runs in a pre-trusted scratch cwd so it neither blocks on the
    * trust prompt nor hijacks the project workspace's `agy -c` mapping.
+   *
+   * NOT the answer run, whose plan mode was measured on the title prompt
+   * (2026-10-13): it searched the web twice, tried a shell command, and came
+   * back empty after 41 s and 36k tokens. This run titled the same prompt in
+   * 4.7 s. It removes its conversation and reports its usage
+   * (`runAntigravityPrint`).
    */
   async summarize(prompt: string, cliPath: string, _cwd: string, options?: SummarizeOptions): Promise<string> {
     // The answer run's model and effort flags, omitted when unset.
@@ -293,7 +299,7 @@ export class AntigravityAdapter implements AgentAdapter {
       ...(options?.model ? ['--model', options.model] : []),
       ...(options?.effort ? ['--effort', options.effort] : []),
     ];
-    const response = await runAntigravityPrint(cliPath, buildSummarizePrompt(prompt), flags);
+    const response = await runAntigravityPrint(cliPath, buildSummarizePrompt(prompt), flags, options?.onUsage);
     const cleaned = cleanSummarizeOutput(response);
     if (!cleaned) throw new Error('summarize produced empty output');
     return cleaned;
@@ -364,7 +370,13 @@ export class AntigravityAdapter implements AgentAdapter {
         ],
         prompt: formatAntigravityUserMessage(prompt),
         cwd,
-        extractRaw: extractAntigravityStreamResponse,
+        // The result event also carries the run's usage, reported before the
+        // runner can reject an empty answer: that run still cost what it says.
+        extractRaw: (stdout: string) => {
+          const usage = antigravityStreamUsage(stdout);
+          if (usage) options?.onUsage?.(usage);
+          return extractAntigravityStreamResponse(stdout);
+        },
         // A stream is a transcript, not an answer: step updates and their
         // deltas carry far more than the answer text.
         outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,

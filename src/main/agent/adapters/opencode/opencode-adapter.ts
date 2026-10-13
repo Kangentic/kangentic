@@ -10,7 +10,7 @@ import { migrateOpenCodeProjectData } from './project-relocation';
 import { removeHooks as removeOpenCodeHooks } from './hook-manager';
 import { discoverOpenCodeCapabilities } from './capability-discovery';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages } from './remote-client';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
@@ -468,15 +468,18 @@ export class OpenCodeAdapter implements AgentAdapter {
     return [];
   }
 
+  /**
+   * A title on the answer run: the read-only `plan` agent, no external
+   * plugins, and the session deleted after. The plain `opencode run` this
+   * replaced could edit and run commands, and kept every title in the global
+   * session list. Measured on the title prompt in an empty folder: a clean
+   * title in 7.1 s.
+   */
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
-    // `opencode run` runs non-interactively. No `-q`: with it the call printed
-    // nothing at all, and the spinner it was meant to hide goes to stderr anyway.
-    return runCliPrintSummarize({
-      cliPath,
-      args: ['run', ...(options?.model ? ['--model', options.model] : [])],
-      prompt: buildSummarizePrompt(prompt),
-      cwd,
-    });
+    return titleFromAnswer(await this.answerFromContext(buildSummarizePrompt(prompt), cliPath, cwd, options?.model, {
+      runDirectory: options?.runDirectory,
+      onUsage: options?.onUsage,
+    }));
   }
 
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: false };

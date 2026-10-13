@@ -279,9 +279,13 @@ export class CodexAdapter implements AgentAdapter {
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     // `codex exec` runs non-interactively. The `--skip-git-repo-check` flag avoids
     // failing in non-git working directories. Prompt is delivered via stdin.
+    // The answer run's read-only sandbox and `--ephemeral`, so a title is not
+    // kept as a session to resume. It keeps the title runner's 15 s bound
+    // rather than calling `answerFromContext`: no title has been measured on
+    // Codex yet (the CLI here was logged out).
     return runCliPrintSummarize({
       cliPath,
-      args: ['exec', '--skip-git-repo-check', ...(options?.model ? ['--model', options.model] : [])],
+      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', ...(options?.model ? ['--model', options.model] : [])],
       prompt: buildSummarizePrompt(prompt),
       cwd,
     });

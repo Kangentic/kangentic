@@ -255,10 +255,12 @@ export class QwenAdapter implements AgentAdapter {
 
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     // Qwen Code is a fork of gemini-cli. Headless mode triggers in non-TTY; we
-    // request plain text to skip status JSON.
+    // request plain text to skip status JSON. `--chat-recording=false`, as the
+    // answer run has it, so a title is not saved as a chat. Not plan mode: no
+    // title has been measured on Qwen in it (the provider here returned 400).
     return runCliPrintSummarize({
       cliPath,
-      args: ['--output-format', 'text', ...(options?.model ? ['--model', options.model] : [])],
+      args: ['--output-format', 'text', '--chat-recording=false', ...(options?.model ? ['--model', options.model] : [])],
       prompt: buildSummarizePrompt(prompt),
       cwd,
     });

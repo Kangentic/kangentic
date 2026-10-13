@@ -426,7 +426,11 @@ export class CursorAdapter implements AgentAdapter {
     // cursor.com/docs/cli/reference/output-format. The prompt is required as a positional
     // arg after `-p`, not via stdin. `--trust` for the same reason as
     // `answerFromContext`: the answer home is a folder Cursor has not seen, and
-    // its trust prompt would block a headless run.
+    // its trust prompt would block a headless run. Not the answer run's
+    // read-only `--mode ask` yet, so this run can still write and leaves its
+    // chat: no title has been measured in ask mode (the CLI here was logged
+    // out), and a mode change is what made Antigravity's answer run come back
+    // empty on the title prompt.
     return runCliPrintSummarize({
       cliPath,
       args: ['--trust', '--output-format', 'text', ...(options?.model ? ['--model', options.model] : []), '-p'],
