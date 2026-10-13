@@ -172,7 +172,8 @@ describe('OpenCodeCommandBuilder - remote attach', () => {
   });
 
   it('does not install the activity plugin in remote mode', () => {
-    // A real temp dir (mirrors the hookHolders refcount tests below) so a
+    // A real temp dir (mirrors the per-session hold tests in
+    // opencode-adapter.test.ts) so a
     // real plugin install would be observable on disk if the remote branch
     // ever fell through to the local buildHooks() call.
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangtest-opencode-remote-plugin-'));
