@@ -72,8 +72,28 @@ if (args.includes('--print') && process.env.MOCK_CLAUDE_CONDITION_ANSWER === '1'
     const labels = [...conditions.matchAll(/^C(\d+):/gm)].map((match) => match[1]);
     const title = /^Title: (.*)$/m.exec(checkInput)?.[1] ?? '';
     const met = !title.includes('needs-you');
-    for (const label of labels) {
-      console.log(`C${label}: ${met ? 'yes' : 'no'} - ${met ? 'the mock agent finished its work' : 'the mock agent asked a question'}`);
+    const answer = labels
+      .map((label) => `C${label}: ${met ? 'yes' : 'no'} - ${met ? 'the mock agent finished its work' : 'the mock agent asked a question'}`)
+      .join('\n');
+    // The real check runs with `--output-format json`, which prints ONE object
+    // holding the answer and what the call cost (tests/fixtures/
+    // claude-print-result-condition-check.json is a captured one). A run
+    // started without the flag prints the bare answer lines.
+    const formatIndex = args.indexOf('--output-format');
+    if (formatIndex !== -1 && args[formatIndex + 1] === 'json') {
+      console.log(JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: answer,
+        total_cost_usd: 0.0002,
+        usage: { input_tokens: 2, cache_creation_input_tokens: 800, cache_read_input_tokens: 2200, output_tokens: 40 },
+        modelUsage: {
+          'claude-haiku-5-5': { inputTokens: 2, outputTokens: 40, cacheReadInputTokens: 2200, cacheCreationInputTokens: 800, costUSD: 0.0002 },
+        },
+      }));
+    } else {
+      console.log(answer);
     }
     process.exit(0);
   });
