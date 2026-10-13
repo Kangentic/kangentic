@@ -23,10 +23,10 @@ type AutomationConfig = { agent: string | null; model: string | null; effort: st
 async function setAutomationAgent(target: Page, automation: AutomationConfig): Promise<void> {
   await target.evaluate(async (value) => {
     await window.electronAPI.config.set({ automation: value });
-    const w = window as unknown as { __zustandStores?: {
+    const windowWithStores = window as unknown as { __zustandStores?: {
       config: { getState: () => { loadConfig: () => Promise<void> } };
     } };
-    await w.__zustandStores?.config.getState().loadConfig();
+    await windowWithStores.__zustandStores?.config.getState().loadConfig();
   }, automation);
 }
 
@@ -109,6 +109,68 @@ test.describe('NewTaskDialog - Name from prompt button', () => {
     await expect(titleInput).toHaveValue(/^Suggested:/);
     // Form is dirty - Cancel shows a "Discard unsaved changes?" confirm.
     // Dismiss via Discard so the dialog fully closes before the next test opens it.
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('button:has-text("Discard")').click();
+  });
+
+  test('clicking the button sends the open project id with the prompt', async () => {
+    // The id comes from the project store, the same source the board reads, so
+    // the expectation does not depend on how the mock numbers its projects.
+    const openProjectId = await page.evaluate(() => {
+      const windowWithStores = window as unknown as { __zustandStores?: {
+        project: { getState: () => { currentProject: { id: string } | null } };
+      } };
+      return windowWithStores.__zustandStores?.project.getState().currentProject?.id ?? null;
+    });
+    // A non-empty id, so a button that sent `null` cannot match a store that
+    // also reported `null`.
+    expect(typeof openProjectId).toBe('string');
+    expect(openProjectId).not.toBe('');
+
+    await openNewTaskDialog();
+    await page.locator('textarea').first().fill('  name the task that sends its project id  ');
+    const button = page.getByTestId('name-from-prompt-button');
+    await expect(button).toBeVisible();
+
+    // Wrap the bridge call so the argument is captured while the real mock
+    // still answers. Restored in `finally`: the page is shared by this
+    // worker's later tests.
+    await page.evaluate(() => {
+      const windowWithCapture = window as unknown as {
+        __summarizeInputs: Array<{ prompt: string; projectId: string | null }>;
+        __restoreSummarize: () => void;
+        electronAPI: { agent: { summarize: (input: { prompt: string; projectId: string | null }) => Promise<unknown> } };
+      };
+      const agentApi = windowWithCapture.electronAPI.agent;
+      const originalSummarize = agentApi.summarize;
+      windowWithCapture.__summarizeInputs = [];
+      agentApi.summarize = (input) => {
+        windowWithCapture.__summarizeInputs.push(input);
+        return originalSummarize.call(agentApi, input);
+      };
+      windowWithCapture.__restoreSummarize = () => {
+        agentApi.summarize = originalSummarize;
+      };
+    });
+
+    try {
+      await button.click();
+      await expect.poll(
+        () => page.evaluate(() => (window as unknown as { __summarizeInputs: unknown[] }).__summarizeInputs.length),
+        { timeout: 5000 },
+      ).toBe(1);
+      const sentInput = await page.evaluate(
+        () => (window as unknown as { __summarizeInputs: Array<{ prompt: string; projectId: string | null }> }).__summarizeInputs[0],
+      );
+      expect(sentInput.projectId).toBe(openProjectId);
+      // The prompt is the trimmed description, sent beside the id.
+      expect(sentInput.prompt).toBe('name the task that sends its project id');
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreSummarize?: () => void }).__restoreSummarize?.());
+    }
+
+    // The mock answered, so the title input filled and the form is dirty.
+    await expect(page.locator('input[placeholder="Task title"]')).not.toHaveValue('');
     await page.locator('button:has-text("Cancel")').click();
     await page.locator('button:has-text("Discard")').click();
   });

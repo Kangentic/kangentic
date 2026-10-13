@@ -104,6 +104,18 @@ describe('BackgroundCallRepository', () => {
     expect(calls.listGroups(null, null, 15 * 60_000)[0].modelId).toBe('haiku');
   });
 
+  it('names the model the CLI reported over the one asked for, when they differ', () => {
+    const { database } = migratedDatabase();
+    const calls = new BackgroundCallRepository(database);
+    // An alias was asked for and the CLI answered with the full id it resolved to.
+    calls.record(call({ id: 'a', requestedModel: 'haiku' }));
+
+    const groups = calls.listGroups(null, null, 15 * 60_000);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].modelId).toBe('claude-haiku-5-5');
+  });
+
   it('windows on started_at, inclusive since and exclusive until', () => {
     const { database } = migratedDatabase();
     const calls = new BackgroundCallRepository(database);
@@ -176,6 +188,43 @@ describe('the run log names the call that answered it', () => {
     expect(runs.listForTask(taskId)[0].check?.callId).toBe('call-step');
   });
 
+  it('names the check on an automation\'s own history, counting the rows the one call answered', () => {
+    const { database, columnId, taskId } = migratedDatabase();
+    new BackgroundCallRepository(database).record(call({ id: 'call-1', swimlaneId: columnId }));
+    const runs = new AutomationRunRepository(database);
+    runs.start({ id: 'run-1', automation: automation('a1', columnId), taskId, condition: { met: true, reason: 'Yes.', callId: 'call-1' } });
+    runs.start({ id: 'run-2', automation: automation('a2', columnId), taskId, condition: { met: false, reason: 'No.', callId: 'call-1' } });
+
+    const listed = runs.listForAutomation('a1');
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0].check).toMatchObject({
+      callId: 'call-1',
+      agent: 'claude',
+      model: 'claude-haiku-5-5',
+      modelReported: true,
+      outcome: 'succeeded',
+      // The other automation's row shares the call, though it is not in this list.
+      rowsAnswered: 2,
+    });
+  });
+
+  it('reads a stored outcome this build does not know as failed, never as a success', () => {
+    const { database, columnId, taskId } = migratedDatabase();
+    // A row a newer build wrote: every NOT NULL column filled, the outcome unknown here.
+    database
+      .prepare('INSERT INTO background_calls (id, job, agent, duration_ms, outcome, started_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('call-future', 'condition_check', 'claude', 900, 'cancelled', '2026-10-13T14:02:11.402Z');
+    const runs = new AutomationRunRepository(database);
+    runs.start({ id: 'run-1', automation: automation('a1', columnId), taskId, condition: { met: true, reason: 'Yes.', callId: 'call-future' } });
+
+    const [run] = runs.listForTask(taskId);
+
+    // The callId proves the join found the row, so the outcome below came from the stored string.
+    expect(run.check?.callId).toBe('call-future');
+    expect(run.check?.outcome).toBe('failed');
+  });
+
   it('carries no check for a row with none, or whose call record is gone', () => {
     const { database, columnId, taskId } = migratedDatabase();
     const runs = new AutomationRunRepository(database);
@@ -237,6 +286,22 @@ describe('startRecordedCall', () => {
     expect(byId.get(timedOut.callId)).toMatchObject({ outcome: 'timed_out', usage: null });
   });
 
+  it('reads only Kangentic\'s own timeout messages, matched whole, as a timeout', async () => {
+    const sink = vi.fn<BackgroundCallSink>();
+    const reject = (message: string) => startRecordedCall(sink, meta, async () => { throw new Error(message); });
+    const runnerTimeout = reject('the agent timed out');
+    const printRunTimeout = reject('antigravity print run timed out');
+    // A CLI's own error that mentions a timeout is a failure of the CLI, not our timer.
+    const cliTimeout = reject('API Error: Request timed out');
+    await Promise.allSettled([runnerTimeout.done, printRunTimeout.done, cliTimeout.done]);
+
+    await vi.waitFor(() => expect(sink).toHaveBeenCalledTimes(3));
+    const byId = new Map(sink.mock.calls.map(([, input]) => [input.id, input]));
+    expect(byId.get(runnerTimeout.callId)).toMatchObject({ outcome: 'timed_out', detail: 'the agent timed out' });
+    expect(byId.get(printRunTimeout.callId)).toMatchObject({ outcome: 'timed_out', detail: 'antigravity print run timed out' });
+    expect(byId.get(cliTimeout.callId)).toMatchObject({ outcome: 'failed', detail: 'API Error: Request timed out' });
+  });
+
   it('still records a run its caller stopped waiting for: it was paid for', async () => {
     const sink = vi.fn<BackgroundCallSink>();
     let release!: (value: string) => void;
@@ -271,6 +336,12 @@ describe('startRecordedCall', () => {
 });
 
 describe('backgroundCallSink', () => {
+  // In afterEach, not at the test's end: a failed assertion would skip a
+  // trailing unmock and leave the mock in place for every later test.
+  afterEach(() => {
+    vi.doUnmock('../../src/main/ipc/helpers/project-repos');
+  });
+
   it('writes nothing for a project that was deleted while the call ran', async () => {
     vi.resetModules();
     const getProjectRepos = vi.fn();
@@ -282,7 +353,6 @@ describe('backgroundCallSink', () => {
 
     // Opening a deleted project's database would create an empty one again.
     expect(getProjectRepos).not.toHaveBeenCalled();
-    vi.doUnmock('../../src/main/ipc/helpers/project-repos');
   });
 });
 

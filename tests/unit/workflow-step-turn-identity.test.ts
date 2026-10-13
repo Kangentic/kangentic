@@ -230,6 +230,56 @@ describe('the workflow step and the turn it judged', () => {
     );
   });
 
+  // The check is one recorded call, and its run-log row links to it so the log
+  // can show what the check cost. The row carries the call the outcome names,
+  // whatever the answer or what became of the move.
+  describe('the step\'s run-log row links the call that answered the check', () => {
+    const answeredBy = (callId: string | null, met = true) => async () => ({
+      ok: true,
+      answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met, reason: met ? 'The work is done.' : 'Still working.' }]]),
+      agentName: 'Mock agent',
+      callId,
+    });
+
+    it('links the call when the answer was yes and the task moved on', async () => {
+      hoisted.checkAutomationConditions.mockImplementation(answeredBy('call-step-1'));
+
+      await runStep();
+
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ met: true, backgroundCallId: 'call-step-1' }));
+    });
+
+    it('links the call when the answer was no and the task stayed', async () => {
+      hoisted.checkAutomationConditions.mockImplementation(answeredBy('call-step-2', false));
+
+      await runStep();
+
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ met: false, backgroundCallId: 'call-step-2' }));
+    });
+
+    it('links the call when the move was refused', async () => {
+      hoisted.checkAutomationConditions.mockImplementation(answeredBy('call-step-3'));
+      hoisted.handleTaskMove.mockRejectedValueOnce(new Error('Column is full.'));
+
+      await expect(runStep()).rejects.toThrow('Column is full.');
+
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ backgroundCallId: 'call-step-3' }));
+    });
+
+    it('links nothing when the outcome names no call (the control)', async () => {
+      hoisted.checkAutomationConditions.mockImplementation(answeredBy(null));
+
+      await runStep();
+
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ backgroundCallId: null }));
+    });
+  });
+
   describe('the step\'s run-log row records the move\'s outcome, not its intent', () => {
     it('writes the succeeded row only after the move resolves', async () => {
       let finishMove: () => void = () => {};

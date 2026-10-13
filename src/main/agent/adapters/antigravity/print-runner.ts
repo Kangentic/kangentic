@@ -47,11 +47,6 @@ export interface AntigravityPrintResult {
   usage: AgentCallUsage | null;
 }
 
-/** The response text alone (`extractPrintResult`). */
-export function extractPrintResponse(rawOutput: string): string | null {
-  return extractPrintResult(rawOutput)?.response ?? null;
-}
-
 /**
  * Pull the print-mode result object out of captured PTY output: the LAST
  * `{...}` JSON blob carrying a `response` field (PTY chrome like the clear
@@ -148,7 +143,7 @@ export async function runAntigravityPrint(
     const timer = setTimeout(() => finish(new Error('antigravity print run timed out')), PRINT_TIMEOUT_MS);
 
     printProcess.onData((data) => {
-      // Retain the TAIL under the cap, not the head: extractPrintResponse
+      // Retain the TAIL under the cap, not the head: extractPrintResult
       // reads the result JSON from the END of the captured stream, so a
       // drop-forward guard would discard exactly the closing chunk that
       // carries it once a chatty run crosses the cap.

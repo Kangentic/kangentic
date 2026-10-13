@@ -16,9 +16,8 @@
  */
 import { EventType, PromptReason, type Session, type SessionEvent } from '../../../shared/types';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
-import type { ResolvedAutomationAgent } from '../../automations/automation-agent';
-import { startRecordedCall, type BackgroundCallSink } from '../../background-calls/record-background-call';
-import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from './answer-run-directory';
+import { runNamingCall, type ResolvedAutomationAgent } from '../../automations/automation-agent';
+import type { BackgroundCallSink } from '../../background-calls/record-background-call';
 import { tryAcquireSummarizeSlot } from './summarize-rate-limit';
 
 export interface CommandTerminalNamerSessionSource {
@@ -94,24 +93,14 @@ export class CommandTerminalNamer {
       // Resolved BEFORE the rate limit, so a terminal that cannot be named
       // spends no slot.
       const resolved = await this.deps.resolveNamingAgent();
-      if (!resolved.ok || typeof resolved.adapter.summarize !== 'function') return;
+      if (!resolved.ok) return;
       const tryAcquireSlot = this.deps.tryAcquireSlot ?? tryAcquireSummarizeSlot;
       if (!tryAcquireSlot(this.deps.readRateLimit())) return;
-      const answerHome = await ensureAnswerHomeDirectory();
-      const title = await startRecordedCall(this.deps.recordCall, {
+      const title = await runNamingCall(resolved, promptText, this.deps.recordCall, {
         projectId,
         job: 'terminal_name',
         taskId: null,
-        swimlaneId: null,
-        agent: resolved.agentName,
-        requestedModel: resolved.model,
-        effort: resolved.effort,
-      }, (onUsage) => withAnswerRunDirectory((runDirectory) => resolved.adapter.summarize!(
-        promptText,
-        resolved.cliPath,
-        answerHome,
-        { model: resolved.model, effort: resolved.effort, runDirectory, onUsage },
-      ))).done;
+      });
       if (this.disposed || !title) return;
       this.deps.sessionManager.setCommandTerminalLabel(sessionId, title);
     } catch (error) {

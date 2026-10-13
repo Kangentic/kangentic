@@ -46,6 +46,7 @@ interface ExecuteOptions {
   onlyIds: ReadonlySet<string>;
   conditionAnswers: ReadonlyMap<string, RunConditionAnswer>;
   conditionUnavailableReason?: string;
+  conditionUnavailableCallId?: string | null;
 }
 
 const hoisted = vi.hoisted(() => ({
@@ -55,6 +56,7 @@ const hoisted = vi.hoisted(() => ({
   column: {} as Record<string, unknown>,
   executeTransition: vi.fn(),
   checkConditions: vi.fn(),
+  conditionCheckCall: vi.fn(),
   waitForTurnCompletion: vi.fn(),
   runWorkflowStep: vi.fn(),
   workflowStepApplies: vi.fn(),
@@ -75,7 +77,7 @@ vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({
     executeTransition: hoisted.executeTransition,
     resolveGroupTemplateVars: vi.fn(() => ({})),
     conditionCheckInput: vi.fn(() => ({})),
-    conditionCheckCall: vi.fn(() => ({ projectId: null, taskId: null, swimlaneId: null, job: 'condition_check' })),
+    conditionCheckCall: hoisted.conditionCheckCall,
     checkConditions: hoisted.checkConditions,
   })),
   resolveInjectionVerifier: vi.fn(() => undefined),
@@ -112,6 +114,7 @@ const MAIN_WINDOW = { isDestroyed: () => false };
 const WORK_SERIAL = 41;
 const SETUP_REASON = 'Set up an Automation agent in Settings > Workflows to check this condition.';
 const MODEL_REASON = 'Choose a model for the Automation agent in Settings > Workflows to check this condition.';
+const TIMED_OUT_REASON = 'The Automation agent did not answer in time.';
 
 interface FakeSessionManager extends EventEmitter {
   getActivityCache: () => Record<string, string>;
@@ -126,6 +129,8 @@ describe('a turn end and the rows it may run', () => {
   let taskId: string;
   let taskCounter = 0;
   let sessionManager: FakeSessionManager;
+  /** What the engine describes a check's call as: whose ledger, which task and column. */
+  let checkCall: { projectId: string; taskId: string; swimlaneId: string; job: 'condition_check' };
 
   afterEach(() => {
     for (const opened of openDatabases.splice(0)) opened.close();
@@ -179,6 +184,8 @@ describe('a turn end and the rows it may run', () => {
     // A workflow task, so a pass always reaches its `finally` unless the visit gate stops it.
     hoisted.workflowStepApplies.mockImplementation(() => true);
     hoisted.checkConditions.mockImplementation(async () => ({ ok: true, answers: new Map() }));
+    checkCall = { projectId: PROJECT_ID, taskId, swimlaneId: laneId, job: 'condition_check' };
+    hoisted.conditionCheckCall.mockImplementation(() => checkCall);
     // The runner's own bookkeeping for the rows it is handed: a run for a row
     // that executes, a skip for a Condition nobody answered or that answered no.
     hoisted.executeTransition.mockImplementation(async (task: { id: string }, _column: unknown, _trigger: string, options: ExecuteOptions) => {
@@ -476,6 +483,69 @@ describe('a turn end and the rows it may run', () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
       expect(runs.countRuns('row-on-to-testing', taskId)).toBe(0);
+    });
+
+    // Every check is one recorded call, filed against the project, task and
+    // column it judged. The engine describes whose call it is; the pass hands
+    // that description to the check, or the call is recorded against nobody.
+    it('is handed the call context the engine describes for this task and column', async () => {
+      await endTurn();
+
+      expect(hoisted.conditionCheckCall).toHaveBeenCalledTimes(1);
+      expect(hoisted.conditionCheckCall).toHaveBeenCalledWith(
+        expect.objectContaining({ id: taskId }),
+        expect.objectContaining({ id: laneId }),
+      );
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      // The same object the engine returned, as the third argument.
+      expect(hoisted.checkConditions.mock.calls[0][2]).toBe(checkCall);
+    });
+  });
+
+  // A check that ran and did not answer (a timeout, an abandoned wait) was still
+  // paid for. Its outcome names the call, and the pass hands that to the engine
+  // so the run rows it skips link to it. The runner stamping those rows from it
+  // is pinned against a real run log in condition-check-call-link.test.ts.
+  describe('a Condition check that ran without answering', () => {
+    beforeEach(() => {
+      hoisted.rows = [row({ condition: 'The review is clean' })];
+      enterColumnAt(secondsAgo(60));
+    });
+
+    function optionsHandedToEngine(): ExecuteOptions {
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      return (hoisted.executeTransition.mock.calls[0] as [unknown, unknown, string, ExecuteOptions])[3];
+    }
+
+    it('hands the engine the call it ran on, so the skipped rows link to it', async () => {
+      hoisted.checkConditions.mockImplementation(async () => ({ ok: false, reason: TIMED_OUT_REASON, callId: 'c1' }));
+
+      await endTurn();
+
+      const options = optionsHandedToEngine();
+      expect(options.conditionUnavailableReason).toBe(TIMED_OUT_REASON);
+      expect(options.conditionUnavailableCallId).toBe('c1');
+    });
+
+    it('hands the engine no call when the check never started (the control)', async () => {
+      hoisted.checkConditions.mockImplementation(async () => ({ ok: false, reason: SETUP_REASON }));
+
+      await endTurn();
+
+      const options = optionsHandedToEngine();
+      expect(options.conditionUnavailableReason).toBe(SETUP_REASON);
+      expect(options.conditionUnavailableCallId).toBeNull();
+    });
+
+    it('hands the engine no call when the check answered (the control)', async () => {
+      hoisted.checkConditions.mockImplementation(async () => ({
+        ok: true,
+        answers: new Map([['row-on-to-testing', { met: true, reason: 'Clean.', callId: 'c1' }]]),
+      }));
+
+      await endTurn();
+
+      expect(optionsHandedToEngine().conditionUnavailableCallId).toBeNull();
     });
   });
 });

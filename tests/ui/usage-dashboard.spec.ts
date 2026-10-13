@@ -107,6 +107,38 @@ function getCalls(page: Page): Promise<RecordedCall[]> {
   });
 }
 
+/**
+ * The Cache hit rate chart's y axis is a ratio fitted to its data: ticks with a
+ * tenth of a percent, none above 100%, and a lower bound near the data rather
+ * than at 0.
+ *
+ * The default fixture's six hourly buckets run from a hit rate of 80.6% down to
+ * 67.1% (cache read 5,000 over cache read + write + 1,000..2,250 of fresh
+ * input), so the fitted axis spans about 63.7% to 84.0%. Each of these
+ * reverts turns the check below red (observed by serving the reverted
+ * module to the page):
+ *   - a whole-percent tick formatter ticks "64%", "69%", ..., which fails the
+ *     one-decimal pattern;
+ *   - dropping the `yDomain` the dashboard passes draws "0.0%" to "400.0%";
+ *   - dropping the chart's own `domain={yDomain}` draws "0.0%" to "100.0%".
+ * The 60 to 90 band is slack around the fitted range, because Recharts picks
+ * the exact tick values; it is not a pixel-exact assertion.
+ */
+async function expectCacheHitRateAxisFitted(page: Page): Promise<void> {
+  const tickLabels = page.locator(
+    '[data-testid="chart-cache-hit-rate"] .recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value',
+  );
+  // Ticks mount after the chart measures its container.
+  await expect.poll(() => tickLabels.count(), { timeout: 10000 }).toBeGreaterThan(1);
+  const labels = await tickLabels.allTextContents();
+  for (const label of labels) {
+    expect(label).toMatch(/^\d{1,3}\.\d%$/);
+  }
+  const percents = labels.map((label) => Number.parseFloat(label));
+  expect(Math.max(...percents)).toBeLessThanOrEqual(90);
+  expect(Math.min(...percents)).toBeGreaterThanOrEqual(60);
+}
+
 test.describe('usage dashboard', () => {
   test('opens from the title-bar button, closes via X, Escape, and the keybinding toggles', async () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
@@ -792,6 +824,7 @@ test.describe('usage dashboard', () => {
       expect(await modelRows.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-slice-id'))))
         .toEqual(['mock-model-large', 'mock-model-small']);
       await expect(page.locator('[data-testid="chart-cache-hit-rate"]')).toContainText('Cache hit rate per hour');
+      await expectCacheHitRateAxisFitted(page);
       await expect(page.locator('[data-testid="chart-cumulative"]')).toHaveCount(0);
       // Ranked by tokens: the agent default (50k) above low (26k).
       expect(await effortRows.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-slice-id'))))

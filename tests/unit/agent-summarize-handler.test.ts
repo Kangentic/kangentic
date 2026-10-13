@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AgentSummarizeResult } from '../../src/shared/types';
+import type { AgentCallUsage, AgentSummarizeResult } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -38,7 +38,22 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn(), openExternal: vi.fn() },
 }));
 
-type SummarizeOptions = { model?: string | null; effort?: string | null; runDirectory?: string };
+type SummarizeOptions = {
+  model?: string | null;
+  effort?: string | null;
+  runDirectory?: string;
+  onUsage?: (usage: AgentCallUsage) => void;
+};
+
+// The ledger write the handler's sink reaches: `backgroundCallSink` checks the
+// project exists, then writes through `getProjectRepos(...).backgroundCalls`.
+// Mocked at that seam so the real sink (and its project lookup) still runs.
+const recordSpy = vi.hoisted(() => vi.fn());
+const getProjectReposMock = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/ipc/helpers/project-repos', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/ipc/helpers/project-repos')>();
+  return { ...actual, getProjectRepos: getProjectReposMock };
+});
 
 type MockAdapter = {
   name: string;
@@ -143,7 +158,11 @@ function makeContext(overrides?: {
     },
     boardConfigManager: { getDefaultBaseBranch: vi.fn(() => null) },
     sessionManager: { setMaxConcurrent: vi.fn(), setShell: vi.fn(), setIdleTimeout: vi.fn() },
-    projectRepo: { list: vi.fn(() => projects) },
+    projectRepo: {
+      list: vi.fn(() => projects),
+      // The background-call sink skips a project this lookup does not find.
+      getById: vi.fn((projectId: string) => projects.find((project) => project.id === projectId) ?? null),
+    },
     shellResolver: { getAvailableShells: vi.fn(() => []), getDefaultShell: vi.fn(() => 'bash') },
     gitDetector: { detect: vi.fn(() => ({ found: false })) },
     mainWindow: {
@@ -181,6 +200,9 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
     resetSummarizeRateLimit();
     // Detection is cached for minutes, keyed by agent: each case detects afresh.
     resetAutomationAgentCacheForTests();
+    recordSpy.mockReset();
+    getProjectReposMock.mockReset();
+    getProjectReposMock.mockReturnValue({ backgroundCalls: { record: recordSpy } });
   });
 
   it('rejects empty prompts', async () => {
@@ -220,6 +242,107 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
     // No effort chosen: the adapter's recommended level, since the CLI lists it.
     expect(options.effort).toBe('low');
     expect(typeof options.runDirectory).toBe('string');
+  });
+
+  describe('background-call ledger', () => {
+    const reportedUsage: AgentCallUsage = {
+      model: 'claude-haiku-5-5',
+      inputTokens: 120,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 40,
+      outputTokens: 9,
+      costUsd: 0.0004,
+    };
+    const projects = [
+      { id: 'proj-A', default_agent: null, path: '/repo-a' },
+      { id: 'proj-B', default_agent: null, path: '/repo-b' },
+    ];
+
+    it('records one task_title call against the project the request named, not the open one', async () => {
+      // The adapter reports its usage through the sink the handler hands it.
+      const summarize = vi.fn(async (_prompt: string, _cliPath: string, _cwd: string, options?: SummarizeOptions) => {
+        options?.onUsage?.(reportedUsage);
+        return 'Fix Login Race Condition';
+      });
+      mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize })];
+      // proj-B is the open project when the request, made for proj-A, runs.
+      register(makeContext({ currentProjectId: 'proj-B', currentProjectPath: '/repo-b', projects }));
+
+      const result = await invokeSummarize({ prompt: 'tests are failing', projectId: 'proj-A', taskId: 't1' });
+
+      expect(result).toEqual({ ok: true, title: 'Fix Login Race Condition' });
+      // Written to proj-A's ledger. The existence check passes for both
+      // projects, so this id is what separates a request-time project from the
+      // ambient one.
+      expect(getProjectReposMock).toHaveBeenCalledTimes(1);
+      expect(getProjectReposMock.mock.calls[0][1]).toBe('proj-A');
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(recordSpy).toHaveBeenCalledWith(expect.objectContaining({
+        job: 'task_title',
+        taskId: 't1',
+        swimlaneId: null,
+        agent: 'claude',
+        requestedModel: 'claude-haiku-5-5',
+        // No effort chosen: the adapter's recommended level, since the CLI lists it.
+        effort: 'low',
+        usage: reportedUsage,
+        outcome: 'succeeded',
+      }));
+    });
+
+    it('leaves the usage null when the adapter reports none', async () => {
+      const summarize = vi.fn(async () => 'Some Title');
+      mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize })];
+      register(makeContext({ currentProjectId: 'proj-A', currentProjectPath: '/repo-a', projects }));
+
+      await invokeSummarize({ prompt: 'a description', projectId: 'proj-A' });
+
+      const [, , , options] = summarize.mock.calls[0] as unknown as [string, string, string, SummarizeOptions];
+      expect(typeof options.onUsage).toBe('function');
+      // An adapter that reports nothing leaves the usage null, never invented.
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(recordSpy.mock.calls[0][0].usage).toBeNull();
+    });
+
+    it('falls back to the open project when the request names none', async () => {
+      mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'Some Title') })];
+      register(makeContext({ currentProjectId: 'proj-B', currentProjectPath: '/repo-b', projects }));
+
+      await invokeSummarize({ prompt: 'a description' });
+
+      expect(getProjectReposMock).toHaveBeenCalledTimes(1);
+      expect(getProjectReposMock.mock.calls[0][1]).toBe('proj-B');
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(recordSpy.mock.calls[0][0]).toMatchObject({ job: 'task_title', taskId: null });
+    });
+
+    it('records a failed call too, with the failure as its detail', async () => {
+      mockRegistryAdapters = [makeAdapter({
+        name: 'claude',
+        summarize: vi.fn(async () => { throw new Error('CLI exited 1: bad config'); }),
+      })];
+      register(makeContext({ currentProjectId: 'proj-A', currentProjectPath: '/repo-a', projects }));
+
+      const result = await invokeSummarize({ prompt: 'a description', projectId: 'proj-A', taskId: 't1' });
+
+      expect(result).toEqual({ ok: false, reason: 'CLI exited 1: bad config' });
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(recordSpy.mock.calls[0][0]).toMatchObject({ job: 'task_title', taskId: 't1', outcome: 'failed', detail: 'CLI exited 1: bad config' });
+    });
+
+    it('records nothing for a refusal that never ran a CLI', async () => {
+      mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'Should Not Run') })];
+      register(makeContext({
+        currentProjectId: 'proj-A',
+        currentProjectPath: '/repo-a',
+        projects,
+        automation: { agent: null, model: null, effort: null },
+      }));
+
+      await invokeSummarize({ prompt: 'a description', projectId: 'proj-A' });
+
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses with no Automation agent, without spending a rate-limit slot', async () => {

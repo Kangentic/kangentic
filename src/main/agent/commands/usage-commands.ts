@@ -95,15 +95,15 @@ function formatBackgroundLine(background: UsageDashboardStats['background']): st
   const tokens = totals.reportedCalls === 0
     ? 'usage not reported'
     : `Tokens: ${formatTokens(totals.inputTokens)} fresh input + ${formatTokens(totals.outputTokens)} output, ${formatTokens(totals.cacheCreationInputTokens)} cache write, ${formatTokens(totals.cacheReadInputTokens)} cache read`;
-  const jobs = background.byJob
+  // One sentence: the first job keeps its label's capital, the rest are lowered.
+  const jobsSentence = background.byJob
     .filter((job) => job.calls > 0)
-    .map((job) => {
+    .map((job, index) => {
       const label = BACKGROUND_CALL_JOB_LABELS[job.job];
-      const jobLabel = label.charAt(0).toLowerCase() + label.slice(1);
+      const jobLabel = index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1);
       return `${jobLabel} ${formatTokens(job.calls)}${job.costUsd === null ? '' : ` ($${job.costUsd.toFixed(2)})`}`;
     })
     .join(', ');
-  const jobsSentence = jobs.charAt(0).toUpperCase() + jobs.slice(1);
   return `  Background (not in the totals above): ${formatTokens(totals.calls)} calls${cost}. ${tokens}. ${jobsSentence}.`;
 }
 

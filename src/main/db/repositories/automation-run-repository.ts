@@ -336,6 +336,12 @@ export class AutomationRunRepository {
   }
 }
 
+/** A stored outcome this build does not know reads as failed, the way the
+ *  dashboard's `outcome != 'succeeded'` count reads it, never as a success. */
+function storedOutcome(value: string | null): BackgroundCallOutcome {
+  return value === 'succeeded' || value === 'timed_out' ? value : 'failed';
+}
+
 /** The check a run's joined row carries, or null when it has none on record. */
 function checkOf(row: AutomationRunWithCheckRow): AutomationRunCheck | null {
   if (!row.background_call_id || !row.check_found || row.check_agent === null) return null;
@@ -351,7 +357,7 @@ function checkOf(row: AutomationRunWithCheckRow): AutomationRunCheck | null {
     outputTokens: row.check_output_tokens,
     costUsd: row.check_cost_usd,
     durationMs: row.check_duration_ms ?? 0,
-    outcome: (row.check_outcome ?? 'succeeded') as BackgroundCallOutcome,
+    outcome: storedOutcome(row.check_outcome),
     rowsAnswered: row.check_rows_answered ?? 1,
   };
 }

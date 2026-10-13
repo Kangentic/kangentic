@@ -7,13 +7,15 @@
  * synthetic pty-activity prompt is skipped; the summarize runs on the Automation
  * agent, its model and effort, in the shared answer home; with no Automation
  * agent nothing runs and no rate-limit slot is spent; the shared rate limit
- * gates it; and the name lands through `setCommandTerminalLabel`.
+ * gates it; the name lands through `setCommandTerminalLabel`; and the naming
+ * call is recorded as a terminal_name call in the terminal's own project's
+ * ledger (none for a terminal with no project).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { CommandTerminalNamer, type CommandTerminalNamerDeps } from '../../src/main/agent/shared/command-terminal-namer';
 import type { ResolvedAutomationAgent } from '../../src/main/automations/automation-agent';
-import { EventType, PromptReason, type Session, type SessionEvent } from '../../src/shared/types';
+import { EventType, PromptReason, type AgentCallUsage, type Session, type SessionEvent } from '../../src/shared/types';
 
 class FakeSessionManager extends EventEmitter {
   sessions = new Map<string, Session>();
@@ -52,6 +54,7 @@ describe('CommandTerminalNamer', () => {
   let tryAcquireSlot: ReturnType<typeof vi.fn>;
   let resolveNamingAgent: ReturnType<typeof vi.fn>;
   let readRateLimit: ReturnType<typeof vi.fn>;
+  let recordCall: ReturnType<typeof vi.fn>;
   let namer: CommandTerminalNamer;
 
   function readyAgent(): ResolvedAutomationAgent {
@@ -72,10 +75,12 @@ describe('CommandTerminalNamer', () => {
     tryAcquireSlot = vi.fn(() => true);
     resolveNamingAgent = vi.fn(async () => readyAgent());
     readRateLimit = vi.fn(() => 60);
+    recordCall = vi.fn();
     namer = new CommandTerminalNamer({
       sessionManager: sessionManager as unknown as CommandTerminalNamerDeps['sessionManager'],
       resolveNamingAgent: resolveNamingAgent as unknown as CommandTerminalNamerDeps['resolveNamingAgent'],
       readRateLimit: readRateLimit as unknown as CommandTerminalNamerDeps['readRateLimit'],
+      recordCall: recordCall as unknown as CommandTerminalNamerDeps['recordCall'],
       tryAcquireSlot: tryAcquireSlot as unknown as CommandTerminalNamerDeps['tryAcquireSlot'],
     });
     namer.start();
@@ -179,6 +184,80 @@ describe('CommandTerminalNamer', () => {
     await vi.waitFor(() => expect(warn).toHaveBeenCalled());
     expect(sessionManager.setCommandTerminalLabel).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  describe('background-call ledger', () => {
+    const reportedUsage: AgentCallUsage = {
+      model: 'claude-haiku-5-5',
+      inputTokens: 80,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 30,
+      outputTokens: 7,
+      costUsd: 0.0003,
+    };
+
+    it('records one terminal_name call in the terminal\'s own project, on the resolved agent', async () => {
+      sessionManager.sessions.set('term-1', terminal({ projectId: 'p1' }));
+      // The adapter reports its usage through the sink the namer's call hands it.
+      summarize.mockImplementation(async (_prompt: string, _cliPath: string, _cwd: string, options?: { onUsage?: (usage: AgentCallUsage) => void }) => {
+        options?.onUsage?.(reportedUsage);
+        return 'Audit Unused Feature Flags';
+      });
+
+      sessionManager.emit('event', 'term-1', prompt('find feature flags nobody reads anymore'));
+
+      // The label lands only after the call settled, and the record is written
+      // when it settles, so waiting on the label orders this without a timer.
+      await vi.waitFor(() => expect(sessionManager.setCommandTerminalLabel).toHaveBeenCalledTimes(1));
+      expect(recordCall).toHaveBeenCalledTimes(1);
+      const [projectId, record] = recordCall.mock.calls[0] as [string, Record<string, unknown>];
+      expect(projectId).toBe('p1');
+      expect(record).toMatchObject({
+        job: 'terminal_name',
+        // A terminal belongs to no task.
+        taskId: null,
+        swimlaneId: null,
+        agent: 'claude',
+        requestedModel: 'claude-haiku-5-5',
+        effort: 'low',
+        usage: reportedUsage,
+        outcome: 'succeeded',
+      });
+    });
+
+    it('leaves the usage null when the adapter reports none', async () => {
+      sessionManager.sessions.set('term-1', terminal({ projectId: 'p1' }));
+
+      sessionManager.emit('event', 'term-1', prompt('find feature flags nobody reads anymore'));
+
+      await vi.waitFor(() => expect(sessionManager.setCommandTerminalLabel).toHaveBeenCalledTimes(1));
+      expect(recordCall).toHaveBeenCalledTimes(1);
+      expect((recordCall.mock.calls[0] as [string, { usage: unknown }])[1].usage).toBeNull();
+    });
+
+    it('records nothing for a terminal with no project, and still names it', async () => {
+      sessionManager.sessions.set('term-1', terminal({ projectId: undefined }));
+
+      sessionManager.emit('event', 'term-1', prompt('find feature flags nobody reads anymore'));
+
+      await vi.waitFor(() => expect(sessionManager.setCommandTerminalLabel).toHaveBeenCalledWith('term-1', 'Audit Unused Feature Flags'));
+      expect(summarize).toHaveBeenCalledTimes(1);
+      expect(recordCall).not.toHaveBeenCalled();
+    });
+
+    it('records a failed naming call as failed, with the failure as its detail', async () => {
+      sessionManager.sessions.set('term-1', terminal({ projectId: 'p1' }));
+      summarize.mockRejectedValueOnce(new Error('cli crashed'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      sessionManager.emit('event', 'term-1', prompt('hello'));
+
+      await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+      expect(recordCall).toHaveBeenCalledTimes(1);
+      expect(recordCall.mock.calls[0][0]).toBe('p1');
+      expect(recordCall.mock.calls[0][1]).toMatchObject({ job: 'terminal_name', outcome: 'failed', detail: 'cli crashed' });
+      warn.mockRestore();
+    });
   });
 
   it('dispose detaches both listeners', () => {

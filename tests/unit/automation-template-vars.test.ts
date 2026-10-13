@@ -111,18 +111,20 @@ function makeEngine(options: {
   /** The Automation agent stand-in an enter or exit Condition is checked on. */
   checkConditions?: TransitionEngineServices['checkConditions'];
 }) {
-  const runs: Array<{ id: string; status: string; detail: string | null }> = [];
+  const runs: Array<{ id: string; status: string; detail: string | null; backgroundCallId: string | null }> = [];
   const automationRunRepo = {
-    start: (input: { id: string }) => { runs.push({ id: input.id, status: 'running', detail: null }); },
+    start: (input: { id: string; backgroundCallId?: string | null }) => {
+      runs.push({ id: input.id, status: 'running', detail: null, backgroundCallId: input.backgroundCallId ?? null });
+    },
     finish: (id: string, status: string, detail: string | null) => {
       const row = runs.find((candidate) => candidate.id === id);
       if (row) { row.status = status; row.detail = detail; }
     },
-    recordSkipped: (input: { id: string }, reason: string) => {
-      runs.push({ id: input.id, status: 'skipped', detail: reason });
+    recordSkipped: (input: { id: string; backgroundCallId?: string | null }, reason: string) => {
+      runs.push({ id: input.id, status: 'skipped', detail: reason, backgroundCallId: input.backgroundCallId ?? null });
     },
-    recordDeliveredByCaller: (input: { id: string }, detail: string) => {
-      runs.push({ id: input.id, status: 'succeeded', detail });
+    recordDeliveredByCaller: (input: { id: string; backgroundCallId?: string | null }, detail: string) => {
+      runs.push({ id: input.id, status: 'succeeded', detail, backgroundCallId: input.backgroundCallId ?? null });
     },
   };
 
@@ -340,6 +342,144 @@ describe('an enter Condition is checked with the task facts the engine hands the
     expect(checkedInput.rows.map((row) => row.automationId)).toEqual([CONDITION_ROW_ID]);
     // The answer was yes, so the row ran: the check really gated this delivery.
     expect(delivered).toEqual(['merge it']);
+  });
+});
+
+// Each Condition check is one recorded background call, filed against the
+// project, task and column it judged, and the run rows it caused link back to
+// it. These are the hops between the engine and the run log: the call context
+// the engine hands the check, and the id a check that ran without answering
+// hands the runner.
+describe('a Condition check is recorded against the task and column it judges', () => {
+  const CONDITION_ROW_ID = 'automation-conditioned';
+  const TIMED_OUT = 'The Automation agent did not answer in time.';
+  const CODE_REVIEW = makeColumn(COLUMN_ID, 'Code Review');
+  const EXPECTED_CALL = { projectId: 'project-1', taskId: 'task-tpl-1', swimlaneId: COLUMN_ID, job: 'condition_check' };
+
+  function conditionedRow(trigger: 'enter' | 'exit' | 'turn_end'): ColumnAutomation {
+    return makeAutomation({
+      id: CONDITION_ROW_ID,
+      trigger,
+      condition: 'The PR is ready to merge.',
+      config: { message: 'merge it', mode: 'immediate' },
+    });
+  }
+
+  /** Run the group the way a move does, and say what it delivered. */
+  async function runGroup(
+    engine: TransitionEngine,
+    trigger: 'enter' | 'exit' | 'turn_end',
+    extra: Record<string, unknown> = {},
+  ): Promise<string[]> {
+    const delivered: string[] = [];
+    await engine.executeTransition(makeTask(), CODE_REVIEW, trigger, {
+      signal: new AbortController().signal,
+      fromColumn: trigger === 'enter' ? null : CODE_REVIEW,
+      toColumn: trigger === 'enter' ? CODE_REVIEW : makeColumn('lane-testing', 'Testing'),
+      deliverToAgent: async (message: string) => { delivered.push(message); },
+      showNotification: vi.fn(),
+      ...extra,
+    } as never);
+    return delivered;
+  }
+
+  it.each(['enter', 'exit'] as const)('hands an %s group\'s check the project, task and column as its call', async (trigger) => {
+    const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>(async () => ({
+      ok: true,
+      answers: new Map([[CONDITION_ROW_ID, { met: true, reason: 'The PR can merge.' }]]),
+      agentName: 'Mock agent',
+      callId: 'c1',
+    }));
+    const { engine } = makeEngine({ automations: [conditionedRow(trigger)], checkConditions });
+
+    await runGroup(engine, trigger);
+
+    expect(checkConditions).toHaveBeenCalledTimes(1);
+    expect(checkConditions.mock.calls[0][2]).toEqual(EXPECTED_CALL);
+  });
+
+  it.each(['enter', 'exit'] as const)('links an %s row skipped by a check that ran without answering to that call', async (trigger) => {
+    const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>(async () => ({
+      ok: false,
+      reason: TIMED_OUT,
+      callId: 'c1',
+    }));
+    const { engine, runs } = makeEngine({ automations: [conditionedRow(trigger)], checkConditions });
+
+    const delivered = await runGroup(engine, trigger);
+
+    expect(delivered).toEqual([]);
+    expect(runs).toEqual([expect.objectContaining({ status: 'skipped', detail: TIMED_OUT, backgroundCallId: 'c1' })]);
+  });
+
+  it('links the skip to no call when the check never started, since none was paid for (the control)', async () => {
+    const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>(async () => ({
+      ok: false,
+      reason: 'Set up an Automation agent in Settings > Workflows to check this condition.',
+    }));
+    const { engine, runs } = makeEngine({ automations: [conditionedRow('enter')], checkConditions });
+
+    await runGroup(engine, 'enter');
+
+    expect(runs).toEqual([expect.objectContaining({ status: 'skipped', backgroundCallId: null })]);
+  });
+
+  // A turn end checks before it runs anything, so the group never calls the
+  // service: its caller passes the answers, or why there are none and the call
+  // that ran without answering.
+  it('links a turn-end row the caller could not get an answer for to the call the caller names', async () => {
+    const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>();
+    const { engine, runs } = makeEngine({ automations: [conditionedRow('turn_end')], checkConditions });
+
+    const delivered = await runGroup(engine, 'turn_end', {
+      conditionAnswers: new Map(),
+      conditionUnavailableReason: TIMED_OUT,
+      conditionUnavailableCallId: 'c1',
+    });
+
+    expect(checkConditions).not.toHaveBeenCalled();
+    expect(delivered).toEqual([]);
+    expect(runs).toEqual([expect.objectContaining({ status: 'skipped', detail: TIMED_OUT, backgroundCallId: 'c1' })]);
+  });
+
+  it('links a turn-end skip to no call when the caller names none (the control)', async () => {
+    const { engine, runs } = makeEngine({ automations: [conditionedRow('turn_end')] });
+
+    await runGroup(engine, 'turn_end', {
+      conditionAnswers: new Map(),
+      conditionUnavailableReason: 'Set up an Automation agent in Settings > Workflows to check this condition.',
+    });
+
+    expect(runs).toEqual([expect.objectContaining({ status: 'skipped', backgroundCallId: null })]);
+  });
+
+  // The turn-end runner builds its own check from these two methods, so each is
+  // a hop on its own: the description of whose call it is, and the pass-through.
+  it('describes a call as the open project, the task and the column', () => {
+    const { engine } = makeEngine({ automations: [] });
+
+    expect(engine.conditionCheckCall(makeTask(), CODE_REVIEW)).toEqual(EXPECTED_CALL);
+  });
+
+  it('hands the service the limits and the call it was given', async () => {
+    const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>(async () => ({
+      ok: false,
+      reason: TIMED_OUT,
+      callId: 'c1',
+    }));
+    const { engine } = makeEngine({ automations: [], checkConditions });
+    const input = engine.conditionCheckInput(makeTask(), CODE_REVIEW, 'turn_end', [], {}, {});
+    const limits = { signal: new AbortController().signal };
+    const call = engine.conditionCheckCall(makeTask(), CODE_REVIEW);
+
+    const outcome = await engine.checkConditions(input, limits, call);
+
+    expect(checkConditions).toHaveBeenCalledTimes(1);
+    expect(checkConditions.mock.calls[0][0]).toBe(input);
+    expect(checkConditions.mock.calls[0][1]).toBe(limits);
+    expect(checkConditions.mock.calls[0][2]).toBe(call);
+    // And the outcome comes back whole, with the call the turn-end pass reads.
+    expect(outcome).toEqual({ ok: false, reason: TIMED_OUT, callId: 'c1' });
   });
 });
 

@@ -630,7 +630,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.perProject?.[0]).toEqual(expect.objectContaining({ filesChanged: 5 }));
   });
 
-  it('perProject tokens come from the TURN ledger (not the usage_history snapshot columns), and active time is PER PROJECT', async () => {
+  it('perProject tokens and cache reads come from the TURN ledger (not the usage_history snapshot columns), and active time is PER PROJECT', async () => {
     // summarizeProject switched from totals.totalInputTokens/totalOutputTokens
     // (usage_history's context-window snapshot columns) to a fold over this
     // project's own turnGroups. makeRow's defaults (100/40) and makeGroup's
@@ -639,19 +639,39 @@ describe('usage-stats service: app-wide rollup', () => {
     // activeSessionsCovered come from `projectActive`, read per project inside
     // the loop - never the app-wide accumulator - so each project must show
     // its OWN reading, not the other project's or a summed one.
+    //
+    // cacheReadTokens is the same kind of fold: a project's cache reads are the
+    // SUM of its own turn groups' cache reads. makeGroup defaults it to 0, so
+    // the groups below set distinct non-zero values (a 0 would pass against a
+    // dropped field). p1 has two groups in two buckets so the assertion is a
+    // sum rather than a copy of one group; the second carries no fresh input or
+    // output, so the token expectations below stay 50/25. That group's bucket
+    // is the NEXT 5-minute bucket, never an earlier one: an earlier bucket
+    // falls before local midnight for the first minutes of the day and the
+    // 'today' read would drop it (a plain 'today' read has no upper bound).
+    const currentBucketStartMs = Math.floor(Date.now() / TURN_GROUP_MS) * TURN_GROUP_MS;
     const { service } = makeService([
       {
         id: 'p1',
         name: 'One',
         rows: [makeRow({ sessionRecordId: 'a' })],
-        groups: [makeGroup({ sessionId: 'a' })],
+        groups: [
+          makeGroup({ sessionId: 'a', cacheReadTokens: 300 }),
+          makeGroup({
+            sessionId: 'a',
+            bucketStartMs: currentBucketStartMs + TURN_GROUP_MS,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 700,
+          }),
+        ],
         activeTotals: { activeMs: 600_000, sessionsCovered: 3 },
       },
       {
         id: 'p2',
         name: 'Two',
         rows: [makeRow({ sessionRecordId: 'b', totalInputTokens: 200, totalOutputTokens: 80 })],
-        groups: [makeGroup({ sessionId: 'b', inputTokens: 70, outputTokens: 35 })],
+        groups: [makeGroup({ sessionId: 'b', inputTokens: 70, outputTokens: 35, cacheReadTokens: 40 })],
         activeTotals: { activeMs: 900_000, sessionsCovered: 5 },
       },
     ]);
@@ -663,6 +683,9 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(p1.outputTokens).toBe(25);
     expect(p2.inputTokens).toBe(70);
     expect(p2.outputTokens).toBe(35);
+    // Each project's own sum: p1 = 300 + 700, p2 = 40. Not the app-wide 1,040.
+    expect(p1.cacheReadTokens).toBe(1000);
+    expect(p2.cacheReadTokens).toBe(40);
     expect(p1.activeMs).toBe(600_000);
     expect(p1.activeSessionsCovered).toBe(3);
     expect(p2.activeMs).toBe(900_000);
