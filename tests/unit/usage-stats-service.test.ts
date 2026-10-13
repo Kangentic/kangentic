@@ -23,7 +23,7 @@ import type {
   UsageRollupRow,
   UsageWindowTotals,
 } from '../../src/main/db/repositories/usage-history-repository';
-import type { GroupedTurnUsageRow, TurnModelGroupRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
+import type { GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
 import type { BackgroundCallGroupRow } from '../../src/main/db/repositories/background-call-repository';
 import type { LiveSessionRow, SubagentUsageTotals } from '../../src/shared/types';
 
@@ -89,10 +89,12 @@ function makeLiveSession(overrides: Partial<LiveSessionRow> = {}): LiveSessionRo
 }
 
 /** Per-session turn fixture: the fake reader allocates cost from the
- *  project's rows and folds to bucket-only output, like the real SQL does. */
+ *  project's rows and folds to one row per bucket and model, like the real
+ *  SQL does. */
 interface FixtureGroup {
   bucketStartMs: number;
   sessionId: string | null;
+  modelId: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
@@ -109,6 +111,7 @@ function makeGroup(overrides: Partial<FixtureGroup> = {}): FixtureGroup {
     // of 15 minutes, so the bucket that holds "now" always starts inside today.
     bucketStartMs: Math.floor(Date.now() / TURN_GROUP_MS) * TURN_GROUP_MS,
     sessionId: 'session-1',
+    modelId: 'model-x',
     inputTokens: 50,
     outputTokens: 25,
     cacheCreationTokens: 0,
@@ -219,15 +222,19 @@ function allocateGroups(
     if (group.sessionId === null) continue;
     tokensBySession.set(group.sessionId, (tokensBySession.get(group.sessionId) ?? 0) + group.inputTokens + group.outputTokens);
   }
-  const byBucket = new Map<number, GroupedTurnUsageRow>();
+  // Keyed by bucket and model, never by session: the share denominator above
+  // is the whole session, whichever models it used.
+  const byBucketAndModel = new Map<string, GroupedTurnUsageRow>();
   for (const group of groups) {
     const cost = group.sessionId === null ? undefined : costBySession.get(group.sessionId);
     const totalTokens = group.sessionId === null ? undefined : tokensBySession.get(group.sessionId);
     const allocatedCostUsd = !cost || !totalTokens ? 0 : cost * ((group.inputTokens + group.outputTokens) / totalTokens);
-    let bucket = byBucket.get(group.bucketStartMs);
+    const key = `${group.bucketStartMs}::${group.modelId ?? ''}`;
+    let bucket = byBucketAndModel.get(key);
     if (!bucket) {
       bucket = {
         bucketStartMs: group.bucketStartMs,
+        modelId: group.modelId,
         inputTokens: 0,
         outputTokens: 0,
         cacheCreationTokens: 0,
@@ -235,7 +242,7 @@ function allocateGroups(
         turnCount: 0,
         allocatedCostUsd: 0,
       };
-      byBucket.set(group.bucketStartMs, bucket);
+      byBucketAndModel.set(key, bucket);
     }
     bucket.inputTokens += group.inputTokens;
     bucket.outputTokens += group.outputTokens;
@@ -244,7 +251,7 @@ function allocateGroups(
     bucket.turnCount += group.turnCount;
     bucket.allocatedCostUsd += allocatedCostUsd;
   }
-  return [...byBucket.values()].sort((first, second) => first.bucketStartMs - second.bucketStartMs);
+  return [...byBucketAndModel.values()].sort((first, second) => first.bucketStartMs - second.bucketStartMs);
 }
 
 /** One subagent-type rollup row, plus the ts the fake reader windows it on
@@ -272,8 +279,6 @@ interface FakeProject {
   earliestTurnMs?: number | null;
   /** Background call groups this project's ledger returns, whatever the window. */
   backgroundGroups?: BackgroundCallGroupRow[];
-  /** Per-turn groups by model, windowed on `bucketStartMs` like the SQL. */
-  turnModelGroups?: TurnModelGroupRow[];
   throws?: boolean;
 }
 
@@ -289,8 +294,7 @@ interface ReaderCall {
     | 'getActiveTotals'
     | 'getEarliestTurnMs'
     | 'listSubagentTotals'
-    | 'listBackgroundCallGroups'
-    | 'listTurnModelGroups';
+    | 'listBackgroundCallGroups';
   sinceIso?: string | null;
   untilIso?: string | null;
   sinceMs?: number | null;
@@ -379,11 +383,6 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
         readerCalls.push({ projectId, method: 'listBackgroundCallGroups', sinceIso, untilIso, groupMs });
         return project.backgroundGroups ?? [];
       },
-      listTurnModelGroups: (sinceMs, groupMs, untilMs) => {
-        readerCalls.push({ projectId, method: 'listTurnModelGroups', sinceMs, untilMs, groupMs });
-        return (project.turnModelGroups ?? []).filter((group) =>
-          (sinceMs === null || group.bucketStartMs >= sinceMs) && (untilMs === null || group.bucketStartMs < untilMs));
-      },
     };
   });
   const service = createUsageStatsService({
@@ -399,26 +398,26 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
 }
 
 describe('usage-stats service: the Tokens view by-model series', () => {
-  it('folds the turn ledger by base model on the token grid, merging projects and context-window twins', async () => {
-    const bucketStartMs = Date.now() - 60_000;
+  it('folds the turn groups by base model on the token grid, merging projects and context-window twins', async () => {
     const { service, readerCalls } = makeService([
       {
         id: 'p1',
         name: 'One',
-        turnModelGroups: [
-          { bucketStartMs, modelId: 'claude-opus-4-8[1m]', inputTokens: 100, outputTokens: 900 },
-          { bucketStartMs, modelId: 'claude-haiku-5-5', inputTokens: 10, outputTokens: 40 },
+        groups: [
+          makeGroup({ modelId: 'claude-opus-4-8[1m]', inputTokens: 100, outputTokens: 900 }),
+          makeGroup({ modelId: 'claude-haiku-5-5', inputTokens: 10, outputTokens: 40 }),
         ],
       },
       {
         id: 'p2',
         name: 'Two',
-        turnModelGroups: [{ bucketStartMs, modelId: 'claude-opus-4-8', inputTokens: 50, outputTokens: 450 }],
+        groups: [makeGroup({ modelId: 'claude-opus-4-8', inputTokens: 50, outputTokens: 450 })],
       },
     ]);
 
     const stats = await service.getDashboardStats({ kind: 'all' }, 'today');
 
+    expect(stats.skippedProjects).toBeUndefined();
     const series = stats.tokenModelSeries ?? [];
     // Same grid as the token series, so the two charts share an x axis.
     expect(series.map((point) => point.bucketStartMs)).toEqual(stats.tokenSeries.map((point) => point.bucketStartMs));
@@ -426,12 +425,20 @@ describe('usage-stats service: the Tokens view by-model series', () => {
     const opus = slices.filter((slice) => slice.modelId === 'claude-opus-4-8');
     expect(opus).toHaveLength(1);
     expect(opus[0]).toMatchObject({ inputTokens: 150, outputTokens: 1350, costUsd: 0 });
-    expect(slices.find((slice) => slice.modelId === 'claude-haiku-5-5')).toMatchObject({ inputTokens: 10, outputTokens: 40 });
-    // Read on the turn groups' own window and grid.
-    const modelRead = readerCalls.find((call) => call.method === 'listTurnModelGroups');
-    const turnRead = readerCalls.find((call) => call.method === 'listTurnGroups');
-    expect(modelRead?.sinceMs).toBe(turnRead?.sinceMs);
-    expect(modelRead?.groupMs).toBe(turnRead?.groupMs);
+    expect(slices.find((slice) => slice.modelId === 'claude-haiku-5-5')).toMatchObject({ inputTokens: 10, outputTokens: 40, costUsd: 0 });
+    // Built from the token series' own groups, so every bucket's slices add up
+    // to that bucket of the token series, and the whole chart to the Tokens tile.
+    series.forEach((point, index) => {
+      const sliceTokens = point.byModel.reduce((sum, slice) => sum + slice.inputTokens + slice.outputTokens, 0);
+      expect(sliceTokens).toBe(stats.tokenSeries[index].inputTokens + stats.tokenSeries[index].outputTokens);
+    });
+    expect(slices.reduce((sum, slice) => sum + slice.inputTokens + slice.outputTokens, 0))
+      .toBe(stats.kpis.turnInputTokens + stats.kpis.turnOutputTokens);
+    // One turn read per project for the current window: the bars cost no
+    // second scan of the turn ledger.
+    const turnReads = readerCalls.filter((call) => call.method === 'listTurnGroups');
+    const currentSinceMs = turnReads[0].sinceMs;
+    expect(turnReads.filter((call) => call.sinceMs === currentSinceMs).map((call) => call.projectId)).toEqual(['p1', 'p2']);
   });
 });
 
@@ -882,7 +889,7 @@ describe('usage-stats service: app-wide rollup', () => {
       id: 'p1',
       name: 'One',
       rows: [makeRow()],
-      groups: [{ bucketStartMs: nowMs - 60_000, inputTokens: 200, outputTokens: 100, cacheCreationTokens: 10, cacheReadTokens: 1000, turnCount: 2, sessionRecordId: 'session-1' }],
+      groups: [{ bucketStartMs: nowMs - 60_000, modelId: 'model-x', inputTokens: 200, outputTokens: 100, cacheCreationTokens: 10, cacheReadTokens: 1000, turnCount: 2, sessionRecordId: 'session-1' }],
       // A realistic fan-out: an order of magnitude more than the driver.
       subagents: [
         { tsMs: nowMs - 60_000, agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },

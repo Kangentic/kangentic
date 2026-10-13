@@ -36,6 +36,7 @@ import {
   bucketStartFor,
   computeKpis,
   foldCostSeries,
+  foldTokenModelSeries,
   foldTokenSeries,
   mergeUsageTotals,
   type ChartBucketKind,
@@ -712,21 +713,20 @@ describe('usage-stats SQL pushdown equivalence (new SQL vs legacy JS folds)', ()
     }
   });
 
-  it('token series by model: the per-model read folds to a row scan, and each bucket sums to the token series', () => {
+  it('token series by model: the turn groups\' model split folds to a row scan, and each bucket sums to the token series', () => {
     // The Tokens view's by-model bars stand beside the Tokens tile, so the
     // property that matters is that a bucket's slices add up to that bucket of
     // the token series. The per-model split is checked against a plain row scan.
+    // Both come from the one grouped read, through the service's own folds.
     for (const window of WINDOWS) {
       for (const kind of ['fiveMinutes', 'hour', 'day', 'week'] as const) {
         const groupMs = kind === 'fiveMinutes' ? TURN_GROUP_MS : COST_GROUP_MS;
         const sinceMs = msOf(window.sinceIso);
         const untilMs = msOf(window.untilIso);
-        const modelGroups = [];
         const turnGroups: GroupedTurnUsageRow[] = [];
         const scannedRows: Array<{ ts: number; model: string | null; input_tokens: number; output_tokens: number }> = [];
         for (const db of databases) {
           const store = new ConversationUsageStore(db);
-          modelGroups.push(...store.getGroupedModelUsageSince(sinceMs, groupMs, untilMs));
           turnGroups.push(...store.getGroupedUsageSince(sinceMs, groupMs, untilMs, window.sinceIso, window.untilIso));
           scannedRows.push(...(db.prepare(
             'SELECT ts, model, input_tokens, output_tokens FROM conversation_turn_usage WHERE subagent_id IS NULL AND ts IS NOT NULL',
@@ -738,11 +738,7 @@ describe('usage-stats SQL pushdown equivalence (new SQL vs legacy JS folds)', ()
         const starts = buildBucketStarts(rangeStartMs, rangeEndMs, kind);
         const label = `tokenModelSeries[${window.label}][${kind}]`;
 
-        const modelSeries = foldCostSeries(
-          modelGroups.map((group) => ({ ...group, costUsd: 0, sessionCount: 0 })),
-          starts,
-          kind,
-        );
+        const modelSeries = foldTokenModelSeries(turnGroups, starts, kind);
         const tokenSeries = foldTokenSeries(turnGroups, starts, kind);
         expect(modelSeries.map((point) => point.inputTokens + point.outputTokens), label)
           .toEqual(tokenSeries.map((point) => point.inputTokens + point.outputTokens));

@@ -36,25 +36,19 @@ export interface TurnUsageOwner {
 }
 
 /**
- * One fixed-UTC-bucket group of turn usage, as consumed by the usage-stats
- * service. Grouped by bucket ONLY: per-session cost allocation happens
- * inside the SQL (see getGroupedUsageSince), so the output is O(active
- * buckets in the window), never O(sessions x buckets) - the shape that let
- * a year of history stall the main thread.
+ * One fixed-UTC-bucket group of turn usage for one model, as consumed by the
+ * usage-stats service. Grouped by bucket and each turn's own model, never by
+ * session: per-session cost allocation happens inside the SQL (see
+ * getGroupedUsageSince), so the output is O(active bucket and model pairs in
+ * the window), never O(sessions x buckets) - the shape that let a year of
+ * history stall the main thread. The model split is what lets one read feed
+ * both the token series and the Tokens view's by-model bars.
  */
-/** Main-thread fresh input and output for one fixed UTC bucket and model
- *  (`getGroupedModelUsageSince`). `modelId` is the turn's own model id, null
- *  when the transcript named none. */
-export interface TurnModelGroupRow {
-  bucketStartMs: number;
-  modelId: string | null;
-  inputTokens: number;
-  outputTokens: number;
-}
-
 export interface GroupedTurnUsageRow {
   /** UTC-aligned group start (epoch ms), a multiple of the groupMs passed in. */
   bucketStartMs: number;
+  /** The turn's own model id, null when the transcript named none. */
+  modelId: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
@@ -342,24 +336,33 @@ export class ConversationUsageStore {
 
   /**
    * Project-wide MAIN-THREAD turn usage grouped into fixed UTC buckets of
-   * `groupMs`, bucket-only output. Subagent rows are excluded from both the
-   * aggregate and the cost-allocation denominator, so this series means exactly
-   * what it meant before subagent capture existed and stays comparable back
-   * through the whole history. Subagent traffic is reported additively by
-   * `getSubagentTotalsByType`. The usage-stats service passes 5 minutes for the
-   * Live period (whose chart buckets sit on the 5-minute grid) and 15
-   * minutes otherwise - the coarsest grid that still nests into local
-   * hour/day/week chart boundaries for every real-world UTC offset. Turns
-   * with a NULL `ts` are excluded (they cannot be placed on a time axis;
-   * their tokens still count in the usage_history KPIs). Uses
+   * `groupMs` and each turn's own model, one row per pair. Subagent rows are
+   * excluded from both the aggregate and the cost-allocation denominator, so
+   * this series means exactly what it meant before subagent capture existed
+   * and stays comparable back through the whole history. Subagent traffic is
+   * reported additively by `getSubagentTotalsByType`. The usage-stats service
+   * passes 5 minutes for the Live period (whose chart buckets sit on the
+   * 5-minute grid) and 15 minutes otherwise - the coarsest grid that still
+   * nests into local hour/day/week chart boundaries for every real-world UTC
+   * offset. Turns with a NULL `ts` are excluded (they cannot be placed on a
+   * time axis; their tokens still count in the usage_history KPIs). Uses
    * idx_turn_usage_ts. Pass null `sinceMs` for all time; pass `untilMs` to
    * bound the window (the dashboard's day drill-down).
    *
+   * The model split feeds the Tokens view's by-model bars from the same rows
+   * as the token series, so the bars sum to the Tokens tile by construction
+   * and the dashboard pays for one scan of this table rather than two. Read
+   * from this ledger, never from `usage_history`'s token columns: those are
+   * status-line context totals, and a chart built on them did not sum to the
+   * Tokens tile beside it (1.6B against 307.5M on the dogfooding install).
+   * Ordered by bucket, then each model's first turn, so a point's slices keep
+   * a stable order.
+   *
    * Cost allocation happens per turn INSIDE the query (each turn contributes
    * its session's ledger cost weighted by the turn's share of the session's
-   * windowed fresh tokens), summed per bucket - algebraically identical to
-   * the old per-session-group allocation, without materializing the
-   * O(sessions x buckets) intermediate for the JS side.
+   * windowed fresh tokens), summed per bucket and model - algebraically
+   * identical to the old per-session-group allocation, without materializing
+   * the O(sessions x buckets) intermediate for the JS side.
    * `costSince`/`costUntil` must be the same session_started_at window the
    * service applies to its usage_history aggregates - a turn whose session
    * has no ledger row INSIDE that window allocates $0, exactly like the old
@@ -379,6 +382,11 @@ export class ConversationUsageStore {
     // away from the driver's buckets and into the subagents' timestamps. Window
     // totals would still add up while the series silently changed shape, which is
     // exactly the unmarked discontinuity these columns exist to prevent.
+    //
+    // The CTE stays grouped by session alone, while the outer query also groups
+    // by model. A turn's share is of its SESSION's tokens, across every model
+    // that session used, so a mid-session model switch splits the session's cost
+    // between two rows rather than giving each model a full share.
     const turnClauses = [MAIN_THREAD_ONLY, 'ts IS NOT NULL'];
     const turnWindowParams: number[] = [];
     if (sinceMs !== null) {
@@ -416,6 +424,7 @@ export class ConversationUsageStore {
       )
       SELECT
         CAST(ts / ? AS INTEGER) * ? AS bucketStartMs,
+        model AS modelId,
         SUM(input_tokens) AS inputTokens,
         SUM(output_tokens) AS outputTokens,
         SUM(cache_creation_input_tokens) AS cacheCreationTokens,
@@ -432,43 +441,9 @@ export class ConversationUsageStore {
       LEFT JOIN session_tokens ON session_tokens.sessionId = conversation_turn_usage.session_id
       LEFT JOIN session_cost ON session_cost.sessionId = conversation_turn_usage.session_id
       WHERE ${turnWhere}
-      GROUP BY bucketStartMs
-      ORDER BY bucketStartMs ASC
-    `).all(...turnWindowParams, ...costParams, groupMs, groupMs, ...turnWindowParams) as GroupedTurnUsageRow[];
-  }
-
-  /**
-   * Main-thread fresh input and output per fixed UTC bucket of `groupMs` and
-   * per model, for the usage dashboard's Tokens view ("Tokens per day by
-   * model"). Read from this ledger, never from `usage_history`'s token
-   * columns: those are status-line context totals, and a chart built on them
-   * did not sum to the Tokens tile beside it (1.6B against 307.5M on the
-   * dogfooding install). Same window and NULL-`ts` rule as
-   * `getGroupedUsageSince`. Ordered by bucket, then each model's first turn, so
-   * a point's slices keep a stable order.
-   */
-  getGroupedModelUsageSince(sinceMs: number | null, groupMs: number, untilMs: number | null = null): TurnModelGroupRow[] {
-    const clauses = [MAIN_THREAD_ONLY, 'ts IS NOT NULL'];
-    const windowParams: number[] = [];
-    if (sinceMs !== null) {
-      clauses.push('ts >= ?');
-      windowParams.push(sinceMs);
-    }
-    if (untilMs !== null) {
-      clauses.push('ts < ?');
-      windowParams.push(untilMs);
-    }
-    return this.db.prepare(`
-      SELECT
-        CAST(ts / ? AS INTEGER) * ? AS bucketStartMs,
-        model AS modelId,
-        COALESCE(SUM(input_tokens), 0) AS inputTokens,
-        COALESCE(SUM(output_tokens), 0) AS outputTokens
-      FROM conversation_turn_usage
-      WHERE ${clauses.join(' AND ')}
       GROUP BY bucketStartMs, model
       ORDER BY bucketStartMs ASC, MIN(ts) ASC
-    `).all(groupMs, groupMs, ...windowParams) as TurnModelGroupRow[];
+    `).all(...turnWindowParams, ...costParams, groupMs, groupMs, ...turnWindowParams) as GroupedTurnUsageRow[];
   }
 
   /** Usage for a specific set of MAIN-THREAD turns - the join a conversation view
