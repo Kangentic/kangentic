@@ -12,6 +12,10 @@
  * for two reasons: an untrusted cwd could block on the TUI trust prompt, and
  * a print run in the PROJECT cwd would overwrite that workspace's
  * `last_conversations.json` entry - hijacking the user's own `agy -c` there.
+ *
+ * Its result names the conversation it made and what it cost. The run removes
+ * that conversation, as the answer run does (a title is not a conversation to
+ * resume), and hands the cost to its caller's usage sink.
  */
 // The print run's PTY runs in the pty host; node-pty loads only there, or
 // lazily here when no host is registered (the model-picker-probe precedent).
@@ -24,6 +28,8 @@ import path from 'node:path';
 // (steps 6-8): those rewrite bytes that may sit inside the JSON payload
 // extracted below.
 import { stripAnsiControlCodes } from '../../../../shared/ansi-strip';
+import type { AgentCallUsage } from '../../../../shared/types';
+import { antigravityUsage, removeAntigravityConversation } from './answer-stream';
 import { ensureWorkspaceTrust } from './trust-manager';
 
 const PRINT_TIMEOUT_MS = 25_000;
@@ -34,12 +40,24 @@ function scratchDirectory(): string {
   return path.join(os.tmpdir(), 'kangentic-antigravity-print');
 }
 
+/** A print run's result object, as far as its caller needs it. */
+export interface AntigravityPrintResult {
+  response: string;
+  conversationId: string | null;
+  usage: AgentCallUsage | null;
+}
+
+/** The response text alone (`extractPrintResult`). */
+export function extractPrintResponse(rawOutput: string): string | null {
+  return extractPrintResult(rawOutput)?.response ?? null;
+}
+
 /**
  * Pull the print-mode result object out of captured PTY output: the LAST
  * `{...}` JSON blob carrying a `response` field (PTY chrome like the clear
  * sequence and the shell's OSC title precede/follow it).
  */
-export function extractPrintResponse(rawOutput: string): string | null {
+export function extractPrintResult(rawOutput: string): AntigravityPrintResult | null {
   const cleaned = stripAnsiControlCodes(rawOutput);
   const candidates: string[] = [...(cleaned.match(/\{[\s\S]*?\}(?=\s*$|\s*\{)/g) ?? [])];
   // Also try a greedy whole-object match: the result JSON can contain nested
@@ -51,8 +69,14 @@ export function extractPrintResponse(rawOutput: string): string | null {
   }
   for (const candidate of candidates.reverse()) {
     try {
-      const parsed = JSON.parse(candidate) as { response?: unknown };
-      if (typeof parsed.response === 'string') return parsed.response;
+      const parsed = JSON.parse(candidate) as { response?: unknown; conversation_id?: unknown; usage?: unknown };
+      if (typeof parsed.response === 'string') {
+        return {
+          response: parsed.response,
+          conversationId: typeof parsed.conversation_id === 'string' ? parsed.conversation_id : null,
+          usage: antigravityUsage(parsed.usage),
+        };
+      }
     } catch {
       // Not the result object - keep scanning.
     }
@@ -63,10 +87,16 @@ export function extractPrintResponse(rawOutput: string): string | null {
 /**
  * Run `agy -p <prompt> --output-format json` in a hidden PTY and return the
  * response text. `flags` follow the fixed ones (the summarize caller's model and
- * effort). Throws on timeout, spawn failure, or an unparseable result (the
- * summarize caller treats any throw as "auto-name unavailable").
+ * effort). `onUsage` hears what the run reported it cost, before any throw.
+ * Throws on timeout, spawn failure, or an unparseable result (the summarize
+ * caller treats any throw as "auto-name unavailable").
  */
-export async function runAntigravityPrint(cliPath: string, prompt: string, flags: readonly string[] = []): Promise<string> {
+export async function runAntigravityPrint(
+  cliPath: string,
+  prompt: string,
+  flags: readonly string[] = [],
+  onUsage?: (usage: AgentCallUsage) => void,
+): Promise<string> {
   const scratch = scratchDirectory();
   // sync-write-ok: this must throw, not degrade - the function docblock above
   // already documents that contract, and the summarize caller treats any
@@ -102,12 +132,16 @@ export async function runAntigravityPrint(cliPath: string, prompt: string, flags
       settled = true;
       clearTimeout(timer);
       try { printProcess.kill(); } catch { /* already exited */ }
+      // Read before any rejection: a run that failed still cost what it
+      // reported, and its conversation is still not one to resume.
+      const result = extractPrintResult(output);
+      if (result?.usage) onUsage?.(result.usage);
+      if (result?.conversationId) void removeAntigravityConversation(result.conversationId);
       if (error) {
         reject(error);
         return;
       }
-      const response = extractPrintResponse(output);
-      if (response && response.trim().length > 0) resolve(response.trim());
+      if (result && result.response.trim().length > 0) resolve(result.response.trim());
       else reject(new Error('antigravity print run produced no parseable response'));
     };
 

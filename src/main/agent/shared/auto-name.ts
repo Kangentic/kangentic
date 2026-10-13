@@ -119,6 +119,22 @@ function pickAssistantMessage(record: Record<string, unknown>): string | null {
 }
 
 /**
+ * A title out of an adapter's own answer run (`answerFromContext`), given
+ * `buildSummarizePrompt`'s prompt. That run already carries the agent's
+ * read-only flags and removes the session it leaves, so naming gets both
+ * without a second copy of either. Throws when nothing title-shaped is left.
+ *
+ * Only for an agent whose answer run was measured turning the title prompt
+ * into a title. Antigravity's did not: in plan mode it searched the web, tried
+ * a shell command and came back empty after 41 s, so it keeps its print run.
+ */
+export function titleFromAnswer(answer: string): string {
+  const title = cleanSummarizeOutput(answer);
+  if (!title) throw new Error('the agent produced empty output');
+  return title;
+}
+
+/**
  * A one-shot run shaped for a TITLE: the title's budgets, and its output
  * cleaned to a single line unless the caller passes another `shape`. Throws on
  * a non-zero exit, a timeout, or empty output.

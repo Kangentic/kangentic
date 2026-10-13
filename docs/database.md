@@ -518,8 +518,10 @@ including a check whose caller stopped waiting, since that run is still paid for
 ten tasks, so no `task_id`), `task_title` or `terminal_name`. `requested_model` is what Kangentic
 asked for (NULL for the agent's default); `model` is what the CLI reported answering with, kept apart
 because plan mode once rerouted a Haiku request to Sonnet. The token and cost columns are NULL,
-never 0, for an agent whose CLI reports no usage. `outcome` is `succeeded`, `failed` or `timed_out`,
-with the error in `detail`.
+never 0, for an agent whose CLI reports no usage. Claude and Antigravity report it today.
+Antigravity reports tokens but no model, price or cache write, so its rows keep `model` and
+`cost_usd` NULL and `cache_creation_input_tokens` 0. `outcome` is `succeeded`, `failed` or
+`timed_out`, with the error in `detail`.
 
 No foreign key to tasks: spend outlives a deleted task, as `usage_history`'s does. Rows are kept,
 like `usage_history` and the turn ledger (about 200 calls a day on a busy board, roughly 10 to 15 MB

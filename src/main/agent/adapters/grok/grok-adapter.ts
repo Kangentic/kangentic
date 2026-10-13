@@ -347,13 +347,26 @@ export class GrokAdapter implements AgentAdapter {
     }
   }
 
-  /** One-shot title generation via the verified headless mode, on the answer
-   *  run's model and effort flags. */
+  /**
+   * One-shot title generation via the verified headless mode, on the answer
+   * run's model and effort flags and its deny rules. A user's
+   * `permission_mode = "always-approve"` let the plain run write files and run
+   * commands; the deny rules are the one control that beats it (see
+   * `answerFromContext`). The session it leaves in `~/.grok/sessions` stays:
+   * removing it needs the stream's init line, so that waits until a title is
+   * measured on the answer run itself (the CLI here was too old to run).
+   */
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     return runCliPrintSummarize({
       cliPath,
       args: [
         '--output-format', 'plain',
+        '--deny', 'Write',
+        '--deny', 'Edit',
+        '--deny', 'Bash',
+        '--no-subagents',
+        '--disable-web-search',
+        '--no-memory',
         ...(options?.model ? ['--model', options.model] : []),
         ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
         '-p',

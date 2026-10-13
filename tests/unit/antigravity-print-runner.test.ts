@@ -103,3 +103,36 @@ describe('runAntigravityPrint output capping', () => {
     await expect(resultPromise).resolves.toBe('Fix the login timeout bug');
   });
 });
+
+describe('runAntigravityPrint usage', () => {
+  // The conversation ids here are not UUIDs, so the run's conversation removal
+  // (which only acts on a UUID) never touches a real home directory.
+  it('hands the result\'s usage to the sink before resolving', async () => {
+    const onUsage = vi.fn();
+    const resultPromise = runAntigravityPrint('/usr/bin/agy', 'summarize this task', [], onUsage);
+    installFakePty((fake) => {
+      fake.emitData(JSON.stringify({
+        conversation_id: 'a1b2c3',
+        status: 'SUCCESS',
+        response: 'Fix the login timeout bug',
+        usage: { input_tokens: 2230, output_tokens: 317, thinking_tokens: 174, cache_read_tokens: 14972, total_tokens: 2547 },
+      }));
+      fake.emitExit();
+    });
+    await expect(resultPromise).resolves.toBe('Fix the login timeout bug');
+    expect(onUsage).toHaveBeenCalledWith({
+      model: null, inputTokens: 2230, cacheCreationInputTokens: 0, cacheReadInputTokens: 14972, outputTokens: 317, costUsd: null,
+    });
+  });
+
+  it('still reports what a run cost when it printed no title', async () => {
+    const onUsage = vi.fn();
+    const resultPromise = runAntigravityPrint('/usr/bin/agy', 'summarize this task', [], onUsage);
+    installFakePty((fake) => {
+      fake.emitData(JSON.stringify({ conversation_id: 'a1b2c3', status: 'SUCCESS', response: '', usage: { input_tokens: 10, output_tokens: 0 } }));
+      fake.emitExit();
+    });
+    await expect(resultPromise).rejects.toThrow('no parseable response');
+    expect(onUsage).toHaveBeenCalledTimes(1);
+  });
+});

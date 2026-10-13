@@ -277,7 +277,29 @@ describe('answer run flags and prompt delivery', () => {
     ]);
     expect(options.promptVia ?? 'stdin').toBe('stdin');
     expect(options.prompt).toBe(formatAntigravityUserMessage('THE PROMPT'));
-    expect(options.extractRaw).toBe(extractAntigravityStreamResponse);
+    const result = JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } });
+    expect(options.extractRaw?.(result)).toBe(extractAntigravityStreamResponse(result));
+  });
+
+  it('Antigravity reports the result event\'s usage, even when its answer comes back empty', async () => {
+    // A real capture (2026-10-13): the title prompt in plan mode, which searched
+    // the web, tried a shell command and ended with an empty response. The
+    // result event's usage is the run's total, so the steps are not added up.
+    const capture = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'antigravity-answer-title-plan-mode.jsonl'), 'utf-8');
+    const onUsage = vi.fn();
+    answerSpy.mockClear();
+    await new AntigravityAdapter().answerFromContext('THE PROMPT', '/bin/agy', '/scratch', null, { onUsage });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(options.extractRaw?.(capture)).toBe('');
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage).toHaveBeenCalledWith({
+      model: null,
+      inputTokens: 31_876,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 14_972,
+      outputTokens: 4_524,
+      costUsd: null,
+    });
   });
 
   it('Aider asks without editing, from a message file, outside git', async () => {

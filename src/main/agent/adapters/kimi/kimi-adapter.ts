@@ -254,6 +254,10 @@ export class KimiAdapter implements AgentAdapter {
   }
 
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
+    // Not the answer run's `--plan` yet, so print mode's implied `--yolo`
+    // stands: no title has been measured in plan mode (no model is configured
+    // for Kimi here), and a mode change is what made Antigravity's answer run
+    // come back empty on the title prompt.
     return runCliPrintSummarize({
       cliPath,
       args: ['--print', '--quiet', ...(options?.model ? ['--model', options.model] : [])],

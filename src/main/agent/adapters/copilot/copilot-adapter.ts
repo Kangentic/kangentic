@@ -11,7 +11,7 @@ import { CopilotStreamParser } from './stream-parser';
 import { migrateCopilotProjectData } from './project-relocation';
 import { discoverCopilotCapabilities } from './capability-discovery';
 import { createCopilotCommandInjectionVerifier } from './command-injection-verifier';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { sharedFolderKey } from '../../shared/shared-folder-holds';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions } from '../../agent-adapter';
@@ -233,21 +233,18 @@ export class CopilotAdapter implements AgentAdapter {
     return sequence;
   }
 
+  /**
+   * A title on the answer run: nothing asked of the user, and the session
+   * folder removed after. The plain run this replaced left a `session-state`
+   * folder per title, which model discovery also reads. Measured on the title
+   * prompt in an empty folder: a clean title in 8.0 s.
+   */
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
-    // `copilot -p "<prompt>" --silent` runs non-interactively without status output.
-    // The model and effort flags are the answer run's, omitted when unset.
-    return runCliPrintSummarize({
-      cliPath,
-      args: [
-        '--silent',
-        ...(options?.model ? ['--model', options.model] : []),
-        ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
-        '-p',
-      ],
-      prompt: buildSummarizePrompt(prompt),
-      cwd,
-      promptVia: 'arg',
-    });
+    return titleFromAnswer(await this.answerFromContext(buildSummarizePrompt(prompt), cliPath, cwd, options?.model, {
+      effort: options?.effort,
+      runDirectory: options?.runDirectory,
+      onUsage: options?.onUsage,
+    }));
   }
 
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
