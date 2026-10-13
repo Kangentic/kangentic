@@ -19,6 +19,8 @@ import { openTestDatabase } from './helpers/test-database';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { AutomationRepository } from '../../src/main/db/repositories/automation-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
+import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
+import { BackgroundCallRepository } from '../../src/main/db/repositories/background-call-repository';
 import {
   handleListAutomations,
   handleSetAutomations,
@@ -559,6 +561,35 @@ describe('automation MCP commands', () => {
       const response = handleGetAutomationRuns({ column: 'Executing' }, context);
       expect(response.success).toBe(true);
       expect(response.message).toContain('No automation runs');
+    });
+
+    it('names the model and tokens of the check that answered each run', () => {
+      const columnId = executingId();
+      db.prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run('task-checked', 'Checked task', '', columnId, 0, '2026-10-13T00:00:00.000Z', '2026-10-13T00:00:00.000Z');
+      new BackgroundCallRepository(db).record({
+        id: 'call-1', job: 'condition_check', taskId: 'task-checked', swimlaneId: columnId, agent: 'claude',
+        requestedModel: 'claude-haiku-5-5', effort: 'low',
+        usage: { model: 'claude-haiku-5-5', inputTokens: 2104, cacheCreationInputTokens: 120, cacheReadInputTokens: 1012, outputTokens: 45, costUsd: 0.0026 },
+        durationMs: 1900, outcome: 'succeeded', detail: null, startedAt: '2026-10-13T14:02:11.402Z',
+      });
+      new BackgroundCallRepository(db).record({
+        id: 'call-2', job: 'condition_check', taskId: 'task-checked', swimlaneId: columnId, agent: 'codex',
+        requestedModel: null, effort: null, usage: null,
+        durationMs: 4600, outcome: 'succeeded', detail: null, startedAt: '2026-10-13T14:03:00.000Z',
+      });
+      const runs = new AutomationRunRepository(db);
+      const row = (id: string) => ({ id, name: `Row ${id}`, type: 'send_message' as const, swimlane_id: columnId, trigger: 'turn_end' as const });
+      runs.recordSkipped({ id: 'run-1', automation: row('a1'), taskId: 'task-checked', condition: { met: false, reason: 'No.', callId: 'call-1' } }, 'Condition not met: No.');
+      runs.recordSkipped({ id: 'run-2', automation: row('a2'), taskId: 'task-checked', condition: { met: false, reason: 'No.', callId: 'call-1' } }, 'Condition not met: No.');
+      runs.recordSkipped({ id: 'run-3', automation: row('a3'), taskId: 'task-checked', condition: { met: false, reason: 'No.', callId: 'call-2' } }, 'Condition not met: No.');
+
+      const response = handleGetAutomationRuns({ task: 'task-checked' }, context);
+
+      expect(response.success).toBe(true);
+      expect(response.message).toContain('(claude-haiku-5-5, low): 2,104 fresh input + 45 output, 120 cache write, 1,012 cache read, $0.0026, 1.9s, one call for 2 rows');
+      // An agent that reports no usage says so, never zeros.
+      expect(response.message).toContain('(default model): usage not reported, 4.6s');
     });
   });
 

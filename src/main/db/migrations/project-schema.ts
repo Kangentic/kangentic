@@ -1835,6 +1835,49 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_task_moves_to_column ON task_moves(to_swimlane_id, at DESC)');
 
   runWorkflowsMigration(db);
+
+  // Migration: one row per headless agent call Kangentic makes on the user's
+  // behalf (a Condition check, a workflow step check, a task summary batch, a
+  // task title, a Command Terminal name) with what the CLI reported it cost.
+  // Its own table rather than usage_history, whose every aggregate reads as
+  // session usage. No foreign key to tasks: spend outlives a deleted task, as
+  // usage_history's does. Token and cost columns are NULL, never 0, for an
+  // agent whose CLI reports no usage.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS background_calls (
+      id TEXT PRIMARY KEY,
+      job TEXT NOT NULL,
+      task_id TEXT,
+      swimlane_id TEXT,
+      agent TEXT NOT NULL,
+      requested_model TEXT,
+      model TEXT,
+      effort TEXT,
+      input_tokens INTEGER,
+      cache_creation_input_tokens INTEGER,
+      cache_read_input_tokens INTEGER,
+      output_tokens INTEGER,
+      cost_usd REAL,
+      duration_ms INTEGER NOT NULL,
+      outcome TEXT NOT NULL,
+      detail TEXT,
+      started_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_background_calls_started ON background_calls(started_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_background_calls_task ON background_calls(task_id, started_at DESC)');
+
+  // Migration: the background call that answered a run's Condition, so a run
+  // can name the model and tokens of its check. One call answers every row of
+  // a batched check, so several runs share an id. The table stays small (it is
+  // pruned on project open), so its index is built here.
+  const runColumnsWithCall = new Set(
+    (db.pragma('table_info(automation_runs)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!runColumnsWithCall.has('background_call_id')) {
+    db.exec('ALTER TABLE automation_runs ADD COLUMN background_call_id TEXT DEFAULT NULL');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_automation_runs_background_call ON automation_runs(background_call_id)');
 }
 
 /**

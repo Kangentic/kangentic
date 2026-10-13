@@ -231,8 +231,10 @@ describe('checkAutomationConditions limits', () => {
     const outcome = await pending;
     if (!outcome.ok) throw new Error(`expected an answer, got: ${outcome.reason}`);
     expect(outcome.agentName).toBe('fake-agent');
-    expect(outcome.answers.get('clean')).toEqual({ met: true, reason: 'all clean' });
-    expect(outcome.answers.get('revise')).toEqual({ met: false, reason: 'nothing to revise' });
+    // Each answer names the one call that gave it, so its run row links to it.
+    expect(outcome.callId).toEqual(expect.any(String));
+    expect(outcome.answers.get('clean')).toEqual({ met: true, reason: 'all clean', callId: outcome.callId });
+    expect(outcome.answers.get('revise')).toEqual({ met: false, reason: 'nothing to revise', callId: outcome.callId });
   });
 
   it('gives up with the did-not-answer-in-time reason when the agent is slower than timeoutMs', async () => {
@@ -242,7 +244,8 @@ describe('checkAutomationConditions limits', () => {
 
     await vi.advanceTimersByTimeAsync(1_000);
 
-    await expect(pending).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON });
+    // The CLI ran and is still paid for, so the outcome names its call.
+    await expect(pending).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON, callId: expect.any(String) });
   });
 
   it('does not give up before timeoutMs', async () => {
@@ -275,7 +278,7 @@ describe('checkAutomationConditions limits', () => {
     controller.abort();
     await vi.advanceTimersByTimeAsync(BACKSTOP_MS + 1);
 
-    await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON });
+    await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON, callId: expect.any(String) });
   });
 
   describe('finding the Automation agent, which runs inside the bound too', () => {
@@ -374,7 +377,7 @@ describe('checkAutomationConditions limits', () => {
       await settle();
       expect(agent.held).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(1_000);
-      await expect(abandoned).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON });
+      await expect(abandoned).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON, callId: expect.any(String) });
 
       // The caller is gone, but its CLI run is not: a third check still waits.
       const waiting = check(agent.deps, input());
@@ -390,6 +393,53 @@ describe('checkAutomationConditions limits', () => {
       await expect(waiting).resolves.toMatchObject({ ok: true });
       agent.held[1].answer(BOTH_MET_REPLY);
       await expect(holder).resolves.toMatchObject({ ok: true });
+    });
+  });
+
+  describe('recording the call', () => {
+    const CALL = { projectId: 'project-1', taskId: 'task-1', swimlaneId: 'column-1', job: 'condition_check' as const };
+
+    it('records one call per check, against its task and column, once the CLI settles', async () => {
+      const recordCall = vi.fn();
+      const pending = check({ ...agent.deps, recordCall }, input(), {}, CALL);
+      await settle();
+      expect(recordCall).not.toHaveBeenCalled();
+
+      agent.held[0].answer(BOTH_MET_REPLY);
+      const outcome = await pending;
+      await settle();
+
+      expect(recordCall).toHaveBeenCalledTimes(1);
+      const [projectId, recorded] = recordCall.mock.calls[0];
+      expect(projectId).toBe('project-1');
+      expect(recorded).toMatchObject({
+        id: outcome.callId, job: 'condition_check', taskId: 'task-1', swimlaneId: 'column-1', agent: 'fake-agent', outcome: 'succeeded',
+      });
+    });
+
+    it('records a check the caller stopped waiting for when its CLI finishes, under the id the outcome named', async () => {
+      const recordCall = vi.fn();
+      const pending = check({ ...agent.deps, recordCall }, input(), { timeoutMs: 1_000 }, CALL);
+      await settle();
+      await vi.advanceTimersByTimeAsync(1_000);
+      const outcome = await pending;
+      expect(recordCall).not.toHaveBeenCalled();
+
+      agent.held[0].answer(BOTH_MET_REPLY);
+      await settle();
+
+      expect(recordCall).toHaveBeenCalledTimes(1);
+      expect(recordCall.mock.calls[0][1].id).toBe(outcome.callId);
+    });
+
+    it('records nothing when no CLI ran', async () => {
+      const recordCall = vi.fn();
+      agent = createHeldAgent({ detect: async () => ({ found: false, path: null }) });
+
+      await check({ ...agent.deps, recordCall }, input(), {}, CALL);
+      await settle();
+
+      expect(recordCall).not.toHaveBeenCalled();
     });
   });
 });

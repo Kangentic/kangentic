@@ -24,6 +24,7 @@ import type {
   UsageWindowTotals,
 } from '../../src/main/db/repositories/usage-history-repository';
 import type { GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
+import type { BackgroundCallGroupRow } from '../../src/main/db/repositories/background-call-repository';
 import type { LiveSessionRow, SubagentUsageTotals } from '../../src/shared/types';
 
 /** Plain fixture row mirroring one usage_history row. */
@@ -269,6 +270,8 @@ interface FakeProject {
    *  cannot, since it answers every window identically). */
   activeIntervals?: Array<{ tsMs: number; activeMs: number; sessionId: string }>;
   earliestTurnMs?: number | null;
+  /** Background call groups this project's ledger returns, whatever the window. */
+  backgroundGroups?: BackgroundCallGroupRow[];
   throws?: boolean;
 }
 
@@ -283,7 +286,8 @@ interface ReaderCall {
     | 'sumSessionsRepresented'
     | 'getActiveTotals'
     | 'getEarliestTurnMs'
-    | 'listSubagentTotals';
+    | 'listSubagentTotals'
+    | 'listBackgroundCallGroups';
   sinceIso?: string | null;
   untilIso?: string | null;
   sinceMs?: number | null;
@@ -368,6 +372,10 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
             && (untilMs === null || (row.tsMs !== null && row.tsMs < untilMs)))
           .map(({ tsMs: _tsMs, ...totals }) => totals);
       },
+      listBackgroundCallGroups: (sinceIso, untilIso, groupMs) => {
+        readerCalls.push({ projectId, method: 'listBackgroundCallGroups', sinceIso, untilIso, groupMs });
+        return project.backgroundGroups ?? [];
+      },
     };
   });
   const service = createUsageStatsService({
@@ -381,6 +389,56 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
   });
   return { service, openReader, readerCalls };
 }
+
+describe('usage-stats service: background calls', () => {
+  const backgroundGroup = (overrides: Partial<BackgroundCallGroupRow> = {}): BackgroundCallGroupRow => ({
+    bucketStartMs: Date.now() - 60_000,
+    job: 'condition_check',
+    agent: 'claude',
+    modelId: 'claude-haiku-5-5',
+    calls: 3,
+    failedCalls: 0,
+    reportedCalls: 3,
+    inputTokens: 300,
+    cacheCreationInputTokens: 7000,
+    cacheReadInputTokens: 1500,
+    outputTokens: 90,
+    costUsd: 0.0015,
+    durationMs: 3600,
+    ...overrides,
+  });
+
+  it('merges every project\'s calls into the Background figures and never into the session KPIs', async () => {
+    const { service, readerCalls } = makeService([
+      { id: 'p1', name: 'One', backgroundGroups: [backgroundGroup()] },
+      { id: 'p2', name: 'Two', backgroundGroups: [backgroundGroup({ job: 'task_title', calls: 1, costUsd: 0.0004 })] },
+    ]);
+
+    const stats = await service.getDashboardStats({ kind: 'all' }, 'today');
+
+    expect(stats.background?.totals.calls).toBe(4);
+    expect(stats.background?.totals.costUsd).toBeCloseTo(0.0019, 6);
+    expect(stats.background?.byJob.find((job) => job.job === 'task_title')?.calls).toBe(1);
+    // Kept apart: no session figure moves.
+    expect(stats.kpis.totalCostUsd).toBe(0);
+    expect(stats.kpis.turnInputTokens).toBe(0);
+    expect(stats.kpis.sessionCount).toBe(0);
+    // Read on the same window as the session ledger, on the 15-minute grid.
+    const backgroundCall = readerCalls.find((call) => call.method === 'listBackgroundCallGroups');
+    expect(backgroundCall?.sinceIso).toBe(computePeriodCutoff('today'));
+    expect(backgroundCall?.groupMs).toBe(COST_GROUP_MS);
+  });
+
+  it('reports an empty Background, not a missing one, when nothing ran', async () => {
+    const { service } = makeService([{ id: 'p1', name: 'One' }]);
+
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(stats.background?.totals).toMatchObject({ calls: 0, costUsd: null });
+    expect(stats.background?.byJob).toHaveLength(5);
+    expect(stats.background?.byDay).toEqual([]);
+  });
+});
 
 describe('usage-stats service: cutoffs and payload shape', () => {
   it('passes the ISO cutoff to usage aggregates and the epoch-ms cutoff to turn groups', async () => {

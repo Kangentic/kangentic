@@ -15,7 +15,7 @@ import type {
 } from '../../shared/types';
 import { runAutomations, type AutomationRunSummary } from '../automations/automation-runner';
 import type { AutomationContext } from '../automations/shared/automation-adapter';
-import type { ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
+import type { ConditionCheckCall, ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput } from '../automations/condition-check/condition-prompt';
 import type { AutomationRepository } from '../db/repositories/automation-repository';
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
@@ -98,7 +98,11 @@ export interface SpawnOverrides {
  * Condition is skipped with the reason.
  */
 export interface TransitionEngineServices {
-  checkConditions?: (input: ConditionPromptInput, limits?: ConditionCheckLimits) => Promise<ConditionCheckOutcome>;
+  checkConditions?: (
+    input: ConditionPromptInput,
+    limits?: ConditionCheckLimits,
+    call?: ConditionCheckCall,
+  ) => Promise<ConditionCheckOutcome>;
 }
 
 /** Options shared by every way into an automation group. */
@@ -126,6 +130,8 @@ interface AutomationGroupOptions {
   conditionAnswers?: ReadonlyMap<string, RunConditionAnswer>;
   /** Turn end only: why a Condition without an answer could not be checked. */
   conditionUnavailableReason?: string;
+  /** Turn end only: the call that ran without answering (a timeout), so its skips link to it. */
+  conditionUnavailableCallId?: string | null;
   /** Turn end only: move the task, for a Move to column row (`AutomationContext.moveTask`). */
   moveTask?: AutomationContext['moveTask'];
 }
@@ -324,12 +330,18 @@ export class TransitionEngine {
     };
   }
 
+  /** Who a column's Condition check is for, so its call is recorded against
+   *  this project's ledger with the task and column it judged. */
+  conditionCheckCall(task: Task, column: Swimlane): ConditionCheckCall {
+    return { projectId: this.getConfig().projectId, taskId: task.id, swimlaneId: column.id, job: 'condition_check' };
+  }
+
   /** Answer Conditions on the Automation agent, or say why that cannot happen. */
-  async checkConditions(input: ConditionPromptInput, limits?: ConditionCheckLimits): Promise<ConditionCheckOutcome> {
+  async checkConditions(input: ConditionPromptInput, limits?: ConditionCheckLimits, call?: ConditionCheckCall): Promise<ConditionCheckOutcome> {
     if (!this.services.checkConditions) {
       return { ok: false, reason: 'Set up an Automation agent in Settings > Workflows to check this condition.' };
     }
-    return this.services.checkConditions(input, limits);
+    return this.services.checkConditions(input, limits, call);
   }
 
   /** The shared body: template variables, the adapter context, and the runner. */
@@ -357,16 +369,21 @@ export class TransitionEngine {
       groupBudgetMs: options.groupBudgetMs,
       conditionAnswers: options.conditionAnswers,
       conditionUnavailableReason: options.conditionUnavailableReason,
+      conditionUnavailableCallId: options.conditionUnavailableCallId,
       // Enter and exit check their Conditions here, once for the group. The
       // turn-end group checked before it ran anything and passes its answers.
+      // Each answer names the call that gave it, so the run rows link to it.
       checkConditions: options.conditionAnswers
         ? undefined
         : async (rows, limits) => {
           const outcome = await this.checkConditions(
             this.conditionCheckInput(task, column, trigger, rows, templateVars, options),
             limits,
+            this.conditionCheckCall(task, column),
           );
-          return outcome.ok ? { ok: true, answers: outcome.answers } : outcome;
+          return outcome.ok
+            ? { ok: true, answers: outcome.answers }
+            : { ok: false, reason: outcome.reason, callId: outcome.callId ?? null };
         },
       context: {
         task,

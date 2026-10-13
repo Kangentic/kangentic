@@ -492,11 +492,17 @@ ledger, matching `claude_code.active_time.total`. The pair travels together beca
 interval ledger covers fewer sessions than `sessionCount` does: dividing by the larger
 count would mix two ledgers.
 
+A `Background (not in the totals above)` line reports the headless calls Kangentic made on the
+user's behalf in the range (Condition checks, workflow step checks, task summaries, task titles,
+terminal names), from `background_calls`: the call count, cost, the four token types, and the
+calls per job. `data.background` carries the totals and the per-job figures; its per-day rows are a
+series, kept only with `includeSeries`. None of it is added to any session figure.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `period` | string | No | Time range: "live" (trailing 2 hours), "today", "week", "month", or "all" (default). "today"/"week"/"month" start at the machine's local midnight / Monday / 1st of month. |
 | `allProjects` | boolean | No | Roll up across every registered project, with per-project sub-totals. Takes precedence over `project`. |
-| `includeSeries` | boolean | No | Include the bucketed token/cost time series in the response (larger). Default: false (KPIs + breakdowns only). |
+| `includeSeries` | boolean | No | Include the bucketed token/cost time series, and the Background per-day rows, in the response (larger). Default: false (KPIs + breakdowns only). |
 | `project` | string | No | Project name or UUID to target a different project than the active one. |
 
 ### kangentic_get_task_stats
@@ -965,6 +971,16 @@ Each run carries its status (`running`, `succeeded`, `failed`, `skipped`, `inter
 the Automation agent found it met or not met, and the agent's one-line reason. The log denormalizes the automation's name and
 type and takes no foreign key to the automation, so renaming or deleting one does not empty its
 history.
+
+A run a check answered (or a check that ran without answering, such as a timeout) gets one more line
+naming that call, from `background_calls`: the agent and model (what the CLI reported, else what was
+asked for), the effort, the four token counts and cost as the CLI reported them, how long it took,
+and how many rows the one call answered. In `data`, the same facts are `run.check`.
+
+```
+  checked by Claude Code (claude-haiku-5-5, low): 2,104 fresh input + 45 output, 120 cache write, 1,012 cache read, $0.0026, 1.9s, one call for 2 rows
+  checked by Codex CLI (default model): usage not reported, 4.6s
+```
 
 ### kangentic_run_automation
 

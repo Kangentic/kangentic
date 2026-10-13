@@ -72,6 +72,7 @@ import { reapTaskLeftovers } from './helpers/task-cleanup';
 import { isShuttingDown } from '../shutdown-state';
 import { resolveAutomationAgent } from '../automations/automation-agent';
 import { automationAgentDeps } from './helpers/automation-agent-deps';
+import { backgroundCallSink } from './helpers/background-call-sink';
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
 import { getOpenProjectDb, getProjectDb } from '../db/database';
 import { TranscriptRepository } from '../db/repositories/transcript-repository';
@@ -294,6 +295,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     sessionManager,
     resolveNamingAgent: () => resolveAutomationAgent(automationAgentDeps(requireContext()), 'naming'),
     readRateLimit: () => requireContext().configManager.load().autoNameRateLimitPerHour ?? 60,
+    recordCall: (projectId, call) => backgroundCallSink(requireContext())(projectId, call),
   });
   commandTerminalNamer.start();
 

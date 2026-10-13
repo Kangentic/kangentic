@@ -17,7 +17,9 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { tryAcquireSummarizeSlot } from '../../agent/shared/summarize-rate-limit';
 import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
 import { resolveAutomationAgent } from '../../automations/automation-agent';
+import { startRecordedCall } from '../../background-calls/record-background-call';
 import { automationAgentDeps } from '../helpers/automation-agent-deps';
+import { backgroundCallSink } from '../helpers/background-call-sink';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
@@ -409,12 +411,22 @@ export function registerSystemHandlers(context: IpcContext): void {
         // from the repository, and a project root loads its agent
         // instructions into every call.
         const answerHome = await ensureAnswerHomeDirectory();
-        const title = await withAnswerRunDirectory((runDirectory) => resolved.adapter.summarize!(
+        // Recorded in the ledger of the project the title is for, read when
+        // the request was made rather than whatever is open now.
+        const title = await startRecordedCall(backgroundCallSink(context), {
+          projectId: input.projectId ?? context.currentProjectId ?? null,
+          job: 'task_title',
+          taskId: input.taskId ?? null,
+          swimlaneId: null,
+          agent: resolved.agentName,
+          requestedModel: resolved.model,
+          effort: resolved.effort,
+        }, (onUsage) => withAnswerRunDirectory((runDirectory) => resolved.adapter.summarize!(
           prompt,
           resolved.cliPath,
           answerHome,
-          { model: resolved.model, effort: resolved.effort, runDirectory },
-        ));
+          { model: resolved.model, effort: resolved.effort, runDirectory, onUsage },
+        ))).done;
         if (!title) return { ok: false, reason: 'summarize produced empty output' };
         return { ok: true, title };
       } catch (error) {

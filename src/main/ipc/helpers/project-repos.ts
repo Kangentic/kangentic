@@ -6,6 +6,7 @@ import { AttachmentRepository } from '../../db/repositories/attachment-repositor
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../../db/repositories/task-link-repository';
+import { BackgroundCallRepository } from '../../db/repositories/background-call-repository';
 import { getProjectDb } from '../../db/database';
 import type { IpcContext } from '../ipc-context';
 
@@ -18,6 +19,7 @@ export function getProjectRepos(context: IpcContext, projectId?: string | null):
   taskMoves: TaskMoveRepository;
   workflows: WorkflowRepository;
   taskLinks: TaskLinkRepository;
+  backgroundCalls: BackgroundCallRepository;
 } {
   const resolvedProjectId = projectId ?? context.currentProjectId;
   if (!resolvedProjectId) throw new Error('No project is currently open');
@@ -31,6 +33,7 @@ export function getProjectRepos(context: IpcContext, projectId?: string | null):
     taskMoves: new TaskMoveRepository(db),
     workflows: new WorkflowRepository(db),
     taskLinks: new TaskLinkRepository(db),
+    backgroundCalls: new BackgroundCallRepository(db),
   };
 }
 

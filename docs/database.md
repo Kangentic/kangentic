@@ -442,11 +442,16 @@ the durable record; the failure toast is the rationed interruption, following
 | finished_at | TEXT | | |
 | condition_met | INTEGER | | NULL |
 | condition_reason | TEXT | | NULL |
+| background_call_id | TEXT | | NULL |
 
 `status` is `running`, `succeeded`, `failed`, `skipped`, or `interrupted`. `detail` carries the skip
 reason, the error, or a one-line success (`HTTP 204`, `exit 0`). `condition_met` and
 `condition_reason` hold the Automation agent's answer for a row with a Condition (1 or 0, and its
-one-line reason), NULL for a row without one.
+one-line reason), NULL for a row without one. `background_call_id` names the `background_calls` row
+of the check that answered it, or of a check that ran without answering (a timeout), so the run log
+can show the check's model and tokens. One batched check answers several rows, so several runs
+share an id. No foreign key: the call record outlives the run's 200-row prune, and a run from before
+calls were recorded has none.
 
 **What counts as a run.** A row "has run" (for a turn-end row's once-per-visit rule and for
 Frequency) when it has a row here with status `running`, `succeeded`, `failed` or `interrupted`. A
@@ -463,6 +468,7 @@ Two indices, one per question the log is asked:
 |-------|---------|--------|
 | `idx_automation_runs_task` | (task_id, started_at DESC) | A task's own run history, newest first (`automation:runsForTask`) |
 | `idx_automation_runs_automation` | (automation_id, started_at DESC) | Runs by automation, newest first, for the MCP run history tool's per-automation listing (`listForAutomation`) |
+| `idx_automation_runs_background_call` | (background_call_id) | How many runs one check answered, for the run log's check line |
 
 **Project-open sweep.** In the same pass that runs `retryFailedDoneCleanups`, two things happen.
 `markStaleRunsInterrupted(startedBefore)` stamps every row still `running` as `interrupted`, and
@@ -480,6 +486,50 @@ automation as `interrupted` and raise a toast saying it did not finish.
 
 Nothing is retried automatically, ever. A fired webhook and a half-run script are not safe to repeat
 blind, so the user gets Run again on the row instead.
+
+### background_calls table
+
+One row per headless agent call Kangentic makes on the user's behalf, with what the CLI reported it
+cost. None of these is a session, so none reaches `usage_history`. Written by
+`startRecordedCall` (`src/main/background-calls/record-background-call.ts`) when the CLI settles,
+including a check whose caller stopped waiting, since that run is still paid for.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| job | TEXT | NOT NULL | |
+| task_id | TEXT | | |
+| swimlane_id | TEXT | | |
+| agent | TEXT | NOT NULL | |
+| requested_model | TEXT | | |
+| model | TEXT | | |
+| effort | TEXT | | |
+| input_tokens | INTEGER | | |
+| cache_creation_input_tokens | INTEGER | | |
+| cache_read_input_tokens | INTEGER | | |
+| output_tokens | INTEGER | | |
+| cost_usd | REAL | | |
+| duration_ms | INTEGER | NOT NULL | |
+| outcome | TEXT | NOT NULL | |
+| detail | TEXT | | |
+| started_at | TEXT | NOT NULL | |
+
+`job` is `condition_check`, `workflow_step`, `task_summary` (one Knowledge Graph summary batch, about
+ten tasks, so no `task_id`), `task_title` or `terminal_name`. `requested_model` is what Kangentic
+asked for (NULL for the agent's default); `model` is what the CLI reported answering with, kept apart
+because plan mode once rerouted a Haiku request to Sonnet. The token and cost columns are NULL,
+never 0, for an agent whose CLI reports no usage. `outcome` is `succeeded`, `failed` or `timed_out`,
+with the error in `detail`.
+
+No foreign key to tasks: spend outlives a deleted task, as `usage_history`'s does. Rows are kept,
+like `usage_history` and the turn ledger (about 200 calls a day on a busy board, roughly 10 to 15 MB
+a year). The usage dashboard reads them through `listBackgroundCallGroups`, never into the session
+figures.
+
+| Index | Columns | Serves |
+|-------|---------|--------|
+| `idx_background_calls_started` | (started_at) | The dashboard's windowed group read |
+| `idx_background_calls_task` | (task_id, started_at DESC) | A task's own calls |
 
 ### workflows table
 
@@ -1177,6 +1227,8 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 79. **`agent_cwd` and `agent_read_project_ids` on workflows** - `agent_cwd TEXT DEFAULT NULL`, the checkout the agent's conversation ran in (written at every start), where its CLI keeps the history, so the transcript readers can read the conversation; and `agent_read_project_ids TEXT NOT NULL DEFAULT '[]'`, the other registered projects the workflow agent asked to read (see the `workflows` table above). Guarded `ALTER TABLE`s on the same `table_info` read.
 80. **`agent_pty_cols` / `agent_pty_rows` on workflows** - both `INTEGER DEFAULT NULL`, the workflow agent's last PTY grid (see the `workflows` table above), so a start after a restart spawns at the pane's size. Guarded `ALTER TABLE`s on the same `table_info` read.
 81. **`paused_at` on workflows** - `TEXT DEFAULT NULL`, when a paused workflow was paused (see the `workflows` table above), for the picker's paused row. A guarded `ALTER TABLE` on the same `table_info` read, at the end of `runWorkflowsMigration`.
+82. **`background_calls`** - creates the ledger of headless agent calls (see the table above), with `idx_background_calls_started` and `idx_background_calls_task`. No backfill: calls before it were never recorded. Idempotent `CREATE ... IF NOT EXISTS`, after `runWorkflowsMigration`. The retrieval worker opens a project's database with migrations off, so its read returns empty for a project main has not opened since.
+83. **`background_call_id` on automation_runs** - `TEXT DEFAULT NULL`, the check that answered a run (see the `automation_runs` table above), with `idx_automation_runs_background_call`. A guarded `ALTER TABLE`; the table is pruned to about 200 rows, so its index is built here rather than by the worker.
 
 ### Key Migrations (Global DB)
 
@@ -1287,10 +1339,19 @@ Operates on a per-project DB.
 | `hasRunSince(automationId, taskId, since)` | Whether the automation has run on the task since `since`, the task's entry into the column. Counts executed runs only (`running`, `succeeded`, `failed`, `interrupted`), never a skip. A null `since` (no recorded entry) counts every run. The turn-end group's once-per-visit check. |
 | `hasSkipSince(automationId, taskId, since, detail)` | Whether a `skipped` row with exactly this `detail` exists since `since`. A null `since` counts every such skip. Lets a turn-end group record "Set up an Automation agent" once per visit rather than at every turn end. |
 | `countRuns(automationId, taskId)` | How many executed runs the automation has on the task, across every visit. What Frequency (`max_runs`) checks. |
-| `listForTask(taskId, limit)` | Everything that ran for one card, newest first |
-| `listForAutomation(automationId, limit)` | Every run of one automation, newest first. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
+| `listForTask(taskId, limit)` | Everything that ran for one card, newest first, each with the check that answered it (`AutomationRun.check`, joined from `background_calls`) |
+| `listForAutomation(automationId, limit)` | Every run of one automation, newest first, with its check. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
 | `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |
 | `pruneTo(limit)` | Keep the newest N rows, plus every counted run of an automation with a Frequency limit on a task that is not archived, so pruning never resets a limit. Nothing else bounds the table. |
+
+### BackgroundCallRepository
+
+Operates on a per-project DB.
+
+| Method | Description |
+|--------|-------------|
+| `record(call)` | Write one finished background call: job, task and column, agent, requested and reported model, effort, the four token counts and cost (NULL when the agent reports none), duration, outcome |
+| `listGroups(since, until, groupMs)` | Calls grouped to fixed UTC buckets by job, agent and model (reported, else requested), with call, failure and reported counts and the summed tokens and cost. Empty when the table does not exist yet. The usage dashboard's Background read (`ProjectUsageReader.listBackgroundCallGroups`). |
 
 ### TaskMoveRepository
 
