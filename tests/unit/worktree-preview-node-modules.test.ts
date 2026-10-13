@@ -108,6 +108,28 @@ describe('ensureNodeModulesLink', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  // npm writes `hasInstallScript` for a package it infers an install script for,
+  // so one checkout's lockfile can carry the line while another's does not, with
+  // the same packages. Red-green: count the flag in dependencyTree and this keeps
+  // the branch's install and warns.
+  it("replaces a real install with the root's junction when only a hasInstallScript flag differs", () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const withoutFlag = lockfile({ app: '0.44.0', workspace: '0.16.0', dependency: '1.0.0' });
+    const parsed = JSON.parse(withoutFlag) as { packages: Record<string, Record<string, unknown>> };
+    parsed.packages['node_modules/some-package'].hasInstallScript = true;
+    const { rootDir, worktreeDir, modules } = makeLayout({
+      rootLock: `${JSON.stringify(parsed, null, 2)}\n`,
+      worktreeLock: withoutFlag,
+      realInstall: true,
+    });
+
+    ensureNodeModulesLink(worktreeDir, rootDir);
+
+    expect(resolvesToRoot(modules, rootDir)).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("keeps the worktree's real install when a dependency's version differs", () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const { rootDir, worktreeDir, modules } = makeLayout({
