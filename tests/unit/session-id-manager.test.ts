@@ -35,6 +35,7 @@ describe('SessionIdManager', () => {
       hasAgentSessionId: (id) => capturedIds.has(id),
       notifyAgentSessionId: (id, capturedId) => capturedIds.set(id, capturedId),
       sessionExists: (id) => existingSessions.has(id),
+      agentSessionIdOf: (id) => capturedIds.get(id) ?? null,
     });
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -125,6 +126,129 @@ describe('SessionIdManager', () => {
       await Promise.resolve();
       expect(warnSpy).toHaveBeenCalled();
       expect(capturedIds.has('s1')).toBe(false);
+    });
+  });
+
+  // A folder scan finds the newest session file an agent wrote in a folder. With
+  // two sessions of that agent started in one folder close together, the file can
+  // be the other's, and recording it would make a Resume reopen the wrong
+  // conversation. An ambiguous match is dropped: no id is better than a wrong one.
+  // A worktree session has a folder of its own and is never ambiguous.
+  describe('init with filesystem strategy: an ambiguous folder match', () => {
+    /** Start a session whose folder scan resolves to `foundId` once timers run. */
+    function startScanning(sessionId: string, folder: string, agentName: string, foundId: string | null): void {
+      existingSessions.add(sessionId);
+      manager.init(sessionId, makeAdapter({ fromFilesystem: vi.fn().mockResolvedValue(foundId) }), folder, agentName);
+    }
+
+    async function settle(): Promise<void> {
+      await vi.runAllTimersAsync();
+      await Promise.resolve();
+    }
+
+    it('drops the match when another session of the same agent started in the same folder inside the window', async () => {
+      startScanning('other', '/project', 'codex', null);
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.has('s1')).toBe(false);
+    });
+
+    it('keeps the match when the other session in the folder is a different agent', async () => {
+      startScanning('other', '/project', 'gemini', null);
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.get('s1')).toBe('found-id');
+    });
+
+    it('keeps the match when the other session is in another folder (a worktree of its own)', async () => {
+      startScanning('other', '/project/.kangentic/worktrees/task-1', 'codex', null);
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.get('s1')).toBe('found-id');
+    });
+
+    it('keeps the match when the other session started outside the window', async () => {
+      startScanning('other', '/project', 'codex', null);
+      await vi.advanceTimersByTimeAsync(61_000);
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.get('s1')).toBe('found-id');
+    });
+
+    it('keeps the match when the other session already holds a different id', async () => {
+      startScanning('other', '/project', 'codex', null);
+      capturedIds.set('other', 'other-id');
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.get('s1')).toBe('found-id');
+    });
+
+    it('drops a match that another session in the folder already holds, however long ago it started', async () => {
+      startScanning('other', '/project', 'codex', null);
+      capturedIds.set('other', 'found-id');
+      await vi.advanceTimersByTimeAsync(61_000);
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.get('s1')).toBeUndefined();
+    });
+
+    it('stops counting a session once it is removed', async () => {
+      startScanning('other', '/project', 'codex', null);
+      manager.removeSession('other');
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.get('s1')).toBe('found-id');
+    });
+
+    // Distinct from removeSession above: that one drops the manager's own spawn
+    // record. Here the record stays and the session registry no longer lists the
+    // session, which is the `sessionExists` clause of the conflict check alone.
+    it('keeps the match when the other session is gone from the session registry', async () => {
+      startScanning('other', '/project', 'codex', null);
+      existingSessions.delete('other');
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.get('s1')).toBe('found-id');
+    });
+
+    // A session that ended or was paused is not removed from the registry: the
+    // PTY exit handler only cancels its diagnostic timer (clearDiagnostic), and its
+    // row stays listed with no agent session id. The file the folder scan found
+    // may be the one that session wrote before it stopped, so the match is still
+    // dropped. A change that forgot an exited session's spawn record, or counted
+    // only live ones, would record that file as this session's id.
+    it('drops the match when the other same-agent session already ended but is still registered', async () => {
+      startScanning('other', '/project', 'codex', null);
+      manager.clearDiagnostic('other');
+      await vi.advanceTimersByTimeAsync(10_000);
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+
+      expect(existingSessions.has('other')).toBe(true);
+      expect(capturedIds.has('s1')).toBe(false);
+      const droppedWarnings = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((message) => message.includes('Dropped a session ID'));
+      expect(droppedWarnings).toHaveLength(1);
+      expect(droppedWarnings[0]).toContain('same agent');
+    });
+
+    // Windows and macOS file systems are case-insensitive by default, so two
+    // spellings of one folder are one folder. A case-sensitive Linux file system
+    // keeps them apart, so the same pair there is two folders and the match stays.
+    // Plain strings, nothing is written to disk.
+    it.skipIf(process.platform === 'linux')('treats cwd strings that differ only in letter case as one folder', async () => {
+      startScanning('other', '/Project', 'codex', null);
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.has('s1')).toBe(false);
+    });
+
+    it.runIf(process.platform === 'linux')('keeps cwd strings that differ only in letter case apart as two folders', async () => {
+      startScanning('other', '/Project', 'codex', null);
+      startScanning('s1', '/project', 'codex', 'found-id');
+      await settle();
+      expect(capturedIds.get('s1')).toBe('found-id');
     });
   });
 

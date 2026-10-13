@@ -334,17 +334,19 @@ describe('KimiAdapter', () => {
         });
       });
 
-      it('omits headers when no token is provided', () => {
-        adapter.buildCommand(makeOptions({
+      // The server refuses every request without the token (401), so a config
+      // with no header would point Kimi at a server it can never use. Skip the
+      // wiring instead, as Codex does without its token.
+      it('writes no config and passes no flag when no token is provided', () => {
+        const command = adapter.buildCommand(makeOptions({
           mcpServerEnabled: true,
           mcpServerUrl: 'http://127.0.0.1:54321',
           statusOutputPath: testStatusOutputPath,
           shell: 'bash',
         }));
-        const mcpConfigPath = path.join(testSessionDir, 'mcp.json');
-        const parsed = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
-        expect(parsed.mcpServers.kangentic).not.toHaveProperty('headers');
-        expect(parsed.mcpServers.kangentic.url).toBe('http://127.0.0.1:54321');
+        expect(command).not.toContain('--mcp-config-file');
+        // `existsSync` is mocked in this file; reading the file is not.
+        expect(() => fs.readFileSync(path.join(testSessionDir, 'mcp.json'), 'utf-8')).toThrow();
       });
 
       it('produces valid JSON on PowerShell (regression: previously contained single quotes)', () => {
@@ -445,6 +447,7 @@ describe('KimiAdapter', () => {
             adapter.buildCommand(makeOptions({
               mcpServerEnabled: true,
               mcpServerUrl: 'http://127.0.0.1:54321',
+              mcpServerToken: 'secret-token',
               statusOutputPath: testStatusOutputPath,
               shell: 'bash',
             }));

@@ -152,14 +152,19 @@ export class KimiCommandBuilder {
         console.warn(
           '[kimi command-builder] mcpServerEnabled is true but statusOutputPath is missing - skipping MCP config wiring',
         );
+      } else if (!options.mcpServerToken) {
+        // The server answers every request without the token with a 401, so a
+        // config with no header would point Kimi at a server it can never use.
+        // Skip the wiring, as Codex does without its token.
+        console.warn(
+          '[kimi command-builder] mcpServerEnabled is true but mcpServerToken is missing - skipping MCP config wiring',
+        );
       } else {
         const mcpConfig = {
           mcpServers: {
             kangentic: {
               url: options.mcpServerUrl,
-              ...(options.mcpServerToken
-                ? { headers: { 'X-Kangentic-Token': options.mcpServerToken } }
-                : {}),
+              headers: { 'X-Kangentic-Token': options.mcpServerToken },
             },
           },
         };

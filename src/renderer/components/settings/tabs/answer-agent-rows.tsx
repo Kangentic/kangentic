@@ -45,8 +45,10 @@ export interface AnswerAgentRowsProps {
  * The name is from the first two, which are background answer runs; the
  * Workflow agent reuses the rows through `capability: 'interactive'`.
  *
- * No Permissions: these runs are read-only by construction, so a permission
- * choice would be one the run must ignore. Agent and Model start EMPTY and,
+ * No Permissions: the answer runs are read-only by construction, and the
+ * Workflow agent launches read-only where its adapter can enforce it and in its
+ * own default mode otherwise, so a permission choice would be one the run must
+ * ignore. Agent and Model start EMPTY and,
  * where the run takes a model, are both required: nothing spends on an agent
  * nobody chose, and there is no project fallback.
  */

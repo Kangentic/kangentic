@@ -9,6 +9,7 @@ import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } fr
 import { discoverCursorCapabilities } from './capability-discovery';
 import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
 import { CURSOR_MCP_TOKEN_ENV, CURSOR_MCP_URL_ENV, removeCursorChat, writeCursorAnswerWorkspace } from './answer-workspace';
+import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type {
   AgentCapabilities,
@@ -24,8 +25,16 @@ import type {
 import { ActivityDetection } from '../../../../shared/types';
 
 
+/** Kangentic's MCP server is wired when it is on and both its URL and token are known (the server refuses a request without the token). */
+function cursorMcpWiringEnabled(
+  options: SpawnCommandOptions,
+): options is SpawnCommandOptions & { mcpServerUrl: string; mcpServerToken: string } {
+  return options.mcpServerEnabled !== false && Boolean(options.mcpServerUrl) && Boolean(options.mcpServerToken);
+}
+
 /**
- * Run `<cursorPath> about --format json` and return stdout.
+ * Run `<cursorPath> <args>` and return stdout. `args` are fixed words, never
+ * user text, so the Windows command line joins them as they are.
  *
  * On Windows, npm/installer-generated shims (`agent.cmd`, `agent.bat`)
  * cannot be invoked via `execFile` directly since Node's CVE-2024-27980
@@ -34,20 +43,34 @@ import { ActivityDetection } from '../../../../shared/types';
  * `shared/exec-version.ts`) and keep `execFile` on macOS/Linux where
  * the binary is a native ELF/Mach-O.
  */
-async function runAgentAbout(cursorPath: string): Promise<string> {
+async function runCursorCli(
+  cursorPath: string,
+  args: readonly string[],
+  options: { timeoutMs: number; workingDirectory?: string },
+): Promise<string> {
+  const execOptions = { timeout: options.timeoutMs, windowsHide: true, cwd: options.workingDirectory };
   if (process.platform === 'win32') {
-    const { stdout } = await execAsync(`${quoteCmdExecutable(cursorPath)} about --format json`, {
-      timeout: 5000,
-      windowsHide: true,
-    });
+    const { stdout } = await execAsync(`${quoteCmdExecutable(cursorPath)} ${args.join(' ')}`, execOptions);
     return stdout;
   }
-  const { stdout } = await execFileAsync(cursorPath, ['about', '--format', 'json'], {
-    timeout: 5000,
-    windowsHide: true,
-  });
+  const { stdout } = await execFileAsync(cursorPath, args, execOptions);
   return stdout;
 }
+
+/** `about --format json`, which answers from the local install in under a second. */
+function runAgentAbout(cursorPath: string): Promise<string> {
+  return runCursorCli(cursorPath, ['about', '--format', 'json'], { timeoutMs: 5000 });
+}
+
+/** A whole line that is a chat id, as `create-chat` prints it (measured: the bare UUID). */
+const CHAT_ID_LINE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/im;
+
+/**
+ * `create-chat` reaches Cursor's servers (a probe left nothing on disk), so it
+ * gets longer than `about`; a start waits on it, and past this it goes ahead
+ * without an id.
+ */
+const CREATE_CHAT_TIMEOUT_MS = 20_000;
 
 /**
  * Narrow an unknown `JSON.parse(...)` result to the subset of the
@@ -91,6 +114,11 @@ export class CursorAdapter implements AgentAdapter {
   readonly displayName = 'Cursor CLI';
   readonly sessionType = 'cursor_agent';
   readonly supportsCallerSessionId = false;
+  // A static `.cursor/mcp.json` entry whose url and token are `${env:...}`
+  // references, filled per session by `buildEnv` (project-mcp-config.ts).
+  readonly kangenticMcp = 'per-session' as const;
+  /** Folders whose `.cursor/mcp.json` carries Kangentic's entry, and the tasks still using each. */
+  private readonly mcpHolders = new Map<string, Set<string>>();
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'default', label: 'Interactive (Confirm Changes)' },
     { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
@@ -146,12 +174,29 @@ export class CursorAdapter implements AgentAdapter {
     const { shell } = options;
     const parts: string[] = [quoteArg(options.agentPath, shell)];
 
-    if (options.resume && options.sessionId) {
-      // Resume an existing session: agent --resume="<chat-id>"
-      // The = sits outside the quote boundary (--resume='id' on unix,
-      // --resume="id" on Windows) which is standard --flag=value convention.
+    // Kangentic's MCP server, on every start and resume: the project's
+    // `.cursor/mcp.json` entry plus `--approve-mcps`, which loads the project's
+    // servers without the per-server approval prompt no Kangentic-driven
+    // session can answer (the answer path measured it). It approves the user's
+    // own project servers too, as running Cursor there with the flag would, so
+    // it rides only a start whose entry is in place: a file Kangentic could not
+    // merge into gets neither the entry nor the approval.
+    if (cursorMcpWiringEnabled(options) && writeCursorProjectMcpConfig(options.cwd)) {
+      this.retainMcpConfig(options.cwd, options.taskId);
+      parts.push('--approve-mcps');
+    }
+
+    if (options.sessionId) {
+      // Open a chat by id: agent --resume="<chat-id>". The = sits outside the
+      // quote boundary (--resume='id' on unix, --resume="id" on Windows), the
+      // standard --flag=value convention.
       parts.push(`--resume=${quoteArg(options.sessionId, shell)}`);
-      return parts.join(' ');
+      // A resume sends nothing: the conversation already holds its messages.
+      if (options.resume) return parts.join(' ');
+      // A fresh start with an id opens the empty chat `createSessionId` made,
+      // and goes on below to send the first message into it. Only a start that
+      // created one passes an id here: Cursor takes no id of Kangentic's, so
+      // every other fresh spawn passes none.
     }
 
     // Shell-safe prompt: on PowerShell/cmd, replace double quotes with single
@@ -200,6 +245,52 @@ export class CursorAdapter implements AgentAdapter {
     }
 
     return parts.join(' ');
+  }
+
+  /**
+   * A new chat's id, before launch. An interactive session never prints its
+   * id (only `--output-format stream-json` does, and it needs `--print`), so a
+   * workflow's agent on Cursor would lose its conversation at every Pause.
+   * `create-chat` makes an empty chat and prints its id; the launch opens it
+   * with `--resume=<id>`. Run in the session's own folder, in case Cursor
+   * files chats by workspace as the editor does.
+   */
+  async createSessionId(cliPath: string, workingDirectory: string): Promise<string | null> {
+    try {
+      const stdout = await runCursorCli(cliPath, ['create-chat'], { timeoutMs: CREATE_CHAT_TIMEOUT_MS, workingDirectory });
+      const match = stdout.match(CHAT_ID_LINE);
+      if (match) return match[0].toLowerCase();
+      console.warn(`[cursor] create-chat printed no chat id: ${stdout.trim().slice(0, 200)}`);
+    } catch (error) {
+      console.warn('[cursor] create-chat failed; the session starts without a known id:', error);
+    }
+    return null;
+  }
+
+  /**
+   * A folder whose `.cursor/mcp.json` Kangentic cannot merge its entry into
+   * (one with comments, say) is left as it is, so a session there would start
+   * without Kangentic's tools.
+   */
+  kangenticMcpBlockedReason(workingDirectory: string): string | null {
+    const problem = cursorProjectMcpConfigProblem(workingDirectory);
+    if (!problem) return null;
+    return `${this.displayName} cannot load Kangentic's tools here: ${problem}. Fix or remove it, then close Settings to retry.`;
+  }
+
+  /** The session's own server URL and token, which the static entry's `${env:...}` references read. */
+  buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
+    if (!cursorMcpWiringEnabled(options)) return null;
+    return { [CURSOR_MCP_URL_ENV]: options.mcpServerUrl, [CURSOR_MCP_TOKEN_ENV]: options.mcpServerToken };
+  }
+
+  private retainMcpConfig(directory: string, taskId: string): void {
+    let holders = this.mcpHolders.get(directory);
+    if (!holders) {
+      holders = new Set<string>();
+      this.mcpHolders.set(directory, holders);
+    }
+    holders.add(taskId);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -278,8 +369,19 @@ export class CursorAdapter implements AgentAdapter {
     return { model: { id: payload.model.toLowerCase(), displayName: payload.model } };
   }
 
-  // Cursor CLI does not use hooks - no-op
-  removeHooks(_directory: string): void {}
+  removeHooks(directory: string, taskId?: string): void {
+    // No hooks, but the project's `.cursor/mcp.json` carries Kangentic's entry
+    // while a session uses the folder. Strip it only once the last task using
+    // the folder releases, so a sibling session keeps its server; a call with no
+    // task (the project-delete sweep, after every session is killed) strips it.
+    const holders = this.mcpHolders.get(directory);
+    if (holders && taskId) {
+      holders.delete(taskId);
+      if (holders.size > 0) return;
+    }
+    this.mcpHolders.delete(directory);
+    removeCursorProjectMcpConfig(directory);
+  }
 
   // Cursor CLI has no merged settings - no-op
   clearSettingsCache(): void {}

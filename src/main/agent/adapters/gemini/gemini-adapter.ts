@@ -25,6 +25,10 @@ export class GeminiAdapter implements AgentAdapter {
   readonly displayName = 'Gemini CLI';
   readonly sessionType = 'gemini_agent';
   readonly supportsCallerSessionId = false;
+  // Session files, its hook, and the shutdown banner (`runtime.sessionId`).
+  readonly capturesInteractiveSessionId = true;
+  // The literal URL goes into the folder's `.gemini/settings.json`.
+  readonly kangenticMcp = 'shared-folder' as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },

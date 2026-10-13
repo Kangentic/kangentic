@@ -34,8 +34,8 @@ import {
 export function WorkflowsTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   const agentList = useConfigStore((state) => state.agentList);
-  // Installed agents Kangentic can run as a workflow's agent: launched read-only,
-  // on a session id it chose.
+  // Installed agents Kangentic can run as a workflow's agent: they reach its MCP
+  // server with a URL of their own, and their conversation can be resumed.
   const workflowCapableAgents = useMemo(
     () => agentList.filter((agent) => agent.found && agent.supportsWorkflowAgent),
     [agentList],

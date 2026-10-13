@@ -19,7 +19,7 @@ import { retrievalClient } from '../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../retrieval/remote-targets';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
-import { buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
+import { buildWorkflowAgentContinueMessage, buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
 import { workflowTasks } from './workflow-tasks';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { forgetWorkflowAgentEffort, recordWorkflowAgentEffort } from './workflow-agent-effort';
@@ -36,9 +36,13 @@ import { forgetWorkflowAgentEffort, recordWorkflowAgentEffort } from './workflow
  * conversation is recorded on the workflow itself (`agent_name`,
  * `agent_session_id`), so it resumes by id however its session ended.
  *
- * It runs in the home project's checkout with no worktree, launched read-only
- * (`readOnly`): it reads the code and the board and changes only its own
- * workflow's plan, through the MCP server's `workflow-` caller scope.
+ * It runs in the home project's checkout with no worktree and changes only its
+ * own workflow's plan, through the MCP server's `workflow-` caller scope. Any
+ * agent that reaches that server with a URL of its own and can resume its
+ * conversation can be it (`canBeWorkflowAgent`). Where the adapter can enforce
+ * it, the launch is read-only (`readOnly`: no edit or shell tools); every other
+ * agent runs in its own default mode, and the first message asks it to leave
+ * files alone.
  *
  * It is not resumed at boot, since nothing reads it until its view does: the
  * view's pane opens it, which resumes the conversation when there is one and
@@ -182,6 +186,10 @@ function syncWorkflowAgentAccess(context: IpcContext, homeProjectId: string, wor
   const agentName = context.sessionManager.getSessionAgentName(session.id);
   const adapter = agentName ? agentRegistry.get(agentName) : undefined;
   if (!adapter?.supportsReadableDirectories) return 'unsupported';
+  // A restart resumes the agent's conversation by its recorded id. With none
+  // recorded yet it would begin a new conversation and drop the one running,
+  // so the grant waits for the agent's next start.
+  if (!recordedConversationId(homeProjectId, workflowId)) return 'next-start';
   const missing = missingCheckouts(context, homeProjectId, workflowId);
   if (!missing) return 'next-start';
   if (missing.length === 0) return 'already';
@@ -350,12 +358,37 @@ export async function pauseWorkflowAgent(context: IpcContext, workflowId: string
  * clears its live usage. The 45-second snapshot covers it while it runs.
  */
 function captureSpend(context: IpcContext, session: Session): void {
+  const tracked = withConversationId(session);
   try {
-    captureWorkflowAgentUsage(context.sessionManager, new UsageHistoryRepository(getProjectDb(session.projectId)), session);
+    captureWorkflowAgentUsage(context.sessionManager, new UsageHistoryRepository(getProjectDb(tracked.projectId)), tracked);
   } catch {
     // Best-effort: a project database closing under a quit or a delete.
   }
-  recordTurnTokens(context, session);
+  recordTurnTokens(context, tracked);
+}
+
+/**
+ * The session with the conversation id its spend and turns are filed under:
+ * its own, else the one its workflow recorded. A resumed agent whose CLI chose
+ * its own id may not report it again on that run, which would leave the live
+ * session's id empty and its spend unrecorded. A new conversation not yet
+ * reported has no recorded id either, so nothing is filed under an old one.
+ */
+function withConversationId(session: Session): Session {
+  if (session.agentSessionId || !session.workflowId) return session;
+  try {
+    const recorded = recordedConversationId(session.projectId, session.workflowId);
+    return recorded ? { ...session, agentSessionId: recorded } : session;
+  } catch {
+    // A project database closing under a quit or a delete.
+    return session;
+  }
+}
+
+/** The conversation id the workflow resumes its agent by, or null when none is recorded. */
+function recordedConversationId(homeProjectId: string, workflowId: string): string | null {
+  const homeDb = getExistingProjectDb(homeProjectId);
+  return homeDb ? new WorkflowRepository(homeDb).getById(workflowId)?.agent_session_id ?? null : null;
 }
 
 /**
@@ -497,28 +530,52 @@ async function startWorkflowAgent(
   // `!choice.agent` repeats the gap's own first check so the line below reads it as a string.
   if (!choice.agent || workflowAgentSetupGap({ agents, choice })) return setupNeeded();
   // A conversation belongs to the agent that holds it, so a resume keeps that
-  // agent even after the Workflow agent setting changed.
-  const agentName = workflow.agent_name ?? choice.agent;
+  // agent even after the Workflow agent setting changed. Only while there is one
+  // to resume: with no id recorded (the agent's own id was never captured), or
+  // on an agent that can no longer be a workflow's agent, the next start is a
+  // new conversation on the setting's agent, from the saved plan. The setting's
+  // agent passed `workflowAgentSetupGap` above, so either way it can be one.
+  const recordedAgentName = workflow.agent_session_id !== null ? workflow.agent_name : null;
+  const recordedAdapter = recordedAgentName ? agentRegistry.get(recordedAgentName) : undefined;
+  const keepsRecordedAgent = recordedAdapter !== undefined && canBeWorkflowAgent(recordedAdapter);
+  const agentName = keepsRecordedAgent && recordedAgentName ? recordedAgentName : choice.agent;
   const adapter = agentRegistry.get(agentName);
   if (!adapter) return unavailable(`Kangentic does not know the agent "${agentName}".`);
-  // Only a recorded conversation's agent can fail this: the setting's agent
-  // passed it in the check above. So the way out is the canvas, not the setting.
-  if (!canBeWorkflowAgent(adapter)) {
-    return unavailable(`This workflow's conversation is on ${adapter.displayName}, which Kangentic cannot launch read-only. Plan this workflow on the canvas.`);
-  }
   if (!config.mcpServer.enabled || !context.mcpServerHandle) {
     return unavailable('The workflow agent works through Kangentic\'s MCP server, which is off. Turn it on in Settings, MCP Server.');
   }
   const detection = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
   if (!detection.found || !detection.path) return unavailable(`Kangentic cannot find ${adapter.displayName} on this machine.`);
+  // An agent whose CLI would start here without Kangentic's tools could not save
+  // a plan; it says why, and the user's fix is retried on the next Settings close.
+  const mcpBlocked = adapter.kangenticMcpBlockedReason?.(projectRoot) ?? null;
+  if (mcpBlocked) return unavailable(mcpBlocked);
 
   const resume = workflow.agent_session_id !== null && workflow.agent_name === agentName;
-  const agentSessionId = resume && workflow.agent_session_id ? workflow.agent_session_id : uuidv4();
+  // A new conversation's id, the safest way the CLI offers: Kangentic's own
+  // where the CLI takes one, else one the CLI creates before launch, else none
+  // yet. Without one the agent reports its own once it has it (hook, output or
+  // session files), and the 'agent-session-id' listener records it.
+  let agentSessionId: string | null = null;
+  if (resume && workflow.agent_session_id) agentSessionId = workflow.agent_session_id;
+  else if (adapter.supportsCallerSessionId) agentSessionId = uuidv4();
+  else if (adapter.createSessionId) agentSessionId = await adapter.createSessionId(detection.path, projectRoot);
+  // A new conversation for a workflow whose agent already ran (its id was never
+  // captured, or its conversation could not be resumed) continues from the saved
+  // plan, and the pane says it started over. `agent_name` outlives a lost id
+  // (`forgetAgentSessionId`), so any start reads it the same way: the one that
+  // replaces a failed resume, one that joined it, or a later one after it failed.
+  const startsOver = !resume && workflow.agent_name !== null;
   // A resumed agent gets no first message (its conversation holds it), only the
   // reason Kangentic restarted it, when there is one.
-  const prompt = resume
-    ? continuation
-    : buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, readWorkflowAgentTemplate(context));
+  let prompt: string | undefined = continuation;
+  if (!resume) {
+    const template = readWorkflowAgentTemplate(context);
+    const continued = startsOver
+      ? await buildWorkflowAgentContinueMessage(context, homeProjectId, workflow, template)
+      : null;
+    prompt = continued ?? buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, template);
+  }
   // The other boards' checkouts it may read; an agent whose CLI cannot widen
   // its reads gets none, and its own project only.
   const readable = adapter.supportsReadableDirectories ? readableProjectsOf(context, homeProjectId, workflow) : [];
@@ -550,7 +607,7 @@ async function startWorkflowAgent(
     cwd: projectRoot,
     permissionMode: 'default' as const,
     projectRoot,
-    sessionId: agentSessionId,
+    sessionId: agentSessionId ?? undefined,
     resume,
     statusOutputPath,
     eventsOutputPath,
@@ -560,7 +617,9 @@ async function startWorkflowAgent(
     mcpServerToken: context.mcpServerHandle.token,
     model: choiceApplies ? choice.model ?? undefined : undefined,
     effort: choiceApplies ? choice.effort ?? undefined : undefined,
-    readOnly: true,
+    // Without edit or shell tools where the CLI can enforce it; every other
+    // agent runs in its own default mode, and the prompt asks it to plan only.
+    readOnly: adapter.supportsReadOnlyLaunch === true,
     readableDirectories: readable.map((entry) => entry.path),
   };
   const command = adapter.buildCommand(commandOptions);
@@ -626,12 +685,20 @@ async function startWorkflowAgent(
     // A resume ends what the pane said about an earlier start-over. One that
     // fails too starts over again, which says it again.
     startedOverSessions.delete(workflow.id);
+  } else if (startsOver) {
+    // The pane says the agent started a new conversation, from the summary this push reloads.
+    startedOverSessions.set(workflow.id, session.id);
+    notifyWorkflowChanged(homeProjectId, workflow.id);
   }
   try {
     // Recorded on every start, so a conversation from before `agent_cwd` existed
     // gains its checkout on its next resume. Recorded before a Pause below stops
-    // the agent, so Resume finds the conversation to resume.
-    repository.setAgentConversation(workflow.id, { agentName, agentSessionId, cwd: projectRoot });
+    // the agent, so Resume finds the conversation to resume. An id the agent
+    // reported while the spawn was awaited is already on the live row (and
+    // recorded by the 'agent-session-id' listener); writing null over it would
+    // lose the conversation.
+    const knownAgentSessionId = agentSessionId ?? context.sessionManager.getSession(session.id)?.agentSessionId ?? null;
+    repository.setAgentConversation(workflow.id, { agentName, agentSessionId: knownAgentSessionId, cwd: projectRoot });
   } finally {
     await honorPausePressedDuringSpawn(context, workflow.id, session.id);
   }
@@ -681,10 +748,14 @@ function readWorkflowAgentTemplate(context: IpcContext): string {
  * Wire the agent's lifecycle to the session manager once, at startup.
  *
  * A resume whose conversation the CLI cannot find ends at once with the CLI
- * saying so (`describeStartupFailure`). The agent then starts over with the first
- * message, which the pane shows, rather than leaving a dead pane whose Resume
- * fails the same way every time, and the pane says it started over
- * (`WorkflowAgentSummary.startedOverSessionId`).
+ * saying so (`describeStartupFailure`). The agent then starts a new
+ * conversation from the saved plan, which the pane shows, rather than leaving a
+ * dead pane whose Resume fails the same way every time, and the pane says it
+ * started over (`WorkflowAgentSummary.startedOverSessionId`).
+ *
+ * An agent whose CLI chose its own session id reports it once it has one, and a
+ * Claude conversation forked by `/clear` reports its new one; the workflow
+ * records either, so a Resume reopens the conversation the agent is in.
  */
 export function registerWorkflowAgentLifecycle(context: IpcContext): void {
   const startOverIfResumeFailed = (sessionId: string, exitCode: number): void => {
@@ -705,18 +776,16 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
         // Read after an async scrollback read, by which time the home may be deleted.
         const homeDb = getExistingProjectDb(resumed.homeProjectId);
         if (!homeDb) return;
-        new WorkflowRepository(homeDb).setAgentConversation(resumed.workflowId, null);
+        // Only the id: the agent that ran stays recorded, which is what makes
+        // the next start continue from the saved plan, even when this one
+        // cannot start or another start already in flight takes its place.
+        new WorkflowRepository(homeDb).forgetAgentSessionId(resumed.workflowId);
       } catch {
         return;
       }
       console.warn(`[WORKFLOW-AGENT] Resume of ${resumed.workflowId.slice(0, 8)} found no conversation; starting a new one.`);
+      // The start marks the pane's start-over line itself.
       void startOnce(context, resumed.homeProjectId, resumed.workflowId, resumed.grid)
-        .then((status) => {
-          if (!status.session) return;
-          // The pane says the agent started over, from the summary this push reloads.
-          startedOverSessions.set(resumed.workflowId, status.session.id);
-          notifyWorkflowChanged(resumed.homeProjectId, resumed.workflowId);
-        })
         .catch((error: unknown) => console.error('[WORKFLOW-AGENT] Could not start over:', error));
     }).catch(() => {
       // The host is gone (a quit or a crash): there is nothing to read.
@@ -766,9 +835,39 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
   context.sessionManager.on('idle-timeout', (sessionId: string) => {
     const session = context.sessionManager.getSession(sessionId);
     if (!session?.workflowId) return;
-    recordTurnTokens(context, session);
+    recordTurnTokens(context, withConversationId(session));
     notifyWorkflowChanged(session.projectId, session.workflowId);
   });
   // Every capture of a session's spend happens while its row is registered.
   context.sessionManager.on('session-removed', (sessionId: string) => forgetWorkflowAgentEffort(sessionId));
+  context.sessionManager.on('agent-session-id', (sessionId: string, _taskId: string, projectId: string, agentSessionId: string) => {
+    recordReportedConversation(context, sessionId, projectId, agentSessionId);
+  });
+}
+
+/**
+ * Record the id the workflow's agent reported as the conversation the workflow
+ * resumes by. Only for the workflow's current agent, so a late report from a
+ * session this start replaced never names a conversation the workflow has left.
+ * A paused session counts: some CLIs report their id as they shut down.
+ */
+function recordReportedConversation(context: IpcContext, sessionId: string, homeProjectId: string, agentSessionId: string): void {
+  const session = context.sessionManager.getSession(sessionId);
+  const workflowId = session?.workflowId;
+  if (!session || !workflowId) return;
+  if (findWorkflowAgentSession(context, workflowId)?.id !== sessionId) return;
+  try {
+    const homeDb = getExistingProjectDb(homeProjectId);
+    if (!homeDb) return;
+    const repository = new WorkflowRepository(homeDb);
+    const workflow = repository.getById(workflowId);
+    if (!workflow || workflow.state === 'done' || workflow.agent_session_id === agentSessionId) return;
+    const agentName = context.sessionManager.getSessionAgentName(sessionId) ?? workflow.agent_name;
+    if (!agentName) return;
+    repository.setAgentConversation(workflowId, { agentName, agentSessionId, cwd: session.cwd });
+  } catch (error) {
+    console.warn('[WORKFLOW-AGENT] Could not record the conversation the agent reported:', error);
+    return;
+  }
+  notifyWorkflowChanged(homeProjectId, workflowId);
 }

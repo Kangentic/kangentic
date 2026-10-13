@@ -3,7 +3,10 @@
  *
  * These tests exercise pure logic without any Electron, DOM, or IPC dependencies.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
@@ -23,7 +26,11 @@ let mockAboutStdout = JSON.stringify({
   model: 'Auto',
   subscriptionTier: 'Free',
 });
-const aboutCallLog: Array<{ path: string; args: readonly string[] }> = [];
+// `options` is what the production code passed as the exec options (`cwd`,
+// `timeout`, ...): the second argument of `exec(cmd, options)` on Windows and
+// the third of `execFile(file, args, options)` elsewhere.
+type RecordedExecOptions = { cwd?: string; timeout?: number };
+const aboutCallLog: Array<{ path: string; args: readonly string[]; options: RecordedExecOptions }> = [];
 
 vi.mock('which', () => ({
   default: async () => {
@@ -64,7 +71,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   const promisifyCustom = Symbol.for('nodejs.util.promisify.custom');
   type ExecCallback = (err: Error | null, stdout?: string, stderr?: string) => void;
   type ExecResult = Promise<{ stdout: string; stderr: string }>;
-  type LogEntry = { path: string; args: readonly string[] };
+  type LogEntry = { path: string; args: readonly string[]; options: RecordedExecOptions };
 
   const makeMock = (recordCall: (entry: LogEntry) => void) => Object.assign(
     // Sync callback form: only hit if production code bypasses
@@ -76,10 +83,16 @@ vi.mock('node:child_process', async (importOriginal) => {
       if (callback) callback(null, mockAboutStdout, '');
     },
     {
-      [promisifyCustom]: (firstArg: string, secondArg?: readonly string[] | unknown): ExecResult => {
+      [promisifyCustom]: (firstArg: string, secondArg?: readonly string[] | unknown, thirdArg?: unknown): ExecResult => {
         const pathArg = firstArg;
         const args = Array.isArray(secondArg) ? (secondArg as readonly string[]) : [];
-        recordCall({ path: pathArg, args });
+        // The options object is the first non-array object after the command:
+        // second on `exec(cmd, options)`, third on `execFile(file, args, options)`.
+        const options = [secondArg, thirdArg].find(
+          (candidate): candidate is RecordedExecOptions =>
+            typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate),
+        ) ?? {};
+        recordCall({ path: pathArg, args, options });
         if (mockAboutShouldFail) {
           return Promise.reject(new Error('agent about failed'));
         }
@@ -89,19 +102,19 @@ vi.mock('node:child_process', async (importOriginal) => {
   );
 
   // `execFile(path, args)` on unix → aboutCallLog entry preserves args.
-  const mockExecFile = makeMock(({ path: pathArg, args }) => {
-    aboutCallLog.push({ path: pathArg, args });
+  const mockExecFile = makeMock(({ path: pathArg, args, options }) => {
+    aboutCallLog.push({ path: pathArg, args, options });
   });
 
   // `exec(cmdString)` on Windows → parse the quoted path + args back
   // out of the single command string so tests can still assert on them
   // uniformly. Expected shape: `"<path>" about --format json`.
-  const mockExec = makeMock(({ path: cmdString }) => {
+  const mockExec = makeMock(({ path: cmdString, options }) => {
     const match = cmdString.match(/^"([^"]+)"\s+(.*)$/);
     if (match) {
-      aboutCallLog.push({ path: match[1], args: match[2].split(/\s+/) });
+      aboutCallLog.push({ path: match[1], args: match[2].split(/\s+/), options });
     } else {
-      aboutCallLog.push({ path: cmdString, args: [] });
+      aboutCallLog.push({ path: cmdString, args: [], options });
     }
   });
 
@@ -164,6 +177,258 @@ describe('CursorAdapter', () => {
 
   it('does not support caller session IDs', () => {
     expect(adapter.supportsCallerSessionId).toBe(false);
+  });
+
+  // ── A conversation created before launch ─────────────────────────────────
+  //
+  // An interactive Cursor session prints no session id, so a workflow's agent
+  // on Cursor would lose its conversation at every Pause. `create-chat` makes
+  // an empty chat and prints its id (measured: a bare UUID line), and the launch
+  // opens it with `--resume=<id>`, so Kangentic knows the id from the start.
+  describe('a conversation created before launch', () => {
+    const CHAT_ID = '997bca3d-4c50-43e2-a038-9a99860f4e7c';
+
+    it('creates a chat and reads its id', async () => {
+      mockAboutStdout = `${CHAT_ID}\n`;
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBe(CHAT_ID);
+      expect(aboutCallLog.at(-1)?.args).toContain('create-chat');
+    });
+
+    it('is null when the CLI cannot create one, or prints no id', async () => {
+      mockAboutShouldFail = true;
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBeNull();
+      mockAboutShouldFail = false;
+      mockAboutStdout = 'Not logged in\n';
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBeNull();
+    });
+
+    // The folder matters if Cursor files chats by workspace, and the timeout is
+    // what keeps a start from hanging on a CLI that never answers. Both ride the
+    // exec options: `cwd` and `timeout`. Windows runs the CLI through `exec` (a
+    // .cmd shim needs a shell) and the other platforms through `execFile`, so
+    // both are run here whatever the host is.
+    it.each(['win32', 'linux'] as const)('runs create-chat in the session\'s own folder with a 20 second timeout on %s', async (platform) => {
+      mockAboutStdout = `${CHAT_ID}\n`;
+      const workingDirectory = '/projects/my-app';
+      const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+      Object.defineProperty(process, 'platform', { value: platform });
+      try {
+        expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', workingDirectory)).toBe(CHAT_ID);
+      } finally {
+        Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+      }
+
+      expect(aboutCallLog).toHaveLength(1);
+      expect(aboutCallLog[0].args).toContain('create-chat');
+      expect(aboutCallLog[0].options.cwd).toBe(workingDirectory);
+      expect(aboutCallLog[0].options.timeout).toBe(20_000);
+    });
+
+    it('reads an uppercase id on its own line of multi-line output, and returns it lowercase', async () => {
+      mockAboutStdout = `Cursor Agent 2026.04.29\r\n${CHAT_ID.toUpperCase()}\r\n`;
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBe(CHAT_ID);
+    });
+
+    it('does not take an id that is only part of a longer line', async () => {
+      mockAboutStdout = `Created chat ${CHAT_ID} for this folder\n`;
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBeNull();
+    });
+
+    it('opens the created chat on a fresh start, with the first message', () => {
+      const command = adapter.buildCommand(makeOptions({ sessionId: CHAT_ID, prompt: 'Plan the work.', shell: 'bash' }));
+      expect(command).toContain(`--resume=${quoteArg(CHAT_ID, 'bash')}`);
+      expect(command).toContain(quoteArg('Plan the work.', 'bash'));
+    });
+
+    it('sends no message on a resume, as before', () => {
+      const command = adapter.buildCommand(makeOptions({ sessionId: CHAT_ID, resume: true, prompt: 'Plan the work.', shell: 'bash' }));
+      expect(command).toContain(`--resume=${quoteArg(CHAT_ID, 'bash')}`);
+      expect(command).not.toContain('Plan the work.');
+    });
+  });
+
+  // ── Kangentic MCP ────────────────────────────────────────────────────────
+  //
+  // Cursor's CLI reads the project's `.cursor/mcp.json`, whose entry's url and
+  // token are env references, so each session's own values ride its env.
+  describe('Kangentic MCP wiring', () => {
+    const mcpOptions = (folder: string, overrides: Partial<SpawnCommandOptions> = {}) => makeOptions({
+      cwd: folder,
+      mcpServerEnabled: true,
+      mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-1/session-1',
+      mcpServerToken: 'secret-token',
+      ...overrides,
+    });
+
+    // `existsSync` is mocked in this file; everything else in `fs` is real.
+    function withFolder(run: (folder: string) => void): void {
+      const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-cursor-adapter-mcp-'));
+      try {
+        run(folder);
+      } finally {
+        fs.rmSync(folder, { recursive: true, force: true });
+      }
+    }
+
+    it('declares per-session MCP delivery', () => {
+      expect(adapter.kangenticMcp).toBe('per-session');
+    });
+
+    it('approves the project\'s MCP servers on a fresh start and on a resume', () => {
+      withFolder((folder) => {
+        expect(adapter.buildCommand(mcpOptions(folder))).toContain('--approve-mcps');
+        expect(adapter.buildCommand(mcpOptions(folder, { resume: true, sessionId: 'chat-1' }))).toContain('--approve-mcps');
+      });
+    });
+
+    it('puts the session\'s own URL and token in its environment, never the command', () => {
+      withFolder((folder) => {
+        const command = adapter.buildCommand(mcpOptions(folder));
+        expect(command).not.toContain('session-1');
+        expect(command).not.toContain('secret-token');
+        expect(adapter.buildEnv?.(mcpOptions(folder))).toEqual({
+          KANGENTIC_MCP_URL: 'http://127.0.0.1:5555/mcp/project-1/session-1',
+          KANGENTIC_MCP_TOKEN: 'secret-token',
+        });
+      });
+    });
+
+    it('wires nothing without the server, or without its token', () => {
+      withFolder((folder) => {
+        expect(adapter.buildCommand(mcpOptions(folder, { mcpServerEnabled: false }))).not.toContain('--approve-mcps');
+        expect(adapter.buildCommand(mcpOptions(folder, { mcpServerToken: undefined }))).not.toContain('--approve-mcps');
+        expect(adapter.buildEnv?.(mcpOptions(folder, { mcpServerEnabled: false }))).toBeNull();
+      });
+    });
+
+    it('keeps the entry until the last session in the folder leaves', () => {
+      withFolder((folder) => {
+        adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a' }));
+        adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b' }));
+        const configPath = path.join(folder, '.cursor', 'mcp.json');
+
+        adapter.removeHooks(folder, 'task-a');
+        expect(fs.readFileSync(configPath, 'utf-8')).toContain('kangentic');
+
+        adapter.removeHooks(folder, 'task-b');
+        expect(() => fs.readFileSync(configPath, 'utf-8')).toThrow();
+      });
+    });
+
+    const configPathIn = (folder: string) => path.join(folder, '.cursor', 'mcp.json');
+    const writeConfig = (folder: string, text: string): void => {
+      fs.mkdirSync(path.join(folder, '.cursor'));
+      fs.writeFileSync(configPathIn(folder), text);
+    };
+
+    // The project-delete sweep calls `removeHooks` with no task, after every
+    // session is killed, so it must not wait on holders that are already gone.
+    describe('removal with no task', () => {
+      it('strips the entry even while two tasks still hold the folder', () => {
+        withFolder((folder) => {
+          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a' }));
+          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b' }));
+          expect(fs.readFileSync(configPathIn(folder), 'utf-8')).toContain('kangentic');
+
+          adapter.removeHooks(folder);
+
+          expect(() => fs.readFileSync(configPathIn(folder), 'utf-8')).toThrow();
+        });
+      });
+
+      it('keeps the user\'s own servers when it strips the entry', () => {
+        withFolder((folder) => {
+          writeConfig(folder, JSON.stringify({ mcpServers: { mine: { url: 'http://localhost:1/mcp' } } }));
+          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a' }));
+          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b' }));
+
+          adapter.removeHooks(folder);
+
+          expect(JSON.parse(fs.readFileSync(configPathIn(folder), 'utf-8'))).toEqual({
+            mcpServers: { mine: { url: 'http://localhost:1/mcp' } },
+          });
+        });
+      });
+    });
+
+    it.each<[string, Partial<SpawnCommandOptions>]>([
+      ['the server is off', { mcpServerEnabled: false }],
+      ['there is no token', { mcpServerToken: undefined }],
+      ['there is no URL', { mcpServerUrl: undefined }],
+    ])('writes no MCP config when %s', (_reason, overrides) => {
+      withFolder((folder) => {
+        adapter.buildCommand(mcpOptions(folder, overrides));
+        // Not `existsSync`: this file mocks it to always answer true.
+        expect(fs.readdirSync(folder)).toEqual([]);
+      });
+    });
+
+    // A config Kangentic cannot merge into (here JSONC: a comment and a trailing
+    // comma) holds the user's servers and is never rewritten. The session starts
+    // without Kangentic's tools, and without the approval flag that would also
+    // load the user's own project servers unprompted.
+    describe('a folder whose MCP config Kangentic cannot merge into', () => {
+      const JSONC_CONFIG = [
+        '{',
+        '  // my servers',
+        '  "mcpServers": {',
+        '    "mine": { "url": "http://localhost:1/mcp" },',
+        '  },',
+        '}',
+        '',
+      ].join('\n');
+
+      let restoreWarn: () => void;
+      beforeEach(() => {
+        // The refusal is logged; keep that out of the test output.
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        restoreWarn = () => warnSpy.mockRestore();
+      });
+      afterEach(() => {
+        restoreWarn();
+      });
+
+      it.each<[string, Partial<SpawnCommandOptions>]>([
+        ['a fresh start', {}],
+        ['a resume', { resume: true, sessionId: 'chat-1' }],
+      ])('adds neither the entry nor --approve-mcps on %s', (_start, overrides) => {
+        withFolder((folder) => {
+          writeConfig(folder, JSONC_CONFIG);
+
+          const command = adapter.buildCommand(mcpOptions(folder, overrides));
+
+          expect(command).not.toContain('--approve-mcps');
+          expect(fs.readFileSync(configPathIn(folder), 'utf-8')).toBe(JSONC_CONFIG);
+        });
+      });
+
+      it('names Cursor CLI and the config path as the reason its tools cannot load', () => {
+        withFolder((folder) => {
+          writeConfig(folder, JSONC_CONFIG);
+
+          const reason = adapter.kangenticMcpBlockedReason(folder);
+
+          expect(reason).toEqual(expect.any(String));
+          expect(reason).toContain('Cursor CLI');
+          expect(reason).toContain(configPathIn(folder));
+        });
+      });
+    });
+
+    describe('kangenticMcpBlockedReason', () => {
+      it('is null for a folder with no MCP config', () => {
+        withFolder((folder) => {
+          expect(adapter.kangenticMcpBlockedReason(folder)).toBeNull();
+        });
+      });
+
+      it('is null for a config Kangentic can merge into', () => {
+        withFolder((folder) => {
+          writeConfig(folder, JSON.stringify({ mcpServers: { mine: { url: 'http://localhost:1/mcp' } } }));
+          expect(adapter.kangenticMcpBlockedReason(folder)).toBeNull();
+        });
+      });
+    });
   });
 
   it('defaults to bypassPermissions so stream-json telemetry is on', () => {
@@ -538,7 +803,11 @@ describe('CursorAdapter', () => {
       // Overwrite the promisified mock to return our pending promise.
       const promisifyCustom = Symbol.for('nodejs.util.promisify.custom');
       const cp = await import('node:child_process');
-      const previous = (cp.exec as unknown as Record<symbol, unknown>)[promisifyCustom];
+      // Save and restore each mock on its own: restoring both from one saved
+      // value left `execFile` running the `exec` fake (string-parsed args, no
+      // options) for every later test on the platforms that call `execFile`.
+      const previousExec = (cp.exec as unknown as Record<symbol, unknown>)[promisifyCustom];
+      const previousExecFile = (cp.execFile as unknown as Record<symbol, unknown>)[promisifyCustom];
       (cp.exec as unknown as Record<symbol, unknown>)[promisifyCustom] = () => slowPromise;
       (cp.execFile as unknown as Record<symbol, unknown>)[promisifyCustom] = () => slowPromise;
       try {
@@ -549,8 +818,8 @@ describe('CursorAdapter', () => {
         await flushPromises();
         expect(applied).toHaveLength(0);
       } finally {
-        (cp.exec as unknown as Record<symbol, unknown>)[promisifyCustom] = previous;
-        (cp.execFile as unknown as Record<symbol, unknown>)[promisifyCustom] = previous;
+        (cp.exec as unknown as Record<symbol, unknown>)[promisifyCustom] = previousExec;
+        (cp.execFile as unknown as Record<symbol, unknown>)[promisifyCustom] = previousExecFile;
       }
     });
 

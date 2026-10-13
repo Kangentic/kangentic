@@ -263,6 +263,8 @@ export class ClaudeAdapter implements AgentAdapter {
   readonly displayName = 'Claude Code';
   readonly sessionType = 'claude_agent';
   readonly supportsCallerSessionId = true;
+  // `--mcp-config` pointing at the session's own `mcp.json`.
+  readonly kangenticMcp = 'per-session' as const;
   // `--tools` with the read-only set (`READ_ONLY_TOOLS` in command-builder.ts,
   // which keeps ToolSearch so the deferred Kangentic tools stay reachable),
   // plus `--strict-mcp-config`. `--tools` is the CLI's own restriction of the

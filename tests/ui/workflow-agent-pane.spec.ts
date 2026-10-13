@@ -32,13 +32,25 @@ interface SeedOptions {
   agentListOverrides?: Record<string, Record<string, unknown>>;
   /** Every agent-list read the renderer makes rejects, so its list never loads. Main's own start check still reads it. */
   rejectAgentList?: boolean;
+  /**
+   * The workflow as main left it after an earlier run: the agent it ran on and the
+   * conversation id it kept (null when the id is not known), with that agent's
+   * session already live. A live session is what keeps the mock's open from
+   * recording the Workflow agent setting over the seeded agent, as it does for a
+   * workflow with no conversation yet.
+   */
+  recordedRun?: { agentName: string; agentSessionId: string | null };
 }
+
+const RECORDED_SESSION_ID = 'wf-draft-agent-session';
 
 function seedScript(options: SeedOptions): string {
   const workflowAgent = options.workflowAgent === undefined ? WORKFLOW_AGENT : options.workflowAgent;
+  const recordedRun = options.recordedRun ?? null;
   const draft = {
     workflow: {
       id: WORKFLOW_ID, title: 'Theme tokens', state: 'draft', color_slot: 2,
+      ...(recordedRun ? { agent_name: recordedRun.agentName, agent_session_id: recordedRun.agentSessionId, agent_cwd: '/mock/project' } : {}),
       draft: {
         tasks: [{
           key: 'task-1', title: 'Token table', description: 'Planned.', project_id: null, existing_task_id: null,
@@ -49,6 +61,13 @@ function seedScript(options: SeedOptions): string {
       },
     },
   };
+  // The session row as main's workflow-agent.ts produces it (see the mock's makeMockWorkflowAgentSession).
+  const recordedSession = {
+    id: RECORDED_SESSION_ID, taskId: WORKFLOW_ID, projectId: PROJECT_ID, pid: null, status: 'running', shell: '/bin/bash',
+    cwd: '/mock/project', startedAt: new Date().toISOString(), exitCode: null, resuming: false, transient: true,
+    workflowId: WORKFLOW_ID, commandTerminalSlot: null, commandTerminalBranch: null, commandTerminalLabel: null,
+    isolatedSwimlaneId: null, agentSessionId: recordedRun?.agentSessionId ?? null,
+  };
   return `
     window.__mockWorkflows = ${JSON.stringify([draft])};
     ${options.unavailable ? `window.__mockWorkflowAgentUnavailable = ${JSON.stringify(options.unavailable)};` : ''}
@@ -58,6 +77,7 @@ function seedScript(options: SeedOptions): string {
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
       ${workflowAgent ? `state.config.workflows = ${JSON.stringify(workflowAgent)};` : ''}
+      ${recordedRun ? `state.sessions.push(${JSON.stringify(recordedSession)});` : ''}
       state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
         state.swimlanes.push(Object.assign({}, swimlane, { id: 'lane-' + index, position: index, created_at: ts }));
@@ -466,6 +486,75 @@ test('an agent that is not installed says so, and a Settings round trip after in
     expect(await agentOpenCount(page)).toBe(2);
     await settleFrames(page, 5);
     expect(await agentOpenCount(page)).toBe(2);
+  } finally {
+    await browser.close();
+  }
+});
+
+// Any agent that reaches Kangentic's MCP server per session can be the Workflow
+// agent, read-only or not. A workflow planned by Codex starts its terminal and
+// records Codex as the agent holding its conversation.
+test('a Workflow agent that cannot launch read-only starts, and the workflow records it', async () => {
+  const { browser, page } = await launch({
+    workflowAgent: { agent: 'codex', model: 'gpt-5', effort: null },
+    agentListOverrides: {
+      codex: { found: true, path: '/usr/bin/codex', version: '1.0.0', capabilities: { supportsModelOverride: true, models: ['gpt-5'], effortLevels: [] } },
+    },
+  });
+  try {
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-setup')).toHaveCount(0);
+    // The workflow as main records it after the start (the store's summary is read before it).
+    const recordedAgent = await page.evaluate(async ({ projectId, workflowId }) => {
+      const summaries = await window.electronAPI.workflows.list(projectId);
+      return summaries.find((summary) => summary.workflow.id === workflowId)?.workflow.agent_name ?? null;
+    }, { projectId: PROJECT_ID, workflowId: WORKFLOW_ID });
+    expect(recordedAgent).toBe('codex');
+  } finally {
+    await browser.close();
+  }
+});
+
+/** The agent and conversation id the seeded workflow's summary carries, as the pane's store reads them. */
+async function recordedRunOf(page: Page): Promise<{ agentName: string | null; agentSessionId: string | null }> {
+  return page.evaluate(async ({ projectId, workflowId }) => {
+    const summaries = await window.electronAPI.workflows.list(projectId);
+    const workflow = summaries.find((summary) => summary.workflow.id === workflowId)?.workflow;
+    return { agentName: workflow?.agent_name ?? null, agentSessionId: workflow?.agent_session_id ?? null };
+  }, { projectId: PROJECT_ID, workflowId: WORKFLOW_ID });
+}
+
+// The terminal runs the agent main would resume: the one holding a conversation
+// it can resume (its id is known), else the Workflow agent setting's. A workflow
+// that ran on another agent but kept no id has nothing to resume, so main starts
+// it on the setting's agent, and the terminal (whose image paste follows the
+// agent) has to match it, not the stale name.
+test('a workflow whose agent ran but kept no conversation id gets a terminal for the Workflow agent setting', async () => {
+  const { browser, page } = await launch({
+    workflowAgent: { agent: 'claude', model: 'haiku', effort: 'low' },
+    recordedRun: { agentName: 'codex', agentSessionId: null },
+  });
+  try {
+    // The seed took: the summary names codex as the agent that ran and holds no conversation.
+    expect(await recordedRunOf(page)).toEqual({ agentName: 'codex', agentSessionId: null });
+    const terminalPane = byTestId(page, 'workflow-agent-terminal-pane');
+    await expect(terminalPane).toHaveAttribute('data-session-id', RECORDED_SESSION_ID);
+    await expect(terminalPane).toHaveAttribute('data-agent-name', 'claude');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a workflow whose conversation id is known gets a terminal for the agent that holds it, not the setting', async () => {
+  const { browser, page } = await launch({
+    workflowAgent: { agent: 'claude', model: 'haiku', effort: 'low' },
+    recordedRun: { agentName: 'codex', agentSessionId: 'recorded-codex-conversation' },
+  });
+  try {
+    expect(await recordedRunOf(page)).toEqual({ agentName: 'codex', agentSessionId: 'recorded-codex-conversation' });
+    const terminalPane = byTestId(page, 'workflow-agent-terminal-pane');
+    await expect(terminalPane).toHaveAttribute('data-session-id', RECORDED_SESSION_ID);
+    await expect(terminalPane).toHaveAttribute('data-agent-name', 'codex');
   } finally {
     await browser.close();
   }

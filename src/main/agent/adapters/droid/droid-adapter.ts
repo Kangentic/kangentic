@@ -51,6 +51,10 @@ export class DroidAdapter implements AgentAdapter {
    * (see runtime.sessionId.fromFilesystem).
    */
   readonly supportsCallerSessionId = false;
+  // Its session files (`runtime.sessionId.fromFilesystem`).
+  readonly capturesInteractiveSessionId = true;
+  // The literal URL goes into the folder's `.factory/mcp.json`.
+  readonly kangenticMcp = 'shared-folder' as const;
   /**
    * Droid's interactive TUI handles permission/autonomy decisions
    * in-band: shift+tab cycles low/medium/high autonomy, and `/model`

@@ -412,7 +412,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, supportsWorkflowAgent, capabilities, remoteExecution, launchOptions) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, kangenticMcp, supportsWorkflowAgent, capabilities, remoteExecution, launchOptions) |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 
 ### Handoffs (1 channel)
@@ -1029,7 +1029,9 @@ src/main/workflows/
   workflow-agent.ts          # the workflow's own agent: open, resume, pause, end, start over on a lost resume,
                              #   read access to other projects, its spend captured for Stats
   workflow-agent-record.ts   # a SessionRecord built from the workflow row, so transcript readers reach its conversation
-  workflow-agent-prompt.ts   # its first message: {{columns}}, {{brief_xml}} and the project's facts
+  workflow-agent-prompt.ts   # its first message: {{columns}}, {{brief_xml}} and the project's facts, and the
+                             #   continue-from-the-saved-plan message for a conversation that cannot be resumed
+  workflow-format.ts         # a workflow's plan as text (formatWorkflow), for the MCP tools and the continue message
   workflow-agent-effort.ts   # the effort it started at, for its Stats rows when the status line reports none
   workflow-runtime.ts        # the IPC context the operations act through
   workflow-wake.ts           # wake the engine from a write the board bus does not announce
@@ -1046,11 +1048,18 @@ src/main/workflows/
   agent-absence sweep judges and retires it like a task's agent, and its processes carry its
   workflow's id as their `KANGENTIC_TASK_ID`, which no task shares. While it runs it holds an agent
   slot under Max Concurrent Sessions, as a Command Terminal does, and its Pause frees it. It runs in
-  the home project's checkout, read-only:
-  Claude with `--tools Read,Grep,Glob,ToolSearch`, `--strict-mcp-config` and `--no-chrome`, and an
-  MCP URL whose caller segment is `workflow-<id>`, for which the server registers only the
-  read-only tools and the planning tools, bound to that workflow (`workflow-agent-scope.ts`). It is
-  not resumed at boot; the view's pane opens it.
+  the home project's checkout with an MCP URL whose caller segment is `workflow-<id>`, for which the
+  server registers only the read-only tools and the planning tools, bound to that workflow
+  (`workflow-agent-scope.ts`). That scope is the guard for every agent. Any agent can be it whose
+  adapter delivers Kangentic's MCP per session (`kangenticMcp: 'per-session'`) and whose
+  conversation can be resumed, by an id Kangentic chose, one the CLI creates before launch
+  (`createSessionId`, Cursor's `create-chat`), or one captured after launch (`canBeWorkflowAgent`). Where the adapter declares `supportsReadOnlyLaunch` (Claude: `--tools
+  Read,Grep,Glob,ToolSearch`, `--strict-mcp-config`, `--no-chrome`) it also has no edit or shell
+  tools; any other runs in its default mode, and the first message asks it to leave files alone.
+  An id the agent reports after launch, or a Claude `/clear` fork's new one, is recorded on the
+  workflow by the `'agent-session-id'` listener. A start with no conversation to resume on a
+  workflow whose agent already ran continues from the saved plan
+  (`buildWorkflowAgentContinueMessage`). It is not resumed at boot; the view's pane opens it.
 
 - **A stored project id can outlive its project.** A task's home (`workflow_project_id`), a link's
   far end and a planned task's board are ids in another record, and `getProjectDb` on main creates

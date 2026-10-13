@@ -62,14 +62,18 @@ describe('listAgents - pasted-image capability fields', () => {
 });
 
 // Settings > Workflows offers only the agents the entry flags, so the flag has to
-// be the adapter's own two capabilities together, through the real build.
-describe('listAgents - supportsWorkflowAgent', () => {
-  it('flags an agent that launches read-only on a session id Kangentic chose, and no other', async () => {
+// be the adapter's own capabilities together, through the real build: Kangentic's
+// MCP server per session, and a conversation it can resume. Read-only launch is
+// not part of it.
+describe('listAgents - supportsWorkflowAgent and kangenticMcp', () => {
+  it('flags an agent that reaches the MCP server per session and can resume, and no other', async () => {
     const adaptersByName: Record<string, object> = {
-      capable: { ...buildFakeAdapter(), supportsReadOnlyLaunch: true, supportsCallerSessionId: true },
-      'no-session-id': { ...buildFakeAdapter(), supportsReadOnlyLaunch: true, supportsCallerSessionId: false },
-      'not-read-only': { ...buildFakeAdapter(), supportsReadOnlyLaunch: false, supportsCallerSessionId: true },
-      'read-only-undeclared': { ...buildFakeAdapter(), supportsCallerSessionId: true },
+      'chosen-id': { ...buildFakeAdapter(), kangenticMcp: 'per-session', supportsCallerSessionId: true },
+      'captured-id': { ...buildFakeAdapter(), kangenticMcp: 'per-session', supportsCallerSessionId: false, capturesInteractiveSessionId: true },
+      'not-read-only': { ...buildFakeAdapter(), kangenticMcp: 'per-session', supportsCallerSessionId: true, supportsReadOnlyLaunch: false },
+      'no-session-id': { ...buildFakeAdapter(), kangenticMcp: 'per-session', supportsCallerSessionId: false },
+      'shared-folder': { ...buildFakeAdapter(), kangenticMcp: 'shared-folder', supportsCallerSessionId: true },
+      'no-mcp': { ...buildFakeAdapter(), supportsCallerSessionId: true, supportsReadOnlyLaunch: true },
     };
     mockRegistryList.mockReturnValue(Object.keys(adaptersByName));
     mockGetOrThrow.mockImplementation((name: string) => adaptersByName[name]);
@@ -78,10 +82,16 @@ describe('listAgents - supportsWorkflowAgent', () => {
 
     const flagByName = Object.fromEntries(agents.map((entry) => [entry.name, entry.supportsWorkflowAgent]));
     expect(flagByName).toEqual({
-      capable: true,
+      'chosen-id': true,
+      'captured-id': true,
+      'not-read-only': true,
       'no-session-id': false,
-      'not-read-only': false,
-      'read-only-undeclared': false,
+      'shared-folder': false,
+      'no-mcp': false,
     });
+    // The MCP delivery rides the entry as the adapter declares it.
+    const mcpByName = Object.fromEntries(agents.map((entry) => [entry.name, entry.kangenticMcp]));
+    expect(mcpByName['shared-folder']).toBe('shared-folder');
+    expect(mcpByName['no-mcp']).toBeUndefined();
   });
 });

@@ -430,11 +430,61 @@ export interface AgentAdapter {
   /**
    * True when `buildCommand` honours `CommandOptions.readOnly`: the agent reads
    * files and calls Kangentic's MCP tools, and has no tool that edits a file or
-   * runs a shell command. A workflow's own agent needs it; an agent without it
-   * cannot be one. Declared only once the CLI's flags were measured to hold, since
-   * a CLI can let a user's own approval settings outrank them.
+   * runs a shell command. A workflow's own agent gets it where it is declared; an
+   * agent without it still can be one, launched in its own default mode and asked
+   * by the workflow prompt to leave files alone. Declared only once the CLI's flags
+   * were measured to hold, since a CLI can let a user's own approval settings
+   * outrank them.
    */
   readonly supportsReadOnlyLaunch?: boolean;
+
+  /**
+   * How `buildCommand` (or `buildEnv`, or a config file it writes before spawn)
+   * connects the agent to Kangentic's MCP server when `mcpServerEnabled` is on.
+   * Absent: it does not, because the CLI has no MCP client or nothing wires it yet.
+   *
+   * - `'per-session'`: each session gets its own server URL (a flag, an env var,
+   *   or a file in the session's own directory), so two sessions in one folder
+   *   never see each other's URL.
+   * - `'shared-folder'`: the URL is written literally into a config file in the
+   *   working directory, which every session in that folder shares, so the last
+   *   one to start decides the URL the others read. A session whose URL carries a
+   *   caller scope (a workflow's own agent) cannot rely on it.
+   *
+   * Pinned against the real builders by `tests/unit/kangentic-mcp-delivery.test.ts`.
+   */
+  readonly kangenticMcp?: 'per-session' | 'shared-folder';
+
+  /**
+   * True when an interactive session's own id is captured after launch, from the
+   * session's own hook or terminal output, or from a folder scan
+   * (`runtime.sessionId`), for an agent that does not take an id Kangentic chose
+   * (`supportsCallerSessionId` false). With either one a workflow can resume its
+   * agent's conversation; with neither it cannot be a workflow's agent. Declared,
+   * not inferred from `runtime.sessionId`: an agent whose only capture path is a
+   * headless one (Cursor's stream-json) captures nothing in a terminal.
+   */
+  readonly capturesInteractiveSessionId?: boolean;
+
+  /**
+   * Ask the CLI for a new conversation's id before launch, for a CLI that takes
+   * no id of Kangentic's on its command line and prints none in a terminal, but
+   * can create an empty conversation and name it (Cursor's `create-chat`). The
+   * launch then opens that conversation, so Kangentic knows its id from the
+   * start, as with a caller-chosen one. Null when the CLI could not create one;
+   * never throws. A workflow's agent uses it on a fresh start.
+   */
+  createSessionId?(cliPath: string, workingDirectory: string): Promise<string | null>;
+
+  /**
+   * Why a session started in `workingDirectory` would not reach Kangentic's MCP
+   * server although the adapter wires it, in the agent's own words, or null when
+   * it would. For a CLI that loads the wiring only under a condition Kangentic
+   * does not decide for the user (Grok reads a project's MCP servers only in a
+   * folder the user trusted in Grok). A workflow's agent refuses to start with
+   * this reason rather than start without the tools it saves its plan with.
+   */
+  kangenticMcpBlockedReason?(workingDirectory: string): string | null;
 
   /**
    * True when `buildCommand` honours `CommandOptions.readableDirectories`, so a

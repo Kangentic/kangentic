@@ -22,6 +22,8 @@ export const DEFAULT_WORKFLOW_AGENT_PROMPT = [
   '',
   'Before you plan, read the brief, the code it touches, and the open tasks already on the board, so the plan builds on work that exists instead of repeating it. Do this reading yourself; hand it to subagents only if the brief spans several large, separate areas, since each one multiplies the tokens spent.',
   '',
+  'Your part is the plan: read whatever you need, save the plan with the workflow tools, and leave every file and the repository as they are. This is the user\'s own checkout, and the tasks you plan do the work once the user starts them.',
+  '',
   'Plan what the brief asks for, at the scope it intends. If you see a better approach, say so in one line of your reply rather than planning it in.',
   '',
   'Use as few tasks as the work allows. One capable agent finishing a larger task uses fewer tokens than several agents sharing it, so combine related work. Split only where you must: work that has to land before other work can start, or a real follow-up. For each task:',

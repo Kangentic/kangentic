@@ -187,8 +187,12 @@ export interface AgentDetectionInfo {
   /** What that answer run can do beyond the base, as the adapter declares it.
    *  Absent when the agent cannot answer at all. */
   answerCapabilities?: AnswerCapabilities;
-  /** True if Kangentic can run the agent as a workflow's agent: launched read-only, on a
-   *  session id Kangentic chose. The Workflow agent setting offers only these. */
+  /** How Kangentic's MCP server reaches the agent's sessions (`AgentAdapter.kangenticMcp`):
+   *  `'per-session'` or `'shared-folder'`. Absent = not wired. */
+  kangenticMcp?: 'per-session' | 'shared-folder';
+  /** True if Kangentic can run the agent as a workflow's agent: it reaches Kangentic's MCP
+   *  server with a URL of its own, and its conversation can be resumed. The Workflow agent
+   *  setting offers only these. */
   supportsWorkflowAgent?: boolean;
   /** Discovered at detection time; absent for adapters that do not implement discovery. */
   capabilities?: AgentCapabilities;
@@ -4979,9 +4983,12 @@ export interface Workflow {
   finished_at: string | null;
   /** When it was last paused, while it is paused (the picker's "Paused yesterday 18:20"); null otherwise. */
   paused_at: string | null;
-  /** The agent holding the workflow agent's conversation; null until it first starts. */
+  /** The agent that last ran as the workflow's agent; null until it first starts. Set with a
+   *  null `agent_session_id`, it names an agent whose conversation cannot be resumed, so the
+   *  next start is a new conversation from the saved plan. */
   agent_name: string | null;
-  /** The id that conversation resumes by (`--resume`); null until it first starts. */
+  /** The id that conversation resumes by (`--resume`). Null until the id is known: chosen or
+   *  created before launch, or captured once the agent reports it. Resume reads only this. */
   agent_session_id: string | null;
   /** The checkout that conversation ran in, where the agent CLI keeps its history; null until it first starts. */
   agent_cwd: string | null;

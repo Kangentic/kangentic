@@ -15,6 +15,10 @@
  * env references grok expands at load time), and the same env channel also
  * carries KANGENTIC_EVENTS_PATH for the hook bridge's `env:` sentinel - so
  * neither the per-session URL, the token, nor the events path reaches disk.
+ * Cursor follows Grok's shape: its project `.cursor/mcp.json` entry is static,
+ * `${env:KANGENTIC_MCP_URL}` and `${env:KANGENTIC_MCP_TOKEN}` that Cursor
+ * resolves from the process environment, so two sessions sharing a folder
+ * each read their own URL.
  * Goose is the one entry here NOT about MCP: it has no permission CLI flag,
  * so the permission dropdown is delivered as GOOSE_MODE (Goose's native
  * autonomy env var) via buildEnv.
@@ -33,7 +37,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
  * Exhaustive list of adapter names that are EXPECTED to implement buildEnv.
  * See the file docstring for why each one is here.
  */
-const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose']);
+const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose', 'cursor']);
 
 describe('AgentAdapter.buildEnv interface guard', () => {
   it('exactly the adapters in ADAPTERS_WITH_BUILDENV implement buildEnv', () => {

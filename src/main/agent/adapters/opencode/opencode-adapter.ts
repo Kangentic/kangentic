@@ -104,6 +104,10 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly displayName = 'OpenCode';
   readonly sessionType = 'opencode_agent';
   readonly supportsCallerSessionId = false;
+  // Its plugin hook and labelled banner (`runtime.sessionId`).
+  readonly capturesInteractiveSessionId = true;
+  // The whole config in `OPENCODE_CONFIG_CONTENT`, the session's own env.
+  readonly kangenticMcp = 'per-session' as const;
   // OpenCode's autonomy is expressed through "agents" (Build, Plan,
   // and any custom agents the user defines in opencode.json), cycled
   // at runtime via Tab. We expose those native concepts directly
