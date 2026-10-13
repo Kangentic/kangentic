@@ -319,6 +319,13 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
    - Remove commit hashes
    - Rewrite terse commit subjects into clear, user-friendly descriptions
    - Merge related commits into single bullet points where appropriate (e.g., three commits that all improve the same feature become one bullet)
+   Then collect the notes authors wrote themselves. Run
+   `git log <previousTag>..HEAD --format="%(trailers:key=Release-Note,valueonly)"` (no tag: drop the
+   range). Each non-empty line is a user-facing sentence a commit carried in a `Release-Note:`
+   trailer, for a change its subject undersells, such as something that switches off for some users.
+   Put each in its section with its meaning kept, and fold it into the bullet for the same change
+   rather than listing the change twice. The trailer is the only way such a note reaches this file,
+   since the commit list above is subjects only.
 2. **Group into sections:**
    - **What's New** -- features and enhancements
    - **Bug Fixes** -- fixes
