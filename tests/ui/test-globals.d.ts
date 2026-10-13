@@ -115,6 +115,15 @@ declare global {
     __toastActionClicked?: boolean;
     /** Counts calls to a spec-overridden `navigator.clipboard.writeText` in toast-click-through.spec.ts. */
     __clipboardRejectCalls?: number;
+
+    /** Per-agent patches merged over the mock's `agents.list()` entries (`found: false` for a CLI that is not installed). Read on every call, so a spec can change it mid-test. */
+    __mockAgentListOverrides?: Record<string, Record<string, unknown>>;
+    /** When true, every `agents.list()` the renderer makes rejects, so the config store's agent list never loads. Main's own read (the mock's start check) still answers. Set in addInitScript. */
+    __mockAgentListRejects?: boolean;
+    /** How many times the workflow agent pane has called `workflows.agentOpen` (resumes are not counted). */
+    __mockWorkflowAgentOpenCount?: number;
+    /** When true, the next `workflows.agentOpen` answers `setupNeeded: true` whatever the setting says, then clears itself. Set in addInitScript. */
+    __mockWorkflowAgentSetupNeededOnce?: boolean;
   }
 }
 
