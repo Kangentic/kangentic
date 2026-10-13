@@ -128,14 +128,23 @@ export interface ModelStack {
   rows: ModelStackRow[];
 }
 
+/** Row key of the catch-all series {@link deriveModelStack} adds on demand. */
+const UNRANKED_STACK_KEY = 'stackUnranked';
+
 /**
- * Fold the cost series' per-model splits into stacked-bar data using the SAME
+ * Fold a series' per-model splits into stacked-bar data using the SAME
  * ranking/colors as the donut fold (`slices` comes from
  * {@link foldBreakdownForDonut} over the payload's range-wide byModel
  * breakdown), so the stack and the donut always agree on model identity.
  * Models outside the donut's individually-colored slots accumulate into its
- * "Other" slice; models absent from the ranking entirely (possible only in
- * degenerate payloads) fold into Other too rather than being dropped.
+ * "Other" slice.
+ *
+ * A model with no slice at all still gets a bar segment, never a dropped
+ * value. The Tokens view needs that: its series tags each TURN with its own
+ * model while the ranking tags each session with one, so a mid-session model
+ * switch or a turn with no model reported has no slice, and dropping it would
+ * leave the bars short of the Tokens tile. Such values go to the "Other" slice
+ * when the ranking has one, else to a catch-all series added only when needed.
  */
 export function deriveModelStack(
   costSeries: CostSeriesPoint[],
@@ -149,21 +158,50 @@ export function deriveModelStack(
     colorVar: slice.colorVar,
   }));
   const keyBySliceId = new Map<string, string>(slices.map((slice, index) => [slice.id, `stack${index}`]));
-  const otherKey = keyBySliceId.get('__other__');
+  const fallbackKey = keyBySliceId.get('__other__') ?? UNRANKED_STACK_KEY;
+  let usesUnrankedKey = false;
 
   const rows: ModelStackRow[] = costSeries.map((point) => {
     const row: ModelStackRow = { x: point.bucketStartMs, label: formatLabel(point.bucketStartMs) };
     for (const entry of series) row[entry.key] = 0;
     for (const slice of point.byModel) {
-      const sliceId = slice.modelId ?? '(unknown)';
-      const key = keyBySliceId.get(sliceId) ?? otherKey;
-      if (!key) continue;
       const value = metric === 'cost' ? slice.costUsd : slice.inputTokens + slice.outputTokens;
-      row[key] = (row[key] as number) + value;
+      if (value === 0) continue;
+      const key = keyBySliceId.get(slice.modelId ?? '(unknown)') ?? fallbackKey;
+      if (key === UNRANKED_STACK_KEY) usesUnrankedKey = true;
+      row[key] = ((row[key] as number | undefined) ?? 0) + value;
     }
     return row;
   });
+  if (usesUnrankedKey) {
+    series.push({ key: UNRANKED_STACK_KEY, label: 'Other', colorVar: OTHER_SLICE_VAR });
+    for (const row of rows) row[UNRANKED_STACK_KEY] = (row[UNRANKED_STACK_KEY] as number | undefined) ?? 0;
+  }
   return { series, rows };
+}
+
+/**
+ * Cache hit rate per token-series bucket: cache read over all input (cache
+ * read + cache write + fresh input), the same ratio as the Cache Reads tile.
+ * A bucket with no input at all is left out rather than plotted as 0, so an
+ * idle hour does not draw a dip to zero and drag the fitted y axis down with it.
+ */
+export function deriveCacheHitRateSeries(tokenSeries: TokenSeriesPoint[]): TimePoint[] {
+  return tokenSeries.flatMap((point) => {
+    const denominator = point.cacheReadTokens + point.cacheCreationTokens + point.inputTokens;
+    return denominator > 0 ? [{ x: point.bucketStartMs, y: point.cacheReadTokens / denominator }] : [];
+  });
+}
+
+/**
+ * A breakdown list's display order: by the selected metric, largest first.
+ * Only the ORDER follows the metric; each slice keeps the color the token
+ * fold gave it, so an entity is the same color in both views. A stable sort,
+ * so ties keep the fold's order.
+ */
+export function rankSlicesByMetric(slices: DonutSlice[], byCost: boolean): DonutSlice[] {
+  return [...slices].sort((first, second) =>
+    (byCost ? second.costUsd - first.costUsd : second.value - first.value));
 }
 
 /** Running sum over the cost series (cumulative spend / cumulative tokens). */
@@ -404,6 +442,11 @@ export interface StatsDerivedData {
   burnRate: TimePoint[];
   /** Stacked-by-model daily bars (colors/ranking shared with the donut). */
   modelStack: ModelStack;
+  /** The Tokens view's by-model bars, from the turn ledger on the token
+   *  series' grid, so a bucket sums to that bucket's tokens. */
+  tokenModelStack: ModelStack;
+  /** The Tokens view's second chart: cache read over all input per bucket. */
+  cacheHitRate: TimePoint[];
   cumulative: TimePoint[];
   /** Cumulative running sum from tokenSeries, for the Live card (costSeries empty). */
   cumulativeFromTokens: TimePoint[];
@@ -432,6 +475,8 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
         payload: null,
         burnRate: [],
         modelStack: { series: [], rows: [] },
+        tokenModelStack: { series: [], rows: [] },
+        cacheHitRate: [],
         cumulative: [],
         cumulativeFromTokens: [],
         tokenTypeStack: { series: [], rows: [] },
@@ -461,6 +506,15 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
         effectiveMetric,
         (bucketStartMs) => formatBucketLabel(bucketStartMs, payload.costBucketSizeMs),
       ),
+      // Optional: a payload cached from an older build has no by-model token
+      // series, and the card then reads as empty rather than throwing.
+      tokenModelStack: deriveModelStack(
+        payload.tokenModelSeries ?? [],
+        byModelSlices,
+        'tokens',
+        (bucketStartMs) => formatBucketLabel(bucketStartMs, payload.bucketSizeMs),
+      ),
+      cacheHitRate: deriveCacheHitRateSeries(payload.tokenSeries),
       cumulative: deriveCumulative(payload.costSeries, effectiveMetric),
       cumulativeFromTokens: deriveCumulativeFromTokenSeries(payload.tokenSeries, effectiveMetric),
       tokenTypeStack: deriveTokenTypeStack(

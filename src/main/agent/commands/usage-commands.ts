@@ -136,7 +136,7 @@ export const handleGetUsageStats: CommandHandler = async (params): Promise<Comma
   const data = includeSeries
     ? stats
     : (() => {
-        const { tokenSeries: _tokenSeries, costSeries: _costSeries, background, ...rest } = stats;
+        const { tokenSeries: _tokenSeries, costSeries: _costSeries, tokenModelSeries: _tokenModelSeries, background, ...rest } = stats;
         // The Background per-day rows are a series too: kept only on request.
         return background ? { ...rest, background: { totals: background.totals, byJob: background.byJob } } : rest;
       })();

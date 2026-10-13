@@ -31,6 +31,7 @@ import {
   OTHER_SLICE_VAR,
   UNKNOWN_SLICE_VAR,
   deriveBurnRateSeries,
+  deriveCacheHitRateSeries,
   deriveCostSparkline,
   deriveCumulative,
   deriveCumulativeFromTokenSeries,
@@ -38,6 +39,7 @@ import {
   deriveTokenTypeStack,
   foldBreakdownForDonut,
   isModelStackEmpty,
+  rankSlicesByMetric,
   type BreakdownEntry,
   type ModelStack,
 } from '../../src/renderer/components/stats/useStatsData';
@@ -287,5 +289,75 @@ describe('deriveModelStack', () => {
     };
     const stack = deriveModelStack([point], manySlices, 'tokens', () => 'x');
     expect(stack.rows[0][`stack${otherIndex}`]).toBe(30);
+  });
+
+  it('keeps a model the ranking does not know, in a catch-all series added only when needed', () => {
+    // The Tokens view tags each TURN with its model while the ranking tags each
+    // session with one, so a mid-session model switch has no slice. With no
+    // "Other" slice to absorb it, its tokens used to be dropped and the bars
+    // came up short of the Tokens tile.
+    const point: CostSeriesPoint = {
+      bucketStartMs: 0,
+      costUsd: 0,
+      inputTokens: 970,
+      outputTokens: 0,
+      sessionCount: 0,
+      byModel: [
+        { modelId: 'model-a', costUsd: 0, inputTokens: 900, outputTokens: 0 },
+        { modelId: 'model-switched-to', costUsd: 0, inputTokens: 70, outputTokens: 0 },
+      ],
+    };
+    const stack = deriveModelStack([point], slices, 'tokens', () => 'x');
+    const catchAll = stack.series[stack.series.length - 1];
+    expect(catchAll).toMatchObject({ label: 'Other', colorVar: OTHER_SLICE_VAR });
+    expect(stack.rows[0][catchAll.key]).toBe(70);
+    const rowTotal = stack.series.reduce((sum, entry) => sum + (stack.rows[0][entry.key] as number), 0);
+    expect(rowTotal).toBe(970);
+
+    // Every known model: no catch-all series at all.
+    expect(deriveModelStack(costSeries, slices, 'tokens', () => 'x').series.map((entry) => entry.label))
+      .not.toContain('Other');
+  });
+});
+
+describe('deriveCacheHitRateSeries', () => {
+  const point = (bucketStartMs: number, fresh: number, write: number, read: number): TokenSeriesPoint => ({
+    bucketStartMs,
+    inputTokens: fresh,
+    outputTokens: 0,
+    cacheCreationTokens: write,
+    cacheReadTokens: read,
+    allocatedCostUsd: 0,
+    turnCount: 1,
+  });
+
+  it('is cache read over all input, per bucket', () => {
+    expect(deriveCacheHitRateSeries([point(1, 10, 30, 960)])).toEqual([{ x: 1, y: 0.96 }]);
+  });
+
+  it('leaves out a bucket with no input instead of plotting a dip to zero', () => {
+    const series = deriveCacheHitRateSeries([point(1, 10, 30, 960), point(2, 0, 0, 0), point(3, 20, 0, 980)]);
+    expect(series.map((entry) => entry.x)).toEqual([1, 3]);
+  });
+});
+
+describe('rankSlicesByMetric', () => {
+  // Fixed by the token fold: low effort is smallest by tokens, second by cost.
+  const slices = foldBreakdownForDonut([
+    makeEntry('high', 1160, 8),
+    makeEntry('default', 500, 1.34),
+    makeEntry('low', 260, 3),
+  ]);
+
+  it('ranks by the selected metric and keeps each slice its color', () => {
+    expect(rankSlicesByMetric(slices, true).map((slice) => slice.id)).toEqual(['high', 'low', 'default']);
+    expect(rankSlicesByMetric(slices, false).map((slice) => slice.id)).toEqual(['high', 'default', 'low']);
+    const colorById = new Map(slices.map((slice) => [slice.id, slice.colorVar]));
+    for (const slice of rankSlicesByMetric(slices, true)) expect(slice.colorVar).toBe(colorById.get(slice.id));
+  });
+
+  it('does not reorder its input', () => {
+    rankSlicesByMetric(slices, true);
+    expect(slices.map((slice) => slice.id)).toEqual(['high', 'default', 'low']);
   });
 });

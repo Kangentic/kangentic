@@ -18,6 +18,7 @@ import {
 import type { UsageDashboardStats, UsageStatsScopeKind, UsageTimePeriod } from '../../../shared/types';
 import { useSessionStore } from '../../stores/session-store';
 import { useLiveUsageAggregate } from '../../hooks/useLiveUsageAggregate';
+import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { CompactTile } from './CompactTile';
 import { agentShortName } from '../../utils/agent-display-name';
@@ -141,6 +142,9 @@ interface KpiTilesProps {
   /** True while a custom month window overrides the quick period (the delta
    *  baseline reads "vs preceding window" instead of the period label). */
   hasCustomWindow: boolean;
+  /** The dashboard's Cost/Tokens toggle (tokens when no agent reported cost).
+   *  The Burn Rate tile's value follows it; the other rate is its sub-line. */
+  metric: UsageMetricMode;
   tokenSparkline: TimePoint[];
   costSparkline: TimePoint[];
   burnSparkline: TimePoint[];
@@ -177,6 +181,7 @@ export function KpiTiles({
   effectiveProjectId,
   includeLive,
   hasCustomWindow,
+  metric,
   tokenSparkline,
   costSparkline,
   burnSparkline,
@@ -244,15 +249,18 @@ export function KpiTiles({
           : null,
       ].filter(Boolean).join(' ');
 
-  const burnIsUsd = kpis?.burnRateUsdPerHour != null && costKnown;
-  const burnValue = burnIsUsd
-    ? formatCost(kpis!.burnRateUsdPerHour!)
-    : kpis?.burnRateTokensPerHour != null
-      ? `${formatTokenCount(Math.round(kpis.burnRateTokensPerHour))} tok`
-      : '-';
-  const burnSub = burnIsUsd && kpis?.burnRateTokensPerHour != null
-    ? `${formatTokenCount(Math.round(kpis.burnRateTokensPerHour))} tok/hr`
-    : undefined;
+  // The Burn Rate tile follows the toggle like the sparkline under it: the
+  // selected rate is the value and the other one is the sub-line, so both
+  // rates stay on screen whichever way the toggle is set.
+  const usdPerHour = costKnown ? kpis?.burnRateUsdPerHour ?? null : null;
+  const tokensPerHour = kpis?.burnRateTokensPerHour ?? null;
+  const burnIsUsd = metric === 'cost' && usdPerHour !== null;
+  const tokensPerHourText = tokensPerHour !== null ? formatTokenCount(Math.round(tokensPerHour)) : null;
+  const burnValue = burnIsUsd ? formatCost(usdPerHour) : tokensPerHourText ?? '-';
+  const burnValueSuffix = burnValue === '-' ? undefined : burnIsUsd ? '/hr' : 'tokens/hr';
+  const burnSub = burnIsUsd
+    ? (tokensPerHourText !== null ? `${tokensPerHourText} tokens/hr` : undefined)
+    : (usdPerHour !== null ? `${formatCost(usdPerHour)}/hr` : undefined);
 
   // Deltas read the same base as the value above them. They used to compare
   // bare ledger totals while the hero showed ledger-plus-overlay, so the
@@ -267,8 +275,8 @@ export function KpiTiles({
   );
   const costDelta = deltaPercent(displayCost, previous?.totalCostUsd);
   const burnDelta = burnIsUsd
-    ? deltaPercent(kpis?.burnRateUsdPerHour ?? 0, previous?.burnRateUsdPerHour)
-    : deltaPercent(kpis?.burnRateTokensPerHour ?? 0, previous?.burnRateTokensPerHour);
+    ? deltaPercent(usdPerHour ?? 0, previous?.burnRateUsdPerHour)
+    : deltaPercent(tokensPerHour ?? 0, previous?.burnRateTokensPerHour);
 
   // Secondary-strip deltas (ledger windows only, like the heroes). Lines
   // compares total churn (added + removed); cache-read share deliberately has
@@ -292,13 +300,14 @@ export function KpiTiles({
   );
   const hasSubagentTurns = Boolean(kpis && kpis.subagentTurnCount > 0);
   const nestedCount = kpis?.subagentNestedCount ?? 0;
-  // Unchanged from what ships. Nesting is NOT added here: the sub-line gets
+  // One fact, the shape the Sessions tile has. The sub-line gets
   // (windowWidth - 88) / 8 - 50 px (measured against the live strip: 119px at a
-  // 1440 window) and already truncates, so a third fact would have to displace
-  // one of these two, and nesting is not worth that trade. It reads in the
-  // tooltip and in both MCP outputs instead, neither of which is space-bound.
+  // 1440 window), and "5,845 agent(s), 13.5B cached" truncated there. The cache
+  // read and the nesting count read in the tooltip and in both MCP outputs
+  // instead, neither of which is space-bound, and the Cache Reads tile beside
+  // this one already covers the cache.
   const subagentSub = hasSubagentTurns
-    ? `${kpis!.subagentCount} agent(s), ${formatTokenCount(kpis!.subagentCacheReadTokens)} cached`
+    ? `${kpis!.subagentCount.toLocaleString()} ${kpis!.subagentCount === 1 ? 'subagent' : 'subagents'}`
     : undefined;
   // A blind range is not an empty one. Only Claude reports subagent usage today,
   // so a Codex or Gemini range renders the same `-` a genuinely quiet Claude
@@ -380,7 +389,7 @@ export function KpiTiles({
           label="Burn Rate"
           icon={<Flame size={14} />}
           value={burnValue}
-          valueSuffix={burnValue === '-' ? undefined : '/hr'}
+          valueSuffix={burnValueSuffix}
           sub={burnSub}
           title="Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
           delta={burnDelta}
@@ -399,7 +408,7 @@ export function KpiTiles({
         <CompactTile
           label="Sessions"
           icon={<SquareTerminal size={14} />}
-          value={String(kpis?.sessionCount ?? 0)}
+          value={(kpis?.sessionCount ?? 0).toLocaleString()}
           sub={liveSessionCount > 0 ? `${liveSessionCount} active now` : undefined}
           // Names what it counts. A resume is a separate CLI invocation and so
           // a separate session, which is the convention Claude Code itself

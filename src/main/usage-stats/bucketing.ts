@@ -9,7 +9,7 @@ import type {
   UsageTimePeriod,
 } from '../../shared/types';
 import { computePeriodCutoff } from '../../shared/period-cutoff';
-import { humanizeModelId, parseModelId } from '../../shared/model-id';
+import { baseModelLabel, parseModelId } from '../../shared/model-id';
 import type {
   UsageCostGroupRow,
   UsageRollupRow,
@@ -556,9 +556,9 @@ export function buildModelBreakdown(rollupRows: UsageRollupRow[]): ModelUsageBre
     if (!entry) {
       entry = {
         modelId: baseId,
-        modelDisplayName: baseId === null
-          ? null
-          : row.modelDisplayName ?? humanizeModelId(baseId) ?? baseId,
+        // One label per base model, without the context-window note the
+        // first session's status line may have carried.
+        modelDisplayName: baseId === null ? null : baseModelLabel(row.modelDisplayName, baseId),
         inputTokens: 0,
         outputTokens: 0,
         costUsd: 0,

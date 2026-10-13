@@ -5,13 +5,21 @@ import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { formatRelativeTime } from '../../lib/datetime';
 import { agentShortName } from '../../utils/agent-display-name';
+import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 
+/**
+ * Column keys. The two columns the Cost/Tokens toggle swaps keep ONE key each
+ * across the flip (`metricValue` is Cost or Cache Read, `metricShare` is Cost
+ * Share or Token Share): `DataTable` reads its default sort once, at mount, and
+ * skips a sort level whose column is gone. With stable keys the default sort
+ * follows the toggle, and a sort the user picked on another column stays.
+ */
 type ProjectColumnKey =
   | 'project'
   | 'tokensIn'
   | 'tokensOut'
-  | 'cost'
-  | 'costShare'
+  | 'metricValue'
+  | 'metricShare'
   | 'lines'
   | 'files'
   | 'toolCalls'
@@ -23,12 +31,15 @@ type ProjectColumnKey =
 /** Row shape with the client-derived comparison ratios attached. */
 interface ProjectComparisonRow extends ProjectUsageSummary {
   costShare: number;
+  /** Share of fresh input plus output across all projects. */
+  tokenShare: number;
+  cacheReadTokens: number;
   avgActiveMs: number | null;
 }
 
-/** Inline mini-bar for the cost-share column (value already 0..1). The number
+/** Inline mini-bar for a share column (value already 0..1). The number
  *  beside it keeps the value reachable without reading the bar. */
-function CostShareCell({ share }: { share: number }) {
+function ShareCell({ share }: { share: number }) {
   return (
     <span className="flex items-center gap-2 justify-end">
       <span className="w-14 h-1.5 rounded-full bg-edge/40 overflow-hidden flex-shrink-0" aria-hidden>
@@ -39,7 +50,45 @@ function CostShareCell({ share }: { share: number }) {
   );
 }
 
-const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
+const COST_COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
+  {
+    key: 'metricValue',
+    label: 'Cost',
+    align: 'right',
+    headerTitle: 'API-equivalent cost as reported by agents (subscription sessions may report $0)',
+    sortValue: (row) => row.costUsd,
+    render: (row) => <span className="tabular-nums">{formatCost(row.costUsd)}</span>,
+  },
+  {
+    key: 'metricShare',
+    label: 'Cost Share',
+    align: 'right',
+    headerTitle: "This project's share of the total cost across all projects in the range",
+    sortValue: (row) => row.costShare,
+    render: (row) => <ShareCell share={row.costShare} />,
+  },
+];
+
+const TOKEN_COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
+  {
+    key: 'metricValue',
+    label: 'Cache Read',
+    align: 'right',
+    headerTitle: 'Tokens served from the prompt cache, counted apart from Tokens In',
+    sortValue: (row) => row.cacheReadTokens,
+    render: (row) => <span className="tabular-nums">{formatTokenCount(row.cacheReadTokens)}</span>,
+  },
+  {
+    key: 'metricShare',
+    label: 'Token Share',
+    align: 'right',
+    headerTitle: 'Share of fresh input plus output across all projects in the range',
+    sortValue: (row) => row.tokenShare,
+    render: (row) => <ShareCell share={row.tokenShare} />,
+  },
+];
+
+const LEADING_COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
   {
     key: 'project',
     label: 'Project',
@@ -63,22 +112,9 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
     sortValue: (row) => row.outputTokens,
     render: (row) => <span className="tabular-nums">{formatTokenCount(row.outputTokens)}</span>,
   },
-  {
-    key: 'cost',
-    label: 'Cost',
-    align: 'right',
-    headerTitle: 'API-equivalent cost as reported by agents (subscription sessions may report $0)',
-    sortValue: (row) => row.costUsd,
-    render: (row) => <span className="tabular-nums">{formatCost(row.costUsd)}</span>,
-  },
-  {
-    key: 'costShare',
-    label: 'Cost Share',
-    align: 'right',
-    headerTitle: "This project's share of the total cost across all projects in the range",
-    sortValue: (row) => row.costShare,
-    render: (row) => <CostShareCell share={row.costShare} />,
-  },
+];
+
+const TRAILING_COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
   {
     key: 'lines',
     label: 'Lines',
@@ -145,14 +181,21 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
     align: 'right',
     headerTitle: 'Finalized sessions in the range',
     sortValue: (row) => row.sessionCount,
-    render: (row) => <span className="tabular-nums">{row.sessionCount}</span>,
+    render: (row) => <span className="tabular-nums">{row.sessionCount.toLocaleString()}</span>,
   },
 ];
 
+/** The table's columns for one view of the Cost/Tokens toggle. */
+const COLUMNS_BY_METRIC: Record<UsageMetricMode, DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[]> = {
+  cost: [...LEADING_COLUMNS, ...COST_COLUMNS, ...TRAILING_COLUMNS],
+  tokens: [...LEADING_COLUMNS, ...TOKEN_COLUMNS, ...TRAILING_COLUMNS],
+};
+
 /** Per-project comparison table for the All-Projects scope, sortable on every
- *  column. Ratios (cost share, avg active) derive here from the payload
- *  sub-totals. Clicking a row re-scopes the dashboard to that project (without
- *  switching the app's current project).
+ *  column. Ratios (cost share, token share, avg active) derive here from the
+ *  payload sub-totals. Clicking a row re-scopes the dashboard to that project
+ *  (without switching the app's current project). The Tokens view swaps Cost
+ *  and Cost Share for Cache Read and Token Share.
  *
  *  There is no blended $/Mtok column. Cost reaches back to a project's first
  *  session while per-turn token capture starts later, so the ratio divided a
@@ -160,16 +203,21 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
  *  multiple that varied per project. */
 export function PerProjectTable({
   projects,
+  metric,
   onProjectClick,
 }: {
   projects: ProjectUsageSummary[];
+  metric: UsageMetricMode;
   onProjectClick?: (projectId: string) => void;
 }) {
   const rows = useMemo<ProjectComparisonRow[]>(() => {
     const totalCost = projects.reduce((sum, project) => sum + project.costUsd, 0);
+    const totalTokens = projects.reduce((sum, project) => sum + project.inputTokens + project.outputTokens, 0);
     return projects.map((project) => {
       return {
         ...project,
+        tokenShare: totalTokens > 0 ? (project.inputTokens + project.outputTokens) / totalTokens : 0,
+        cacheReadTokens: project.cacheReadTokens ?? 0,
         // Defensive: a payload cached from an older shape (or a dev server
         // mid-upgrade) may lack the newer fields - never render NaN.
         toolCallCount: project.toolCallCount ?? 0,
@@ -196,11 +244,13 @@ export function PerProjectTable({
   return (
     <div className="bg-surface-raised border border-edge rounded-lg p-2" data-testid="per-project-table">
       <DataTable
-        columns={COLUMNS}
+        columns={COLUMNS_BY_METRIC[metric]}
         data={rows}
         rowKey={(row) => row.projectId}
         onRowClick={onProjectClick ? (row) => onProjectClick(row.projectId) : undefined}
-        defaultSortKey="cost"
+        // By share: cost in the Cost view, fresh input plus output in the
+        // Tokens view, through the one stable key.
+        defaultSortKey="metricShare"
         defaultSortDirection="desc"
         emptyMessage="No project usage recorded yet"
         rowTestId="per-project-row"

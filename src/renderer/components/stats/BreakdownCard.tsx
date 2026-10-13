@@ -4,7 +4,7 @@ import { formatCost } from '../../utils/format-session';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { ChartCard } from './ChartCard';
 import { KngDonut } from './charts/KngDonut';
-import type { DonutSlice } from './useStatsData';
+import { rankSlicesByMetric, type DonutSlice } from './useStatsData';
 
 interface BreakdownCardProps {
   title: string;
@@ -12,8 +12,8 @@ interface BreakdownCardProps {
   costKnown: boolean;
   loading: boolean;
   testId: string;
-  /** The dashboard's Cost/Tokens toggle: sizes the donut arcs, center total,
-   *  share bars, and tooltips. The value list always shows BOTH numbers. */
+  /** The dashboard's Cost/Tokens toggle: sizes the donut arcs, center total
+   *  and share bars, and ranks the list, whose bright value is this metric. */
   metric: UsageMetricMode;
   /** Suspend donut animations (e.g. during an active window resize). */
   animate?: boolean;
@@ -22,15 +22,16 @@ interface BreakdownCardProps {
 /**
  * Donut + value list (the mockup's "by model" form). The list IS the
  * accessibility relief for the donut: every slice always renders with its
- * swatch, name, share bar, tokens, and cost, so identity and values are never
+ * swatch, name, share bar, value and share, so identity and values are never
  * color-alone (this is what permits the sub-3:1 categorical slots the
  * palette validator WARNs about on some themes). The proportional share bar
  * doubles as the row's middle fill, so relative share reads at a glance
  * without matching donut colors.
  *
- * Slice identity (rank order and colors) is fixed by the token fold so an
- * entity keeps its color when the metric toggles; only the PROPORTIONS
- * (arcs, bars, center total) re-key to the selected metric.
+ * Colors are fixed by the token fold, so an entity keeps its color when the
+ * metric toggles. The list RANKS by the selected metric and shows it as the
+ * bright value beside its share; the other metric is in the row's tooltip.
+ * A model that is 6% of tokens and 13% of spend moves up the Cost view's list.
  */
 export function BreakdownCard({ title, slices, costKnown, loading, testId, metric, animate = true }: BreakdownCardProps) {
   const byCost = metric === 'cost' && costKnown;
@@ -43,10 +44,11 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
   // Stable per (payload slices, metric): keeps the memo'd KngDonut from
   // re-rendering (and re-running its animation matcher) on unrelated
   // StatsPage renders such as live-usage ticks or poll refreshes.
-  const { donutSlices, metricTotal, leader } = useMemo(() => {
+  const { donutSlices, listSlices, metricTotal, leader } = useMemo(() => {
     const mapped = slices.map((slice) => ({ ...slice, value: byCost ? slice.costUsd : slice.value }));
     return {
       donutSlices: mapped,
+      listSlices: rankSlicesByMetric(slices, byCost),
       metricTotal: mapped.reduce((sum, slice) => sum + slice.value, 0),
       // The dimension's dominant entry BY THE SELECTED METRIC (the cost
       // leader can differ from the token leader).
@@ -56,6 +58,14 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
       ),
     };
   }, [slices, byCost]);
+  const sharePercent = (slice: DonutSlice) =>
+    (metricTotal > 0 ? Math.round((sliceMetricValue(slice) / metricTotal) * 100) : 0);
+  // The row's tooltip: the shown metric, then the other one ("Opus 5: $43.26,
+  // 111.2M tokens"). Cost is named only where it is known.
+  const tokensText = (slice: DonutSlice) => `${formatTokenCount(slice.value)} tokens`;
+  const rowTitle = (slice: DonutSlice) => (byCost
+    ? `${slice.label}: ${formatCost(slice.costUsd)}, ${tokensText(slice)}`
+    : costKnown ? `${slice.label}: ${tokensText(slice)}, ${formatCost(slice.costUsd)}` : `${slice.label}: ${tokensText(slice)}`);
 
   return (
     <ChartCard
@@ -82,14 +92,13 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
           />
         </div>
         <ul className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden max-h-full space-y-1.5" data-testid={`${testId}-list`}>
-          {slices.map((slice) => (
+          {listSlices.map((slice) => (
             <li
               key={slice.id}
               className={`flex items-center gap-2 text-xs rounded transition-colors ${hoveredSliceId === slice.id ? 'bg-surface-hover/40' : ''}`}
               data-testid={`${testId}-row`}
-              title={metricTotal > 0
-                ? `${slice.label} - ${Math.round((sliceMetricValue(slice) / metricTotal) * 100)}% of ${byCost ? 'cost' : 'tokens'}`
-                : slice.label}
+              data-slice-id={slice.id}
+              title={rowTitle(slice)}
               onMouseEnter={() => setHoveredSliceId(slice.id)}
               onMouseLeave={() => setHoveredSliceId(null)}
             >
@@ -108,10 +117,10 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
                   }}
                 />
               </div>
-              <span className="text-fg tabular-nums">{formatTokenCount(slice.value)}</span>
-              {costKnown && (
-                <span className="text-fg-muted tabular-nums w-14 text-right">{formatCost(slice.costUsd)}</span>
-              )}
+              <span className="text-fg tabular-nums" data-testid={`${testId}-row-value`}>
+                {metricFormatter(sliceMetricValue(slice))}
+              </span>
+              <span className="text-fg-muted tabular-nums w-8 text-right">{`${sharePercent(slice)}%`}</span>
             </li>
           ))}
         </ul>

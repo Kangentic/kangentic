@@ -42,6 +42,16 @@ export interface TurnUsageOwner {
  * buckets in the window), never O(sessions x buckets) - the shape that let
  * a year of history stall the main thread.
  */
+/** Main-thread fresh input and output for one fixed UTC bucket and model
+ *  (`getGroupedModelUsageSince`). `modelId` is the turn's own model id, null
+ *  when the transcript named none. */
+export interface TurnModelGroupRow {
+  bucketStartMs: number;
+  modelId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface GroupedTurnUsageRow {
   /** UTC-aligned group start (epoch ms), a multiple of the groupMs passed in. */
   bucketStartMs: number;
@@ -425,6 +435,40 @@ export class ConversationUsageStore {
       GROUP BY bucketStartMs
       ORDER BY bucketStartMs ASC
     `).all(...turnWindowParams, ...costParams, groupMs, groupMs, ...turnWindowParams) as GroupedTurnUsageRow[];
+  }
+
+  /**
+   * Main-thread fresh input and output per fixed UTC bucket of `groupMs` and
+   * per model, for the usage dashboard's Tokens view ("Tokens per day by
+   * model"). Read from this ledger, never from `usage_history`'s token
+   * columns: those are status-line context totals, and a chart built on them
+   * did not sum to the Tokens tile beside it (1.6B against 307.5M on the
+   * dogfooding install). Same window and NULL-`ts` rule as
+   * `getGroupedUsageSince`. Ordered by bucket, then each model's first turn, so
+   * a point's slices keep a stable order.
+   */
+  getGroupedModelUsageSince(sinceMs: number | null, groupMs: number, untilMs: number | null = null): TurnModelGroupRow[] {
+    const clauses = [MAIN_THREAD_ONLY, 'ts IS NOT NULL'];
+    const windowParams: number[] = [];
+    if (sinceMs !== null) {
+      clauses.push('ts >= ?');
+      windowParams.push(sinceMs);
+    }
+    if (untilMs !== null) {
+      clauses.push('ts < ?');
+      windowParams.push(untilMs);
+    }
+    return this.db.prepare(`
+      SELECT
+        CAST(ts / ? AS INTEGER) * ? AS bucketStartMs,
+        model AS modelId,
+        COALESCE(SUM(input_tokens), 0) AS inputTokens,
+        COALESCE(SUM(output_tokens), 0) AS outputTokens
+      FROM conversation_turn_usage
+      WHERE ${clauses.join(' AND ')}
+      GROUP BY bucketStartMs, model
+      ORDER BY bucketStartMs ASC, MIN(ts) ASC
+    `).all(groupMs, groupMs, ...windowParams) as TurnModelGroupRow[];
   }
 
   /** Usage for a specific set of MAIN-THREAD turns - the join a conversation view

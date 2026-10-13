@@ -563,6 +563,25 @@ describe('breakdowns', () => {
     expect(breakdown[0].modelDisplayName).toBe('Opus 4.8');
   });
 
+  it('labels a model without the context-window note its first [1m] session carried', () => {
+    const rollup = [
+      makeRollup({ modelId: 'claude-opus-4-8[1m]', modelDisplayName: 'Opus 4.8 (1M context)', inputTokens: 10 }),
+      makeRollup({ modelId: 'claude-opus-4-8', modelDisplayName: 'Opus 4.8', inputTokens: 5 }),
+      makeRollup({ modelId: 'claude-opus-5-5[1m]', modelDisplayName: 'Opus 5.5 (1M)', inputTokens: 3 }),
+    ];
+    const breakdown = buildModelBreakdown(rollup);
+    expect(breakdown.map((entry) => entry.modelDisplayName)).toEqual(['Opus 4.8', 'Opus 5.5']);
+  });
+
+  it('keeps another agent\'s own spelling, and derives a label only when there is no display name', () => {
+    const rollup = [
+      makeRollup({ modelId: 'gpt-5.2-codex', modelDisplayName: 'GPT-5.2 Codex', inputTokens: 10 }),
+      makeRollup({ modelId: 'claude-sonnet-5-5', modelDisplayName: null, inputTokens: 5 }),
+    ];
+    const breakdown = buildModelBreakdown(rollup);
+    expect(breakdown.map((entry) => entry.modelDisplayName)).toEqual(['GPT-5.2 Codex', 'Sonnet 5.5']);
+  });
+
   it('sums pre-grouped session counts instead of counting rows', () => {
     const rollup = [
       makeRollup({ modelId: 'claude-opus-4-8', sessionCount: 4 }),

@@ -127,6 +127,18 @@ describe('formatTokenCount', () => {
   it('renders millions with an uppercase M', () => {
     expect(formatTokenCount(1200000)).toBe('1.2M');
   });
+
+  it('scales on to B and T instead of printing thousands of millions', () => {
+    expect(formatTokenCount(87_378_754_432)).toBe('87.4B');
+    expect(formatTokenCount(1_000_000_000)).toBe('1B');
+    expect(formatTokenCount(2_500_000_000_000)).toBe('2.5T');
+  });
+
+  it('moves a value that rounds up to 1000 of its unit to the next unit', () => {
+    expect(formatTokenCount(999_960)).toBe('1M');
+    expect(formatTokenCount(999_960_000)).toBe('1B');
+    expect(formatTokenCount(999_400)).toBe('999.4k');
+  });
 });
 
 describe('formatContextWindow', () => {

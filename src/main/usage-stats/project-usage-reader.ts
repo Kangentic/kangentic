@@ -8,7 +8,7 @@ import {
 } from '../db/repositories/usage-history-repository';
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
 import { BackgroundCallRepository, type BackgroundCallGroupRow } from '../db/repositories/background-call-repository';
-import { ConversationUsageStore, type GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
+import { ConversationUsageStore, type GroupedTurnUsageRow, type TurnModelGroupRow } from '../retrieval/conversation/conversation-usage-store';
 
 /**
  * One project's usage reads, each a SQL-side aggregate: the usage-stats
@@ -82,6 +82,12 @@ export interface ProjectUsageReader {
    * above. Empty for a database main has not migrated since the table arrived.
    */
   listBackgroundCallGroups(sinceIso: string | null, untilIso: string | null, groupMs: number): BackgroundCallGroupRow[];
+  /**
+   * Main-thread fresh input and output per fixed UTC bucket and model, from
+   * the per-turn ledger: the Tokens view's by-model bars, which then sum to
+   * the Tokens tile. Same window as `listTurnGroups`.
+   */
+  listTurnModelGroups(sinceMs: number | null, groupMs: number, untilMs: number | null): TurnModelGroupRow[];
 }
 
 export type UsageReadName = keyof ProjectUsageReader;
@@ -112,5 +118,6 @@ export function localUsageReader(db: Database.Database): ProjectUsageReader {
     getActiveTotals: (sinceMs, untilMs) => new ActivityIntervalStore(db).getActiveTotals(sinceMs, untilMs),
     listBackgroundCallGroups: (sinceIso, untilIso, groupMs) =>
       new BackgroundCallRepository(db).listGroups(sinceIso, untilIso, groupMs),
+    listTurnModelGroups: (sinceMs, groupMs, untilMs) => turnUsage.getGroupedModelUsageSince(sinceMs, groupMs, untilMs),
   };
 }
