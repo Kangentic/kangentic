@@ -123,4 +123,33 @@ describe('extractStreamedAnswer', () => {
     expect(extractStreamedAnswer(stream, onUsage)).toContain('C1: yes');
     expect(onUsage.mock.calls[0][0]).toMatchObject({ model: 'claude-haiku-5-5', outputTokens: 35 });
   });
+
+  it('reports the result line\'s usage BEFORE an error result throws: a failed streamed call was still paid for', () => {
+    const onUsage = vi.fn();
+    const stream = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Searching.' }] } }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        result: 'API Error: 529 overloaded',
+        total_cost_usd: 0.0003,
+        usage: { input_tokens: 7, cache_creation_input_tokens: 0, cache_read_input_tokens: 100, output_tokens: 1 },
+      }),
+    ].join('\n');
+
+    expect(() => extractStreamedAnswer(stream, onUsage)).toThrow('API Error: 529 overloaded');
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage).toHaveBeenCalledWith({
+      model: null, inputTokens: 7, cacheCreationInputTokens: 0, cacheReadInputTokens: 100, outputTokens: 1, costUsd: 0.0003,
+    });
+  });
+
+  it('reports nothing for a stream cut before its result line (a timeout or output budget)', () => {
+    const onUsage = vi.fn();
+    const cutStream = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Partial.' }] } });
+
+    expect(extractStreamedAnswer(cutStream, onUsage)).toBe('Partial.');
+    expect(onUsage).not.toHaveBeenCalled();
+  });
 });
