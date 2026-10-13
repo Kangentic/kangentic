@@ -17,6 +17,7 @@
 import { EventType, PromptReason, type Session, type SessionEvent } from '../../../shared/types';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { ResolvedAutomationAgent } from '../../automations/automation-agent';
+import { startRecordedCall, type BackgroundCallSink } from '../../background-calls/record-background-call';
 import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from './answer-run-directory';
 import { tryAcquireSummarizeSlot } from './summarize-rate-limit';
 
@@ -35,6 +36,9 @@ export interface CommandTerminalNamerDeps {
   resolveNamingAgent: () => Promise<ResolvedAutomationAgent>;
   /** `AppConfig.autoNameRateLimitPerHour` (0 means no limit). */
   readRateLimit: () => number;
+  /** Where the naming call is recorded, in the terminal's project's ledger;
+   *  absent records nothing. */
+  recordCall?: BackgroundCallSink;
   /** Injectable for tests; defaults to the shared summarize window. */
   tryAcquireSlot?: (limitPerHour: number) => boolean;
 }
@@ -82,10 +86,10 @@ export class CommandTerminalNamer {
     // First prompt wins, and only once: a later prompt never renames it.
     this.attemptedSessionIds.add(sessionId);
     if (session.commandTerminalLabel) return;
-    void this.nameFromPrompt(sessionId, promptText);
+    void this.nameFromPrompt(sessionId, session.projectId ?? null, promptText);
   };
 
-  private async nameFromPrompt(sessionId: string, promptText: string): Promise<void> {
+  private async nameFromPrompt(sessionId: string, projectId: string | null, promptText: string): Promise<void> {
     try {
       // Resolved BEFORE the rate limit, so a terminal that cannot be named
       // spends no slot.
@@ -94,12 +98,20 @@ export class CommandTerminalNamer {
       const tryAcquireSlot = this.deps.tryAcquireSlot ?? tryAcquireSummarizeSlot;
       if (!tryAcquireSlot(this.deps.readRateLimit())) return;
       const answerHome = await ensureAnswerHomeDirectory();
-      const title = await withAnswerRunDirectory((runDirectory) => resolved.adapter.summarize!(
+      const title = await startRecordedCall(this.deps.recordCall, {
+        projectId,
+        job: 'terminal_name',
+        taskId: null,
+        swimlaneId: null,
+        agent: resolved.agentName,
+        requestedModel: resolved.model,
+        effort: resolved.effort,
+      }, (onUsage) => withAnswerRunDirectory((runDirectory) => resolved.adapter.summarize!(
         promptText,
         resolved.cliPath,
         answerHome,
-        { model: resolved.model, effort: resolved.effort, runDirectory },
-      ));
+        { model: resolved.model, effort: resolved.effort, runDirectory, onUsage },
+      ))).done;
       if (this.disposed || !title) return;
       this.deps.sessionManager.setCommandTerminalLabel(sessionId, title);
     } catch (error) {

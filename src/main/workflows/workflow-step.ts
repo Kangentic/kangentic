@@ -90,7 +90,7 @@ export async function runWorkflowStep(
     move: null,
     agentReply,
     rows: [{ automationId: WORKFLOW_STEP_CHECK_ID, name: 'Step done', condition: workflowStepCondition(column, route) }],
-  }, { signal: input.signal });
+  }, { signal: input.signal }, { projectId: payload.projectId, taskId: task.id, swimlaneId: column.id, job: 'workflow_step' });
   // No Automation agent, or it could not run: a human gate until one can.
   if (!outcome.ok) return;
   if (input.signal.aborted) return;
@@ -113,6 +113,7 @@ export async function runWorkflowStep(
         met,
         reason: answer.reason,
         detail,
+        backgroundCallId: outcome.callId,
       });
     } catch (error) {
       console.warn('[WORKFLOW] Could not record the step check:', error);

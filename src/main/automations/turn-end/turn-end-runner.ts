@@ -304,19 +304,23 @@ async function runRows(
   const conditional = pending.filter((row) => hasCondition(row));
   const answers = new Map<string, RunConditionAnswer>();
   let conditionUnavailableReason: string | undefined;
+  let conditionUnavailableCallId: string | null = null;
   let runnable = pending;
   if (conditional.length > 0) {
     const templateVars = engine.resolveGroupTemplateVars(task, column, 'turn_end', { agentReply });
     // No time limit, since a turn end holds no lock, but a move that supersedes
     // this pass stops the check, so it does not hold a check slot for nothing.
+    // Each answer names the call that gave it, so its run row links to it.
     const outcome = await engine.checkConditions(
       engine.conditionCheckInput(task, column, 'turn_end', conditional, templateVars, { agentReply }),
       { signal: controller.signal },
+      engine.conditionCheckCall(task, column),
     );
     if (outcome.ok) {
       for (const [automationId, answer] of outcome.answers) answers.set(automationId, answer);
     } else {
       conditionUnavailableReason = outcome.reason;
+      conditionUnavailableCallId = outcome.callId ?? null;
       // Recorded once per visit, not at every turn end of a long chat.
       runnable = pending.filter((row) => !hasCondition(row)
         || !runs.hasSkipSince(row.id, task.id, visitStartedAt, outcome.reason));
@@ -346,6 +350,7 @@ async function runRows(
     agentReply,
     conditionAnswers: answers,
     conditionUnavailableReason,
+    conditionUnavailableCallId,
     deliverToAgent: async (message, mode, runSignal) => {
       await deliverMessageToSession(context, {
         taskId: task.id,

@@ -41,6 +41,8 @@ import { createSummaryScheduler } from './summary/summary-scheduler';
 import { resolveAnswerRun } from './answer-run';
 import { codeSweepPlan, taskSummariesOn, type CodeSweepPlan } from '../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
+import { startRecordedCall } from '../background-calls/record-background-call';
+import { backgroundCallSink } from '../ipc/helpers/background-call-sink';
 import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
@@ -497,9 +499,19 @@ const summaryScheduler = createSummaryScheduler<IpcContext>({
       agent: run.agentName,
       model: run.model,
       effort: run.effort,
-      write: (prompt) => withAnswerRunDirectory((runDirectory) => (
-        run.answerFromContext(prompt, run.cliPath, run.answerHome, run.model, { effort: run.effort, runDirectory })
-      )),
+      // Each batch is one background call in the project's ledger. A batch
+      // covers about ten tasks, so the call names none.
+      write: (prompt) => startRecordedCall(backgroundCallSink(context), {
+        projectId,
+        job: 'task_summary',
+        taskId: null,
+        swimlaneId: null,
+        agent: run.agentName,
+        requestedModel: run.model,
+        effort: run.effort,
+      }, (onUsage) => withAnswerRunDirectory((runDirectory) => (
+        run.answerFromContext(prompt, run.cliPath, run.answerHome, run.model, { effort: run.effort, runDirectory, onUsage })
+      ))).done,
     };
   },
   // A summary is part of its task's record, so the record re-reads, and the

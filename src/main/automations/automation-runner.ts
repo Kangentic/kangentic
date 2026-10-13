@@ -125,6 +125,9 @@ export interface RunAutomationsOptions {
   checkConditions?: (rows: ColumnAutomation[], limits: ConditionCheckLimits) => Promise<ConditionCheckResult>;
   /** Why a Condition could not be checked, when neither of the above is given. */
   conditionUnavailableReason?: string;
+  /** The call that ran without answering (a timeout), so the skips it caused
+   *  link to it: it was still paid for. */
+  conditionUnavailableCallId?: string | null;
 }
 
 /**
@@ -134,10 +137,11 @@ export interface RunAutomationsOptions {
  */
 export const CONDITION_CHECK_WAIT_MS = 60_000;
 
-/** What a Condition check hands the runner: answers by automation id, or why there are none. */
+/** What a Condition check hands the runner: answers by automation id, or why
+ *  there are none and the call that ran without answering, if one did. */
 export type ConditionCheckResult =
   | { ok: true; answers: ReadonlyMap<string, RunConditionAnswer> }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; callId?: string | null };
 
 /** A row whose Frequency limit is spent on this task, with the reason, or null. */
 export function frequencyLimitReason(automation: ColumnAutomation, runs: AutomationRunRepository, taskId: string): string | null {
@@ -182,6 +186,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
   // a check costs a model call.
   const conditionAnswers = new Map<string, RunConditionAnswer>(options.conditionAnswers ?? []);
   let conditionUnavailable = options.conditionUnavailableReason ?? 'The condition was not checked.';
+  let conditionUnavailableCallId = options.conditionUnavailableCallId ?? null;
   const unanswered = automations.filter((automation) => hasCondition(automation)
     && !conditionAnswers.has(automation.id)
     && registry.get(automation.type) !== undefined
@@ -199,6 +204,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       for (const [automationId, answer] of checked.answers) conditionAnswers.set(automationId, answer);
     } else {
       conditionUnavailable = checked.reason;
+      conditionUnavailableCallId = checked.callId ?? null;
     }
   }
 
@@ -273,6 +279,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     if (hasCondition(automation)) {
       const answer = conditionAnswers.get(automation.id);
       if (!answer) {
+        started.backgroundCallId = conditionUnavailableCallId;
         runs.recordSkipped(started, conditionUnavailable);
         record('skipped', conditionUnavailable);
         continue;

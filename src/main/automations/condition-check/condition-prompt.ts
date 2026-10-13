@@ -53,6 +53,9 @@ export interface ConditionPromptInput {
 export interface ConditionAnswer {
   met: boolean;
   reason: string | null;
+  /** The background call that gave this answer (`background_calls.id`), so the
+   *  run row it lands on can name the call's model and tokens. */
+  callId?: string | null;
 }
 
 const DESCRIPTION_CHARS = 2_000;

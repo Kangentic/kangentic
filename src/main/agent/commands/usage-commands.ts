@@ -1,4 +1,5 @@
 import type { UsageDashboardStats, UsageStatsScope, UsageTimePeriod } from '../../../shared/types';
+import { BACKGROUND_CALL_JOB_LABELS } from '../../../shared/background-call-jobs';
 import { usageStatsService } from '../../usage-stats/usage-stats-service';
 import type { CommandHandler, CommandResponse } from './types';
 
@@ -77,7 +78,33 @@ function formatUsageMessage(stats: UsageDashboardStats): string {
     const skipped = stats.skippedProjects?.length ?? 0;
     lines.push(`  Projects aggregated: ${stats.perProject.length}${skipped > 0 ? ` (${skipped} skipped, unreadable DB)` : ''}`);
   }
+  const backgroundLine = formatBackgroundLine(stats.background);
+  if (backgroundLine) lines.push(backgroundLine);
   return lines.join('\n');
+}
+
+/**
+ * The headless calls Kangentic made on the user's behalf, as one line after
+ * the session lines, the same numbers the dashboard's Background card shows.
+ * Never added to the session figures above.
+ */
+function formatBackgroundLine(background: UsageDashboardStats['background']): string | null {
+  if (!background || background.totals.calls === 0) return null;
+  const totals = background.totals;
+  const cost = totals.costUsd === null ? '' : `, $${totals.costUsd.toFixed(2)}`;
+  const tokens = totals.reportedCalls === 0
+    ? 'usage not reported'
+    : `Tokens: ${formatTokens(totals.inputTokens)} fresh input + ${formatTokens(totals.outputTokens)} output, ${formatTokens(totals.cacheCreationInputTokens)} cache write, ${formatTokens(totals.cacheReadInputTokens)} cache read`;
+  const jobs = background.byJob
+    .filter((job) => job.calls > 0)
+    .map((job) => {
+      const label = BACKGROUND_CALL_JOB_LABELS[job.job];
+      const jobLabel = label.charAt(0).toLowerCase() + label.slice(1);
+      return `${jobLabel} ${formatTokens(job.calls)}${job.costUsd === null ? '' : ` ($${job.costUsd.toFixed(2)})`}`;
+    })
+    .join(', ');
+  const jobsSentence = jobs.charAt(0).toUpperCase() + jobs.slice(1);
+  return `  Background (not in the totals above): ${formatTokens(totals.calls)} calls${cost}. ${tokens}. ${jobsSentence}.`;
 }
 
 /**
@@ -109,8 +136,9 @@ export const handleGetUsageStats: CommandHandler = async (params): Promise<Comma
   const data = includeSeries
     ? stats
     : (() => {
-        const { tokenSeries: _tokenSeries, costSeries: _costSeries, ...rest } = stats;
-        return rest;
+        const { tokenSeries: _tokenSeries, costSeries: _costSeries, background, ...rest } = stats;
+        // The Background per-day rows are a series too: kept only on request.
+        return background ? { ...rest, background: { totals: background.totals, byJob: background.byJob } } : rest;
       })();
   return { success: true, message: formatUsageMessage(stats), data };
 };

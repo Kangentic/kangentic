@@ -1105,6 +1105,44 @@ export interface AutomationRun {
   condition_met: boolean | null;
   /** The Automation agent's one-line reason for its answer, or null. */
   condition_reason: string | null;
+  /**
+   * The background call that answered the row's Condition: which agent and
+   * model, and what it cost. Null when the row has no Condition, the answer
+   * came from a call recorded before calls were, or the call's record is gone.
+   */
+  check?: AutomationRunCheck | null;
+}
+
+/**
+ * A headless agent call Kangentic makes on the user's behalf, by what it was
+ * for. None of these is a session, so none reaches the session usage ledger;
+ * each is recorded in `background_calls` instead.
+ */
+export type BackgroundCallJob = 'condition_check' | 'workflow_step' | 'task_summary' | 'task_title' | 'terminal_name';
+
+/** How a background call's CLI run ended. A timed-out run was still paid for. */
+export type BackgroundCallOutcome = 'succeeded' | 'failed' | 'timed_out';
+
+/** The background call that answered a run's Condition, as the run log shows it. */
+export interface AutomationRunCheck {
+  callId: string;
+  agent: string;
+  /** The model the CLI reported answering with, else the one Kangentic asked
+   *  for, else null (the agent's own default). */
+  model: string | null;
+  /** True when `model` is what the CLI reported rather than what was asked for. */
+  modelReported: boolean;
+  effort: string | null;
+  /** Token counts and cost are null, never zero, when the agent reports none. */
+  inputTokens: number | null;
+  cacheCreationInputTokens: number | null;
+  cacheReadInputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  durationMs: number;
+  outcome: BackgroundCallOutcome;
+  /** How many run rows this one call answered. */
+  rowsAnswered: number;
 }
 
 /**
@@ -2370,6 +2408,61 @@ export interface UsageDashboardStats {
   perProject?: ProjectUsageSummary[];
   /** Projects whose DB was missing or unreadable and were skipped (app-wide scope). */
   skippedProjects?: Array<{ projectId: string; projectName: string }>;
+  /**
+   * Headless calls Kangentic made on the user's behalf in the range (Condition
+   * checks, workflow step checks, task summaries, task titles, terminal names),
+   * from `background_calls`. Kept apart from every session figure above and
+   * never added to `kpis`. Optional: a payload from an older build has none.
+   */
+  background?: BackgroundUsage;
+}
+
+/** One agent and model a set of background calls ran on, with how many. */
+export interface BackgroundModelCount {
+  agent: string;
+  /** The model the CLI reported, else the one asked for, else null (the agent's default). */
+  modelId: string | null;
+  calls: number;
+}
+
+/** The sums the Background card and its history rows show. */
+export interface BackgroundCallTotals {
+  calls: number;
+  /** Calls whose CLI run did not succeed (failed or timed out); still paid for. */
+  failedCalls: number;
+  /** Calls whose agent reported usage; the token sums cover only these. */
+  reportedCalls: number;
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  outputTokens: number;
+  /** Summed cost, or null when no call in the set reported one. */
+  costUsd: number | null;
+  durationMs: number;
+}
+
+/** One job's calls across the range (a Background card cell). */
+export interface BackgroundJobUsage extends BackgroundCallTotals {
+  job: BackgroundCallJob;
+  /** Most calls first. */
+  models: BackgroundModelCount[];
+}
+
+/** One job's calls on one local day (a history row). */
+export interface BackgroundDayUsage extends BackgroundCallTotals {
+  /** Local midnight of the day (epoch ms). */
+  dayStartMs: number;
+  job: BackgroundCallJob;
+  /** Most calls first. */
+  models: BackgroundModelCount[];
+}
+
+export interface BackgroundUsage {
+  totals: BackgroundCallTotals;
+  /** Every job, in `BACKGROUND_CALL_JOBS` order, a job with no calls at zero. */
+  byJob: BackgroundJobUsage[];
+  /** Days with calls, newest first, jobs in `BACKGROUND_CALL_JOBS` order within a day. */
+  byDay: BackgroundDayUsage[];
 }
 
 // === Session Display State (discriminated union for UI) ===

@@ -2,8 +2,10 @@ import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type {
   AutomationRun,
+  AutomationRunCheck,
   AutomationRunStatus,
   AutomationType,
+  BackgroundCallOutcome,
   ColumnAutomation,
 } from '../../../shared/types';
 import { isAutomationTrigger } from '../../../shared/automation-manifest';
@@ -51,6 +53,8 @@ interface AutomationRunRow {
 export interface RunConditionAnswer {
   met: boolean;
   reason: string | null;
+  /** The background call that answered it, when one was recorded. */
+  callId?: string | null;
 }
 
 export interface StartRunInput {
@@ -59,7 +63,56 @@ export interface StartRunInput {
   taskId: string;
   /** Set when the row has a Condition and the Automation agent answered it. */
   condition?: RunConditionAnswer;
+  /**
+   * The background call this run is tied to when it has no answer of its own:
+   * a check the caller stopped waiting for still ran, and was still paid for.
+   * An answered run takes its answer's `callId` instead.
+   */
+  backgroundCallId?: string | null;
 }
+
+/** A run row with the background call that answered its Condition, when there is one. */
+interface AutomationRunWithCheckRow extends AutomationRunRow {
+  background_call_id: string | null;
+  check_found: number | null;
+  check_agent: string | null;
+  check_model: string | null;
+  check_requested_model: string | null;
+  check_effort: string | null;
+  check_input_tokens: number | null;
+  check_cache_creation_input_tokens: number | null;
+  check_cache_read_input_tokens: number | null;
+  check_output_tokens: number | null;
+  check_cost_usd: number | null;
+  check_duration_ms: number | null;
+  check_outcome: string | null;
+  check_rows_answered: number | null;
+}
+
+/**
+ * Runs with their check. One call can answer every row of a batched check, so
+ * `check_rows_answered` counts the runs that share it. A call whose record is
+ * gone (or a run from before calls were recorded) leaves the check columns null.
+ */
+const RUNS_WITH_CHECK_SQL = `
+  SELECT ar.*,
+    bc.id IS NOT NULL AS check_found,
+    bc.agent AS check_agent,
+    bc.model AS check_model,
+    bc.requested_model AS check_requested_model,
+    bc.effort AS check_effort,
+    bc.input_tokens AS check_input_tokens,
+    bc.cache_creation_input_tokens AS check_cache_creation_input_tokens,
+    bc.cache_read_input_tokens AS check_cache_read_input_tokens,
+    bc.output_tokens AS check_output_tokens,
+    bc.cost_usd AS check_cost_usd,
+    bc.duration_ms AS check_duration_ms,
+    bc.outcome AS check_outcome,
+    CASE WHEN ar.background_call_id IS NULL THEN NULL ELSE (
+      SELECT COUNT(*) FROM automation_runs answered WHERE answered.background_call_id = ar.background_call_id
+    ) END AS check_rows_answered
+  FROM automation_runs ar
+  LEFT JOIN background_calls bc ON bc.id = ar.background_call_id`;
 
 /** How many runs a project keeps. Older rows are pruned on project open. */
 export const AUTOMATION_RUN_RETENTION = 200;
@@ -76,8 +129,8 @@ export class AutomationRunRepository {
       .prepare(`
         INSERT INTO automation_runs
           (id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status, detail, attempts,
-           started_at, finished_at, condition_met, condition_reason)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'running', NULL, 0, ?, NULL, ?, ?)
+           started_at, finished_at, condition_met, condition_reason, background_call_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'running', NULL, 0, ?, NULL, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -93,6 +146,7 @@ export class AutomationRunRepository {
         new Date().toISOString(),
         input.condition ? (input.condition.met ? 1 : 0) : null,
         input.condition?.reason ?? null,
+        input.condition?.callId ?? input.backgroundCallId ?? null,
       );
   }
 
@@ -143,13 +197,15 @@ export class AutomationRunRepository {
     met: boolean;
     reason: string | null;
     detail: string;
+    /** The background call that answered the step check, when one was recorded. */
+    backgroundCallId?: string | null;
   }): void {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO automation_runs
         (id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status, detail, attempts,
-         started_at, finished_at, condition_met, condition_reason)
-      VALUES (?, ?, 'Workflow step', 'workflow_step', ?, ?, 'turn_end', ?, ?, 1, ?, ?, ?, ?)
+         started_at, finished_at, condition_met, condition_reason, background_call_id)
+      VALUES (?, ?, 'Workflow step', 'workflow_step', ?, ?, 'turn_end', ?, ?, 1, ?, ?, ?, ?, ?)
     `).run(
       uuidv4(),
       `workflow-step:${input.workflowId}`,
@@ -161,6 +217,7 @@ export class AutomationRunRepository {
       now,
       input.met ? 1 : 0,
       input.reason,
+      input.backgroundCallId ?? null,
     );
   }
 
@@ -214,15 +271,15 @@ export class AutomationRunRepository {
 
   listForTask(taskId: string, limit = 50): AutomationRun[] {
     const rows = this.db
-      .prepare('SELECT * FROM automation_runs WHERE task_id = ? ORDER BY started_at DESC LIMIT ?')
-      .all(taskId, limit) as AutomationRunRow[];
+      .prepare(`${RUNS_WITH_CHECK_SQL} WHERE ar.task_id = ? ORDER BY ar.started_at DESC LIMIT ?`)
+      .all(taskId, limit) as AutomationRunWithCheckRow[];
     return mapRows(rows);
   }
 
   listForAutomation(automationId: string, limit = 20): AutomationRun[] {
     const rows = this.db
-      .prepare('SELECT * FROM automation_runs WHERE automation_id = ? ORDER BY started_at DESC LIMIT ?')
-      .all(automationId, limit) as AutomationRunRow[];
+      .prepare(`${RUNS_WITH_CHECK_SQL} WHERE ar.automation_id = ? ORDER BY ar.started_at DESC LIMIT ?`)
+      .all(automationId, limit) as AutomationRunWithCheckRow[];
     return mapRows(rows);
   }
 
@@ -279,8 +336,28 @@ export class AutomationRunRepository {
   }
 }
 
+/** The check a run's joined row carries, or null when it has none on record. */
+function checkOf(row: AutomationRunWithCheckRow): AutomationRunCheck | null {
+  if (!row.background_call_id || !row.check_found || row.check_agent === null) return null;
+  return {
+    callId: row.background_call_id,
+    agent: row.check_agent,
+    model: row.check_model ?? row.check_requested_model,
+    modelReported: row.check_model !== null,
+    effort: row.check_effort,
+    inputTokens: row.check_input_tokens,
+    cacheCreationInputTokens: row.check_cache_creation_input_tokens,
+    cacheReadInputTokens: row.check_cache_read_input_tokens,
+    outputTokens: row.check_output_tokens,
+    costUsd: row.check_cost_usd,
+    durationMs: row.check_duration_ms ?? 0,
+    outcome: (row.check_outcome ?? 'succeeded') as BackgroundCallOutcome,
+    rowsAnswered: row.check_rows_answered ?? 1,
+  };
+}
+
 /** A run with a trigger this build does not know is left out, not read as another trigger. */
-function mapRows(rows: AutomationRunRow[]): AutomationRun[] {
+function mapRows(rows: AutomationRunWithCheckRow[]): AutomationRun[] {
   const runs: AutomationRun[] = [];
   for (const row of rows) {
     if (!isAutomationTrigger(row.trigger)) continue;
@@ -299,6 +376,7 @@ function mapRows(rows: AutomationRunRow[]): AutomationRun[] {
       finished_at: row.finished_at,
       condition_met: row.condition_met === null ? null : row.condition_met === 1,
       condition_reason: row.condition_reason,
+      check: checkOf(row),
     });
   }
   return runs;

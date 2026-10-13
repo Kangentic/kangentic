@@ -1,4 +1,5 @@
 import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
+import { startRecordedCall, type BackgroundCallSink } from '../../background-calls/record-background-call';
 import {
   resetAutomationAgentCacheForTests,
   resolveAutomationAgent,
@@ -27,12 +28,30 @@ import { buildConditionPrompt, parseConditionReply, type ConditionAnswer, type C
  *   of starting them all.
  */
 
+/**
+ * What a check answered, or why it did not. `callId` names the background
+ * call (`background_calls.id`) whenever a CLI actually ran, a failed or
+ * abandoned one included, since it was still paid for; null or absent when
+ * none did.
+ */
 export type ConditionCheckOutcome =
-  | { ok: true; answers: Map<string, ConditionAnswer>; agentName: string }
-  | { ok: false; reason: string };
+  | { ok: true; answers: Map<string, ConditionAnswer>; agentName: string; callId: string | null }
+  | { ok: false; reason: string; callId?: string | null };
 
 /** The dependencies a check needs, so the module tests without Electron. */
-export type ConditionCheckDeps = AutomationAgentDeps;
+export interface ConditionCheckDeps extends AutomationAgentDeps {
+  /** Where the check's call is recorded; absent records nothing. */
+  recordCall?: BackgroundCallSink;
+}
+
+/** Whose check this is, for its record: the project's ledger, the task and the column. */
+export interface ConditionCheckCall {
+  projectId: string | null;
+  taskId: string | null;
+  swimlaneId: string | null;
+  /** A column's Conditions, or a workflow task's own step check. */
+  job: 'condition_check' | 'workflow_step';
+}
 
 const MAX_CONCURRENT_CHECKS = 2;
 
@@ -125,8 +144,9 @@ export async function checkAutomationConditions(
   deps: ConditionCheckDeps,
   input: ConditionPromptInput,
   limits: ConditionCheckLimits = {},
+  callContext: ConditionCheckCall = { projectId: null, taskId: null, swimlaneId: null, job: 'condition_check' },
 ): Promise<ConditionCheckOutcome> {
-  if (input.rows.length === 0) return { ok: true, answers: new Map(), agentName: '' };
+  if (input.rows.length === 0) return { ok: true, answers: new Map(), agentName: '', callId: null };
   const stop = new AbortController();
   let timedOut = false;
   const onCallerAbort = (): void => stop.abort();
@@ -153,7 +173,17 @@ export async function checkAutomationConditions(
 
     const prompt = buildConditionPrompt(input);
     if (!(await acquireCheckSlot(stop.signal))) return { ok: false, reason: stoppedReason() };
-    const answering = (async (): Promise<string> => {
+    // Recorded when the CLI settles, not when this returns: a caller that
+    // stops waiting leaves the run going, and it is still paid for.
+    const recorded = startRecordedCall(deps.recordCall, {
+      projectId: callContext.projectId,
+      job: callContext.job,
+      taskId: callContext.taskId,
+      swimlaneId: callContext.swimlaneId,
+      agent: resolved.agentName,
+      requestedModel: resolved.model,
+      effort: resolved.effort,
+    }, async (onUsage) => {
       try {
         const answerHome = await ensureAnswerHomeDirectory();
         return await withAnswerRunDirectory((runDirectory) => resolved.adapter.answerFromContext!(
@@ -161,40 +191,43 @@ export async function checkAutomationConditions(
           resolved.cliPath,
           answerHome,
           resolved.model,
-          { effort: resolved.effort, runDirectory },
+          { effort: resolved.effort, runDirectory, onUsage },
         ));
       } finally {
         releaseCheckSlot();
       }
-    })();
+    });
+    const answering = recorded.done;
     // A caller that stopped waiting leaves this run to finish on its own.
     answering.catch(() => undefined);
 
     let reply: string;
     try {
       const settled = await untilAborted(answering, stop.signal);
-      if (!settled) return { ok: false, reason: stoppedReason() };
+      if (!settled) return { ok: false, reason: stoppedReason(), callId: recorded.callId };
       reply = settled.value;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      return { ok: false, reason: `The Automation agent could not check the condition: ${detail}` };
+      return { ok: false, reason: `The Automation agent could not check the condition: ${detail}`, callId: recorded.callId };
     }
-    return { ok: true, answers: answersFrom(reply, input), agentName: resolved.agentName };
+    return { ok: true, answers: answersFrom(reply, input, recorded.callId), agentName: resolved.agentName, callId: recorded.callId };
   } finally {
     if (timer) clearTimeout(timer);
     limits.signal?.removeEventListener('abort', onCallerAbort);
   }
 }
 
-/** Every row's answer from the reply; a row the reply skipped is not met, and says so. */
-function answersFrom(reply: string, input: ConditionPromptInput): Map<string, ConditionAnswer> {
+/** Every row's answer from the reply, each naming the call that gave it; a row
+ *  the reply skipped is not met, and says so. */
+function answersFrom(reply: string, input: ConditionPromptInput, callId: string): Map<string, ConditionAnswer> {
   const parsed = parseConditionReply(reply, input.rows.length);
   const answers = new Map<string, ConditionAnswer>();
   input.rows.forEach((row, index) => {
-    answers.set(row.automationId, parsed.get(index) ?? {
+    const answer = parsed.get(index) ?? {
       met: false,
       reason: 'The Automation agent did not answer this condition.',
-    });
+    };
+    answers.set(row.automationId, { ...answer, callId });
   });
   return answers;
 }

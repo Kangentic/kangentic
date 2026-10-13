@@ -36,9 +36,11 @@ import {
 import { describeAutomation, describeAutomationMarksInWords } from '../../../shared/automation-describe';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
 import { resolveTask } from './task-resolver';
+import { agentRegistry } from '../agent-registry';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type {
   AutomationConfig,
+  AutomationRunCheck,
   AutomationTrigger,
   AutomationType,
   ColumnAutomation,
@@ -361,6 +363,34 @@ export const handleRunAutomation: CommandHandler = async (
   };
 };
 
+/** A call's cost to the precision a small check needs: $0.0026, not $0.00. */
+function formatCallCost(costUsd: number): string {
+  return costUsd < 0.01 ? `$${costUsd.toFixed(4)}` : `$${costUsd.toFixed(2)}`;
+}
+
+/**
+ * The check that answered a run, as the line under it: the agent and model,
+ * the four token counts and cost as the CLI reported them, how long it took,
+ * and how many rows the one call answered. An agent that reports no usage
+ * says so rather than showing zeros.
+ */
+function formatCheckLine(check: AutomationRunCheck): string {
+  const agentLabel = agentRegistry.get(check.agent)?.displayName ?? check.agent;
+  const modelLabel = [check.model ?? 'default model', check.effort].filter(Boolean).join(', ');
+  const seconds = `${(check.durationMs / 1000).toFixed(1)}s`;
+  const usage = check.inputTokens === null
+    ? 'usage not reported'
+    : [
+      `${(check.inputTokens ?? 0).toLocaleString('en-US')} fresh input + ${(check.outputTokens ?? 0).toLocaleString('en-US')} output`,
+      `${(check.cacheCreationInputTokens ?? 0).toLocaleString('en-US')} cache write`,
+      `${(check.cacheReadInputTokens ?? 0).toLocaleString('en-US')} cache read`,
+      ...(check.costUsd === null ? [] : [formatCallCost(check.costUsd)]),
+    ].join(', ');
+  const outcome = check.outcome === 'succeeded' ? '' : `, ${check.outcome === 'timed_out' ? 'timed out' : 'failed'}`;
+  const shared = check.rowsAnswered > 1 ? `, one call for ${check.rowsAnswered} rows` : '';
+  return `  checked by ${agentLabel} (${modelLabel}): ${usage}, ${seconds}${outcome}${shared}`;
+}
+
 function renderRuns(runs: ReturnType<AutomationRunRepository['listForTask']>, subject: string): CommandResponse {
   if (runs.length === 0) {
     return { success: true, message: `No automation runs recorded for ${subject}.`, data: { runs: [] } };
@@ -369,7 +399,8 @@ function renderRuns(runs: ReturnType<AutomationRunRepository['listForTask']>, su
     `${run.started_at} ${run.automation_name} (${run.type}, on ${run.trigger}): ${run.status}`
     + (run.attempts > 1 ? ` after ${run.attempts} attempts` : '')
     + (run.detail ? ` - ${run.detail}` : '')
-    + (run.condition_met === null ? '' : ` [condition ${run.condition_met ? 'met' : 'not met'}${run.condition_reason ? `: ${run.condition_reason}` : ''}]`));
+    + (run.condition_met === null ? '' : ` [condition ${run.condition_met ? 'met' : 'not met'}${run.condition_reason ? `: ${run.condition_reason}` : ''}]`)
+    + (run.check ? `\n${formatCheckLine(run.check)}` : ''));
   return {
     success: true,
     message: `${runs.length} automation run(s) for ${subject}, newest first:\n${lines.join('\n')}`,

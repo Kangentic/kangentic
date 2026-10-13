@@ -7,6 +7,7 @@ import {
   type UsageWindowTotals,
 } from '../db/repositories/usage-history-repository';
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
+import { BackgroundCallRepository, type BackgroundCallGroupRow } from '../db/repositories/background-call-repository';
 import { ConversationUsageStore, type GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
 
 /**
@@ -75,6 +76,12 @@ export interface ProjectUsageReader {
     activeMs: number;
     sessionsCovered: number;
   };
+  /**
+   * Background calls (`background_calls`) grouped to fixed UTC buckets of
+   * `groupMs` by job, agent and model. Kept apart from every session read
+   * above. Empty for a database main has not migrated since the table arrived.
+   */
+  listBackgroundCallGroups(sinceIso: string | null, untilIso: string | null, groupMs: number): BackgroundCallGroupRow[];
 }
 
 export type UsageReadName = keyof ProjectUsageReader;
@@ -103,5 +110,7 @@ export function localUsageReader(db: Database.Database): ProjectUsageReader {
     listSubagentTotals: (sinceMs, untilMs) => turnUsage.getSubagentTotalsByType(sinceMs, untilMs),
     getEarliestTurnMs: () => turnUsage.getEarliestTurnMs(),
     getActiveTotals: (sinceMs, untilMs) => new ActivityIntervalStore(db).getActiveTotals(sinceMs, untilMs),
+    listBackgroundCallGroups: (sinceIso, untilIso, groupMs) =>
+      new BackgroundCallRepository(db).listGroups(sinceIso, untilIso, groupMs),
   };
 }

@@ -12,6 +12,8 @@ import type {
 import { PATHS } from '../config/paths';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import type { UsageCostGroupRow, UsageRollupRow, UsageWindowTotals } from '../db/repositories/usage-history-repository';
+import type { BackgroundCallGroupRow } from '../db/repositories/background-call-repository';
+import { foldBackgroundUsage } from './background-usage';
 import { agentRegistry } from '../agent/agent-registry';
 import type { GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
 import { retrievalClient } from '../retrieval/retrieval-client';
@@ -242,6 +244,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     const previousGroups: GroupedTurnUsageRow[] = [];
     const subagentTotalsList: SubagentUsageTotals[][] = [];
     const previousSubagentTotalsList: SubagentUsageTotals[][] = [];
+    const backgroundGroups: BackgroundCallGroupRow[] = [];
     const perProject: ProjectUsageSummary[] = [];
     const skippedProjects: Array<{ projectId: string; projectName: string }> = [];
     let liveSessionCountTotal = 0;
@@ -270,6 +273,9 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         combinedCostGroups.push(...costGroups);
         combinedGroups.push(...groups);
         subagentTotalsList.push(await reader.listSubagentTotals(sinceMs, untilMs));
+        // Background calls: their own ledger, never folded into the session
+        // figures this loop gathers.
+        backgroundGroups.push(...await reader.listBackgroundCallGroups(sinceIso, untilIso, COST_GROUP_MS));
         const projectActive = await reader.getActiveTotals(sinceMs, untilMs);
         activeMsTotal += projectActive.activeMs;
         activeSessionsCovered += projectActive.sessionsCovered;
@@ -428,6 +434,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         .sort(),
       liveLedgerBaseline,
       earliestTurnMs,
+      background: foldBackgroundUsage(backgroundGroups),
     };
     if (scope.kind === 'all') {
       stats.perProject = perProject;
@@ -457,6 +464,7 @@ function workerUsageReader(projectId: string): AsyncProjectUsageReader {
     listSubagentTotals: read('listSubagentTotals'),
     getEarliestTurnMs: read('getEarliestTurnMs'),
     getActiveTotals: read('getActiveTotals'),
+    listBackgroundCallGroups: read('listBackgroundCallGroups'),
   };
 }
 

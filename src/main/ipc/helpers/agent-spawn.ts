@@ -37,6 +37,7 @@ import { registerResumeController, releaseResumeController } from '../handlers/s
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { checkAutomationConditions, type ConditionCheckDeps } from '../../automations/condition-check/condition-check';
 import { automationAgentDeps } from './automation-agent-deps';
+import { backgroundCallSink } from './background-call-sink';
 import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 
 /**
@@ -134,13 +135,14 @@ export function createTransitionEngine(
     attachments,
     automations,
     automationRuns,
-    { checkConditions: (input, limits) => checkAutomationConditions(conditionCheckDeps(context), input, limits) },
+    { checkConditions: (input, limits, call) => checkAutomationConditions(conditionCheckDeps(context), input, limits, call) },
   );
 }
 
-/** What a Condition check reads from the app: the config, and the agent registry. */
+/** What a Condition check reads from the app: the config and the agent
+ *  registry, and where it records its call. */
 export function conditionCheckDeps(context: IpcContext): ConditionCheckDeps {
-  return automationAgentDeps(context);
+  return { ...automationAgentDeps(context), recordCall: backgroundCallSink(context) };
 }
 
 export interface AgentSpawnOptions {

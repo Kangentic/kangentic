@@ -66,6 +66,7 @@ vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({
     executeTransition: hoisted.executeTransition,
     resolveGroupTemplateVars: vi.fn(() => ({})),
     conditionCheckInput: vi.fn(() => ({})),
+    conditionCheckCall: vi.fn(() => ({ projectId: null, taskId: null, swimlaneId: null, job: 'condition_check' })),
     checkConditions: vi.fn(),
   })),
   resolveInjectionVerifier: vi.fn(() => undefined),

@@ -225,6 +225,8 @@ describe('the workflow step and the turn it judged', () => {
         task: expect.objectContaining({ title: 'Add the export button', prMergeReadiness: readiness }),
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      // Recorded as a workflow step check, against the task and its column.
+      { projectId: 'project-1', taskId: 'task-1', swimlaneId: 'lane-executing', job: 'workflow_step' },
     );
   });
 
