@@ -3115,7 +3115,14 @@
     agents: {
       // forceRefresh is accepted to match the real API surface but ignored:
       // the mock always returns the fixture, fresh or cached alike.
-      list: async function (_forceRefresh) {
+      list: async function (_forceRefresh, mainsOwnRead) {
+        // Off unless a spec sets window.__mockAgentListRejects = true: every read the
+        // renderer makes rejects (a detection that fails), so the config store's agent
+        // list stays unloaded. Main's own read (the second argument, passed by
+        // mockWorkflowAgentRefusal) is not the renderer's and still answers.
+        if (typeof window !== 'undefined' && window.__mockAgentListRejects && !mainsOwnRead) {
+          throw new Error('Could not read the agent list');
+        }
         // Tests can override per-agent fields (found, version, authenticated, etc.)
         // by setting window.__mockAgentListOverrides = { kimi: { found: true, authenticated: false }, ... }
         // before navigating to the page. Useful for exercising auth-state UI without
@@ -3141,6 +3148,9 @@
             // what makes the Answering model setting required for Claude, and
             // `defaultEffort` is the level the Answering effort row shows unset.
             answerCapabilities: { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' },
+            // KEEP IN SYNC with canBeWorkflowAgent(ClaudeAdapter): Claude launches
+            // read-only on a session id Kangentic chose, so it can be the Workflow agent.
+            supportsWorkflowAgent: true,
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
@@ -4762,18 +4772,51 @@
         };
       }
 
-      function openMockWorkflowAgent(projectId, workflowId, resume) {
-        if (window.__mockWorkflowAgentUnavailable) {
-          return { session: null, unavailable: String(window.__mockWorkflowAgentUnavailable) };
+      // Mirrors main's checks before a start, over the mock's own agent list:
+      // `workflowAgentSetupGap` (src/shared/workflow-agent-choice.ts), so no start
+      // until Settings > Workflows names an agent that can be a workflow's agent,
+      // with a model when its CLI takes one; then the CLI's detection, which main
+      // reports as unavailable when it is not installed. Null when a start may run.
+      async function mockWorkflowAgentRefusal() {
+        var choice = (config && config.workflows) || {};
+        var setupNeeded = { session: null, unavailable: null, setupNeeded: true };
+        if (!choice.agent) return setupNeeded;
+        var agents = await window.electronAPI.agents.list(false, true);
+        var candidate = agents.find(function (entry) { return entry.name === choice.agent; });
+        if (!candidate || !candidate.supportsWorkflowAgent) return setupNeeded;
+        var takesModel = Boolean(candidate.capabilities && candidate.capabilities.supportsModelOverride);
+        if (takesModel && !choice.model) return setupNeeded;
+        if (!candidate.found) {
+          return { session: null, unavailable: 'Kangentic cannot find ' + (candidate.displayName || candidate.name) + ' on this machine.', setupNeeded: false };
         }
-        var existing = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
+        return null;
+      }
+
+      function findMockWorkflowAgent(workflowId) {
+        return sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
+      }
+
+      async function openMockWorkflowAgent(projectId, workflowId, resume) {
+        if (window.__mockWorkflowAgentUnavailable) {
+          return { session: null, unavailable: String(window.__mockWorkflowAgentUnavailable), setupNeeded: false };
+        }
+        var before = findMockWorkflowAgent(workflowId);
+        // As main does before any start: a live agent comes back as it is, and
+        // an open leaves a paused one paused. A Resume or a new start needs the setting.
+        if (before && (before.status !== 'suspended' || !resume)) {
+          return { session: JSON.parse(JSON.stringify(before)), unavailable: null, setupNeeded: false };
+        }
+        var refusal = await mockWorkflowAgentRefusal();
+        if (refusal) return refusal;
+        // Read again after the await: an open in flight alongside this one may have started it.
+        var existing = findMockWorkflowAgent(workflowId);
         if (existing && resume && existing.status === 'suspended') {
           existing.status = 'running';
           // A normal resume ends what the pane said about a start-over.
           delete startedOverSessions[workflowId];
           fireMockWorkflowAgentStatus(existing);
         }
-        if (existing) return { session: JSON.parse(JSON.stringify(existing)), unavailable: null };
+        if (existing) return { session: JSON.parse(JSON.stringify(existing)), unavailable: null, setupNeeded: false };
         var session = makeMockWorkflowAgentSession(projectId, workflowId);
         sessions.push(session);
         // Main records the conversation on the workflow at every start.
@@ -4784,7 +4827,7 @@
           owner.workflow.agent_cwd = session.cwd;
         }
         fireMockWorkflowAgentStatus(session);
-        return { session: JSON.parse(JSON.stringify(session)), unavailable: null };
+        return { session: JSON.parse(JSON.stringify(session)), unavailable: null, setupNeeded: false };
       }
 
       function hydrate() {
@@ -4842,6 +4885,17 @@
         fireMockWorkflowAgentStatus(session);
         emit(homeOf(entry), workflowId, false);
         return session.id;
+      };
+      // The agent's CLI ends on its own (the user typed /exit): its session
+      // exits and nothing starts in its place. Main resumes the conversation on
+      // the pane's next open, as it does for any workflow with no live session.
+      window.__mockWorkflowAgentExit = function (workflowId) {
+        var live = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
+        if (!live) return null;
+        live.status = 'exited';
+        live.exitCode = 0;
+        fireMockWorkflowAgentStatus(live);
+        return live.id;
       };
 
       // KEEP IN SYNC with src/shared/workflow-route.ts.
@@ -5413,7 +5467,18 @@
         // The workflow's own agent: a transient session carrying `workflowId`,
         // the row shape main's workflow-agent.ts produces. A test makes it
         // unavailable with window.__mockWorkflowAgentUnavailable = '<reason>'.
+        // Nothing starts until config.workflows names the Workflow agent (and
+        // its model), as in main: seed it with __mockConfigOverrides.
+        // window.__mockWorkflowAgentOpenCount counts the opens (not the resumes).
+        // window.__mockWorkflowAgentSetupNeededOnce = true makes the NEXT open answer
+        // `setupNeeded: true` whatever config.workflows says, as main does when its
+        // own read of the setting disagrees with the pane's; it clears itself.
         agentOpen: async function (projectId, workflowId) {
+          window.__mockWorkflowAgentOpenCount = (window.__mockWorkflowAgentOpenCount || 0) + 1;
+          if (window.__mockWorkflowAgentSetupNeededOnce) {
+            window.__mockWorkflowAgentSetupNeededOnce = false;
+            return { session: null, unavailable: null, setupNeeded: true };
+          }
           return openMockWorkflowAgent(projectId, workflowId, false);
         },
         agentResume: async function (projectId, workflowId) {

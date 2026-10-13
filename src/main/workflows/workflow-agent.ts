@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { IpcContext } from '../ipc/ipc-context';
-import { DEFAULT_AGENT } from '../../shared/types';
 import type { ActivityState, Session, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
+import { workflowAgentChoice, workflowAgentSetupGap } from '../../shared/workflow-agent-choice';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { isActive } from '../../shared/activity-state';
 import { getExistingProjectDb, getProjectDb } from '../db/database';
@@ -13,6 +13,8 @@ import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { UsageHistoryRepository } from '../db/repositories/usage-history-repository';
 import { captureWorkflowAgentUsage } from '../ipc/handlers/session-metrics';
 import { agentRegistry } from '../agent/agent-registry';
+import { listAgents } from '../agent/agent-list';
+import { canBeWorkflowAgent } from '../agent/shared/workflow-agent-capability';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../retrieval/remote-targets';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
@@ -243,12 +245,14 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
     // An open already in flight (the user's Resume) starts it with the grant,
     // so this start joins that one, and the line is not said either.
     const restarted = await startOnce(context, pending.homeProjectId, workflowId, lastGrid.get(workflowId) ?? {}, pending.message);
-    // A start that cannot run (the MCP server turned off, the CLI gone) leaves
-    // the agent suspended, as a Pause would, and the pane offers Resume, which
-    // shows the same reason. Nothing is owed: that start reads the grant. A
-    // start a Pause stopped after the agent ended has no reason to give.
-    if (restarted.unavailable) {
-      console.warn(`[WORKFLOW-AGENT] Stopped to read new project access, but could not start again: ${restarted.unavailable}`);
+    // A start that cannot run (the MCP server turned off, the CLI gone, the
+    // Workflow agent setting no longer complete) leaves the agent suspended, as
+    // a Pause would, and the pane offers Resume or asks for the setting. Nothing
+    // is owed: that start reads the grant. A start a Pause stopped after the
+    // agent ended has no reason to give.
+    if (restarted.unavailable || restarted.setupNeeded) {
+      const reason = restarted.unavailable ?? 'the Workflow agent setting is not complete';
+      console.warn(`[WORKFLOW-AGENT] Stopped to read new project access, but could not start again: ${reason}`);
     }
   } catch (error) {
     console.error('[WORKFLOW-AGENT] Could not restart with the new project access:', error);
@@ -264,7 +268,17 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
 }
 
 function unavailable(reason: string): WorkflowAgentStatus {
-  return { session: null, unavailable: reason };
+  return { session: null, unavailable: reason, setupNeeded: false };
+}
+
+/** Nothing started because the Workflow agent setting is not complete: the pane asks for it. */
+function setupNeeded(): WorkflowAgentStatus {
+  return { session: null, unavailable: null, setupNeeded: true };
+}
+
+/** The agent as it is: a session (running, queued or paused), or none when a Pause stopped the start. */
+function sessionStatus(session: Session | null): WorkflowAgentStatus {
+  return { session, unavailable: null, setupNeeded: false };
 }
 
 /**
@@ -300,7 +314,7 @@ export function openWorkflowAgent(
   grid: WorkflowAgentGrid,
 ): Promise<WorkflowAgentStatus> {
   const existing = findWorkflowAgentSession(context, workflowId);
-  if (existing) return Promise.resolve({ session: existing, unavailable: null });
+  if (existing) return Promise.resolve(sessionStatus(existing));
   // A Pause recorded with no agent to stop, or for one since gone, is not this
   // new agent's: kept, it would turn away every restart for read access.
   userPaused.delete(workflowId);
@@ -316,7 +330,7 @@ export function resumeWorkflowAgent(
 ): Promise<WorkflowAgentStatus> {
   userPaused.delete(workflowId);
   const existing = findWorkflowAgentSession(context, workflowId);
-  if (existing && existing.status !== 'suspended') return Promise.resolve({ session: existing, unavailable: null });
+  if (existing && existing.status !== 'suspended') return Promise.resolve(sessionStatus(existing));
   return startOnce(context, homeProjectId, workflowId, grid);
 }
 
@@ -474,14 +488,23 @@ async function startWorkflowAgent(
 
   const projectRoot = resolveProjectRoot(project.path);
   const config = context.configManager.getEffectiveConfig(projectRoot);
-  const projectDefaultAgent = project.default_agent || DEFAULT_AGENT;
+  // The Workflow agent setting, with no fallback to the project's default agent:
+  // until it is complete nothing starts, and the pane asks for it
+  // (`src/shared/workflow-agent-choice.ts`). The list is the cached inventory the
+  // renderer reads too, warm from its bootstrap, so the pane and this check agree.
+  const choice = workflowAgentChoice(config.workflows);
+  const agents = await listAgents(config.agent.cliPaths);
+  // `!choice.agent` repeats the gap's own first check so the line below reads it as a string.
+  if (!choice.agent || workflowAgentSetupGap({ agents, choice })) return setupNeeded();
   // A conversation belongs to the agent that holds it, so a resume keeps that
-  // agent even after the project's default changed.
-  const agentName = workflow.agent_name ?? projectDefaultAgent;
+  // agent even after the Workflow agent setting changed.
+  const agentName = workflow.agent_name ?? choice.agent;
   const adapter = agentRegistry.get(agentName);
   if (!adapter) return unavailable(`Kangentic does not know the agent "${agentName}".`);
-  if (!adapter.supportsReadOnlyLaunch || !adapter.supportsCallerSessionId) {
-    return unavailable(`${adapter.displayName} cannot be a workflow's agent, because Kangentic cannot launch it read-only. Plan on the canvas, or choose another default agent in Settings.`);
+  // Only a recorded conversation's agent can fail this: the setting's agent
+  // passed it in the check above. So the way out is the canvas, not the setting.
+  if (!canBeWorkflowAgent(adapter)) {
+    return unavailable(`This workflow's conversation is on ${adapter.displayName}, which Kangentic cannot launch read-only. Plan this workflow on the canvas.`);
   }
   if (!config.mcpServer.enabled || !context.mcpServerHandle) {
     return unavailable('The workflow agent works through Kangentic\'s MCP server, which is off. Turn it on in Settings, MCP Server.');
@@ -516,9 +539,10 @@ async function startWorkflowAgent(
   // `.cmd` shim, which cmd.exe would otherwise run).
   await adapter.ensureTrust(projectRoot);
   const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt });
-  // The project's model tier applies to the project's own default agent only
-  // (a model id is the agent's own), as for a task spawn.
-  const projectTierApplies = agentName === projectDefaultAgent;
+  // The chosen model and effort belong to the chosen agent (a model id means
+  // nothing to another CLI), so a conversation kept on another agent runs at its
+  // CLI's own defaults. Read on every start, so a Resume takes a changed setting.
+  const choiceApplies = agentName === choice.agent;
   const commandOptions = {
     agentPath: launch.agentPath,
     taskId: workflow.id,
@@ -534,8 +558,8 @@ async function startWorkflowAgent(
     mcpServerEnabled: true,
     mcpServerUrl: appendWorkflowAgentCaller(context.mcpServerHandle.urlForProject(homeProjectId), workflow.id),
     mcpServerToken: context.mcpServerHandle.token,
-    model: projectTierApplies ? project.default_model ?? undefined : undefined,
-    effort: projectTierApplies ? project.default_effort ?? undefined : undefined,
+    model: choiceApplies ? choice.model ?? undefined : undefined,
+    effort: choiceApplies ? choice.effort ?? undefined : undefined,
     readOnly: true,
     readableDirectories: readable.map((entry) => entry.path),
   };
@@ -551,7 +575,7 @@ async function startWorkflowAgent(
   // and its next start reads the grant from the workflow row.
   const restartForAccess = continuation !== undefined;
   if (restartForAccess && userPaused.has(workflowId)) {
-    return { session: findWorkflowAgentSession(context, workflowId), unavailable: null };
+    return sessionStatus(findWorkflowAgentSession(context, workflowId));
   }
   // The rows this start replaces leave the registry with no removal push (the
   // spawn's sibling drain), so what is kept per session id goes with them here.
@@ -611,7 +635,7 @@ async function startWorkflowAgent(
   } finally {
     await honorPausePressedDuringSpawn(context, workflow.id, session.id);
   }
-  return { session: context.sessionManager.getSession(session.id) ?? session, unavailable: null };
+  return sessionStatus(context.sessionManager.getSession(session.id) ?? session);
 }
 
 /**

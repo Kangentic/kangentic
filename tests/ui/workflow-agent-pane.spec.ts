@@ -19,7 +19,23 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 const PROJECT_ID = 'workflow-agent-proj';
 const WORKFLOW_ID = 'wf-draft';
 
-function seedScript(options: { unavailable?: string }): string {
+/** Settings > Workflows > Workflow agent, complete, which every start needs. */
+const WORKFLOW_AGENT = { agent: 'claude', model: 'haiku', effort: 'low' };
+
+interface SeedOptions {
+  unavailable?: string;
+  /** The Workflow agent setting: complete by default, null for a first run with none chosen. */
+  workflowAgent?: { agent: string | null; model: string | null; effort: string | null } | null;
+  /** Main refuses the pane's first open with `setupNeeded`, though the setting is complete. */
+  setupNeededOnce?: boolean;
+  /** Patches over the mock's agent list, by agent name (`found: false` for a CLI that is not installed). */
+  agentListOverrides?: Record<string, Record<string, unknown>>;
+  /** Every agent-list read the renderer makes rejects, so its list never loads. Main's own start check still reads it. */
+  rejectAgentList?: boolean;
+}
+
+function seedScript(options: SeedOptions): string {
+  const workflowAgent = options.workflowAgent === undefined ? WORKFLOW_AGENT : options.workflowAgent;
   const draft = {
     workflow: {
       id: WORKFLOW_ID, title: 'Theme tokens', state: 'draft', color_slot: 2,
@@ -36,8 +52,12 @@ function seedScript(options: { unavailable?: string }): string {
   return `
     window.__mockWorkflows = ${JSON.stringify([draft])};
     ${options.unavailable ? `window.__mockWorkflowAgentUnavailable = ${JSON.stringify(options.unavailable)};` : ''}
+    ${options.setupNeededOnce ? 'window.__mockWorkflowAgentSetupNeededOnce = true;' : ''}
+    ${options.agentListOverrides ? `window.__mockAgentListOverrides = ${JSON.stringify(options.agentListOverrides)};` : ''}
+    ${options.rejectAgentList ? 'window.__mockAgentListRejects = true;' : ''}
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
+      ${workflowAgent ? `state.config.workflows = ${JSON.stringify(workflowAgent)};` : ''}
       state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
         state.swimlanes.push(Object.assign({}, swimlane, { id: 'lane-' + index, position: index, created_at: ts }));
@@ -47,7 +67,7 @@ function seedScript(options: { unavailable?: string }): string {
   `;
 }
 
-async function launch(options: { unavailable?: string; width?: number } = {}): Promise<{ browser: Browser; page: Page }> {
+async function launch(options: SeedOptions & { width?: number } = {}): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: options.width ?? 1700, height: 950 } })).newPage();
@@ -210,12 +230,267 @@ test('while the agent works, Start and Add task wait with the reason, and the ca
 });
 
 test('an agent that cannot run says why, with no terminal', async () => {
-  const reason = 'Codex cannot be a workflow\'s agent, because Kangentic cannot launch it read-only. Plan on the canvas, or choose another default agent in Settings.';
+  const reason = 'The workflow agent works through Kangentic\'s MCP server, which is off. Turn it on in Settings, MCP Server.';
   const { browser, page } = await launch({ unavailable: reason });
   try {
     await expect(byTestId(page, 'workflow-agent-unavailable')).toHaveText(reason);
     await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
     await expect(byTestId(page, 'workflow-agent-toggle')).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});
+
+/** Settings > Workflows > Workflow agent, written the way the settings card writes it. */
+async function setWorkflowAgent(page: Page, workflows: { agent: string | null; model: string | null; effort: string | null }): Promise<void> {
+  await page.evaluate((value) => window.electronAPI.config.set({ workflows: value }), workflows);
+  await page.evaluate(() => (window as unknown as { __zustandStores: { config: { getState: () => { loadConfig: () => Promise<void> } } } })
+    .__zustandStores.config.getState().loadConfig());
+}
+
+/** Open Settings from the pane's setup state, retrying until the Workflow agent card is on screen. */
+async function openSettingsFromPane(page: Page): Promise<void> {
+  await expect(async () => {
+    if (!(await byTestId(page, 'settings-panel').isVisible())) await byTestId(page, 'workflow-agent-setup-open-settings').click();
+    await expect(byTestId(page, 'settings-card-workflow-agent')).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 12_000 });
+}
+
+test.describe('with no Workflow agent chosen', () => {
+  // The bug this replaced: the pane started on the project's default agent at its
+  // default model and effort (Opus at xhigh) while the user had set Haiku at low
+  // for the Automation agent. Nothing starts until the Workflow agent is chosen.
+  test('the pane asks for one in place of the terminal, and starts no agent', async () => {
+    const { browser, page } = await launch({ workflowAgent: null });
+    try {
+      const setup = byTestId(page, 'workflow-agent-setup');
+      await expect(setup).toBeVisible();
+      await expect(setup).toContainText('Choose a workflow agent');
+      await expect(setup).toContainText('It plans your workflows, and starts when you close Settings.');
+      await expect(byTestId(page, 'workflow-agent-pane')).toHaveAttribute('data-agent-state', 'setup');
+      await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+      await expect(byTestId(page, 'workflow-agent-toggle')).toHaveCount(0);
+      const agentSessions = await page.evaluate(async () => (await window.electronAPI.sessions.list())
+        .filter((session) => session.workflowId).length);
+      expect(agentSessions).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Open Settings lands on Workflows, Workflow agent first, and choosing an agent shows Model and Effort', async () => {
+    const { browser, page } = await launch({ workflowAgent: null });
+    try {
+      await openSettingsFromPane(page);
+      const cards = page.locator('[data-testid="settings-panel"] section[data-testid^="settings-card-"]');
+      await expect(cards.first()).toHaveAttribute('data-testid', 'settings-card-workflow-agent');
+      await expect(byTestId(page, 'workflow-agent-setting-model')).toHaveCount(0);
+
+      await byTestId(page, 'workflow-agent-setting-agent').click();
+      await byTestId(page, 'workflow-agent-setting-agent-option-claude').click();
+
+      await expect(byTestId(page, 'workflow-agent-setting-model')).toBeVisible();
+      await expect(byTestId(page, 'workflow-agent-setting-effort')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the agent starts when Settings closes with the choice made, not while it is open', async () => {
+    const { browser, page } = await launch({ workflowAgent: null });
+    try {
+      await openSettingsFromPane(page);
+      await setWorkflowAgent(page, { agent: 'claude', model: 'haiku', effort: 'low' });
+      // Complete, but Settings is still open: an Effort picked next must make the first run.
+      await expect(byTestId(page, 'settings-card-workflow-agent').locator('[data-testid="workflow-agent-setting-effort"]')).toBeVisible();
+      const setup = byTestId(page, 'workflow-agent-setup');
+      await expect(setup).toBeVisible();
+      // The held state says the choice is made and when the agent starts, and has no way
+      // into the Settings panel that is already open. The "needed" state says neither: its
+      // line reads "and starts", not "It starts".
+      await expect(setup).toHaveAttribute('data-setting', 'chosen');
+      await expect(setup).toContainText('Workflow agent chosen');
+      await expect(setup).toContainText('It starts when you close Settings.');
+      await expect(byTestId(page, 'workflow-agent-setup-open-settings')).toHaveCount(0);
+      await expect(byTestId(page, 'workflow-agent-pane')).toHaveAttribute('data-agent-state', 'setup');
+      await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+
+      await page.keyboard.press('Escape');
+      await expect(byTestId(page, 'settings-panel')).toHaveCount(0);
+
+      await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+      await expect(byTestId(page, 'workflow-agent-setup')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/** How many times the pane has opened its agent. A Resume is not an open. */
+async function agentOpenCount(page: Page): Promise<number> {
+  return page.evaluate(() => window.__mockWorkflowAgentOpenCount ?? 0);
+}
+
+/** Open Settings from the title bar, as a user does with the agent already running. */
+async function openSettingsFromTitleBar(page: Page): Promise<void> {
+  await page.locator('[data-testid="settings-button"]').click();
+  await expect(byTestId(page, 'settings-panel')).toBeVisible();
+}
+
+/** Close Settings with Escape, and wait for the panel to go. */
+async function closeSettings(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await expect(byTestId(page, 'settings-panel')).toHaveCount(0);
+}
+
+// Main checks the Workflow agent setting itself, so it can refuse a start the
+// pane's own read let through (the pane's agent list was out of date). The pane
+// then asks for the setting like a first run. Settings is where a refusal is
+// fixed, so opening it forgets the refusal and the close that follows tries the
+// open once more. Nothing else retries.
+test('when main refuses a start the pane expected to run, it asks for the setting, and a Settings round trip retries the open once', async () => {
+  const { browser, page } = await launch({ setupNeededOnce: true });
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    const setup = byTestId(page, 'workflow-agent-setup');
+    // The setting is complete, so the pane opened the agent and main refused it.
+    await expect(setup).toHaveAttribute('data-setting', 'needed');
+    await expect(pane).toHaveAttribute('data-agent-state', 'setup');
+    await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+    expect(await agentOpenCount(page)).toBe(1);
+    // A refusal is not retried on its own: a few frames is room for any effect to run.
+    await settleFrames(page, 5);
+    expect(await agentOpenCount(page)).toBe(1);
+
+    // Opening Settings forgets the refusal and holds the start until it closes.
+    await openSettingsFromPane(page);
+    await expect(setup).toHaveAttribute('data-setting', 'chosen');
+    expect(await agentOpenCount(page)).toBe(1);
+
+    // Closing it tries once more, and main accepts.
+    await closeSettings(page);
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await expect(setup).toHaveCount(0);
+    await expect(pane).not.toHaveAttribute('data-agent-state', 'setup');
+    expect(await agentOpenCount(page)).toBe(2);
+
+    // The agent is running now, so another visit to Settings opens nothing.
+    await openSettingsFromTitleBar(page);
+    await closeSettings(page);
+    await settleFrames(page, 5);
+    expect(await agentOpenCount(page)).toBe(2);
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+  } finally {
+    await browser.close();
+  }
+});
+
+// Pause leaves the session in the list, so a Resume button stands in for the
+// terminal. If the setting has since become incomplete, a Resume is one main
+// would refuse, so the pane asks for the setting instead and offers neither.
+test('a paused agent whose setting becomes incomplete shows the setup state, with no Pause or Resume', async () => {
+  const { browser, page } = await launch();
+  try {
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await byTestId(page, 'workflow-agent-toggle').click();
+    await expect(byTestId(page, 'workflow-agent-resume')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-toggle')).toHaveCount(1);
+
+    await setWorkflowAgent(page, { agent: null, model: null, effort: null });
+
+    await expect(byTestId(page, 'workflow-agent-setup')).toHaveAttribute('data-setting', 'needed');
+    await expect(byTestId(page, 'workflow-agent-pane')).toHaveAttribute('data-agent-state', 'setup');
+    await expect(byTestId(page, 'workflow-agent-toggle')).toHaveCount(0);
+    await expect(byTestId(page, 'workflow-agent-resume')).toHaveCount(0);
+
+    // Choosing the agent again gives the paused agent its Resume back.
+    await setWorkflowAgent(page, WORKFLOW_AGENT);
+    await expect(byTestId(page, 'workflow-agent-resume')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-toggle')).toHaveCount(1);
+    await expect(byTestId(page, 'workflow-agent-setup')).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});
+
+// Main answers `setupNeeded` for an incomplete setting, so a pane that never gets
+// an agent list is not stranded: it opens on the setting alone. Every agent-list
+// read the renderer makes rejects here (the boot load, which dev StrictMode runs
+// twice), so the store keeps its empty, not-loaded list for the whole page.
+test('the pane starts its agent without waiting for the agent list', async () => {
+  const { browser, page } = await launch({ rejectAgentList: true });
+  try {
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    // The precondition this stands on: the pane never had a list to run its own check on.
+    const listState = await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores: { config: { getState: () => { agentListLoaded: boolean; agentList: unknown[] } } };
+      }).__zustandStores;
+      const { agentListLoaded, agentList } = stores.config.getState();
+      return { agentListLoaded, agentCount: agentList.length };
+    });
+    expect(listState).toEqual({ agentListLoaded: false, agentCount: 0 });
+    await expect(byTestId(page, 'workflow-agent-setup')).toHaveCount(0);
+    expect(await agentOpenCount(page)).toBe(1);
+  } finally {
+    await browser.close();
+  }
+});
+
+// An agent whose CLI is not installed is no setup gap: the choice is made, and
+// main's own detection says what is missing. The pane shows that reason, and a
+// Settings round trip (where the user installs it or picks another) tries again.
+test('an agent that is not installed says so, and a Settings round trip after installing it starts the agent', async () => {
+  const { browser, page } = await launch({ agentListOverrides: { claude: { found: false } } });
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    const unavailable = byTestId(page, 'workflow-agent-unavailable');
+    await expect(unavailable).toHaveText('Kangentic cannot find Claude Code on this machine.');
+    await expect(pane).toHaveAttribute('data-agent-state', 'unavailable');
+    await expect(byTestId(page, 'workflow-agent-setup')).toHaveCount(0);
+    await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+    expect(await agentOpenCount(page)).toBe(1);
+
+    // The CLI is installed: main's next detection finds it. The pane's own agent list
+    // is not refreshed, so the retry must not depend on it.
+    await page.evaluate(() => { window.__mockAgentListOverrides = {}; });
+    await openSettingsFromTitleBar(page);
+    // Opening Settings drops the stale reason and holds the start.
+    await expect(byTestId(page, 'workflow-agent-setup')).toHaveAttribute('data-setting', 'chosen');
+    await expect(unavailable).toHaveCount(0);
+    expect(await agentOpenCount(page)).toBe(1);
+
+    await closeSettings(page);
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await expect(unavailable).toHaveCount(0);
+    expect(await agentOpenCount(page)).toBe(2);
+    await settleFrames(page, 5);
+    expect(await agentOpenCount(page)).toBe(2);
+  } finally {
+    await browser.close();
+  }
+});
+
+// The pane opens once per visit. Closing Settings starts only a pane that was
+// waiting on the setting: an open on an agent that has exited resumes its
+// conversation, which a Settings close (a theme change, say) must not do unasked.
+test('an agent that exited stays exited when Settings opens and closes', async () => {
+  const { browser, page } = await launch();
+  try {
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await page.evaluate((workflowId) => window.__mockWorkflowAgentExit(workflowId), WORKFLOW_ID);
+    await expect(byTestId(page, 'workflow-agent-resume')).toBeVisible();
+
+    await page.locator('[data-testid="settings-button"]').click();
+    await expect(byTestId(page, 'settings-panel')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(byTestId(page, 'settings-panel')).toHaveCount(0);
+
+    await expect(byTestId(page, 'workflow-agent-resume')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+    const liveAgents = await page.evaluate(async () => (await window.electronAPI.sessions.list())
+      .filter((session) => session.workflowId && session.status !== 'exited').length);
+    expect(liveAgents).toBe(0);
   } finally {
     await browser.close();
   }

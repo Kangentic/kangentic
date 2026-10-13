@@ -24,7 +24,10 @@
  *   restarts one that lacks it;
  * - a restart whose suspend worked but whose start then threw, after the new
  *   agent was already running, owes nothing: the new agent has the access, and
- *   owing it again would stop and respawn a healthy agent at every idle edge.
+ *   owing it again would stop and respawn a healthy agent at every idle edge;
+ * - a restart whose start is refused because the Workflow agent setting was
+ *   cleared since the agent started leaves the agent suspended, logs that the
+ *   setting is not complete, spawns nothing, and owes nothing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -50,6 +53,13 @@ vi.mock('../../src/main/db/database', () => ({
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
+// The cached agent inventory the Workflow agent setting is checked against.
+vi.mock('../../src/main/agent/agent-list', () => ({
+  listAgents: async () => [{ name: 'claude', found: true, supportsWorkflowAgent: true, capabilities: { supportsModelOverride: true } }],
+}));
+
+/** Settings > Workflows > Workflow agent, complete, so a start gets past it. */
+const WORKFLOW_AGENT = { agent: 'claude', model: 'haiku', effort: null };
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
@@ -218,7 +228,7 @@ describe('the workflow agent\'s reads across projects', () => {
 
     beforeEach(() => {
       warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-      startAttempts = vi.fn(() => ({ mcpServer: { enabled: false }, agent: { cliPaths: {} } }));
+      startAttempts = vi.fn(() => ({ mcpServer: { enabled: false }, agent: { cliPaths: {} }, workflows: WORKFLOW_AGENT }));
       Object.assign(context.configManager, { getEffectiveConfig: startAttempts });
       // An emitter, so the lifecycle's activity listener (the next idle) can be driven.
       manager = Object.assign(new EventEmitter(), {
@@ -263,7 +273,7 @@ describe('the workflow agent\'s reads across projects', () => {
       };
       spies.push(vi.spyOn(agentRegistry, 'get').mockReturnValue(fakeAdapter as unknown as AgentAdapter));
       // The MCP server is on, so the start gets past its config check and to the spawn.
-      startAttempts.mockReturnValue({ mcpServer: { enabled: true }, agent: { cliPaths: {} } });
+      startAttempts.mockReturnValue({ mcpServer: { enabled: true }, agent: { cliPaths: {} }, workflows: WORKFLOW_AGENT });
       Object.assign(context, {
         mcpServerHandle: { urlForProject: (projectId: string) => `http://127.0.0.1:9/mcp/${projectId}`, token: 'test-token' },
       });
@@ -320,6 +330,44 @@ describe('the workflow agent\'s reads across projects', () => {
       await nextTurn();
       expect(suspend).toHaveBeenCalledTimes(1);
       expect(startAttempts).toHaveBeenCalledTimes(1);
+    });
+
+    // The Workflow agent setting can be cleared between the agent's start and the
+    // restart for new access. That start has no agent to run, so it asks for the
+    // setting instead of falling back to the project's default agent, and the
+    // restart leaves the agent paused with the reason logged.
+    it('leaves the agent suspended, says the setting is not complete, and owes nothing when the setting was cleared since it started', async () => {
+      makeStartsReachSpawn();
+      // Everything else a start needs is in place; only the Workflow agent setting is empty.
+      startAttempts.mockReturnValue({ mcpServer: { enabled: true }, agent: { cliPaths: {} }, workflows: {} });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      spies.push(errorSpy);
+      const sessionId = 'session-setting-cleared';
+      const workflowId = idleAgent(sessionId);
+      // A conversation to resume: were the start to get past the setting, it would spawn.
+      recordConversation(workflowId);
+
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('could not start again: the Workflow agent setting is not complete'),
+      ));
+      expect(startAttempts).toHaveBeenCalledTimes(1);
+      expect(suspend).toHaveBeenCalledTimes(1);
+      expect(suspend).toHaveBeenCalledWith(sessionId);
+      // A refusal to start is a return, not a failure: nothing spawned, nothing threw, the agent is paused.
+      expect(spawn).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(sessions.map((session) => [session.id, session.status])).toEqual([[sessionId, 'suspended']]);
+
+      // Nothing is owed: an agent that runs again is left alone at its idle edge.
+      const returning = sessions.find((session) => session.id === sessionId);
+      if (returning) returning.status = 'running';
+      manager.emit('activity', sessionId, 'idle');
+      await nextTurn();
+      expect(suspend).toHaveBeenCalledTimes(1);
+      expect(startAttempts).toHaveBeenCalledTimes(1);
+      expect(spawn).not.toHaveBeenCalled();
     });
 
     it('does not suspend an agent whose turn began again before the restart ran, and restarts it at its next idle', async () => {

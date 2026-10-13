@@ -61,6 +61,10 @@ vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: async (options: { agentPath: string; prompt?: string }) => ({ agentPath: options.agentPath, prompt: options.prompt }),
 }));
 vi.mock('../../src/main/workflows/workflow-agent-prompt', () => ({ buildWorkflowAgentFirstMessage: () => 'FIRST MESSAGE' }));
+// The cached agent inventory the Workflow agent setting is checked against.
+vi.mock('../../src/main/agent/agent-list', () => ({
+  listAgents: async () => [{ name: 'claude', found: true, supportsWorkflowAgent: true, capabilities: { supportsModelOverride: true } }],
+}));
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
@@ -197,9 +201,12 @@ describe('a workflow\'s own agent: spend and conversation', () => {
   let context: IpcContext;
   let workflowId: string;
   let projects: Array<{ id: string; name: string; path: string; default_agent: null; default_model: null; default_effort: string | null }>;
+  /** Settings > Workflows > Workflow agent, which every start reads. */
+  let workflowAgentSetting: { agent: string; model: string; effort: string | null };
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-workflow-spend-'));
+    workflowAgentSetting = { agent: 'claude', model: 'haiku', effort: null };
     paths = { home: path.join(root, 'home'), mobile: path.join(root, 'mobile'), relay: path.join(root, 'relay') };
     for (const checkout of Object.values(paths)) fs.mkdirSync(checkout);
     harness.dbs.clear();
@@ -237,7 +244,7 @@ describe('a workflow\'s own agent: spend and conversation', () => {
       sessionManager: manager,
       configManager: {
         load: () => ({}),
-        getEffectiveConfig: () => ({ mcpServer: { enabled: true }, agent: { cliPaths: {} } }),
+        getEffectiveConfig: () => ({ mcpServer: { enabled: true }, agent: { cliPaths: {} }, workflows: workflowAgentSetting }),
       },
       mcpServerHandle: { urlForProject: (projectId: string) => `http://127.0.0.1:9/mcp/${projectId}`, token: 'test-token' },
     } as unknown as IpcContext;
@@ -573,15 +580,16 @@ describe('a workflow\'s own agent: spend and conversation', () => {
         forgetWorkflowAgentEffort('pty-spawned-1');
       });
 
-      it('is the project\'s default effort, kept under the new session\'s id', async () => {
-        projects[0].default_effort = 'high';
+      it('is the Workflow agent\'s effort, kept under the new session\'s id', async () => {
+        workflowAgentSetting.effort = 'high';
 
         await agent.openWorkflowAgent(context, 'home', workflowId, {});
 
         expect(workflowAgentEffort('pty-spawned-1')).toBe('high');
       });
 
-      it('is null for a project on the CLI\'s own default', async () => {
+      it('is null when the Workflow agent runs at the CLI\'s own effort, whatever the project\'s default', async () => {
+        projects[0].default_effort = 'xhigh';
         await agent.openWorkflowAgent(context, 'home', workflowId, {});
 
         expect(workflowAgentEffort('pty-spawned-1')).toBeNull();
@@ -589,7 +597,7 @@ describe('a workflow\'s own agent: spend and conversation', () => {
 
       it('is dropped when the session is removed', async () => {
         agent.registerWorkflowAgentLifecycle(context);
-        projects[0].default_effort = 'high';
+        workflowAgentSetting.effort = 'high';
         await agent.openWorkflowAgent(context, 'home', workflowId, {});
         expect(workflowAgentEffort('pty-spawned-1')).toBe('high');
 

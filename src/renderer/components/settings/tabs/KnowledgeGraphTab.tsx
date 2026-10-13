@@ -269,7 +269,6 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
             ) : (
               <AnswerAgentRows
                 choice={agentChoice}
-                agents={agentList}
                 capableAgents={answerCapableAgents}
                 onChange={updateKnowledgeGraph}
                 settingIds={{ agent: 'knowledgeGraph.agent', model: 'knowledgeGraph.model', effort: 'knowledgeGraph.effort' }}
