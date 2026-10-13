@@ -1,18 +1,35 @@
 import { parseModelId, type ModelDisplayGroup } from '../../shared/model-id';
 import type { ModelAliasOption } from '../../shared/types';
 
+/** Compact token units, smallest first. A cache-read total passes a billion on
+ *  a busy install, so the scale runs on past M. */
+const TOKEN_UNITS: ReadonlyArray<{ size: number; suffix: string }> = [
+  { size: 1_000_000_000_000, suffix: 'T' },
+  { size: 1_000_000_000, suffix: 'B' },
+  { size: 1_000_000, suffix: 'M' },
+  { size: 1000, suffix: 'k' },
+];
+
 /**
- * Format a token count for compact display.
- * e.g. 850 → "850", 1200 → "1.2k", 45300 → "45.3k", 200000 → "200k", 1200000 → "1.2M"
+ * Format a token count for compact display, one decimal with a trailing .0
+ * dropped: 850 "850", 1200 "1.2k", 200000 "200k", 1200000 "1.2M",
+ * 87378754432 "87.4B". A value that rounds up to 1000 of its unit moves to the
+ * next one, so 999,960 reads "1M" rather than "1000k".
  */
 export function formatTokenCount(n: number): string {
   if (n < 1000) return String(n);
-  if (n < 1_000_000) {
-    const v = (n / 1000).toFixed(1);
-    return `${v.endsWith('.0') ? v.slice(0, -2) : v}k`;
+  for (let index = 0; index < TOKEN_UNITS.length; index++) {
+    const unit = TOKEN_UNITS[index];
+    if (n < unit.size) continue;
+    const scaled = (n / unit.size).toFixed(1);
+    const larger = TOKEN_UNITS[index - 1];
+    if (larger && Number(scaled) >= 1000) {
+      const promoted = (n / larger.size).toFixed(1);
+      return `${promoted.endsWith('.0') ? promoted.slice(0, -2) : promoted}${larger.suffix}`;
+    }
+    return `${scaled.endsWith('.0') ? scaled.slice(0, -2) : scaled}${unit.suffix}`;
   }
-  const v = (n / 1_000_000).toFixed(1);
-  return `${v.endsWith('.0') ? v.slice(0, -2) : v}M`;
+  return String(n);
 }
 
 /**

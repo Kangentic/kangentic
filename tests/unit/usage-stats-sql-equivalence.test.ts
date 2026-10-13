@@ -712,6 +712,60 @@ describe('usage-stats SQL pushdown equivalence (new SQL vs legacy JS folds)', ()
     }
   });
 
+  it('token series by model: the per-model read folds to a row scan, and each bucket sums to the token series', () => {
+    // The Tokens view's by-model bars stand beside the Tokens tile, so the
+    // property that matters is that a bucket's slices add up to that bucket of
+    // the token series. The per-model split is checked against a plain row scan.
+    for (const window of WINDOWS) {
+      for (const kind of ['fiveMinutes', 'hour', 'day', 'week'] as const) {
+        const groupMs = kind === 'fiveMinutes' ? TURN_GROUP_MS : COST_GROUP_MS;
+        const sinceMs = msOf(window.sinceIso);
+        const untilMs = msOf(window.untilIso);
+        const modelGroups = [];
+        const turnGroups: GroupedTurnUsageRow[] = [];
+        const scannedRows: Array<{ ts: number; model: string | null; input_tokens: number; output_tokens: number }> = [];
+        for (const db of databases) {
+          const store = new ConversationUsageStore(db);
+          modelGroups.push(...store.getGroupedModelUsageSince(sinceMs, groupMs, untilMs));
+          turnGroups.push(...store.getGroupedUsageSince(sinceMs, groupMs, untilMs, window.sinceIso, window.untilIso));
+          scannedRows.push(...(db.prepare(
+            'SELECT ts, model, input_tokens, output_tokens FROM conversation_turn_usage WHERE subagent_id IS NULL AND ts IS NOT NULL',
+          ).all() as typeof scannedRows).filter((row) =>
+            (sinceMs === null || row.ts >= sinceMs) && (untilMs === null || row.ts < untilMs)));
+        }
+        const rangeStartMs = msOf(window.sinceIso) ?? BASE_MS;
+        const rangeEndMs = msOf(window.untilIso) ?? BASE_MS + SPAN_DAYS * 24 * 3_600_000;
+        const starts = buildBucketStarts(rangeStartMs, rangeEndMs, kind);
+        const label = `tokenModelSeries[${window.label}][${kind}]`;
+
+        const modelSeries = foldCostSeries(
+          modelGroups.map((group) => ({ ...group, costUsd: 0, sessionCount: 0 })),
+          starts,
+          kind,
+        );
+        const tokenSeries = foldTokenSeries(turnGroups, starts, kind);
+        expect(modelSeries.map((point) => point.inputTokens + point.outputTokens), label)
+          .toEqual(tokenSeries.map((point) => point.inputTokens + point.outputTokens));
+
+        const scanned = new Map<string, number>();
+        const startSet = new Set(starts);
+        for (const row of scannedRows) {
+          const bucket = bucketStartFor(row.ts, kind);
+          if (!startSet.has(bucket)) continue;
+          const key = `${bucket}|${row.model === null ? '' : parseModelId(row.model).baseId}`;
+          scanned.set(key, (scanned.get(key) ?? 0) + row.input_tokens + row.output_tokens);
+        }
+        const folded = new Map<string, number>();
+        for (const point of modelSeries) {
+          for (const slice of point.byModel) {
+            folded.set(`${point.bucketStartMs}|${slice.modelId ?? ''}`, slice.inputTokens + slice.outputTokens);
+          }
+        }
+        expect(folded, label).toEqual(scanned);
+      }
+    }
+  });
+
   it('breakdowns: the dimension rollup regroups to the same model/agent/effort tables (order included)', () => {
     // The oracle still holds for cost, session counts, grouping and ORDER.
     // Tokens are deliberately no longer the same measurement: the legacy fold

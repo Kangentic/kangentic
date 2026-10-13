@@ -3456,9 +3456,71 @@ export function buildDemoPreConfig(options: {
             };
           }).sort(function (left, right) { return right.inputTokens - left.inputTokens; });
         }
+        // The Tokens view's by-model bars: each hour of the token series split across the same
+        // models as the cost chart, so a bucket's slices sum to its tokens.
+        var tokenModelSeries = tokenSeries.map(function (point) {
+          return {
+            bucketStartMs: point.bucketStartMs, costUsd: 0, inputTokens: point.inputTokens, outputTokens: point.outputTokens, sessionCount: 0,
+            byModel: modelWeights.map(function (entry) {
+              var share = entry.weight / weightTotal;
+              return { modelId: entry.modelId, costUsd: 0, inputTokens: Math.round(point.inputTokens * share), outputTokens: Math.round(point.outputTokens * share) };
+            }),
+          };
+        });
+        // Background calls, the headless calls Kangentic makes for the user, kept apart from the
+        // session figures. Each job's per-call figures follow what the real calls report: a
+        // Haiku 5.5 condition check is about 2.1k fresh input, 1k cache read and 45 output for
+        // $0.0026 in 1.9s, and a title is about 8k tokens. The ledger is new on this install, so
+        // it reaches back six days. Drawn after every other random value, so adding it moved none.
+        var backgroundJobShapes = [
+          { job: 'condition_check', modelId: 'claude-haiku-5-5', perDay: 14, input: 2100, write: 120, read: 1000, output: 45, cost: 0.0026, ms: 1900 },
+          { job: 'workflow_step', modelId: 'claude-haiku-5-5', perDay: 4, input: 2300, write: 120, read: 1000, output: 48, cost: 0.0028, ms: 2100 },
+          { job: 'task_summary', modelId: 'claude-sonnet-5-5', perDay: 1, input: 16000, write: 2000, read: 5000, output: 1500, cost: 0.074, ms: 14200 },
+          { job: 'task_title', modelId: 'claude-haiku-5-5', perDay: 3, input: 800, write: 1000, read: 6000, output: 16, cost: 0.0025, ms: 2400 },
+          { job: 'terminal_name', modelId: 'claude-haiku-5-5', perDay: 1, input: 800, write: 1000, read: 6000, output: 16, cost: 0.0025, ms: 2200 },
+        ];
+        var backgroundDayCount = period === 'live' || period === 'today' ? 1 : 6;
+        var nowDate = new Date(now);
+        var backgroundDays = [];
+        for (var dayOffset = 0; dayOffset < backgroundDayCount; dayOffset++) {
+          var backgroundDayStart = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() - dayOffset).getTime();
+          backgroundJobShapes.forEach(function (shape) {
+            var calls = Math.round(shape.perDay * (scope.kind === 'all' ? 1.6 : 1) * (0.6 + random() * 0.8));
+            if (calls === 0) return;
+            backgroundDays.push({
+              dayStartMs: backgroundDayStart, job: shape.job, models: [{ agent: 'claude', modelId: shape.modelId, calls: calls }],
+              calls: calls, failedCalls: shape.job === 'condition_check' && random() > 0.8 ? 1 : 0, reportedCalls: calls,
+              inputTokens: calls * shape.input, cacheCreationInputTokens: calls * shape.write, cacheReadInputTokens: calls * shape.read,
+              outputTokens: calls * shape.output, costUsd: calls * shape.cost, durationMs: calls * shape.ms,
+            });
+          });
+        }
+        function emptyBackgroundTotals() {
+          return { calls: 0, failedCalls: 0, reportedCalls: 0, inputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, costUsd: null, durationMs: 0 };
+        }
+        function addBackgroundTotals(totals, row) {
+          totals.calls += row.calls; totals.failedCalls += row.failedCalls; totals.reportedCalls += row.reportedCalls;
+          totals.inputTokens += row.inputTokens; totals.cacheCreationInputTokens += row.cacheCreationInputTokens;
+          totals.cacheReadInputTokens += row.cacheReadInputTokens; totals.outputTokens += row.outputTokens;
+          if (row.costUsd !== null) totals.costUsd = (totals.costUsd || 0) + row.costUsd;
+          totals.durationMs += row.durationMs;
+        }
+        var backgroundTotals = emptyBackgroundTotals();
+        backgroundDays.forEach(function (row) { addBackgroundTotals(backgroundTotals, row); });
+        var background = {
+          totals: backgroundTotals,
+          byJob: backgroundJobShapes.map(function (shape) {
+            var jobTotals = emptyBackgroundTotals();
+            var jobRows = backgroundDays.filter(function (row) { return row.job === shape.job; });
+            jobRows.forEach(function (row) { addBackgroundTotals(jobTotals, row); });
+            return Object.assign({ job: shape.job, models: jobTotals.calls > 0 ? [{ agent: 'claude', modelId: shape.modelId, calls: jobTotals.calls }] : [] }, jobTotals);
+          }),
+          byDay: backgroundDays,
+        };
         return {
           scope: scope, period: period, rangeStartMs: rangeStartMs, rangeEndMs: now, bucketSizeMs: hourMs, costBucketSizeMs: dayMs, generatedAtMs: now,
           kpis: kpis, previousKpis: period === 'all' ? null : previous, tokenSeries: tokenSeries, costSeries: costSeries,
+          tokenModelSeries: tokenModelSeries, background: background,
           byModel: breakdown(function (session) { return session.model ? session.model.id : null; }, function (session) { return session.model.displayName; }).map(function (row) {
             return { modelId: row.key, modelDisplayName: row.label, inputTokens: row.inputTokens, outputTokens: row.outputTokens, costUsd: row.costUsd, sessionCount: row.sessionCount };
           }),
@@ -3473,6 +3535,7 @@ export function buildDemoPreConfig(options: {
                 var share = [0.55, 0.27, 0.18][index] || 0.1;
                 return {
                   projectId: project.id, projectName: project.name, inputTokens: Math.round(totalInput * share), outputTokens: Math.round(totalOutput * share),
+                  cacheReadTokens: Math.round(kpis.cacheReadTokens * share),
                   costUsd: totalCost * share, sessionCount: Math.round(sessionCount * share), toolCallCount: Math.round(sessionCount * 41 * share),
                   linesAdded: Math.round(sessionCount * 160 * share), linesRemoved: Math.round(sessionCount * 55 * share), filesChanged: Math.round(sessionCount * 7 * share),
                   totalDurationMs: Math.round(sessionCount * 38 * 60000 * share), lastActiveMs: now - project.lastOpenedMinutesAgo * 60000, topAgent: project.default_agent,

@@ -1075,9 +1075,11 @@ The status bar runs along the bottom of the window, providing at-a-glance metric
 Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift+U`. It replaces the old status-bar token/cost strip with a full-page view of agent usage:
 
 - **Scope** - the current project, or an app-wide rollup across every registered project (with a per-project comparison table).
-- **Metric** - toggle between cost and tokens.
+- **Metric** - toggle between cost and tokens. The two views chart different things. The Cost view shows cost per day by model and the cumulative spend. The Tokens view reads the same per-turn ledger as the Tokens tile, so its bars add up to that tile: tokens per bucket by model, then the cache hit rate per bucket (cache read over all input), which is what makes a week expensive without more work. The breakdown lists rank by the selected metric, with the other one in each row's tooltip. In the per-project table the Tokens view swaps Cost and Cost Share for Cache Read and Token Share.
 - **Range** - Live (trailing 2 hours), Today, This Week, This Month, All Time, or a custom month range. Click a day in a chart to drill into that single day.
 - **Breakdowns** - by model, by agent, by reasoning effort, and, when a session fanned out to subagents, by subagent type, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, files, cache reads, compactions, burn rate, average active time, subagent tokens) with "vs previous period" deltas. The Subagents tile's tooltip adds how many of those subagents another subagent spawned, and names any agent in the range that cannot report subagent usage at all - only Claude can today, so a Codex or Gemini range says so rather than showing a dash that looks like "nothing fanned out".
+
+- **Background** - the headless agent calls Kangentic makes for you: Condition checks, workflow step checks, Knowledge Graph task summaries, task titles and Command Terminal names. A card under the tiles shows the range's total and each job's calls and model, in the selected metric. Below the burn rate chart, "Background calls by day" lists each day and job with all four token types, failures, average time and cost. None of these calls is a session, so none of it is added to the tiles above. An agent whose CLI reports no usage shows a dash, never a zero.
 
 Totals are read from the durable usage ledgers, so they survive task and session deletion. The selected range and scope persist across app restarts (one global value shared across all projects).
 

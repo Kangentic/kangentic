@@ -2631,6 +2631,84 @@
             ],
           });
         }
+        // The Tokens view's by-model bars: the token series split by model, so
+        // each bucket's slices sum to that bucket of tokenSeries, as the
+        // service's turn-ledger fold does.
+        var tokenModelSeries = tokenSeries.map(function (point) {
+          var largeInput = Math.floor(point.inputTokens * 0.7);
+          var largeOutput = Math.floor(point.outputTokens * 0.7);
+          return {
+            bucketStartMs: point.bucketStartMs,
+            costUsd: 0,
+            inputTokens: point.inputTokens,
+            outputTokens: point.outputTokens,
+            sessionCount: 0,
+            byModel: [
+              { modelId: 'mock-model-large', costUsd: 0, inputTokens: largeInput, outputTokens: largeOutput },
+              { modelId: 'mock-model-small', costUsd: 0, inputTokens: point.inputTokens - largeInput, outputTokens: point.outputTokens - largeOutput },
+            ],
+          };
+        });
+        // Background calls: per-day rows, with the per-job and total figures
+        // folded from them the way the service folds them, so the card and
+        // the history table always agree. The terminal names ran on an agent
+        // that reports no usage, which exercises the "not reported" state.
+        var todayStartMs = new Date(new Date(nowMs).getFullYear(), new Date(nowMs).getMonth(), new Date(nowMs).getDate()).getTime();
+        var yesterdayStartMs = new Date(new Date(nowMs).getFullYear(), new Date(nowMs).getMonth(), new Date(nowMs).getDate() - 1).getTime();
+        function backgroundDay(dayStartMs, job, agent, modelId, calls, failedCalls, usage, durationMs) {
+          return {
+            dayStartMs: dayStartMs,
+            job: job,
+            models: [{ agent: agent, modelId: modelId, calls: calls }],
+            calls: calls,
+            failedCalls: failedCalls,
+            reportedCalls: usage ? calls : 0,
+            inputTokens: usage ? usage[0] : 0,
+            cacheCreationInputTokens: usage ? usage[1] : 0,
+            cacheReadInputTokens: usage ? usage[2] : 0,
+            outputTokens: usage ? usage[3] : 0,
+            costUsd: usage ? usage[4] : null,
+            durationMs: durationMs,
+          };
+        }
+        var backgroundDays = [
+          backgroundDay(todayStartMs, 'condition_check', 'claude', 'claude-haiku-5-5', 12, 0, [25000, 1200, 12000, 540, 0.04], 22800),
+          backgroundDay(todayStartMs, 'workflow_step', 'claude', 'claude-haiku-5-5', 4, 1, [8400, 400, 4000, 180, 0.01], 8400),
+          backgroundDay(todayStartMs, 'task_summary', 'claude', 'claude-sonnet-5-5', 2, 0, [32000, 4000, 10000, 3000, 0.15], 28000),
+          backgroundDay(todayStartMs, 'task_title', 'claude', 'claude-haiku-5-5', 3, 0, [2400, 3000, 18000, 48, 0.02], 7200),
+          backgroundDay(todayStartMs, 'terminal_name', 'codex', null, 2, 0, null, 9200),
+          backgroundDay(yesterdayStartMs, 'condition_check', 'claude', 'claude-haiku-5-5', 9, 0, [19000, 900, 9000, 400, 0.03], 17100),
+        ];
+        var backgroundJobs = ['condition_check', 'workflow_step', 'task_summary', 'task_title', 'terminal_name'];
+        function emptyBackgroundTotals() {
+          return { calls: 0, failedCalls: 0, reportedCalls: 0, inputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, costUsd: null, durationMs: 0 };
+        }
+        function addBackgroundTotals(totals, row) {
+          totals.calls += row.calls;
+          totals.failedCalls += row.failedCalls;
+          totals.reportedCalls += row.reportedCalls;
+          totals.inputTokens += row.inputTokens;
+          totals.cacheCreationInputTokens += row.cacheCreationInputTokens;
+          totals.cacheReadInputTokens += row.cacheReadInputTokens;
+          totals.outputTokens += row.outputTokens;
+          if (row.costUsd !== null) totals.costUsd = (totals.costUsd || 0) + row.costUsd;
+          totals.durationMs += row.durationMs;
+        }
+        var backgroundTotals = emptyBackgroundTotals();
+        backgroundDays.forEach(function (row) { addBackgroundTotals(backgroundTotals, row); });
+        var backgroundByJob = backgroundJobs.map(function (job) {
+          var jobTotals = emptyBackgroundTotals();
+          var models = [];
+          backgroundDays.filter(function (row) { return row.job === job; }).forEach(function (row) {
+            addBackgroundTotals(jobTotals, row);
+            row.models.forEach(function (model) {
+              var existing = models.find(function (candidate) { return candidate.agent === model.agent && candidate.modelId === model.modelId; });
+              if (existing) existing.calls += model.calls;
+              else models.push({ agent: model.agent, modelId: model.modelId, calls: model.calls });
+            });
+          });
+          return Object.assign({ job: job, models: models }, jobTotals);
+        });
         // Burn rates derived from THIS fixture's own totals and range, the way
         // the service computes them: one shared denominator, each numerator
         // the field its own tile renders. Hardcoded constants here used to
@@ -2705,6 +2783,8 @@
           },
           tokenSeries: tokenSeries,
           costSeries: costSeries,
+          tokenModelSeries: tokenModelSeries,
+          background: { totals: backgroundTotals, byJob: backgroundByJob, byDay: backgroundDays },
           byModel: [
             { modelId: 'mock-model-large', modelDisplayName: 'Mock Large', inputTokens: 120000, outputTokens: 30000, costUsd: 10.0, sessionCount: 5 },
             { modelId: 'mock-model-small', modelDisplayName: 'Mock Small', inputTokens: 30000, outputTokens: 12000, costUsd: 2.34, sessionCount: 2 },
@@ -2713,10 +2793,13 @@
             { agent: 'claude', inputTokens: 130000, outputTokens: 36000, costUsd: 11.0, sessionCount: 6 },
             { agent: 'codex', inputTokens: 20000, outputTokens: 6000, costUsd: 1.34, sessionCount: 1 },
           ],
+          // Cost and token order differ on purpose: 'low' is the smallest by
+          // tokens but second by cost, so a breakdown list visibly re-ranks
+          // when the Cost/Tokens toggle flips.
           byEffort: [
             { effort: 'high', inputTokens: 90000, outputTokens: 26000, costUsd: 8.0, sessionCount: 3 },
-            { effort: null, inputTokens: 40000, outputTokens: 10000, costUsd: 3.0, sessionCount: 3 },
-            { effort: 'low', inputTokens: 20000, outputTokens: 6000, costUsd: 1.34, sessionCount: 1 },
+            { effort: null, inputTokens: 40000, outputTokens: 10000, costUsd: 1.34, sessionCount: 3 },
+            { effort: 'low', inputTokens: 20000, outputTokens: 6000, costUsd: 3.0, sessionCount: 1 },
           ],
           // Subagent rollup carries no cost by design: the session's reported
           // cost already covers its whole subagent tree.
@@ -2732,8 +2815,8 @@
           earliestTurnMs: nowMs - 30 * dayMs,
           perProject: scope.kind === 'all'
             ? [
-                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, filesChanged: 47, totalDurationMs: 3 * hourMs, activeMs: 55 * 60 * 1000, activeSessionsCovered: 4, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
-                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, filesChanged: 12, totalDurationMs: hourMs, activeMs: 20 * 60 * 1000, activeSessionsCovered: 2, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
+                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, cacheReadTokens: 400000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, filesChanged: 47, totalDurationMs: 3 * hourMs, activeMs: 55 * 60 * 1000, activeSessionsCovered: 4, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
+                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, cacheReadTokens: 2500000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, filesChanged: 12, totalDurationMs: hourMs, activeMs: 20 * 60 * 1000, activeSessionsCovered: 2, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
               ]
             : undefined,
         };

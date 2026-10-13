@@ -98,6 +98,26 @@ export function humanizeModelId(modelId: string): string | null {
 }
 
 /**
+ * A context-window note at the end of a display name ("Opus 4.8 (1M context)",
+ * "Opus 4.8 (1M)"). Pure string shape: any `(<n>K|M ...)` parenthetical.
+ */
+const CONTEXT_WINDOW_SUFFIX_PATTERN = /\s*\(\s*\d+(?:\.\d+)?\s*[KkMm]\b[^)]*\)\s*$/;
+
+/**
+ * The label a usage breakdown shows for a base model: the agent's own display
+ * name with any context-window note stripped, so `claude-opus-4-8[1m]` and
+ * `claude-opus-4-8` read as one "Opus 4.8" row rather than whichever spelling
+ * the first session happened to report. Falls back to `humanizeModelId` only
+ * when there is no display name, which keeps another agent's own spelling
+ * ("GPT-5.2 Codex", not "Gpt 5.2 Codex").
+ */
+export function baseModelLabel(displayName: string | null, baseId: string): string {
+  const stripped = displayName?.replace(CONTEXT_WINDOW_SUFFIX_PATTERN, '').trim();
+  if (stripped) return stripped;
+  return humanizeModelId(baseId) ?? baseId;
+}
+
+/**
  * The exact shapes `humanizeModelId` emits for a model id: one family word,
  * an optional dotted version, and an optional "(1M)" suffix. Anything else is
  * treated as a raw id and never rewritten.

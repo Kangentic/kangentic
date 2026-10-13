@@ -476,7 +476,9 @@ test.describe('usage dashboard', () => {
       const subagentTile = page.locator('[data-testid="kpi-subagents"]');
       // 180000 + 45000 fresh + output from the mock's subagent rollup.
       await expect(subagentTile).toContainText('225k', { timeout: 10000 });
-      await expect(subagentTile).toContainText('8 agent(s), 5.2M cached');
+      // The count alone: the cache read is in the tooltip (asserted below).
+      await expect(subagentTile).toContainText('8 subagents');
+      await expect(subagentTile).not.toContainText('cached');
       // A real period-over-period delta, which only appears when the previous
       // window is read for the subagent fields too (225k against 186k = +21%).
       await expect(subagentTile).toContainText('+21%');
@@ -676,12 +678,122 @@ test.describe('usage dashboard', () => {
       // (claude $11.00 of $12.34 = 89%).
       await expect(page.locator('[data-testid="breakdown-agent"]')).toContainText('89%', { timeout: 10000 });
 
+      // In the Cost view the row's bright value is its cost, with tokens in
+      // the row's tooltip.
+      const claudeRow = page.locator('[data-testid="breakdown-agent-row"]').first();
+      await expect(claudeRow.locator('[data-testid="breakdown-agent-row-value"]')).toHaveText('$11.00');
+      await expect(claudeRow).toHaveAttribute('title', 'Claude: $11.00, 166k tokens');
+
       // Switching to Tokens re-keys the share to the token split (claude 166k
-      // of 192k = 86%); the per-slice cost column stays visible either way.
+      // of 192k = 86%), and the row shows tokens with the cost in its tooltip.
       await page.locator('[data-testid="stats-metric-group"] button:has-text("Tokens")').click();
       await expect(page.locator('[data-testid="breakdown-agent"]')).toContainText('86%');
       await expect(page.locator('[data-testid="breakdown-agent"]')).not.toContainText('89%');
-      await expect(page.locator('[data-testid="breakdown-agent-row"]').first()).toContainText('$11.00');
+      await expect(claudeRow.locator('[data-testid="breakdown-agent-row-value"]')).toHaveText('166k');
+      await expect(claudeRow).toHaveAttribute('title', 'Claude: 166k tokens, $11.00');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Background card and its history table report background calls apart from the session tiles', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+
+      // Cost view. The mock's six day rows sum to $0.25 over 32 calls, with
+      // 86,800 fresh input and 4,168 output (91k tokens) on the last line.
+      const total = page.locator('[data-testid="background-total"]');
+      await expect(page.locator('[data-testid="background-total-value"]')).toHaveText('$0.25', { timeout: 10000 });
+      await expect(total).toContainText('32 calls');
+      await expect(total).toContainText('91k tokens');
+      const checks = page.locator('[data-testid="background-job-condition_check"]');
+      await expect(checks).toContainText('$0.07');
+      await expect(checks).toContainText('21 calls');
+      await expect(checks).toContainText('Haiku 5.5');
+      // An agent that reports no usage: a dash, never $0.00, with its default
+      // model named and the reason in the tooltip rather than on the value.
+      const names = page.locator('[data-testid="background-job-terminal_name"]');
+      await expect(page.locator('[data-testid="background-job-terminal_name-value"]')).toHaveText('-');
+      await expect(names).toContainText('2 calls');
+      await expect(names).toContainText('Codex default');
+      expect(await names.getAttribute('title')).toContain('Codex reported no usage');
+
+      // Kept apart: the session tiles are the mock's own session figures.
+      await expect(page.locator('[data-testid="kpi-cost-value"]')).toContainText('$12.34');
+      await expect(page.locator('[data-testid="kpi-tokens-value"]')).toContainText('80k');
+
+      // The history table: one row per day and job, today's costliest first.
+      const rows = page.locator('[data-testid="background-history-row"]');
+      await expect(rows).toHaveCount(6);
+      await expect(rows.first()).toContainText('Task summaries');
+      await expect(rows.first()).toContainText('Sonnet 5.5');
+      await expect(page.locator('[data-testid="background-history"]')).toContainText('Codex default');
+
+      // Tokens view: the card follows the toggle, and the Total keeps cost.
+      await page.locator('[data-testid="stats-metric-group"] button:has-text("Tokens")').click();
+      await expect(page.locator('[data-testid="background-total-value"]')).toHaveText('91k');
+      await expect(total).toContainText('$0.25');
+      // (25,000 + 540) + (19,000 + 400) fresh input plus output.
+      await expect(page.locator('[data-testid="background-job-condition_check-value"]')).toHaveText('44.9k');
+      await expect(page.locator('[data-testid="background-job-terminal_name-value"]')).toHaveText('-');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('flipping Cost/Tokens changes the Burn Rate tile, the second chart, the list order, and the project table', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+      await page.locator('[data-testid="stats-scope-trigger"]').click();
+      await page.locator('[data-testid="stats-scope-option-all"]').click();
+
+      const burnValue = page.locator('[data-testid="kpi-burn-rate-value"]');
+      const effortRows = page.locator('[data-testid="breakdown-effort-row"]');
+      const table = page.locator('[data-testid="per-project-table"]');
+      const projectRows = page.locator('[data-testid="per-project-row"]');
+
+      // Cost view.
+      await expect(burnValue).toContainText('$', { timeout: 10000 });
+      await expect(page.locator('[data-testid="kpi-burn-rate"]')).toContainText('tokens/hr');
+      await expect(page.locator('[data-testid="chart-daily"]')).toContainText('Cost per day by model');
+      await expect(page.locator('[data-testid="chart-cumulative"]')).toContainText('Cumulative spend');
+      // Ranked by cost: low ($3.00) above the agent default ($1.34).
+      await expect(effortRows).toHaveCount(3);
+      expect(await effortRows.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-slice-id'))))
+        .toEqual(['high', 'low', '(default)']);
+      await expect(table).toContainText('Cost Share');
+      await expect(table).not.toContainText('Token Share');
+
+      // A sort picked by hand: Tool Calls ascending puts Other Project first.
+      const toolCallsHeader = table.locator('th:has-text("Tool Calls")');
+      await toolCallsHeader.click();
+      await toolCallsHeader.click();
+      await expect(projectRows.first()).toContainText('Other Project');
+
+      // Tokens view.
+      await page.locator('[data-testid="stats-metric-group"] button:has-text("Tokens")').click();
+      await expect(burnValue).not.toContainText('$');
+      await expect(page.locator('[data-testid="kpi-burn-rate"]')).toContainText('tokens/hr');
+      await expect(page.locator('[data-testid="kpi-burn-rate"]')).toContainText('$');
+      await expect(page.locator('[data-testid="chart-daily"]')).toContainText('Tokens per hour by model');
+      await expect(page.locator('[data-testid="chart-daily-legend"]')).toContainText('Mock Large');
+      await expect(page.locator('[data-testid="chart-cache-hit-rate"]')).toContainText('Cache hit rate per hour');
+      await expect(page.locator('[data-testid="chart-cumulative"]')).toHaveCount(0);
+      // Ranked by tokens: the agent default (50k) above low (26k).
+      expect(await effortRows.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-slice-id'))))
+        .toEqual(['high', '(default)', 'low']);
+      await expect(table).toContainText('Token Share');
+      await expect(table).toContainText('Cache Read');
+      await expect(table).not.toContainText('Cost Share');
+      await expect(table).toContainText('2.5M');
+      // The hand-picked sort survives the flip.
+      await expect(projectRows.first()).toContainText('Other Project');
     } finally {
       await browser.close();
     }
@@ -825,6 +937,10 @@ test.describe('usage dashboard', () => {
       await expect(page.locator('[data-testid="kpi-cost-value"]')).toContainText('$0.00');
       await expect(page.locator('[data-testid="chart-burn-rate"]')).toContainText('No agent turns recorded');
       await expect(page.locator('[data-testid="breakdown-model"]')).toContainText('No usage recorded yet');
+      // A payload with no Background figures (an older build's, or a range
+      // with no calls) reads as no calls, and the history table is not drawn.
+      await expect(page.locator('[data-testid="background-card-empty"]')).toHaveText('No background calls in this range');
+      await expect(page.locator('[data-testid="background-history"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -883,14 +999,15 @@ test.describe('usage dashboard', () => {
       await openDashboard(page);
 
       // No cost reported: the Cost/Tokens metric toggle is hidden (tokens
-      // forced), the burn tile falls back to tokens/hr (the '/hr' unit is a
-      // muted suffix beside the hero value), and the cumulative card retitles
-      // to tokens.
-      await expect(page.locator('[data-testid="kpi-burn-rate-value"]')).toContainText('tok', { timeout: 10000 });
-      await expect(page.locator('[data-testid="kpi-burn-rate-value"]')).not.toContainText('$');
-      await expect(page.locator('[data-testid="kpi-burn-rate"]')).toContainText('/hr');
+      // forced), the burn tile reads tokens/hr (the unit is a muted suffix
+      // beside the hero value) with no dollar sub-line, and the second chart
+      // is the Tokens view's cache hit rate.
+      await expect(page.locator('[data-testid="kpi-burn-rate-value"]')).toHaveText('1.8k', { timeout: 10000 });
+      await expect(page.locator('[data-testid="kpi-burn-rate"]')).toContainText('tokens/hr');
+      await expect(page.locator('[data-testid="kpi-burn-rate"]')).not.toContainText('$');
       await expect(page.locator('[data-testid="stats-metric-group"]')).not.toBeVisible();
-      await expect(page.locator('[data-testid="chart-cumulative"]')).toContainText('Cumulative tokens');
+      await expect(page.locator('[data-testid="chart-cache-hit-rate"]')).toContainText('Cache hit rate per hour');
+      await expect(page.locator('[data-testid="chart-cumulative"]')).toHaveCount(0);
 
       // A null model id renders as "(unknown)" in the breakdown list; a null
       // effort renders as "(default)" (a real bucket, not missing data).
@@ -1002,13 +1119,15 @@ test.describe('usage dashboard', () => {
         await expect(cumulativeCard.locator('[role="img"]')).not.toHaveClass(/cursor-pointer/);
         await expect(page.locator('[data-testid="chart-daily"] [role="img"]')).not.toHaveClass(/cursor-pointer/);
 
-        // Toggling the Cost/Tokens metric while still in Live re-keys the
-        // Cumulative card's title and value source, but it must STAY
-        // populated from tokenSeries either way (not silently go empty).
+        // Toggling to Tokens while still in Live swaps the running total for
+        // the cache hit rate, also from tokenSeries, and it must be populated
+        // (not silently empty). The first card stays the token-type stack.
         await page.locator('[data-testid="stats-metric-group"] button:has-text("Tokens")').click();
-        await expect(cumulativeCard).toContainText('Cumulative tokens');
-        await expect(cumulativeCard).not.toContainText('recorded');
-        await expect(cumulativeCard.locator('.recharts-area-area')).toBeVisible({ timeout: 10000 });
+        await expect(cumulativeCard).toHaveCount(0);
+        const hitRateCard = page.locator('[data-testid="chart-cache-hit-rate"]');
+        await expect(hitRateCard).not.toContainText('recorded');
+        await expect(hitRateCard.locator('.recharts-area-area')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-testid="chart-daily"]')).toContainText('Tokens by type');
       } finally {
         await browser.close();
       }
@@ -1061,8 +1180,8 @@ test.describe('usage dashboard', () => {
           'No agent turns recorded in the last 2 hours',
           { timeout: 10000 },
         );
-        await expect(page.locator('[data-testid="chart-cumulative"]')).toContainText(
-          'No tokens recorded in the last 2 hours',
+        await expect(page.locator('[data-testid="chart-cache-hit-rate"]')).toContainText(
+          'No input recorded in the last 2 hours',
         );
       } finally {
         await browser.close();

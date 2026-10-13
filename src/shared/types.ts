@@ -2278,6 +2278,9 @@ export interface ProjectUsageSummary {
   projectName: string;
   inputTokens: number;
   outputTokens: number;
+  /** Main-thread cache read from the turn ledger, for the Tokens view's table.
+   *  Optional: a payload from an older build has none. */
+  cacheReadTokens?: number;
   costUsd: number;
   sessionCount: number;
   toolCallCount: number;
@@ -2347,6 +2350,13 @@ export interface UsageDashboardStats {
   previousKpis: UsageKpis | null;
   tokenSeries: TokenSeriesPoint[];
   costSeries: CostSeriesPoint[];
+  /**
+   * Main-thread fresh input and output per token-series bucket (`bucketSizeMs`),
+   * split by base model, from the per-turn ledger: the Tokens view's by-model
+   * bars, which sum to the Tokens tile. Each slice's `costUsd` is 0. Optional:
+   * a payload from an older build has none.
+   */
+  tokenModelSeries?: CostSeriesPoint[];
   byModel: ModelUsageBreakdown[];
   byAgent: AgentUsageBreakdown[];
   byEffort: EffortUsageBreakdown[];
