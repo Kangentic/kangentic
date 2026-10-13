@@ -769,6 +769,10 @@ test.describe('usage dashboard', () => {
         .toEqual(['high', 'low', '(default)']);
       await expect(table).toContainText('Cost Share');
       await expect(table).not.toContainText('Token Share');
+      // A model with cost and no turn tokens is in the Cost view's breakdown.
+      const modelRows = page.locator('[data-testid="breakdown-model-row"]');
+      expect(await modelRows.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-slice-id'))))
+        .toEqual(['mock-model-large', 'mock-model-small', 'mock-model-legacy']);
 
       // A sort picked by hand: Tool Calls ascending puts Other Project first.
       const toolCallsHeader = table.locator('th:has-text("Tool Calls")');
@@ -783,6 +787,10 @@ test.describe('usage dashboard', () => {
       await expect(page.locator('[data-testid="kpi-burn-rate"]')).toContainText('$');
       await expect(page.locator('[data-testid="chart-daily"]')).toContainText('Tokens per hour by model');
       await expect(page.locator('[data-testid="chart-daily-legend"]')).toContainText('Mock Large');
+      // ...and not in the Tokens view's breakdown or legend, where it has nothing to show.
+      await expect(page.locator('[data-testid="chart-daily-legend"]')).not.toContainText('Mock Legacy');
+      expect(await modelRows.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-slice-id'))))
+        .toEqual(['mock-model-large', 'mock-model-small']);
       await expect(page.locator('[data-testid="chart-cache-hit-rate"]')).toContainText('Cache hit rate per hour');
       await expect(page.locator('[data-testid="chart-cumulative"]')).toHaveCount(0);
       // Ranked by tokens: the agent default (50k) above low (26k).

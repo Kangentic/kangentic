@@ -40,6 +40,7 @@ import {
   foldBreakdownForDonut,
   isModelStackEmpty,
   rankSlicesByMetric,
+  visibleSlices,
   type BreakdownEntry,
   type ModelStack,
 } from '../../src/renderer/components/stats/useStatsData';
@@ -119,8 +120,25 @@ describe('foldBreakdownForDonut', () => {
     expect(slices[2].colorVar).toBe('--kng-chart-2');
   });
 
-  it('drops zero-token entries', () => {
+  it('drops an entry with neither tokens nor cost', () => {
     expect(foldBreakdownForDonut([makeEntry('empty', 0), makeEntry('real', 5)])).toHaveLength(1);
+  });
+
+  it('keeps an entry with cost and no tokens, so the Cost view still adds up', () => {
+    // A model whose sessions predate per-turn capture has ledger cost and no
+    // turn tokens ($2,910 at 0 tokens on the dogfooding install). Dropping it
+    // took that cost out of the cost-ranked list, the donut and the bars.
+    const slices = foldBreakdownForDonut([makeEntry('current', 500, 10), makeEntry('older', 0, 29)]);
+    expect(slices.map((slice) => slice.id)).toEqual(['current', 'older']);
+    expect(slices[1]).toMatchObject({ value: 0, costUsd: 29 });
+  });
+});
+
+describe('visibleSlices', () => {
+  it('leaves out a slice with nothing in the selected metric', () => {
+    const slices = foldBreakdownForDonut([makeEntry('current', 500, 10), makeEntry('older', 0, 29)]);
+    expect(visibleSlices(slices, true).map((slice) => slice.id)).toEqual(['current', 'older']);
+    expect(visibleSlices(slices, false).map((slice) => slice.id)).toEqual(['current']);
   });
 });
 

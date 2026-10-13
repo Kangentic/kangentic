@@ -170,6 +170,10 @@ export function StatsDashboardBody() {
   const perBucketEmpty = isModelStackEmpty(perBucketStack);
   const cumulativePoints = isLivePeriod ? data.cumulativeFromTokens : data.cumulative;
   const cumulativeEmpty = cumulativePoints.every((point) => point.y === 0);
+  // The legend names only series with a bar somewhere: a model with cost and
+  // no turn tokens has a slice, and so a series, in both views.
+  const legendSeries = perBucketStack.series.filter((entry) =>
+    perBucketStack.rows.some((row) => (row[entry.key] as number) > 0));
   const tokenBucketNoun = bucketNoun(payload?.bucketSizeMs ?? DAY_MS);
   // Live buckets are 5 minutes wide: a click would mint a bogus day drill on
   // a 5-minute boundary, so neither Live card is drillable.
@@ -250,9 +254,9 @@ export function StatsDashboardBody() {
             testId="chart-daily"
           >
             <div className="h-full flex flex-col">
-              {perBucketStack.series.length > 1 && (
+              {legendSeries.length > 1 && (
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 mb-1 flex-shrink-0" data-testid="chart-daily-legend">
-                  {perBucketStack.series.map((entry) => (
+                  {legendSeries.map((entry) => (
                     <span key={entry.key} className="flex items-center gap-1 text-[11px] text-fg-muted">
                       <span
                         aria-hidden
