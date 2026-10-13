@@ -335,6 +335,34 @@ export function foldCostSeries(
   return points;
 }
 
+/**
+ * Fold the turn groups into the Tokens view's by-model series, on the token
+ * grid. It is {@link foldCostSeries} over the turn groups, so each point's
+ * `byModel` slices carry the turn ledger's fresh input and output per base
+ * model. Cost and session counts stay at 0: cost is the Cost view's, from the
+ * session ledger, and the groups' `allocatedCostUsd` never reaches a slice.
+ * The groups are the token series' own, which the SQL already splits by
+ * model, so a bucket's slices sum to that bucket of {@link foldTokenSeries}.
+ */
+export function foldTokenModelSeries(
+  groups: GroupedTurnUsageRow[],
+  starts: number[],
+  kind: ChartBucketKind,
+): CostSeriesPoint[] {
+  return foldCostSeries(
+    groups.map((group) => ({
+      bucketStartMs: group.bucketStartMs,
+      modelId: group.modelId,
+      inputTokens: group.inputTokens,
+      outputTokens: group.outputTokens,
+      costUsd: 0,
+      sessionCount: 0,
+    })),
+    starts,
+    kind,
+  );
+}
+
 /** Per-project window totals merged across the project loop (integer adds
  *  plus float cost adds - one add per project, not per row). */
 export function mergeUsageTotals(totalsList: UsageWindowTotals[]): UsageWindowTotals {
