@@ -212,7 +212,7 @@ describe('Droid Adapter', () => {
   describe('removeHooks / clearSettingsCache / ensureTrust', () => {
     it('all run without throwing on a directory with no Kangentic config', async () => {
       expect(() => adapter.removeHooks(tempDir)).not.toThrow();
-      expect(() => adapter.removeHooks(tempDir, 'task-x')).not.toThrow();
+      expect(() => adapter.removeHooks(tempDir, 'session-x')).not.toThrow();
       expect(() => adapter.clearSettingsCache()).not.toThrow();
       await expect(adapter.ensureTrust(tempDir)).resolves.toBeUndefined();
     });
@@ -284,26 +284,39 @@ describe('Droid Adapter', () => {
       expect(fs.existsSync(configPath())).toBe(false);
     });
 
-    it('keeps the config alive until the last task in the same cwd releases', () => {
+    it('keeps the config alive until the last session in the same cwd releases', () => {
       // .factory/mcp.json is project-shared. A project with no worktree
-      // configured runs every task in the project root, so an exiting task
+      // configured runs every task in the project root, so an exiting session
       // must not strip the entry out from under a running sibling.
-      build({ taskId: 'task-a' });
-      build({ taskId: 'task-b' });
+      build({ taskId: 'task-a', ptySessionId: 'session-a' });
+      build({ taskId: 'task-b', ptySessionId: 'session-b' });
 
-      adapter.removeHooks(tempDir, 'task-a');
+      adapter.removeHooks(tempDir, 'session-a');
       expect(fs.existsSync(configPath())).toBe(true);
 
-      adapter.removeHooks(tempDir, 'task-b');
+      adapter.removeHooks(tempDir, 'session-b');
       expect(fs.existsSync(configPath())).toBe(false);
     });
 
-    it('is idempotent when the same task releases twice', () => {
+    it('an older session of the same task releasing late keeps the newer session\'s entry', () => {
+      // A killed young session's PTY exits up to the grace after the task's
+      // next session started; its late release must not strip the entry.
+      build({ taskId: 'task-a', ptySessionId: 'old-session' });
+      build({ taskId: 'task-a', ptySessionId: 'new-session' });
+
+      adapter.removeHooks(tempDir, 'old-session');
+      expect(fs.existsSync(configPath())).toBe(true);
+
+      adapter.removeHooks(tempDir, 'new-session');
+      expect(fs.existsSync(configPath())).toBe(false);
+    });
+
+    it('is idempotent when the same session releases twice', () => {
       // session-manager calls removeHooks explicitly in suspend() and again
       // from the PTY onExit handler.
-      build({ taskId: 'task-a' });
-      adapter.removeHooks(tempDir, 'task-a');
-      expect(() => adapter.removeHooks(tempDir, 'task-a')).not.toThrow();
+      build({ taskId: 'task-a', ptySessionId: 'session-a' });
+      adapter.removeHooks(tempDir, 'session-a');
+      expect(() => adapter.removeHooks(tempDir, 'session-a')).not.toThrow();
       expect(fs.existsSync(configPath())).toBe(false);
     });
 

@@ -82,6 +82,17 @@ contract was kept in sync across three files by prose comments alone.
   flattens the prompt. The runtime wiring per chokepoint is pinned by
   `tests/unit/prepare-spawn-shim-launch-wiring.test.ts`, `tests/unit/transition-engine.test.ts`,
   and `tests/unit/transient-session-spawn-shim-launch.test.ts`.
+- Every file that calls `<receiver>.buildCommand(` passes the session's own id as
+  `ptySessionId` in its command options, the same id it hands `sessionManager.spawn` as `id`.
+  An adapter that writes a file every session in a folder shares (Gemini's settings, Cursor's
+  `mcp.json`, ...) holds it under that id (`SharedFolderHolds`), and the session layer releases
+  it with the same id and the cwd the command was built for (`ManagedSession.commandCwd`).
+  Never a task id: a task's sessions overlap. A built command that never reaches
+  `sessionManager.spawn` (an early return, an abort, a skipped startup spawn) calls
+  `releaseCommandHold` (`src/main/pty/lifecycle/adapter-lifecycle.ts`), or the folder's file stays
+  for the rest of the run. A caller never releases after it calls `spawn()`: from there
+  `SessionManager` releases a spawn that never ran, and a spawn that failed after its PTY started
+  keeps the hold for that PTY's exit, so the file is never stripped under a running agent.
 - Adding a new spawn entry point means routing it through one of the two chokepoints, or adding
   a reasoned allowlist entry in the enforcement test AND updating this rule.
 
@@ -94,10 +105,13 @@ contract was kept in sync across three files by prose comments alone.
   any `lockAdvancedOverridesOnFirstSpawn` call outside `spawn-preamble.ts`, (e) any
   `<receiver>.buildCommand(` call site with no earlier `<receiver>.ensureTrust(` on that same
   receiver in the same file, (f) any `<receiver>.buildCommand(` call site with no earlier
-  `resolveShimLaunch(` in the same file, and (g) any `explicitStart` reference outside
+  `resolveShimLaunch(` in the same file, (g) any `explicitStart` reference outside
   `helpers/agent-spawn.ts` (its declaration, gates, and forward) and `handlers/session-start.ts`
   (its one user-gesture caller), with a companion assertion that the caller still passes it so
-  the scan cannot pass vacuously. That scan proves line order, not control flow; the runtime ordering
+  the scan cannot pass vacuously, and (h) any `<receiver>.buildCommand(` call site with no
+  `ptySessionId` property between it and the file's previous call site, or in a file that never
+  calls `releaseCommandHold(`. That
+  scan proves line order, not control flow; the runtime ordering
   on the Command Terminal path is pinned separately by
   `tests/unit/transient-session-spawn-ensure-trust.test.ts`, which drives the handler and fails
   if the `await` is dropped or the call is removed. An

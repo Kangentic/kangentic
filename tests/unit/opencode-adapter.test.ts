@@ -312,7 +312,7 @@ describe('OpenCode Adapter', () => {
     it('removeHooks is safe on a project with no installed plugin', () => {
       // OpenCode hooks live in `<project>/.opencode/plugins/`. A fresh
       // directory with no plugin installed should be a clean no-op.
-      expect(() => adapter.removeHooks('/some/dir', 'task-001')).not.toThrow();
+      expect(() => adapter.removeHooks('/some/dir', 'session-001')).not.toThrow();
     });
 
     it('clearSettingsCache is a no-op (no merged settings)', () => {
@@ -540,11 +540,11 @@ describe('OpenCode Adapter', () => {
   });
 });
 
-describe('OpenCodeAdapter - removeHooks refcount deferral', () => {
-  // Tests the hookHolders reference-counting logic in OpenCodeAdapter.removeHooks
-  // (opencode-adapter.ts lines 208-218). When two concurrent tasks in the same
-  // project both call buildCommand with eventsOutputPath, each increments the
-  // refcount. The plugin file must remain until the LAST holder calls removeHooks.
+describe('OpenCodeAdapter - removeHooks holds deferral', () => {
+  // Tests the per-session holds in OpenCodeAdapter.removeHooks. When two
+  // concurrent sessions in the same project both call buildCommand with
+  // eventsOutputPath, each holds the project root under its own session id.
+  // The plugin file must remain until the LAST holder calls removeHooks.
   //
   // Strategy: use a real temp directory as the project root so buildCommand
   // actually installs the plugin (via buildHooks). The plugin source file at
@@ -558,14 +558,16 @@ describe('OpenCodeAdapter - removeHooks refcount deferral', () => {
     return path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.mjs');
   }
 
-  function makeBuildOptions(taskId: string): SpawnCommandOptions {
+  function makeBuildOptions(ptySessionId: string, overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
     return {
       agentPath: '/usr/bin/opencode',
-      taskId,
+      taskId: `task-of-${ptySessionId}`,
+      ptySessionId,
       cwd: projectDir,
       projectRoot: projectDir,
       permissionMode: 'default',
       eventsOutputPath: path.join(projectDir, 'events.jsonl'),
+      ...overrides,
     };
   }
 
@@ -578,52 +580,74 @@ describe('OpenCodeAdapter - removeHooks refcount deferral', () => {
     fs.rmSync(projectDir, { recursive: true, force: true });
   });
 
-  it('plugin file is still present after first removeHooks when two tasks share the project', () => {
+  it('plugin file is still present after first removeHooks when two sessions share the project', () => {
     // Simulate two concurrent OpenCode sessions in the same project.
-    concurrentAdapter.buildCommand(makeBuildOptions('task-alpha'));
-    concurrentAdapter.buildCommand(makeBuildOptions('task-beta'));
+    concurrentAdapter.buildCommand(makeBuildOptions('session-alpha'));
+    concurrentAdapter.buildCommand(makeBuildOptions('session-beta'));
 
     // Plugin must be installed after both buildCommand calls.
     expect(fs.existsSync(pluginPath())).toBe(true);
 
-    // First holder releases - refcount drops to 1. Plugin must stay.
-    concurrentAdapter.removeHooks(projectDir, 'task-alpha');
+    // First holder releases. Plugin must stay.
+    concurrentAdapter.removeHooks(projectDir, 'session-alpha');
     expect(fs.existsSync(pluginPath())).toBe(true);
   });
 
   it('plugin file is removed after the last holder calls removeHooks', () => {
-    concurrentAdapter.buildCommand(makeBuildOptions('task-alpha'));
-    concurrentAdapter.buildCommand(makeBuildOptions('task-beta'));
+    concurrentAdapter.buildCommand(makeBuildOptions('session-alpha'));
+    concurrentAdapter.buildCommand(makeBuildOptions('session-beta'));
 
-    concurrentAdapter.removeHooks(projectDir, 'task-alpha');
+    concurrentAdapter.removeHooks(projectDir, 'session-alpha');
     // alpha is gone, beta still holds - plugin present.
     expect(fs.existsSync(pluginPath())).toBe(true);
 
-    concurrentAdapter.removeHooks(projectDir, 'task-beta');
+    concurrentAdapter.removeHooks(projectDir, 'session-beta');
     // Last holder released - plugin must be gone.
     expect(fs.existsSync(pluginPath())).toBe(false);
   });
 
-  it('double removeHooks call for the same taskId is idempotent and does not throw', () => {
-    concurrentAdapter.buildCommand(makeBuildOptions('task-solo'));
+  it('an older session of the same task releasing late keeps the newer session\'s plugin', () => {
+    concurrentAdapter.buildCommand(makeBuildOptions('old-session', { taskId: 'task-a' }));
+    concurrentAdapter.buildCommand(makeBuildOptions('new-session', { taskId: 'task-a' }));
 
-    concurrentAdapter.removeHooks(projectDir, 'task-solo');
+    concurrentAdapter.removeHooks(projectDir, 'old-session');
+    expect(fs.existsSync(pluginPath())).toBe(true);
+
+    concurrentAdapter.removeHooks(projectDir, 'new-session');
+    expect(fs.existsSync(pluginPath())).toBe(false);
+  });
+
+  it('a worktree session\'s release removes the plugin its build installed in the project root', () => {
+    // The plugin lands in `<projectRoot>/.opencode/plugins/`, while the session
+    // layer releases with the worktree the session ran in.
+    const worktree = path.join(projectDir, '.kangentic', 'worktrees', 'task-a');
+    fs.mkdirSync(worktree, { recursive: true });
+    concurrentAdapter.buildCommand(makeBuildOptions('session-a', { cwd: worktree }));
+    expect(fs.existsSync(pluginPath())).toBe(true);
+
+    concurrentAdapter.removeHooks(worktree, 'session-a');
+    expect(fs.existsSync(pluginPath())).toBe(false);
+  });
+
+  it('double removeHooks call for the same session is idempotent and does not throw', () => {
+    concurrentAdapter.buildCommand(makeBuildOptions('session-solo'));
+
+    concurrentAdapter.removeHooks(projectDir, 'session-solo');
     // Plugin is gone after the only holder releases.
     expect(fs.existsSync(pluginPath())).toBe(false);
 
-    // Calling removeHooks again for the same task must not throw.
-    expect(() => concurrentAdapter.removeHooks(projectDir, 'task-solo')).not.toThrow();
+    // Calling removeHooks again for the same session must not throw.
+    expect(() => concurrentAdapter.removeHooks(projectDir, 'session-solo')).not.toThrow();
   });
 
-  it('removeHooks without a taskId unconditionally removes the plugin regardless of refcount', () => {
-    // The taskId-less path is the forced-cleanup / shutdown path. It must
-    // bypass the refcount and call removeOpenCodeHooks directly.
-    concurrentAdapter.buildCommand(makeBuildOptions('task-alpha'));
-    concurrentAdapter.buildCommand(makeBuildOptions('task-beta'));
+  it('removeHooks without a session id removes the plugin whoever holds it', () => {
+    // The id-less path is the forced cleanup (project delete), after every
+    // session is gone.
+    concurrentAdapter.buildCommand(makeBuildOptions('session-alpha'));
+    concurrentAdapter.buildCommand(makeBuildOptions('session-beta'));
 
     expect(fs.existsSync(pluginPath())).toBe(true);
 
-    // Pass undefined taskId - forced cleanup.
     concurrentAdapter.removeHooks(projectDir, undefined);
     expect(fs.existsSync(pluginPath())).toBe(false);
   });

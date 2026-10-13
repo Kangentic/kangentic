@@ -17,6 +17,7 @@ import type { SessionRepository } from '../../db/repositories/session-repository
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
+import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 
 /**
  * Fully-prepared agent spawn: the adapter has been resolved, the CLI
@@ -269,10 +270,21 @@ export async function prepareAgentSpawn(input: {
     executionTarget: resolveExecutionTarget(agent, config.agent.executionServers, config.agent.execution) ?? undefined,
     launchOptions: resolveLaunchOptions(adapter, config.agent.launchOptions),
     taskProcessTag: task.id,
+    // The id the caller spawns under, which a folder-shared adapter file is
+    // held under. A caller that does not spawn this command releases it
+    // (releaseCommandHold).
+    ptySessionId: sessionRecordId,
   };
 
   const command = adapter.buildCommand(commandOptions);
-  const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
+  let extraEnv: Record<string, string> | null;
+  try {
+    extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
+  } catch (error) {
+    // No caller will spawn this command, so nothing else releases its hold.
+    releaseCommandHold(adapter, cwd, sessionRecordId);
+    throw error;
+  }
 
   return {
     ok: true,

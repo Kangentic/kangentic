@@ -17,7 +17,7 @@
  *      `--session-id`, asserts the mock wrote the JSONL at the path
  *      our adapter expects, then resumes that exact UUID via `--resume`.
  *   5. Exercises hook injection (writes to .qwen/settings.json) and
- *      cleanup (refcount-aware removeHooks) on real on-disk files using
+ *      cleanup (hold-aware removeHooks) on real on-disk files using
  *      a kangentic-style path so the `isKangenticHookCommand` filter
  *      correctly identifies our entries.
  *   6. Confirms the activity detector and PTY output regex against
@@ -342,12 +342,13 @@ describe('Qwen Code - integration harness', () => {
       }
     });
 
-    it('removeHooks with matching taskId strips kangentic entries', () => {
+    it('removeHooks with the matching session id strips kangentic entries', () => {
       const adapter = new QwenAdapter();
       const eventsPath = path.join(sandbox, 'events.jsonl');
       adapter.buildCommand({
         agentPath: MOCK_QWEN_JS,
         taskId: 'task-cleanup',
+        ptySessionId: 'session-cleanup',
         cwd: sandbox,
         permissionMode: 'default',
         eventsOutputPath: eventsPath,
@@ -356,7 +357,7 @@ describe('Qwen Code - integration harness', () => {
       const settingsPath = path.join(sandbox, '.qwen', 'settings.json');
       expect(fs.existsSync(settingsPath)).toBe(true);
 
-      adapter.removeHooks(sandbox, 'task-cleanup');
+      adapter.removeHooks(sandbox, 'session-cleanup');
 
       // safelyUpdateSettingsFile deletes the file when hooks was the
       // only top-level key, then rmdirs the parent if empty.
@@ -369,12 +370,13 @@ describe('Qwen Code - integration harness', () => {
       }
     });
 
-    it('two concurrent task holders prevent premature cleanup', () => {
+    it('two concurrent session holders prevent premature cleanup', () => {
       const adapter = new QwenAdapter();
       const eventsPath = path.join(sandbox, 'events.jsonl');
       adapter.buildCommand({
         agentPath: MOCK_QWEN_JS,
         taskId: 'task-a',
+        ptySessionId: 'session-a',
         cwd: sandbox,
         permissionMode: 'default',
         eventsOutputPath: eventsPath,
@@ -382,22 +384,23 @@ describe('Qwen Code - integration harness', () => {
       adapter.buildCommand({
         agentPath: MOCK_QWEN_JS,
         taskId: 'task-b',
+        ptySessionId: 'session-b',
         cwd: sandbox,
         permissionMode: 'default',
         eventsOutputPath: eventsPath,
       });
 
       const settingsPath = path.join(sandbox, '.qwen', 'settings.json');
-      // Task A releases - hooks must remain because task B still holds.
-      adapter.removeHooks(sandbox, 'task-a');
+      // Session A releases - hooks must remain because session B still holds.
+      adapter.removeHooks(sandbox, 'session-a');
       expect(fs.existsSync(settingsPath)).toBe(true);
       const stillThere = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
         hooks: Record<string, unknown[]>;
       };
       expect(Object.keys(stillThere.hooks).length).toBeGreaterThan(0);
 
-      // Task B releases - now cleanup happens.
-      adapter.removeHooks(sandbox, 'task-b');
+      // Session B releases - now cleanup happens.
+      adapter.removeHooks(sandbox, 'session-b');
       const afterBoth = fs.existsSync(settingsPath);
       if (afterBoth) {
         const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { hooks?: unknown };

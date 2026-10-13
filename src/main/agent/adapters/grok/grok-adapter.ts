@@ -22,6 +22,7 @@ import {
   forwardStreamLines,
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/cli-answer';
+import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -91,12 +92,12 @@ export class GrokAdapter implements AgentAdapter {
 
   private readonly detector = new GrokDetector();
   private readonly commandBuilder = new GrokCommandBuilder();
-  // Set of taskIds currently relying on the per-cwd `.grok/` wiring
-  // (hooks file + MCP config block), keyed by cwd. Both files are static
-  // and idempotently rewritten on every spawn; the refcount only guards
-  // REMOVAL, so concurrent sessions in one cwd do not strip each other's
-  // wiring (the Droid mcpHolders pattern).
-  private readonly wiringHolders = new Map<string, Set<string>>();
+  // Sessions relying on the per-cwd `.grok/` wiring (hooks file + MCP
+  // config block), per cwd. Both files are static and idempotently
+  // rewritten on every spawn; the holds only guard REMOVAL, so concurrent
+  // sessions in one cwd do not strip each other's wiring. See
+  // SharedFolderHolds.
+  private readonly wiringHolds = new SharedFolderHolds();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -131,7 +132,7 @@ export class GrokAdapter implements AgentAdapter {
     const grokOptions = { grokPath: agentPath, ...rest };
     const command = this.commandBuilder.buildGrokCommand(grokOptions);
     if (options.eventsOutputPath || grokMcpWiringEnabled(grokOptions)) {
-      this.retainWiring(options.cwd, options.taskId);
+      this.wiringHolds.retain(options.ptySessionId, options.cwd);
     }
     return command;
   }
@@ -146,15 +147,6 @@ export class GrokAdapter implements AgentAdapter {
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
     const { agentPath, ...rest } = options;
     return this.commandBuilder.buildGrokEnv({ grokPath: agentPath, ...rest });
-  }
-
-  private retainWiring(directory: string, taskId: string): void {
-    let holders = this.wiringHolders.get(directory);
-    if (!holders) {
-      holders = new Set<string>();
-      this.wiringHolders.set(directory, holders);
-    }
-    holders.add(taskId);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -196,18 +188,12 @@ export class GrokAdapter implements AgentAdapter {
     },
   };
 
-  removeHooks(directory: string, taskId?: string): void {
-    const holders = this.wiringHolders.get(directory);
-    if (holders && taskId) {
-      holders.delete(taskId);
-      if (holders.size > 0) {
-        // Another session in this cwd still needs the wiring.
-        return;
-      }
-      this.wiringHolders.delete(directory);
-    }
-    removeHooksFile(directory);
-    removeMcpConfig(directory);
+  removeHooks(directory: string, sessionId?: string): void {
+    const folder = this.wiringHolds.release(sessionId, directory);
+    // Null while another session in this cwd still needs the wiring.
+    if (!folder) return;
+    removeHooksFile(folder);
+    removeMcpConfig(folder);
   }
 
   clearSettingsCache(): void {

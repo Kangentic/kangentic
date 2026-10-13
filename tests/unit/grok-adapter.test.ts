@@ -680,7 +680,7 @@ describe('hooks file + MCP config lifecycle', () => {
     expect(fs.existsSync(path.join(projectDir, '.grok'))).toBe(false);
   });
 
-  it('refcounts wiring removal across concurrent sessions in one cwd', () => {
+  it('holds the wiring per session across concurrent sessions in one cwd', () => {
     const adapter = new GrokAdapter();
     const spawnOptions = {
       agentPath: '/usr/bin/grok',
@@ -688,22 +688,44 @@ describe('hooks file + MCP config lifecycle', () => {
       permissionMode: 'acceptEdits' as PermissionMode,
       eventsOutputPath: path.join(projectDir, 'events.jsonl'),
     };
-    adapter.buildCommand({ ...spawnOptions, taskId: 'task-a' });
-    adapter.buildCommand({ ...spawnOptions, taskId: 'task-b' });
+    adapter.buildCommand({ ...spawnOptions, taskId: 'task-a', ptySessionId: 'session-a' });
+    adapter.buildCommand({ ...spawnOptions, taskId: 'task-b', ptySessionId: 'session-b' });
     const hooksPath = path.join(projectDir, '.grok', 'hooks', 'kangentic.json');
     expect(fs.existsSync(hooksPath)).toBe(true);
 
-    adapter.removeHooks(projectDir, 'task-a');
+    adapter.removeHooks(projectDir, 'session-a');
     expect(fs.existsSync(hooksPath)).toBe(true);
 
-    adapter.removeHooks(projectDir, 'task-b');
+    adapter.removeHooks(projectDir, 'session-b');
     expect(fs.existsSync(hooksPath)).toBe(false);
   });
 
-  it('writes the sentinel MCP block to disk for an MCP-only spawn and refcounts its removal', () => {
+  it('an older session of the same task releasing late keeps the newer session\'s wiring', () => {
+    // A killed young session's PTY exits up to the grace after the task's
+    // next session started; its late release must not strip the wiring.
+    const adapter = new GrokAdapter();
+    const spawnOptions = {
+      agentPath: '/usr/bin/grok',
+      cwd: projectDir,
+      permissionMode: 'acceptEdits' as PermissionMode,
+      eventsOutputPath: path.join(projectDir, 'events.jsonl'),
+      taskId: 'task-a',
+    };
+    adapter.buildCommand({ ...spawnOptions, ptySessionId: 'old-session' });
+    adapter.buildCommand({ ...spawnOptions, ptySessionId: 'new-session' });
+    const hooksPath = path.join(projectDir, '.grok', 'hooks', 'kangentic.json');
+
+    adapter.removeHooks(projectDir, 'old-session');
+    expect(fs.existsSync(hooksPath)).toBe(true);
+
+    adapter.removeHooks(projectDir, 'new-session');
+    expect(fs.existsSync(hooksPath)).toBe(false);
+  });
+
+  it('writes the sentinel MCP block to disk for an MCP-only spawn and holds it per session', () => {
     // No eventsOutputPath: this spawn participates ONLY in the MCP wiring,
     // not the hooks-file wiring, so the hooks file must never appear while
-    // the config.toml block is written and refcounted exactly like the
+    // the config.toml block is written and held exactly like the
     // events-driven case above.
     const adapter = new GrokAdapter();
     const spawnOptions = {
@@ -713,7 +735,7 @@ describe('hooks file + MCP config lifecycle', () => {
       mcpServerUrl: 'http://127.0.0.1:4100/mcp/p1/s1',
       mcpServerToken: 'secret-token',
     };
-    adapter.buildCommand({ ...spawnOptions, taskId: 'task-a' });
+    adapter.buildCommand({ ...spawnOptions, taskId: 'task-a', ptySessionId: 'session-a' });
 
     const configPath = path.join(projectDir, '.grok', 'config.toml');
     const hooksPath = path.join(projectDir, '.grok', 'hooks', 'kangentic.json');
@@ -723,11 +745,11 @@ describe('hooks file + MCP config lifecycle', () => {
     expect(written).toContain('url = "${KANGENTIC_MCP_URL}"');
     expect(written).toContain('"X-Kangentic-Token" = "${KANGENTIC_MCP_TOKEN}"');
 
-    adapter.buildCommand({ ...spawnOptions, taskId: 'task-b' });
-    adapter.removeHooks(projectDir, 'task-a');
+    adapter.buildCommand({ ...spawnOptions, taskId: 'task-b', ptySessionId: 'session-b' });
+    adapter.removeHooks(projectDir, 'session-a');
     expect(fs.existsSync(configPath)).toBe(true);
 
-    adapter.removeHooks(projectDir, 'task-b');
+    adapter.removeHooks(projectDir, 'session-b');
     expect(fs.existsSync(configPath)).toBe(false);
   });
 

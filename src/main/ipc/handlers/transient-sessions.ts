@@ -27,6 +27,7 @@ import type {
   SessionInjectSettingsResult,
 } from '../../../shared/types';
 import type { SettingsChangeSpec } from '../../agent/agent-adapter';
+import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -226,6 +227,7 @@ export async function startCommandTerminal(
     const shell = await context.sessionManager.getShell();
     const permissionMode = config.agent.permissionMode as PermissionMode;
     const transientTaskId = uuidv4();
+    const sessionId = uuidv4();
 
     const { branch, checkoutError } = await checkOutStartBranch(context, projectRoot, input);
     if (checkoutError && input.unattended) {
@@ -275,6 +277,9 @@ export async function startCommandTerminal(
       // inherited variables from its tool shells (Codex). The PTY carries it
       // from performSpawn; its leftovers are reaped when the terminal ends.
       taskProcessTag: transientTaskId,
+      // The session's own id, minted here so the spawn below uses it too: a
+      // folder-shared adapter file is held under it until the session ends.
+      ptySessionId: sessionId,
       shell,
       mcpServerEnabled: config.mcpServer.enabled,
       mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
@@ -286,9 +291,18 @@ export async function startCommandTerminal(
       effort: project.default_effort ?? undefined,
     };
     const command = adapter.buildCommand(commandOptions);
-    const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 
+    let extraEnv: Record<string, string> | null;
+    try {
+      extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
+    } catch (error) {
+      // The built command never reached spawn(), so release its hold. From the
+      // spawn() call on, spawn() releases a spawn that never runs.
+      releaseCommandHold(adapter, projectRoot, sessionId);
+      throw error;
+    }
     const session = await context.sessionManager.spawn({
+      id: sessionId,
       taskId: transientTaskId,
       projectId: input.projectId,
       command,

@@ -303,14 +303,30 @@ describe('CursorAdapter', () => {
 
     it('keeps the entry until the last session in the folder leaves', () => {
       withFolder((folder) => {
-        adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a' }));
-        adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b' }));
+        adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a', ptySessionId: 'session-a' }));
+        adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b', ptySessionId: 'session-b' }));
         const configPath = path.join(folder, '.cursor', 'mcp.json');
 
-        adapter.removeHooks(folder, 'task-a');
+        adapter.removeHooks(folder, 'session-a');
         expect(fs.readFileSync(configPath, 'utf-8')).toContain('kangentic');
 
-        adapter.removeHooks(folder, 'task-b');
+        adapter.removeHooks(folder, 'session-b');
+        expect(() => fs.readFileSync(configPath, 'utf-8')).toThrow();
+      });
+    });
+
+    it('an older session of the same task leaving late keeps the newer session\'s entry', () => {
+      // A killed young session's PTY exits up to the grace after the task's
+      // next session started; its late release must not strip the entry.
+      withFolder((folder) => {
+        adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a', ptySessionId: 'old-session' }));
+        adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a', ptySessionId: 'new-session' }));
+        const configPath = path.join(folder, '.cursor', 'mcp.json');
+
+        adapter.removeHooks(folder, 'old-session');
+        expect(fs.readFileSync(configPath, 'utf-8')).toContain('kangentic');
+
+        adapter.removeHooks(folder, 'new-session');
         expect(() => fs.readFileSync(configPath, 'utf-8')).toThrow();
       });
     });
@@ -321,13 +337,13 @@ describe('CursorAdapter', () => {
       fs.writeFileSync(configPathIn(folder), text);
     };
 
-    // The project-delete sweep calls `removeHooks` with no task, after every
+    // The project-delete sweep calls `removeHooks` with no session, after every
     // session is killed, so it must not wait on holders that are already gone.
-    describe('removal with no task', () => {
-      it('strips the entry even while two tasks still hold the folder', () => {
+    describe('removal with no session', () => {
+      it('strips the entry even while two sessions still hold the folder', () => {
         withFolder((folder) => {
-          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a' }));
-          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b' }));
+          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a', ptySessionId: 'session-a' }));
+          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b', ptySessionId: 'session-b' }));
           expect(fs.readFileSync(configPathIn(folder), 'utf-8')).toContain('kangentic');
 
           adapter.removeHooks(folder);
@@ -339,8 +355,8 @@ describe('CursorAdapter', () => {
       it('keeps the user\'s own servers when it strips the entry', () => {
         withFolder((folder) => {
           writeConfig(folder, JSON.stringify({ mcpServers: { mine: { url: 'http://localhost:1/mcp' } } }));
-          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a' }));
-          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b' }));
+          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-a', ptySessionId: 'session-a' }));
+          adapter.buildCommand(mcpOptions(folder, { taskId: 'task-b', ptySessionId: 'session-b' }));
 
           adapter.removeHooks(folder);
 

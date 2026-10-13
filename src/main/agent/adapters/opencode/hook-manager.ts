@@ -54,8 +54,8 @@ function pluginPath(projectRoot: string): string {
  * env var (exported by the PTY spawn flow); the path is therefore not a
  * parameter of this function. Idempotent: skips the copy when the
  * destination file is byte-identical to the packaged source. Concurrent
- * OpenCode sessions in the same project share one plugin file (refcount
- * in `OpenCodeAdapter.hookHolders`).
+ * OpenCode sessions in the same project share one plugin file (held per
+ * session in `OpenCodeAdapter.hookHolds`).
  */
 export function buildHooks(projectRoot: string): void {
   const sourcePath = resolvePluginScript('opencode', 'kangentic-activity');

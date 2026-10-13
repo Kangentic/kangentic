@@ -4,6 +4,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
+import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, Swimlane, Task } from '../../../shared/types';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
@@ -222,6 +223,10 @@ export async function autoSpawnTasks(
 
   // --- Spawn pass (parallel): fire all spawns concurrently ---
   if (isShuttingDown()) {
+    // Every prepared command took a hold that no spawn will now release. A
+    // hold left behind keeps its folder's file through the quit, since the
+    // folder's last live session would no longer be its last holder.
+    for (const input of spawnInputs) releaseCommandHold(input.adapter, input.cwd, input.sessionRecordId);
     done(0);
     return;
   }
@@ -231,80 +236,90 @@ export async function autoSpawnTasks(
   // detection, and a move, a Resume or a reset that took the task in that time
   // owns it now. Without the lock this pass spawned into a task the user had
   // just moved, To Do included. A reset shows as a changed `session_id`, which
-  // it clears. A skipped task keeps what its preparation wrote: the session
-  // directory, which the next launch's orphan cleanup removes, and anything the
-  // adapter's command builder wrote for that run (Gemini's hooks file in the
-  // worktree), which stays until a later session of the task ends.
+  // it clears. A skipped task keeps the session directory its preparation
+  // made, which the next launch's orphan cleanup removes. What the adapter's
+  // command builder wrote for that run (Gemini's hooks file in the worktree)
+  // is held under the prepared session's id, so a skip releases that hold. A
+  // hold never released keeps the folder's file in place for the rest of the
+  // run: no later session's release can empty the folder's holds.
   const spawnResults = await Promise.allSettled(
     spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
-      const current = taskRepo.getById(input.task.id);
-      if (
-        !current
-        || current.swimlane_id !== input.task.swimlane_id
-        || current.session_id !== input.task.session_id
-        // A move to To Do and back inside the preparation leaves the column as
-        // it was, but its cleanup removed the worktree the agent was prepared
-        // in, and the move back may still be making it again (its own spawn
-        // follows when it has).
-        || (current.worktree_path || projectPath) !== input.cwd
-        || !fs.existsSync(input.cwd)
-        || hasSession(input.task.id)
-      ) {
-        // Logged, so a task this pass left without an agent leaves a trace.
-        console.log(`[AUTO_SPAWN] Skipped task ${input.task.id}: it changed while its spawn was prepared`);
-        return null;
+      // Until spawn() takes the command, this pass owns its hold. spawn()
+      // releases a spawn that never runs, and a session that ran owns its own.
+      let handedToSpawn = false;
+      try {
+        const current = taskRepo.getById(input.task.id);
+        if (
+          !current
+          || current.swimlane_id !== input.task.swimlane_id
+          || current.session_id !== input.task.session_id
+          // A move to To Do and back inside the preparation leaves the column as
+          // it was, but its cleanup removed the worktree the agent was prepared
+          // in, and the move back may still be making it again (its own spawn
+          // follows when it has).
+          || (current.worktree_path || projectPath) !== input.cwd
+          || !fs.existsSync(input.cwd)
+          || hasSession(input.task.id)
+        ) {
+          // Logged, so a task this pass left without an agent leaves a trace.
+          console.log(`[AUTO_SPAWN] Skipped task ${input.task.id}: it changed while its spawn was prepared`);
+          return null;
+        }
+        // Stamped inside the lock, so a record another holder wrote while this
+        // one waited never sorts after the one written here.
+        const now = new Date().toISOString();
+
+        handedToSpawn = true;
+        const newSession = await sessionManager.spawn({
+          id: input.sessionRecordId,
+          taskId: input.task.id,
+          projectId,
+          command: input.command,
+          cwd: input.cwd,
+          env: input.extraEnv ?? undefined,
+          statusOutputPath: input.statusOutputPath,
+          eventsOutputPath: input.eventsOutputPath,
+          agentParser: input.adapter,
+          agentName: input.adapter.name,
+          agentSessionId: input.agentSessionId,
+          isolatedSwimlaneId: input.isolatedSwimlaneId,
+          permissionMode: input.permissionMode,
+          exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
+        });
+
+        taskRepo.update({
+          id: input.task.id,
+          session_id: newSession.id,
+          agent: input.agent,
+        });
+
+        sessionRepo.insert({
+          id: newSession.id,
+          task_id: input.task.id,
+          session_type: input.adapter.sessionType,
+          isolated_swimlane_id: input.isolatedSwimlaneId,
+          agent_session_id: input.agentSessionId,
+          command: input.command,
+          cwd: input.cwd,
+          permission_mode: input.permissionMode,
+          prompt: null,
+          status: 'running',
+          exit_code: null,
+          started_at: now,
+          suspended_at: null,
+          exited_at: null,
+          suspended_by: null,
+        });
+        // Record what this fresh spawn applied so a later column move diffs
+        // against the session's true value, not the leaving column's config.
+        sessionRepo.updateAppliedSettings(newSession.id, {
+          model: input.appliedModel,
+          effort: input.appliedEffort,
+        });
+        return newSession;
+      } finally {
+        if (!handedToSpawn) releaseCommandHold(input.adapter, input.cwd, input.sessionRecordId);
       }
-      // Stamped inside the lock, so a record another holder wrote while this
-      // one waited never sorts after the one written here.
-      const now = new Date().toISOString();
-
-      const newSession = await sessionManager.spawn({
-        id: input.sessionRecordId,
-        taskId: input.task.id,
-        projectId,
-        command: input.command,
-        cwd: input.cwd,
-        env: input.extraEnv ?? undefined,
-        statusOutputPath: input.statusOutputPath,
-        eventsOutputPath: input.eventsOutputPath,
-        agentParser: input.adapter,
-        agentName: input.adapter.name,
-        agentSessionId: input.agentSessionId,
-        isolatedSwimlaneId: input.isolatedSwimlaneId,
-        permissionMode: input.permissionMode,
-        exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
-      });
-
-      taskRepo.update({
-        id: input.task.id,
-        session_id: newSession.id,
-        agent: input.agent,
-      });
-
-      sessionRepo.insert({
-        id: newSession.id,
-        task_id: input.task.id,
-        session_type: input.adapter.sessionType,
-        isolated_swimlane_id: input.isolatedSwimlaneId,
-        agent_session_id: input.agentSessionId,
-        command: input.command,
-        cwd: input.cwd,
-        permission_mode: input.permissionMode,
-        prompt: null,
-        status: 'running',
-        exit_code: null,
-        started_at: now,
-        suspended_at: null,
-        exited_at: null,
-        suspended_by: null,
-      });
-      // Record what this fresh spawn applied so a later column move diffs
-      // against the session's true value, not the leaving column's config.
-      sessionRepo.updateAppliedSettings(newSession.id, {
-        model: input.appliedModel,
-        effort: input.appliedEffort,
-      });
-      return newSession;
     })),
   );
 

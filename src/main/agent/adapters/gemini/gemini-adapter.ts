@@ -9,6 +9,7 @@ import { GeminiStatusParser } from './status-parser';
 import { discoverGeminiCapabilities } from './capability-discovery';
 import { randomUUID } from 'node:crypto';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
@@ -47,15 +48,11 @@ export class GeminiAdapter implements AgentAdapter {
 
   private readonly detector = new GeminiDetector();
   private readonly commandBuilder = new GeminiCommandBuilder();
-  // Set of taskIds currently holding hook injections per directory. Gemini
-  // has no per-session settings flag, so `.gemini/settings.json` is shared
-  // across concurrent sessions in the same project. removeHooks() only
-  // actually strips hooks when the last taskId releases; otherwise a first
-  // session's suspend/exit would clobber a still-running second session's
-  // hooks. A Set (rather than a counter) makes double-releases for the same
-  // taskId idempotent, which matters because session-manager's suspend path
-  // calls removeHooks once explicitly and again from the PTY onExit handler.
-  private readonly hookHolders = new Map<string, Set<string>>();
+  // Sessions holding `.gemini/settings.json` per folder. Gemini has no
+  // per-session settings flag, so the file is shared across concurrent
+  // sessions in the same folder, and removeHooks() strips it only when the
+  // folder's last session releases. Keyed by session id: see SharedFolderHolds.
+  private readonly hookHolds = new SharedFolderHolds();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -85,33 +82,15 @@ export class GeminiAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, model, effort, ...rest } = options;
-    const command = this.commandBuilder.buildGeminiCommand({
-      geminiPath: agentPath,
-      model,
-      effort,
-      ...rest,
-    });
-    // buildGeminiCommand writes hooks into .gemini/settings.json whenever
-    // eventsOutputPath is present. Retain a reference for every such spawn
-    // so concurrent sessions in the same cwd serialize their cleanup.
-    // An MCP-only spawn (no events pipeline) writes the MCP entry but takes
-    // no reference, so it is not protected by the count: if it shared a cwd
-    // with a holding session, that session exiting would strip its entry.
-    // Every spawn chokepoint supplies eventsOutputPath today, so no such
-    // spawn exists in practice. Same gate as the sibling Qwen adapter.
-    if (options.eventsOutputPath) {
-      this.retainHooks(options.cwd, options.taskId);
+    const geminiOptions = { geminiPath: agentPath, model, effort, ...rest };
+    const command = this.commandBuilder.buildGeminiCommand(geminiOptions);
+    // Every spawn that writes the folder-shared .gemini/settings.json (an
+    // events pipeline or MCP wiring) holds it until its session releases.
+    // Same gate as the sibling Qwen adapter.
+    if (this.commandBuilder.shouldWriteMergedSettings(geminiOptions)) {
+      this.hookHolds.retain(options.ptySessionId, options.cwd);
     }
     return command;
-  }
-
-  private retainHooks(directory: string, taskId: string): void {
-    let holders = this.hookHolders.get(directory);
-    if (!holders) {
-      holders = new Set<string>();
-      this.hookHolders.set(directory, holders);
-    }
-    holders.add(taskId);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -191,17 +170,10 @@ export class GeminiAdapter implements AgentAdapter {
     },
   };
 
-  removeHooks(directory: string, taskId?: string): void {
-    const holders = this.hookHolders.get(directory);
-    if (holders && taskId) {
-      holders.delete(taskId);
-      if (holders.size > 0) {
-        // Another session in this directory still needs the hooks.
-        return;
-      }
-      this.hookHolders.delete(directory);
-    }
-    removeGeminiHooks(directory);
+  removeHooks(directory: string, sessionId?: string): void {
+    const folder = this.hookHolds.release(sessionId, directory);
+    // Null while another session in the folder still needs the file.
+    if (folder) removeGeminiHooks(folder);
   }
 
   getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {

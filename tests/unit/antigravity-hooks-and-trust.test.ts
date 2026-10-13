@@ -479,42 +479,80 @@ describe('removeHooks', () => {
     expect(fs.existsSync(path.join(workspace, '.agents'))).toBe(false);
   });
 
-  it('adapter-level removeHooks refcounts concurrent holders per directory', () => {
+  // Holds are keyed by the session's own id (`ptySessionId`), never by its task.
+  const spawnSession = (adapter: AntigravityAdapter, ptySessionId: string, taskId = `task-of-${ptySessionId}`) => adapter.buildCommand({
+    agentPath: '/usr/bin/agy',
+    taskId,
+    ptySessionId,
+    cwd: workspace,
+    permissionMode: 'default',
+    shell: 'bash',
+    eventsOutputPath: path.join(workspace, '.kangentic', 'sessions', ptySessionId, 'events.jsonl'),
+  });
+
+  it('adapter-level removeHooks holds concurrent sessions per directory', () => {
     const adapter = new AntigravityAdapter();
-    const spawn = (taskId: string) => adapter.buildCommand({
-      agentPath: '/usr/bin/agy',
-      taskId,
-      cwd: workspace,
-      permissionMode: 'default',
-      shell: 'bash',
-      eventsOutputPath: path.join(workspace, '.kangentic', 'sessions', taskId, 'events.jsonl'),
-    });
-    spawn('task-a');
-    spawn('task-b');
+    spawnSession(adapter, 'session-a');
+    spawnSession(adapter, 'session-b');
 
-    adapter.removeHooks(workspace, 'task-a');
-    expect(fs.existsSync(hooksPath())).toBe(true); // task-b still holds
+    adapter.removeHooks(workspace, 'session-a');
+    expect(fs.existsSync(hooksPath())).toBe(true); // session-b still holds
 
-    adapter.removeHooks(workspace, 'task-b');
+    adapter.removeHooks(workspace, 'session-b');
     expect(fs.existsSync(hooksPath())).toBe(false);
   });
 
-  it('removeHooks with no taskId (project-delete cleanup) strips the hook unconditionally, ignoring an outstanding refcount', () => {
+  it('an older session of the same task releasing late keeps the newer session\'s hooks', () => {
+    // A killed young session's PTY exits up to the grace after the task's
+    // next session started; its late release must not strip the hooks.
     const adapter = new AntigravityAdapter();
-    const spawn = (taskId: string) => adapter.buildCommand({
+    spawnSession(adapter, 'old-session', 'task-a');
+    spawnSession(adapter, 'new-session', 'task-a');
+
+    adapter.removeHooks(workspace, 'old-session');
+    expect(fs.existsSync(hooksPath())).toBe(true);
+
+    adapter.removeHooks(workspace, 'new-session');
+    expect(fs.existsSync(hooksPath())).toBe(false);
+  });
+
+  it('an MCP-only spawn (no events pipeline) holds the plugin dir against a neighbour\'s release', () => {
+    // The gate is `eventsOutputPath || antigravityMcpWiringEnabled(...)`: a
+    // spawn that writes only the MCP plugin dir still holds the folder. Were
+    // the gate events-only, session-a would hold nothing, session-b would be
+    // the folder's last holder, and its exit would strip the plugin dir out
+    // from under the running MCP-only session.
+    const adapter = new AntigravityAdapter();
+    const pluginDir = path.join(workspace, '.agents', 'plugins', 'kangentic');
+    adapter.buildCommand({
       agentPath: '/usr/bin/agy',
-      taskId,
+      taskId: 'task-of-session-a',
+      ptySessionId: 'session-a',
       cwd: workspace,
       permissionMode: 'default',
       shell: 'bash',
-      eventsOutputPath: path.join(workspace, '.kangentic', 'sessions', taskId, 'events.jsonl'),
+      mcpServerEnabled: true,
+      mcpServerUrl: 'http://127.0.0.1:4123/mcp',
+      mcpServerToken: 'token-abc',
     });
-    spawn('task-a');
-    spawn('task-b');
+    spawnSession(adapter, 'session-b');
+    expect(fs.existsSync(path.join(pluginDir, 'mcp_config.json'))).toBe(true);
+
+    adapter.removeHooks(workspace, 'session-b');
+    expect(fs.existsSync(pluginDir)).toBe(true); // session-a still holds
+
+    adapter.removeHooks(workspace, 'session-a');
+    expect(fs.existsSync(pluginDir)).toBe(false);
+  });
+
+  it('removeHooks with no session id (project-delete cleanup) strips the hook whoever holds it', () => {
+    const adapter = new AntigravityAdapter();
+    spawnSession(adapter, 'session-a');
+    spawnSession(adapter, 'session-b');
     expect(fs.existsSync(hooksPath())).toBe(true);
 
-    // No taskId: the project-delete cleanup path. task-b still holds a
-    // refcount, but this call must not consult it.
+    // No session id: the project-delete cleanup path, after every session is
+    // gone. session-b still holds the folder, but this call must not wait on it.
     adapter.removeHooks(workspace);
 
     expect(fs.existsSync(hooksPath())).toBe(false);

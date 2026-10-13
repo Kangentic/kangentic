@@ -245,7 +245,7 @@ describe('GeminiSessionHistoryParser.locate', () => {
   });
 });
 
-describe('Gemini Adapter - concurrent-session hook reference counting', () => {
+describe('Gemini Adapter - concurrent-session hook holds', () => {
   let sandbox: string;
   let adapter: GeminiAdapter;
   let settingsPath: string;
@@ -276,69 +276,102 @@ describe('Gemini Adapter - concurrent-session hook reference counting', () => {
     fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
-  const buildOptions = (cwd: string, taskId: string) => ({
+  // Holds are keyed by the session's own id (`ptySessionId`), never by its
+  // task: a task's sessions overlap while an old PTY exits.
+  const buildOptions = (cwd: string, ptySessionId: string, taskId = `task-of-${ptySessionId}`) => ({
     agentPath: 'gemini',
     taskId,
+    ptySessionId,
     cwd,
     permissionMode: 'default' as const,
     eventsOutputPath: path.join(cwd, 'events.jsonl'),
   });
 
+  const sessionStartHookCount = (): number | undefined => {
+    if (!fs.existsSync(settingsPath)) return undefined;
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).hooks?.SessionStart?.length;
+  };
+
   it('strips hooks only after the last live session releases', () => {
     // Two concurrent sessions in the same cwd, distinct tasks.
-    adapter.buildCommand(buildOptions(sandbox, 'task-a'));
-    adapter.buildCommand(buildOptions(sandbox, 'task-b'));
+    adapter.buildCommand(buildOptions(sandbox, 'session-a'));
+    adapter.buildCommand(buildOptions(sandbox, 'session-b'));
 
     // Manually seed hooks so removeHooks has something to strip. We cannot
     // actually run the real Gemini binary, so we emulate the state that
     // buildCommand's createMergedSettings would produce.
     seedSettingsWithKangenticHook();
 
-    // Task A releases: hooks must remain because task B is still live.
-    adapter.removeHooks(sandbox, 'task-a');
-    const afterFirst = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    expect(afterFirst.hooks?.SessionStart?.length).toBe(1);
+    // Session A releases: hooks must remain because session B is still live.
+    adapter.removeHooks(sandbox, 'session-a');
+    expect(sessionStartHookCount()).toBe(1);
 
-    // Task B releases: now the file is cleaned up.
-    adapter.removeHooks(sandbox, 'task-b');
-    const afterSecondExists = fs.existsSync(settingsPath);
-    if (afterSecondExists) {
-      const afterSecond = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-      expect(afterSecond.hooks?.SessionStart).toBeUndefined();
-    } else {
-      // safelyUpdateSettingsFile deletes the file when hooks was the only key.
-      expect(afterSecondExists).toBe(false);
-    }
+    // Session B releases: now the file is cleaned up (safelyUpdateSettingsFile
+    // deletes it when hooks was the only key).
+    adapter.removeHooks(sandbox, 'session-b');
+    expect(sessionStartHookCount()).toBeUndefined();
   });
 
-  it('double-release for the same taskId is idempotent (suspend + onExit)', () => {
-    adapter.buildCommand(buildOptions(sandbox, 'task-a'));
-    adapter.buildCommand(buildOptions(sandbox, 'task-b'));
+  it('double-release for the same session is idempotent (suspend + onExit)', () => {
+    adapter.buildCommand(buildOptions(sandbox, 'session-a'));
+    adapter.buildCommand(buildOptions(sandbox, 'session-b'));
     seedSettingsWithKangenticHook();
 
     // Session-manager's suspend() path calls removeHooks explicitly, then
-    // the PTY's onExit handler calls it again. Both pass the same taskId.
-    adapter.removeHooks(sandbox, 'task-a');
-    adapter.removeHooks(sandbox, 'task-a');
+    // the PTY's onExit handler calls it again. Both pass the same session id.
+    adapter.removeHooks(sandbox, 'session-a');
+    adapter.removeHooks(sandbox, 'session-a');
 
-    // Task B is still live, so hooks must still be present.
-    const afterDoubleRelease = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    expect(afterDoubleRelease.hooks?.SessionStart?.length).toBe(1);
+    // Session B is still live, so hooks must still be present.
+    expect(sessionStartHookCount()).toBe(1);
   });
 
-  it('decouples reference counts across different cwds', () => {
+  it('an older session of the same task releasing late keeps the newer session\'s hooks', () => {
+    // A young session's kill parks its PTY for the grace; the task respawns
+    // meanwhile, and the old PTY's exit releases after the new build. Keyed by
+    // task, that release emptied the holders and stripped the running
+    // session's hooks.
+    adapter.buildCommand(buildOptions(sandbox, 'old-session', 'task-a'));
+    adapter.buildCommand(buildOptions(sandbox, 'new-session', 'task-a'));
+    seedSettingsWithKangenticHook();
+
+    adapter.removeHooks(sandbox, 'old-session');
+    expect(sessionStartHookCount()).toBe(1);
+
+    adapter.removeHooks(sandbox, 'new-session');
+    expect(sessionStartHookCount()).toBeUndefined();
+  });
+
+  it('an MCP-only spawn holds the file too', () => {
+    // The builder writes the MCP entry with no events pipeline, so a
+    // neighbour's exit must not strip it while this session runs.
+    adapter.buildCommand({
+      ...buildOptions(sandbox, 'mcp-only'),
+      eventsOutputPath: undefined,
+      mcpServerEnabled: true,
+      mcpServerUrl: 'http://127.0.0.1:4000/mcp/project',
+      mcpServerToken: 'token',
+    });
+    adapter.buildCommand(buildOptions(sandbox, 'session-b'));
+    seedSettingsWithKangenticHook();
+
+    adapter.removeHooks(sandbox, 'session-b');
+    expect(sessionStartHookCount()).toBe(1);
+  });
+
+  it('decouples holds across different cwds', () => {
     const sandboxTwo = fs.mkdtempSync(path.join(os.tmpdir(), 'kg-gemini-refcount-b-'));
     try {
-      adapter.buildCommand(buildOptions(sandbox, 'task-a'));
-      adapter.buildCommand(buildOptions(sandboxTwo, 'task-b'));
+      adapter.buildCommand(buildOptions(sandbox, 'session-a'));
+      adapter.buildCommand(buildOptions(sandboxTwo, 'session-b'));
 
       seedSettingsWithKangenticHook();
       const settingsPathTwo = path.join(sandboxTwo, '.gemini', 'settings.json');
       fs.mkdirSync(path.dirname(settingsPathTwo), { recursive: true });
       fs.writeFileSync(settingsPathTwo, fs.readFileSync(settingsPath, 'utf-8'));
 
-      // Releasing task-a in one directory does not touch the other.
-      adapter.removeHooks(sandbox, 'task-a');
+      // Releasing session-a in one directory does not touch the other.
+      adapter.removeHooks(sandbox, 'session-a');
       const stillThere = JSON.parse(fs.readFileSync(settingsPathTwo, 'utf-8'));
       expect(stillThere.hooks?.SessionStart?.length).toBe(1);
     } finally {
@@ -348,7 +381,7 @@ describe('Gemini Adapter - concurrent-session hook reference counting', () => {
 
   it('tolerates removeHooks with no prior retain (crash/restart path)', () => {
     seedSettingsWithKangenticHook();
-    expect(() => adapter.removeHooks(sandbox, 'orphan-task')).not.toThrow();
+    expect(() => adapter.removeHooks(sandbox, 'orphan-session')).not.toThrow();
   });
 });
 

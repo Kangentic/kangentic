@@ -350,6 +350,58 @@ describe('spawn entry-point parity: every buildCommand site resolves the shim la
   });
 });
 
+describe('spawn entry-point parity: every buildCommand site holds by session id and can release', () => {
+  // An adapter that writes a file every session in a folder shares (Gemini's
+  // settings, Cursor's mcp.json, ...) holds it under CommandOptions.ptySessionId,
+  // the id the session layer releases with (SharedFolderHolds). A build site
+  // that leaves it out takes no hold, so a neighbour's exit strips the file
+  // under its running session. A built command that never becomes a session
+  // must release its hold through releaseCommandHold, or the folder's file
+  // stays in place for the rest of the run. Same static-scan limits as above:
+  // this proves each file says both, not that every path between build and
+  // spawn releases. The per-site tests pin that.
+  const PROPERTY_LINE = /^\s*ptySessionId\s*[:,]/;
+
+  it('every buildCommand( call site passes ptySessionId in its command options', () => {
+    const buildSites = collectReceiverCalls('buildCommand');
+    expect(buildSites.length, 'expected at least one buildCommand( call site').toBeGreaterThan(0);
+    // Each site looks only above itself and below the file's previous site, so a
+    // second site in a file cannot pass on the first one's property.
+    const missing = buildSites
+      .filter((site) => {
+        const lines = fs.readFileSync(path.join(REPO_ROOT, site.relativePath), 'utf-8').split('\n');
+        const previousSiteLine = Math.max(
+          0,
+          ...buildSites
+            .filter((other) => other.relativePath === site.relativePath && other.line < site.line)
+            .map((other) => other.line),
+        );
+        return !lines
+          .slice(previousSiteLine, site.line - 1)
+          .some((line) => !isCommentLine(line) && PROPERTY_LINE.test(line));
+      })
+      .map((site) => site.location);
+    expect(
+      missing,
+      `buildCommand( without a ptySessionId property in the command options above it:\n`
+        + `${missing.join('\n')}\n\n`
+        + `Pass the session's own id (the id handed to sessionManager.spawn) as ptySessionId, so a `
+        + `folder-shared adapter file is held for exactly that session. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+
+  it('every file with a buildCommand( call site also calls releaseCommandHold(', () => {
+    const buildFiles = [...new Set(collectReceiverCalls('buildCommand').map((site) => site.relativePath))];
+    const missing = buildFiles.filter((relativePath) => !fileHasNonCommentCall(relativePath, 'releaseCommandHold'));
+    expect(
+      missing,
+      `Files that build an agent command but never release its hold:\n${missing.join('\n')}\n\n`
+        + `A built command that does not become a session (an early return, an abort, a failed `
+        + `spawn) must call releaseCommandHold(adapter, cwd, ptySessionId). See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+});
+
 describe('spawn entry-point parity: single lock call site', () => {
   it('lockAdvancedOverridesOnFirstSpawn is only referenced inside spawn-preamble.ts', () => {
     const outsideCalls = collectSinkCalls(/\blockAdvancedOverridesOnFirstSpawn\s*\(/)

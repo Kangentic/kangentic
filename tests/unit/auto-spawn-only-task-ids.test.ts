@@ -76,6 +76,8 @@ vi.mock('../../src/main/transition-engine/session-startup/prepare-spawn', () => 
 }));
 
 import { autoSpawnTasks, type LostSessionScope } from '../../src/main/transition-engine/session-startup/auto-spawn';
+// The mocked flag (see the shutdown-state mock above), so a test can raise it mid-pass.
+import { isShuttingDown } from '../../src/main/shutdown-state';
 
 const ACTIVE_LANE = 'lane-active';
 
@@ -529,5 +531,107 @@ describe('autoSpawnTasks: a spawn a teardown cancelled', () => {
     });
 
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Spawn failed for task task-lost'), failure);
+  });
+});
+
+/**
+ * The preparation built the command, and a folder-shared adapter (Gemini,
+ * Cursor, ...) took its hold on the file it wrote under the prepared session's
+ * id. A task the spawn pass skips never becomes that session, so the pass
+ * releases the hold: one never released keeps the folder's file in place for
+ * the rest of the run. Once spawn() has the command, the pass leaves the hold
+ * alone (a running session owns it, and SessionManager releases a spawn that
+ * never ran).
+ *
+ * Red-green: drop the `finally` release in auto-spawn.ts and the skip test
+ * fails; release unconditionally and the two controls fail.
+ */
+describe('autoSpawnTasks: a skipped spawn releases its command\'s hold', () => {
+  const lostRegistry = (): RegistryRow[] => [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }];
+  const removeHooks = vi.fn();
+
+  function preparedHoldingSpawn(taskId = 'task-lost') {
+    const prepared = preparedSpawn(taskId);
+    return { ...prepared, data: { ...prepared.data, adapter: { ...prepared.data.adapter, removeHooks } } };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTaskGetById.mockReset();
+    mockTaskGetById.mockImplementation(() => undefined);
+    mockSwimlaneList.mockReturnValue([activeLane()]);
+    mockTaskList.mockReturnValue([task('task-lost')]);
+  });
+
+  afterEach(() => {
+    // `clearAllMocks` leaves a `mockReturnValue` in place, and a flag left raised
+    // would make every later pass return at its first check.
+    vi.mocked(isShuttingDown).mockReturnValue(false);
+  });
+
+  it('releases with the prepared session id and cwd when the task changed during the preparation', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      mockTaskGetById.mockImplementation((id) => (id === 'task-lost' ? { ...task('task-lost'), swimlane_id: 'lane-todo' } : undefined));
+      return preparedHoldingSpawn() as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(removeHooks).toHaveBeenCalledTimes(1);
+    expect(removeHooks).toHaveBeenCalledWith('/mock/project', 'session-new-task-lost');
+  });
+
+  // The pass checks the flag at its top, then again after the preparation, which
+  // awaits the shell and every agent's detection: a quit can begin in between.
+  // Every prepared command took a hold by then, and no spawn will run.
+  //
+  // Red-green: drop the release loop in auto-spawn.ts's shutdown branch and this fails.
+  it('releases every prepared command\'s hold when the app begins to quit during the preparation', async () => {
+    mockTaskList.mockReturnValue([task('task-a'), task('task-b')]);
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      // Raised once the pass is past its first check, while it prepares its first task.
+      vi.mocked(isShuttingDown).mockReturnValue(true);
+      return preparedHoldingSpawn('task-a') as never;
+    });
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedHoldingSpawn('task-b') as never);
+
+    const sessionManager = await runScopedAutoSpawn(
+      [
+        { id: 'session-lost-a', taskId: 'task-a', status: 'exited' },
+        { id: 'session-lost-b', taskId: 'task-b', status: 'exited' },
+      ],
+      new Set(['task-a', 'task-b']),
+      new Set(['session-lost-a', 'session-lost-b']),
+    );
+
+    expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(2);
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(removeHooks).toHaveBeenCalledTimes(2);
+    expect(removeHooks).toHaveBeenCalledWith('/mock/project', 'session-new-task-a');
+    expect(removeHooks).toHaveBeenCalledWith('/mock/project', 'session-new-task-b');
+  });
+
+  it('control: a spawned task keeps its hold for its session', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedHoldingSpawn() as never);
+
+    const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(removeHooks).not.toHaveBeenCalled();
+  });
+
+  it('control: a spawn that rejects is SessionManager\'s to release, not the pass\'s', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedHoldingSpawn() as never);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']), async () => {
+        throw new Error('the pty host refused the spawn');
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(removeHooks).not.toHaveBeenCalled();
   });
 });

@@ -229,6 +229,7 @@ describe('a workflow\'s own agent starting over', () => {
       detect: vi.fn(async () => ({ found: true, path: '/mock/bin/claude' })),
       ensureTrust: vi.fn(async () => undefined),
       buildCommand: vi.fn(() => 'mock-agent-command'),
+      removeHooks: vi.fn(),
       getExitSequence: () => ['\x03'],
       describeStartupFailure,
     };
@@ -1158,6 +1159,158 @@ describe('a workflow\'s own agent starting over', () => {
 
       expect(status).toEqual({ session: null, unavailable: 'This workflow no longer exists.', setupNeeded: false });
       expect(manager.spawn).not.toHaveBeenCalled();
+      // The command was built, so a folder-shared adapter took its hold under
+      // the start's session id; with no session to release it, the start does.
+      // Red-green: drop that early return's releaseCommandHold and this fails.
+      const adapter = harness.adapter as { buildCommand: ReturnType<typeof vi.fn>; removeHooks: ReturnType<typeof vi.fn> };
+      const built = adapter.buildCommand.mock.calls[0][0] as { cwd: string; ptySessionId?: string };
+      expect(built.ptySessionId).toBeDefined();
+      expect(adapter.removeHooks).toHaveBeenCalledWith(built.cwd, built.ptySessionId);
+    });
+  });
+
+  // A folder-shared adapter holds the file it writes under `ptySessionId`, and
+  // the session layer releases with the session's own id, so the two must be one.
+  it('builds the command for the same session id it spawns under', async () => {
+    await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+    const adapter = harness.adapter as { buildCommand: ReturnType<typeof vi.fn>; removeHooks: ReturnType<typeof vi.fn> };
+    const built = adapter.buildCommand.mock.calls[0][0] as { ptySessionId?: string };
+    expect(built.ptySessionId).toBeDefined();
+    expect(manager.spawn).toHaveBeenCalledWith(expect.objectContaining({ id: built.ptySessionId }));
+    expect(adapter.removeHooks).not.toHaveBeenCalled();
+  });
+
+  // `buildCommand` takes a folder-shared adapter's hold under the start's session
+  // id. The start owns that hold until `sessionManager.spawn()` takes the command:
+  // every return or throw before the call releases it, and from the call on the
+  // session layer does (it releases a spawn that never runs, and a session that
+  // ran releases at its exit), so the start must not release a second time there.
+  describe('the hold a start\'s built command took', () => {
+    interface HoldingAdapter {
+      buildCommand: ReturnType<typeof vi.fn>;
+      removeHooks: ReturnType<typeof vi.fn>;
+      detect: ReturnType<typeof vi.fn>;
+    }
+    const holdingAdapter = (): HoldingAdapter => harness.adapter as HoldingAdapter;
+
+    /** What the Nth `buildCommand` call (zero based) was handed: its cwd, and the id its hold is keyed by. */
+    function builtOptions(buildIndex: number): { cwd: string; ptySessionId?: string } {
+      return holdingAdapter().buildCommand.mock.calls[buildIndex][0] as { cwd: string; ptySessionId?: string };
+    }
+
+    /**
+     * The agent running on its recorded conversation (the open's build is the
+     * first), owed a restart to read a second project's checkout. The restart
+     * suspends it and starts again, and that start is held inside `detect`:
+     * past the restart's own Pause check, before the start's re-read.
+     */
+    async function holdAccessRestartInItsStart(): Promise<{ releaseDetect: () => void }> {
+      Object.assign(harness.adapter as object, { supportsReadableDirectories: true });
+      const otherCheckout = path.join(root, 'other');
+      fs.mkdirSync(otherCheckout);
+      const otherProject = { id: 'other', name: 'kangentic-other', path: otherCheckout, default_agent: null, default_model: null, default_effort: null };
+      const knownGetById = context.projectRepo.getById.bind(context.projectRepo);
+      vi.spyOn(context.projectRepo, 'getById').mockImplementation(
+        (projectId: string) => (projectId === 'other' ? otherProject : knownGetById(projectId)) as never,
+      );
+
+      const opened = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      expect(opened.session?.status).toBe('running');
+
+      let releaseDetect!: () => void;
+      const detectGate = new Promise<void>((resolve) => {
+        releaseDetect = resolve;
+      });
+      const detect = holdingAdapter().detect;
+      detect.mockImplementationOnce(async () => {
+        await detectGate;
+        return { found: true, path: '/mock/bin/claude' };
+      });
+
+      // 'now' is the restart: an idle agent that lacks the checkout (the cache is empty, so it reads idle).
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'other').when).toBe('now');
+      await vi.waitFor(() => expect(detect).toHaveBeenCalledTimes(2));
+      expect(manager.suspend).toHaveBeenCalledTimes(1);
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      return { releaseDetect };
+    }
+
+    // A Pause pressed while the restart's start finds the CLI finds the agent
+    // suspended already, so it stops nothing and stands: the start re-reads it
+    // after building its command and returns without spawning. That command
+    // took a hold that no session will ever own.
+    //
+    // Red-green: drop the releaseCommandHold in that early return and this fails.
+    it('releases the hold of a read-access restart that a Pause pressed during the start stood down', async () => {
+      const { releaseDetect } = await holdAccessRestartInItsStart();
+
+      await agent.pauseWorkflowAgent(context, workflowId);
+      releaseDetect();
+      await vi.waitFor(() => expect(holdingAdapter().buildCommand).toHaveBeenCalledTimes(2));
+      // Nothing after the build awaits before the spawn decision; one macrotask turn lets the rest settle.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const restartBuild = builtOptions(1);
+      expect(restartBuild.ptySessionId).toBeDefined();
+      // The restart built for its own session, not the open's.
+      expect(restartBuild.ptySessionId).not.toBe(builtOptions(0).ptySessionId);
+      // Only the open spawned.
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(holdingAdapter().removeHooks).toHaveBeenCalledTimes(1);
+      expect(holdingAdapter().removeHooks).toHaveBeenCalledWith(restartBuild.cwd, restartBuild.ptySessionId);
+    });
+
+    it('control: the same restart with no Pause spawns, and the session keeps the hold', async () => {
+      const { releaseDetect } = await holdAccessRestartInItsStart();
+
+      releaseDetect();
+      await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(2));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(manager.spawn).toHaveBeenLastCalledWith(expect.objectContaining({ id: builtOptions(1).ptySessionId }));
+      expect(holdingAdapter().removeHooks).not.toHaveBeenCalled();
+    });
+
+    // `buildEnv` runs after `buildCommand`, so the command's hold is already
+    // taken when it throws. The start rejects (the pane shows the reason), and
+    // no session will exist to release the hold.
+    //
+    // Red-green: move the buildEnv call above the try in workflow-agent.ts and
+    // this fails.
+    it('releases the hold and rejects the start when the adapter\'s buildEnv throws, spawning nothing', async () => {
+      const failure = new Error('the adapter could not build its environment');
+      Object.assign(harness.adapter as object, {
+        buildEnv: vi.fn(() => {
+          throw failure;
+        }),
+      });
+
+      await expect(agent.openWorkflowAgent(context, 'home', workflowId, {})).rejects.toBe(failure);
+
+      expect(manager.spawn).not.toHaveBeenCalled();
+      const built = builtOptions(0);
+      expect(built.ptySessionId).toBeDefined();
+      expect(holdingAdapter().removeHooks).toHaveBeenCalledTimes(1);
+      expect(holdingAdapter().removeHooks).toHaveBeenCalledWith(built.cwd, built.ptySessionId);
+    });
+
+    // From the `spawn()` call on, the session layer owns the hold: it releases a
+    // spawn that never ran, and keeps it for a PTY that started, so the file is
+    // never stripped under a running agent. A second release from here would
+    // strip the folder's file out from under a session that is still running.
+    //
+    // Red-green: wrap the spawn call back inside a catch that calls
+    // releaseCommandHold and this fails.
+    it('leaves the hold to the session layer when spawn rejects', async () => {
+      const failure = new Error('the pty host refused the spawn');
+      manager.spawn.mockRejectedValueOnce(failure);
+
+      await expect(agent.openWorkflowAgent(context, 'home', workflowId, {})).rejects.toBe(failure);
+
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(holdingAdapter().buildCommand).toHaveBeenCalledTimes(1);
+      expect(holdingAdapter().removeHooks).not.toHaveBeenCalled();
     });
   });
 

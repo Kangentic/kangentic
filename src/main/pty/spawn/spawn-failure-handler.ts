@@ -81,6 +81,7 @@ export function handleSpawnFailure(
     status: 'exited',
     shell,
     cwd: effectiveCwd,
+    commandCwd: input.cwd,
     startedAt: new Date().toISOString(),
     exitCode: -1,
     resuming: input.resuming ?? false,

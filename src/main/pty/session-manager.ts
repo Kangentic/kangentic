@@ -33,7 +33,7 @@ import type { CliChildProcess, OffMainCliOptions } from '../utility-process/off-
  *  for exits and exits itself, so main never stops waiting first. */
 const HOST_EXIT_MARGIN_MS = 200;
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
-import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
+import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
@@ -1490,6 +1490,9 @@ export class SessionManager extends EventEmitter {
 
   async spawn(input: SpawnSessionInput): Promise<Session> {
     if (isShuttingDown()) {
+      // The caller handed this command over, so nothing else releases the
+      // hold its build took (adapter-lifecycle.releaseCommandHold).
+      if (input.id) releaseCommandHold(input.agentParser, input.cwd, input.id);
       throw new Error('Cannot spawn session during shutdown');
     }
 
@@ -1506,6 +1509,7 @@ export class SessionManager extends EventEmitter {
         status: 'queued',
         shell: '',
         cwd: input.cwd,
+        commandCwd: input.cwd,
         startedAt: new Date().toISOString(),
         exitCode: null,
         resuming: input.resuming ?? false,
@@ -1555,6 +1559,9 @@ export class SessionManager extends EventEmitter {
     };
     try {
       const session = await this.performTrackedSpawn({ ...input, id });
+      // A failed spawn's row is exited with no PTY, so no exit will release
+      // the hold its command took (adapter-lifecycle.releaseCommandHold).
+      if (session.status === 'exited') releaseCommandHold(input.agentParser, input.cwd, id);
       // A new PTY is a grid nothing has laid out yet, and only a focus or
       // mount change ever re-ran the park decision. Run it now, so a PTY that
       // comes up unheld while a phone streams its id is parked after the usual
@@ -1563,6 +1570,15 @@ export class SessionManager extends EventEmitter {
       if (session.status === 'running') this.reconsiderRestingGrid(id);
       if (session.status === 'running' && input.resuming && !input.transient) this.announceResumed(id, input.agentSessionId ?? null);
       return session;
+    } catch (error) {
+      // A spawn that never became a session (a teardown overtook it, the quit
+      // began, the host failed) has nothing else to release its command's
+      // hold. From the input: a cancelled spawn registered no row to release
+      // from. A failure after the PTY's row was registered leaves an agent
+      // running, and stripping its folder's file would pull its hooks or MCP
+      // entry from under it, so that row keeps the hold for its exit to end.
+      if (!this.registry.get(id)?.pty) releaseCommandHold(input.agentParser, input.cwd, id);
+      throw error;
     } finally {
       // An abandoned spawn settles once the PTY the host started has exited;
       // until then it is still in flight for a teardown waiting on it.
@@ -2707,6 +2723,9 @@ export class SessionManager extends EventEmitter {
     if ((dequeued || promotionInFlight) && session) {
       session.status = 'exited';
       session.exitCode = -1;
+      // It never ran, so no PTY exit releases its command's hold. A cancelled
+      // promotion also releases in doSpawn; the second release is a no-op.
+      removeAdapterHooks(session);
       // Queued sessions never spawn a PTY, so onExit (which reads
       // intentionalExit) never runs; forward the flag on this direct emit.
       this.emit('exit', sessionId, -1, true);
@@ -2797,10 +2816,11 @@ export class SessionManager extends EventEmitter {
       return;
     }
 
-    // Strip agent hooks from the project's settings file before
-    // closing down. Prevents hook accumulation across sessions. Both
-    // this path and the onExit handler call removeAdapterHooks;
-    // adapters key on taskId so the duplicate call is idempotent.
+    // Release this session's hold on what its adapter wrote before closing
+    // down. Prevents hook accumulation across sessions. Both this path and
+    // the onExit handler call removeAdapterHooks; holds are keyed by session
+    // id, so the second call is a no-op and never touches the hold of the
+    // task's next session.
     removeAdapterHooks(session);
 
     // Close watchers and detach telemetry readers WITHOUT deleting

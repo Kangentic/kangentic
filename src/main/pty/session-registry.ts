@@ -30,7 +30,16 @@ export interface ManagedSession {
   pty: PtyHandle | null;
   status: SessionStatus;
   shell: string;
+  /** The directory the PTY started in (see `resolveSpawnCwd`). */
   cwd: string;
+  /**
+   * The cwd the agent's command was built for (`SpawnSessionInput.cwd`). Differs
+   * from `cwd` when the spawn fell back to the home directory (a missing folder,
+   * or a UNC path under cmd, which `pushd`es into it afterwards). Whatever the
+   * adapter wrote for the session lives here, so its release
+   * (`removeAdapterHooks`) names this folder, never `cwd`.
+   */
+  commandCwd: string;
   startedAt: string;
   exitCode: number | null;
   resuming: boolean;
@@ -588,6 +597,8 @@ export class SessionRegistry {
       status: 'suspended',
       shell: '',
       cwd: input.cwd,
+      // It built no command and has no adapter, so it holds nothing.
+      commandCwd: input.cwd,
       startedAt: new Date().toISOString(),
       exitCode: null,
       resuming: false,

@@ -5,6 +5,7 @@ import { recordedPtyGrid } from '../../db/recorded-pty-grid';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
+import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, SessionRecord, Task } from '../../../shared/types';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
@@ -473,6 +474,9 @@ export async function resumeSuspendedSessions(
   // adapter.detect and shell resolution). Avoids firing N spawns that
   // would each individually throw and log errors against a closing DB.
   if (isShuttingDown()) {
+    // Every prepared command took a hold that no spawn will now release (see
+    // auto-spawn.ts).
+    for (const input of spawnInputs) releaseCommandHold(input.adapter, input.cwd, input.sessionRecordId);
     done(0);
     return;
   }
@@ -486,93 +490,102 @@ export async function resumeSuspendedSessions(
   // suspended one already is); what it changes is the task's `session_id`,
   // which it clears. A user's Resume retires the record, so a Resume then a
   // Pause, which leaves no live session, still shows as the record's status.
-  // A skipped task keeps what its preparation wrote (see auto-spawn.ts).
+  // A skipped task keeps its session directory and releases its command's
+  // hold (see auto-spawn.ts).
   const spawnResults = await Promise.allSettled(
     spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
-      const current = taskRepo.getById(input.task.id);
-      const recordNow = sessionRepo.findByAnyId(input.record.id);
-      const recordUnchanged = recordNow?.id === input.record.id && recordNow.status === input.record.status;
-      if (
-        !current
-        || current.swimlane_id !== input.task.swimlane_id
-        || current.session_id !== input.task.session_id
-        || !recordUnchanged
-        || sessionManager.findLiveSessionByTaskId(input.task.id)
-      ) {
-        // Moved, in the preparation, into a column that starts no agent. That
-        // move had no session to suspend, so without a placeholder the card
-        // would offer no Resume until the next launch. Kept resumable as the
-        // gather keeps a record found in such a column; a column that starts
-        // agents is the move's own to spawn into. Any other change keeps nothing.
-        keepResumableIfUnchanged(input.record, input.task);
-        // Logged and counted, so a task this pass left alone leaves a trace.
-        console.log(
-          `[SESSION_RECOVERY] Skipped session ${input.record.id} (task ${input.task.id}): it changed while its resume was prepared`,
-        );
-        skipped++;
-        return null;
+      // Until spawn() takes the command, this pass owns its hold. spawn()
+      // releases a spawn that never runs, and a session that ran owns its own.
+      let handedToSpawn = false;
+      try {
+        const current = taskRepo.getById(input.task.id);
+        const recordNow = sessionRepo.findByAnyId(input.record.id);
+        const recordUnchanged = recordNow?.id === input.record.id && recordNow.status === input.record.status;
+        if (
+          !current
+          || current.swimlane_id !== input.task.swimlane_id
+          || current.session_id !== input.task.session_id
+          || !recordUnchanged
+          || sessionManager.findLiveSessionByTaskId(input.task.id)
+        ) {
+          // Moved, in the preparation, into a column that starts no agent. That
+          // move had no session to suspend, so without a placeholder the card
+          // would offer no Resume until the next launch. Kept resumable as the
+          // gather keeps a record found in such a column; a column that starts
+          // agents is the move's own to spawn into. Any other change keeps nothing.
+          keepResumableIfUnchanged(input.record, input.task);
+          // Logged and counted, so a task this pass left alone leaves a trace.
+          console.log(
+            `[SESSION_RECOVERY] Skipped session ${input.record.id} (task ${input.task.id}): it changed while its resume was prepared`,
+          );
+          skipped++;
+          return null;
+        }
+        // Stamped inside the lock, as the auto-spawn's is, so a record another
+        // holder wrote while this one waited never sorts after the one written here.
+        const now = new Date().toISOString();
+        // The grid the session being replaced last had. After a desktop restart
+        // no registry row remembers it, so without this every resume came up at
+        // 120x30 and a phone opening the task paid a park mid-boot.
+        const restoredGrid = recordedPtyGrid(input.record);
+
+        handedToSpawn = true;
+        const newSession = await sessionManager.spawn({
+          id: input.sessionRecordId,
+          taskId: input.task.id,
+          projectId,
+          command: input.command,
+          cwd: input.cwd,
+          env: input.extraEnv ?? undefined,
+          statusOutputPath: input.statusOutputPath,
+          eventsOutputPath: input.eventsOutputPath,
+          agentParser: input.adapter,
+          agentName: input.adapter.name,
+          agentSessionId: input.agentSessionId,
+          isolatedSwimlaneId: input.record.isolated_swimlane_id,
+          permissionMode: input.permissionMode,
+          // Recovery spawns carry no initial prompt (prompt: undefined in
+          // prepare-spawn), so the agent comes up waiting for the user: a resume
+          // sits at a quiet prompt, a fresh spawn at a blank one. Mark resuming so
+          // the activity engine seeds idle, not 'thinking' (the documented
+          // orphan-recovery contract). The command is already built, so this flag
+          // does not alter it - it only drives the seed and the resume overlay.
+          resuming: true,
+          exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
+          ...(restoredGrid ? { restoredGrid } : {}),
+        });
+
+        retireRecord(sessionRepo, input.record.id);
+
+        sessionRepo.insert({
+          id: newSession.id,
+          task_id: input.task.id,
+          session_type: input.record.session_type,
+          isolated_swimlane_id: input.record.isolated_swimlane_id,
+          agent_session_id: input.agentSessionId,
+          command: input.command,
+          cwd: input.cwd,
+          permission_mode: input.permissionMode,
+          prompt: null,
+          status: 'running',
+          exit_code: null,
+          started_at: now,
+          suspended_at: null,
+          exited_at: null,
+          suspended_by: null,
+        });
+        // Record what this resume applied (the `--model` / `--effort` flags land
+        // on every resume) so a later column move diffs against the true value.
+        sessionRepo.updateAppliedSettings(newSession.id, {
+          model: input.appliedModel,
+          effort: input.appliedEffort,
+        });
+
+        taskRepo.update({ id: input.task.id, session_id: newSession.id });
+        return newSession;
+      } finally {
+        if (!handedToSpawn) releaseCommandHold(input.adapter, input.cwd, input.sessionRecordId);
       }
-      // Stamped inside the lock, as the auto-spawn's is, so a record another
-      // holder wrote while this one waited never sorts after the one written here.
-      const now = new Date().toISOString();
-      // The grid the session being replaced last had. After a desktop restart
-      // no registry row remembers it, so without this every resume came up at
-      // 120x30 and a phone opening the task paid a park mid-boot.
-      const restoredGrid = recordedPtyGrid(input.record);
-
-      const newSession = await sessionManager.spawn({
-        id: input.sessionRecordId,
-        taskId: input.task.id,
-        projectId,
-        command: input.command,
-        cwd: input.cwd,
-        env: input.extraEnv ?? undefined,
-        statusOutputPath: input.statusOutputPath,
-        eventsOutputPath: input.eventsOutputPath,
-        agentParser: input.adapter,
-        agentName: input.adapter.name,
-        agentSessionId: input.agentSessionId,
-        isolatedSwimlaneId: input.record.isolated_swimlane_id,
-        permissionMode: input.permissionMode,
-        // Recovery spawns carry no initial prompt (prompt: undefined in
-        // prepare-spawn), so the agent comes up waiting for the user: a resume
-        // sits at a quiet prompt, a fresh spawn at a blank one. Mark resuming so
-        // the activity engine seeds idle, not 'thinking' (the documented
-        // orphan-recovery contract). The command is already built, so this flag
-        // does not alter it - it only drives the seed and the resume overlay.
-        resuming: true,
-        exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
-        ...(restoredGrid ? { restoredGrid } : {}),
-      });
-
-      retireRecord(sessionRepo, input.record.id);
-
-      sessionRepo.insert({
-        id: newSession.id,
-        task_id: input.task.id,
-        session_type: input.record.session_type,
-        isolated_swimlane_id: input.record.isolated_swimlane_id,
-        agent_session_id: input.agentSessionId,
-        command: input.command,
-        cwd: input.cwd,
-        permission_mode: input.permissionMode,
-        prompt: null,
-        status: 'running',
-        exit_code: null,
-        started_at: now,
-        suspended_at: null,
-        exited_at: null,
-        suspended_by: null,
-      });
-      // Record what this resume applied (the `--model` / `--effort` flags land
-      // on every resume) so a later column move diffs against the true value.
-      sessionRepo.updateAppliedSettings(newSession.id, {
-        model: input.appliedModel,
-        effort: input.appliedEffort,
-      });
-
-      taskRepo.update({ id: input.task.id, session_id: newSession.id });
-      return newSession;
     })),
   );
 
