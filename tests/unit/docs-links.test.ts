@@ -10,7 +10,7 @@
  *
  * Four checks:
  *   1. the base is the canonical apex, with no `www` and no trailing slash
- *   2. the five contract paths are pinned, so a rename is a deliberate edit
+ *   2. the contract paths are pinned, so a rename is a deliberate edit
  *   3. no source file outside docs-links.ts spells out a docs URL
  *   4. announcements.json, which no import can reach, uses the apex host
  *
@@ -106,9 +106,9 @@ describe('DOCS_BASE_URL', () => {
     expect(DOCS_BASE_URL).toBe('https://kangentic.com');
   });
 
-  it('pins the five URLs the website treats as contracts', () => {
+  it('pins the URLs the website treats as contracts', () => {
     // The site owes these paths. A rename should be a deliberate two-sided
-    // edit, not a silent one. The sixth half of the contract, the
+    // edit, not a silent one. The other half of the contract, the
     // `#kangentic_<tool>` anchor form, is pinned by mcp-tool-docs-url.test.ts;
     // do not add a third assertion for it here.
     expect(DOCS_URLS).toEqual({
@@ -117,6 +117,8 @@ describe('DOCS_BASE_URL', () => {
       mobilePairing: 'https://kangentic.com/mobile/pairing/',
       relay: 'https://kangentic.com/relay/',
       mcpServer: 'https://kangentic.com/mcp-server/',
+      workflows: 'https://kangentic.com/features/workflows/',
+      columnsAndAutomations: 'https://kangentic.com/features/columns-and-automations/',
     });
   });
 
