@@ -657,7 +657,9 @@ Five types ship. Each is an adapter under `src/main/automations/adapters/`, decl
 
 **On agent turn end** runs when the agent working the task finishes a turn on its own (not an
 interrupt, a failed turn, or a background job still running), once the turn has settled. Only a
-turn that began after the task entered the column counts. Rows run top to bottom, each at most
+turn that began after the task entered the column counts. The exception is a plan approval (an
+`auto-move` entry): the turn it lands in counts, because the agent implements in the turn that
+planned. See [transition-engine.md](transition-engine.md). Rows run top to bottom, each at most
 once per visit, and only a row that actually runs counts: a row whose Condition answered no is
 checked again at the next turn end. To Do and Done have no turn ends, nor does a column whose agent
 is off or does not report turn ends (agents whose only signal is terminal silence).

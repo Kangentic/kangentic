@@ -10,7 +10,7 @@ import type { TaskMoveRecord, TaskMoveRecordOrigin } from '../../../shared/types
  *
  * - when the task's current visit to a column began (`visitStartedAt`), which
  *   is the boundary a turn-end automation's "has it run this visit" counts
- *   from;
+ *   from, and which move opened it (`currentVisit`);
  * - the task's step history (`listForTask`), for a workflow task's route.
  */
 interface TaskMoveRow {
@@ -32,11 +32,19 @@ export class TaskMoveRepository {
    * caller has no visit boundary, which counts every earlier run as this visit's.
    */
   visitStartedAt(taskId: string, swimlaneId: string): string | null {
+    return this.currentVisit(taskId, swimlaneId)?.at ?? null;
+  }
+
+  /**
+   * The move that opened the task's current visit to this column: when, and who
+   * made it. Null under the same condition as `visitStartedAt`.
+   */
+  currentVisit(taskId: string, swimlaneId: string): Pick<TaskMoveRecord, 'at' | 'origin'> | null {
     const row = this.db
       // rowid breaks a tie between two moves stamped in the same millisecond.
-      .prepare('SELECT at FROM task_moves WHERE task_id = ? AND to_swimlane_id = ? ORDER BY at DESC, rowid DESC LIMIT 1')
-      .get(taskId, swimlaneId) as { at: string } | undefined;
-    return row?.at ?? null;
+      .prepare('SELECT at, origin FROM task_moves WHERE task_id = ? AND to_swimlane_id = ? ORDER BY at DESC, rowid DESC LIMIT 1')
+      .get(taskId, swimlaneId) as { at: string; origin: string } | undefined;
+    return row ? { at: row.at, origin: row.origin as TaskMoveRecordOrigin } : null;
   }
 
   /**

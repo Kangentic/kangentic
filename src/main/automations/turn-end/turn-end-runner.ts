@@ -35,7 +35,10 @@ import { trackTurnEndGroup } from './turn-end-passes';
  *   turn or a watchdog guess. Then 1.5 s of PTY silence (`waitForTurnCompletion`).
  * - **Only a turn that began in this visit counts.** A task dragged in while
  *   its agent was mid-turn ends that turn here, but the turn did the last
- *   column's work, and `{{agentReply}}` would carry the wrong reply.
+ *   column's work, and `{{agentReply}}` would carry the wrong reply. A plan
+ *   approval is the exception: its move (`auto-move`) lands mid-turn and the
+ *   agent implements in that same turn, so the rest of the turn is this
+ *   column's work and its reply is the one to judge.
  * - **Rows run top to bottom, each at most once per visit, and only a row that
  *   executes counts.** A Condition that answers no has not run, so the next
  *   turn end checks it again. A Move to column row that runs ends the group:
@@ -162,9 +165,18 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
   const stepApplies = workflowStepApplies(task, payload.projectId);
   if (rows.length === 0 && !stepApplies) return;
 
-  const visitStartedAt = repos.taskMoves.visitStartedAt(task.id, column.id);
-  if (visitStartedAt && payload.turnStartedAt !== null && payload.turnStartedAt < Date.parse(visitStartedAt)) {
-    // A turn the task carried in from its last column.
+  const visit = repos.taskMoves.currentVisit(task.id, column.id);
+  const visitStartedAt = visit?.at ?? null;
+  if (visit && visit.origin !== 'auto-move'
+    && payload.turnStartedAt !== null && payload.turnStartedAt < Date.parse(visit.at)) {
+    // A turn the task carried in from its last column. Not after a plan
+    // approval: the agent goes on implementing in the turn that planned, and
+    // the rest of that turn is this column's work. Logged because it leaves no
+    // run record, and at most once a visit: only one turn can predate it.
+    console.log(
+      `[turn-end] Skipped a carried-in turn for task ${task.id.slice(0, 8)} in ${column.name}: `
+      + `the turn began ${new Date(payload.turnStartedAt).toISOString()}, before the ${visit.origin} move at ${visit.at}.`,
+    );
     return;
   }
 
@@ -247,6 +259,9 @@ async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promi
     const reply = await readFinalReply(payload, new SessionRepository(getProjectDb(payload.projectId)));
     if (!reply || controller.signal.aborted) return;
     // A reply from before the task entered this column was the last column's.
+    // This gates on the reply, not the turn, so a plan approval needs no
+    // exception here: the implementation reply follows the move, and the plan
+    // that precedes it stays out.
     const visitStartedAt = subject.repos.taskMoves.visitStartedAt(task.id, column.id);
     if (visitStartedAt && reply.ts < Date.parse(visitStartedAt)) return;
     if (subject.repos.automationRuns.hasWorkflowStepSince(task.id, column.id, new Date(reply.ts).toISOString())) return;

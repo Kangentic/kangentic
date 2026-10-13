@@ -4,7 +4,10 @@
  *
  * - **The visit gate.** A turn that began before the task entered the column did
  *   the last column's work, and `{{agentReply}}` would carry the wrong reply, so
- *   it runs no row.
+ *   it runs no row. The skip writes no run record, so it logs one line. A plan
+ *   approval is the exception: its move (`auto-move`) lands mid-turn and the
+ *   agent implements in that same turn, so the turn is the new column's work
+ *   and its rows run.
  * - **Once per visit.** A row that already ran since the task entered the column
  *   is not run again at the next turn end. Only a run counts: a skip does not.
  * - **A "not set up" skip is written once per visit.** A column whose Condition
@@ -29,7 +32,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type DatabaseType from 'better-sqlite3';
-import type { ColumnAutomation } from '../../src/shared/types';
+import type { ColumnAutomation, TaskMoveRecordOrigin } from '../../src/shared/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { RunConditionAnswer } from '../../src/main/db/repositories/automation-run-repository';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
@@ -56,11 +59,13 @@ const hoisted = vi.hoisted(() => ({
   runWorkflowStep: vi.fn(),
   workflowStepApplies: vi.fn(),
   clearSpawnProgress: vi.fn(),
+  findSession: vi.fn(),
+  retrievalCall: vi.fn(),
 }));
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
-    findByAnyId = vi.fn(() => null);
+    findByAnyId = hoisted.findSession;
   },
 }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
@@ -84,7 +89,7 @@ vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
 vi.mock('../../src/main/transition-engine/turn-completion', () => ({
   waitForTurnCompletion: hoisted.waitForTurnCompletion,
 }));
-vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: vi.fn() } }));
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: hoisted.retrievalCall } }));
 vi.mock('../../src/main/retrieval/remote-targets', () => ({ collectRemoteTargets: vi.fn(() => []) }));
 vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: vi.fn(), list: vi.fn(() => []) } }));
 vi.mock('../../src/main/automations/automation-registry', () => ({ automationRegistry: { get: vi.fn(() => ({})) } }));
@@ -123,6 +128,8 @@ describe('a turn end and the rows it may run', () => {
 
   afterEach(() => {
     for (const opened of openDatabases.splice(0)) opened.close();
+    // A console spy a failed assertion left in place.
+    vi.restoreAllMocks();
   });
 
   beforeEach(() => {
@@ -164,6 +171,9 @@ describe('a turn end and the rows it may run', () => {
     };
 
     hoisted.waitForTurnCompletion.mockImplementation(async () => 'completed');
+    // No session record, so no reply is read, unless a test sets one up.
+    hoisted.findSession.mockImplementation(() => null);
+    hoisted.retrievalCall.mockImplementation(async () => null);
     hoisted.runWorkflowStep.mockImplementation(async () => undefined);
     // A workflow task, so a pass always reaches its `finally` unless the visit gate stops it.
     hoisted.workflowStepApplies.mockImplementation(() => true);
@@ -221,10 +231,10 @@ describe('a turn end and the rows it may run', () => {
   }
 
   /** Record that the task entered the column at `at`, the boundary a visit counts from. */
-  function enterColumnAt(at: string): void {
+  function enterColumnAt(at: string, origin: TaskMoveRecordOrigin = 'renderer'): void {
     database
       .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(randomUUID(), taskId, null, laneId, 'user', null, at);
+      .run(randomUUID(), taskId, null, laneId, origin, null, at);
   }
 
   /** Fire a turn end and wait for its pass to finish (see the file header). */
@@ -245,15 +255,73 @@ describe('a turn end and the rows it may run', () => {
   const skippedRows = () => runs.listForTask(taskId).filter((run) => run.status === 'skipped');
 
   describe('the visit gate', () => {
-    it('runs no row for a turn that began before the task entered the column', async () => {
+    // Every mover but a plan approval: a drag, the agent moving its own task, a
+    // phone, a Move to column row, a workflow step. Each of those turns did the
+    // last column's work.
+    it.each(['renderer', 'agent', 'mobile', 'automation', 'workflow'] as const)(
+      'runs no row for a turn that began before a %s move into the column, and logs the skip',
+      async (origin) => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        hoisted.rows = [row()];
+        const enteredAt = secondsAgo(10);
+        enterColumnAt(enteredAt, origin);
+
+        await endTurn(Date.parse(enteredAt) - 1_000);
+
+        expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+        expect(hoisted.checkConditions).not.toHaveBeenCalled();
+        expect(hoisted.executeTransition).not.toHaveBeenCalled();
+        expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+        expect(runs.listForTask(taskId)).toEqual([]);
+        // The skip writes no run record, so the log is the only trace of it.
+        const skipLines = logSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('Skipped a carried-in turn'));
+        expect(skipLines).toHaveLength(1);
+        expect(skipLines[0]).toContain(`before the ${origin} move at ${enteredAt}`);
+        logSpy.mockRestore();
+      },
+    );
+
+    it('runs the row for the turn a plan approval moved into the column', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
       hoisted.rows = [row()];
-      const enteredAt = secondsAgo(10);
-      enterColumnAt(enteredAt);
+      const approvedAt = secondsAgo(10);
+      enterColumnAt(approvedAt, 'auto-move');
 
-      await endTurn(Date.parse(enteredAt) - 1_000);
+      // The turn began with the planning prompt and went on implementing after the approval.
+      await endTurn(Date.parse(approvedAt) - 60_000);
 
-      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
-      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+      expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(logSpy.mock.calls.some((call) => String(call[0]).includes('Skipped a carried-in turn'))).toBe(false);
+      logSpy.mockRestore();
+    });
+
+    it('hands the rows the implementation\'s reply as {{agentReply}} after a plan approval', async () => {
+      hoisted.rows = [row({ config: { targetColumn: 'Testing', message: 'Review this: {{agentReply}}' } })];
+      hoisted.findSession.mockImplementation(() => ({ session_type: 'claude_agent', agent_session_id: 'agent-session-1', cwd: '/mock/worktree' }));
+      // The turn's final reply: what the agent said once it finished implementing.
+      hoisted.retrievalCall.mockImplementation(async () => ({ text: 'Implemented the approved plan.', uuid: 'reply-1', ts: Date.now() }));
+      const approvedAt = secondsAgo(10);
+      enterColumnAt(approvedAt, 'auto-move');
+
+      await endTurn(Date.parse(approvedAt) - 60_000);
+
+      expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      const [, , trigger, options] = hoisted.executeTransition.mock.calls[0] as [unknown, unknown, string, { agentReply: string | null }];
+      expect(trigger).toBe('turn_end');
+      expect(options.agentReply).toBe('Implemented the approved plan.');
+    });
+
+    it('reads only the latest entry: a drag back in after a plan approval drops the carried turn', async () => {
+      hoisted.rows = [row()];
+      enterColumnAt(secondsAgo(60), 'auto-move');
+      const draggedBackAt = secondsAgo(10);
+      enterColumnAt(draggedBackAt, 'renderer');
+
+      await endTurn(Date.parse(draggedBackAt) - 1_000);
+
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
       expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
       expect(runs.listForTask(taskId)).toEqual([]);

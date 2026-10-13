@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 
-// The no-activity-hold sentinel exists in three copies, and only one of them can
+// The no-activity-hold sentinel exists in four copies, and only one of them can
 // import the constant:
 //
 //   1. `src/shared/background-shell-hold.ts` - the source of truth, read by the
@@ -11,11 +11,15 @@ import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 //   2. `scripts/worktree-preview.js` - CommonJS, cannot import a `.ts` module.
 //      Prints the `Watch:` command the agent runs.
 //   3. `.claude/skills/preview/SKILL.md` - markdown, cannot import anything.
+//   4. `CLAUDE.md` - markdown, the instruction that a background server the
+//      agent leaves running carries the flag.
 //
-// Nothing links them at compile time, so a rename in (1) silently strands (2)
-// and (3) and the preview watcher goes back to pinning its task ACTIVE for
-// hours - a regression with NO failing type, lint, or engine test, because the
-// engine keeps working perfectly on a flag nobody sends any more.
+// Nothing links them at compile time, so a rename in (1) silently strands the
+// others and the preview watcher, or a dev server, goes back to pinning its
+// task ACTIVE for hours - a regression with NO failing type, lint, or engine
+// test, because the engine keeps working perfectly on a flag nobody sends any
+// more. The workflow prompt (`prompt-xml.ts`) interpolates the constant, so it
+// is not a copy.
 //
 // This is the same hand-duplication pattern as `WORKTREE_MARKER`
 // (`src/shared/git-utils.ts` vs `scripts/worktree-preview.js`).
@@ -23,6 +27,7 @@ import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const PREVIEW_SCRIPT = path.join(REPO_ROOT, 'scripts/worktree-preview.js');
 const PREVIEW_SKILL = path.join(REPO_ROOT, '.claude/skills/preview/SKILL.md');
+const PROJECT_INSTRUCTIONS = path.join(REPO_ROOT, 'CLAUDE.md');
 
 function read(filePath: string): string {
   return fs.readFileSync(filePath, 'utf-8');
@@ -77,5 +82,16 @@ describe('no-activity-hold sentinel parity', () => {
     for (const command of waitCommands) {
       expect(command).toContain(NO_ACTIVITY_HOLD_FLAG);
     }
+  });
+
+  it('CLAUDE.md tells an agent to put the flag on a background server it leaves running', () => {
+    // Its example command must carry the current flag. A dev server started
+    // without it held a task active for hours, through every Stop, so the
+    // column's turn-end automations never ran.
+    const exampleLine = read(PROJECT_INSTRUCTIONS)
+      .split('\n')
+      .find((line) => line.includes('npm run demo:serve #'));
+    expect(exampleLine, 'CLAUDE.md no longer shows a background server carrying the flag').toBeDefined();
+    expect(exampleLine).toContain(`npm run demo:serve # ${NO_ACTIVITY_HOLD_FLAG}`);
   });
 });
