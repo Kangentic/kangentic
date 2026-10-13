@@ -64,6 +64,7 @@ async function buildAgentList(
         reportsTurnEnd: adapter.runtime.reportsTurnEnd,
         supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
         answerCapabilities: adapter.answerCapabilities,
+        kangenticMcp: adapter.kangenticMcp,
         supportsWorkflowAgent: canBeWorkflowAgent(adapter),
         capabilities,
         remoteExecution: adapter.remoteExecution?.info,

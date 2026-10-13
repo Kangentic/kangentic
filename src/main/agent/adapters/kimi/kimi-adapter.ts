@@ -59,6 +59,8 @@ export class KimiAdapter implements AgentAdapter {
   readonly displayName = 'Kimi Code';
   readonly sessionType = 'kimi_agent';
   readonly supportsCallerSessionId = true;
+  // `--mcp-config-file` pointing at the session's own `mcp.json`.
+  readonly kangenticMcp = 'per-session' as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },

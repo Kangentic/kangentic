@@ -16,7 +16,7 @@ export interface SessionHistoryReferenceOptions {
   sourceAgent: string;
   /** Absolute path to the source agent's native session history file, or null if unavailable. */
   sessionFilePath: string | null;
-  /** Whether the target agent has MCP access (currently only Claude). */
+  /** Whether the target agent reaches Kangentic's MCP server (`AgentAdapter.kangenticMcp`). */
   targetHasMcpAccess: boolean;
 }
 

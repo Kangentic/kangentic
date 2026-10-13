@@ -575,26 +575,33 @@ elsewhere that waited only on its tasks starts. A running or paused workflow lef
 deleted; a finished one stays. A plan with a task on that board refuses to start until you save it
 again without that task.
 
-**The workflow agent.** The pane on the left is the workflow's own agent, launched read-only: it
-reads the code and the board and changes only this workflow's plan, never a file. It runs on the
+**The workflow agent.** The pane on the left is the workflow's own agent. It reads the code and the
+board and changes only this workflow's plan, through Kangentic's workflow tools. It runs on the
 agent, model and effort chosen in Settings > Workflows > Workflow agent, not on the project's
-default agent. A conversation kept from an earlier agent runs at that CLI's own defaults. Until that is chosen the pane says so in place of the terminal, with an Open
+default agent; the Agent menu lists every installed agent that can reach Kangentic's MCP server
+with a server address of its own. Where the agent's CLI can be launched read-only, it has no tools
+that edit a file or run a command. Any other agent runs in its own default
+mode in your checkout, and its first message tells it to plan only and leave files alone; it is
+asked, not prevented, and an agent that asks before an edit asks in the pane. A conversation kept
+from an earlier agent runs at that CLI's own defaults. Until that is chosen the pane says so in place of the terminal, with an Open
 Settings button, and starts the agent on its own once you choose and close Settings. A new
 workflow's agent starts with the first message (Settings > Workflows > Workflow agent prompt,
 which you can edit), reads the brief, plans the tasks, and saves them;
 made from nothing, it first asks what you want to build. Talk to it in its terminal to reshape the
 plan. While it works, the canvas says so and the controls that would change its plan (Start, Add
 task, links, routes, Remove) wait until its turn ends; moving cards does not. The toggle in its
-header pauses and resumes it, and the conversation is kept across a restart. It also reads the
-other projects its workflow's tasks are on, and when it needs another of your projects to plan, it
-asks for it and gets it without a prompt: it restarts on the same conversation with that project
-readable and carries on. The speech-bubble button in its header opens its conversation in the
+header pauses and resumes it, and the conversation is kept across a restart. An agent that picks
+its own conversation id reports it once it has one; paused before that, or when its CLI cannot find
+the conversation, it starts a new one from the saved plan, and the pane says it started over. It
+also reads the other projects its workflow's tasks are on, and when it needs another of your
+projects to plan, it asks for it and gets it without a prompt. An agent whose CLI can be told to
+read outside its folder restarts on the same conversation with that project readable and carries
+on; any other is told the grant takes effect for an agent that can. The speech-bubble
+button in its header opens its conversation in the
 transcript viewer, paused or not, and its spend counts in Stats. Drag the pane's right
 edge to widen it; the width is kept. Opening Workflows folds the project sidebar for room, and
 leaving restores it as you had it. It keeps running when you leave the view, and ends when its
-workflow is deleted or finishes. Only an agent Kangentic can
-launch read-only can be a workflow's agent; for any other, the pane says so and you plan on the
-canvas.
+workflow is deleted or finishes.
 
 **Shaping it.** Drag from a card's right-hand dot onto the card that should wait; the card under
 the pointer says what a release would do, or why it cannot. In the inspector, the route list

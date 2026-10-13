@@ -251,7 +251,7 @@ describe('buildWorkflowAgentMcpServer - a workflow agent reads, and plans only i
       return { instructions, toolNames: tools.map((tool) => tool.name) };
     }
 
-    it('name kangentic_request_project_access as the way to read another project, and that the grant ends the turn', async () => {
+    it('name kangentic_request_project_access as the way to read another project, and defer to its reply', async () => {
       const { instructions, toolNames } = await readInstructions();
 
       // Claude Code defers MCP tools when there are many, so the agent sees a
@@ -260,7 +260,12 @@ describe('buildWorkflowAgentMcpServer - a workflow agent reads, and plans only i
       expect(instructions).toContain('READING ANOTHER PROJECT');
       expect(instructions).toContain('kangentic_request_project_access');
       expect(instructions).toContain('kangentic_list_projects');
-      expect(instructions).toContain('then end your turn');
+      expect(instructions).toContain('do what its reply says');
+      // Any agent can be a workflow's agent now, and only one whose CLI can widen
+      // its reads is restarted with the checkout readable, so the instructions do
+      // not promise that; the tool's reply says which case applies.
+      expect(instructions).not.toContain('then end your turn');
+      expect(instructions).not.toContain('comes back on this conversation');
       // ...and the tool it names is one this server registers.
       expect(toolNames).toContain('kangentic_request_project_access');
       // The paragraph is the workflow agent's own, not the shared base text.
@@ -271,7 +276,6 @@ describe('buildWorkflowAgentMcpServer - a workflow agent reads, and plans only i
       const { instructions } = await readInstructions();
 
       expect(instructions).toContain('Do not search the disk for another project\'s folder');
-      expect(instructions).toContain('outside what you can read until access is granted');
     });
 
     it('keep the shared server rules and the planning scope ahead of the project-access paragraph', async () => {

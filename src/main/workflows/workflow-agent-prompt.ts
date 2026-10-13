@@ -11,6 +11,7 @@ import { interpolateTaskTemplate } from '../agent/shared/template-utils';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { doneColumn, routeCandidates } from '../../shared/workflow-route';
+import { formatWorkflow } from './workflow-format';
 
 /**
  * The first message a workflow's own agent gets, resolved from its template
@@ -133,3 +134,65 @@ export function buildWorkflowAgentFirstMessage(
   };
   return interpolateTaskTemplate(template, variables);
 }
+
+/**
+ * The first message of a new conversation for a workflow that already has a
+ * plan, because its agent's earlier conversation cannot be resumed (its id was
+ * never captured, or the CLI could not find it). The template's message, then
+ * the saved plan and what to do with it, so the agent builds on the plan rather
+ * than planning from the brief again: a save replaces the whole plan, so a fresh
+ * plan saved over it would lose every task the user already shaped.
+ *
+ * Null when nothing is saved yet: there is nothing to continue, and the caller
+ * sends the first message as for a new workflow. Not a template variable, so a
+ * customized template gets it too.
+ */
+export async function buildWorkflowAgentContinueMessage(
+  context: IpcContext,
+  homeProjectId: string,
+  workflow: Workflow,
+  template: string,
+): Promise<string | null> {
+  // Loaded on use: the service ends workflow agents, so a static import here
+  // would close a cycle through `workflow-agent.ts`.
+  const { readWorkflow } = await import('./workflow-service');
+  let savedPlan: string;
+  try {
+    const view = readWorkflow(context, homeProjectId, workflow.id);
+    if (view.tasks.length === 0) return null;
+    savedPlan = escapeXml(formatWorkflow(view));
+  } catch (error) {
+    console.warn('[WORKFLOW-AGENT] Could not read the saved plan for a new conversation:', error);
+    return null;
+  }
+  const firstMessage = buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, template);
+  const toBuildOn = 'Build on it instead of planning again: saving replaces the whole plan, so keep every task you are not changing. Reply in one line that you have the plan, and ask what the user wants to change.';
+  // The message rides the command line, 8,191 characters under a cmd.exe
+  // shell, and a long plan would leave the start that recovers a lost
+  // conversation unable to start. The first message counts too: a board with
+  // many columns or a long custom template fills much of that line by itself.
+  // Past the budget the agent reads the plan itself; `kangentic_get_workflow`
+  // answers with its own workflow's.
+  if (firstMessage.length + savedPlan.length > CONTINUE_MESSAGE_INLINE_BUDGET) {
+    return [
+      firstMessage,
+      '',
+      `This workflow already has a saved plan, from an earlier conversation that could not be resumed. Read it first with kangentic_get_workflow. ${toBuildOn}`,
+    ].join('\n');
+  }
+  return [
+    firstMessage,
+    '',
+    '<saved_plan>',
+    savedPlan,
+    '</saved_plan>',
+    `This workflow already has the plan in <saved_plan>, from an earlier conversation that could not be resumed. ${toBuildOn}`,
+  ].join('\n');
+}
+
+/**
+ * The longest first message plus saved plan sent inline. The whole command has
+ * to fit cmd.exe's 8,191 characters, and the rest of it (the CLI path, its
+ * flags, the MCP URL and the closing lines) takes up to about 1,000 of them.
+ */
+const CONTINUE_MESSAGE_INLINE_BUDGET = 7_000;

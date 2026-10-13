@@ -173,11 +173,13 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   const clearAgentRefusal = useWorkflowStore((state) => state.clearAgentRefusal);
   // Main refused the last start, for want of the setting or for a reason it gave.
   const refused = mainSetupNeeded || unavailable !== null;
-  // The agent the terminal runs, as main picks it: the one holding the
-  // conversation, else the setting's (a new workflow's first start).
-  const recordedAgent = useWorkflowStore((state) => (
-    state.summaries.find((summary) => summary.workflow.id === workflowId)?.workflow.agent_name ?? null
-  ));
+  // The agent the terminal runs, as main picks it: the one holding a
+  // conversation it can resume, else the setting's (a new workflow's first
+  // start, or a new conversation from the saved plan).
+  const recordedAgent = useWorkflowStore((state) => {
+    const workflow = state.summaries.find((summary) => summary.workflow.id === workflowId)?.workflow;
+    return workflow && workflow.agent_session_id !== null ? workflow.agent_name : null;
+  });
   const terminalAgent = recordedAgent ?? choice.agent;
 
   // Open the agent of the workflow on screen, once per mount, when nothing holds
@@ -518,7 +520,7 @@ function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: str
   });
 
   return (
-    <div className="absolute inset-0 px-1 pt-1" data-testid="workflow-agent-terminal-pane" data-session-id={sessionId}>
+    <div className="absolute inset-0 px-1 pt-1" data-testid="workflow-agent-terminal-pane" data-session-id={sessionId} data-agent-name={agentName ?? undefined}>
       <FileDropOverlay {...fileDrop} />
       <div ref={terminalRef} className="h-full" data-testid="workflow-agent-terminal" />
     </div>

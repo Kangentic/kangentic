@@ -66,6 +66,11 @@ export class AntigravityAdapter implements AgentAdapter {
   // No flag pre-assigns a NEW conversation id; agy allocates one lazily at
   // the first turn and Kangentic captures it (hooks / PTY scrape).
   readonly supportsCallerSessionId = false;
+  // Its hook at the first turn and the shutdown summary (`runtime.sessionId`).
+  readonly capturesInteractiveSessionId = true;
+  // The literal URL and token go into the folder's
+  // `.agents/plugins/kangentic/mcp_config.json`.
+  readonly kangenticMcp = 'shared-folder' as const;
   // Mapped onto agy's native autonomy flags in the command builder
   // (--mode plan / --mode accept-edits / --dangerously-skip-permissions;
   // no flag = agy's own "request-review" default).

@@ -23,6 +23,10 @@ export class CodexAdapter implements AgentAdapter {
   readonly displayName = 'Codex CLI';
   readonly sessionType = 'codex_agent';
   readonly supportsCallerSessionId = false;
+  // The startup banner in its own output names the session (`runtime.sessionId`).
+  readonly capturesInteractiveSessionId = true;
+  // `-c mcp_servers.kangentic.*` overrides, the token in the session's env.
+  readonly kangenticMcp = 'per-session' as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Safe Read-Only Browsing' },
     { mode: 'dontAsk', label: 'Read-Only Non-Interactive (CI)' },

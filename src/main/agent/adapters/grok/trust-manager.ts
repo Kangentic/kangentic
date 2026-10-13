@@ -67,6 +67,32 @@ function trustStorePath(): string {
   return path.join(grokHomeDir(), 'trusted_folders.toml');
 }
 
+/**
+ * Whether Grok trusts `workingDirectory`: the nearest decision covering it says
+ * trusted. Undecided reads as untrusted, as Grok runs it. Grok records the
+ * folder it runs in, which the OS reports with links resolved, so a decision
+ * on the folder's real path wins over one on the path it was opened by (a
+ * project opened as `/tmp/app` that Grok trusted as `/private/tmp/app`). Read
+ * only; Kangentic never writes a decision for a folder that is not its own.
+ */
+export function isFolderTrusted(workingDirectory: string): boolean {
+  let content: string;
+  try {
+    content = fs.readFileSync(trustStorePath(), 'utf-8');
+  } catch {
+    return false;
+  }
+  const entries = parseTrustEntries(content.split('\n'));
+  let realPath: string | null = null;
+  try {
+    realPath = fs.realpathSync.native(workingDirectory);
+  } catch {
+    // A folder that is gone has no real path; its own path decides.
+  }
+  const realDecision = realPath ? decisionFor(entries, realPath) : null;
+  return (realDecision ?? decisionFor(entries, path.resolve(workingDirectory))) === true;
+}
+
 /** Recover the owning project root from the `/.kangentic/worktrees/` marker. */
 function projectRootForWorktree(resolvedPath: string): string | null {
   const marker = `${path.sep}.kangentic${path.sep}worktrees${path.sep}`;

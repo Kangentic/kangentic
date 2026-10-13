@@ -31,6 +31,8 @@ export class QwenAdapter implements AgentAdapter {
   readonly displayName = 'Qwen Code';
   readonly sessionType = 'qwen_agent';
   readonly supportsCallerSessionId = true;
+  // The literal URL goes into the folder's `.qwen/settings.json`.
+  readonly kangenticMcp = 'shared-folder' as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },

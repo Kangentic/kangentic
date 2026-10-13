@@ -40,7 +40,7 @@ import {
 } from '../../src/main/agent/adapters/grok/command-injection-verifier';
 import { cleanGrokTranscript } from '../../src/main/agent/adapters/grok/transcript-cleanup';
 import { discoverGrokCapabilities, clearGrokCapabilityMemo } from '../../src/main/agent/adapters/grok/capability-discovery';
-import { ensureAnswerHomeTrust, ensureWorktreeTrust, removeWorktreeTrust } from '../../src/main/agent/adapters/grok/trust-manager';
+import { ensureAnswerHomeTrust, ensureWorktreeTrust, isFolderTrusted, normalizeForCompare, removeWorktreeTrust } from '../../src/main/agent/adapters/grok/trust-manager';
 import { migrateGrokProjectData } from '../../src/main/agent/adapters/grok/project-relocation';
 import type { PermissionMode } from '../../src/shared/types';
 
@@ -1596,6 +1596,96 @@ describe('trust manager', () => {
     const home = useTempGrokHome();
     await ensureWorktreeTrust(path.join(home, 'fake-project'));
     expect(fs.existsSync(path.join(home, 'trusted_folders.toml'))).toBe(false);
+  });
+
+  // Grok loads a project's MCP servers only in a folder the user trusted in Grok,
+  // and Kangentic never decides that for them. A project root left undecided
+  // runs a workflow's agent with no Kangentic tools, so it could not save a plan.
+  it('reads a folder as trusted only when the nearest decision covering it trusts it', () => {
+    const home = useTempGrokHome();
+    const projectRoot = path.join(home, 'fake-project');
+    const storePath = path.join(home, 'trusted_folders.toml');
+
+    expect(isFolderTrusted(projectRoot)).toBe(false);
+
+    fs.writeFileSync(storePath, `[folders.'${path.resolve(home)}']\ntrusted = true\ndecided_at = 1786162868\n`);
+    expect(isFolderTrusted(projectRoot)).toBe(true);
+
+    fs.appendFileSync(storePath, `[folders.'${path.resolve(projectRoot)}']\ntrusted = false\ndecided_at = 1786162869\n`);
+    expect(isFolderTrusted(projectRoot)).toBe(false);
+  });
+
+  it('names an untrusted folder as the reason Kangentic\'s tools would not load, and nothing for a trusted one', () => {
+    const home = useTempGrokHome();
+    const projectRoot = path.join(home, 'fake-project');
+    const adapter = new GrokAdapter();
+
+    const reason = adapter.kangenticMcpBlockedReason(projectRoot);
+    expect(reason).toContain('Grok Build');
+    expect(reason).toContain(path.resolve(projectRoot));
+
+    fs.writeFileSync(path.join(home, 'trusted_folders.toml'), `[folders.'${path.resolve(projectRoot)}']\ntrusted = true\ndecided_at = 1786162868\n`);
+    expect(adapter.kangenticMcpBlockedReason(projectRoot)).toBeNull();
+  });
+
+  /**
+   * A real folder and a link to it, both under the temp Grok home so the
+   * afterEach cleanup removes them. `realFolder` is the path the OS reports for
+   * the folder, with links, Windows short names and macOS's /var -> /private/var
+   * resolved. That is the spelling Grok records, because Grok runs in the folder
+   * the OS reports.
+   */
+  function makeLinkedFolder(home: string): { realFolder: string; linkFolder: string } {
+    const target = path.join(home, 'real-project');
+    const linkFolder = path.join(home, 'linked-project');
+    fs.mkdirSync(target);
+    fs.symlinkSync(target, linkFolder, process.platform === 'win32' ? 'junction' : 'dir');
+    const realFolder = fs.realpathSync.native(target);
+    // Preconditions: the link resolves to the folder, and the two spellings are
+    // different keys. Otherwise the cases below would pass with a link that is
+    // not one.
+    expect(fs.realpathSync.native(linkFolder)).toBe(realFolder);
+    expect(normalizeForCompare(realFolder)).not.toBe(normalizeForCompare(linkFolder));
+    return { realFolder, linkFolder };
+  }
+
+  // Grok records the folder it runs in, which the OS reports with links
+  // resolved. A project Kangentic opened through a link (a project opened as
+  // /tmp/app that Grok trusted as /private/tmp/app) is the same folder, so a
+  // decision on the real path covers it. Before the real path was read first,
+  // this read as untrusted and the workflow agent was refused for a folder the
+  // user had trusted.
+  it('reads a project opened through a link as trusted when Grok trusted its real path', () => {
+    const home = useTempGrokHome();
+    const { realFolder, linkFolder } = makeLinkedFolder(home);
+    fs.writeFileSync(path.join(home, 'trusted_folders.toml'), `[folders.'${realFolder}']\ntrusted = true\ndecided_at = 1786162868\n`);
+
+    expect(isFolderTrusted(linkFolder)).toBe(true);
+    expect(new GrokAdapter().kangenticMcpBlockedReason(linkFolder)).toBeNull();
+  });
+
+  it('lets a decision on the real path win over the opposite decision on the link', () => {
+    const home = useTempGrokHome();
+    const { realFolder, linkFolder } = makeLinkedFolder(home);
+    fs.writeFileSync(
+      path.join(home, 'trusted_folders.toml'),
+      `[folders.'${path.resolve(linkFolder)}']\ntrusted = true\ndecided_at = 1786162868\n\n[folders.'${realFolder}']\ntrusted = false\ndecided_at = 1786162869\n`,
+    );
+
+    expect(isFolderTrusted(linkFolder)).toBe(false);
+    // The reason still names the folder as the project was opened, which is the
+    // path the user recognizes and has to trust.
+    const reason = new GrokAdapter().kangenticMcpBlockedReason(linkFolder);
+    expect(reason).toContain('Grok Build');
+    expect(reason).toContain(path.resolve(linkFolder));
+  });
+
+  it('falls back to the path as given when nothing is decided on the real path', () => {
+    const home = useTempGrokHome();
+    const { linkFolder } = makeLinkedFolder(home);
+    fs.writeFileSync(path.join(home, 'trusted_folders.toml'), `[folders.'${path.resolve(linkFolder)}']\ntrusted = true\ndecided_at = 1786162868\n`);
+
+    expect(isFolderTrusted(linkFolder)).toBe(true);
   });
 
   it('trusts the answer home once, so its search server starts, and never again', async () => {

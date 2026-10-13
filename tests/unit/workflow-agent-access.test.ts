@@ -27,7 +27,11 @@
  *   owing it again would stop and respawn a healthy agent at every idle edge;
  * - a restart whose start is refused because the Workflow agent setting was
  *   cleared since the agent started leaves the agent suspended, logs that the
- *   setting is not complete, spawns nothing, and owes nothing.
+ *   setting is not complete, spawns nothing, and owes nothing;
+ * - an agent whose workflow records no conversation id (its CLI chose its own and
+ *   never reported it) is not restarted, since a restart would begin a new
+ *   conversation and drop the one running: the grant is stored for its next
+ *   start, whether the agent is idle or mid-turn.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -186,7 +190,9 @@ describe('the workflow agent\'s reads across projects', () => {
 
   // The working agent's restart at its turn's end is pinned in "the restart for new read access" below.
   it('leaves a working agent\'s turn alone, and restarts an idle one at once', async () => {
+    // Each agent's conversation is recorded, as its start leaves it: a restart resumes by that id.
     const working = service.createWorkflow('home', {});
+    new WorkflowRepository(homeDb()).setAgentConversation(working.id, { agentName: 'claude', agentSessionId: 'conversation-working', cwd: paths.home });
     sessions.push({ id: 'session-working', workflowId: working.id, status: 'running' });
     activity['session-working'] = 'thinking';
     expect(agent.requestWorkflowAgentProjectAccess(context, 'home', working.id, 'mobile').when).toBe('next-turn');
@@ -195,6 +201,7 @@ describe('the workflow agent\'s reads across projects', () => {
     expect(suspend).not.toHaveBeenCalled();
 
     const idle = service.createWorkflow('home', {});
+    new WorkflowRepository(homeDb()).setAgentConversation(idle.id, { agentName: 'claude', agentSessionId: 'conversation-idle', cwd: paths.home });
     sessions.push({ id: 'session-idle', workflowId: idle.id, status: 'running' });
     activity['session-idle'] = 'idle';
     // The restart's own start fails here (no config in this context) and logs; the suspend is what matters.
@@ -247,11 +254,16 @@ describe('the workflow agent\'s reads across projects', () => {
       warnSpy.mockRestore();
     });
 
-    /** An idle running agent for a new workflow, owed a restart for `mobile`'s checkout. */
+    /**
+     * An idle running agent for a new workflow, owed a restart for `mobile`'s
+     * checkout. Its conversation is recorded, as every start on an agent that
+     * takes Kangentic's id leaves it: a restart resumes by that id.
+     */
     function idleAgent(sessionId: string): string {
       const workflow = service.createWorkflow('home', {});
       sessions.push({ id: sessionId, workflowId: workflow.id, status: 'running' });
       activity[sessionId] = 'idle';
+      recordConversation(workflow.id);
       return workflow.id;
     }
 
@@ -263,6 +275,7 @@ describe('the workflow agent\'s reads across projects', () => {
         name: 'claude',
         displayName: 'Claude Code',
         sessionType: 'claude_agent',
+        kangenticMcp: 'per-session',
         supportsReadOnlyLaunch: true,
         supportsCallerSessionId: true,
         supportsReadableDirectories: true,
@@ -368,6 +381,33 @@ describe('the workflow agent\'s reads across projects', () => {
       expect(suspend).toHaveBeenCalledTimes(1);
       expect(startAttempts).toHaveBeenCalledTimes(1);
       expect(spawn).not.toHaveBeenCalled();
+    });
+
+    // A restart resumes the agent by the id its workflow recorded. An agent whose
+    // CLI chose its own id and has not reported it has none recorded, so a restart
+    // would begin a new conversation and drop the one running. The grant is kept
+    // for its next start instead, and nothing is owed to it.
+    it.each(['idle', 'thinking'])('keeps a %s agent running, and owes it nothing, when no conversation id was ever recorded for it', async (state) => {
+      const workflow = service.createWorkflow('home', {});
+      sessions.push({ id: 'session-no-id', workflowId: workflow.id, status: 'running' });
+      activity['session-no-id'] = state;
+      expect(read(workflow.id).agent_session_id).toBeNull();
+
+      const result = agent.requestWorkflowAgentProjectAccess(context, 'home', workflow.id, 'mobile');
+
+      expect(result.when).toBe('next-start');
+      expect(read(workflow.id).agent_read_project_ids).toEqual(['mobile']);
+      // Were a restart queued, it would have run by the time this resolves.
+      await nextTurn();
+      expect(suspend).not.toHaveBeenCalled();
+      expect(startAttempts).not.toHaveBeenCalled();
+
+      // Nothing is owed: the agent's next idle edge leaves it alone too.
+      activity['session-no-id'] = 'idle';
+      manager.emit('activity', 'session-no-id', 'idle');
+      await nextTurn();
+      expect(suspend).not.toHaveBeenCalled();
+      expect(startAttempts).not.toHaveBeenCalled();
     });
 
     it('does not suspend an agent whose turn began again before the restart ran, and restarts it at its next idle', async () => {

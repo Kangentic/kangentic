@@ -537,6 +537,7 @@ export class SessionManager extends EventEmitter {
       hasAgentSessionId: (id) => this.telemetry.hasAgentSessionId(id),
       notifyAgentSessionId: (id, capturedId) => this.telemetry.notifyAgentSessionId(id, capturedId),
       sessionExists: (id) => this.registry.has(id),
+      agentSessionIdOf: (id) => this.registry.get(id)?.agentSessionId ?? null,
     });
 
     this.telemetry = new SessionTelemetry({

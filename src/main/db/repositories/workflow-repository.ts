@@ -221,11 +221,22 @@ export class WorkflowRepository {
 
   /**
    * The agent conversation the workflow's agent resumes by. Changes no plan, so
-   * the revision stays; null forgets it, so the next open starts a new one.
+   * the revision stays; null forgets it, so the next open starts a new one. A
+   * null `agentSessionId` records an agent that ran whose own id is not known
+   * yet: its next start continues from the saved plan unless the id arrives.
    */
-  setAgentConversation(id: string, conversation: { agentName: string; agentSessionId: string; cwd: string } | null): void {
+  setAgentConversation(id: string, conversation: { agentName: string; agentSessionId: string | null; cwd: string } | null): void {
     this.db.prepare('UPDATE workflows SET agent_name = ?, agent_session_id = ?, agent_cwd = ? WHERE id = ?')
       .run(conversation?.agentName ?? null, conversation?.agentSessionId ?? null, conversation?.cwd ?? null, id);
+  }
+
+  /**
+   * Forget the conversation id only, keeping the agent and checkout that ran:
+   * the CLI could not find the conversation, so the next start begins a new
+   * one from the saved plan, whichever start that turns out to be.
+   */
+  forgetAgentSessionId(id: string): void {
+    this.db.prepare('UPDATE workflows SET agent_session_id = NULL WHERE id = ?').run(id);
   }
 
   /** The agent's PTY grid, on every resize the desktop makes. Changes no plan, so the revision stays. */

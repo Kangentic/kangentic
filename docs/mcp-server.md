@@ -70,10 +70,19 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 | Grok Build | `[mcp_servers.kangentic]` sentinel block in `<cwd>/.grok/config.toml` with `${KANGENTIC_MCP_URL}` + `${KANGENTIC_MCP_TOKEN}`, plus `--allow "MCPTool(kangentic__*)"` pre-approval | process env (file holds only var names - the URL too, so the block is fully static) |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env var | process env (local spawns only) |
 | Antigravity CLI | Workspace plugin `<cwd>/.agents/plugins/kangentic/` (`serverUrl` + `X-Kangentic-Token` header; streamable HTTP, connects at the first agent turn) | project file, stripped on exit |
-| Cursor, Oz CLI, Goose CLI | Not wired | n/a |
+| Cursor CLI | `<cwd>/.cursor/mcp.json` entry with `${env:KANGENTIC_MCP_URL}` + `${env:KANGENTIC_MCP_TOKEN}`, plus `--approve-mcps` | process env (file holds only var references; stripped when the folder's last session exits) |
+| Oz CLI, Goose CLI | Not wired | n/a |
 | Aider, Ollama | Not possible - neither CLI is an MCP client | n/a |
 
-The project-file rows (Gemini, Qwen, Droid, Grok, Antigravity) are additionally hidden from git while untracked: when Kangentic creates the file, the builder seeds it into the local `.git/info/exclude` so it never shows in `git status` and cannot ride a `git add -A` (shared mechanism in `src/main/agent/shared/git-exclude.ts`; a pre-existing user file keeps its git visibility).
+Each adapter declares its row as `kangenticMcp` (`'per-session'` or `'shared-folder'`), and
+`tests/unit/kangentic-mcp-delivery.test.ts` drives every real builder to hold the declaration to
+what it does. Gemini, Qwen, Droid and Antigravity are `'shared-folder'`: the session's URL is
+written literally into a project file every session in that folder shares, so the last session to
+start decides the URL the others read. That is why they cannot carry a workflow agent's caller
+scope (`canBeWorkflowAgent`). Grok's and Cursor's files are static and their URLs are per-process
+env references, so they are `'per-session'`.
+
+The project-file rows (Gemini, Qwen, Droid, Grok, Antigravity, Cursor) are additionally hidden from git while untracked: when Kangentic creates the file, the builder seeds it into the local `.git/info/exclude` so it never shows in `git status` and cannot ride a `git add -A` (shared mechanism in `src/main/agent/shared/git-exclude.ts`; a pre-existing user file keeps its git visibility).
 
 Full per-adapter detail, including the Codex quoting contract and the Gemini folder-trust requirement, lives in [agent-integration.md](agent-integration.md).
 
@@ -1168,7 +1177,9 @@ missing from disk is left out. An agent whose CLI cannot widen its reads
 The workflow agent's server instructions name this tool, since Claude Code defers MCP tools when
 there are many and the agent then sees only a tool's name until it searches. An agent that does
 not find it searches the disk instead, and hits Claude's own permission prompt for a read outside
-its directories.
+its directories. They tell the agent to do what the tool's reply says rather than promise a
+restart, because any agent can be a workflow's agent and only one whose CLI can widen its reads is
+restarted with the checkout readable; the reply says which case applies.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -2193,7 +2204,7 @@ To point an external MCP client (a manually-run remote OpenCode server's own `op
 
 ### Permissions
 
-Agents Kangentic spawns never see a permission prompt for Kangentic's own tools. Three layers cover the axes (which mode, which project):
+Claude Code sessions Kangentic spawns never see a permission prompt for Kangentic's own tools, and Grok Build's do not either (`--allow "MCPTool(kangentic__*)"`). Every other agent applies its own approval rules to Kangentic's tools as to any MCP server, so it may ask before a call in its terminal. For Claude, three layers cover the axes (which mode, which project):
 
 1. **Auto-allow injection (all projects, default / acceptEdits mode).** Whenever the MCP server is attached, `CommandBuilder.createMergedSettings()` appends `mcp__kangentic` to `permissions.allow` in the per-session merged `settings.json` (`.kangentic/sessions/<sessionId>/settings.json`). This is gated on the same condition as the session `mcp.json` write and is append-if-absent, so a committed project rule or a Claude "always allow" grant is not duplicated. It lives only in the regenerated per-session settings, never written back to the user's own settings files, and an explicit user `deny` of `mcp__kangentic` still wins (deny outranks allow). So the no-prompt behavior holds for every project, not just ones that committed a rule.
 2. **Read-only annotations (all projects, plan mode).** Allow rules do not punch through plan mode. Plan-mode auto-approval comes from the tools' `readOnlyHint` annotations (see the Tool annotations note under Available Tools): read-only tools run without a prompt while planning; mutating tools still prompt, by design.

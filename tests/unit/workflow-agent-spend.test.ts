@@ -17,7 +17,9 @@
  *
  * Turns. Alongside the spend row, every capture asks the retrieval worker to
  * write the conversation's turns to the token ledger (`index.workflowAgentTurns`),
- * fire and forget: a rejection is logged and never breaks the stop.
+ * fire and forget: a rejection is logged and never breaks the stop. A live
+ * session with no conversation id of its own is filed under the one its workflow
+ * records, and under nothing when the row has none either.
  *
  * Start. Every start records the conversation on the workflow row, resumes
  * included, so a row from before `agent_cwd` existed gains its checkout the next
@@ -220,6 +222,7 @@ describe('a workflow\'s own agent: spend and conversation', () => {
       name: 'claude',
       displayName: 'Claude Code',
       sessionType: 'claude_agent',
+      kangenticMcp: 'per-session',
       supportsReadOnlyLaunch: true,
       supportsCallerSessionId: true,
       supportsReadableDirectories: true,
@@ -290,10 +293,10 @@ describe('a workflow\'s own agent: spend and conversation', () => {
     return session;
   }
 
-  function expectBookedOnce(sessionId: string): void {
+  function expectBookedOnce(sessionId: string, conversationId = 'conv-1'): void {
     const rows = ledgerRows(sessionId);
     expect(rows).toHaveLength(1);
-    expect(rows[0].conversation_id).toBe('conv-1');
+    expect(rows[0].conversation_id).toBe(conversationId);
     expect(rows[0].total_cost_usd).toBe(1.5);
     expect(rows[0].total_input_tokens).toBe(1_000);
     expect(rows[0].agent).toBe('claude');
@@ -325,6 +328,8 @@ describe('a workflow\'s own agent: spend and conversation', () => {
     it('on a restart for new checkouts, before the suspend drops the live usage', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       addAgentSession();
+      // Recorded, as the agent's start leaves it: the restart resumes by it.
+      new WorkflowRepository(homeDb()).setAgentConversation(workflowId, { agentName: 'claude', agentSessionId: 'conv-1', cwd: paths.home });
       manager.activity['pty-agent'] = 'idle';
 
       expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
@@ -440,16 +445,16 @@ describe('a workflow\'s own agent: spend and conversation', () => {
     });
   });
 
-  describe('its turns reach the token ledger through the retrieval worker', () => {
-    const TURNS_CALL = (cwd: string) => ['index.workflowAgentTurns', {
-      projectId: 'home',
-      sessionId: 'pty-agent',
-      agentSessionId: 'conv-1',
-      sessionType: 'claude_agent',
-      cwd,
-      remoteTargets: [],
-    }];
+  const TURNS_CALL = (cwd: string, conversationId = 'conv-1') => ['index.workflowAgentTurns', {
+    projectId: 'home',
+    sessionId: 'pty-agent',
+    agentSessionId: conversationId,
+    sessionType: 'claude_agent',
+    cwd,
+    remoteTargets: [],
+  }];
 
+  describe('its turns reach the token ledger through the retrieval worker', () => {
     it('on Pause, with the session\'s project, id, conversation, session type and checkout', async () => {
       addAgentSession();
 
@@ -538,6 +543,46 @@ describe('a workflow\'s own agent: spend and conversation', () => {
       await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
       expect(String(warn.mock.calls[0][0])).toContain('pty-agen');
       expect(warn.mock.calls[0][1]).toEqual(expect.objectContaining({ message: 'The retrieval worker is restarting.' }));
+    });
+  });
+
+  // A resumed agent whose CLI chose its own id may not report it again on that
+  // run, which leaves the live session's id empty while its workflow still
+  // records the conversation. The stop files the spend and the turns under the
+  // recorded id; with none recorded either, there is no lineage to file under.
+  describe('a stop of a session that has no conversation id of its own', () => {
+    const stops: Array<{ name: string; stop: () => Promise<void> | void }> = [
+      { name: 'Pause', stop: () => agent.pauseWorkflowAgent(context, workflowId) },
+      { name: 'an exit the CLI made', stop: () => { manager.emit('exit', 'pty-agent', 1, false); } },
+    ];
+
+    function recordConversation(agentSessionId: string | null): void {
+      new WorkflowRepository(homeDb()).setAgentConversation(workflowId, { agentName: 'claude', agentSessionId, cwd: paths.home });
+    }
+
+    it.each(stops)('files the spend and the turns under the workflow\'s recorded conversation on $name', async ({ stop }) => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession({ agentSessionId: null });
+      recordConversation('conv-x');
+
+      await stop();
+
+      expectBookedOnce('pty-agent', 'conv-x');
+      expect(harness.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(harness.retrievalCall.mock.calls[0]).toEqual(TURNS_CALL(paths.home, 'conv-x'));
+    });
+
+    // The control: an agent that ran but whose id is not recorded (never captured,
+    // or forgotten for a start-over) is not filed under any conversation.
+    it.each(stops)('files nothing and asks for no turns when the workflow records no conversation id either, on $name', async ({ stop }) => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession({ agentSessionId: null });
+      recordConversation(null);
+
+      await stop();
+
+      expect(ledgerRows('pty-agent')).toHaveLength(0);
+      expect(harness.retrievalCall).not.toHaveBeenCalled();
     });
   });
 

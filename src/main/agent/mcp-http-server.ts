@@ -423,10 +423,11 @@ export function buildAnswerMcpServer(resolver: RequestResolver, callerSessionId?
  * The McpServer a workflow's own agent sees: every read-only tool, and the tools
  * that shape its plan, bound to its own workflow (`workflow-agent-scope.ts`).
  *
- * Selected by the caller segment (`workflowIdOfCaller`). The agent is launched
- * read-only, and this is the half of that the CLI cannot override: a tool that
- * starts, deletes, moves or creates board work is not registered for it. No
- * browser or steering tools, since it has no task and drives no other session.
+ * Selected by the caller segment (`workflowIdOfCaller`). This is the guard the
+ * CLI cannot override, whatever the agent: a tool that starts, deletes, moves or
+ * creates board work is not registered for it. An agent whose adapter can launch
+ * it read-only also has no edit or shell tools of its own. No browser or
+ * steering tools, since it has no task and drives no other session.
  *
  * Exported so the tool list is unit-testable without booting the HTTP server.
  */
@@ -442,11 +443,13 @@ export function buildWorkflowAgentMcpServer(
     // Named here because Claude Code defers MCP tools when there are many: the
     // agent sees a tool's name, not its description, until it searches, and a
     // small model went to the disk instead (#732, the preview journey).
-    + 'READING ANOTHER PROJECT: you can read the checkouts of the projects this workflow\'s tasks are on. '
-    + 'To read any other registered project (kangentic_list_projects names them), call '
-    + 'kangentic_request_project_access with its name, then end your turn: it is granted at once, and your '
-    + 'session comes back on this conversation with that checkout readable. Do not search the disk for another '
-    + 'project\'s folder: it is outside what you can read until access is granted.';
+    // Not "end your turn and come back readable": only an agent whose CLI can
+    // widen its reads (`supportsReadableDirectories`) is restarted that way, and
+    // the tool's reply says which case applies.
+    + 'READING ANOTHER PROJECT: to read a registered project other than this workflow\'s own '
+    + '(kangentic_list_projects names them), call kangentic_request_project_access with its name and do what '
+    + 'its reply says: it tells you whether and when that checkout becomes readable. Do not search the disk '
+    + 'for another project\'s folder.';
   const mcpServer = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions });
   const scoped = scopeServerToWorkflowAgent(mcpServer, workflowId);
   registerTaskTools(scoped, resolver, taskCounter, toolArgumentNotices, null);

@@ -3148,8 +3148,11 @@
             // what makes the Answering model setting required for Claude, and
             // `defaultEffort` is the level the Answering effort row shows unset.
             answerCapabilities: { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' },
-            // KEEP IN SYNC with canBeWorkflowAgent(ClaudeAdapter): Claude launches
-            // read-only on a session id Kangentic chose, so it can be the Workflow agent.
+            // KEEP IN SYNC with each adapter's `kangenticMcp` and canBeWorkflowAgent(adapter)
+            // (every entry below carries both; tests/unit/mock-agent-list-parity.test.ts
+            // pins them). Claude reaches the MCP server per session and resumes by an
+            // id Kangentic chose, so it can be the Workflow agent.
+            kangenticMcp: 'per-session',
             supportsWorkflowAgent: true,
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
@@ -3184,6 +3187,8 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: true,
             // KEEP IN SYNC with CodexAdapter.launchOptions in
             // src/main/agent/adapters/codex/codex-adapter.ts - the only agent
             // that declares a launch option today, so the Agent tab's launch
@@ -3205,6 +3210,8 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            kangenticMcp: 'shared-folder',
+            supportsWorkflowAgent: false,
           },
           {
             name: 'qwen', displayName: 'Qwen Code', found: false, path: null, version: null,
@@ -3217,6 +3224,8 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            kangenticMcp: 'shared-folder',
+            supportsWorkflowAgent: false,
           },
           {
             name: 'aider', displayName: 'Aider', found: false, path: null, version: null,
@@ -3234,6 +3243,9 @@
             ],
             defaultPermission: 'default',
             supportsSummarize: true,
+            // An interactive session prints no id, so `create-chat` names one before launch.
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: true,
           },
           {
             name: 'warp', displayName: 'Oz CLI', found: false, path: null, version: null,
@@ -3256,6 +3268,8 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: true,
           },
           {
             name: 'kimi', displayName: 'Kimi Code', found: false, path: null, version: null,
@@ -3267,6 +3281,8 @@
             ],
             defaultPermission: 'default',
             supportsSummarize: true,
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: true,
           },
           {
             name: 'opencode', displayName: 'OpenCode', found: false, path: null, version: null,
@@ -3277,6 +3293,8 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: true,
             // KEEP IN SYNC with OpenCodeAdapter.remoteExecution.info - the only
             // agent that declares this capability today, so the Agent tab's
             // remote-execution rows have exactly one agent to render them for
@@ -3297,6 +3315,8 @@
             ],
             defaultPermission: 'default',
             supportsSummarize: true,
+            kangenticMcp: 'shared-folder',
+            supportsWorkflowAgent: false,
             liveTelemetryUnsupported: {
               unavailableLabel: 'Telemetry: TUI only',
               unavailableTitle:
@@ -3326,6 +3346,8 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: true,
             // KEEP IN SYNC with GrokAdapter.answerFromContext / answerCapabilities:
             // a second answering agent with its own effort levels, so a spec can
             // switch agents by marking it found.
@@ -3335,6 +3357,8 @@
           {
             name: 'antigravity', displayName: 'Antigravity CLI', found: false, path: null, version: null,
             supportsSummarize: true,
+            kangenticMcp: 'shared-folder',
+            supportsWorkflowAgent: false,
             // KEEP IN SYNC with AntigravityAdapter.permissions and AntigravityAdapter.liveTelemetryUnsupported
             // in src/main/agent/adapters/antigravity/antigravity-adapter.ts
             permissions: [
@@ -4820,10 +4844,11 @@
         if (existing) return { session: JSON.parse(JSON.stringify(existing)), unavailable: null, setupNeeded: false };
         var session = makeMockWorkflowAgentSession(projectId, workflowId);
         sessions.push(session);
-        // Main records the conversation on the workflow at every start.
+        // Main records the conversation on the workflow at every start, on the
+        // Workflow agent setting's agent (the refusal check above passed it).
         var owner = entries.find(function (entry) { return entry.workflow.id === workflowId; });
         if (owner && !owner.workflow.agent_session_id) {
-          owner.workflow.agent_name = 'claude';
+          owner.workflow.agent_name = ((config && config.workflows) || {}).agent || 'claude';
           owner.workflow.agent_session_id = session.agentSessionId;
           owner.workflow.agent_cwd = session.cwd;
         }

@@ -21,6 +21,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { canBeWorkflowAgent } from '../../src/main/agent/shared/workflow-agent-capability';
 import type { AgentDetectionInfo } from '../../src/shared/types';
 
 const MOCK_ELECTRON_API_PATH = path.resolve(__dirname, '../ui/mock-electron-api.js');
@@ -125,6 +126,22 @@ describe('mock-electron-api agents.list() fixture stays in sync with the agent r
       'tests/ui/mock-electron-api.js claude entry drifted from src/main/agent/adapters/claude/claude-adapter.ts; '
       + 'update the fixture field(s) that differ (see the KEEP IN SYNC comments beside each).',
     ).toEqual(expected);
+  });
+
+  // Which agents Settings > Workflows offers is read off these two fields, so a
+  // mock entry that drifts from its adapter leaves every UI spec offering a
+  // different set of Workflow agents than the app does.
+  it('every mock entry carries its adapter\'s Kangentic MCP delivery and Workflow agent eligibility', async () => {
+    const mockAgents = await readMockAgentList();
+    const expected: Record<string, { kangenticMcp: unknown; supportsWorkflowAgent: boolean }> = {};
+    const actual: Record<string, { kangenticMcp: unknown; supportsWorkflowAgent: boolean }> = {};
+    for (const name of agentRegistry.list()) {
+      const adapter = agentRegistry.getOrThrow(name);
+      expected[name] = { kangenticMcp: adapter.kangenticMcp, supportsWorkflowAgent: canBeWorkflowAgent(adapter) };
+      const mockEntry = mockAgents.find((entry) => entry.name === name);
+      actual[name] = { kangenticMcp: mockEntry?.kangenticMcp, supportsWorkflowAgent: mockEntry?.supportsWorkflowAgent === true };
+    }
+    expect(actual, 'tests/ui/mock-electron-api.js agent entries drifted from the adapters\' kangenticMcp / canBeWorkflowAgent').toEqual(expected);
   });
 
   it('sanity: the extraction itself finds a plausible number of mock agent entries', () => {

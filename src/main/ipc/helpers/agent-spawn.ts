@@ -365,9 +365,9 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         }
       }
 
-      // Determine if the target agent has MCP access (currently only Claude).
+      // Whether the target agent reaches Kangentic's MCP server, as its adapter declares.
       const targetAdapter = agentRegistry.get(targetAgent);
-      const targetHasMcpAccess = targetAdapter?.name === 'claude';
+      const targetHasMcpAccess = targetAdapter?.kangenticMcp !== undefined;
 
       handoffPromptPrefix = buildSessionHistoryReference({
         sourceAgent,

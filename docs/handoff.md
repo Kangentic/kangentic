@@ -66,9 +66,9 @@ The prior agent's full session history is at: /home/user/.claude/projects/slug/s
 Read this file for context on what was done, decisions made, and current state.
 ```
 
-For Claude (MCP-capable), it also appends: "You can also use the `kangentic_get_transcript` MCP tool for a structured view of the prior session."
+For a target agent that Kangentic's MCP server is wired into (any adapter that declares `kangenticMcp`, not only Claude), it also appends: "You can also use the `kangentic_get_session_history` MCP tool to read the prior session content directly."
 
-When the source agent has no session file to point at (Cursor, Copilot, Oz, Ollama and Goose return none, and Aider has none until it writes `.aider.chat.history.md`), the prompt falls back to: "No session history file is available - check `git log` for prior changes."
+When the source agent has no session file to point at (Cursor, Copilot, Oz, Ollama and Goose return none, and Aider has none until it writes `.aider.chat.history.md`), the prompt falls back to: "No session history file is available. Check `git log` for prior changes on this branch."
 
 The prompt is built entirely by `buildSessionHistoryReference()` with no per-adapter customization needed.
 

@@ -39,6 +39,8 @@ export class CopilotAdapter implements AgentAdapter {
    * existing UUID resumes it. Same semantics as Claude's --session-id.
    */
   readonly supportsCallerSessionId = true;
+  // `--additional-mcp-config` pointing at a file in the session's own directory.
+  readonly kangenticMcp = 'per-session' as const;
 
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only)' },

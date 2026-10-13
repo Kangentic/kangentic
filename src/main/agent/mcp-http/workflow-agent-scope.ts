@@ -4,9 +4,9 @@ import { z } from 'zod/v4';
 /**
  * What a workflow's own agent may reach on Kangentic's MCP server.
  *
- * That agent plans one workflow and is launched read-only (`readOnly` on the
- * spawn), so on the server it gets every read-only tool and the tools that shape
- * its plan, and nothing else. Starting, pausing, resuming and deleting the
+ * That agent plans one workflow, so on the server it gets every read-only tool
+ * and the tools that shape its plan, and nothing else, whatever agent it is and
+ * whether or not its adapter launched it read-only. Starting, pausing, resuming and deleting the
  * workflow stay the user's (Start is the plan's approval), and so does every
  * tool that creates, moves or deletes board work outside the plan.
  *

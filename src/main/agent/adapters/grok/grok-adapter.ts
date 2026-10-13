@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import { GrokDetector } from './detector';
@@ -10,7 +11,7 @@ import { GrokSessionHistoryParser, grokModelDisplayName } from './session-histor
 import { parseGrokTranscript, grokTranscriptUsage, grokTranscriptToolCounts } from './transcript-parser';
 import { createGrokCommandInjectionVerifier } from './command-injection-verifier';
 import { discoverGrokCapabilities } from './capability-discovery';
-import { ensureAnswerHomeTrust, ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
+import { ensureAnswerHomeTrust, ensureWorktreeTrust, isFolderTrusted, removeWorktreeTrust } from './trust-manager';
 import { migrateGrokProjectData } from './project-relocation';
 import { grokSessionDir, grokUpdatesJsonlPath } from './session-paths';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
@@ -66,6 +67,10 @@ export class GrokAdapter implements AgentAdapter {
   readonly displayName = 'Grok Build';
   readonly sessionType = 'grok_agent';
   readonly supportsCallerSessionId = true;
+  // A fixed `.grok/config.toml` block whose URL and token are env references,
+  // filled per session by `buildEnv`. Grok reads it only in a folder the user
+  // trusted (see trust-manager.ts).
+  readonly kangenticMcp = 'per-session' as const;
   /**
    * `--permission-mode` accepts Kangentic's exact PermissionMode names
    * (verified in `grok --help`), so all six pass through 1:1. Internally
@@ -109,6 +114,16 @@ export class GrokAdapter implements AgentAdapter {
    */
   async ensureTrust(workingDirectory: string): Promise<void> {
     await ensureWorktreeTrust(workingDirectory);
+  }
+
+  /**
+   * Grok loads a project's MCP servers only in a folder its user trusted, and
+   * `ensureTrust` decides that only for a Kangentic worktree. In a project root
+   * the user has not trusted, the session would start without Kangentic's tools.
+   */
+  kangenticMcpBlockedReason(workingDirectory: string): string | null {
+    if (isFolderTrusted(workingDirectory)) return null;
+    return `${this.displayName} loads Kangentic's tools only in a folder you trusted in it. Trust ${path.resolve(workingDirectory)} in grok, then close Settings to retry.`;
   }
 
   buildCommand(options: SpawnCommandOptions): string {

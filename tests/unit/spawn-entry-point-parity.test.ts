@@ -101,8 +101,9 @@ const PTY_SINK_FILES: Record<string, string> = {
   'src/main/ipc/handlers/transient-sessions.ts':
     'transient Command Terminal sessions: not task agents, no overrides or lock apply',
   'src/main/workflows/workflow-agent.ts':
-    'a workflow\'s own agent: no task, so no override lock or column resolution; it runs the project '
-    + 'default agent read-only, and runs ensureTrust and resolveShimLaunch before buildCommand (scanned below)',
+    'a workflow\'s own agent: no task, so no override lock or column resolution; it runs the Workflow '
+    + 'agent setting\'s agent (read-only where the adapter can enforce it), and runs ensureTrust and '
+    + 'resolveShimLaunch before buildCommand (scanned below)',
 };
 
 function collectSourceFiles(directory: string): string[] {

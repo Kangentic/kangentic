@@ -205,3 +205,34 @@ test('a Workflow agent set to an installed agent that cannot be one reads as uns
     await browser.close();
   }
 });
+
+// Any installed agent that reaches Kangentic's MCP server with a URL of its own
+// can be the Workflow agent; read-only launch is an enhancement, not a gate.
+// Codex cannot launch read-only and is offered. Gemini writes the server URL into
+// a file its folder shares, and Aider has no MCP client: neither is offered.
+test('the Agent menu offers every installed agent that reaches the MCP server per session, read-only or not', async () => {
+  const { browser, page } = await launch({
+    agentListOverrides: {
+      codex: { found: true, path: '/usr/bin/codex', version: '1.0.0' },
+      gemini: { found: true, path: '/usr/bin/gemini', version: '1.0.0' },
+      aider: { found: true, path: '/usr/bin/aider', version: '1.0.0' },
+    },
+  });
+  try {
+    // The precondition this stands on: all four are installed, and only Claude can launch read-only.
+    await expect.poll(() => page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores: { config: { getState: () => { agentList: Array<{ name: string; found: boolean }> } } };
+      }).__zustandStores;
+      return stores.config.getState().agentList.filter((agent) => agent.found).map((agent) => agent.name).sort();
+    })).toEqual(['aider', 'claude', 'codex', 'gemini']);
+
+    await byTestId(page, 'workflow-agent-setting-agent').click();
+    await expect(byTestId(page, 'workflow-agent-setting-agent-option-claude')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-setting-agent-option-codex')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-setting-agent-option-gemini')).toHaveCount(0);
+    await expect(byTestId(page, 'workflow-agent-setting-agent-option-aider')).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});

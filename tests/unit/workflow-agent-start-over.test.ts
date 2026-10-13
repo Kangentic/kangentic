@@ -17,6 +17,13 @@
  * session the start-over spawns; the end of a workflow waits for an open still in flight
  * and ends what it spawned; and a start reads its workflow again before it
  * spawns, so one deleted or finished while the CLI was being found spawns nothing.
+ *
+ * What a start records and what it reads back: a start-over that could not start
+ * leaves the agent recorded, so the next open continues from the saved plan; an
+ * id the agent reported while its spawn was awaited survives the start's own
+ * write; a recorded agent with no id is not kept over the Workflow agent
+ * setting; Kangentic's own id wins over a conversation the CLI would create; and
+ * a reported id for a done workflow, a repeat, or a task's session changes nothing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -37,6 +44,8 @@ const harness = vi.hoisted(() => ({
   retrievalCall: vi.fn(async (_method: string, _params: unknown) => ({ outcome: 'indexed' })),
   /** Settings > Workflows > Workflow agent, as `getEffectiveConfig` returns it. */
   workflows: {} as { agent?: string | null; model?: string | null; effort?: string | null },
+  /** What the saved-plan message builder answers: null when the workflow has no saved plan. */
+  continueMessage: 'CONTINUE MESSAGE' as string | null,
 }));
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
@@ -52,10 +61,13 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { get: (name: string) => harness.adapterByName.get(name) ?? harness.adapter, list: () => [] },
 }));
 // The cached agent inventory the Workflow agent setting is checked against:
-// Claude can be a workflow's agent, Codex is installed but cannot.
+// Claude and OpenCode can be a workflow's agent (OpenCode takes no model flag),
+// Codex is installed but, here, cannot.
 vi.mock('../../src/main/agent/agent-list', () => ({
   listAgents: async () => [
     { name: 'claude', found: true, supportsWorkflowAgent: true, capabilities: { supportsModelOverride: true } },
+    { name: 'opencode', found: true, supportsWorkflowAgent: true, capabilities: {} },
+    { name: 'cursor', found: true, supportsWorkflowAgent: true, capabilities: {} },
     { name: 'codex', found: true, supportsWorkflowAgent: false, capabilities: { supportsModelOverride: true } },
   ],
 }));
@@ -63,7 +75,10 @@ vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: {
 vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: async (options: { agentPath: string; prompt?: string }) => ({ agentPath: options.agentPath, prompt: options.prompt }),
 }));
-vi.mock('../../src/main/workflows/workflow-agent-prompt', () => ({ buildWorkflowAgentFirstMessage: () => 'FIRST MESSAGE' }));
+vi.mock('../../src/main/workflows/workflow-agent-prompt', () => ({
+  buildWorkflowAgentFirstMessage: () => 'FIRST MESSAGE',
+  buildWorkflowAgentContinueMessage: async () => harness.continueMessage,
+}));
 vi.mock('../../src/main/workflows/workflow-changed', () => ({
   notifyWorkflowChanged: harness.notifyWorkflowChanged,
   notifyWorkflowOfTask: vi.fn(),
@@ -76,6 +91,7 @@ const agent = await import('../../src/main/workflows/workflow-agent');
 const agentEffort = await import('../../src/main/workflows/workflow-agent-effort');
 
 import { openTestDatabase } from './helpers/test-database';
+import { canBeWorkflowAgent } from '../../src/main/agent/shared/workflow-agent-capability';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { WorkflowAgentStatus } from '../../src/shared/types';
 
@@ -102,12 +118,14 @@ interface SpawnOptions {
   resuming: boolean;
   transient: boolean;
   workflowId: string;
-  agentSessionId: string;
+  agentSessionId: string | null;
 }
 
 /** The slice of SessionManager the workflow agent drives. */
 class FakeSessionManager extends EventEmitter {
   sessions: FakeSession[] = [];
+  /** The agent every session runs, as `getSessionAgentName` answers. */
+  agentName = 'claude';
   private spawnCount = 0;
 
   suspend = vi.fn(async (sessionId: string) => {
@@ -157,7 +175,7 @@ class FakeSessionManager extends EventEmitter {
     return {};
   }
   getSessionAgentName(): string {
-    return 'claude';
+    return this.agentName;
   }
   getToolCallCount(): number {
     return 0;
@@ -198,11 +216,13 @@ describe('a workflow\'s own agent starting over', () => {
     harness.adapterByName.clear();
     harness.notifyWorkflowChanged.mockReset();
     harness.retrievalCall.mockClear();
+    harness.continueMessage = 'CONTINUE MESSAGE';
     describeStartupFailure = vi.fn(() => true);
     harness.adapter = {
       name: 'claude',
       displayName: 'Claude Code',
       sessionType: 'claude_agent',
+      kangenticMcp: 'per-session',
       supportsReadOnlyLaunch: true,
       supportsCallerSessionId: true,
       supportsReadableDirectories: false,
@@ -254,6 +274,28 @@ describe('a workflow\'s own agent starting over', () => {
     return resumedId;
   }
 
+  /** A new workflow, with no agent and no conversation recorded. */
+  function newWorkflow(): string {
+    return new WorkflowRepository(harness.dbs.get('home') as Database.Database).create({ title: 'Release notes' }).id;
+  }
+
+  /** The agent and conversation id the workflow row records. */
+  function recordedConversation(id: string): { agent_name: string | null; agent_session_id: string | null } {
+    const workflow = new WorkflowRepository(harness.dbs.get('home') as Database.Database).getById(id)!;
+    return { agent_name: workflow.agent_name, agent_session_id: workflow.agent_session_id };
+  }
+
+  /**
+   * Make `adapter` the Workflow agent: registered under `name`, chosen in the
+   * Workflow agent setting with no model or effort, and the agent the fake
+   * manager reports for every session.
+   */
+  function becomeWorkflowAgent(name: string, adapter: unknown): void {
+    harness.adapterByName.set(name, adapter);
+    harness.workflows = { agent: name, model: null, effort: null };
+    manager.agentName = name;
+  }
+
   // Found in the preview: `--resume` reloads the conversation with no hooks
   // while its token count grows, the status heartbeat forces that shape to
   // thinking, and the canvas then held every plan edit for the 30 s the
@@ -282,6 +324,24 @@ describe('a workflow\'s own agent starting over', () => {
     // The new session is a fresh conversation, not another resume.
     expect(manager.spawn.mock.calls[1][0].resuming).toBe(false);
     expect(agent.workflowAgentSummary(context, workflowId)).toMatchObject({ state: 'idle', startedOverSessionId: 'pty-spawned-2' });
+  });
+
+  // Before, the start-over sent only the template's first message, and an agent
+  // that planned from the brief again saved over the plan the user had shaped
+  // (a save replaces the whole plan). It now starts from the saved plan.
+  it('starts the new conversation from the saved plan', async () => {
+    await resumeThatFails();
+
+    const buildCommand = (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
+    expect(buildCommand.mock.calls[1][0]).toMatchObject({ resume: false, prompt: 'CONTINUE MESSAGE' });
+  });
+
+  it('sends the first message when nothing is saved yet to continue from', async () => {
+    harness.continueMessage = null;
+    await resumeThatFails();
+
+    const buildCommand = (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
+    expect(buildCommand.mock.calls[1][0]).toMatchObject({ resume: false, prompt: 'FIRST MESSAGE' });
   });
 
   it('keeps saying so while that session is paused', async () => {
@@ -392,6 +452,66 @@ describe('a workflow\'s own agent starting over', () => {
     expect(agent.workflowAgentSummary(context, workflowId)).toMatchObject({ state: 'paused', startedOverSessionId: 'pty-spawned-2' });
   });
 
+  // A resume the CLI cannot find forgets only the conversation id, never the
+  // agent that ran (`forgetAgentSessionId`). When the start-over that follows
+  // cannot start either, the row keeps saying an agent ran, so the next open
+  // still continues from the saved plan. Before, the failed resume cleared the
+  // whole record and that open sent the plain first message, which an agent
+  // that planned from the brief again would save over the user's plan.
+  describe('a start-over that could not start', () => {
+    /** What stops the replacement start, and the way to undo it. */
+    const causes: Array<{ name: string; stopStarts: (target: IpcContext) => () => void }> = [
+      {
+        name: 'the MCP server is off',
+        stopStarts: (target) => {
+          const serverHandle = target.mcpServerHandle;
+          target.mcpServerHandle = null;
+          return () => {
+            target.mcpServerHandle = serverHandle;
+          };
+        },
+      },
+      {
+        name: 'the Workflow agent setting is not complete',
+        stopStarts: () => {
+          const setting = harness.workflows;
+          harness.workflows = {};
+          return () => {
+            harness.workflows = setting;
+          };
+        },
+      },
+    ];
+
+    it.each(causes)('keeps the agent recorded, and continues from the saved plan on the next open, when $name', async ({ stopStarts }) => {
+      const resumed = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      expect(resumed.session?.resuming).toBe(true);
+      const fixCause = stopStarts(context);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      manager.exitOnItsOwn(resumed.session!.id);
+
+      // The conversation the CLI could not find is forgotten as the start-over begins.
+      await vi.waitFor(() => expect(recordedConversation(workflowId).agent_session_id).toBeNull());
+      // The replacement start is refused through microtasks only: one macrotask lets it
+      // end and leave the opening map, so the open below is a start of its own, not a join.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(recordedConversation(workflowId)).toEqual({ agent_name: 'claude', agent_session_id: null });
+
+      fixCause();
+      const reopened = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(reopened.session?.resuming).toBe(false);
+      const buildCommand = (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
+      // The refused start never built a command: the resume and this open are the two.
+      expect(buildCommand).toHaveBeenCalledTimes(2);
+      expect(buildCommand.mock.calls[1][0]).toMatchObject({ resume: false, prompt: 'CONTINUE MESSAGE' });
+      expect(agent.workflowAgentSummary(context, workflowId)).toMatchObject({ startedOverSessionId: reopened.session!.id });
+      agentEffort.forgetWorkflowAgentEffort(reopened.session!.id);
+    });
+  });
+
   describe('the end of a workflow while its agent is still opening', () => {
     /**
      * Open the agent with its spawn held, and return the open and the way to let
@@ -462,10 +582,6 @@ describe('a workflow\'s own agent starting over', () => {
     function buildCommandOptions(callIndex: number): { model?: string; effort?: string; resume: boolean } {
       const buildCommand = (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
       return buildCommand.mock.calls[callIndex][0] as { model?: string; effort?: string; resume: boolean };
-    }
-
-    function newWorkflow(): string {
-      return new WorkflowRepository(harness.dbs.get('home') as Database.Database).create({ title: 'Release notes' }).id;
     }
 
     it.each([
@@ -580,30 +696,362 @@ describe('a workflow\'s own agent starting over', () => {
       agentEffort.forgetWorkflowAgentEffort(status.session!.id);
     });
 
-    // Only a recorded conversation's agent can fail this: the setting's agent
-    // passed the setup check. So the way out is the canvas, not the setting.
+    // Before, a conversation kept on an agent that could no longer be a
+    // workflow's agent was a dead end ("Plan this workflow on the canvas"). Now
+    // the setting's agent starts a new conversation from the saved plan.
     it.each([
-      { name: 'does not declare read-only launch', flags: { supportsReadOnlyLaunch: undefined, supportsCallerSessionId: true } },
-      { name: 'cannot launch read-only', flags: { supportsReadOnlyLaunch: false, supportsCallerSessionId: true } },
-      { name: 'cannot take a session id Kangentic chose', flags: { supportsReadOnlyLaunch: true, supportsCallerSessionId: false } },
-    ])('refuses to resume a conversation kept on an agent that $name, and starts nothing', async ({ flags }) => {
+      { name: 'reaches the MCP server through a folder-shared file', flags: { kangenticMcp: 'shared-folder', supportsCallerSessionId: true } },
+      { name: 'does not reach the MCP server', flags: { kangenticMcp: undefined, supportsCallerSessionId: true } },
+      { name: 'cannot resume its conversation', flags: { kangenticMcp: 'per-session', supportsCallerSessionId: false, capturesInteractiveSessionId: undefined } },
+    ])('starts a new conversation on the setting\'s agent when the kept one $name', async ({ flags }) => {
       const keptAgent = registerAdapterFor('codex', 'Codex CLI', flags);
       recordConversationOn('codex', 'conv-codex');
-      const settingAgent = harness.adapter as { detect: ReturnType<typeof vi.fn>; buildCommand: ReturnType<typeof vi.fn> };
+      const settingAgent = harness.adapter as { buildCommand: ReturnType<typeof vi.fn> };
 
       const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
 
-      expect(status).toEqual({
-        session: null,
-        unavailable: 'This workflow\'s conversation is on Codex CLI, which Kangentic cannot launch read-only. Plan this workflow on the canvas.',
-        setupNeeded: false,
-      });
-      // Neither agent was looked for, trusted or launched.
-      expect(keptAgent.detect).not.toHaveBeenCalled();
+      expect(status).toMatchObject({ unavailable: null, setupNeeded: false });
       expect(keptAgent.buildCommand).not.toHaveBeenCalled();
-      expect(settingAgent.detect).not.toHaveBeenCalled();
-      expect(settingAgent.buildCommand).not.toHaveBeenCalled();
+      expect(settingAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, prompt: 'CONTINUE MESSAGE' });
+      expect(agent.workflowAgentSummary(context, workflowId)?.startedOverSessionId).toBe(status.session!.id);
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+    });
+
+    // The id is what makes a conversation one to resume. A row that names an
+    // agent but holds no id (never captured, or forgotten after a resume the CLI
+    // could not find) is not kept on that agent, even one that could be a workflow
+    // agent: the setting's agent starts a new conversation from the saved plan.
+    it('starts a new conversation on the setting\'s agent, not the recorded one, when the recorded agent has no id', async () => {
+      harness.workflows = { agent: 'claude', model: 'haiku', effort: null };
+      const recordedAgent = registerAdapterFor('gemini', 'Gemini CLI');
+      // The recorded agent could keep the conversation, were there an id to resume.
+      expect(canBeWorkflowAgent(recordedAgent as unknown as Parameters<typeof canBeWorkflowAgent>[0])).toBe(true);
+      new WorkflowRepository(harness.dbs.get('home') as Database.Database)
+        .setAgentConversation(workflowId, { agentName: 'gemini', agentSessionId: null, cwd: path.join(root, 'home') });
+      const settingAgent = harness.adapter as { buildCommand: ReturnType<typeof vi.fn> };
+
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(status).toMatchObject({ unavailable: null, setupNeeded: false });
+      expect(recordedAgent.buildCommand).not.toHaveBeenCalled();
+      expect(settingAgent.buildCommand).toHaveBeenCalledTimes(1);
+      expect(settingAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, prompt: 'CONTINUE MESSAGE', model: 'haiku' });
+      expect(manager.spawn.mock.calls[0][0]).toMatchObject({ resuming: false, agentName: 'claude' });
+      // The row now names the agent that ran, with the new conversation's id.
+      expect(recordedConversation(workflowId)).toEqual({ agent_name: 'claude', agent_session_id: manager.spawn.mock.calls[0][0].agentSessionId });
+      expect(agent.workflowAgentSummary(context, workflowId)?.startedOverSessionId).toBe(status.session!.id);
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+    });
+
+    // Grok loads Kangentic's tools only in a folder its user trusted in Grok: an
+    // agent started there anyway could not save a plan, so the start says why.
+    it('starts nothing and says why when the agent would not reach Kangentic\'s tools in this folder', async () => {
+      const reason = 'Grok Build loads Kangentic\'s tools only in a folder you have trusted in it.';
+      (harness.adapter as Record<string, unknown>).kangenticMcpBlockedReason = () => reason;
+
+      const status = await agent.openWorkflowAgent(context, 'home', newWorkflow(), {});
+
+      expect(status).toEqual({ session: null, unavailable: reason, setupNeeded: false });
       expect(manager.spawn).not.toHaveBeenCalled();
+    });
+
+    it('launches read-only where the adapter declares it', async () => {
+      const status = await agent.openWorkflowAgent(context, 'home', newWorkflow(), {});
+
+      expect(buildCommandOptions(0)).toMatchObject({ readOnly: true });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+    });
+  });
+
+  // Any agent that reaches Kangentic's MCP server with a URL of its own and can
+  // resume its conversation can be the Workflow agent. One that cannot launch
+  // read-only runs in its own default mode (the prompt asks it to leave files
+  // alone), and one that picks its own session id has it captured after launch.
+  describe('an agent that is not read-only and picks its own session id', () => {
+    let openCodeAdapter: { buildCommand: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      openCodeAdapter = {
+        ...(harness.adapter as Record<string, unknown>),
+        name: 'opencode',
+        displayName: 'OpenCode',
+        sessionType: 'opencode_agent',
+        kangenticMcp: 'per-session',
+        supportsReadOnlyLaunch: undefined,
+        supportsCallerSessionId: false,
+        capturesInteractiveSessionId: true,
+        detect: vi.fn(async () => ({ found: true, path: '/mock/bin/opencode' })),
+        ensureTrust: vi.fn(async () => undefined),
+        buildCommand: vi.fn((_options: unknown) => 'mock-opencode-command'),
+        describeStartupFailure: undefined,
+      } as unknown as { buildCommand: ReturnType<typeof vi.fn> };
+      becomeWorkflowAgent('opencode', openCodeAdapter);
+    });
+
+    it('starts in its default mode with no session id, and records the agent with no id yet', async () => {
+      const id = newWorkflow();
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      const options = openCodeAdapter.buildCommand.mock.calls[0][0] as { readOnly: boolean; sessionId?: string; permissionMode: string; prompt: string };
+      expect(options.readOnly).toBe(false);
+      expect(options.permissionMode).toBe('default');
+      expect(options.sessionId).toBeUndefined();
+      expect(options.prompt).toBe('FIRST MESSAGE');
+      expect(manager.spawn.mock.calls[0][0].agentSessionId).toBeNull();
+      expect(recordedConversation(id)).toEqual({ agent_name: 'opencode', agent_session_id: null });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    it('records the id the agent reports after launch, so the next start resumes it', async () => {
+      const id = newWorkflow();
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+      harness.notifyWorkflowChanged.mockClear();
+
+      manager.emit('agent-session-id', status.session!.id, id, 'home', 'ses_reported');
+
+      expect(recordedConversation(id)).toEqual({ agent_name: 'opencode', agent_session_id: 'ses_reported' });
+      expect(harness.notifyWorkflowChanged).toHaveBeenCalledWith('home', id);
+
+      await agent.pauseWorkflowAgent(context, id);
+      await agent.resumeWorkflowAgent(context, 'home', id, {});
+      expect(openCodeAdapter.buildCommand.mock.calls[1][0]).toMatchObject({ resume: true, sessionId: 'ses_reported' });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    // The start's write of the conversation comes after its spawn is awaited. An
+    // id the agent reported in that window is on the live row already, so the
+    // write reads it back, and a null from the start would lose the conversation.
+    it.each([
+      { name: 'sits on its session row', announced: false },
+      { name: 'was also announced to the lifecycle listener', announced: true },
+    ])('keeps the id the agent reported while its spawn was awaited, when it $name', async ({ announced }) => {
+      const id = newWorkflow();
+      const spawnImmediately = manager.spawn.getMockImplementation()!;
+      manager.spawn.mockImplementationOnce(async (options: SpawnOptions) => {
+        const registered = await spawnImmediately(options);
+        // The real spawn resolves with a snapshot taken before the agent has an id.
+        const snapshot = { ...registered };
+        manager.getSession(registered.id)!.agentSessionId = 'ses_during_spawn';
+        if (announced) manager.emit('agent-session-id', registered.id, id, 'home', 'ses_during_spawn');
+        return snapshot;
+      });
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      // The adapter gave the start no id to spawn with: the one recorded came from the agent.
+      expect(manager.spawn.mock.calls[0][0].agentSessionId).toBeNull();
+      expect(recordedConversation(id)).toEqual({ agent_name: 'opencode', agent_session_id: 'ses_during_spawn' });
+      await agent.pauseWorkflowAgent(context, id);
+      const resumed = await agent.resumeWorkflowAgent(context, 'home', id, {});
+      expect(openCodeAdapter.buildCommand.mock.calls[1][0]).toMatchObject({ resume: true, sessionId: 'ses_during_spawn' });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+      agentEffort.forgetWorkflowAgentEffort(resumed.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    it('ignores a report from a session the workflow has replaced', async () => {
+      const id = newWorkflow();
+      const first = await agent.openWorkflowAgent(context, 'home', id, {});
+      await agent.pauseWorkflowAgent(context, id);
+      await agent.resumeWorkflowAgent(context, 'home', id, {});
+      // The paused first session's row is replaced; a late report from it names a conversation the workflow left.
+      manager.sessions = manager.sessions.filter((session) => session.id !== first.session!.id || session.status !== 'suspended');
+      manager.sessions.push({ ...manager.getSession('pty-spawned-2')!, id: first.session!.id, status: 'exited' });
+
+      manager.emit('agent-session-id', first.session!.id, id, 'home', 'ses_stale');
+
+      expect(recordedConversation(id).agent_session_id).not.toBe('ses_stale');
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    it('continues from the saved plan when its id was never captured', async () => {
+      const id = newWorkflow();
+      await agent.openWorkflowAgent(context, 'home', id, {});
+      // Paused before the agent reported its id: there is no conversation to resume.
+      await agent.pauseWorkflowAgent(context, id);
+
+      const resumed = await agent.resumeWorkflowAgent(context, 'home', id, {});
+
+      expect(openCodeAdapter.buildCommand.mock.calls[1][0]).toMatchObject({ resume: false, prompt: 'CONTINUE MESSAGE' });
+      // Main's spawn drains the paused row it replaces; the fake keeps it, and the summary would read it first.
+      manager.sessions = manager.sessions.filter((session) => session.status !== 'suspended');
+      expect(agent.workflowAgentSummary(context, id)?.startedOverSessionId).toBe(resumed.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+  });
+
+  // An agent that takes no id of Kangentic's and prints none in a terminal, but
+  // can create an empty conversation before launch and name it (Cursor's
+  // `create-chat`): the start opens that conversation, so its id is known from
+  // the first moment, as a caller-chosen one is.
+  describe('an agent that creates its conversation before launch', () => {
+    interface CreatedAgent {
+      buildCommand: ReturnType<typeof vi.fn>;
+      createSessionId: ReturnType<typeof vi.fn>;
+      supportsCallerSessionId: boolean;
+    }
+    let createdAgent: CreatedAgent;
+
+    beforeEach(() => {
+      createdAgent = {
+        ...(harness.adapter as Record<string, unknown>),
+        name: 'cursor',
+        displayName: 'Cursor CLI',
+        sessionType: 'cursor_agent',
+        kangenticMcp: 'per-session',
+        supportsReadOnlyLaunch: undefined,
+        supportsCallerSessionId: false,
+        capturesInteractiveSessionId: undefined,
+        createSessionId: vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<string | null> => 'chat-created'),
+        detect: vi.fn(async () => ({ found: true, path: '/mock/bin/cursor-agent' })),
+        ensureTrust: vi.fn(async () => undefined),
+        buildCommand: vi.fn((_options: unknown) => 'mock-cursor-command'),
+        describeStartupFailure: undefined,
+      } as unknown as CreatedAgent;
+      becomeWorkflowAgent('cursor', createdAgent);
+    });
+
+    it('creates the conversation in the project folder and starts in it with the first message', async () => {
+      const id = newWorkflow();
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      expect(createdAgent.createSessionId).toHaveBeenCalledWith('/mock/bin/cursor-agent', path.join(root, 'home'));
+      expect(createdAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, sessionId: 'chat-created', prompt: 'FIRST MESSAGE' });
+      expect(manager.spawn.mock.calls[0][0].agentSessionId).toBe('chat-created');
+      expect(recordedConversation(id)).toEqual({ agent_name: 'cursor', agent_session_id: 'chat-created' });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    it('resumes the created conversation after a Pause without creating another', async () => {
+      const id = newWorkflow();
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+      await agent.pauseWorkflowAgent(context, id);
+
+      await agent.resumeWorkflowAgent(context, 'home', id, {});
+
+      expect(createdAgent.createSessionId).toHaveBeenCalledTimes(1);
+      expect(createdAgent.buildCommand.mock.calls[1][0]).toMatchObject({ resume: true, sessionId: 'chat-created' });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    // Kangentic's own id is the safest way, so an agent that offers both takes it:
+    // creating a conversation first would spend a CLI call to get an id that the
+    // start already has.
+    it('uses an id of Kangentic\'s own, and creates no conversation, when the CLI takes one too', async () => {
+      createdAgent.supportsCallerSessionId = true;
+      const id = newWorkflow();
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      expect(createdAgent.createSessionId).not.toHaveBeenCalled();
+      const spawnedId = manager.spawn.mock.calls[0][0].agentSessionId;
+      expect(spawnedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(spawnedId).not.toBe('chat-created');
+      expect(createdAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, sessionId: spawnedId });
+      expect(recordedConversation(id)).toEqual({ agent_name: 'cursor', agent_session_id: spawnedId });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    it('starts with no id when the CLI could not create one', async () => {
+      createdAgent.createSessionId.mockResolvedValueOnce(null);
+      const id = newWorkflow();
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      expect(createdAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, sessionId: undefined });
+      expect(recordedConversation(id)).toEqual({ agent_name: 'cursor', agent_session_id: null });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+  });
+
+  // A Claude conversation forked by `/clear` reports its new id through the
+  // status file. The workflow used to keep the old one, so a Resume reopened
+  // the conversation from before the `/clear`.
+  it('records the new conversation a Claude /clear fork reports', async () => {
+    const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+    manager.emit('agent-session-id', status.session!.id, workflowId, 'home', 'conv-forked');
+
+    const workflow = new WorkflowRepository(harness.dbs.get('home') as Database.Database).getById(workflowId)!;
+    expect(workflow.agent_session_id).toBe('conv-forked');
+    expect(workflow.agent_name).toBe('claude');
+  });
+
+  // The listener writes a reported id only to a live workflow's own agent row
+  // and only when it is news. Anything else leaves the workflow row and the
+  // pane's push alone.
+  describe('a reported conversation id that changes nothing', () => {
+    function reportConversation(sessionId: string, taskId: string, agentSessionId: string): void {
+      manager.emit('agent-session-id', sessionId, taskId, 'home', agentSessionId);
+    }
+
+    it('is ignored for a workflow that is done', async () => {
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      new WorkflowRepository(harness.dbs.get('home') as Database.Database).setState(workflowId, 'done');
+      harness.notifyWorkflowChanged.mockClear();
+
+      reportConversation(status.session!.id, workflowId, 'conv-after-done');
+
+      expect(recordedConversation(workflowId)).toEqual({ agent_name: 'claude', agent_session_id: 'conv-gone' });
+      expect(harness.notifyWorkflowChanged).not.toHaveBeenCalled();
+    });
+
+    it('is not written, nor pushed to the pane, when it is the id already recorded', async () => {
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      // Installed after the open, whose own start records the conversation through the same method.
+      const conversationWrites = vi.spyOn(WorkflowRepository.prototype, 'setAgentConversation');
+      harness.notifyWorkflowChanged.mockClear();
+
+      reportConversation(status.session!.id, workflowId, 'conv-gone');
+
+      expect(conversationWrites).not.toHaveBeenCalled();
+      expect(harness.notifyWorkflowChanged).not.toHaveBeenCalled();
+
+      // The control: a different id is written and pushed, so the spy and the mock can see both.
+      reportConversation(status.session!.id, workflowId, 'conv-forked');
+
+      expect(conversationWrites).toHaveBeenCalledTimes(1);
+      expect(harness.notifyWorkflowChanged).toHaveBeenCalledWith('home', workflowId);
+      expect(recordedConversation(workflowId).agent_session_id).toBe('conv-forked');
+    });
+
+    it('is ignored for a session that is not a workflow\'s agent, before any workflow is read', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      // A task's session reports its conversation id like any other agent's.
+      manager.sessions.push({
+        id: 'task-session',
+        taskId: 'task-1',
+        projectId: 'home',
+        pid: 6001,
+        status: 'running',
+        shell: 'bash',
+        cwd: root,
+        startedAt: '2026-10-04T10:00:00.000Z',
+        exitCode: null,
+        resuming: false,
+        transient: false,
+        agentSessionId: 'task-agent-session',
+      });
+      const workflowReads = vi.spyOn(WorkflowRepository.prototype, 'getById');
+      const conversationWrites = vi.spyOn(WorkflowRepository.prototype, 'setAgentConversation');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      harness.notifyWorkflowChanged.mockClear();
+
+      reportConversation('task-session', 'task-1', 'task-agent-session-forked');
+
+      expect(workflowReads).not.toHaveBeenCalled();
+      expect(conversationWrites).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(harness.notifyWorkflowChanged).not.toHaveBeenCalled();
+      expect(recordedConversation(workflowId).agent_session_id).toBe('conv-gone');
     });
   });
 
@@ -645,6 +1093,19 @@ describe('a workflow\'s own agent starting over', () => {
       }));
       expect(harness.notifyWorkflowChanged).toHaveBeenCalledTimes(1);
       expect(harness.notifyWorkflowChanged).toHaveBeenCalledWith('home', workflowId);
+    });
+
+    // A resumed agent whose CLI picked its own id may not report it again on that
+    // run, which left the live session's id empty and its turns unrecorded.
+    it('files the turns under the workflow\'s recorded conversation when the live session has no id', async () => {
+      const opened = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      const session = manager.getSession(opened.session!.id)!;
+      session.agentSessionId = null;
+      harness.retrievalCall.mockClear();
+
+      manager.emit('idle-timeout', session.id, workflowId, 5);
+
+      expect(harness.retrievalCall).toHaveBeenCalledWith('index.workflowAgentTurns', expect.objectContaining({ agentSessionId: 'conv-gone' }));
     });
 
     it('does nothing for a task\'s session (the control)', () => {
