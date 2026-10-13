@@ -58,24 +58,29 @@ export function useSidebarResize(config: AppConfig, viewCollapse = false): Sideb
 
   const collapsedByDragRef = useRef(false);
 
-  // Sync from config when it changes. A render-time adjustment on the config
-  // transition (React's "adjusting state when a prop changes" pattern) rather
-  // than an effect, so the sidebar never paints the old width for a frame. The
-  // initial state already comes from the mount-time config.
-  const [syncedConfig, setSyncedConfig] = useState(config);
-  if (config !== syncedConfig) {
-    setSyncedConfig(config);
-    const saved = config.sidebar?.width;
-    if (typeof saved === 'number' && saved >= MIN_WIDTH && saved <= MAX_WIDTH) setWidth(saved);
+  // Adopt the saved width when IT changes. A render-time adjustment (React's
+  // "adjusting state when a prop changes" pattern) rather than an effect, so the
+  // sidebar never paints the old width for a frame. The initial state already
+  // comes from the mount-time config.
+  //
+  // Keyed on the value, never on the config object, for the same reason as
+  // `useTerminalResize`: the drag persists its width straight to main, so the
+  // config store keeps the width it loaded, and an unrelated config write (opening
+  // a task's detail saves the window layout) rebuilt the object around that stale
+  // width and slid the sidebar back to it.
+  const savedWidth = config.sidebar?.width;
+  const [syncedSavedWidth, setSyncedSavedWidth] = useState(savedWidth);
+  if (savedWidth !== syncedSavedWidth) {
+    setSyncedSavedWidth(savedWidth);
+    if (typeof savedWidth === 'number' && savedWidth >= MIN_WIDTH && savedWidth <= MAX_WIDTH) setWidth(savedWidth);
   }
-  // The ref half of that sync, which render cannot do. Keyed on the config and
-  // NOT mirrored from `width`: a collapsing drag sets the width to MIN_WIDTH
+  // The ref half of that sync, which render cannot do. Keyed on the saved width
+  // and NOT mirrored from `width`: a collapsing drag sets the width to MIN_WIDTH
   // and then 0 on purpose while the ref keeps the last real width for the
   // toggle to restore.
   useLayoutEffect(() => {
-    const saved = config.sidebar?.width;
-    if (typeof saved === 'number' && saved >= MIN_WIDTH && saved <= MAX_WIDTH) latestWidthRef.current = saved;
-  }, [config]);
+    if (typeof savedWidth === 'number' && savedWidth >= MIN_WIDTH && savedWidth <= MAX_WIDTH) latestWidthRef.current = savedWidth;
+  }, [savedWidth]);
 
   // Enable transitions after the first frame, and again after a config change
   // (matching the previous mount-and-config effect), to avoid animating the

@@ -41,7 +41,7 @@ import { ToastContainer } from './ToastContainer';
 import { WindowLayer, useWindowStore } from '../../window-manager';
 import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarResize';
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
-import { shouldForceCollapseTerminal } from '../../utils/terminal-force-collapse';
+import { resolveTerminalForceCollapse } from '../../utils/terminal-force-collapse';
 import { derivePanelSessions } from '../../utils/panel-sessions';
 import { useCommandBar } from '../../hooks/useCommandBar';
 import { useSearchPalette } from '../../hooks/useSearchPalette';
@@ -74,6 +74,13 @@ export function AppLayout() {
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
   const config = useConfigStore((s) => s.config);
+  // The resize hooks below read the panel and sidebar layout from the GLOBAL config.
+  // Those settings are global-only, and the effective `config` is the copy a warm
+  // project switch replaces with the snapshot it took when that project was left.
+  // The drags write to main without updating the store, so a snapshot can hold a
+  // size from before the last drag, and restoring it moved the panel back to that
+  // size. `globalConfig` is only ever replaced by a fresh read from main.
+  const globalConfig = useConfigStore((s) => s.globalConfig);
   const currentProject = useProjectStore((s) => s.currentProject);
   const projects = useProjectStore((s) => s.projects);
   const hydrated = useProjectStore((s) => s.hydrated);
@@ -112,14 +119,14 @@ export function AppLayout() {
 
   // Workflows folds the project sidebar for its canvas and its agent's
   // terminal, and the user's own choice comes back on the way out.
-  const sidebar = useSidebarResize(config, activeView === 'workflows');
+  const sidebar = useSidebarResize(globalConfig, activeView === 'workflows');
   // The bottom panel drops a task's tab whenever its detail is open (a board window, the in-app
   // Agent Monitor, or the detached monitor), and collapses once no tab is left - see
-  // `derivePanelSessions` / `shouldForceCollapseTerminal`. Derived inside ONE selector returning a
-  // boolean so `Object.is` gates this root's re-render: subscribing to the session list itself
+  // `derivePanelSessions` / `resolveTerminalForceCollapse`. Derived inside ONE selector returning a
+  // string so `Object.is` gates this root's re-render: subscribing to the session list itself
   // would re-render the whole app on every activity push.
   const currentProjectId = currentProject?.id ?? null;
-  const everyTerminalDetached = useSessionStore((s) => {
+  const terminalForceCollapse = useSessionStore((s) => {
     const panelSessions = derivePanelSessions({
       sessions: s.sessions,
       currentProjectId,
@@ -127,13 +134,16 @@ export function AppLayout() {
       remoteDetailTaskIds: s.remoteDetailTaskIds,
       mobileTerminalStreamedSessionIds: s.mobileTerminalStreamedSessionIds,
     });
-    return shouldForceCollapseTerminal({
+    return resolveTerminalForceCollapse({
       activeSessionCount: panelSessions.active.length,
       visibleSessionCount: panelSessions.visible.length,
       pendingDetailWindowsProjectId: s.pendingDetailWindowsProjectId,
       currentProjectId,
     });
   });
+  // The one collapse with nothing to render: every session's terminal is in a detail window,
+  // so the panel has no tab bar and no expand control, and its container takes no height.
+  const everyPanelSessionDetached = terminalForceCollapse === 'every-session-detached';
   // Releasing that arm is a restore step, not a user action. A project whose restored
   // detail windows leave OTHER sessions behind now ends up expanded rather than
   // collapsed, so without this the panel would slide open a second or two after
@@ -152,12 +162,20 @@ export function AppLayout() {
   // input a detached task window uses, so the user's own preference is never
   // overwritten and comes back on the way out.
   const terminal = useTerminalResize(
-    config,
+    globalConfig,
     terminalContentColRef,
     terminalPanelContainerRef,
-    everyTerminalDetached || activeView === 'workflows',
+    terminalForceCollapse !== null || activeView === 'workflows',
     `${currentProjectId ?? 'none'}:${detailWindowRestorePending ? 'restoring' : 'settled'}`,
   );
+  // With every session detached the panel renders nothing, so its container takes no height
+  // instead of a blank strip. It stays mounted, so closing the window animates it back up from
+  // 0. A user collapse keeps the strip, which carries the tabs and the expand control. The 0
+  // never applies to an expanded panel, because the same `terminalForceCollapse` value that
+  // gives it also collapses the panel.
+  const terminalPanelHeight = everyPanelSessionDetached
+    ? 0
+    : terminal.collapsed ? COLLAPSED_HEIGHT : terminal.height;
   const commandBar = useCommandBar();
   // Destructured for the callback's dep list: `open`/`close` are stable, `isOpen` changes;
   // depending on the fresh `commandBar` object would rebuild the callback every render.
@@ -553,12 +571,13 @@ export function AppLayout() {
                         />
                       )}
 
-                      {/* Terminal panel */}
+                      {/* Terminal panel, at `terminalPanelHeight` (0 with every session
+                          detached, see there). */}
                       <div
                         ref={terminalPanelContainerRef}
                         data-testid="terminal-panel-container"
                         data-collapsed={terminal.collapsed ? 'true' : 'false'}
-                        style={{ height: terminal.collapsed ? COLLAPSED_HEIGHT : terminal.height }}
+                        style={{ height: terminalPanelHeight }}
                         className={`flex-shrink-0 overflow-hidden ${
                           terminal.ready && !terminal.isResizing && !terminal.suppressTransition
                             ? 'transition-[height] duration-200 ease-in-out'

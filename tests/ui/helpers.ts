@@ -282,6 +282,64 @@ export async function pressResizeHandle(
 }
 
 /**
+ * Press a Workflows canvas card's outgoing port and take a first step, then
+ * return once the canvas says a link is being drawn (`data-linking` on
+ * `workflow-canvas`), so the moves after it cannot run ahead of the drag.
+ *
+ * The same treatment as `pressResizeHandle`, for the same shape. Under a full UI
+ * run's load the first press once never started a link, and the canvas went the
+ * full 15 s without `data-linking`. A longer wait cannot help a press that has
+ * already happened. `hover()` waits for the port to stop moving and to be the
+ * element under the pointer, which covers a box read while the canvas was still
+ * settling. A press that has not started a link within a short window is
+ * released and re-issued, bounded, and the cap keeps a port that never links a
+ * failure rather than a hang.
+ */
+export async function pressPortToStartLink(page: Page, port: Locator): Promise<void> {
+  const linking = page.locator('[data-testid="workflow-canvas"][data-linking]');
+  // A port takes a press only while the workflow agent is not mid-turn (the plan is held).
+  await expect(page.locator('[data-testid="workflow-agent-working"]')).toHaveAttribute('data-working', 'false');
+  const PRESS_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= PRESS_ATTEMPTS; attempt += 1) {
+    await port.hover();
+    const box = await port.boundingBox();
+    if (!box) throw new Error('the port has no bounding box');
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 8, box.y + box.height / 2 + 8, { steps: 2 });
+    const started = await linking.waitFor({ state: 'attached', timeout: 5000 }).then(() => true, () => false);
+    if (started) return;
+    await page.mouse.up();
+  }
+  throw new Error(`the port did not start a link after ${PRESS_ATTEMPTS} presses`);
+}
+
+/**
+ * How many windows the config store's saved layout holds for a project. The window layout
+ * save is debounced, so this is how a test knows the save, and the config rebuild it makes,
+ * has landed.
+ */
+export async function readSavedWindowCount(page: Page, projectId: string): Promise<number> {
+  return page.evaluate((targetProjectId) => {
+    const stores = (window as unknown as {
+      __zustandStores?: {
+        config: { getState: () => { config: { workspaceByProject?: Record<string, { windows?: unknown[] }> } } };
+      };
+    }).__zustandStores;
+    if (!stores) throw new Error('window.__zustandStores not exposed');
+    return stores.config.getState().config.workspaceByProject?.[targetProjectId]?.windows?.length ?? 0;
+  }, projectId);
+}
+
+/** The sidebar's rendered width as React set it (its inline style), not its animating box. */
+export async function readSidebarStyleWidth(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const sidebarArea = document.querySelector<HTMLElement>('[data-testid="sidebar-area"]');
+    if (!sidebarArea) throw new Error('sidebar area not rendered');
+    return parseFloat(sidebarArea.style.width);
+  });
+}
+
+/**
  * Expand the task-detail Changes panel's History section and return only once
  * it is provably open: the section's resize handle
  * (`changes-history-resize`) renders ONLY while the section is open, so its
