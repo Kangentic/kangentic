@@ -37,6 +37,7 @@ import {
   deriveCumulativeFromTokenSeries,
   deriveModelStack,
   deriveTokenTypeStack,
+  fitRatioDomain,
   foldBreakdownForDonut,
   isModelStackEmpty,
   rankSlicesByMetric,
@@ -356,6 +357,24 @@ describe('deriveCacheHitRateSeries', () => {
   it('leaves out a bucket with no input instead of plotting a dip to zero', () => {
     const series = deriveCacheHitRateSeries([point(1, 10, 30, 960), point(2, 0, 0, 0), point(3, 20, 0, 980)]);
     expect(series.map((entry) => entry.x)).toEqual([1, 3]);
+  });
+});
+
+describe('fitRatioDomain', () => {
+  it('fits the observed band with headroom, inside 0..1', () => {
+    // The preview's two days: 90.4% and 87.2%. A 0-based axis drew them on
+    // 0% to 400% (whole-number ticks on a ratio).
+    const [lower, upper] = fitRatioDomain([{ x: 1, y: 0.904 }, { x: 2, y: 0.872 }]);
+    expect(lower).toBeCloseTo(0.862, 3);
+    expect(upper).toBeCloseTo(0.914, 3);
+  });
+
+  it('never leaves 0..1, and gives a flat or empty series a visible band', () => {
+    expect(fitRatioDomain([{ x: 1, y: 0.999 }, { x: 2, y: 0.998 }])[1]).toBe(1);
+    expect(fitRatioDomain([{ x: 1, y: 0.004 }])[0]).toBe(0);
+    const [flatLower, flatUpper] = fitRatioDomain([{ x: 1, y: 0.5 }, { x: 2, y: 0.5 }]);
+    expect(flatUpper - flatLower).toBeCloseTo(0.02, 6);
+    expect(fitRatioDomain([])).toEqual([0, 1]);
   });
 });
 
