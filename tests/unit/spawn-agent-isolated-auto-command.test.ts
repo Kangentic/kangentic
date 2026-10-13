@@ -33,7 +33,7 @@
  * and resolveTaskTemplateVars run for real - they are the logic under test.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Task, Swimlane, SessionRecord } from '../../src/shared/types';
 
 vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
@@ -134,6 +134,7 @@ vi.mock('../../src/main/agent/handoff/session-history-reference', () => ({
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
 import { resolveTargetAgent } from '../../src/main/transition-engine/agent-resolver';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { buildSessionHistoryReference } from '../../src/main/agent/handoff/session-history-reference';
 
 const TASK_ID = 'task-aaa00001';
 const EXEC_LANE_ID = 'lane-exec';
@@ -882,5 +883,95 @@ describe('spawnAgent handoff branch: a column message with a Condition or a Freq
       [{ text: '/task-command', verify: 'submitted' }],
       expect.objectContaining({ freshlySpawned: true }),
     );
+  });
+});
+
+/**
+ * A handoff tells the new agent it can read the prior session over MCP
+ * (`kangentic_get_session_history`) only when its adapter reaches Kangentic's MCP
+ * server at all: `kangenticMcp` declared, of either kind. The flag was Claude's
+ * alone before, so a Codex or Gemini agent that could call the tool was never
+ * told. The source is Claude with a session file in every case below and the
+ * target is never Claude, so only the target adapter decides. The real prompt
+ * text is built (the mock forwards to the real builder for these cases), so the
+ * line is checked in the prefix the engine receives.
+ */
+describe('spawnAgent handoff branch: telling the new agent it can read the prior session over MCP', () => {
+  const PROJECT_ID = 'proj-handoff-mcp';
+  const SOURCE_SESSION_FILE = '/mock/claude-session.jsonl';
+  const MCP_TOOL_LINE = 'kangentic_get_session_history';
+
+  /** The prefix is the 7th argument of resumeSuspendedSession, after the target agent. */
+  function handoffPrefixArg(engine: ReturnType<typeof makeDeps>['engine']): unknown {
+    return engine.resumeSuspendedSession.mock.calls[0]?.[6];
+  }
+
+  /**
+   * Run a Claude -> `targetAgent` handoff whose registry knows Claude (with a
+   * session file) and the given target adapter. The column has no message, so
+   * nothing is delivered after the spawn and only the prefix is under test.
+   */
+  async function handOffTo(targetAgent: string, targetAdapter: Record<string, unknown>) {
+    const adapters: Record<string, Record<string, unknown>> = {
+      claude: { sessionType: 'claude_agent', locateSessionHistoryFile: vi.fn(async () => SOURCE_SESSION_FILE) },
+      [targetAgent]: { sessionType: `${targetAgent}_agent`, ...targetAdapter },
+    };
+    vi.mocked(agentRegistry.get).mockImplementation(((name: string) => adapters[name] ?? null) as never);
+    const actual = await vi.importActual<typeof import('../../src/main/agent/handoff/session-history-reference')>(
+      '../../src/main/agent/handoff/session-history-reference',
+    );
+    vi.mocked(buildSessionHistoryReference).mockImplementationOnce(actual.buildSessionHistoryReference);
+
+    const lane = makeSwimlane('lane-target', { session_target: 'main', handoff_context: true, agent_override: targetAgent });
+    const deps = makeDeps({
+      manualPauseRecord: makeRecord({ id: 'rec-claude', isolated_swimlane_id: null, agent_session_id: 'claude-session-1' }),
+      resumeRecord: undefined,
+      taskFields: { session_id: FRESH_PTY_SESSION_ID },
+    });
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: targetAgent, isHandoff: true });
+
+    await runSpawn(lane, deps, true, false, PROJECT_ID);
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    return deps;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    // Leave the registry as the earlier handoff blocks do: nothing registered.
+    vi.mocked(agentRegistry.get).mockReturnValue(null as never);
+  });
+
+  it.each([
+    { targetAgent: 'codex', kangenticMcp: 'per-session' },
+    { targetAgent: 'gemini', kangenticMcp: 'shared-folder' },
+  ])('a $targetAgent target declaring $kangenticMcp MCP is told it can read the prior session', async ({ targetAgent, kangenticMcp }) => {
+    const deps = await handOffTo(targetAgent, { kangenticMcp });
+
+    expect(buildSessionHistoryReference).toHaveBeenCalledWith({
+      sourceAgent: 'claude',
+      sessionFilePath: SOURCE_SESSION_FILE,
+      targetHasMcpAccess: true,
+    });
+    // Red: tying the flag to Claude (as it was), or to one kind of MCP wiring,
+    // leaves this false for a target that is not Claude.
+    expect(handoffPrefixArg(deps.engine)).toContain(MCP_TOOL_LINE);
+  });
+
+  it('a target that declares no Kangentic MCP access gets the session file but no mention of the tool', async () => {
+    const deps = await handOffTo('aider', {});
+
+    expect(buildSessionHistoryReference).toHaveBeenCalledWith({
+      sourceAgent: 'claude',
+      sessionFilePath: SOURCE_SESSION_FILE,
+      targetHasMcpAccess: false,
+    });
+    const prefix = handoffPrefixArg(deps.engine);
+    expect(prefix).toContain(SOURCE_SESSION_FILE);
+    // Red: a flag that is true for every target points an agent with no Kangentic
+    // tools at one it cannot call.
+    expect(prefix).not.toContain(MCP_TOOL_LINE);
   });
 });

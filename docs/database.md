@@ -519,8 +519,10 @@ Start creates the tasks and clears it. `revision` goes up on every save and edit
 `--kng-chart-N` slot of the workflow's icon, the first no unfinished workflow holds.
 `agent_name` and `agent_session_id` are the workflow agent's conversation: the agent that holds it
 and the id it resumes by. They live here rather than in `sessions`, whose `task_id` is a foreign
-key to tasks, and they change no plan, so writing them leaves `revision` alone. Null until the agent
-first starts, and again after a resume finds no conversation to resume.
+key to tasks, and they change no plan, so writing them leaves `revision` alone. Both are null until
+the agent first starts. `agent_session_id` is also null while the agent's own id is not yet known,
+and again after a resume finds no conversation to resume; `agent_name` stays set then, so the next
+start begins a new conversation from the saved plan.
 
 `agent_cwd` is the checkout that conversation ran in, rewritten at every start. The agent CLI keeps
 the history under it (Claude keys the file by it), so the conversation viewer and
@@ -1319,7 +1321,8 @@ Operates on the workflow's home project DB.
 | `markStarted(id)` | Running, the plan spent (its tasks now exist), `started_at` stamped |
 | `setState(id, state)` | Running, paused or done; done stamps `finished_at`, paused stamps `paused_at`, and any other state clears it |
 | `bumpRevision(id)` | Any change to a started workflow's tasks, links or routes |
-| `setAgentConversation(id, conversation)` | The workflow agent's conversation (`agent_name`, `agent_session_id`, `agent_cwd`), or null to forget it so the next open starts a new one. The revision stays |
+| `setAgentConversation(id, conversation)` | The workflow agent's conversation (`agent_name`, `agent_session_id`, `agent_cwd`), or null to forget it so the next open starts a new one. A null `agentSessionId` records an agent whose id is not known yet. The revision stays |
+| `forgetAgentSessionId(id)` | Clear `agent_session_id` only, after a resume finds no conversation: the agent stays recorded, so the next start continues from the saved plan. The revision stays |
 | `addAgentReadProject(id, projectId)` | Let the workflow agent read another registered project from now on; false when it already could. The revision stays |
 | `setAgentGrid(id, grid)` / `getAgentGrid(id)` | The workflow agent's last PTY grid (`agent_pty_cols/rows`), or null before it has one. The revision stays |
 | `delete(id)` | Delete; its links cascade |

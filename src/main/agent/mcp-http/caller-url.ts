@@ -76,11 +76,12 @@ export function isAnswerCaller(callerSessionId: string | undefined): boolean {
 /**
  * The caller segment prefix that marks a workflow's own agent.
  *
- * That agent plans a workflow and is launched read-only: it reads the code and
- * the board, and changes nothing but its own workflow's plan. The server gives a
- * caller with this prefix the read-only tools and the planning tools only (see
- * `buildWorkflowAgentMcpServer`), so a tool that creates, moves or deletes board
- * work is not there to call, whatever the CLI's own permissions allow.
+ * That agent plans a workflow. It is launched read-only where its CLI can
+ * enforce that, and every other agent is asked by its first message to leave
+ * files alone. The server gives a caller with this prefix the read-only tools
+ * and the planning tools only (see `buildWorkflowAgentMcpServer`), so a tool
+ * that creates, moves or deletes board work is not there to call, whatever the
+ * CLI's own permissions allow.
  */
 export const WORKFLOW_AGENT_CALLER_PREFIX = 'workflow-';
 
