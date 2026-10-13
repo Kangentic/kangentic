@@ -63,10 +63,15 @@ export interface BreakdownEntry {
  * CVD-safety mechanism; colors follow the entity's rank at fold time and the
  * fold is stable per payload), a null id renders as "(unknown)" with a
  * neutral swatch, and everything past MAX_DONUT_SLICES folds into "Other".
- * Zero-token entries are dropped.
+ *
+ * An entry is dropped only when it has neither tokens nor cost. One with cost
+ * and no tokens is real: a model whose sessions predate per-turn capture has
+ * ledger cost and no turn tokens ($2,910 at 0 tokens on the dogfooding
+ * install), and dropping it took that cost out of the Cost view. Each view
+ * hides the slices empty in ITS metric through {@link visibleSlices}.
  */
 export function foldBreakdownForDonut(entries: BreakdownEntry[]): DonutSlice[] {
-  const nonEmpty = entries.filter((entry) => entry.inputTokens + entry.outputTokens > 0);
+  const nonEmpty = entries.filter((entry) => entry.inputTokens + entry.outputTokens > 0 || entry.costUsd > 0);
   const head = nonEmpty.slice(0, MAX_DONUT_SLICES);
   const tail = nonEmpty.slice(MAX_DONUT_SLICES);
 
@@ -191,6 +196,13 @@ export function deriveCacheHitRateSeries(tokenSeries: TokenSeriesPoint[]): TimeP
     const denominator = point.cacheReadTokens + point.cacheCreationTokens + point.inputTokens;
     return denominator > 0 ? [{ x: point.bucketStartMs, y: point.cacheReadTokens / denominator }] : [];
   });
+}
+
+/** The slices a breakdown shows in one view: those with something in the
+ *  selected metric. A model with cost and no turn tokens shows in the Cost
+ *  view only. Colors are untouched, so hiding a slice moves no other's. */
+export function visibleSlices(slices: DonutSlice[], byCost: boolean): DonutSlice[] {
+  return slices.filter((slice) => (byCost ? slice.costUsd > 0 : slice.value > 0));
 }
 
 /**

@@ -2785,9 +2785,13 @@
           costSeries: costSeries,
           tokenModelSeries: tokenModelSeries,
           background: { totals: backgroundTotals, byJob: backgroundByJob, byDay: backgroundDays },
+          // 'mock-model-legacy' has cost and no turn tokens, the shape of a
+          // model whose sessions predate per-turn capture: it belongs in the
+          // Cost view's breakdown and not in the Tokens view's.
           byModel: [
-            { modelId: 'mock-model-large', modelDisplayName: 'Mock Large', inputTokens: 120000, outputTokens: 30000, costUsd: 10.0, sessionCount: 5 },
+            { modelId: 'mock-model-large', modelDisplayName: 'Mock Large', inputTokens: 120000, outputTokens: 30000, costUsd: 8.0, sessionCount: 4 },
             { modelId: 'mock-model-small', modelDisplayName: 'Mock Small', inputTokens: 30000, outputTokens: 12000, costUsd: 2.34, sessionCount: 2 },
+            { modelId: 'mock-model-legacy', modelDisplayName: 'Mock Legacy', inputTokens: 0, outputTokens: 0, costUsd: 2.0, sessionCount: 1 },
           ],
           byAgent: [
             { agent: 'claude', inputTokens: 130000, outputTokens: 36000, costUsd: 11.0, sessionCount: 6 },

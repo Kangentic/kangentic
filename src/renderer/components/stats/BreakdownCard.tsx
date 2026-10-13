@@ -4,7 +4,7 @@ import { formatCost } from '../../utils/format-session';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { ChartCard } from './ChartCard';
 import { KngDonut } from './charts/KngDonut';
-import { rankSlicesByMetric, type DonutSlice } from './useStatsData';
+import { rankSlicesByMetric, visibleSlices, type DonutSlice } from './useStatsData';
 
 interface BreakdownCardProps {
   title: string;
@@ -45,10 +45,13 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
   // re-rendering (and re-running its animation matcher) on unrelated
   // StatsPage renders such as live-usage ticks or poll refreshes.
   const { donutSlices, listSlices, metricTotal, leader } = useMemo(() => {
-    const mapped = slices.map((slice) => ({ ...slice, value: byCost ? slice.costUsd : slice.value }));
+    // Only what this view has something to show for: a model with cost and
+    // no turn tokens is in the Cost view, not the Tokens view.
+    const shown = visibleSlices(slices, byCost);
+    const mapped = shown.map((slice) => ({ ...slice, value: byCost ? slice.costUsd : slice.value }));
     return {
       donutSlices: mapped,
-      listSlices: rankSlicesByMetric(slices, byCost),
+      listSlices: rankSlicesByMetric(shown, byCost),
       metricTotal: mapped.reduce((sum, slice) => sum + slice.value, 0),
       // The dimension's dominant entry BY THE SELECTED METRIC (the cost
       // leader can differ from the token leader).
@@ -71,7 +74,7 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
     <ChartCard
       title={title}
       loading={loading}
-      empty={!loading && slices.length === 0}
+      empty={!loading && listSlices.length === 0}
       bodyClassName="h-44"
       testId={testId}
     >
@@ -85,7 +88,7 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
             centerLabel={leader?.label ?? ''}
             valueFormatter={metricFormatter}
             valueLabel={byCost ? 'cost' : 'tokens'}
-            ariaLabel={`${title}: ${slices.map((slice) => `${slice.label} ${metricFormatter(sliceMetricValue(slice))}`).join(', ')}`}
+            ariaLabel={`${title}: ${listSlices.map((slice) => `${slice.label} ${metricFormatter(sliceMetricValue(slice))}`).join(', ')}`}
             highlightedSliceId={hoveredSliceId}
             onSliceHover={setHoveredSliceId}
             animate={animate}
