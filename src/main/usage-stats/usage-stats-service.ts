@@ -15,7 +15,7 @@ import type { UsageCostGroupRow, UsageRollupRow, UsageWindowTotals } from '../db
 import type { BackgroundCallGroupRow } from '../db/repositories/background-call-repository';
 import { foldBackgroundUsage } from './background-usage';
 import { agentRegistry } from '../agent/agent-registry';
-import type { GroupedTurnUsageRow, TurnModelGroupRow } from '../retrieval/conversation/conversation-usage-store';
+import type { GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import type { AsyncProjectUsageReader, ProjectUsageReader, UsageReadName } from './project-usage-reader';
 import {
@@ -29,6 +29,7 @@ import {
   bucketStartFor,
   computeKpis,
   foldCostSeries,
+  foldTokenModelSeries,
   foldTokenSeries,
   mergeSubagentTotals,
   mergeUsageTotals,
@@ -248,7 +249,6 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     const subagentTotalsList: SubagentUsageTotals[][] = [];
     const previousSubagentTotalsList: SubagentUsageTotals[][] = [];
     const backgroundGroups: BackgroundCallGroupRow[] = [];
-    const turnModelGroups: TurnModelGroupRow[] = [];
     const perProject: ProjectUsageSummary[] = [];
     const skippedProjects: Array<{ projectId: string; projectName: string }> = [];
     let liveSessionCountTotal = 0;
@@ -280,9 +280,6 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         // Background calls: their own ledger, never folded into the session
         // figures this loop gathers.
         backgroundGroups.push(...await reader.listBackgroundCallGroups(sinceIso, untilIso, COST_GROUP_MS));
-        // The Tokens view's by-model bars, from the turn ledger on the turn
-        // groups' own grid, so they sum to the Tokens tile.
-        turnModelGroups.push(...await reader.listTurnModelGroups(sinceMs, turnGroupMs, untilMs));
         const projectActive = await reader.getActiveTotals(sinceMs, untilMs);
         activeMsTotal += projectActive.activeMs;
         activeSessionsCovered += projectActive.sessionsCovered;
@@ -427,14 +424,10 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       // fields and broken out below, never folded into these series.
       tokenSeries: foldTokenSeries(combinedGroups, tokenStarts, tokenBucketKind),
       costSeries: foldCostSeries(combinedCostGroups, costStarts, costBucketKind),
-      // The same fold as the cost series, on the TOKEN grid: each point's
-      // byModel slices carry the turn ledger's fresh input and output, at no
-      // cost (cost is the Cost view's, from the session ledger).
-      tokenModelSeries: foldCostSeries(
-        turnModelGroups.map((group) => ({ ...group, costUsd: 0, sessionCount: 0 })),
-        tokenStarts,
-        tokenBucketKind,
-      ),
+      // The Tokens view's by-model bars, folded from the token series' own
+      // groups, so they sum to the token series with no second scan of the
+      // turn ledger.
+      tokenModelSeries: foldTokenModelSeries(combinedGroups, tokenStarts, tokenBucketKind),
       byModel: buildModelBreakdown(combinedRollup),
       byAgent: buildAgentBreakdown(combinedRollup),
       byEffort: buildEffortBreakdown(combinedRollup),
@@ -480,7 +473,6 @@ function workerUsageReader(projectId: string): AsyncProjectUsageReader {
     getEarliestTurnMs: read('getEarliestTurnMs'),
     getActiveTotals: read('getActiveTotals'),
     listBackgroundCallGroups: read('listBackgroundCallGroups'),
-    listTurnModelGroups: read('listTurnModelGroups'),
   };
 }
 

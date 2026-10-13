@@ -1,19 +1,22 @@
 /**
  * Real-DB tests for ConversationUsageStore.getGroupedUsageSince's SQL-side
  * cost allocation (the usage_history LEFT JOIN that replaced the service's
- * buildSessionTokenTotals / allocateGroupCost JS maps) and its bucket-only
- * output (per-turn allocation summed per UTC bucket, so the result is
- * O(active buckets), never O(sessions x buckets)). Pins:
+ * buildSessionTokenTotals / allocateGroupCost JS maps) and its bucket and
+ * model output (per-turn allocation summed per UTC bucket and turn model, so
+ * the result is O(active bucket and model pairs), never O(sessions x
+ * buckets)). Pins:
  *
  *   - proportional allocation by fresh-token share across the WHOLE queried
  *     window (not per bucket), reassembling each session's full cost;
+ *   - a session that switches model splitting its cost by each model's share
+ *     of the SESSION's tokens (the denominator is never per model);
  *   - $0 for a session with no ledger row inside the COST window, even when
  *     a ledger row exists outside it (the windowed-map semantics the old JS
  *     path had);
  *   - $0 for zero-cost sessions, unknown sessions, and NULL session ids;
  *   - the cost window being independent of the ts window;
- *   - cross-session merge into one bucket row, NULL-ts exclusion, and the
- *     UTC bucket grid.
+ *   - cross-session merge into one row per bucket and model, NULL-ts
+ *     exclusion, and the UTC bucket grid.
  *
  * Uses a real in-memory better-sqlite3 DB bootstrapped via runProjectMigrations.
  */
@@ -39,13 +42,13 @@ describe('ConversationUsageStore.getGroupedUsageSince cost allocation (real DB)'
     `).run(`id-${sessionRecordId}`, sessionRecordId, sessionStartedAt, totalCostUsd);
   }
 
-  function insertTurn(turnUuid: string, sessionId: string | null, ts: number | null, inputTokens: number, outputTokens: number, cacheCreation = 0, cacheRead = 0): void {
+  function insertTurn(turnUuid: string, sessionId: string | null, ts: number | null, inputTokens: number, outputTokens: number, cacheCreation = 0, cacheRead = 0, model = 'model-x'): void {
     db.prepare(`
       INSERT INTO conversation_turn_usage (turn_uuid, session_id, model, ts,
         input_tokens, output_tokens, cache_creation_input_tokens,
         cache_read_input_tokens, recorded_at)
-      VALUES (?, ?, 'model-x', ?, ?, ?, ?, ?, '2026-01-05T00:00:00.000Z')
-    `).run(turnUuid, sessionId, ts, inputTokens, outputTokens, cacheCreation, cacheRead);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-01-05T00:00:00.000Z')
+    `).run(turnUuid, sessionId, model, ts, inputTokens, outputTokens, cacheCreation, cacheRead);
   }
 
   beforeEach(() => {
@@ -94,7 +97,7 @@ describe('ConversationUsageStore.getGroupedUsageSince cost allocation (real DB)'
     expect(unbounded[0].allocatedCostUsd).toBeCloseTo(3.0, 12);
   });
 
-  it('allocates $0 for zero-cost sessions, unknown sessions, and NULL session ids (merged into one bucket row)', () => {
+  it('allocates $0 for zero-cost sessions, unknown sessions, and NULL session ids (merged into one bucket and model row)', () => {
     insertLedgerRow('sess-zero', '2026-01-02T09:00:00.000Z', 0);
     insertTurn('t1', 'sess-zero', T0 + 60_000, 100, 50);
     insertTurn('t2', 'sess-unknown', T0 + 60_000, 40, 10);
@@ -102,7 +105,7 @@ describe('ConversationUsageStore.getGroupedUsageSince cost allocation (real DB)'
 
     const groups = store.getGroupedUsageSince(null, TURN_GROUP_MS, null, null, null);
 
-    // Bucket-only output: all three same-bucket turns fold into one row.
+    // Same bucket and same model: all three turns fold into one row.
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ inputTokens: 170, outputTokens: 65, turnCount: 3 });
     expect(groups[0].allocatedCostUsd).toBe(0);
@@ -145,6 +148,27 @@ describe('ConversationUsageStore.getGroupedUsageSince cost allocation (real DB)'
     expect(groups[0].allocatedCostUsd).toBeCloseTo(1 + 1.5, 12);
     expect(groups[1].allocatedCostUsd).toBeCloseTo(1.5, 12);
     expect(groups[0].turnCount).toBe(2);
+  });
+
+  it('splits one session\'s cost across its models by each model\'s share of the SESSION\'s tokens', () => {
+    // A mid-session model switch inside one bucket: the rows split by model,
+    // but the share denominator is still the whole session (400 tokens), so
+    // the two rows carry 1/4 and 3/4 of the $2 and add back up to it. Grouping
+    // the session_tokens CTE by model as well would hand each model a full
+    // share of the session, or double the joined rows.
+    insertLedgerRow('sess-1', '2026-01-02T09:00:00.000Z', 2);
+    insertTurn('t1', 'sess-1', T0 + 60_000, 80, 20, 0, 0, 'model-x');
+    insertTurn('t2', 'sess-1', T0 + 120_000, 250, 50, 0, 0, 'model-y');
+
+    const groups = store.getGroupedUsageSince(null, TURN_GROUP_MS, null, null, null);
+
+    expect(groups.map((group) => [group.modelId, group.inputTokens, group.outputTokens, group.turnCount])).toEqual([
+      ['model-x', 80, 20, 1],
+      ['model-y', 250, 50, 1],
+    ]);
+    expect(groups[0].allocatedCostUsd).toBeCloseTo(2 * (100 / 400), 12);
+    expect(groups[1].allocatedCostUsd).toBeCloseTo(2 * (300 / 400), 12);
+    expect(groups[0].allocatedCostUsd + groups[1].allocatedCostUsd).toBeCloseTo(2, 12);
   });
 
   it('token-share totals span the whole queried ts window, not just one bucket', () => {

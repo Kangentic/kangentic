@@ -386,7 +386,7 @@ describe('ConversationIndexer.indexSession populates the usage ledger', () => {
 describe('ConversationUsageStore.getGroupedUsageSince', () => {
   const FIVE_MIN = 5 * 60_000;
 
-  it('groups turns into fixed UTC buckets (bucket-only output), oldest first', () => {
+  it('groups turns into fixed UTC buckets (one row per bucket and model), oldest first', () => {
     const { db } = makeUsageDb();
     const store = new ConversationUsageStore(db);
     // Two turns inside the same 5-min bucket, one in the next bucket.
@@ -444,24 +444,27 @@ describe('ConversationUsageStore.getGroupedUsageSince', () => {
     expect(groups[0].bucketStartMs).toBe(FIVE_MIN * 20);
   });
 
-  it('merges turns from different sessions and models into one bucket row', () => {
+  it('merges turns from different sessions into one row per model, models in first-turn order', () => {
     const { db } = makeUsageDb();
     const store = new ConversationUsageStore(db);
     store.recordTurns(owner, [
-      { turnUuid: 'a1', ts: FIVE_MIN * 10 + 100, model: 'model-x', usage: usage() },
-      { turnUuid: 'a2', ts: FIVE_MIN * 10 + 200, model: 'model-y', usage: usage() },
+      { turnUuid: 'a1', ts: FIVE_MIN * 10 + 200, model: 'model-y', usage: usage() },
+      { turnUuid: 'a2', ts: FIVE_MIN * 10 + 300, model: 'model-x', usage: usage() },
     ], now);
     store.recordTurns({ ...owner, sessionId: 'session-2' }, [
-      { turnUuid: 'a3', ts: FIVE_MIN * 10 + 300, model: 'model-x', usage: usage() },
+      { turnUuid: 'a3', ts: FIVE_MIN * 10 + 400, model: 'model-x', usage: usage() },
     ], now);
 
-    // Bucket-only output: one row for the shared bucket, three turns summed.
-    // (Per-session cost allocation happens INSIDE the SQL; pinned against a
-    // real database in conversation-usage-cost-allocation.test.ts.)
+    // Never per session: session-1's and session-2's model-x turns share a row.
+    // The two models stay apart, model-y first because its turn came first, so
+    // the Tokens view's by-model bars read straight off these rows. (Per-session
+    // cost allocation happens INSIDE the SQL; pinned against a real database in
+    // conversation-usage-cost-allocation.test.ts.)
     const groups = store.getGroupedUsageSince(null, FIVE_MIN);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].turnCount).toBe(3);
-    expect(groups[0].inputTokens).toBe(30);
+    expect(groups.map((group) => [group.bucketStartMs, group.modelId, group.turnCount, group.inputTokens])).toEqual([
+      [FIVE_MIN * 10, 'model-y', 1, 10],
+      [FIVE_MIN * 10, 'model-x', 2, 20],
+    ]);
   });
 });
 
