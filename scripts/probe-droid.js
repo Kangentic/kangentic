@@ -703,7 +703,7 @@ async function step8ProjectLevelHooks() {
     }
     log('PROJECT-LEVEL HOOKS FIRE: adapter wiring is viable.');
     log('  Next step (separate decision): add src/main/agent/adapters/droid/hook-manager.ts');
-    log('  using the Codex/Gemini refcounted pattern (Map<projectRoot, Set<taskId>>).');
+    log('  holding the shared file per session (SharedFolderHolds, keyed by the PTY session id).');
   } else {
     log('PROJECT-LEVEL HOOKS DID NOT FIRE: zero records captured.');
     log('  Both injection vehicles (--settings and <cwd>/.factory/settings.json) fail on this Droid build.');
