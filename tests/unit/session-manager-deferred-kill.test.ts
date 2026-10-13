@@ -88,6 +88,16 @@ function registryRow(manager: SessionManager, sessionId: string): ManagedSession
   return (manager as unknown as { registry: { get(id: string): ManagedSession | undefined } }).registry.get(sessionId);
 }
 
+/**
+ * Spy on the handle kill() parks on the deferred-kill registry, which is what
+ * its force-kill calls. Read it before kill(), which nulls the row's pty.
+ */
+function spyOnParkedHandleKill(manager: SessionManager, sessionId: string) {
+  const handle = registryRow(manager, sessionId)?.pty;
+  if (!handle) throw new Error('expected the spawned session to hold a PTY handle');
+  return vi.spyOn(handle, 'kill');
+}
+
 async function spawnSession(manager: SessionManager, taskId: string, pid?: number) {
   const mock = createMockPty(pid);
   vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
@@ -163,14 +173,20 @@ describe('kill() on a young session', () => {
   });
 
   it('cancels the force-kill when the PTY exits on its own inside the grace', async () => {
+    // The spy sits on the parked handle, not the raw PTY mock. On Windows the
+    // host releases a PTY that exited on its own with a kill of its own
+    // (releaseExitedPty), so the raw mock counts one kill there. And a timer
+    // that did fire would never reach the raw mock on any platform: the handle
+    // throws ESRCH once the exit is reported, and safeKillPty swallows it.
     const manager = new SessionManager();
-    const { session, mockPty, triggerExit } = await spawnSession(manager, 'task-natural');
+    const { session, triggerExit } = await spawnSession(manager, 'task-natural');
+    const handleKill = spyOnParkedHandleKill(manager, session.id);
 
     manager.kill(session.id);
     triggerExit(0);
     await vi.advanceTimersByTimeAsync(KILL_GRACE_MS * 2);
 
-    expect(mockPty.kill).not.toHaveBeenCalled();
+    expect(handleKill).not.toHaveBeenCalled();
     expect(manager.getSession(session.id)?.status).toBe('exited');
   });
 
@@ -228,7 +244,8 @@ describe('kill() on a young session', () => {
     // remove(), so a natural exit still reaches the manager's 'exit' event,
     // which is what resolves awaitExit and cancels the force-kill timer.
     const manager = new SessionManager();
-    const { session, mockPty, triggerExit } = await spawnSession(manager, 'task-natural-after-remove');
+    const { session, triggerExit } = await spawnSession(manager, 'task-natural-after-remove');
+    const handleKill = spyOnParkedHandleKill(manager, session.id);
 
     manager.kill(session.id);
     let settled = false;
@@ -240,7 +257,7 @@ describe('kill() on a young session', () => {
     expect(settled).toBe(true);
 
     await vi.advanceTimersByTimeAsync(KILL_GRACE_MS * 2);
-    expect(mockPty.kill).not.toHaveBeenCalled();
+    expect(handleKill).not.toHaveBeenCalled();
   });
 });
 
@@ -316,6 +333,7 @@ describe('killAll() and the parked PTYs', () => {
   it('without grace, flushes a parked PTY now and reports it as a plain kill', async () => {
     const manager = new SessionManager();
     const { session, mockPty } = await spawnSession(manager, 'task-flush', 4242);
+    const handleKill = spyOnParkedHandleKill(manager, session.id);
     manager.kill(session.id);
     expect(mockPty.kill).not.toHaveBeenCalled();
 
@@ -323,8 +341,10 @@ describe('killAll() and the parked PTYs', () => {
 
     expect(mockPty.kill).toHaveBeenCalledTimes(1);
     expect(report).toEqual({ pids: [4242], killedCount: 1, deferredCount: 0 });
+    // Counted on the handle: a timer the flush left armed would kill a PTY
+    // that has exited by then, and that kill never reaches the raw mock.
     await vi.advanceTimersByTimeAsync(KILL_GRACE_MS * 2);
-    expect(mockPty.kill).toHaveBeenCalledTimes(1);
+    expect(handleKill).toHaveBeenCalledTimes(1);
   });
 
   it('with grace, leaves a parked PTY on its timer and counts it as deferred', async () => {
