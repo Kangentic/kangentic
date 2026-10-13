@@ -112,8 +112,8 @@ export default defineConfig({
       // (tests/captures/helpers/output-dir.ts). It is scoped in practice by the
       // poster job's file filter, not by this project: nothing on CI runs the whole
       // project, and a job that did would also retry the two five-minute videos.
-      // workers stays 1: the three driver drags are a timed pointer sequence, and a
-      // starved worker drops them.
+      // workers stays 1: the driver scenes' drags, and the hover held through the
+      // board's link dwell, are timed pointer sequences, and a starved worker drops them.
       name: 'captures',
       testDir: './tests/captures',
       testMatch: '**/*.capture.ts',

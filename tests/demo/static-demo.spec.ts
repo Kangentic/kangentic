@@ -18,11 +18,12 @@ import { test, expect, chromium, type Page, type Locator } from '@playwright/tes
 import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
-import { SCENES } from '../captures/scenes';
+import { PLANNED_PDF_ROUTE, SCENES } from '../captures/scenes';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
-  SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET,
+  SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET,
+  TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
@@ -37,17 +38,23 @@ const SWIMLANE_NAMES = DEMO_LANES_BY_PROJECT[PROJECT_CONTOSO].map((lane) => lane
 const MONITOR_ROW_COUNT = DEMO_SESSIONS.length;
 
 /**
- * How many stops each Harden the API card's step track draws (the workflows scenes' seed): To Do,
- * each column on its route, and Done. Contoso has five route columns, and Refactor API error
- * handling skips Planning. A route read across every project's columns drew about seventeen.
+ * The stops a contoso step track draws when its route takes every column: To Do, each of
+ * contoso's route columns (neither To Do nor Done, and not archived), and Done. A route read
+ * across every project's columns drew about seventeen.
+ */
+const CONTOSO_FULL_TRACK_STOPS = DEMO_LANES_BY_PROJECT[PROJECT_CONTOSO].filter((lane) => lane.role === null && !lane.is_archived).length + 2;
+
+/**
+ * How many stops each Harden the API card's step track draws (the workflows scenes' seed).
+ * Refactor API error handling starts at Executing, so its track skips Planning.
  */
 const WORKFLOW_TRACK_STOPS: Record<string, number> = {
-  'task-cw-done-schema': 7,
-  'task-cw-done-logging': 7,
-  [TASK_MIDDLEWARE]: 7,
-  'task-cw-rate-limit': 7,
-  [TASK_AUTH]: 7,
-  'task-cw-api-errors': 6,
+  [TASK_SCHEMA]: CONTOSO_FULL_TRACK_STOPS,
+  [TASK_LOGGING]: CONTOSO_FULL_TRACK_STOPS,
+  [TASK_MIDDLEWARE]: CONTOSO_FULL_TRACK_STOPS,
+  [TASK_RATE_LIMIT]: CONTOSO_FULL_TRACK_STOPS,
+  [TASK_AUTH]: CONTOSO_FULL_TRACK_STOPS,
+  [TASK_API_ERRORS]: CONTOSO_FULL_TRACK_STOPS - 1,
 };
 
 /** The stops each element's step track draws, keyed by the attribute that names its task. */
@@ -252,24 +259,29 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     const view = page.locator('[data-testid="workflows-view"]');
     const cards = view.locator('[data-testid="workflow-canvas-card"]');
     await expect(cards).toHaveCount(4);
-    await expect(view.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveAttribute('data-workflow-task-key', 'task-2');
+    await expect(view.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveAttribute('data-workflow-task-key', PLANNED_PDF_ROUTE);
     await expect(view.locator('[data-testid="workflow-inspector-title"]')).toContainText('Add the invoice PDF route');
     await expect(view.locator('[data-testid="workflow-start"]')).toBeVisible();
     await expect(view.locator('path.react-flow__edge-path[data-link-relation="blocker"]')).toHaveCount(1);
     await expect(view.locator('path.react-flow__edge-path[data-link-relation="dependent"]')).toHaveCount(2);
     // Planned tracks run over contoso's own columns too; the tests task starts at Executing.
-    expect(await trackStopCounts(cards, 'data-workflow-task-key')).toEqual({ 'task-1': 7, 'task-2': 7, 'task-3': 7, 'task-4': 6 });
+    expect(await trackStopCounts(cards, 'data-workflow-task-key')).toEqual({
+      'task-1': CONTOSO_FULL_TRACK_STOPS,
+      [PLANNED_PDF_ROUTE]: CONTOSO_FULL_TRACK_STOPS,
+      'task-3': CONTOSO_FULL_TRACK_STOPS,
+      'task-4': CONTOSO_FULL_TRACK_STOPS - 1,
+    });
     await expect(view.locator('[data-testid="workflow-agent-pane"]')).toHaveAttribute('data-collapsed', 'true');
   },
   'board-workflow': async (page) => {
     // The four members still on the board carry the strip; the two done ones are archived.
-    const live = [TASK_AUTH, 'task-cw-api-errors', TASK_MIDDLEWARE, 'task-cw-rate-limit'];
+    const live = [TASK_AUTH, TASK_API_ERRORS, TASK_MIDDLEWARE, TASK_RATE_LIMIT];
     const cards = page.locator(live.map((id) => `[data-task-id="${id}"]`).join(', '));
     await expect(page.locator('[data-testid="workflow-card-strip"]')).toHaveCount(live.length);
     expect(await trackStopCounts(cards, 'data-task-id')).toEqual(Object.fromEntries(live.map((id) => [id, WORKFLOW_TRACK_STOPS[id]])));
     // One blocker is named; two are counted (boardWaiting).
     await expect(page.locator(`[data-task-id="${TASK_AUTH}"] [data-testid="workflow-status-bar"]`)).toContainText('Blocked by #4');
-    await expect(page.locator('[data-task-id="task-cw-api-errors"] [data-testid="workflow-status-bar"]')).toContainText('Blocked by 2 tasks');
+    await expect(page.locator(`[data-task-id="${TASK_API_ERRORS}"] [data-testid="workflow-status-bar"]`)).toContainText('Blocked by 2 tasks');
     await expect(page.locator('[data-testid="view-toggle-workflows-running"]')).toBeVisible();
   },
   'session-states': async (page) => {

@@ -8,7 +8,7 @@
  *
  * The rig is tests/captures/features/scenes.capture.ts, driven through its own env axes
  * (CAPTURE_THEMES, CAPTURE_RESOLUTIONS, CAPTURE_OUTPUT_ROOT) rather than a second capture file,
- * so the posters are the same stills `npm run capture` shoots, and the three driver scenes get
+ * so the posters are the same stills `npm run capture` shoots, and the driver scenes get
  * their gesture from the same Playwright code. release.yml's demo-posters job runs this after
  * publish-release and attaches the zip to the release. Every gate here exits non-zero naming its
  * cause: a missing or stale build, a rig failure, a poster missing or at the wrong size.

@@ -24,7 +24,7 @@
  * No Node imports on purpose: demo/vite.config.mts serializes this module into the static build,
  * and the capture rig reads it as well. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -309,8 +309,9 @@ const ROUTES_COMMIT = CONTOSO_HISTORY_COMMITS.find((commit) => commit.subject.st
 if (!ROUTES_COMMIT) throw new Error('tests/captures/fixtures/demo/history/contoso-web.json no longer carries the routes commit; re-run scripts/capture-demo-history.mjs');
 
 /**
- * The contoso board as someone would configure it, shared by the three Column Manager scenes
- * (edit-columns, column-automation, column-handoff) so they describe one board. Modelled on this
+ * The contoso board as someone would configure it, shared by the four Column Manager scenes
+ * (edit-columns, column-automation, column-automation-turn-end, column-handoff) so they describe
+ * one board. Modelled on this
  * repo's own kangentic.json (Opus at xhigh plans in plan mode, Sonnet at high builds, an isolated
  * Code Review with an automation) plus the cross-agent step real teams take: Claude builds, Codex
  * reviews, because a second model family catches what the first missed.
@@ -398,10 +399,8 @@ const TESTING_TURN_END_AUTOMATIONS = [
  * records it on every start.
  */
 const WORKFLOW_HARDEN_API = 'wf-cw-harden-api';
-const TASK_SCHEMA = 'task-cw-done-schema';
-const TASK_LOGGING = 'task-cw-done-logging';
-const TASK_RATE_LIMIT = 'task-cw-rate-limit';
-const TASK_API_ERRORS = 'task-cw-api-errors';
+/** The slot main gives a project's first workflow. Each scene seeds only one. */
+const FIRST_WORKFLOW_COLOR_SLOT = 1;
 const WORKFLOW_HARDEN_API_SEEDS = {
   __mockWorkflows: [{
     projectId: PROJECT_CONTOSO,
@@ -411,8 +410,7 @@ const WORKFLOW_HARDEN_API_SEEDS = {
       brief: 'Put auth and rate limits in front of every API route, then make the errors those layers return consistent.',
       state: 'running',
       draft: null,
-      // The slot main gives a project's first workflow.
-      color_slot: 1,
+      color_slot: FIRST_WORKFLOW_COLOR_SLOT,
       agent_name: 'claude',
     },
   }],
@@ -438,7 +436,7 @@ const WORKFLOW_HARDEN_API_SEEDS = {
  */
 const WORKFLOW_INVOICE_PDF = 'wf-cw-invoice-pdf';
 /** The planned task the workflow-draft scene selects: it waits for one task and two wait for it. */
-const PLANNED_PDF_ROUTE = 'task-2';
+export const PLANNED_PDF_ROUTE = 'task-2';
 function plannedTask(key: string, title: string, description: string, labels: string[], routeStart: string | null = null): Record<string, unknown> {
   return {
     key, title, description, labels, priority: 0,
@@ -455,8 +453,7 @@ const WORKFLOW_INVOICE_DRAFT_SEEDS = {
       title: 'Invoice PDF export',
       brief: 'Customers ask for a downloadable invoice from the billing page.',
       state: 'draft',
-      // The slot main gives a project's first workflow.
-      color_slot: 1,
+      color_slot: FIRST_WORKFLOW_COLOR_SLOT,
       agent_name: 'claude',
       draft: {
         tasks: [
@@ -486,6 +483,19 @@ const WORKFLOW_HARDEN_API_MEMBERS = [TASK_SCHEMA, TASK_LOGGING, TASK_MIDDLEWARE,
   canvas_x: null,
   canvas_y: null,
 }));
+
+/**
+ * How both Workflows view scenes open the canvas: the view, the agent pane collapsed, Board, then
+ * the view again. The canvas fits its cards when a workflow opens and never on a resize, so only
+ * the second open lays them out at the width the collapse gave back. The collapse is store state
+ * and survives the round trip.
+ */
+const WORKFLOW_VIEW_ROUND_TRIP: DemoBootStep[] = [
+  { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-agent-pane-collapse"]' },
+  { click: '[data-testid="workflow-agent-pane-collapse"]', waitFor: '[data-testid="workflow-agent-pane"][data-collapsed="true"]' },
+  { click: '[data-testid="view-toggle-board"]', waitFor: '[data-swimlane-name="To Do"]' },
+  { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-inspector-title"]' },
+];
 
 const SETTINGS_PANEL = '[data-testid="settings-panel"]';
 
@@ -1141,10 +1151,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="workflow-run-order"]',
     focus: '[data-testid="workflows-view"]',
     steps: [
-      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-agent-pane-collapse"]' },
-      { click: '[data-testid="workflow-agent-pane-collapse"]', waitFor: '[data-testid="workflow-agent-pane"][data-collapsed="true"]' },
-      { click: '[data-testid="view-toggle-board"]', waitFor: '[data-swimlane-name="To Do"]' },
-      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-inspector-title"]' },
+      ...WORKFLOW_VIEW_ROUND_TRIP,
       { click: '.react-flow__pane', waitFor: '[data-testid="workflow-run-order"]' },
     ],
   },
@@ -1167,10 +1174,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="workflow-inspector-title"]',
     focus: '[data-testid="workflows-view"]',
     steps: [
-      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-agent-pane-collapse"]' },
-      { click: '[data-testid="workflow-agent-pane-collapse"]', waitFor: '[data-testid="workflow-agent-pane"][data-collapsed="true"]' },
-      { click: '[data-testid="view-toggle-board"]', waitFor: '[data-swimlane-name="To Do"]' },
-      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-inspector-title"]' },
+      ...WORKFLOW_VIEW_ROUND_TRIP,
       {
         click: `[data-testid="workflow-canvas-card"][data-workflow-task-key="${PLANNED_PDF_ROUTE}"]`,
         waitFor: `[data-testid="workflow-canvas-card"][data-workflow-task-key="${PLANNED_PDF_ROUTE}"][data-selected="true"]`,

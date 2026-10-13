@@ -4907,10 +4907,17 @@
         var tagged = swimlanes.filter(function (lane) { return lane.projectId === projectId; });
         return tagged.length > 0 ? tagged : swimlanes.filter(function (lane) { return !lane.projectId; });
       }
-      // The board a workflow task sits on: a task row's projectId tag, a
-      // planned task's project_id, else the workflow's home.
+      // The board a workflow task sits on, as main's read model names it: a task
+      // row's projectId tag (tasks.list scopes a row by it), a planned task's
+      // project_id, else the workflow's home.
       function boardOf(entry, task) {
         return task.projectId || task.project_id || homeOf(entry);
+      }
+      // A task made on another board is that board's project's row, as main
+      // creates it in that project's database, so boardOf reads it there later.
+      // A home-board row stays untagged, which every UI spec's one board reads.
+      function tagBoard(row, entry, projectId) {
+        if (projectId && projectId !== homeOf(entry)) row.projectId = projectId;
       }
 
       // KEEP IN SYNC with src/shared/workflow-route.ts.
@@ -4942,9 +4949,11 @@
           skipped_swimlane_ids: list.slice(first, last + 1).filter(function (lane) { return ids.indexOf(lane.id) === -1; }).map(function (lane) { return lane.id; }),
         };
       }
+      // A lane id is unique across boards, so finding one needs no board.
       function laneOf(id) { return swimlanes.find(function (lane) { return lane.id === id; }); }
-      function todoLane(projectId) { return boardLanes(projectId).find(function (lane) { return lane.role === 'todo'; }); }
-      function doneLane(projectId) { return boardLanes(projectId).find(function (lane) { return lane.role === 'done'; }); }
+      // KEEP IN SYNC with todoColumn and doneColumn in src/shared/workflow-route.ts.
+      function todoLane(projectId) { return boardLanes(projectId).find(function (lane) { return lane.role === 'todo' && !lane.is_ghost; }); }
+      function doneLane(projectId) { return boardLanes(projectId).find(function (lane) { return lane.role === 'done' && !lane.is_ghost; }); }
       function step(lane, state) {
         return { swimlaneId: lane.id, name: lane.name, color: lane.color || null, icon: lane.icon || null, state: state, finishedAt: null };
       }
@@ -5001,8 +5010,6 @@
             projectNames: names,
             boardEnds: boardEnds,
             tasks: draft.tasks.map(function (planned) {
-              // A planned task names its board as main's read model does: its own
-              // project_id, else the workflow's home.
               var taskProjectId = boardOf(entry, planned);
               noteProject(taskProjectId);
               return {
@@ -5024,8 +5031,6 @@
           boardEnds: boardEnds,
           tasks: created.map(function (task) {
             var place = placeOf(task);
-            // A task row tagged with a projectId is on that project's board, as
-            // tasks.list scopes it; an untagged one is on the workflow's home.
             var taskProjectId = boardOf(entry, task);
             noteProject(taskProjectId);
             return {
@@ -5095,8 +5100,10 @@
         };
       }
 
-      // Main's human gate also counts a column whose agent reports no turn end, or no
-      // Automation agent; the mock has neither, so a column that starts no agent is its gate.
+      // Main's human gate (isHumanGate) also counts a column whose agent reports no
+      // turn end, and every column while no Automation agent is set up. The mock
+      // checks only auto_spawn, even where the web build's agent list carries
+      // reportsTurnEnd, so here a column that starts no agent is the only gate.
       function humanGateExit(workflow, task, projectId) {
         if (workflow.state !== 'running') return null;
         var column = laneOf(task.swimlane_id);
@@ -5264,11 +5271,12 @@
           var entry = requireEntry(projectId, workflowId);
           var draft = entry.workflow.draft || { tasks: [], links: [] };
           if (entry.workflow.state !== 'draft') throw new Error('"' + entry.workflow.title + '" has already started.');
-          if (draft.tasks.length === 0) throw new Error('"' + entry.workflow.title + '" has no tasks yet.');
+          if (draft.tasks.length === 0) throw new Error('"' + entry.workflow.title + '" has no tasks yet. Save a plan with kangentic_save_workflow first.');
           var idByKey = {};
           draft.tasks.forEach(function (planned) {
             // Each task starts in its own board's To Do.
-            var todo = todoLane(boardOf(entry, planned));
+            var board = boardOf(entry, planned);
+            var todo = todoLane(board);
             var row;
             if (planned.existing_task_id) {
               // Main's Start takes a board task in where it is (setWorkflowMembership)
@@ -5284,6 +5292,7 @@
                 { title: planned.title, description: planned.description, swimlane_id: todo.id, labels: planned.labels, priority: planned.priority },
                 runSettingsCreateInput(planned),
               ), tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
+              tagBoard(row, entry, board);
               tasks.push(row);
             }
             membership(row, entry, planned);
@@ -5295,10 +5304,12 @@
             links.push({ workflow_id: workflowId, blocker_task_id: idByKey[link.blocker], blocked_task_id: idByKey[link.blocked] });
           });
           var source = entry.workflow.source_task_id ? tasks.find(function (task) { return task.id === entry.workflow.source_task_id; }) : null;
-          // Main's supersedeSourceTask: only a source still in To Do moves to
-          // Done, and only that move makes it superseded (listSupersessions).
+          // Main's supersedeSourceTask: only an unarchived source still in To Do
+          // moves to Done, and only that move makes it superseded
+          // (listSupersessions). Main reads the source on the workflow's home
+          // board and moves it to that board's Done.
           entry.supersededSource = false;
-          var sourceDone = source ? doneLane(boardOf(entry, source)) : null;
+          var sourceDone = source && !source.archived_at ? doneLane(homeOf(entry)) : null;
           if (source && laneOf(source.swimlane_id) && laneOf(source.swimlane_id).role === 'todo' && sourceDone) {
             source.swimlane_id = sourceDone.id;
             source.archived_at = now();
@@ -5356,6 +5367,7 @@
             runSettingsCreateInput(runSettingsOver(null, input)),
           ), tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
           membership(row, entry, { route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [] });
+          tagBoard(row, entry, input.projectId);
           tasks.push(row);
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, true);

@@ -55,13 +55,9 @@ function declaredAppConfigKeys(): Set<string> {
   );
 }
 
-/**
- * The agent ids whose adapter defines `probeAuth`, read from each `*-adapter.ts` file's own
- * `readonly name`. listAgents calls the probe only where an adapter has one, so every other
- * agent reports no auth state and the desktop can never show it as signed out.
- */
-function agentsWithAuthProbe(): Set<string> {
-  const probed = new Set<string>();
+/** Each `*-adapter.ts` file's source, keyed by the agent id in its own `readonly name`. */
+function adapterSources(): Map<string, string> {
+  const sources = new Map<string, string>();
   for (const folder of fs.readdirSync(AGENT_ADAPTERS_ROOT, { withFileTypes: true })) {
     if (!folder.isDirectory()) continue;
     const folderPath = path.join(AGENT_ADAPTERS_ROOT, folder.name);
@@ -69,30 +65,36 @@ function agentsWithAuthProbe(): Set<string> {
       if (!fileName.endsWith('-adapter.ts')) continue;
       const source = fs.readFileSync(path.join(folderPath, fileName), 'utf-8');
       const agentName = source.match(/readonly name = '([^']+)'/)?.[1];
-      if (agentName && /^\s+(?:async\s+)?probeAuth\s*\(/m.test(source)) probed.add(agentName);
+      if (agentName) sources.set(agentName, source);
     }
+  }
+  return sources;
+}
+
+/**
+ * The agent ids whose adapter defines `probeAuth`. listAgents calls the probe only where an
+ * adapter has one, so every other agent reports no auth state and the desktop can never show it
+ * as signed out.
+ */
+function agentsWithAuthProbe(): Set<string> {
+  const probed = new Set<string>();
+  for (const [agentName, source] of adapterSources()) {
+    if (/^\s+(?:async\s+)?probeAuth\s*\(/m.test(source)) probed.add(agentName);
   }
   return probed;
 }
 
 /**
- * Each agent's `runtime.reportsTurnEnd`, read the same way from its `*-adapter.ts` file. Main's
- * agent list reports it, and the Column Manager blocks On agent turn end on a column whose agent
- * says false. The mock's own list leaves it out, which reads as true, so a demo agent that does
- * not carry its adapter's value draws a turn-end group the desktop would refuse.
+ * Each agent's `runtime.reportsTurnEnd`, as its adapter declares it. Main's agent list reports
+ * it, and the Column Manager blocks On agent turn end on a column whose agent says false. The
+ * mock's own list leaves it out, which reads as true, so a demo agent that does not carry its
+ * adapter's value draws a turn-end group the desktop would refuse.
  */
 function adapterTurnEndReports(): Map<string, boolean> {
   const reports = new Map<string, boolean>();
-  for (const folder of fs.readdirSync(AGENT_ADAPTERS_ROOT, { withFileTypes: true })) {
-    if (!folder.isDirectory()) continue;
-    const folderPath = path.join(AGENT_ADAPTERS_ROOT, folder.name);
-    for (const fileName of fs.readdirSync(folderPath)) {
-      if (!fileName.endsWith('-adapter.ts')) continue;
-      const source = fs.readFileSync(path.join(folderPath, fileName), 'utf-8');
-      const agentName = source.match(/readonly name = '([^']+)'/)?.[1];
-      const reported = source.match(/^\s+reportsTurnEnd: (true|false),/m)?.[1];
-      if (agentName && reported) reports.set(agentName, reported === 'true');
-    }
+  for (const [agentName, source] of adapterSources()) {
+    const reported = source.match(/^\s+reportsTurnEnd: (true|false),/m)?.[1];
+    if (reported) reports.set(agentName, reported === 'true');
   }
   return reports;
 }
