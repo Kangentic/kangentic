@@ -10,7 +10,7 @@ export const REPORT_QUIET_MS = 400;
 /** ...or this long after its first addition, whichever comes first. */
 export const REPORT_MAX_WAIT_MS = 8000;
 /** How many reported processes the Stop button can still reach. The oldest go first. */
-const RETAINED_PROCESS_IDS = 500;
+export const RETAINED_PROCESS_IDS = 500;
 const FALLBACK_TASK_TITLE = 'Task';
 
 type ReportSender = (report: LeftoverProcessReport) => void;

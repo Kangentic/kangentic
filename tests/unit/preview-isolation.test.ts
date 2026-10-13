@@ -15,6 +15,11 @@ vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 
 import { previewProjectsRoot } from '../../src/devtools/main/ephemeral-projects';
+import {
+  PREVIEW_STOP_FOR_WORKTREE_REMOVAL,
+  previewPidFilePath,
+  stopWorktreePreviews,
+} from '../../src/devtools/main/worktree-preview-stop';
 
 // CJS scripts (run by node directly, not bundled), loaded the way the other script tests do.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -25,16 +30,26 @@ const isolation = require('../../scripts/preview-isolation.js') as {
   moveIntoTrash: (sourcePaths: string[], trashDir: string) => string[];
   listTrashDirs: (kangenticDir: string) => string[];
   spawnTrashDeleter: (trashDir: string) => void;
+  isWorktreeRemovalStop: (stopFilePath: string) => boolean;
 };
-const { previewGitCeilingDirectories, findOtherPreviewInstances, stoppingMarkerPathFor, moveIntoTrash, listTrashDirs, spawnTrashDeleter } = isolation;
+const {
+  previewGitCeilingDirectories,
+  findOtherPreviewInstances,
+  stoppingMarkerPathFor,
+  moveIntoTrash,
+  listTrashDirs,
+  spawnTrashDeleter,
+  isWorktreeRemovalStop,
+} = isolation;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { isPreviewTrashDir, deletePreviewTrash } = require('../../scripts/preview-trash-delete.js') as {
   isPreviewTrashDir: (candidate: string) => boolean;
   deletePreviewTrash: (trashDir: string) => void;
 };
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { waitForOtherPreviews } = require('../../scripts/worktree-preview.js') as {
+const { waitForOtherPreviews, stopFilePathFor } = require('../../scripts/worktree-preview.js') as {
   waitForOtherPreviews: (worktreeDir: string) => Promise<void>;
+  stopFilePathFor: (worktreeDir: string, port: number) => string;
 };
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -246,6 +261,84 @@ describe('fast exit: move into trash, delete in the background', () => {
     moveIntoTrash([path.join(kangenticDir, 'data'), path.join(kangenticDir, 'preview.lock')], trashDir);
     spawnTrashDeleter(trashDir);
     await expect.poll(() => fs.existsSync(kangenticDir), { timeout: 15000, interval: 100 }).toBe(false);
+  });
+});
+
+/**
+ * dev.js reads its stop file through `isWorktreeRemovalStop` to decide whether the worktree is
+ * removed next (skip the ephemeral cleanup) or the preview is merely stopping (keep it). The
+ * payloads here are the two real writers': the launcher's `--stop` and the task reap's.
+ */
+describe('isWorktreeRemovalStop: what dev.js reads from a stop file', () => {
+  const port = 5198;
+  let worktreeDir: string;
+  let stopFilePath: string;
+  let idleProcess: ChildProcess | null = null;
+
+  beforeEach(() => {
+    worktreeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-stop-reason-'));
+    fs.mkdirSync(path.join(worktreeDir, '.kangentic'));
+    // The path the launcher's --stop and dev.js's watcher both use.
+    stopFilePath = stopFilePathFor(worktreeDir, port);
+  });
+
+  afterEach(async () => {
+    if (idleProcess) {
+      idleProcess.kill();
+      await waitForExit(idleProcess);
+      idleProcess = null;
+    }
+    await fs.promises.rm(worktreeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+
+  it('reads false for the launcher\'s --stop payload, a timestamp, so dev.js keeps its cleanup', () => {
+    // scripts/worktree-preview.js writes String(Date.now()) inline in stopPreview, which it does
+    // not export (calling it would need a live pid and waits up to 45 s), so this writes the same payload.
+    fs.writeFileSync(stopFilePath, String(Date.now()));
+
+    expect(isWorktreeRemovalStop(stopFilePath)).toBe(false);
+  });
+
+  it('reads true for the reap\'s payload, so dev.js skips its cleanup', () => {
+    fs.writeFileSync(stopFilePath, PREVIEW_STOP_FOR_WORKTREE_REMOVAL);
+
+    expect(isWorktreeRemovalStop(stopFilePath)).toBe(true);
+  });
+
+  it('reads true for the file the reap\'s own writer leaves behind', async () => {
+    // A live process that never answers, so the stop gives up unacknowledged and leaves the file it wrote.
+    idleProcess = startIdleProcess();
+    fs.writeFileSync(previewPidFilePath(worktreeDir, port), String(idleProcess.pid));
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    try {
+      const results = await stopWorktreePreviews([worktreeDir], { acknowledgeMs: 300, boundMs: 3000 });
+
+      // Positive control: the stop ran against this preview and wrote the file.
+      expect(results).toEqual([expect.objectContaining({ port, pid: idleProcess.pid, outcome: 'unacknowledged' })]);
+      expect(fs.existsSync(stopFilePath)).toBe(true);
+      expect(isWorktreeRemovalStop(stopFilePath)).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('reads true when the reason is followed by a newline', () => {
+    fs.writeFileSync(stopFilePath, `${PREVIEW_STOP_FOR_WORKTREE_REMOVAL}\n`);
+
+    expect(isWorktreeRemovalStop(stopFilePath)).toBe(true);
+  });
+
+  it('reads false for an empty file', () => {
+    fs.writeFileSync(stopFilePath, '');
+
+    expect(isWorktreeRemovalStop(stopFilePath)).toBe(false);
+  });
+
+  it('reads false for a file that does not exist', () => {
+    expect(fs.existsSync(stopFilePath)).toBe(false);
+
+    expect(isWorktreeRemovalStop(stopFilePath)).toBe(false);
   });
 });
 

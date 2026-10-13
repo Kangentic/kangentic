@@ -22,6 +22,8 @@
  *   into a trash folder and leaves the slow delete to a detached process, so a
  *   closed preview is gone in about a second instead of the 7 it took to delete
  *   two repo clones in place.
+ * - isWorktreeRemovalStop: whether a stop file came from a task's leftover reap,
+ *   which removes the worktree next, so dev.js skips that cleanup entirely.
  */
 
 const fs = require('fs');
@@ -44,6 +46,26 @@ function previewGitCeilingDirectories(ephemeralDataDir, existingValue) {
  *  reaches it, and kept until its cleanup is done. */
 function stoppingMarkerPathFor(worktreeDir, port) {
   return path.join(worktreeDir, '.kangentic', `preview-${port}.stopping`);
+}
+
+/**
+ * What a task's leftover reap writes into the stop file
+ * (PREVIEW_STOP_FOR_WORKTREE_REMOVAL in src/devtools/main/worktree-preview-stop.ts).
+ * The launcher's `--stop` writes a timestamp instead.
+ */
+const WORKTREE_REMOVAL_STOP_REASON = 'worktree-removal';
+
+/**
+ * Whether the stop file at `stopFilePath` says the worktree is removed next.
+ * Only the exact reason counts: a timestamp from `--stop`, an empty file, or
+ * one that cannot be read keeps dev.js's cleanup.
+ */
+function isWorktreeRemovalStop(stopFilePath) {
+  try {
+    return fs.readFileSync(stopFilePath, 'utf-8').trim() === WORKTREE_REMOVAL_STOP_REASON;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -155,6 +177,8 @@ function spawnTrashDeleter(trashDir) {
 module.exports = {
   previewGitCeilingDirectories,
   stoppingMarkerPathFor,
+  WORKTREE_REMOVAL_STOP_REASON,
+  isWorktreeRemovalStop,
   findOtherPreviewInstances,
   isProcessAlive,
   moveIntoTrash,
