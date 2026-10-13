@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
+import { namingAgentReady } from '../../shared/answer-agent';
 import { useConfigStore } from '../stores/config-store';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
@@ -12,22 +13,22 @@ interface NameFromPromptButtonProps {
 }
 
 /**
- * Returns true when the "Name from prompt" affordance should be visible:
- * the active project's default agent is detected and exposes the summarize
- * capability, and `description` is non-empty.
+ * Returns true when the "Name from prompt" affordance should be visible: the
+ * Automation agent can name tasks (`namingAgentReady`, the predicate main's
+ * summarize handler refuses on), and `description` is non-empty. With no
+ * Automation agent the button is hidden.
  *
  * Exposed separately from `<NameFromPromptButton>` so callers can size their
  * title input (e.g. add right padding) without duplicating the gating logic.
  */
 export function useNameFromPromptAvailable(description: string): boolean {
   const agentList = useConfigStore((s) => s.agentList);
-  const projectAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
+  const automationConfig = useConfigStore((s) => s.globalConfig.automation);
 
-  const summarizeAvailable = useMemo(() => {
-    if (!projectAgent) return false;
-    const adapter = agentList.find((entry) => entry.name === projectAgent);
-    return !!adapter?.found && !!adapter?.supportsSummarize;
-  }, [agentList, projectAgent]);
+  const summarizeAvailable = useMemo(
+    () => namingAgentReady(agentList, automationConfig, true),
+    [agentList, automationConfig],
+  );
 
   if (!summarizeAvailable) return false;
   if (description.trim().length === 0) return false;
@@ -35,8 +36,8 @@ export function useNameFromPromptAvailable(description: string): boolean {
 }
 
 /**
- * Renders a square icon button (Sparkles) that calls the active project's agent
- * adapter via `agent.summarize` and pipes the result back through `onTitle`.
+ * Renders a square icon button (Sparkles) that asks the Automation agent for a
+ * title via `agent.summarize` and pipes the result back through `onTitle`.
  * Returns `null` when the affordance is unavailable (see useNameFromPromptAvailable).
  *
  * Sized to sit alongside a title input in a horizontal flex row (NOT inside it):
@@ -63,7 +64,10 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
     if (!promptText || isPending) return;
     setIsPending(true);
     try {
-      const result = await window.electronAPI.agent.summarize({ prompt: promptText });
+      const result = await window.electronAPI.agent.summarize({
+        prompt: promptText,
+        projectId: useProjectStore.getState().currentProject?.id ?? null,
+      });
       if (!mountedRef.current) return;
       if (result.ok) {
         onTitle(result.title);

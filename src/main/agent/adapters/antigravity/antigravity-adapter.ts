@@ -24,6 +24,7 @@ import type {
   AnswerFromContextOptions,
   ParsedTranscript,
   SpawnCommandOptions,
+  SummarizeOptions,
 } from '../../agent-adapter';
 import type {
   AgentCapabilities,
@@ -286,8 +287,13 @@ export class AntigravityAdapter implements AgentAdapter {
    * used. Runs in a pre-trusted scratch cwd so it neither blocks on the
    * trust prompt nor hijacks the project workspace's `agy -c` mapping.
    */
-  async summarize(prompt: string, cliPath: string, _cwd: string): Promise<string> {
-    const response = await runAntigravityPrint(cliPath, buildSummarizePrompt(prompt));
+  async summarize(prompt: string, cliPath: string, _cwd: string, options?: SummarizeOptions): Promise<string> {
+    // The answer run's model and effort flags, omitted when unset.
+    const flags = [
+      ...(options?.model ? ['--model', options.model] : []),
+      ...(options?.effort ? ['--effort', options.effort] : []),
+    ];
+    const response = await runAntigravityPrint(cliPath, buildSummarizePrompt(prompt), flags);
     const cleaned = cleanSummarizeOutput(response);
     if (!cleaned) throw new Error('summarize produced empty output');
     return cleaned;

@@ -407,7 +407,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `agent:listCommands` | invoke | List available agent commands and skills |
-| `agent:summarize` | invoke | Summarize a free-form prompt into a short task title via the active project's default agent (or `input.agentName`). Returns `{ ok, title } \| { ok: false, reason }`. Sliding-window rate limit per `AppConfig.autoNameRateLimitPerHour`. |
+| `agent:summarize` | invoke | Summarize a free-form prompt into a short task title on the Automation agent (`AppConfig.automation`), its model and effort, in the shared answer home. Input carries the interaction-time `projectId` and `taskId`. Refuses with the setup reason when no Automation agent can name (`namingAgentReady`), before taking a rate-limit slot. Returns `{ ok, title } \| { ok: false, reason }`. Sliding-window rate limit per `AppConfig.autoNameRateLimitPerHour`. |
 
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |

@@ -7,14 +7,17 @@
  * comes from here for every terminal, and `setCommandTerminalLabel` announces it
  * on 'session-changed' for the window title, the Agent Monitor, and the phone.
  *
- * The name comes from the terminal's OWN agent (the one it spawned with, which
- * is its project's default), summarizing in the terminal's own project folder.
- * The renderer used to ask the open project's default agent instead, which was
- * the wrong agent for a background project's terminal.
+ * The name comes from the Automation agent (`AppConfig.automation`), its model
+ * and effort, run in the shared answer home: a few words of title need neither
+ * the terminal's own agent (which ran on the project default, Opus here) nor
+ * the project's instructions. With no Automation agent, naming is off and the
+ * terminal keeps its "Command Terminal N" title, the same rule the task title
+ * suggestion follows.
  */
 import { EventType, PromptReason, type Session, type SessionEvent } from '../../../shared/types';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
-import type { AgentAdapter } from '../agent-adapter';
+import type { ResolvedAutomationAgent } from '../../automations/automation-agent';
+import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from './answer-run-directory';
 import { tryAcquireSummarizeSlot } from './summarize-rate-limit';
 
 export interface CommandTerminalNamerSessionSource {
@@ -23,23 +26,15 @@ export interface CommandTerminalNamerSessionSource {
   off(event: 'event', listener: (sessionId: string, event: SessionEvent) => void): unknown;
   off(event: 'session-removed', listener: (sessionId: string) => void): unknown;
   getSession(sessionId: string): Session | undefined;
-  getSessionAgentName(sessionId: string): string | undefined;
   setCommandTerminalLabel(sessionId: string, label: string): boolean;
-}
-
-export interface CommandTerminalNamerConfig {
-  /** `AppConfig.autoNameRateLimitPerHour` (0 means no limit). */
-  rateLimitPerHour: number;
-  /** The CLI path override for this agent, if the user set one. */
-  cliPathOverride: string | null;
 }
 
 export interface CommandTerminalNamerDeps {
   sessionManager: CommandTerminalNamerSessionSource;
-  /** The adapter for an agent name, or undefined when none is registered. */
-  getAdapter: (agentName: string) => Pick<AgentAdapter, 'detect' | 'summarize'> | undefined;
-  /** The effective settings for the terminal's project folder. */
-  readConfig: (projectRoot: string, agentName: string) => CommandTerminalNamerConfig;
+  /** The Automation agent resolved for naming, or why it cannot name. */
+  resolveNamingAgent: () => Promise<ResolvedAutomationAgent>;
+  /** `AppConfig.autoNameRateLimitPerHour` (0 means no limit). */
+  readRateLimit: () => number;
   /** Injectable for tests; defaults to the shared summarize window. */
   tryAcquireSlot?: (limitPerHour: number) => boolean;
 }
@@ -87,21 +82,24 @@ export class CommandTerminalNamer {
     // First prompt wins, and only once: a later prompt never renames it.
     this.attemptedSessionIds.add(sessionId);
     if (session.commandTerminalLabel) return;
-    void this.nameFromPrompt(sessionId, session.cwd, promptText);
+    void this.nameFromPrompt(sessionId, promptText);
   };
 
-  private async nameFromPrompt(sessionId: string, projectRoot: string, promptText: string): Promise<void> {
+  private async nameFromPrompt(sessionId: string, promptText: string): Promise<void> {
     try {
-      const agentName = this.deps.sessionManager.getSessionAgentName(sessionId);
-      if (!agentName) return;
-      const adapter = this.deps.getAdapter(agentName);
-      if (!adapter || typeof adapter.summarize !== 'function') return;
-      const config = this.deps.readConfig(projectRoot, agentName);
+      // Resolved BEFORE the rate limit, so a terminal that cannot be named
+      // spends no slot.
+      const resolved = await this.deps.resolveNamingAgent();
+      if (!resolved.ok || typeof resolved.adapter.summarize !== 'function') return;
       const tryAcquireSlot = this.deps.tryAcquireSlot ?? tryAcquireSummarizeSlot;
-      if (!tryAcquireSlot(config.rateLimitPerHour)) return;
-      const detection = await adapter.detect(config.cliPathOverride);
-      if (!detection.found || !detection.path) return;
-      const title = await adapter.summarize(promptText, detection.path, projectRoot);
+      if (!tryAcquireSlot(this.deps.readRateLimit())) return;
+      const answerHome = await ensureAnswerHomeDirectory();
+      const title = await withAnswerRunDirectory((runDirectory) => resolved.adapter.summarize!(
+        promptText,
+        resolved.cliPath,
+        answerHome,
+        { model: resolved.model, effort: resolved.effort, runDirectory },
+      ));
       if (this.disposed || !title) return;
       this.deps.sessionManager.setCommandTerminalLabel(sessionId, title);
     } catch (error) {

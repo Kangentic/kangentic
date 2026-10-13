@@ -653,6 +653,14 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
   // renders once `description` is non-empty, and no existing test in this
   // file ever fills the description - so the whole wiring was unverified.
   test('Name from prompt button appears once the description is filled and updates the title', async () => {
+    // Naming runs on the Automation agent, which the mock config leaves unset.
+    await page.evaluate(async () => {
+      await window.electronAPI.config.set({ automation: { agent: 'claude', model: 'claude-haiku-5-5', effort: null } });
+      const stores = (window as unknown as {
+        __zustandStores?: { config?: { getState: () => { loadConfig: () => Promise<void> } } };
+      }).__zustandStores;
+      await stores?.config?.getState().loadConfig();
+    });
     await openBacklogView(page);
     await openNewBacklogDialog(page);
     const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');

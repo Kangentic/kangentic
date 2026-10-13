@@ -300,30 +300,30 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 
 ## Auto-Name (Summarize)
 
-Always-on feature that suggests a task title from the task description, via each adapter's optional `summarize?(prompt, cliPath, cwd)` method. Adapters that omit `summarize` are gated out automatically (Warp has no headless run; Aider, Ollama and Goose have headless answer runs but no summarize yet): the renderer hides the button and never schedules the rename toast.
+Suggests a task title from the task description, and names a Command Terminal from its first prompt, via each adapter's optional `summarize?(prompt, cliPath, cwd, options)` method. Both run on the **Automation agent** (Settings > Workflows, `AppConfig.automation`), at its model and effort, never on the project's default agent: the project default was Opus at xhigh, the top tier for four to eight words. With no Automation agent, or one whose adapter has no `summarize` (Warp has no headless run; Aider, Ollama and Goose have headless answer runs but no summarize yet), naming is off: the renderer hides the button and never schedules the rename toast, a Command Terminal keeps "Command Terminal N", and main's handler refuses the call. Renderer and main read the same predicate, `namingAgentReady` (`src/shared/answer-agent.ts`), and main resolves the agent through the resolver Condition checks use (`src/main/automations/automation-agent.ts`), so the detection cache and the effort rule exist once.
 
 ### Surfaces
 
-- **`<NameFromPromptButton>`** (`src/renderer/components/NameFromPromptButton.tsx`) is a square Sparkles icon button placed alongside the title input (not inside it). It exposes a `useNameFromPromptAvailable(description)` hook and is used by `NewTaskDialog` and `TaskDetailEditForm`. The button shows only when the project's default agent declares `supportsSummarize`, the agent CLI is detected, and the description is non-empty.
-- **30-second rename toast** (wired in `App.tsx`) fires once per task per app run for placeholder-titled tasks (`fix`, `wip`, etc., or empty). The "don't re-ask" set is persisted in `AppConfig.autoNameAskedTaskIds` (drained on task delete) so a dismissed suggestion does not reappear after restart.
+- **`<NameFromPromptButton>`** (`src/renderer/components/NameFromPromptButton.tsx`) is a square Sparkles icon button placed alongside the title input (not inside it). It exposes a `useNameFromPromptAvailable(description)` hook and is used by `NewTaskDialog` and `TaskDetailEditForm`. The button shows only when the Automation agent can name tasks (`namingAgentReady`) and the description is non-empty.
+- **30-second rename toast** (wired in `App.tsx`) fires once per task per app run for placeholder-titled tasks (`fix`, `wip`, etc., or empty). The "don't re-ask" set is persisted in `AppConfig.autoNameAskedTaskIds` (drained on task delete) so a dismissed suggestion does not reappear after restart. The request carries the task's project and task ids, read when it was scheduled.
 
 ### Implementation
 
-Implementations live next to each adapter and call the shared `runCliPrintSummarize` helper in `src/main/agent/shared/auto-name.ts`, the title shape of the headless runner (`runCliPrint`, `src/main/agent/shared/cli-print.ts`). An answer run uses its answer shape, `runCliPrintAnswer` in `cli-answer.ts`. Each adapter picks the right `args`, `promptVia`, and (if needed) `extractRaw`:
+Implementations live next to each adapter and call the shared `runCliPrintSummarize` helper in `src/main/agent/shared/auto-name.ts`, the title shape of the headless runner (`runCliPrint`, `src/main/agent/shared/cli-print.ts`). An answer run uses its answer shape, `runCliPrintAnswer` in `cli-answer.ts`. The run's `cwd` is the shared answer home (`ensureAnswerHomeDirectory`), never the project: a title needs nothing from the repository, and a project root loads the agent's instructions into every call. Each adapter takes the same model (and effort, where its answer run has one) and trust flags its own `answerFromContext` uses there, and picks the right `args`, `promptVia`, and (if needed) `extractRaw`:
 
 | Agent | Invocation | Prompt delivery |
 |-------|-----------|-----------------|
-| Claude | `claude --print --permission-mode plan` | stdin |
-| Codex | `codex exec --skip-git-repo-check` | stdin |
-| Gemini | `gemini --output-format text` | stdin (non-TTY headless) |
-| Qwen Code | `qwen --output-format text` | stdin (non-TTY headless) |
-| OpenCode | `opencode run -q` | stdin |
-| Kimi | `kimi --print --quiet` | stdin |
-| Cursor | `agent --output-format text -p "<prompt>"` | positional arg |
-| Droid | `droid exec -o text "<prompt>"` | positional arg |
-| Copilot | `copilot --silent -p "<prompt>"` | positional arg |
-| Grok Build | `grok --output-format plain -p "<prompt>"` | positional arg |
-| Antigravity | `agy -p "<prompt>" --output-format json` through a hidden PTY (`agy -p` hangs without a TTY, upstream #318); runs in a pre-trusted scratch cwd so it never touches the project workspace's `agy -c` mapping | flag arg |
+| Claude | `claude --print --no-session-persistence --permission-prompts none --tools '' --strict-mcp-config --settings <file> --output-format json [--model] [--effort]`, the answer run's flags (`answerArgs`), with no plan mode, which rerouted a Haiku request to Sonnet | stdin |
+| Codex | `codex exec --skip-git-repo-check [--model]` | stdin |
+| Gemini | `gemini --skip-trust --output-format text [--model]` | stdin (non-TTY headless) |
+| Qwen Code | `qwen --output-format text [--model]` | stdin (non-TTY headless) |
+| OpenCode | `opencode run [--model]` | stdin |
+| Kimi | `kimi --print --quiet [--model]` | stdin |
+| Cursor | `agent --trust --output-format text [--model] -p "<prompt>"` | positional arg |
+| Droid | `droid exec -o text [--model] "<prompt>"` | positional arg |
+| Copilot | `copilot --silent [--model] [--reasoning-effort] -p "<prompt>"` | positional arg |
+| Grok Build | `grok --output-format plain [--model] [--reasoning-effort] -p "<prompt>"` | positional arg |
+| Antigravity | `agy -p "<prompt>" --output-format json [--model] [--effort]` through a hidden PTY (`agy -p` hangs without a TTY, upstream #318); runs in a pre-trusted scratch cwd so it never touches the project workspace's `agy -c` mapping | flag arg |
 | Warp | (no headless run) | n/a |
 | Aider | (headless answer run only; summarize not wired) | n/a |
 | Ollama | (headless answer run only; summarize not wired) | n/a |

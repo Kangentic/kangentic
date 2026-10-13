@@ -7,7 +7,7 @@ import { discoverDroidCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -213,13 +213,13 @@ export class DroidAdapter implements AgentAdapter {
     return [];
   }
 
-  async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
+  async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     // `droid exec` runs non-interactively. Default output format is `text`. The prompt
     // is delivered as a positional arg (also accepts stdin pipes; we use args for
     // explicit alignment with documented usage).
     return runCliPrintSummarize({
       cliPath,
-      args: ['exec', '-o', 'text'],
+      args: ['exec', '-o', 'text', ...(options?.model ? ['--model', options.model] : [])],
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',

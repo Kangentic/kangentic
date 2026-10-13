@@ -36,6 +36,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { registerResumeController, releaseResumeController } from '../handlers/session-resume-controllers';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { checkAutomationConditions, type ConditionCheckDeps } from '../../automations/condition-check/condition-check';
+import { automationAgentDeps } from './automation-agent-deps';
 import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 
 /**
@@ -139,13 +140,7 @@ export function createTransitionEngine(
 
 /** What a Condition check reads from the app: the config, and the agent registry. */
 export function conditionCheckDeps(context: IpcContext): ConditionCheckDeps {
-  return {
-    loadConfig: () => context.configManager.load(),
-    listAgents: async () => agentRegistry.list().flatMap((name) => {
-      const adapter = agentRegistry.get(name);
-      return adapter ? [{ name, adapter }] : [];
-    }),
-  };
+  return automationAgentDeps(context);
 }
 
 export interface AgentSpawnOptions {

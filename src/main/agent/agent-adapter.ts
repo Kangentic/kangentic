@@ -1,5 +1,6 @@
 import type { AnswerStreamEvent } from './shared/cli-answer';
 import type {
+  AgentCallUsage,
   SessionRecord,
   AgentPermissionEntry,
   PermissionMode,
@@ -286,6 +287,30 @@ export interface AnswerFromContextOptions {
    * has none; the adapter then makes its own.
    */
   runDirectory?: string;
+  /**
+   * Called with what the CLI reported the call cost: the model that answered,
+   * its tokens and its cost. An adapter whose CLI reports none never calls it,
+   * and the caller records null rather than an estimate. A failed call that
+   * still reported usage calls it before throwing, since it was still paid for.
+   */
+  onUsage?: (usage: AgentCallUsage) => void;
+}
+
+/**
+ * How a one-shot title run is made. Every field is optional, so a caller with
+ * none gets the CLI's own defaults.
+ */
+export interface SummarizeOptions {
+  /** Adapter-specific model id, or absent for the CLI's default. Each adapter
+   *  owns the flag, exactly as for `answerFromContext`. */
+  model?: string | null;
+  /** Adapter-specific effort level, already checked against what the CLI
+   *  reports. Read only by an adapter whose answer run takes an effort. */
+  effort?: string | null;
+  /** A directory this run owns, as for `AnswerFromContextOptions.runDirectory`. */
+  runDirectory?: string;
+  /** As for `AnswerFromContextOptions.onUsage`. */
+  onUsage?: (usage: AgentCallUsage) => void;
 }
 
 /** What an answer session is started with. It is fixed for the session's life:
@@ -1061,18 +1086,24 @@ export interface AgentAdapter {
   /**
    * Optional one-shot summarization. Spawns the agent CLI in its non-interactive
    * `--print` (or equivalent) mode to turn a free-form description into a short
-   * task title. Used by the auto-name-tasks-from-prompt feature. Adapters that
-   * lack a non-interactive print mode (Aider) omit this; the renderer hides the
-   * "Name from prompt" affordances when the active adapter has no capability.
+   * task title. Used by the task title suggestion and the Command Terminal
+   * namer, both of which run it on the Automation agent. Adapters that lack a
+   * non-interactive print mode (Aider) omit this; the renderer hides the "Name
+   * from prompt" affordances unless the Automation agent has it.
+   *
+   * `cwd` is the shared answer home (`answer-run-directory.ts`), never the
+   * project: a title needs nothing from the repository, and a project root
+   * loads its agent instructions into every call.
    *
    * Implementations should:
-   * - Use the adapter's read-only / no-edit equivalent of plan mode where possible
-   *   (the prompt is pure summarization, no file edits required).
+   * - Take the same flags their `answerFromContext` runs with in the answer
+   *   home: the model flag when `options.model` is set, the trust flag the CLI
+   *   needs in a folder it has not seen, and its read-only mode.
    * - Apply a strict timeout (the helper `runCliPrintSummarize` defaults to 15s).
    * - Throw on failure rather than returning placeholder text. The IPC handler
    *   converts thrown errors to `{ ok: false, reason }`.
    */
-  summarize?(prompt: string, cliPath: string, cwd: string): Promise<string>;
+  summarize?(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string>;
 
   /**
    * What this adapter's `answerFromContext` run can do beyond the base, declared

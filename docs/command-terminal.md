@@ -98,11 +98,15 @@ push finds nothing to close and the branch switch keeps its window.
 
 ## Naming runs in main
 
-A terminal gets its name from its first prompt, summarized by its own agent CLI in its own project
-folder, through `CommandTerminalNamer` (`src/main/agent/shared/command-terminal-namer.ts`). It used
-to be named in the renderer by the open project's default agent, so a terminal a phone started, or
-one in a project the desktop did not have open, never got one. The namer shares the summarize rate
-limit (`autoNameRateLimitPerHour`) with the task namer, skips the synthetic PTY-activity prompt,
+A terminal gets its name from its first prompt, summarized by the Automation agent at its model and
+effort in the shared answer home, through `CommandTerminalNamer`
+(`src/main/agent/shared/command-terminal-namer.ts`). With no Automation agent, naming is off and the
+terminal keeps its "Command Terminal N" title. It used to be named in the renderer by the open
+project's default agent, so a terminal a phone started, or one in a project the desktop did not have
+open, never got one; and it later ran on the terminal's own agent in its project folder, which put a
+four-word title on the project's default model with the project's instructions loaded. The namer
+shares the summarize rate limit (`autoNameRateLimitPerHour`) with the task namer, spends no slot
+when it cannot name, skips the synthetic PTY-activity prompt,
 and writes through `setCommandTerminalLabel`, which emits `session-changed` once. The window title,
 the Monitor row, the phone's list and its push alerts all read the name from the registry row
 through `commandTerminalDisplayName`, falling back to "Command Terminal N".

@@ -24,12 +24,14 @@ import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintSummarize, buildSummarizePrompt, SUMMARIZE_JSON_OUTPUT_BUDGET } from '../../shared/auto-name';
 import {
   runCliPrintAnswer,
   extractStreamedAnswer,
+  createJsonResultExtractor,
   createAnswerStreamReducer,
   forwardStreamLines,
+  ANSWER_JSON_OUTPUT_BUDGET,
   ANSWER_STREAM_OUTPUT_BUDGET,
   type AnswerStreamEvent,
 } from '../../shared/cli-answer';
@@ -51,6 +53,7 @@ import type {
   AnswerSessionInput,
   ParsedSubagentUsage,
   SubagentTranscriptSignature,
+  SummarizeOptions,
 } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -197,7 +200,14 @@ function answerArgs(input: {
     // first text at 4.8s of a 5.5s call); with them the model's deltas come
     // through as written (measured: 1.3s to the first). `--verbose` is
     // required alongside stream-json in print mode.
-    ...(input.streaming ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'] : []),
+    //
+    // A run with no stream prints one JSON object instead of bare text: the
+    // answer plus what the call cost (`usage`, `modelUsage`, `total_cost_usd`),
+    // which is how a background call's model and tokens reach its record.
+    // Verified on CLI 2.1.296 with these exact flags.
+    ...(input.streaming
+      ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages']
+      : ['--output-format', 'json']),
     ...(input.model ? ['--model', input.model] : []),
     ...(input.effort ? ['--effort', input.effort] : []),
   ];
@@ -207,6 +217,32 @@ function answerArgs(input: {
  *  `answerCapabilities` for the measurement behind the split. */
 function answerEnv(effort: string | null): { env?: Record<string, string> } {
   return effort === null || effort === 'low' ? { env: { MAX_THINKING_TOKENS: '0' } } : {};
+}
+
+/**
+ * Run `work` with a directory for the run's config files: the caller's, or one
+ * made here and removed whole when the call ends.
+ *
+ * The MCP config it may hold carries a live token, so it exists only for the
+ * call. `force` because Windows may still hold the handle for a beat after the
+ * child exits; `force` only ignores a missing path, so a handle Windows still
+ * holds throws EBUSY, which is caught: it would otherwise replace the answer or
+ * the real error, and the stale-directory sweep takes the folder later. A
+ * caller's directory is the caller's to remove.
+ */
+async function withConfigDirectory<T>(runDirectory: string | undefined, work: (directory: string) => Promise<T>): Promise<T> {
+  const directory = runDirectory ?? fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
+  try {
+    return await work(directory);
+  } finally {
+    if (!runDirectory) {
+      try {
+        fs.rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Left for the sweep in answer-run-directory.ts.
+      }
+    }
+  }
 }
 
 /** The line that ends a stream-json turn. */
@@ -555,13 +591,27 @@ export class ClaudeAdapter implements AgentAdapter {
     return parseClaudeTranscriptToolResultTokens(filePath, input.sinceMs, input.untilMs);
   }
 
-  async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
-    return runCliPrintSummarize({
+  /**
+   * A title on the answer run's flags. It used to be `--print --permission-mode
+   * plan` in the project root with no model: every call landed on the CLI's
+   * default model (Opus) and read the project's CLAUDE.md, built-in tools and
+   * MCP servers, about 90k cache-write plus 31k cache-read tokens for a 4 to 8
+   * word title (13 runs audited on 2026-10-13), and each left a transcript in
+   * the project's resume list. `answerArgs` drops all of that, and `cwd` is the
+   * answer home. No plan mode: it rerouted a `--model haiku` call to Sonnet
+   * (see `answerArgs`).
+   */
+  async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
+    const effort = options?.effort ?? null;
+    return withConfigDirectory(options?.runDirectory, (directory) => runCliPrintSummarize({
       cliPath,
-      args: ['--print', '--permission-mode', 'plan'],
+      args: answerArgs({ directory, retrieval: undefined, streaming: false, model: options?.model, effort }),
       prompt: buildSummarizePrompt(prompt),
       cwd,
-    });
+      extractRaw: createJsonResultExtractor(options?.onUsage),
+      outputBudget: SUMMARIZE_JSON_OUTPUT_BUDGET,
+      ...answerEnv(effort),
+    }));
   }
 
   /**
@@ -621,26 +671,30 @@ export class ClaudeAdapter implements AgentAdapter {
     const retrieval = options?.retrieval;
     const streaming = options?.onEvent !== undefined;
     const effort = options?.effort ?? null;
-    // The run's own directory for its config files; one made here, and removed
-    // whole when the call ends, for a caller that passed none.
-    const ownsDirectory = !options?.runDirectory;
-    const configDirectory = options?.runDirectory ?? fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
+    const onUsage = options?.onUsage;
 
-    try {
-      return await runCliPrintAnswer({
-        cliPath,
-        args: answerArgs({ directory: configDirectory, retrieval, streaming, model, effort }),
-        // In stream mode stdout is a transcript of JSON lines, not the answer.
-        // The final answer is the last assistant turn's text; the runner's
-        // `extractRaw` seam is exactly where that reduction belongs.
-        ...(streaming ? { extractRaw: extractStreamedAnswer } : {}),
-        // And stdout is a transcript, not an answer: tool results and per-delta
-        // envelopes for a two-paragraph answer run to hundreds of kilobytes.
-        // The answer-sized budget killed the CLI mid-search.
-        ...(streaming ? { outputBudget: ANSWER_STREAM_OUTPUT_BUDGET } : {}),
-        // Forward each line's events as they land. A chunk can end mid-line,
-        // so lines are reassembled across chunks before parsing.
-        ...(streaming ? { onChunk: makeStreamForwarder(options.onEvent!) } : {}),
+    return withConfigDirectory(options?.runDirectory, (configDirectory) => runCliPrintAnswer({
+      cliPath,
+      args: answerArgs({ directory: configDirectory, retrieval, streaming, model, effort }),
+      ...(streaming
+        ? {
+          // In stream mode stdout is a transcript of JSON lines, not the
+          // answer. The final answer is the last assistant turn's text; the
+          // runner's `extractRaw` seam is exactly where that reduction belongs.
+          extractRaw: (stdout: string) => extractStreamedAnswer(stdout, onUsage),
+          // And stdout is a transcript, not an answer: tool results and
+          // per-delta envelopes for a two-paragraph answer run to hundreds of
+          // kilobytes. The answer-sized budget killed the CLI mid-search.
+          outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+          // Forward each line's events as they land. A chunk can end
+          // mid-line, so lines are reassembled across chunks before parsing.
+          onChunk: makeStreamForwarder(options.onEvent!),
+        }
+        : {
+          // One JSON object: the answer inside an envelope of usage.
+          extractRaw: createJsonResultExtractor(onUsage),
+          outputBudget: ANSWER_JSON_OUTPUT_BUDGET,
+        }),
       // NO EXTENDED THINKING at the default level, and this is the latency of
       // the feature.
       //
@@ -655,25 +709,10 @@ export class ClaudeAdapter implements AgentAdapter {
       //
       // `MAX_THINKING_TOKENS` is Claude Code's own control, which is why this
       // lives in the Claude adapter rather than in the shared runner.
-        ...answerEnv(effort),
-        prompt,
-        cwd,
-      });
-    } finally {
-      // The MCP config carries a live token. It exists only for the duration of
-      // one call, and `force` because Windows may still hold the handle for a
-      // beat after the child exits. A caller's run directory is the caller's
-      // to remove. `force` only ignores a missing path, so a handle Windows still
-      // holds throws EBUSY; caught, or it would replace the answer or the real
-      // error, and the stale-directory sweep takes the folder later.
-      if (ownsDirectory) {
-        try {
-          fs.rmSync(configDirectory, { recursive: true, force: true });
-        } catch {
-          // Left for the sweep in answer-run-directory.ts.
-        }
-      }
-    }
+      ...answerEnv(effort),
+      prompt,
+      cwd,
+    }));
   }
 
   /**

@@ -22,7 +22,7 @@
  * already considered.
  */
 import type { Session } from '../../shared/types';
-import { useProjectStore } from '../stores/project-store';
+import { namingAgentReady } from '../../shared/answer-agent';
 import { useBoardStore } from '../stores/board-store';
 import { useConfigStore } from '../stores/config-store';
 import { useSessionStore } from '../stores/session-store';
@@ -48,17 +48,13 @@ export function markAutoNameAsked(taskId: string): void {
   });
 }
 
-/** Returns true if the given project's default agent has the summarize capability
- *  AND is detected on disk. The IPC handler resolves to the same adapter, so this
- *  keeps the renderer-side gating consistent with what the main process can satisfy. */
-export function projectAgentCanSummarize(projectId: string | null | undefined): boolean {
-  if (!projectId) return false;
-  const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
-  if (!project) return false;
-  const adapterName = project.default_agent;
-  if (!adapterName) return false;
-  const adapter = useConfigStore.getState().agentList.find((entry) => entry.name === adapterName);
-  return !!adapter?.found && !!adapter?.supportsSummarize;
+/** True when the Automation agent can name tasks: chosen, installed, with a model
+ *  when it needs one, and able to summarize. The IPC handler refuses on the same
+ *  predicate (`namingAgentReady`), so the suggestion is never offered for a call
+ *  main would refuse. With no Automation agent, naming is off. */
+export function automationAgentCanName(): boolean {
+  const { agentList, globalConfig } = useConfigStore.getState();
+  return namingAgentReady(agentList, globalConfig.automation, true);
 }
 
 /** Schedule a one-shot 30-second timer that suggests renaming a task whose
@@ -83,7 +79,7 @@ export function scheduleAutoNameSuggestion(session: Session): void {
   if (!isPlaceholderTitle(task.title, task.id)) return;
   if (!task.description.trim()) return;
 
-  if (!projectAgentCanSummarize(session.projectId)) return;
+  if (!automationAgentCanName()) return;
 
   const timer = setTimeout(async () => {
     autoNameTimers.delete(session.taskId);
@@ -99,7 +95,11 @@ export function scheduleAutoNameSuggestion(session: Session): void {
     if (!liveSession || liveSession.status !== 'running') return;
 
     try {
-      const result = await window.electronAPI.agent.summarize({ prompt: latest.description });
+      const result = await window.electronAPI.agent.summarize({
+        prompt: latest.description,
+        projectId: session.projectId ?? null,
+        taskId: session.taskId,
+      });
       if (!result.ok || !result.title) return;
       const suggested = result.title;
       // The board may have moved on; only suggest if the task still exists with a placeholder.

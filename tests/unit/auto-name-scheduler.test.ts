@@ -47,7 +47,7 @@ const { useProjectStore, useBoardStore, useConfigStore, useSessionStore, useToas
 import {
   scheduleAutoNameSuggestion,
   markAutoNameAsked,
-  projectAgentCanSummarize,
+  automationAgentCanName,
   cancelAutoNameTimersAndClear,
   autoNameTimers,
   autoNameAsked,
@@ -98,6 +98,7 @@ function makeTask(overrides: { id?: string; title?: string; description?: string
   };
 }
 
+/** An agent that can be the Automation agent: it answers, takes a model, and summarizes. */
 function makeAdapter(overrides: Partial<AgentDetectionInfo> = {}): AgentDetectionInfo {
   return {
     name: 'claude',
@@ -108,6 +109,8 @@ function makeAdapter(overrides: Partial<AgentDetectionInfo> = {}): AgentDetectio
     permissions: [{ mode: 'default', label: 'Default' }],
     defaultPermission: 'default',
     supportsSummarize: true,
+    supportsAnswerFromContext: true,
+    answerCapabilities: { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' },
     ...overrides,
   };
 }
@@ -115,6 +118,8 @@ function makeAdapter(overrides: Partial<AgentDetectionInfo> = {}): AgentDetectio
 interface ConfigFixture {
   autoNameAskedTaskIds?: string[];
 }
+
+const READY_AUTOMATION = { agent: 'claude', model: 'claude-haiku-5-5', effort: null };
 
 function setupStores(options: {
   task?: ReturnType<typeof makeTask> | null;
@@ -124,6 +129,8 @@ function setupStores(options: {
   sessionSequence?: Array<Session | null>;
   agents?: AgentDetectionInfo[];
   projects?: Array<{ id: string; default_agent: string | null }>;
+  /** `AppConfig.automation` in the global config; defaults to a ready Automation agent. */
+  automation?: AppConfig['automation'];
   config?: ConfigFixture;
   updateConfig?: ReturnType<typeof vi.fn>;
   addToast?: ReturnType<typeof vi.fn>;
@@ -154,6 +161,9 @@ function setupStores(options: {
   useConfigStore.getState.mockReturnValue({
     config: {
       autoNameAskedTaskIds: options.config?.autoNameAskedTaskIds ?? [],
+    } as Partial<AppConfig>,
+    globalConfig: {
+      automation: 'automation' in options ? options.automation : READY_AUTOMATION,
     } as Partial<AppConfig>,
     agentList: options.agents ?? [makeAdapter()],
     updateConfig: options.updateConfig ?? vi.fn(async () => {}),
@@ -306,7 +316,7 @@ describe('scheduleAutoNameSuggestion - prechecks', () => {
     expect(autoNameTimers.size).toBe(0);
   });
 
-  it('returns early when the project default agent does not support summarize', () => {
+  it('returns early when the Automation agent does not support summarize', () => {
     setupStores({
       task: makeTask({ title: 'fix bug' }),
       agents: [makeAdapter({ supportsSummarize: false })],
@@ -315,11 +325,17 @@ describe('scheduleAutoNameSuggestion - prechecks', () => {
     expect(autoNameTimers.size).toBe(0);
   });
 
-  it('returns early when the project default agent is not found on disk', () => {
+  it('returns early when the Automation agent is not found on disk', () => {
     setupStores({
       task: makeTask({ title: 'fix bug' }),
       agents: [makeAdapter({ found: false })],
     });
+    scheduleAutoNameSuggestion(makeSession());
+    expect(autoNameTimers.size).toBe(0);
+  });
+
+  it('returns early when no Automation agent is set', () => {
+    setupStores({ task: makeTask({ title: 'fix bug' }), automation: undefined });
     scheduleAutoNameSuggestion(makeSession());
     expect(autoNameTimers.size).toBe(0);
   });
@@ -343,13 +359,16 @@ describe('scheduleAutoNameSuggestion - timer body', () => {
       task: makeTask({ title: 'fix bug', description: 'real description' }),
       addToast,
     });
-    setupSummarizeApi(() => ({ ok: true, title: 'Suggested Title' }));
+    const summarize = setupSummarizeApi(() => ({ ok: true, title: 'Suggested Title' }));
 
     scheduleAutoNameSuggestion(makeSession());
     await vi.advanceTimersByTimeAsync(30_000);
     // Allow the async IPC promise + addToast to flush.
     await vi.runAllTimersAsync();
 
+    // The project and task travel with the request: by the time it fires
+    // another project may be open, and the call is recorded against this one.
+    expect(summarize).toHaveBeenCalledWith({ prompt: 'real description', projectId: 'project-1', taskId: 'task-1' });
     expect(addToast).toHaveBeenCalledTimes(1);
     expect(addToast.mock.calls[0][0]).toMatchObject({
       message: expect.stringContaining('Suggested Title'),
@@ -425,46 +444,39 @@ describe('scheduleAutoNameSuggestion - timer body', () => {
 });
 
 // ---------------------------------------------------------------------------
-// projectAgentCanSummarize - direct unit test
+// automationAgentCanName - direct unit test
 // ---------------------------------------------------------------------------
 
-describe('projectAgentCanSummarize', () => {
-  it('returns false when projectId is null/undefined/empty', () => {
-    setupStores({});
-    expect(projectAgentCanSummarize(null)).toBe(false);
-    expect(projectAgentCanSummarize(undefined)).toBe(false);
-    expect(projectAgentCanSummarize('')).toBe(false);
+describe('automationAgentCanName', () => {
+  it('returns false when no Automation agent is set', () => {
+    setupStores({ automation: undefined });
+    expect(automationAgentCanName()).toBe(false);
+    setupStores({ automation: { agent: null, model: null, effort: null } });
+    expect(automationAgentCanName()).toBe(false);
   });
 
-  it('returns false when project is not found', () => {
-    setupStores({ projects: [] });
-    expect(projectAgentCanSummarize('project-1')).toBe(false);
+  it('returns false when the Automation agent is not in the agent list', () => {
+    setupStores({ automation: { agent: 'unknown-agent', model: 'm', effort: null } });
+    expect(automationAgentCanName()).toBe(false);
   });
 
-  it('returns false when the project has no default_agent', () => {
-    setupStores({ projects: [{ id: 'project-1', default_agent: null }] });
-    expect(projectAgentCanSummarize('project-1')).toBe(false);
-  });
-
-  it('returns false when the agent is not in the agent list', () => {
-    setupStores({
-      projects: [{ id: 'project-1', default_agent: 'unknown-agent' }],
-    });
-    expect(projectAgentCanSummarize('project-1')).toBe(false);
-  });
-
-  it('returns false when the agent is in the list but not detected on disk', () => {
+  it('returns false when the Automation agent is not detected on disk', () => {
     setupStores({ agents: [makeAdapter({ found: false })] });
-    expect(projectAgentCanSummarize('project-1')).toBe(false);
+    expect(automationAgentCanName()).toBe(false);
   });
 
-  it('returns false when the agent is detected but does not support summarize', () => {
+  it('returns false when the Automation agent does not support summarize', () => {
     setupStores({ agents: [makeAdapter({ supportsSummarize: false })] });
-    expect(projectAgentCanSummarize('project-1')).toBe(false);
+    expect(automationAgentCanName()).toBe(false);
   });
 
-  it('returns true when project default agent is detected and supports summarize', () => {
-    setupStores({});
-    expect(projectAgentCanSummarize('project-1')).toBe(true);
+  it('returns false when the Automation agent takes a model and none is chosen', () => {
+    setupStores({ automation: { agent: 'claude', model: null, effort: null } });
+    expect(automationAgentCanName()).toBe(false);
+  });
+
+  it('returns true when the Automation agent is ready, whatever the project default agent is', () => {
+    setupStores({ projects: [{ id: 'project-1', default_agent: 'aider' }] });
+    expect(automationAgentCanName()).toBe(true);
   });
 });

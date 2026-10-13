@@ -197,9 +197,12 @@ describe('answerFromContext parity', () => {
     expect(flags, 'the search tool must be pre-approved').toMatch(/'--allowedTools',\s*ANSWER_RETRIEVAL_TOOL/);
     expect(claude?.source).toMatch(/ANSWER_RETRIEVAL_TOOL = 'mcp__kangentic__kangentic_search'/);
     // That file carries a live token and must not outlive the call. It lives in
-    // the call's own config directory, which goes whole.
-    expect(method, 'the call\'s config directory must be deleted when the call ends').toMatch(
-      /finally[\s\S]*rmSync\(configDirectory,\s*\{\s*recursive:\s*true/,
+    // the call's own config directory, which goes whole: the call runs inside
+    // `withConfigDirectory`, whose `finally` removes a directory it made.
+    expect(method, 'the call must run inside its own config directory').toContain('withConfigDirectory(');
+    const configDirectoryHelper = claude?.source.match(/function withConfigDirectory<[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(configDirectoryHelper, 'the call\'s config directory must be deleted when the call ends').toMatch(
+      /finally[\s\S]*rmSync\(directory,\s*\{\s*recursive:\s*true/,
     );
 
     // The user's own advisor must not ride along. With `advisorModel: "opus"`

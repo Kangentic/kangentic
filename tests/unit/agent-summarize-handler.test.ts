@@ -4,12 +4,12 @@
  *
  * The handler:
  *   - rejects empty prompts
- *   - applies a sliding-window rate limit (autoNameRateLimitPerHour)
- *   - resolves which adapter to call: explicit input.agentName, then the
- *     active project's default_agent, then the registry's first entry
- *   - returns { ok: false, reason } for unknown agents, missing summarize
- *     capability, or undetected CLI
- *   - calls adapter.summarize() with the detected CLI path + project cwd
+ *   - names on the Automation agent (`AppConfig.automation`), its model and
+ *     effort, never the project's default agent; with no Automation agent it
+ *     refuses, and the refusal spends no rate-limit slot
+ *   - applies a sliding-window rate limit (autoNameRateLimitPerHour), shared
+ *     with main's Command Terminal namer
+ *   - runs `summarize` in the shared answer home with a run directory of its own
  *   - converts thrown errors to { ok: false, reason }
  *
  * Strategy mirrors agent-list-handler.test.ts: capture handlers via mocked
@@ -38,13 +38,18 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn(), openExternal: vi.fn() },
 }));
 
+type SummarizeOptions = { model?: string | null; effort?: string | null; runDirectory?: string };
+
 type MockAdapter = {
   name: string;
   displayName: string;
   permissions: { mode: string; label: string }[];
   defaultPermission: string;
   detect: (override?: string | null) => Promise<{ found: boolean; path: string | null; version: string | null }>;
-  summarize?: (prompt: string, cliPath: string, cwd: string) => Promise<string>;
+  summarize?: (prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions) => Promise<string>;
+  answerFromContext?: () => Promise<string>;
+  answerCapabilities?: { streaming: boolean; search: boolean; model: boolean; effort: boolean; defaultEffort?: string };
+  discoverCapabilities?: () => Promise<{ effortLevels: string[] }>;
   invalidateDetectionCache: () => void;
 };
 
@@ -81,17 +86,23 @@ vi.mock('node:child_process', () => ({
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
 import { resetSummarizeRateLimit, tryAcquireSummarizeSlot } from '../../src/main/agent/shared/summarize-rate-limit';
+import { resetAutomationAgentCacheForTests } from '../../src/main/automations/automation-agent';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** An adapter that can be the Automation agent: it answers, takes a model, and
+ *  reports the effort levels its CLI knows. */
 function makeAdapter(overrides: Partial<MockAdapter> & { name: string }): MockAdapter {
   return {
     displayName: overrides.name.charAt(0).toUpperCase() + overrides.name.slice(1),
     permissions: [{ mode: 'default', label: 'Default' }],
     defaultPermission: 'default',
     detect: vi.fn(async () => ({ found: true, path: `/usr/bin/${overrides.name}`, version: '1.0.0' })),
+    answerFromContext: vi.fn(async () => 'answer'),
+    answerCapabilities: { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' },
+    discoverCapabilities: vi.fn(async () => ({ effortLevels: ['low', 'high'] })),
     invalidateDetectionCache: vi.fn(),
     ...overrides,
   };
@@ -99,12 +110,14 @@ function makeAdapter(overrides: Partial<MockAdapter> & { name: string }): MockAd
 
 function makeContext(overrides?: {
   rateLimit?: number;
+  automation?: { agent?: string | null; model?: string | null; effort?: string | null };
   currentProjectId?: string | null;
   currentProjectPath?: string | null;
   projects?: Array<{ id: string; default_agent: string | null; path: string }>;
 }) {
   const rateLimit = overrides?.rateLimit ?? 60;
   const projects = overrides?.projects ?? [];
+  const automation = overrides?.automation ?? { agent: 'claude', model: 'claude-haiku-5-5', effort: null };
   return {
     configManager: {
       load: vi.fn(() => ({
@@ -118,6 +131,7 @@ function makeContext(overrides?: {
         terminal: { shell: null },
         mcpServer: { enabled: false },
         autoNameRateLimitPerHour: rateLimit,
+        automation,
       })),
       getEffectiveConfig: vi.fn(() => ({
         agent: { cliPaths: {}, maxConcurrentSessions: 5, idleTimeoutMinutes: 30 },
@@ -144,10 +158,14 @@ function makeContext(overrides?: {
   };
 }
 
-async function invokeSummarize(input: { prompt: string; agentName?: string }): Promise<AgentSummarizeResult> {
+async function invokeSummarize(input: { prompt: string; projectId?: string | null; taskId?: string | null }): Promise<AgentSummarizeResult> {
   const handler = capturedHandlers.get('agent:summarize');
   if (!handler) throw new Error('agent:summarize handler not registered');
   return handler(undefined, input) as Promise<AgentSummarizeResult>;
+}
+
+function register(context: ReturnType<typeof makeContext>): void {
+  registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,93 +179,79 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
     // The window is shared with main's Command Terminal namer, so it outlives
     // a handler registration; each case starts from an empty one.
     resetSummarizeRateLimit();
+    // Detection is cached for minutes, keyed by agent: each case detects afresh.
+    resetAutomationAgentCacheForTests();
   });
 
   it('rejects empty prompts', async () => {
-    const context = makeContext();
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    register(makeContext());
     mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'X') })];
 
-    const empty = await invokeSummarize({ prompt: '' });
-    const blank = await invokeSummarize({ prompt: '   ' });
-
-    expect(empty).toEqual({ ok: false, reason: 'empty prompt' });
-    expect(blank).toEqual({ ok: false, reason: 'empty prompt' });
+    expect(await invokeSummarize({ prompt: '' })).toEqual({ ok: false, reason: 'empty prompt' });
+    expect(await invokeSummarize({ prompt: '   ' })).toEqual({ ok: false, reason: 'empty prompt' });
   });
 
-  it('returns ok:true with the title from the active project default agent', async () => {
-    const summarize = vi.fn(async () => 'Fix Login Race Condition');
-    mockRegistryAdapters = [
-      makeAdapter({ name: 'claude', summarize }),
-      makeAdapter({ name: 'kimi', summarize: vi.fn(async () => 'Wrong Adapter') }),
-    ];
-    const context = makeContext({
-      currentProjectId: 'proj-1',
-      currentProjectPath: '/repo',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
-
-    const result = await invokeSummarize({ prompt: 'tests are failing' });
-
-    expect(result).toEqual({ ok: true, title: 'Fix Login Race Condition' });
-    expect(summarize).toHaveBeenCalledWith('tests are failing', '/usr/bin/claude', '/repo');
-  });
-
-  it('honors explicit input.agentName, overriding project default', async () => {
-    const claudeSummarize = vi.fn(async () => 'Claude Title');
-    const kimiSummarize = vi.fn(async () => 'Kimi Title');
+  it('names on the Automation agent, its model and effort, not the project default agent', async () => {
+    const claudeSummarize = vi.fn(async () => 'Fix Login Race Condition');
+    const kimiSummarize = vi.fn(async () => 'Wrong Agent');
     mockRegistryAdapters = [
       makeAdapter({ name: 'claude', summarize: claudeSummarize }),
       makeAdapter({ name: 'kimi', summarize: kimiSummarize }),
     ];
-    const context = makeContext({
+    register(makeContext({
       currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+      currentProjectPath: '/repo',
+      projects: [{ id: 'proj-1', default_agent: 'kimi', path: '/repo' }],
+    }));
 
-    const result = await invokeSummarize({ prompt: 'description', agentName: 'kimi' });
+    const result = await invokeSummarize({ prompt: 'tests are failing', projectId: 'proj-1' });
 
-    expect(result).toEqual({ ok: true, title: 'Kimi Title' });
-    expect(claudeSummarize).not.toHaveBeenCalled();
-    expect(kimiSummarize).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true, title: 'Fix Login Race Condition' });
+    expect(kimiSummarize).not.toHaveBeenCalled();
+    expect(claudeSummarize).toHaveBeenCalledTimes(1);
+    const [prompt, cliPath, cwd, options] = claudeSummarize.mock.calls[0] as unknown as [string, string, string, SummarizeOptions];
+    expect(prompt).toBe('tests are failing');
+    expect(cliPath).toBe('/usr/bin/claude');
+    // The shared answer home, never the project root: a project root loads the
+    // agent's instructions into every call.
+    expect(cwd).not.toBe('/repo');
+    expect(cwd).toContain('kangentic-ask-home');
+    expect(options.model).toBe('claude-haiku-5-5');
+    // No effort chosen: the adapter's recommended level, since the CLI lists it.
+    expect(options.effort).toBe('low');
+    expect(typeof options.runDirectory).toBe('string');
   });
 
-  it('falls back to the registry first entry when no project is open', async () => {
-    const summarize = vi.fn(async () => 'Fallback Title');
+  it('refuses with no Automation agent, without spending a rate-limit slot', async () => {
+    const summarize = vi.fn(async () => 'Should Not Run');
     mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize })];
-    const context = makeContext({ currentProjectId: null });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    register(makeContext({ rateLimit: 1, automation: { agent: null, model: null, effort: null } }));
 
     const result = await invokeSummarize({ prompt: 'description' });
 
-    expect(result).toEqual({ ok: true, title: 'Fallback Title' });
+    expect(result).toEqual({ ok: false, reason: 'Set up an Automation agent in Settings > Workflows to name tasks.' });
+    expect(summarize).not.toHaveBeenCalled();
+    // The one slot is still free for a call that can run.
+    expect(tryAcquireSummarizeSlot(1)).toBe(true);
   });
 
-  it('returns ok:false when the resolved agent is unknown to the registry', async () => {
-    mockRegistryAdapters = [makeAdapter({ name: 'claude' })];
-    const context = makeContext();
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+  it('refuses when the Automation agent takes a model and none is chosen', async () => {
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'X') })];
+    register(makeContext({ automation: { agent: 'claude', model: null, effort: null } }));
 
-    const result = await invokeSummarize({ prompt: 'description', agentName: 'nonexistent' });
+    const result = await invokeSummarize({ prompt: 'description' });
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain('unknown agent');
+    expect(result).toEqual({ ok: false, reason: 'Choose a model for the Automation agent in Settings > Workflows to name tasks.' });
   });
 
-  it('returns ok:false when the resolved adapter lacks summarize', async () => {
+  it('refuses when the Automation agent cannot summarize', async () => {
     mockRegistryAdapters = [makeAdapter({ name: 'aider' /* no summarize */ })];
-    const context = makeContext({
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'aider', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    register(makeContext({ automation: { agent: 'aider', model: 'gpt-x', effort: null } }));
 
     const result = await invokeSummarize({ prompt: 'description' });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain('does not support summarize');
+    if (!result.ok) expect(result.reason).toContain('cannot name tasks');
   });
 
   it('returns ok:false when the CLI is not detected on disk', async () => {
@@ -259,19 +263,13 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
         detect: vi.fn(async () => ({ found: false, path: null, version: null })),
       }),
     ];
-    const context = makeContext({
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    register(makeContext());
 
     const result = await invokeSummarize({ prompt: 'description' });
 
     expect(result.ok).toBe(false);
-    // The reason now comes from the shared agentCliNotFoundMessage, which never
-    // appends the word "CLI" - the display name supplies it when it applies.
-    // This adapter's displayName is "Claude", so asserting on "CLI not found"
-    // here would be asserting the old doubled-"CLI" wording.
+    // The shared agentCliNotFoundMessage, which never appends the word "CLI":
+    // the display name supplies it when it applies.
     if (!result.ok) {
       expect(result.reason).toContain('not found on PATH');
       expect(result.reason).not.toMatch(/CLI CLI/i);
@@ -286,27 +284,16 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
         summarize: vi.fn(async () => { throw new Error('CLI exited 1: bad config'); }),
       }),
     ];
-    const context = makeContext({
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    register(makeContext());
 
     const result = await invokeSummarize({ prompt: 'description' });
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('CLI exited 1: bad config');
+    expect(result).toEqual({ ok: false, reason: 'CLI exited 1: bad config' });
   });
 
   it('returns ok:false on empty title from adapter', async () => {
-    mockRegistryAdapters = [
-      makeAdapter({ name: 'claude', summarize: vi.fn(async () => '') }),
-    ];
-    const context = makeContext({
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => '') })];
+    register(makeContext());
 
     const result = await invokeSummarize({ prompt: 'description' });
 
@@ -315,15 +302,8 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
   });
 
   it('rate-limits when window is exceeded', async () => {
-    mockRegistryAdapters = [
-      makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'A Title') }),
-    ];
-    const context = makeContext({
-      rateLimit: 3,
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'A Title') })];
+    register(makeContext({ rateLimit: 3 }));
 
     const r1 = await invokeSummarize({ prompt: 'a' });
     const r2 = await invokeSummarize({ prompt: 'b' });
@@ -345,12 +325,7 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
   it('refuses when a main-side caller (the namer path) already used the only slot', async () => {
     const summarize = vi.fn(async () => 'Should Not Run');
     mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize })];
-    const context = makeContext({
-      rateLimit: 1,
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    register(makeContext({ rateLimit: 1 }));
 
     // What CommandTerminalNamer.nameFromPrompt does with no injected acquirer.
     expect(tryAcquireSummarizeSlot(1)).toBe(true);
@@ -363,14 +338,8 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
   });
 
   it('a slot the handler used is refused to a main-side caller (the namer path)', async () => {
-    const summarize = vi.fn(async () => 'A Title');
-    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize })];
-    const context = makeContext({
-      rateLimit: 1,
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'A Title') })];
+    register(makeContext({ rateLimit: 1 }));
 
     const result = await invokeSummarize({ prompt: 'description' });
     expect(result.ok).toBe(true);
@@ -379,15 +348,8 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
   });
 
   it('does not rate-limit when limit is 0 (disabled)', async () => {
-    mockRegistryAdapters = [
-      makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'OK') }),
-    ];
-    const context = makeContext({
-      rateLimit: 0,
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'OK') })];
+    register(makeContext({ rateLimit: 0 }));
 
     // Sequential rather than Promise.all to avoid micro-task starvation in vitest's
     // tiny-pool runner. The point is just to verify the disabled branch doesn't
@@ -400,85 +362,34 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
-  it('uses currentProjectPath as cwd when provided, falling back to process.cwd()', async () => {
-    const summarize = vi.fn(async () => 'Title');
-    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize })];
-    const context = makeContext({
-      currentProjectId: 'proj-1',
-      currentProjectPath: '/repo/main',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo/main' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
-
-    await invokeSummarize({ prompt: 'description' });
-
-    expect(summarize).toHaveBeenCalledWith('description', '/usr/bin/claude', '/repo/main');
-  });
-
-  // ---------------------------------------------------------------------------
-  // #8: Sliding-window rate-limit eviction via fake timers
-  // ---------------------------------------------------------------------------
-
   it('evicts timestamps older than 1 hour from the rate-limit window before the cap check', async () => {
-    // The rate-limit window is module-level (summarize-rate-limit.ts), shared
-    // with the Command Terminal namer, so a fresh window comes from the
-    // beforeEach reset, not from re-registering. Re-registering here only
-    // binds this test's context with its own limit of 2.
-    capturedHandlers.clear();
-    mockRegistryAdapters = [
-      makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'Eviction Title') }),
-    ];
-    const context = makeContext({
-      rateLimit: 2,
-      currentProjectId: 'proj-1',
-      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
-    });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', summarize: vi.fn(async () => 'Eviction Title') })];
+    register(makeContext({ rateLimit: 2 }));
 
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      // Fill the 2-call window
       const r1 = await invokeSummarize({ prompt: 'first' });
       const r2 = await invokeSummarize({ prompt: 'second' });
       expect(r1.ok).toBe(true);
       expect(r2.ok).toBe(true);
 
-      // Third call should be rate-limited (window is full)
       const rBlocked = await invokeSummarize({ prompt: 'blocked' });
       expect(rBlocked.ok).toBe(false);
       if (!rBlocked.ok) expect(rBlocked.reason).toContain('rate limit');
 
-      // Advance time by 61 minutes so the first two entries age out of the 1-hour window
-      vi.advanceTimersByTime(61 * 60 * 1000);
+      // 61 minutes on: the first two age out of the 1-hour window. The
+      // detection cache expires too, and the next call simply detects again.
+      vi.setSystemTime(Date.now() + 61 * 60 * 1000);
 
-      // Now calls should succeed again - the old entries were evicted
       const rAfterEviction1 = await invokeSummarize({ prompt: 'after eviction 1' });
       const rAfterEviction2 = await invokeSummarize({ prompt: 'after eviction 2' });
       expect(rAfterEviction1.ok).toBe(true);
       expect(rAfterEviction2.ok).toBe(true);
 
-      // Third call after eviction should be blocked again (window refilled)
       const rBlockedAgain = await invokeSummarize({ prompt: 'blocked again' });
       expect(rBlockedAgain.ok).toBe(false);
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  // ---------------------------------------------------------------------------
-  // #9: Empty registry path
-  // ---------------------------------------------------------------------------
-
-  it('returns ok:false with "no agents registered" when agentRegistry.list() is empty and no agentName provided', async () => {
-    capturedHandlers.clear();
-    // Empty registry
-    mockRegistryAdapters = [];
-    const context = makeContext({ currentProjectId: null });
-    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
-
-    const result = await invokeSummarize({ prompt: 'any description' });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('no agents registered');
   });
 });
