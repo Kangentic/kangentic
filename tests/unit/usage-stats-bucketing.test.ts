@@ -22,6 +22,7 @@ import {
   buildModelBreakdown,
   computeKpis,
   foldCostSeries,
+  foldTokenModelSeries,
   foldTokenSeries,
   mergeSubagentTotals,
   mergeUsageTotals,
@@ -42,6 +43,7 @@ import type { SubagentUsageTotals } from '../../src/shared/types';
 function makeGroup(overrides: Partial<GroupedTurnUsageRow> = {}): GroupedTurnUsageRow {
   return {
     bucketStartMs: 0,
+    modelId: null,
     inputTokens: 100,
     outputTokens: 50,
     cacheCreationTokens: 10,
@@ -375,6 +377,71 @@ describe('foldCostSeries', () => {
     expect(unknown).toMatchObject({ costUsd: 1, inputTokens: 25 });
     const sliceCostSum = point.byModel.reduce((sum, slice) => sum + slice.costUsd, 0);
     expect(sliceCostSum).toBeCloseTo(point.costUsd);
+  });
+});
+
+describe('foldTokenModelSeries', () => {
+  it('carries fresh tokens per base model but never forwards the groups allocated cost or a session count', () => {
+    const dayStart = new Date(2026, 5, 17).getTime();
+    const starts = [dayStart, new Date(2026, 5, 18).getTime()];
+    const groups = [
+      // The [1m] context-window twin and the plain id are one base model.
+      makeGroup({
+        bucketStartMs: dayStart + TURN_GROUP_MS,
+        modelId: 'claude-opus-4-8[1m]',
+        inputTokens: 100,
+        outputTokens: 40,
+        allocatedCostUsd: 5,
+      }),
+      makeGroup({
+        bucketStartMs: dayStart + 2 * TURN_GROUP_MS,
+        modelId: 'claude-opus-4-8',
+        inputTokens: 60,
+        outputTokens: 20,
+        allocatedCostUsd: 2,
+      }),
+      makeGroup({
+        bucketStartMs: dayStart + 3 * TURN_GROUP_MS,
+        modelId: 'claude-sonnet-4-6',
+        inputTokens: 30,
+        outputTokens: 10,
+        allocatedCostUsd: 3,
+      }),
+    ];
+
+    // Guard against a vacuous pass: the token series over the same groups does
+    // see the dollar allocation, so a leak into the model series would show.
+    const tokenSeries = foldTokenSeries(groups, starts, 'day');
+    expect(tokenSeries[0].allocatedCostUsd).toBeCloseTo(10);
+
+    const series = foldTokenModelSeries(groups, starts, 'day');
+    expect(series).toHaveLength(2);
+
+    for (const point of series) {
+      expect(point.costUsd).toBe(0);
+      expect(point.sessionCount).toBe(0);
+      for (const slice of point.byModel) {
+        expect(slice.costUsd).toBe(0);
+      }
+    }
+
+    const [populated, empty] = series;
+    expect(populated.bucketStartMs).toBe(dayStart);
+    expect(populated.byModel).toHaveLength(2);
+    const opus = populated.byModel.find((slice) => slice.modelId === 'claude-opus-4-8');
+    const sonnet = populated.byModel.find((slice) => slice.modelId === 'claude-sonnet-4-6');
+    expect(opus).toEqual({ modelId: 'claude-opus-4-8', costUsd: 0, inputTokens: 160, outputTokens: 60 });
+    expect(sonnet).toEqual({ modelId: 'claude-sonnet-4-6', costUsd: 0, inputTokens: 30, outputTokens: 10 });
+
+    // The empty bucket stays dense and zero.
+    expect(empty.bucketStartMs).toBe(starts[1]);
+    expect(empty.byModel).toEqual([]);
+
+    // The point's token totals are the token series' for the same buckets.
+    expect(series.map((point) => point.inputTokens)).toEqual(tokenSeries.map((point) => point.inputTokens));
+    expect(series.map((point) => point.outputTokens)).toEqual(tokenSeries.map((point) => point.outputTokens));
+    expect(populated.inputTokens).toBe(190);
+    expect(populated.outputTokens).toBe(70);
   });
 });
 
