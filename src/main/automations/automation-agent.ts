@@ -1,7 +1,9 @@
 import { answerSetupGap, automationAgentChoice, resolveAnswerAgent } from '../../shared/answer-agent';
 import { agentCliNotFoundMessage } from '../agent/shared/agent-cli-not-found';
+import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
+import { startRecordedCall, type BackgroundCallSink } from '../background-calls/record-background-call';
 import type { AgentAdapter } from '../agent/agent-adapter';
-import type { AppConfig } from '../../shared/types';
+import type { AppConfig, BackgroundCallJob } from '../../shared/types';
 
 /**
  * Which agent the Automation agent setting (`AppConfig.automation`) resolves to,
@@ -32,11 +34,15 @@ export type ResolvedAutomationAgent =
   | { ok: false; reason: string };
 
 const DETECTION_TTL_MS = 5 * 60_000;
+/** A discovery that threw (a probe timeout) is retried this soon, so one
+ *  failure does not drop effort from every call for the full TTL. */
+const FAILED_DISCOVERY_TTL_MS = 30_000;
 
 interface CachedCli {
   path: string;
   effortLevels: string[];
   at: number;
+  ttlMs: number;
 }
 
 // Keyed by agent name plus its CLI path override, so changing the override
@@ -101,15 +107,19 @@ async function resolveAutomationAgentOrThrow(deps: AutomationAgentDeps, job: Aut
   const override = config.agent.cliPaths[agentName] ?? null;
   const cacheKey = `${agentName}\n${override ?? ''}`;
   let cached = cliCache.get(cacheKey);
-  if (!cached || Date.now() - cached.at > DETECTION_TTL_MS) {
+  if (!cached || Date.now() - cached.at > cached.ttlMs) {
     const info = await adapter.detect(override);
     if (!info.found || !info.path) return { ok: false, reason: reasons.notFound(adapter.displayName) };
     let effortLevels: string[] = [];
+    let discoveryFailed = false;
     if (adapter.answerCapabilities?.effort && adapter.discoverCapabilities) {
-      const discovered = await adapter.discoverCapabilities(info.path).catch(() => undefined);
+      const discovered = await adapter.discoverCapabilities(info.path).catch(() => {
+        discoveryFailed = true;
+        return undefined;
+      });
       effortLevels = discovered?.effortLevels ?? [];
     }
-    cached = { path: info.path, effortLevels, at: Date.now() };
+    cached = { path: info.path, effortLevels, at: Date.now(), ttlMs: discoveryFailed ? FAILED_DISCOVERY_TTL_MS : DETECTION_TTL_MS };
     cliCache.set(cacheKey, cached);
   }
 
@@ -123,6 +133,46 @@ async function resolveAutomationAgentOrThrow(deps: AutomationAgentDeps, job: Aut
     else if (capabilities.defaultEffort && cached.effortLevels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
   }
   return { ok: true, adapter, agentName, cliPath: cached.path, model: choice.model, effort };
+}
+
+/** Where a naming call is recorded: the project whose ledger takes it, and for what. */
+export interface NamingCall {
+  projectId: string | null;
+  job: Extract<BackgroundCallJob, 'task_title' | 'terminal_name'>;
+  taskId: string | null;
+}
+
+/**
+ * A title from the agent resolved for naming: `summarize` on its model and
+ * effort, run in the shared answer home (a title needs nothing from the
+ * repository, and a project root loads its agent instructions into every
+ * call), and recorded in `call.projectId`'s ledger when the CLI settles. The
+ * caller resolves the agent and takes its rate-limit slot first, so a refusal
+ * spends nothing.
+ */
+export async function runNamingCall(
+  agent: Extract<ResolvedAutomationAgent, { ok: true }>,
+  prompt: string,
+  sink: BackgroundCallSink | undefined,
+  call: NamingCall,
+): Promise<string> {
+  const summarize = agent.adapter.summarize?.bind(agent.adapter);
+  if (!summarize) throw new Error(REASONS.naming.unsupported(agent.agentName));
+  const answerHome = await ensureAnswerHomeDirectory();
+  return startRecordedCall(sink, {
+    projectId: call.projectId,
+    job: call.job,
+    taskId: call.taskId,
+    swimlaneId: null,
+    agent: agent.agentName,
+    requestedModel: agent.model,
+    effort: agent.effort,
+  }, (onUsage) => withAnswerRunDirectory((runDirectory) => summarize(
+    prompt,
+    agent.cliPath,
+    answerHome,
+    { model: agent.model, effort: agent.effort, runDirectory, onUsage },
+  ))).done;
 }
 
 /** For tests: forget cached CLI detections. */

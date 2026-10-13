@@ -50,7 +50,7 @@ vi.mock('node:os', async (importOriginal) => {
 // runCliPrintSummarize helper (agy -p hangs without a TTY - see
 // print-runner.ts), so it is mocked here rather than fitting
 // agent-summarize-shape.test.ts's shared mock shape. Only runAntigravityPrint
-// is replaced; extractPrintResponse (used unmocked below in the
+// is replaced; extractPrintResult (used unmocked below in the
 // "print-runner response extraction" tests) keeps its real implementation via
 // the ...actual spread. The mock fn is created INSIDE the factory (not
 // referenced from outer scope) so there is no ordering/TDZ hazard - the same
@@ -82,7 +82,7 @@ import {
 } from '../../src/main/agent/adapters/antigravity/capability-discovery';
 import { AntigravityStatusParser } from '../../src/main/agent/adapters/antigravity/status-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
-import { extractPrintResponse, extractPrintResult, runAntigravityPrint } from '../../src/main/agent/adapters/antigravity/print-runner';
+import { extractPrintResult, runAntigravityPrint } from '../../src/main/agent/adapters/antigravity/print-runner';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import {
   agentDisplayName,
@@ -452,17 +452,17 @@ describe('capability discovery parsing', () => {
 describe('print-runner response extraction', () => {
   it('extracts the response from print-mode PTY output with ANSI chrome', () => {
     const raw = '\x1b[2J\x1b[H{"conversation_id":"02d4959d-354d-4a2d-ae40-3d7f9875a3ed","status":"SUCCESS","response":"ok\\n","usage":{"input_tokens":14931,"output_tokens":115}}\r\n\x1b]0;powershell\x07';
-    expect(extractPrintResponse(raw)).toBe('ok\n');
+    expect(extractPrintResult(raw)?.response).toBe('ok\n');
   });
 
   it('returns null when no result object is present', () => {
-    expect(extractPrintResponse('spinner noise only')).toBeNull();
+    expect(extractPrintResult('spinner noise only')).toBeNull();
   });
 
   it('resolves the response from the LATER of two JSON-shaped candidates when only it carries a response field (last-blob policy)', () => {
     const raw = '{"conversation_id":"a1-progress-blob","status":"partial","usage":{}}\n'
       + '{"conversation_id":"a2-result-blob","status":"done","response":"final title","usage":{}}';
-    expect(extractPrintResponse(raw)).toBe('final title');
+    expect(extractPrintResult(raw)?.response).toBe('final title');
   });
 
   it('reads the conversation to remove and the usage off the real 1.1.13 result, which has no cache count', () => {
@@ -512,6 +512,25 @@ describe('AntigravityAdapter.summarize', () => {
     const [, , flags, sink] = runAntigravityPrintMock.mock.calls[0] as [string, string, string[], unknown];
     expect(flags).toEqual(['--model', 'gemini-3.8-flash-low']);
     expect(sink).toBe(onUsage);
+  });
+
+  it('passes the chosen model and effort to the print run as flags, in that order', async () => {
+    runAntigravityPrintMock.mockResolvedValue('Fix the login timeout bug');
+
+    await adapter.summarize('fix the login timeout bug', '/usr/local/bin/agy', '/project', { model: 'gemini-3.8-flash-low', effort: 'low' });
+
+    const [, , flags] = runAntigravityPrintMock.mock.calls[0] as [string, string, string[]];
+    expect(flags).toEqual(['--model', 'gemini-3.8-flash-low', '--effort', 'low']);
+  });
+
+  it('passes only the effort when no model is chosen, and no flags when neither is', async () => {
+    runAntigravityPrintMock.mockResolvedValue('Fix the login timeout bug');
+
+    await adapter.summarize('fix the login timeout bug', '/usr/local/bin/agy', '/project', { effort: 'high' });
+    await adapter.summarize('fix the login timeout bug', '/usr/local/bin/agy', '/project', { model: null, effort: null });
+
+    expect((runAntigravityPrintMock.mock.calls[0] as [string, string, string[]])[2]).toEqual(['--effort', 'high']);
+    expect((runAntigravityPrintMock.mock.calls[1] as [string, string, string[]])[2]).toEqual([]);
   });
 
   it('throws "summarize produced empty output" when cleanup strips the print run down to nothing', async () => {

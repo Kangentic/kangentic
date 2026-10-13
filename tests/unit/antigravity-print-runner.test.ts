@@ -11,7 +11,7 @@
  * real home directory (`scratchDirectory()` uses the real `os.tmpdir()`,
  * which is the sandboxed-write rule's own carve-out).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('node-pty', () => ({
   spawn: vi.fn(),
@@ -21,10 +21,20 @@ vi.mock('../../src/main/agent/adapters/antigravity/trust-manager', () => ({
   ensureWorkspaceTrust: vi.fn(async () => undefined),
 }));
 
+// The conversation removal acts on a real home directory for a UUID id, so it is
+// replaced with a spy here; the real `antigravityUsage` mapping stays, since the
+// usage tests below assert it.
+vi.mock('../../src/main/agent/adapters/antigravity/answer-stream', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/antigravity/answer-stream')>();
+  return { ...actual, removeAntigravityConversation: vi.fn(async () => undefined) };
+});
+
 import * as pty from 'node-pty';
 import { runAntigravityPrint } from '../../src/main/agent/adapters/antigravity/print-runner';
+import { removeAntigravityConversation } from '../../src/main/agent/adapters/antigravity/answer-stream';
 
 const spawnMock = pty.spawn as unknown as ReturnType<typeof vi.fn>;
+const removeConversationMock = removeAntigravityConversation as unknown as ReturnType<typeof vi.fn>;
 
 interface FakePtyProcess {
   emitData: (data: string) => void;
@@ -69,6 +79,12 @@ function installFakePty(onSpawn: (fake: FakePtyProcess) => void): void {
 
 beforeEach(() => {
   spawnMock.mockReset();
+  removeConversationMock.mockClear();
+});
+
+afterEach(() => {
+  // A test that fails mid-way under fake timers must not leave them on.
+  vi.useRealTimers();
 });
 
 describe('runAntigravityPrint output capping', () => {
@@ -76,7 +92,7 @@ describe('runAntigravityPrint output capping', () => {
     // Before this branch, the cap guard was drop-forward
     // (`if (output.length < OUTPUT_CAP_BYTES) output += data`): once 64KB of
     // output had accumulated, every subsequent chunk - including the closing
-    // result JSON extractPrintResponse reads from the END of the stream -
+    // result JSON extractPrintResult reads from the END of the stream -
     // was silently discarded. The fix retains the tail instead
     // (`output = (output + data).slice(-OUTPUT_CAP_BYTES)`), so a run that
     // is chatty BEFORE printing its result must still resolve correctly.
@@ -105,8 +121,8 @@ describe('runAntigravityPrint output capping', () => {
 });
 
 describe('runAntigravityPrint usage', () => {
-  // The conversation ids here are not UUIDs, so the run's conversation removal
-  // (which only acts on a UUID) never touches a real home directory.
+  // The conversation removal is mocked above, so no run here touches a real
+  // home directory whatever id it prints.
   it('hands the result\'s usage to the sink before resolving', async () => {
     const onUsage = vi.fn();
     const resultPromise = runAntigravityPrint('/usr/bin/agy', 'summarize this task', [], onUsage);
@@ -134,5 +150,71 @@ describe('runAntigravityPrint usage', () => {
     });
     await expect(resultPromise).rejects.toThrow('no parseable response');
     expect(onUsage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('runAntigravityPrint conversation removal', () => {
+  // A title is not a conversation to resume, so every run that reports the
+  // conversation it made removes it, whether or not the run produced a title.
+  it('removes the conversation the run made once it succeeds', async () => {
+    const resultPromise = runAntigravityPrint('/usr/bin/agy', 'summarize this task');
+    installFakePty((fake) => {
+      fake.emitData(JSON.stringify({ conversation_id: 'a1b2c3', status: 'SUCCESS', response: 'Fix the login timeout bug', usage: {} }));
+      fake.emitExit();
+    });
+
+    await expect(resultPromise).resolves.toBe('Fix the login timeout bug');
+
+    expect(removeConversationMock).toHaveBeenCalledTimes(1);
+    expect(removeConversationMock).toHaveBeenCalledWith('a1b2c3');
+  });
+
+  it('removes it when the run printed no title', async () => {
+    const resultPromise = runAntigravityPrint('/usr/bin/agy', 'summarize this task');
+    installFakePty((fake) => {
+      fake.emitData(JSON.stringify({ conversation_id: 'd4e5f6', status: 'SUCCESS', response: '', usage: {} }));
+      fake.emitExit();
+    });
+
+    await expect(resultPromise).rejects.toThrow('no parseable response');
+
+    expect(removeConversationMock).toHaveBeenCalledTimes(1);
+    expect(removeConversationMock).toHaveBeenCalledWith('d4e5f6');
+  });
+
+  it('removes it when the run times out after naming its conversation', async () => {
+    vi.useFakeTimers();
+    try {
+      const resultPromise = runAntigravityPrint('/usr/bin/agy', 'summarize this task');
+      // Attached now so the rejection is never unhandled while time advances.
+      const rejection = expect(resultPromise).rejects.toThrow('antigravity print run timed out');
+      // The CLI names its conversation, then never exits: the 25 s timer ends it.
+      installFakePty((fake) => {
+        fake.emitData(JSON.stringify({ conversation_id: '0a1b2c', status: 'RUNNING', response: '', usage: {} }));
+      });
+      // First step: the spawn and the scripted output. Second: past the timeout.
+      await vi.advanceTimersByTimeAsync(1);
+      // The run is live before time moves on, so the 25 s timer exists to fire.
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(25_000);
+
+      await rejection;
+      expect(removeConversationMock).toHaveBeenCalledTimes(1);
+      expect(removeConversationMock).toHaveBeenCalledWith('0a1b2c');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('removes nothing when the run never printed a conversation id', async () => {
+    const resultPromise = runAntigravityPrint('/usr/bin/agy', 'summarize this task');
+    installFakePty((fake) => {
+      fake.emitData('no result object here');
+      fake.emitExit();
+    });
+
+    await expect(resultPromise).rejects.toThrow('no parseable response');
+
+    expect(removeConversationMock).not.toHaveBeenCalled();
   });
 });

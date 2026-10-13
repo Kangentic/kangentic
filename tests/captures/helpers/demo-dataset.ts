@@ -3495,6 +3495,8 @@ export function buildDemoPreConfig(options: {
             });
           });
         }
+        // The fold foldBackgroundUsage (src/main/usage-stats/background-usage.ts) does, copied
+        // here as the UI mock copies it. Keep the totals' fields in step with BackgroundCallTotals.
         function emptyBackgroundTotals() {
           return { calls: 0, failedCalls: 0, reportedCalls: 0, inputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, costUsd: null, durationMs: 0 };
         }

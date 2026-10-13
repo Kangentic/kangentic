@@ -22,8 +22,8 @@ interface NameFromPromptButtonProps {
  * title input (e.g. add right padding) without duplicating the gating logic.
  */
 export function useNameFromPromptAvailable(description: string): boolean {
-  const agentList = useConfigStore((s) => s.agentList);
-  const automationConfig = useConfigStore((s) => s.globalConfig.automation);
+  const agentList = useConfigStore((state) => state.agentList);
+  const automationConfig = useConfigStore((state) => state.globalConfig.automation);
 
   const summarizeAvailable = useMemo(
     () => namingAgentReady(agentList, automationConfig, true),

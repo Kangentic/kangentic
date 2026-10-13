@@ -72,10 +72,16 @@ import {
 import { AiderAdapter, extractAiderAnswer } from '../../src/main/agent/adapters/aider/aider-adapter';
 import { GooseAdapter } from '../../src/main/agent/adapters/goose/goose-adapter';
 import { OllamaAdapter } from '../../src/main/agent/adapters/ollama/ollama-adapter';
-import { extractLastTurnAnswer, extractStreamedAnswer } from '../../src/main/agent/shared/cli-answer';
+import {
+  ANSWER_JSON_OUTPUT_BUDGET,
+  ANSWER_STREAM_OUTPUT_BUDGET,
+  extractLastTurnAnswer,
+  extractStreamedAnswer,
+} from '../../src/main/agent/shared/cli-answer';
 import type { RunCliPrintOptions } from '../../src/main/agent/shared/cli-print';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+import type { AgentCallUsage } from '../../src/shared/types';
 
 type AnsweringAdapter = AgentAdapter & Required<Pick<AgentAdapter, 'answerFromContext'>>;
 
@@ -97,6 +103,31 @@ async function optionsFor(
   await adapter.answerFromContext?.('THE PROMPT', '/bin/agent', '/scratch', model);
   expect(answerSpy).toHaveBeenCalledTimes(1);
   return (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+}
+
+/**
+ * The real `--output-format json` result of a one-model call, captured on CLI
+ * 2.1.296 (the same fixture claude-json-result.test.ts reads). In stream-json
+ * mode the CLI ends the transcript with this same record as its `result` line.
+ */
+const conditionCheckResult = fs.readFileSync(
+  path.join(__dirname, '..', 'fixtures', 'claude-print-result-condition-check.json'),
+  'utf-8',
+);
+const conditionCheckAnswer = 'C1: yes - The agent reply\'s final line is "Findings: applied", which matches the condition exactly.';
+const conditionCheckUsage: AgentCallUsage = {
+  model: 'claude-haiku-5-5',
+  inputTokens: 2,
+  cacheCreationInputTokens: 2402,
+  cacheReadInputTokens: 535,
+  outputTokens: 35,
+  costUsd: 0.00050345,
+};
+
+/** The reducer the runner applies to captured stdout, which a test runs by hand. */
+function extractorOf(options: RunCliPrintOptions): (stdout: string) => string {
+  if (!options.extractRaw) throw new Error('the adapter handed the runner no extractRaw');
+  return options.extractRaw;
 }
 
 describe('answer run flags and prompt delivery', () => {
@@ -425,6 +456,61 @@ describe('answer run flags and prompt delivery', () => {
     // project under ~/.claude/projects keyed by its one-off directory.
     const options = await optionsFor(new ClaudeAdapter());
     expect(options.args).toContain('--no-session-persistence');
+  });
+
+  it('prints Claude\'s answer as one JSON object when not streaming, and reports the call\'s usage from it', async () => {
+    // How a background call's model and tokens reach its record: the non-stream
+    // run asks for `--output-format json`, reads the answer and the usage out of
+    // that one object, and gets a budget sized for the object's envelope.
+    const onUsage = vi.fn();
+    answerSpy.mockClear();
+    await new ClaudeAdapter().answerFromContext('THE PROMPT', '/bin/claude', '/scratch', 'sonnet', { onUsage });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+
+    expect(options.args[options.args.indexOf('--output-format') + 1]).toBe('json');
+    expect(options.args).not.toContain('stream-json');
+    expect(options.outputBudget).toBe(ANSWER_JSON_OUTPUT_BUDGET);
+
+    expect(extractorOf(options)(conditionCheckResult)).toBe(conditionCheckAnswer);
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage).toHaveBeenCalledWith(conditionCheckUsage);
+  });
+
+  it('still extracts Claude\'s non-stream answer when the caller has no usage sink', async () => {
+    const options = await optionsFor(new ClaudeAdapter());
+    expect(extractorOf(options)(conditionCheckResult)).toBe(conditionCheckAnswer);
+  });
+
+  it('streams Claude\'s answer as stream-json, and forwards the result line\'s usage from the transcript', async () => {
+    // Stream mode keeps the usage reporting: stdout is a transcript, so the
+    // answer is its last turn and the usage is on the closing `result` line.
+    const onUsage = vi.fn();
+    const onEvent = vi.fn();
+    answerSpy.mockClear();
+    await new ClaudeAdapter().answerFromContext('THE PROMPT', '/bin/claude', '/scratch', 'sonnet', { onEvent, onUsage });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+
+    expect(options.args[options.args.indexOf('--output-format') + 1]).toBe('stream-json');
+    expect(options.args).toContain('--include-partial-messages');
+    expect(options.outputBudget).toBe(ANSWER_STREAM_OUTPUT_BUDGET);
+    expect(options.onChunk).toBeTypeOf('function');
+
+    const transcript = [
+      JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'C1: yes' } } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: conditionCheckAnswer }] } }),
+      conditionCheckResult.trim(),
+    ].join('\n');
+    expect(extractorOf(options)(transcript)).toBe(conditionCheckAnswer);
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage).toHaveBeenCalledWith(conditionCheckUsage);
+  });
+
+  it('still extracts Claude\'s streamed answer when the caller has no usage sink', async () => {
+    answerSpy.mockClear();
+    await new ClaudeAdapter().answerFromContext('THE PROMPT', '/bin/claude', '/scratch', 'sonnet', { onEvent: vi.fn() });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(extractorOf(options)(conditionCheckResult)).toBe(conditionCheckAnswer);
   });
 
   it('declares effort exactly where the run passes it on', async () => {

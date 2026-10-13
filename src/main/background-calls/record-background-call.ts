@@ -38,10 +38,21 @@ export interface RecordedCall<T> {
   done: Promise<T>;
 }
 
-/** A run's error, read as a timeout or a failure. Every runner's timeout says "timed out". */
+/**
+ * What the runners reject with when Kangentic's own timer stops a CLI:
+ * `cli-print.ts`, the stdin answer session, and Antigravity's print runner.
+ * Matched whole, so a CLI's own error that mentions a timeout ("API Error:
+ * Request timed out") is recorded as a failure, not as our timeout.
+ */
+const RUNNER_TIMEOUT_MESSAGES: ReadonlySet<string> = new Set(['the agent timed out', 'antigravity print run timed out']);
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** A run's error, read as Kangentic's timeout or a failure. */
 function outcomeOf(error: unknown): BackgroundCallOutcome {
-  const message = error instanceof Error ? error.message : String(error);
-  return /timed out/i.test(message) ? 'timed_out' : 'failed';
+  return RUNNER_TIMEOUT_MESSAGES.has(messageOf(error)) ? 'timed_out' : 'failed';
 }
 
 /**
@@ -82,7 +93,7 @@ export function startRecordedCall<T>(
   };
   done.then(
     () => write('succeeded', null),
-    (error: unknown) => write(outcomeOf(error), error instanceof Error ? error.message : String(error)),
+    (error: unknown) => write(outcomeOf(error), messageOf(error)),
   );
   return { callId, done };
 }

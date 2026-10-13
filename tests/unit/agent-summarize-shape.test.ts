@@ -4,6 +4,10 @@
  * stubbed via vi.mock so this test runs offline.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { AgentCallUsage } from '../../src/shared/types';
 
 const runCliPrintSummarizeMock = vi.fn(async () => 'Mocked Title');
 
@@ -51,6 +55,62 @@ describe('Adapter summarize() invocation shapes', () => {
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
     expect(call.args).not.toContain('--model');
     expect(call.args).not.toContain('--effort');
+  });
+
+  it('Claude reads the title and the call\'s usage out of the JSON result, within the title run\'s output budget', async () => {
+    // The real result of a one-model call, captured on CLI 2.1.296 with the
+    // answer run's flags. The title run prints the same object, so this is the
+    // envelope its extractor reads: the usage goes to the caller's sink and the
+    // result text comes back as the title candidate.
+    const fixtureText = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-print-result-condition-check.json'), 'utf-8');
+    const { ClaudeAdapter } = await import('../../src/main/agent/adapters/claude/claude-adapter');
+    const { SUMMARIZE_JSON_OUTPUT_BUDGET } = await import('../../src/main/agent/shared/auto-name');
+    const onUsage = vi.fn();
+    await new ClaudeAdapter().summarize('refactor login flow', '/usr/bin/claude', '/answer-home', { onUsage });
+    const call = runCliPrintSummarizeMock.mock.calls[0][0];
+
+    expect(call.outputBudget).toBe(SUMMARIZE_JSON_OUTPUT_BUDGET);
+    expect(call.extractRaw(fixtureText)).toBe('C1: yes - The agent reply\'s final line is "Findings: applied", which matches the condition exactly.');
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage).toHaveBeenCalledWith({
+      model: 'claude-haiku-5-5',
+      inputTokens: 2,
+      cacheCreationInputTokens: 2402,
+      cacheReadInputTokens: 535,
+      outputTokens: 35,
+      costUsd: 0.00050345,
+    } satisfies AgentCallUsage);
+  });
+
+  it('Claude writes the run\'s settings into a directory the caller owns, and leaves that directory in place', async () => {
+    // A caller's run directory is the caller's to remove (the answer-run
+    // directory sweep). The adapter must not delete it when the call resolves,
+    // or the caller's own cleanup and any later read of it find nothing.
+    const runDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'summarize-shape-run-'));
+    try {
+      const { ClaudeAdapter } = await import('../../src/main/agent/adapters/claude/claude-adapter');
+      await new ClaudeAdapter().summarize('refactor login flow', '/usr/bin/claude', '/answer-home', { runDirectory });
+      const call = runCliPrintSummarizeMock.mock.calls[0][0];
+      const settingsPath: string = call.args[call.args.indexOf('--settings') + 1];
+
+      expect(path.dirname(settingsPath)).toBe(runDirectory);
+      expect(fs.existsSync(runDirectory)).toBe(true);
+      expect(fs.existsSync(settingsPath)).toBe(true);
+    } finally {
+      fs.rmSync(runDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('Claude removes the directory it made itself once the call resolves', async () => {
+    // The other half of the ownership rule: with no run directory handed in, the
+    // adapter makes one for the settings file and must not leave it behind.
+    const { ClaudeAdapter } = await import('../../src/main/agent/adapters/claude/claude-adapter');
+    await new ClaudeAdapter().summarize('refactor login flow', '/usr/bin/claude', '/answer-home');
+    const call = runCliPrintSummarizeMock.mock.calls[0][0];
+    const settingsPath: string = call.args[call.args.indexOf('--settings') + 1];
+
+    expect(path.dirname(settingsPath).startsWith(os.tmpdir())).toBe(true);
+    expect(fs.existsSync(path.dirname(settingsPath))).toBe(false);
   });
 
   // Each adapter takes the model the way its own answerFromContext already does,

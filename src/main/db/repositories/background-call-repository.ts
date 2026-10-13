@@ -119,7 +119,7 @@ export class BackgroundCallRepository {
       clauses.push('started_at < ?');
       params.push(untilIso);
     }
-    const rows = this.db.prepare(`
+    return this.db.prepare(`
       SELECT
         CAST(CAST(strftime('%s', started_at) AS INTEGER) * 1000 / ? AS INTEGER) * ? AS bucketStartMs,
         job,
@@ -139,6 +139,5 @@ export class BackgroundCallRepository {
       GROUP BY bucketStartMs, job, agent, modelId
       ORDER BY bucketStartMs ASC, job ASC
     `).all(...params) as BackgroundCallGroupRow[];
-    return rows;
   }
 }

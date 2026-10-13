@@ -2650,8 +2650,11 @@
           };
         });
         // Background calls: per-day rows, with the per-job and total figures
-        // folded from them the way the service folds them, so the card and
-        // the history table always agree. The terminal names ran on an agent
+        // folded from them the way foldBackgroundUsage
+        // (src/main/usage-stats/background-usage.ts) folds them, so the card and
+        // the history table always agree. This file cannot import it: keep the
+        // totals' fields in step with BackgroundCallTotals, as the demo
+        // dataset's copy does. The terminal names ran on an agent
         // that reports no usage, which exercises the "not reported" state.
         var todayStartMs = new Date(new Date(nowMs).getFullYear(), new Date(nowMs).getMonth(), new Date(nowMs).getDate()).getTime();
         var yesterdayStartMs = new Date(new Date(nowMs).getFullYear(), new Date(nowMs).getMonth(), new Date(nowMs).getDate() - 1).getTime();
