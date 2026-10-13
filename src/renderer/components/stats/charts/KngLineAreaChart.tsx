@@ -25,6 +25,13 @@ interface KngLineAreaChartProps {
   onBucketClick?: (bucketStartMs: number) => void;
   /** Suspend data animations (e.g. during an active window resize). */
   animate?: boolean;
+  /**
+   * A fixed y range with fractional ticks, for a ratio. Without it the axis
+   * starts at 0 with whole-number ticks, which suits counts and dollars but
+   * drew a 0-to-1 hit rate on a 0% to 400% axis. Pass a stable reference:
+   * the chart is memoized.
+   */
+  yDomain?: [number, number];
 }
 
 /**
@@ -44,6 +51,7 @@ export const KngLineAreaChart = memo(function KngLineAreaChart({
   ariaLabel,
   onBucketClick,
   animate = true,
+  yDomain,
 }: KngLineAreaChartProps) {
   return (
     <div className={`h-full w-full ${onBucketClick ? 'cursor-pointer' : ''}`} role="img" aria-label={ariaLabel}>
@@ -77,7 +85,9 @@ export const KngLineAreaChart = memo(function KngLineAreaChart({
             tick={{ fill: 'var(--kng-fg-faint)', fontSize: 11 }}
             tickLine={false}
             axisLine={false}
-            allowDecimals={false}
+            allowDecimals={yDomain !== undefined}
+            domain={yDomain}
+            allowDataOverflow={yDomain !== undefined}
           />
           <Tooltip
             cursor={{ stroke: 'var(--kng-fg-faint)', strokeWidth: 1 }}

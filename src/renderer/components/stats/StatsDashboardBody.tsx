@@ -294,6 +294,7 @@ export function StatsDashboardBody() {
             >
               <KngLineAreaChart
                 points={data.cacheHitRate}
+                yDomain={data.cacheHitRateDomain}
                 colorVar="--kng-accent"
                 yFormatter={axisPercentFormatter}
                 xFormatter={xFormatter}

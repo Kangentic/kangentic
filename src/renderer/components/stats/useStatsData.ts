@@ -198,6 +198,24 @@ export function deriveCacheHitRateSeries(tokenSeries: TokenSeriesPoint[]): TimeP
   });
 }
 
+/**
+ * The cache hit rate chart's y range, fitted to the data: a few points of
+ * headroom either side of the observed band, clamped to 0..1, so a rate that
+ * moves between 96% and 99% reads as movement rather than a flat line at the
+ * top of a 0 to 100% axis. A flat series still gets a visible band.
+ */
+export function fitRatioDomain(points: TimePoint[]): [number, number] {
+  if (points.length === 0) return [0, 1];
+  let lowest = 1;
+  let highest = 0;
+  for (const point of points) {
+    lowest = Math.min(lowest, point.y);
+    highest = Math.max(highest, point.y);
+  }
+  const padding = Math.max((highest - lowest) * 0.25, 0.01);
+  return [Math.max(0, lowest - padding), Math.min(1, highest + padding)];
+}
+
 /** The slices a breakdown shows in one view: those with something in the
  *  selected metric. A model with cost and no turn tokens shows in the Cost
  *  view only. Colors are untouched, so hiding a slice moves no other's. */
@@ -459,6 +477,8 @@ export interface StatsDerivedData {
   tokenModelStack: ModelStack;
   /** The Tokens view's second chart: cache read over all input per bucket. */
   cacheHitRate: TimePoint[];
+  /** Its y range, fitted to the data (see {@link fitRatioDomain}). */
+  cacheHitRateDomain: [number, number];
   cumulative: TimePoint[];
   /** Cumulative running sum from tokenSeries, for the Live card (costSeries empty). */
   cumulativeFromTokens: TimePoint[];
@@ -489,6 +509,7 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
         modelStack: { series: [], rows: [] },
         tokenModelStack: { series: [], rows: [] },
         cacheHitRate: [],
+        cacheHitRateDomain: [0, 1],
         cumulative: [],
         cumulativeFromTokens: [],
         tokenTypeStack: { series: [], rows: [] },
@@ -500,6 +521,7 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
         bySubagentSlices: [],
       };
     }
+    const cacheHitRate = deriveCacheHitRateSeries(payload.tokenSeries);
     const byModelSlices = foldBreakdownForDonut(
       payload.byModel.map((model) => ({
         id: model.modelId,
@@ -526,7 +548,8 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
         'tokens',
         (bucketStartMs) => formatBucketLabel(bucketStartMs, payload.bucketSizeMs),
       ),
-      cacheHitRate: deriveCacheHitRateSeries(payload.tokenSeries),
+      cacheHitRate,
+      cacheHitRateDomain: fitRatioDomain(cacheHitRate),
       cumulative: deriveCumulative(payload.costSeries, effectiveMetric),
       cumulativeFromTokens: deriveCumulativeFromTokenSeries(payload.tokenSeries, effectiveMetric),
       tokenTypeStack: deriveTokenTypeStack(
