@@ -12,7 +12,7 @@ import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-na
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -225,12 +225,14 @@ export class GeminiAdapter implements AgentAdapter {
     return sequence;
   }
 
-  async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
+  async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     // Gemini's headless mode triggers automatically in non-TTY environments. We pipe
-    // the prompt via stdin and request plain text output.
+    // the prompt via stdin and request plain text output. `--skip-trust` for the
+    // same reason as `answerFromContext`: the answer home is a folder Gemini was
+    // never asked to trust, and the headless run would stop at the trust check.
     return runCliPrintSummarize({
       cliPath,
-      args: ['--output-format', 'text'],
+      args: ['--skip-trust', '--output-format', 'text', ...(options?.model ? ['--model', options.model] : [])],
       prompt: buildSummarizePrompt(prompt),
       cwd,
     });

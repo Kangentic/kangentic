@@ -151,6 +151,27 @@ export interface AnswerCapabilities {
   defaultEffort?: string;
 }
 
+/**
+ * What one headless agent call cost, as the CLI itself reported it.
+ *
+ * An adapter whose CLI reports no usage never builds one: the caller records
+ * null rather than an estimate. Tokens are kept apart by type because a cache
+ * read is far cheaper than fresh input and far larger.
+ */
+export interface AgentCallUsage {
+  /** The model that answered, as the CLI named it; null when it did not say. */
+  model: string | null;
+  /** Fresh (non-cached) input tokens. */
+  inputTokens: number;
+  /** Tokens written to the prompt cache. */
+  cacheCreationInputTokens: number;
+  /** Tokens served from the prompt cache. */
+  cacheReadInputTokens: number;
+  outputTokens: number;
+  /** What the CLI priced the call at, or null when it reported tokens and no cost. */
+  costUsd: number | null;
+}
+
 export interface AgentDetectionInfo {
   name: string;
   displayName: string;
@@ -305,8 +326,12 @@ export type RemoteServerStatus =
 export interface AgentSummarizeInput {
   /** Free-form text to summarize into a short task title. */
   prompt: string;
-  /** Optional: a specific agent name. Defaults to the active project's default agent. */
-  agentName?: string;
+  /** The project the title is for, read when the request was made: the
+   *  suggestion fires 30 s after a spawn, by which time another project may be
+   *  open. Names where the call is recorded. */
+  projectId?: string | null;
+  /** The task the title is for, when there is one yet. */
+  taskId?: string | null;
 }
 
 export type AgentSummarizeResult =

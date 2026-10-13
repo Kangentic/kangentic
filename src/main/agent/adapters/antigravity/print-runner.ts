@@ -62,10 +62,11 @@ export function extractPrintResponse(rawOutput: string): string | null {
 
 /**
  * Run `agy -p <prompt> --output-format json` in a hidden PTY and return the
- * response text. Throws on timeout, spawn failure, or an unparseable result
- * (the summarize caller treats any throw as "auto-name unavailable").
+ * response text. `flags` follow the fixed ones (the summarize caller's model and
+ * effort). Throws on timeout, spawn failure, or an unparseable result (the
+ * summarize caller treats any throw as "auto-name unavailable").
  */
-export async function runAntigravityPrint(cliPath: string, prompt: string): Promise<string> {
+export async function runAntigravityPrint(cliPath: string, prompt: string, flags: readonly string[] = []): Promise<string> {
   const scratch = scratchDirectory();
   // sync-write-ok: this must throw, not degrade - the function docblock above
   // already documents that contract, and the summarize caller treats any
@@ -87,7 +88,7 @@ export async function runAntigravityPrint(cliPath: string, prompt: string): Prom
     cwd: scratch,
     env: { ...process.env } as Record<string, string>,
   };
-  const args = ['-p', flatPrompt, '--output-format', 'json'];
+  const args = ['-p', flatPrompt, '--output-format', 'json', ...flags];
   const printProcess = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath)
     ? await spawnOffMainPty('cmd.exe', ['/c', cliPath, ...args], spawnOptions)
     : await spawnOffMainPty(cliPath, args, spawnOptions);

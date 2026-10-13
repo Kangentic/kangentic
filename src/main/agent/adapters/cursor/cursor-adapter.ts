@@ -11,7 +11,7 @@ import { discoverCursorCapabilities } from './capability-discovery';
 import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
 import { CURSOR_MCP_TOKEN_ENV, CURSOR_MCP_URL_ENV, removeCursorChat, writeCursorAnswerWorkspace } from './answer-workspace';
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions } from '../../agent-adapter';
 import type {
   AgentCapabilities,
   AgentPermissionEntry,
@@ -420,14 +420,16 @@ export class CursorAdapter implements AgentAdapter {
     return null;
   }
 
-  async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
+  async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     // `agent -p "<prompt>"` runs non-interactively. `--output-format text` returns only
     // the final assistant message (no tool-call summaries) per
     // cursor.com/docs/cli/reference/output-format. The prompt is required as a positional
-    // arg after `-p`, not via stdin.
+    // arg after `-p`, not via stdin. `--trust` for the same reason as
+    // `answerFromContext`: the answer home is a folder Cursor has not seen, and
+    // its trust prompt would block a headless run.
     return runCliPrintSummarize({
       cliPath,
-      args: ['--output-format', 'text', '-p'],
+      args: ['--trust', '--output-format', 'text', ...(options?.model ? ['--model', options.model] : []), '-p'],
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',

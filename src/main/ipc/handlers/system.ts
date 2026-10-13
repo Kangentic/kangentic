@@ -14,8 +14,10 @@ import { syncProjectMcpConfig } from './projects';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { listAgents, invalidateAgentListCache, nameLearnedModels } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
-import { agentCliNotFoundMessage } from '../../agent/shared/agent-cli-not-found';
 import { tryAcquireSummarizeSlot } from '../../agent/shared/summarize-rate-limit';
+import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
+import { resolveAutomationAgent } from '../../automations/automation-agent';
+import { automationAgentDeps } from '../helpers/automation-agent-deps';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
@@ -375,11 +377,12 @@ export function registerSystemHandlers(context: IpcContext): void {
     }
   });
 
-  // Summarize a free-form prompt into a short task title via the active
-  // project's default agent (or `input.agentName` if provided). Returns a
-  // discriminated result so renderer code can show a graceful error toast
-  // instead of throwing. Adapters without the `summarize` capability or
-  // CLIs that fail detection produce `{ ok: false, reason }`.
+  // Summarize a free-form prompt into a short task title on the Automation
+  // agent (`AppConfig.automation`), its model and effort. With no Automation
+  // agent naming is off: the renderer hides its affordances on the same
+  // predicate (`namingAgentReady`), and this refuses with the reason, so the
+  // two cannot disagree. Returns a discriminated result so renderer code can
+  // show a graceful error toast instead of throwing.
   ipcMain.handle(
     IPC.AGENT_SUMMARIZE,
     async (_, input: AgentSummarizeInput): Promise<AgentSummarizeResult> => {
@@ -387,11 +390,13 @@ export function registerSystemHandlers(context: IpcContext): void {
         const prompt = (input?.prompt ?? '').trim();
         if (!prompt) return { ok: false, reason: 'empty prompt' };
 
-        const { agentRegistry } = await import('../../agent/agent-registry');
         const config = context.configManager.load();
+        // Resolved BEFORE the rate limit, so a refusal spends no slot.
+        const resolved = await resolveAutomationAgent(automationAgentDeps(context), 'naming');
+        if (!resolved.ok) return { ok: false, reason: resolved.reason };
 
-        // Apply the sliding-window rate limit before doing any work. Shared
-        // with main's Command Terminal namer (summarize-rate-limit.ts).
+        // The sliding-window rate limit, shared with main's Command Terminal
+        // namer (summarize-rate-limit.ts).
         const limit = config.autoNameRateLimitPerHour ?? 60;
         if (!tryAcquireSummarizeSlot(limit)) {
           return {
@@ -400,36 +405,16 @@ export function registerSystemHandlers(context: IpcContext): void {
           };
         }
 
-        // Resolve which adapter to ask. Caller may name a specific agent
-        // (e.g. for transient sessions); otherwise fall back to the active
-        // project's default agent, then to the registry's first entry.
-        let agentName = input.agentName;
-        if (!agentName && context.currentProjectId) {
-          const project = context.projectRepo
-            .list()
-            .find((entry) => entry.id === context.currentProjectId);
-          agentName = project?.default_agent ?? undefined;
-        }
-        if (!agentName) {
-          const list = agentRegistry.list();
-          agentName = list[0];
-        }
-        if (!agentName) return { ok: false, reason: 'no agents registered' };
-
-        const adapter = agentRegistry.get(agentName);
-        if (!adapter) return { ok: false, reason: `unknown agent: ${agentName}` };
-        if (typeof adapter.summarize !== 'function') {
-          return { ok: false, reason: `${adapter.displayName} does not support summarize` };
-        }
-
-        const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
-        const info = await adapter.detect(cliPathOverride);
-        if (!info.found || !info.path) {
-          return { ok: false, reason: agentCliNotFoundMessage(adapter.displayName) };
-        }
-
-        const cwd = context.currentProjectPath ?? process.cwd();
-        const title = await adapter.summarize(prompt, info.path, cwd);
+        // The shared answer home, never the project: a title needs nothing
+        // from the repository, and a project root loads its agent
+        // instructions into every call.
+        const answerHome = await ensureAnswerHomeDirectory();
+        const title = await withAnswerRunDirectory((runDirectory) => resolved.adapter.summarize!(
+          prompt,
+          resolved.cliPath,
+          answerHome,
+          { model: resolved.model, effort: resolved.effort, runDirectory },
+        ));
         if (!title) return { ok: false, reason: 'summarize produced empty output' };
         return { ok: true, title };
       } catch (error) {

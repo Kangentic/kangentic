@@ -1,7 +1,10 @@
 import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
-import { answerSetupGap, automationAgentChoice, resolveAnswerAgent } from '../../../shared/answer-agent';
-import type { AgentAdapter } from '../../agent/agent-adapter';
-import type { AppConfig } from '../../../shared/types';
+import {
+  resetAutomationAgentCacheForTests,
+  resolveAutomationAgent,
+  type AutomationAgentDeps,
+  type ResolvedAutomationAgent,
+} from '../automation-agent';
 import { buildConditionPrompt, parseConditionReply, type ConditionAnswer, type ConditionPromptInput } from './condition-prompt';
 
 /**
@@ -16,8 +19,9 @@ import { buildConditionPrompt, parseConditionReply, type ConditionAnswer, type C
  * Two costs are held down because a check runs at turn ends, which a busy
  * board produces many of:
  * - the CLI's detection and effort levels are cached for a few minutes rather
- *   than probed on every check (`resolveAnswerRun` probes per call, which suits
- *   a question a person asked, not a background check);
+ *   than probed on every check (`automation-agent.ts`; `resolveAnswerRun`
+ *   probes per call, which suits a question a person asked, not a background
+ *   check);
  * - at most `MAX_CONCURRENT_CHECKS` run at once, each a CLI started in the pty
  *   host, so a workflow ending many turns together queues its checks instead
  *   of starting them all.
@@ -28,23 +32,9 @@ export type ConditionCheckOutcome =
   | { ok: false; reason: string };
 
 /** The dependencies a check needs, so the module tests without Electron. */
-export interface ConditionCheckDeps {
-  loadConfig: () => AppConfig;
-  listAgents: () => Promise<ReadonlyArray<{ name: string; adapter: AgentAdapter }>>;
-}
+export type ConditionCheckDeps = AutomationAgentDeps;
 
 const MAX_CONCURRENT_CHECKS = 2;
-const DETECTION_TTL_MS = 5 * 60_000;
-
-interface CachedCli {
-  path: string;
-  effortLevels: string[];
-  at: number;
-}
-
-// Keyed by agent name plus its CLI path override, so changing the override
-// finds the new CLI at once.
-const cliCache = new Map<string, CachedCli>();
 
 let runningChecks = 0;
 const waitingChecks: Array<() => void> = [];
@@ -118,68 +108,9 @@ export async function automationAgentUnavailableReason(deps: ConditionCheckDeps)
   return resolved.ok ? null : resolved.reason;
 }
 
-type ResolvedCheckAgent =
-  | { ok: true; adapter: AgentAdapter; agentName: string; cliPath: string; model: string | null; effort: string | null }
-  | { ok: false; reason: string };
-
-/** Which agent answers, and with what. A setup step that throws (a CLI probe that fails to spawn) is a check that could not run. */
-async function resolveCheckAgent(deps: ConditionCheckDeps): Promise<ResolvedCheckAgent> {
-  try {
-    return await resolveCheckAgentOrThrow(deps);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: `The Automation agent could not be set up, so the condition was not checked: ${detail}` };
-  }
-}
-
-async function resolveCheckAgentOrThrow(deps: ConditionCheckDeps): Promise<ResolvedCheckAgent> {
-  const config = deps.loadConfig();
-  const choice = automationAgentChoice(config.automation);
-  const registered = await deps.listAgents();
-  const candidates = registered.map(({ name, adapter }) => ({
-    name,
-    displayName: adapter.displayName,
-    supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
-    answerCapabilities: adapter.answerCapabilities,
-  }));
-  const gap = answerSetupGap({ agents: candidates, configured: choice.agent, configuredModel: choice.model });
-  if (gap) {
-    return {
-      ok: false,
-      reason: gap === 'agent'
-        ? 'Set up an Automation agent in Settings > Workflows to check this condition.'
-        : 'Choose a model for the Automation agent in Settings > Workflows to check this condition.',
-    };
-  }
-  const agentName = resolveAnswerAgent({ agents: candidates, configured: choice.agent })?.name ?? '';
-  const adapter = registered.find((entry) => entry.name === agentName)?.adapter;
-  if (!adapter?.answerFromContext) return { ok: false, reason: `The Automation agent "${agentName}" cannot answer checks.` };
-
-  const override = config.agent.cliPaths[agentName] ?? null;
-  const cacheKey = `${agentName}\n${override ?? ''}`;
-  let cached = cliCache.get(cacheKey);
-  if (!cached || Date.now() - cached.at > DETECTION_TTL_MS) {
-    const info = await adapter.detect(override);
-    if (!info.found || !info.path) return { ok: false, reason: `${adapter.displayName} CLI not found, so the condition could not be checked.` };
-    let effortLevels: string[] = [];
-    if (adapter.answerCapabilities?.effort && adapter.discoverCapabilities) {
-      const discovered = await adapter.discoverCapabilities(info.path).catch(() => undefined);
-      effortLevels = discovered?.effortLevels ?? [];
-    }
-    cached = { path: info.path, effortLevels, at: Date.now() };
-    cliCache.set(cacheKey, cached);
-  }
-
-  // Effort only when the CLI reports it right now: the chosen level, else the
-  // adapter's recommended one. A stale level fails every run on the CLIs that
-  // exit on an unknown one (Grok, Copilot, Antigravity).
-  let effort: string | null = null;
-  const capabilities = adapter.answerCapabilities;
-  if (capabilities?.effort) {
-    if (choice.effort && cached.effortLevels.includes(choice.effort)) effort = choice.effort;
-    else if (capabilities.defaultEffort && cached.effortLevels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
-  }
-  return { ok: true, adapter, agentName, cliPath: cached.path, model: choice.model, effort };
+/** Which agent answers, and with what. */
+function resolveCheckAgent(deps: ConditionCheckDeps): Promise<ResolvedAutomationAgent> {
+  return resolveAutomationAgent(deps, 'check');
 }
 
 /**
@@ -270,5 +201,5 @@ function answersFrom(reply: string, input: ConditionPromptInput): Map<string, Co
 
 /** For tests: forget cached CLI detections. */
 export function resetConditionCheckCacheForTests(): void {
-  cliCache.clear();
+  resetAutomationAgentCacheForTests();
 }

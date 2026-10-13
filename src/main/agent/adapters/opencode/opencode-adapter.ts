@@ -15,7 +15,7 @@ import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -468,12 +468,12 @@ export class OpenCodeAdapter implements AgentAdapter {
     return [];
   }
 
-  async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
+  async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     // `opencode run` runs non-interactively. No `-q`: with it the call printed
     // nothing at all, and the spinner it was meant to hide goes to stderr anyway.
     return runCliPrintSummarize({
       cliPath,
-      args: ['run'],
+      args: ['run', ...(options?.model ? ['--model', options.model] : [])],
       prompt: buildSummarizePrompt(prompt),
       cwd,
     });

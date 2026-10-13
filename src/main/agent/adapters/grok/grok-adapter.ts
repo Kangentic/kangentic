@@ -23,7 +23,7 @@ import {
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -347,11 +347,17 @@ export class GrokAdapter implements AgentAdapter {
     }
   }
 
-  /** One-shot title generation via the verified headless mode. */
-  async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
+  /** One-shot title generation via the verified headless mode, on the answer
+   *  run's model and effort flags. */
+  async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     return runCliPrintSummarize({
       cliPath,
-      args: ['--output-format', 'plain', '-p'],
+      args: [
+        '--output-format', 'plain',
+        ...(options?.model ? ['--model', options.model] : []),
+        ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
+        '-p',
+      ],
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',

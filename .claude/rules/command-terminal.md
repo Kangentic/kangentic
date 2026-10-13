@@ -58,8 +58,9 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   renderer-initiated end (Stop, a branch switch) must scrub its map entry BEFORE it sends the
   kill, or the subscriber closes the window a second time (a branch switch would lose its window).
   Do not move this into App.tsx's removal handler, whose mapping the replica convergence test pins.
-- **Naming runs in MAIN**, by `CommandTerminalNamer` with the session's own agent and project
-  folder. Display reads `commandTerminalLabel` off the registry row through
+- **Naming runs in MAIN**, by `CommandTerminalNamer` on the Automation agent (its model and
+  effort, in the shared answer home), and is off when no Automation agent is set: the terminal
+  keeps "Command Terminal N". Display reads `commandTerminalLabel` off the registry row through
   `commandTerminalDisplayName`; there is no renderer-side label. The namer needs the prompt's
   text on the Prompt event, so `startCommandTerminal` passes `capturePromptText` and an adapter
   whose hooks are per-session (Claude) copies its prompt payload into `detail`. Never set that

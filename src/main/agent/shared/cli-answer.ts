@@ -1,3 +1,4 @@
+import type { AgentCallUsage } from '../../../shared/types';
 import { parseJsonLine, pickStringField, runCliPrint, type RunCliPrintOptions } from './cli-print';
 
 /**
@@ -33,6 +34,15 @@ export const ANSWER_TIMEOUT_MS = 120_000;
  * what a stream is.
  */
 export const ANSWER_STREAM_OUTPUT_BUDGET = 8 * 1024 * 1024;
+
+/**
+ * The stdout budget for an answer printed as one `--output-format json`
+ * object: the answer, escaped, inside an envelope of usage, per-model usage
+ * and run statistics. Measured on CLI 2.1.296, a one-model call's envelope is
+ * about 1.9 KB before the answer, so the answer's own budget is doubled
+ * rather than shared with it.
+ */
+export const ANSWER_JSON_OUTPUT_BUDGET = ANSWER_OUTPUT_BUDGET * 2;
 
 /**
  * One event from a `--output-format stream-json` line, reduced to what the
@@ -201,6 +211,100 @@ function errorResultText(record: Record<string, unknown>): string | null {
   return subtype && subtype !== 'success' ? subtype.replace(/_/g, ' ') : null;
 }
 
+/** A finite, non-negative number field, else 0. */
+function tokenCount(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+/**
+ * What a Claude-compatible `result` line says the call cost, or null when it
+ * says nothing.
+ *
+ * `modelUsage` is read first because it covers every model the call used: a
+ * side request on another model counts there and not in the top-level `usage`,
+ * which is the main loop's alone. On a one-model call the two agree (the CLI
+ * 2.1.296 fixture). The model that answered is the one with the most output.
+ * The cost is the CLI's own `total_cost_usd`, the sum of the per-model costs
+ * when that is absent, and null when neither is there.
+ */
+export function usageFromResultRecord(record: Record<string, unknown>): AgentCallUsage | null {
+  const totalCost = record.total_cost_usd;
+  const reportedCost = typeof totalCost === 'number' && Number.isFinite(totalCost) ? totalCost : null;
+
+  const modelUsage = record.modelUsage;
+  if (typeof modelUsage === 'object' && modelUsage !== null) {
+    const usage: AgentCallUsage = {
+      model: null, inputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, costUsd: null,
+    };
+    let mostOutput = -1;
+    let summedCost: number | null = null;
+    let counted = 0;
+    for (const [modelName, rawEntry] of Object.entries(modelUsage as Record<string, unknown>)) {
+      if (typeof rawEntry !== 'object' || rawEntry === null) continue;
+      const entry = rawEntry as Record<string, unknown>;
+      counted += 1;
+      const outputTokens = tokenCount(entry, 'outputTokens');
+      usage.inputTokens += tokenCount(entry, 'inputTokens');
+      usage.cacheCreationInputTokens += tokenCount(entry, 'cacheCreationInputTokens');
+      usage.cacheReadInputTokens += tokenCount(entry, 'cacheReadInputTokens');
+      usage.outputTokens += outputTokens;
+      if (outputTokens > mostOutput) {
+        mostOutput = outputTokens;
+        usage.model = modelName;
+      }
+      const entryCost = entry.costUSD;
+      if (typeof entryCost === 'number' && Number.isFinite(entryCost)) summedCost = (summedCost ?? 0) + entryCost;
+    }
+    if (counted > 0) return { ...usage, costUsd: reportedCost ?? summedCost };
+  }
+
+  const topLevel = record.usage;
+  if (typeof topLevel === 'object' && topLevel !== null) {
+    const entry = topLevel as Record<string, unknown>;
+    return {
+      model: null,
+      inputTokens: tokenCount(entry, 'input_tokens'),
+      cacheCreationInputTokens: tokenCount(entry, 'cache_creation_input_tokens'),
+      cacheReadInputTokens: tokenCount(entry, 'cache_read_input_tokens'),
+      outputTokens: tokenCount(entry, 'output_tokens'),
+      costUsd: reportedCost,
+    };
+  }
+  return null;
+}
+
+/** The last `result` line in stdout, or null when there is none. */
+function lastResultRecord(stdout: string): Record<string, unknown> | null {
+  const lines = stdout.split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const record = parseJsonLine(lines[index]);
+    if (record?.type === 'result') return record;
+  }
+  return null;
+}
+
+/**
+ * The answer out of a run printed as one `--output-format json` object, with
+ * what the call cost handed to `onUsage` on the way.
+ *
+ * Usage is reported BEFORE an error result throws: a failed call was still
+ * paid for. Stdout that is empty or not a result line (a rejected flag, a
+ * failed login) reads as no answer rather than throwing, so the runner goes on
+ * to its own "exited N: stderr" reason instead of a JSON parse error.
+ */
+export function createJsonResultExtractor(onUsage?: (usage: AgentCallUsage) => void): (stdout: string) => string {
+  return (stdout) => {
+    const record = lastResultRecord(stdout);
+    if (!record) return '';
+    const usage = usageFromResultRecord(record);
+    if (usage && onUsage) onUsage(usage);
+    const result = pickStringField(record, 'result');
+    throwIfErrorResult(record, result);
+    return result ?? '';
+  };
+}
+
 /**
  * The final answer text out of a complete stream-json transcript.
  *
@@ -212,9 +316,10 @@ function errorResultText(record: Record<string, unknown>): string | null {
  *
  * Falls back to every assistant text joined when no `result` line is present -
  * an output-budget cut lands mid-stream, and the partial answer is still worth
- * more than nothing.
+ * more than nothing. The `result` line's usage goes to `onUsage` when given,
+ * before an error result throws.
  */
-export function extractStreamedAnswer(stdout: string): string {
+export function extractStreamedAnswer(stdout: string, onUsage?: (usage: AgentCallUsage) => void): string {
   const lines = stdout.split(/\r?\n/);
   let lastTurnText = '';
   let allText = '';
@@ -224,6 +329,8 @@ export function extractStreamedAnswer(stdout: string): string {
     if (!record) continue;
     if (record.type === 'result') {
       sawResult = true;
+      const usage = onUsage ? usageFromResultRecord(record) : null;
+      if (usage && onUsage) onUsage(usage);
       const result = pickStringField(record, 'result');
       throwIfErrorResult(record, result);
       if (result) return result;

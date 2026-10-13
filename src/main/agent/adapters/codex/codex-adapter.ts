@@ -11,7 +11,7 @@ import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -276,12 +276,12 @@ export class CodexAdapter implements AgentAdapter {
     return [];
   }
 
-  async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
+  async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     // `codex exec` runs non-interactively. The `--skip-git-repo-check` flag avoids
     // failing in non-git working directories. Prompt is delivered via stdin.
     return runCliPrintSummarize({
       cliPath,
-      args: ['exec', '--skip-git-repo-check'],
+      args: ['exec', '--skip-git-repo-check', ...(options?.model ? ['--model', options.model] : [])],
       prompt: buildSummarizePrompt(prompt),
       cwd,
     });

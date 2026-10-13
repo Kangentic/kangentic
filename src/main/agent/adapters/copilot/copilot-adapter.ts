@@ -14,7 +14,7 @@ import { createCopilotCommandInjectionVerifier } from './command-injection-verif
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { sharedFolderKey } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -233,11 +233,17 @@ export class CopilotAdapter implements AgentAdapter {
     return sequence;
   }
 
-  async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
+  async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     // `copilot -p "<prompt>" --silent` runs non-interactively without status output.
+    // The model and effort flags are the answer run's, omitted when unset.
     return runCliPrintSummarize({
       cliPath,
-      args: ['--silent', '-p'],
+      args: [
+        '--silent',
+        ...(options?.model ? ['--model', options.model] : []),
+        ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
+        '-p',
+      ],
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',

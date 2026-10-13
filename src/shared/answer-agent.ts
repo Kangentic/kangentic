@@ -82,6 +82,29 @@ export function automationAgentReady<T extends AnswerAgentCandidate>(
   return answerSetupGap({ agents, configured: choice.agent, configuredModel: choice.model, requireFound }) === null;
 }
 
+/** An agent as naming sees it: an answer candidate that may also summarize. */
+export interface NamingAgentCandidate extends AnswerAgentCandidate {
+  supportsSummarize?: boolean;
+}
+
+/**
+ * Whether task titles and Command Terminal names can be made: the Automation
+ * agent is ready (`automationAgentReady`) and its adapter can summarize. With
+ * no Automation agent, naming is off and hidden rather than falling back to
+ * another agent, the same way a Condition check never spends on an agent
+ * nobody chose. The one test the renderer's Name-from-prompt button, the
+ * rename suggestion, and main's summarize handler and terminal namer all read.
+ */
+export function namingAgentReady<T extends NamingAgentCandidate>(
+  agents: ReadonlyArray<T>,
+  config: AutomationAgentConfig | undefined,
+  requireFound: boolean,
+): boolean {
+  if (!automationAgentReady(agents, config, requireFound)) return false;
+  const choice = automationAgentChoice(config);
+  return agents.find((entry) => entry.name === choice.agent)?.supportsSummarize === true;
+}
+
 /**
  * Whether task summaries are switched on. On unless switched off:
  * they are part of what the Knowledge Graph reads, and nothing is spent until

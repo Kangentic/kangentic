@@ -10,6 +10,14 @@ const OUTPUT_BUDGET = 2048; // bytes of stdout we accept before terminating
 const TITLE_LIMIT = 80;
 const DEFAULT_TIMEOUT_MS = 15_000;
 
+/**
+ * The stdout budget for a title printed as one JSON object with its usage. The
+ * envelope alone measured 1,898 bytes on a one-model call (CLI 2.1.296), which
+ * leaves the plain-text budget no room for the title, and a call that touches
+ * a second model adds a `modelUsage` entry.
+ */
+export const SUMMARIZE_JSON_OUTPUT_BUDGET = 16 * 1024;
+
 const SYSTEM_PROMPT_PREFIX =
   'Summarize the following task description as a concise imperative title (4-8 words). '
   + 'Use Title Case. No quotes, no trailing period, no markdown formatting. '

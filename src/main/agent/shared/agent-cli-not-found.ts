@@ -12,8 +12,8 @@ import { UserConfigurationError } from '../../../shared/user-configuration-error
  * appending the word was the bug, not the display names.
  *
  * Exported separately from the error class because one of the three call sites
- * reports a `reason` string rather than throwing
- * (`ipc/handlers/system.ts`'s summarize probe). Both routes therefore share a
+ * reports a `reason` string rather than throwing (the Automation agent's naming
+ * resolution in `automations/automation-agent.ts`). Both routes therefore share a
  * single function, which is what lets `tests/unit/agent-cli-not-found.test.ts`
  * walk every registered adapter through one call.
  */
