@@ -215,6 +215,16 @@ export interface CommandOptions {
    */
   taskProcessTag?: string;
   /**
+   * Kangentic's id for the session this command is built for: the `id` the
+   * caller then hands to `sessionManager.spawn`. Not the agent's own session id
+   * (`sessionId`). An adapter that writes a file every session in a folder
+   * shares holds it under this id (`SharedFolderHolds`), and the session layer
+   * releases it with `removeHooks(directory, ptySessionId)`. Set by all four
+   * build sites; without it the build takes no hold, which is why there is no
+   * taskId fallback (a task's sessions overlap, see `SharedFolderHolds`).
+   */
+  ptySessionId?: string;
+  /**
    * Launch with no tool that edits a file or runs a shell command, and with
    * Kangentic's MCP server as the only one. Set only for a workflow's own agent,
    * and only on an adapter that declares `supportsReadOnlyLaunch`.
@@ -515,14 +525,18 @@ export interface AgentAdapter {
   /**
    * Remove any monitoring hooks injected by this adapter (cleanup).
    *
-   * `taskId` identifies which spawn is releasing its hold on shared hook
-   * state. Adapters that write to a project-shared settings file (Codex,
-   * Gemini) use it for per-task reference counting so concurrent sessions
-   * do not clobber each other's hooks. Double-releases for the same taskId
-   * are idempotent. Adapters that use per-session settings files (Claude)
-   * ignore the parameter.
+   * `directory` is the cwd the session's command was built for, not the PTY's
+   * start dir (a missing folder or a UNC path under cmd starts it in home).
+   * `sessionId` is the session releasing its hold, the `ptySessionId` its
+   * command was built with. An adapter that writes a file every session in a
+   * folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode,
+   * Codex) strips it only when the folder's last holder releases
+   * (`SharedFolderHolds`), and strips the folder the hold was taken in. A
+   * second release of the same session is idempotent. No `sessionId` (project
+   * delete's sweep) strips the folder whoever holds it. Adapters with nothing
+   * shared ignore the parameter.
    */
-  removeHooks(directory: string, taskId?: string): void;
+  removeHooks(directory: string, sessionId?: string): void;
 
   /** Clear any cached settings (e.g. after project settings change). */
   clearSettingsCache(): void;

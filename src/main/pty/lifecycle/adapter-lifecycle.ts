@@ -6,7 +6,10 @@ import type { AgentParser, SessionAttachment, SessionContext } from '../../../sh
  * declares only the fields these helpers touch.
  */
 export interface AdapterAttachable {
+  id: string;
   cwd: string;
+  /** The cwd the agent's command was built for. See ManagedSession.commandCwd. */
+  commandCwd?: string;
   taskId: string;
   agentParser?: AgentParser;
   adapterAttachment?: SessionAttachment;
@@ -45,19 +48,45 @@ export function disposeAdapterAttachment(session: AdapterAttachable): void {
 }
 
 /**
- * Ask the adapter to strip its hooks from the project's settings file.
+ * End a session's hold on what its adapter wrote for it.
  *
- * Gemini and Codex write hooks to a shared project-level file
- * (`<cwd>/.gemini/settings.json` or equivalent) rather than a
- * session-specific override, so each session must clean up its own
- * hooks on exit. Without this they accumulate and the agent executes
- * N copies per event.
+ * Several adapters write their hooks or the Kangentic MCP entry into a file
+ * every session in a folder shares (`.gemini/settings.json`,
+ * `.cursor/mcp.json`, ...), and strip it once the folder's last session
+ * releases (`SharedFolderHolds`). The hold was taken in `buildCommand` under
+ * the session's own id (`CommandOptions.ptySessionId`), so the release names
+ * that id and the folder the command was built for.
  *
- * Adapters key on `taskId`, which means this can be called safely from
- * both suspend() and the PTY exit handler for the same task - the
- * second call is a no-op for shared-file adapters and a no-op via the
- * optional chain for adapters that don't implement removeHooks.
+ * Every hold must be released exactly once it can no longer become a
+ * running session's: on the PTY's exit and on suspend (a second release of
+ * one session is a no-op), and for a built command that never ran (an
+ * abandoned or failed spawn, a queued placeholder killed before it started,
+ * a caller that gave up between building and spawning). A hold that is
+ * never released keeps its folder's file in place for the rest of the run.
+ *
+ * Never throws. Most calls sit in a catch or a finally, where an adapter's
+ * failed strip would replace the error being handled (an abort would read as
+ * a spawn failure), and in the PTY exit handler it would skip the cleanup
+ * after it.
+ */
+export function releaseCommandHold(
+  agentParser: AgentParser | undefined,
+  commandCwd: string,
+  sessionId: string,
+): void {
+  try {
+    agentParser?.removeHooks?.(commandCwd, sessionId);
+  } catch (error) {
+    console.error(`[ADAPTER] Releasing the hold of session ${sessionId.slice(0, 8)} failed:`, error);
+  }
+}
+
+/**
+ * Release the session's hold (see `releaseCommandHold`). Keyed by the
+ * session's own id, never its task: a task's sessions overlap (a killed young
+ * session's PTY exits up to the grace after the task's next session started),
+ * and a task-keyed release let the old exit strip the new session's file.
  */
 export function removeAdapterHooks(session: AdapterAttachable): void {
-  session.agentParser?.removeHooks?.(session.cwd, session.taskId);
+  releaseCommandHold(session.agentParser, session.commandCwd ?? session.cwd, session.id);
 }

@@ -211,6 +211,58 @@ describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution w
     expect(commandOptions.taskProcessTag).toBe(spawnInput.taskId);
   });
 
+  // A folder-shared adapter holds the file it writes under `ptySessionId`, and
+  // the session layer releases with the session's own id, so the two must be one.
+  it('hands the builder the same ptySessionId the spawn runs under', async () => {
+    await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    const commandOptions = buildCommandMock.mock.calls[0][0] as { ptySessionId?: string };
+    const spawnInput = vi.mocked(context.sessionManager.spawn).mock.calls[0][0] as { id?: string };
+    expect(commandOptions.ptySessionId).toBeDefined();
+    expect(spawnInput.id).toBe(commandOptions.ptySessionId);
+  });
+
+  // Red-green: drop the catch's releaseCommandHold in transient-sessions.ts
+  // and the built command's hold is never released.
+  it('releases the built command\'s hold when buildEnv throws before the spawn', async () => {
+    const removeHooks = vi.fn();
+    mockAgentRegistryGetOrThrow.mockReturnValue({
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: vi.fn(async () => ({ found: true, path: CMD_HEAD, version: '1.0.0' })),
+      ensureTrust: ensureTrustMock,
+      buildCommand: buildCommandMock,
+      buildEnv: vi.fn(() => { throw new Error('env failed'); }),
+      removeHooks,
+    });
+
+    await expect(callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' })).rejects.toThrow('env failed');
+
+    const commandOptions = buildCommandMock.mock.calls[0][0] as { ptySessionId?: string; cwd: string };
+    expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+    expect(removeHooks).toHaveBeenCalledWith(commandOptions.cwd, commandOptions.ptySessionId);
+  });
+
+  // spawn() owns the hold once it is called: it releases a spawn that never
+  // ran, and keeps the hold of one whose PTY started. A second release here
+  // would strip the folder's file under that running agent.
+  it('leaves a rejected spawn\'s hold to the session layer', async () => {
+    const removeHooks = vi.fn();
+    mockAgentRegistryGetOrThrow.mockReturnValue({
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: vi.fn(async () => ({ found: true, path: CMD_HEAD, version: '1.0.0' })),
+      ensureTrust: ensureTrustMock,
+      buildCommand: buildCommandMock,
+      removeHooks,
+    });
+    vi.mocked(context.sessionManager.spawn).mockRejectedValueOnce(new Error('spawn failed'));
+
+    await expect(callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' })).rejects.toThrow('spawn failed');
+
+    expect(removeHooks).not.toHaveBeenCalled();
+  });
+
   it('resolves after ensureTrust and before buildCommand', async () => {
     await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
 

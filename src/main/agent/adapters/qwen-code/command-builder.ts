@@ -144,7 +144,11 @@ export class QwenCommandBuilder {
     return structuredClone(baseSettings);
   }
 
-  private shouldWriteMergedSettings(options: QwenCommandOptions): boolean {
+  /**
+   * True when the build writes the folder-shared `.qwen/settings.json`. The
+   * adapter takes its session's hold on the file under the same test.
+   */
+  shouldWriteMergedSettings(options: QwenCommandOptions): boolean {
     if (options.eventsOutputPath) return true;
     return (
       options.mcpServerEnabled !== false &&
@@ -178,9 +182,9 @@ export class QwenCommandBuilder {
    *
    * Qwen Code (like Gemini) has no --settings flag, so hooks live in a
    * project-shared file. Concurrent sessions in the same cwd are
-   * serialized by QwenAdapter's hook reference counter: each spawn
-   * retains one reference, and removeHooks() only strips the file when
-   * the count drops to zero. The isKangenticHook() guard prevents
+   * serialized by QwenAdapter's per-session holds: each spawn holds the
+   * file under its own session id, and removeHooks() only strips it when
+   * the folder's last session releases. The isKangenticHook() guard prevents
    * affecting user-defined hooks. On crash / force-quit, stripping on
    * the next spawn (buildHooks) cleans up.
    *

@@ -64,12 +64,12 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 | Codex CLI | `-c mcp_servers.kangentic.*` per-invocation overrides | process env (`KANGENTIC_MCP_TOKEN`) |
 | Kimi Code | `--mcp-config-file <sessionDir>/mcp.json` | session file (gitignored) |
 | GitHub Copilot CLI | `--additional-mcp-config @<path>` | session-adjacent file |
-| Gemini CLI | `mcpServers` in `<cwd>/.gemini/settings.json` (`httpUrl`) | project file, stripped on exit |
-| Qwen Code | `mcpServers` in `<cwd>/.qwen/settings.json` (`httpUrl`) | project file, stripped on exit |
+| Gemini CLI | `mcpServers` in `<cwd>/.gemini/settings.json` (`httpUrl`) | project file, stripped when the folder's last session exits |
+| Qwen Code | `mcpServers` in `<cwd>/.qwen/settings.json` (`httpUrl`) | project file, stripped when the folder's last session exits |
 | Droid | `<cwd>/.factory/mcp.json` with `${KANGENTIC_MCP_TOKEN}` | process env (file holds only the var name) |
 | Grok Build | `[mcp_servers.kangentic]` sentinel block in `<cwd>/.grok/config.toml` with `${KANGENTIC_MCP_URL}` + `${KANGENTIC_MCP_TOKEN}`, plus `--allow "MCPTool(kangentic__*)"` pre-approval | process env (file holds only var names - the URL too, so the block is fully static) |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env var | process env (local spawns only) |
-| Antigravity CLI | Workspace plugin `<cwd>/.agents/plugins/kangentic/` (`serverUrl` + `X-Kangentic-Token` header; streamable HTTP, connects at the first agent turn) | project file, stripped on exit |
+| Antigravity CLI | Workspace plugin `<cwd>/.agents/plugins/kangentic/` (`serverUrl` + `X-Kangentic-Token` header; streamable HTTP, connects at the first agent turn) | project file, stripped when the folder's last session exits |
 | Cursor CLI | `<cwd>/.cursor/mcp.json` entry with `${env:KANGENTIC_MCP_URL}` + `${env:KANGENTIC_MCP_TOKEN}`, plus `--approve-mcps` | process env (file holds only var references; stripped when the folder's last session exits) |
 | Oz CLI, Goose CLI | Not wired | n/a |
 | Aider, Ollama | Not possible - neither CLI is an MCP client | n/a |
@@ -81,6 +81,10 @@ written literally into a project file every session in that folder shares, so th
 start decides the URL the others read. That is why they cannot carry a workflow agent's caller
 scope (`canBeWorkflowAgent`). Grok's and Cursor's files are static and their URLs are per-process
 env references, so they are `'per-session'`.
+
+A project-file row's entry is held per session (`SharedFolderHolds`, keyed by the session's own id
+and recording the folder the build wrote), and the folder's last session to end strips it. A
+session that ends while a later session of the same task runs releases only its own hold.
 
 The project-file rows (Gemini, Qwen, Droid, Grok, Antigravity, Cursor) are additionally hidden from git while untracked: when Kangentic creates the file, the builder seeds it into the local `.git/info/exclude` so it never shows in `git status` and cannot ride a `git add -A` (shared mechanism in `src/main/agent/shared/git-exclude.ts`; a pre-existing user file keeps its git visibility).
 

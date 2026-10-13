@@ -41,6 +41,7 @@ import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { AgentParser } from '../../src/shared/types';
+import { SharedFolderHolds } from '../../src/main/agent/shared/shared-folder-holds';
 import {
   KILL_GRACE_MS,
   YOUNG_AFTER_ALT_SCREEN_MS,
@@ -533,6 +534,101 @@ describe('the spawn flow onData guard once remove() has cleared the row', () => 
 
     expect(notifyPtyDataSpy).not.toHaveBeenCalled();
     expect(setSessionUsageSpy).not.toHaveBeenCalled();
+    manager.killAll();
+  });
+});
+
+describe('a folder-shared adapter file across a same-task respawn', () => {
+  // Gemini, Cursor and the other folder-shared adapters hold the file they
+  // write in buildCommand until the session releases it (SharedFolderHolds).
+  // The release used to be keyed by task: a young session's kill parks its PTY
+  // with its exit listener still attached, the task respawns inside the grace,
+  // the new build re-adds the same task id (a no-op), and then the old PTY's
+  // exit removed the task id and stripped the RUNNING session's hooks and MCP
+  // entry. Keyed by session id, the late exit ends only its own hold.
+  //
+  // Red-green: releasing with `session.taskId` in removeAdapterHooks never
+  // ends a session's own hold, so the new session's exit fails to strip and
+  // the suspend's release fails to strip; the task-keyed holds this replaced
+  // failed the first case at the old exit instead.
+
+  /** An adapter whose removeHooks goes through real holds, with the strip spied. */
+  function holdingAdapter() {
+    const holds = new SharedFolderHolds();
+    const strip = vi.fn();
+    const parser = {
+      detectFirstOutput: () => false,
+      removeHooks: (directory: string, sessionId?: string) => {
+        const folder = holds.release(sessionId, directory);
+        if (folder) strip(folder);
+      },
+      runtime: { sessionId: { fromOutput: () => null } },
+    } as unknown as AgentParser;
+    return { parser, holds, strip };
+  }
+
+  /** What a build does before spawn: take the session's hold, then spawn under the same id. */
+  async function buildAndSpawn(manager: SessionManager, adapter: ReturnType<typeof holdingAdapter>, sessionId: string, taskId: string) {
+    adapter.holds.retain(sessionId, tmpDir);
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      id: sessionId,
+      taskId,
+      command: '',
+      cwd: tmpDir,
+      exitSequence: EXIT_SEQUENCE,
+      agentParser: adapter.parser,
+    });
+    return { session, ...mock };
+  }
+
+  it('the old PTY\'s late exit after a kill keeps the new session\'s file', async () => {
+    const manager = new SessionManager();
+    const adapter = holdingAdapter();
+    const old = await buildAndSpawn(manager, adapter, 'old-session', 'task-respawn');
+
+    // Young, so the kill parks the PTY for the grace with its exit listener.
+    manager.kill(old.session.id);
+    expect(old.mockPty.kill).not.toHaveBeenCalled();
+
+    const fresh = await buildAndSpawn(manager, adapter, 'new-session', 'task-respawn');
+    expect(fresh.session.status).toBe('running');
+
+    old.triggerExit(0);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(adapter.strip).not.toHaveBeenCalled();
+    expect(adapter.holds.isHeld(tmpDir)).toBe(true);
+
+    // The running session's own end strips it.
+    fresh.triggerExit(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(adapter.strip).toHaveBeenCalledTimes(1);
+    expect(adapter.strip).toHaveBeenCalledWith(tmpDir);
+    manager.killAll();
+  });
+
+  it('a suspend, a respawn, then the old PTY\'s exit keeps the new session\'s file', async () => {
+    // suspend() releases at its start and the exit releases again. The
+    // second release lands after the respawn took its own hold.
+    const manager = new SessionManager();
+    const adapter = holdingAdapter();
+    const old = await buildAndSpawn(manager, adapter, 'old-session', 'task-suspend');
+
+    const suspended = manager.suspend(old.session.id);
+    // suspend() released at once: nobody else held the folder.
+    expect(adapter.strip).toHaveBeenCalledTimes(1);
+
+    const fresh = await buildAndSpawn(manager, adapter, 'new-session', 'task-suspend');
+    expect(fresh.session.status).toBe('running');
+
+    old.triggerExit(0);
+    await vi.advanceTimersByTimeAsync(KILL_GRACE_MS * 3);
+    await suspended;
+
+    expect(adapter.strip).toHaveBeenCalledTimes(1);
+    expect(adapter.holds.isHeld(tmpDir)).toBe(true);
     manager.killAll();
   });
 });

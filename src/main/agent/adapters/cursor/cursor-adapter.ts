@@ -6,6 +6,7 @@ import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import { CursorStreamParser } from './stream-parser';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
+import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { discoverCursorCapabilities } from './capability-discovery';
 import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
 import { CURSOR_MCP_TOKEN_ENV, CURSOR_MCP_URL_ENV, removeCursorChat, writeCursorAnswerWorkspace } from './answer-workspace';
@@ -117,8 +118,8 @@ export class CursorAdapter implements AgentAdapter {
   // A static `.cursor/mcp.json` entry whose url and token are `${env:...}`
   // references, filled per session by `buildEnv` (project-mcp-config.ts).
   readonly kangenticMcp = 'per-session' as const;
-  /** Folders whose `.cursor/mcp.json` carries Kangentic's entry, and the tasks still using each. */
-  private readonly mcpHolders = new Map<string, Set<string>>();
+  /** Folders whose `.cursor/mcp.json` carries Kangentic's entry, and the sessions still using each. */
+  private readonly mcpHolds = new SharedFolderHolds();
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'default', label: 'Interactive (Confirm Changes)' },
     { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
@@ -182,7 +183,7 @@ export class CursorAdapter implements AgentAdapter {
     // it rides only a start whose entry is in place: a file Kangentic could not
     // merge into gets neither the entry nor the approval.
     if (cursorMcpWiringEnabled(options) && writeCursorProjectMcpConfig(options.cwd)) {
-      this.retainMcpConfig(options.cwd, options.taskId);
+      this.mcpHolds.retain(options.ptySessionId, options.cwd);
       parts.push('--approve-mcps');
     }
 
@@ -284,15 +285,6 @@ export class CursorAdapter implements AgentAdapter {
     return { [CURSOR_MCP_URL_ENV]: options.mcpServerUrl, [CURSOR_MCP_TOKEN_ENV]: options.mcpServerToken };
   }
 
-  private retainMcpConfig(directory: string, taskId: string): void {
-    let holders = this.mcpHolders.get(directory);
-    if (!holders) {
-      holders = new Set<string>();
-      this.mcpHolders.set(directory, holders);
-    }
-    holders.add(taskId);
-  }
-
   interpolateTemplate(template: string, variables: Record<string, string>): string {
     return interpolateTemplate(template, variables);
   }
@@ -369,18 +361,14 @@ export class CursorAdapter implements AgentAdapter {
     return { model: { id: payload.model.toLowerCase(), displayName: payload.model } };
   }
 
-  removeHooks(directory: string, taskId?: string): void {
+  removeHooks(directory: string, sessionId?: string): void {
     // No hooks, but the project's `.cursor/mcp.json` carries Kangentic's entry
-    // while a session uses the folder. Strip it only once the last task using
-    // the folder releases, so a sibling session keeps its server; a call with no
-    // task (the project-delete sweep, after every session is killed) strips it.
-    const holders = this.mcpHolders.get(directory);
-    if (holders && taskId) {
-      holders.delete(taskId);
-      if (holders.size > 0) return;
-    }
-    this.mcpHolders.delete(directory);
-    removeCursorProjectMcpConfig(directory);
+    // while a session uses the folder. Strip it only once the last session
+    // using the folder releases, so a sibling session keeps its server; a call
+    // with no session (the project-delete sweep, after every session is
+    // killed) strips it.
+    const folder = this.mcpHolds.release(sessionId, directory);
+    if (folder) removeCursorProjectMcpConfig(folder);
   }
 
   // Cursor CLI has no merged settings - no-op

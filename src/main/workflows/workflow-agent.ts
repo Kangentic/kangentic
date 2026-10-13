@@ -19,6 +19,7 @@ import { retrievalClient } from '../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../retrieval/remote-targets';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
+import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
 import { buildWorkflowAgentContinueMessage, buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
 import { workflowTasks } from './workflow-tasks';
 import { notifyWorkflowChanged } from './workflow-changed';
@@ -600,6 +601,7 @@ async function startWorkflowAgent(
   // nothing to another CLI), so a conversation kept on another agent runs at its
   // CLI's own defaults. Read on every start, so a Resume takes a changed setting.
   const choiceApplies = agentName === choice.agent;
+  const sessionId = uuidv4();
   const commandOptions = {
     agentPath: launch.agentPath,
     taskId: workflow.id,
@@ -621,28 +623,46 @@ async function startWorkflowAgent(
     // agent runs in its own default mode, and the prompt asks it to plan only.
     readOnly: adapter.supportsReadOnlyLaunch === true,
     readableDirectories: readable.map((entry) => entry.path),
+    // The session's own id, minted here so the spawn below uses it too: a
+    // folder-shared adapter file is held under it until the session ends.
+    ptySessionId: sessionId,
   };
   const command = adapter.buildCommand(commandOptions);
-  const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
+  // From here until spawn() takes the command, a return or a throw releases
+  // the hold it took. From the spawn() call on, spawn() releases a spawn that
+  // never runs.
+  let extraEnv: Record<string, string> | null;
+  let replacedSessionIds: string[];
+  try {
+    extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 
-  // Read again after the awaits above: the workflow may have finished, or been
-  // deleted with its project, while the CLI was being found.
-  if (!workflowStillOpen(context, homeProjectId, workflowId)) return unavailable('This workflow no longer exists.');
-  // The restart for read access is the one start Kangentic makes on its own. A
-  // Pause pressed while it found the CLI reached an agent that already read
-  // suspended, so it stopped nothing, and it stands: the agent stays suspended,
-  // and its next start reads the grant from the workflow row.
-  const restartForAccess = continuation !== undefined;
-  if (restartForAccess && userPaused.has(workflowId)) {
-    return sessionStatus(findWorkflowAgentSession(context, workflowId));
+    // Read again after the awaits above: the workflow may have finished, or been
+    // deleted with its project, while the CLI was being found.
+    if (!workflowStillOpen(context, homeProjectId, workflowId)) {
+      releaseCommandHold(adapter, projectRoot, sessionId);
+      return unavailable('This workflow no longer exists.');
+    }
+    // The restart for read access is the one start Kangentic makes on its own. A
+    // Pause pressed while it found the CLI reached an agent that already read
+    // suspended, so it stopped nothing, and it stands: the agent stays suspended,
+    // and its next start reads the grant from the workflow row.
+    const restartForAccess = continuation !== undefined;
+    if (restartForAccess && userPaused.has(workflowId)) {
+      releaseCommandHold(adapter, projectRoot, sessionId);
+      return sessionStatus(findWorkflowAgentSession(context, workflowId));
+    }
+    // The rows this start replaces leave the registry with no removal push (the
+    // spawn's sibling drain), so what is kept per session id goes with them here.
+    replacedSessionIds = context.sessionManager.listSessions()
+      .filter((existing) => existing.workflowId === workflowId)
+      .map((existing) => existing.id);
+  } catch (error) {
+    releaseCommandHold(adapter, projectRoot, sessionId);
+    throw error;
   }
-  // The rows this start replaces leave the registry with no removal push (the
-  // spawn's sibling drain), so what is kept per session id goes with them here.
-  const replacedSessionIds = context.sessionManager.listSessions()
-    .filter((existing) => existing.workflowId === workflowId)
-    .map((existing) => existing.id);
 
   const session = await context.sessionManager.spawn({
+    id: sessionId,
     taskId: workflow.id,
     projectId: homeProjectId,
     command,

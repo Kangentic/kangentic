@@ -6,6 +6,7 @@ import { migrateDroidProjectData } from './project-relocation';
 import { discoverDroidCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
+import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -70,13 +71,12 @@ export class DroidAdapter implements AgentAdapter {
 
   private readonly detector = new DroidDetector();
   private readonly commandBuilder = new DroidCommandBuilder();
-  // Set of taskIds currently relying on `<cwd>/.factory/mcp.json`, keyed by
-  // that cwd. The file is project-shared, so without this a task exiting
-  // would strip the entry out from under a concurrent session in the same
-  // directory. Per-task worktrees usually make that impossible, but a
-  // project with no worktree configured runs every task in the project root.
-  // Same pattern as GeminiAdapter.hookHolders and CodexAdapter.hookHolders.
-  private readonly mcpHolders = new Map<string, Set<string>>();
+  // Sessions relying on `<cwd>/.factory/mcp.json`, per cwd. The file is
+  // project-shared, so without this a session exiting would strip the entry
+  // out from under a concurrent session in the same directory. Per-task
+  // worktrees usually make that impossible, but a project with no worktree
+  // configured runs every task in the project root. See SharedFolderHolds.
+  private readonly mcpHolds = new SharedFolderHolds();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -94,22 +94,13 @@ export class DroidAdapter implements AgentAdapter {
     const { agentPath, ...rest } = options;
     const droidOptions = { droidPath: agentPath, ...rest };
     const command = this.commandBuilder.buildDroidCommand(droidOptions);
-    // buildDroidCommand writes .factory/mcp.json whenever MCP is wired.
-    // Retain a reference so concurrent sessions in the same cwd serialize
-    // their cleanup.
+    // buildDroidCommand writes .factory/mcp.json whenever MCP is wired. Hold
+    // it until this session releases, so concurrent sessions in the same cwd
+    // serialize their cleanup.
     if (droidMcpWiringEnabled(droidOptions)) {
-      this.retainMcpConfig(options.cwd, options.taskId);
+      this.mcpHolds.retain(options.ptySessionId, options.cwd);
     }
     return command;
-  }
-
-  private retainMcpConfig(directory: string, taskId: string): void {
-    let holders = this.mcpHolders.get(directory);
-    if (!holders) {
-      holders = new Set<string>();
-      this.mcpHolders.set(directory, holders);
-    }
-    holders.add(taskId);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -164,22 +155,15 @@ export class DroidAdapter implements AgentAdapter {
     return this.commandBuilder.buildDroidEnv({ droidPath: agentPath, ...rest });
   }
 
-  removeHooks(directory: string, taskId?: string): void {
+  removeHooks(directory: string, sessionId?: string): void {
     // This adapter writes no hook config, but it does write a project-scoped
     // .factory/mcp.json entry that should not outlive the session. Strip it
-    // only once the last task using that directory releases, so a sibling
-    // session in the same cwd does not lose its MCP server mid-run.
-    const holders = this.mcpHolders.get(directory);
-    if (holders && taskId) {
-      holders.delete(taskId);
-      if (holders.size > 0) return;
-    }
-    // Reached either by the last holder releasing or by a no-taskId call (the
-    // project-delete sweep, which force-strips after every session is already
-    // killed). Both mean nothing may still be holding this directory, so drop
-    // the entry rather than leaving a Set that can never be released.
-    this.mcpHolders.delete(directory);
-    removeMcpConfig(directory);
+    // only once the last session using that directory releases, so a sibling
+    // session in the same cwd does not lose its MCP server mid-run. A call
+    // with no session id (the project-delete sweep, after every session is
+    // already killed) drops every hold on the directory and strips it.
+    const folder = this.mcpHolds.release(sessionId, directory);
+    if (folder) removeMcpConfig(folder);
   }
 
   getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {

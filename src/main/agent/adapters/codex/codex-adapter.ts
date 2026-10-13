@@ -10,6 +10,7 @@ import { CodexStatusParser } from './status-parser';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
+import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -54,16 +55,16 @@ export class CodexAdapter implements AgentAdapter {
 
   private readonly detector = new CodexDetector();
   private readonly commandBuilder = new CodexCommandBuilder();
-  // Set of taskIds currently active per project root. Originally tracked
-  // ownership of a project-shared `.codex/hooks.json` we wrote on spawn.
-  // Codex 0.128 redesigned the hook system (hooks now live in
-  // `~/.codex/config.toml` or in a Codex plugin folder), so Kangentic no
-  // longer writes that file - `buildHooks` only sweeps stale legacy
-  // entries from pre-upgrade installs. The refcount is retained because
-  // multiple concurrent sessions in the same cwd still race on that
-  // legacy cleanup, and serializing via holders keeps removeHooks
-  // idempotent. See GeminiAdapter.hookHolders for the same pattern.
-  private readonly hookHolders = new Map<string, Set<string>>();
+  // Sessions active per project root. Originally tracked ownership of a
+  // project-shared `.codex/hooks.json` we wrote on spawn. Codex 0.128
+  // redesigned the hook system (hooks now live in `~/.codex/config.toml` or
+  // in a Codex plugin folder), so Kangentic no longer writes that file -
+  // `buildHooks` only sweeps stale legacy entries from pre-upgrade installs.
+  // The holds stay because concurrent sessions in one project still race on
+  // that legacy cleanup. A hold records the project root, so a worktree
+  // session's release (which arrives with the worktree path) sweeps the root
+  // the build swept. See SharedFolderHolds.
+  private readonly hookHolds = new SharedFolderHolds();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -90,13 +91,11 @@ export class CodexAdapter implements AgentAdapter {
       effort,
       ...rest,
     });
-    // buildCodexCommand sweeps any stale legacy `.codex/hooks.json` whenever
-    // eventsOutputPath is present. Retain a reference keyed by the project
-    // root (same key removeHooks uses) so concurrent sessions serialize
-    // their cleanup.
+    // buildCodexCommand sweeps any stale legacy `.codex/hooks.json` in the
+    // project root whenever eventsOutputPath is present. Hold that root until
+    // this session releases, so concurrent sessions serialize their cleanup.
     if (options.eventsOutputPath) {
-      const projectRoot = options.projectRoot || options.cwd;
-      this.retainHooks(projectRoot, options.taskId);
+      this.hookHolds.retain(options.ptySessionId, options.projectRoot || options.cwd);
     }
     return command;
   }
@@ -116,15 +115,6 @@ export class CodexAdapter implements AgentAdapter {
       effort,
       ...rest,
     });
-  }
-
-  private retainHooks(directory: string, taskId: string): void {
-    let holders = this.hookHolders.get(directory);
-    if (!holders) {
-      holders = new Set<string>();
-      this.hookHolders.set(directory, holders);
-    }
-    holders.add(taskId);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -215,17 +205,10 @@ export class CodexAdapter implements AgentAdapter {
     },
   };
 
-  removeHooks(directory: string, taskId?: string): void {
-    const holders = this.hookHolders.get(directory);
-    if (holders && taskId) {
-      holders.delete(taskId);
-      if (holders.size > 0) {
-        // Another session in this directory still needs the hooks.
-        return;
-      }
-      this.hookHolders.delete(directory);
-    }
-    removeCodexHooks(directory);
+  removeHooks(directory: string, sessionId?: string): void {
+    const folder = this.hookHolds.release(sessionId, directory);
+    // Null while another session in the project still holds it.
+    if (folder) removeCodexHooks(folder);
   }
 
   getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {

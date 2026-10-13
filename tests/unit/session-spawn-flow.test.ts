@@ -106,6 +106,7 @@ import { SessionRegistry } from '../../src/main/pty/session-registry';
 import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
 import { handleSpawnFailure } from '../../src/main/pty/spawn/spawn-failure-handler';
 import { safeKillPty } from '../../src/main/pty/lifecycle/pty-kill';
+import { removeAdapterHooks } from '../../src/main/pty/lifecycle/adapter-lifecycle';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 import { InProcessPtyHostTransport, PtyHostClient } from '../../src/main/pty/host/pty-host-client';
@@ -1536,6 +1537,43 @@ describe('performSpawn - onPtyExited runs after every exit listener', () => {
     expect(onPtyExited).toHaveBeenCalledWith(input.id);
     expect(order.indexOf('emit:exit')).toBeGreaterThanOrEqual(0);
     expect(order.indexOf(`onPtyExited:${input.id}`)).toBeGreaterThan(order.indexOf('emit:exit'));
+  });
+});
+
+describe('performSpawn - the exit releases the cwd the command was built for', () => {
+  // A spawn whose requested folder is missing (or a UNC path under cmd) starts
+  // its PTY in the home directory, but the adapter wrote its folder-shared
+  // file into the requested folder when it built the command. The release
+  // used `session.cwd` and missed it, leaving the entry (and its token) behind
+  // and stripping the home directory's file instead.
+  //
+  // Red-green: storing effectiveCwd as commandCwd, or dropping the field, makes
+  // the release arrive with the home directory.
+
+  beforeEach(() => {
+    ptyExitHarness.onExitCallback = null;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('keeps cwd as the PTY start dir and commandCwd as the requested folder, and releases with the latter', async () => {
+    const context = makeContext();
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({ effectiveCwd: '/home/dev', cwdFixupCommand: null });
+    const input = makeInput({ cwd: '/mock/project/.kangentic/worktrees/task-001', agentParser: makeAdapter({}) });
+
+    await performSpawn(input, context);
+    const session = context.registry.get(input.id!)!;
+    expect(session.cwd).toBe('/home/dev');
+    expect(session.commandCwd).toBe('/mock/project/.kangentic/worktrees/task-001');
+
+    ptyExitHarness.onExitCallback!({ exitCode: 0 });
+
+    expect(removeAdapterHooks).toHaveBeenCalledTimes(1);
+    const released = vi.mocked(removeAdapterHooks).mock.calls[0][0];
+    expect(released.id).toBe(input.id);
+    expect(released.commandCwd).toBe('/mock/project/.kangentic/worktrees/task-001');
   });
 });
 

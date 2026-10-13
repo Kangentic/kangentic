@@ -208,7 +208,7 @@ function makeAdapter(
     interpolateTemplate(template: string, _variables: Record<string, string>) {
       return template;
     },
-    removeHooks(_directory: string, _taskId?: string) {},
+    removeHooks(_directory: string, _sessionId?: string) {},
     clearSettingsCache() {},
     detectFirstOutput(_data: string) {
       return false;
@@ -327,7 +327,7 @@ function makeCaptureAdapter(
     interpolateTemplate(template: string, _variables: Record<string, string>) {
       return template;
     },
-    removeHooks(_directory: string, _taskId?: string) {},
+    removeHooks(_directory: string, _sessionId?: string) {},
     clearSettingsCache() {},
     detectFirstOutput(_data: string) {
       return false;
@@ -354,6 +354,40 @@ describe('prepareAgentSpawn - task process tag', () => {
 
     expect(result.ok).toBe(true);
     expect(capturedCommandOptions[0].taskProcessTag).toBe(task.id);
+  });
+});
+
+describe('prepareAgentSpawn - the session id a folder-shared hold is taken under', () => {
+  // The caller spawns under `sessionRecordId`, and the session layer releases
+  // with that id, so the builder must hold under the same one.
+  it('hands the builder the prepared sessionRecordId as ptySessionId', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput({ task: makeTask() }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(capturedCommandOptions[0].ptySessionId).toBe(result.data.sessionRecordId);
+  });
+
+  // Red-green: drop the catch around buildEnv in prepare-spawn.ts and the
+  // built command's hold is never released.
+  it('releases the hold when buildEnv throws after the build, since no caller will spawn it', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    const removeHooks = vi.fn();
+    const throwingAdapter = {
+      ...adapter,
+      removeHooks,
+      buildCommand: adapter.buildCommand,
+      buildEnv: () => { throw new Error('env failed'); },
+    } as AgentAdapter;
+    agentRegistryGetMock.mockReturnValue(throwingAdapter);
+
+    await expect(prepareAgentSpawn(makeSpawnInput({ task: makeTask() }))).rejects.toThrow('env failed');
+
+    const built = capturedCommandOptions[0];
+    expect(removeHooks).toHaveBeenCalledWith(built.cwd, built.ptySessionId);
   });
 });
 

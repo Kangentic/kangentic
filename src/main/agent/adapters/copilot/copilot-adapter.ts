@@ -13,6 +13,7 @@ import { discoverCopilotCapabilities } from './capability-discovery';
 import { createCopilotCommandInjectionVerifier } from './command-injection-verifier';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
+import { sharedFolderKey } from '../../shared/shared-folder-holds';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -56,12 +57,14 @@ export class CopilotAdapter implements AgentAdapter {
   private readonly commandBuilder = new CopilotCommandBuilder();
 
   /**
-   * Track per-session config directories keyed by project root (cwd).
-   * The session-manager calls removeHooks(session.cwd, session.taskId),
-   * so we must key by project root to match. The value maps taskId to
-   * the per-session copilot-config directory path for cleanup.
+   * Each session's own copilot-config directory, keyed by the session id its
+   * command was built with (`ptySessionId`), with the folder it was built
+   * for. The directory sits in the session's own dir, so nothing is shared:
+   * a release removes that session's directory alone, and never another
+   * session's of the same task. The project-delete sweep (no session id)
+   * removes every directory recorded for its folder.
    */
-  private readonly sessionConfigDirs = new Map<string, Map<string, string>>();
+  private readonly sessionConfigDirs = new Map<string, { folder: string; configDir: string }>();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -84,23 +87,13 @@ export class CopilotAdapter implements AgentAdapter {
       effort,
       ...rest,
     });
-    // Track session config dir keyed by project root for cleanup.
-    // The session-manager will call removeHooks(session.cwd, taskId).
-    if (options.eventsOutputPath) {
-      const projectRoot = options.projectRoot || options.cwd;
+    // Track the session's config dir for cleanup. The session layer releases
+    // with removeHooks(<cwd>, <the session's id>).
+    if (options.eventsOutputPath && options.ptySessionId) {
       const configDir = path.resolve(path.dirname(options.eventsOutputPath), 'copilot-config');
-      this.trackSessionConfig(projectRoot, options.taskId, configDir);
+      this.sessionConfigDirs.set(options.ptySessionId, { folder: options.cwd, configDir });
     }
     return command;
-  }
-
-  private trackSessionConfig(projectRoot: string, taskId: string, configDir: string): void {
-    let taskMap = this.sessionConfigDirs.get(projectRoot);
-    if (!taskMap) {
-      taskMap = new Map<string, string>();
-      this.sessionConfigDirs.set(projectRoot, taskMap);
-    }
-    taskMap.set(taskId, configDir);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -137,27 +130,23 @@ export class CopilotAdapter implements AgentAdapter {
     activity: ActivityDetection.hooksAndPty(),
   };
 
-  removeHooks(directory: string, taskId?: string): void {
-    // `directory` is the project root (session.cwd), matching the key
-    // used in trackSessionConfig during buildCommand.
-    const taskMap = this.sessionConfigDirs.get(directory);
-    if (!taskMap) return;
-
-    if (taskId) {
-      const configDir = taskMap.get(taskId);
-      if (configDir) {
-        removeSessionConfig(configDir);
-      }
-      taskMap.delete(taskId);
-      if (taskMap.size === 0) {
-        this.sessionConfigDirs.delete(directory);
-      }
-    } else {
-      // No taskId - clean up all sessions for this directory
-      for (const configDir of taskMap.values()) {
-        removeSessionConfig(configDir);
-      }
-      this.sessionConfigDirs.delete(directory);
+  removeHooks(directory: string, sessionId?: string): void {
+    if (sessionId) {
+      // The session's own config dir, wherever it was built: the release
+      // needs no folder match.
+      const tracked = this.sessionConfigDirs.get(sessionId);
+      if (!tracked) return;
+      this.sessionConfigDirs.delete(sessionId);
+      removeSessionConfig(tracked.configDir);
+      return;
+    }
+    // No session id (the project-delete sweep): every session built for this
+    // folder.
+    const folderKey = sharedFolderKey(directory);
+    for (const [trackedSessionId, tracked] of this.sessionConfigDirs) {
+      if (sharedFolderKey(tracked.folder) !== folderKey) continue;
+      removeSessionConfig(tracked.configDir);
+      this.sessionConfigDirs.delete(trackedSessionId);
     }
   }
 

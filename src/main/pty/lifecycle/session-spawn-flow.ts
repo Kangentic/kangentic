@@ -435,6 +435,7 @@ export async function performSpawn(
     status: 'running',
     shell,
     cwd: effectiveCwd,
+    commandCwd: input.cwd,
     startedAt: new Date().toISOString(),
     exitCode: null,
     resuming: input.resuming ?? false,
@@ -632,8 +633,10 @@ export async function performSpawn(
     // the PTY exits, but fs.watch hasn't fired the callback yet.
     context.statusFileReader.flushPendingEvents(id);
 
-    // Strip agent hooks from the project's settings file so they don't
-    // accumulate across sessions. See adapter-lifecycle.removeAdapterHooks.
+    // Release this session's hold on what its adapter wrote, so hooks don't
+    // accumulate across sessions. Keyed by this session's id: a late exit of a
+    // parked PTY releases only its own hold, never the hold of the task's
+    // next session. See adapter-lifecycle.removeAdapterHooks.
     removeAdapterHooks(session);
 
     // Close watchers but preserve session files on disk - they are

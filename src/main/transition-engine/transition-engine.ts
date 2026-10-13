@@ -23,6 +23,7 @@ import { interpolateTaskTemplate } from '../agent/shared/template-utils';
 import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../shared/task-template-vars';
 import { readWorkflowPromptFacts } from '../workflows/workflow-prompt-facts';
 import { SessionManager } from '../pty/session-manager';
+import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import { resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
@@ -614,14 +615,26 @@ export class TransitionEngine {
       executionTarget,
       launchOptions,
       taskProcessTag: task.id,
+      // The session's own id, which a folder-shared adapter file is held under.
+      ptySessionId,
     };
     const command = adapter.buildCommand(commandOptions);
-    const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 
-    console.log(`[spawnAgent] agent=${agentName} Command: ${command.slice(0, 120)}...`);
+    let extraEnv: Record<string, string> | null;
+    try {
+      extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 
-    // Last chance to abort before creating a PTY process
-    signal?.throwIfAborted();
+      console.log(`[spawnAgent] agent=${agentName} Command: ${command.slice(0, 120)}...`);
+
+      // Last chance to abort before creating a PTY process
+      signal?.throwIfAborted();
+    } catch (error) {
+      // The built command never reached spawn() (an abort or a buildEnv
+      // failure), so release the hold it took. From the spawn() call on,
+      // spawn() releases a spawn that never runs and a session owns its own.
+      releaseCommandHold(adapter, cwd, ptySessionId);
+      throw error;
+    }
 
     console.log(`[spawnAgent] Spawning PTY session for ${agentName}...`);
     const session = await this.sessionManager.spawn({

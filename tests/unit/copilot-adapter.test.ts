@@ -168,55 +168,81 @@ describe('CopilotAdapter - removeHooks', () => {
     expect(() => adapter.removeHooks('/some/project')).not.toThrow();
   });
 
-  it('removeHooks calls removeSessionConfig for tracked task', () => {
+  // Each session's config dir is keyed by its own id (`ptySessionId`), and
+  // lives in that session's own dir.
+  const eventsPathFor = (ptySessionId: string): string => path.join(tmpDir, 'sessions', ptySessionId, 'events.jsonl');
+  const configDirFor = (ptySessionId: string): string => path.resolve(path.dirname(eventsPathFor(ptySessionId)), 'copilot-config');
+
+  it('removeHooks calls removeSessionConfig for the tracked session', () => {
     const projectRoot = '/home/dev/project';
-    const eventsOutputPath = path.join(tmpDir, 'sessions', 'task-001', 'events.jsonl');
 
     // buildCommand with eventsOutputPath triggers session config tracking
     adapter.buildCommand(makeOptions({
       taskId: 'task-001',
+      ptySessionId: 'session-001',
       cwd: projectRoot,
       projectRoot,
-      eventsOutputPath,
+      eventsOutputPath: eventsPathFor('session-001'),
     }));
 
-    adapter.removeHooks(projectRoot, 'task-001');
+    adapter.removeHooks(projectRoot, 'session-001');
 
     expect(removeSessionConfig).toHaveBeenCalledTimes(1);
     // The config dir is derived from the events dir + 'copilot-config'
-    const expectedConfigDir = path.resolve(path.dirname(eventsOutputPath), 'copilot-config');
-    expect(removeSessionConfig).toHaveBeenCalledWith(expectedConfigDir);
+    expect(removeSessionConfig).toHaveBeenCalledWith(configDirFor('session-001'));
   });
 
-  it('removeHooks with taskId removes only that task, not others', () => {
+  it('removeHooks with a session id removes only that session, not others', () => {
     const projectRoot = '/home/dev/project';
 
-    const eventsPath1 = path.join(tmpDir, 'sessions', 'task-001', 'events.jsonl');
-    const eventsPath2 = path.join(tmpDir, 'sessions', 'task-002', 'events.jsonl');
+    adapter.buildCommand(makeOptions({ taskId: 'task-001', ptySessionId: 'session-001', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPathFor('session-001') }));
+    adapter.buildCommand(makeOptions({ taskId: 'task-002', ptySessionId: 'session-002', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPathFor('session-002') }));
 
-    adapter.buildCommand(makeOptions({ taskId: 'task-001', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPath1 }));
-    adapter.buildCommand(makeOptions({ taskId: 'task-002', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPath2 }));
+    adapter.removeHooks(projectRoot, 'session-001');
 
-    adapter.removeHooks(projectRoot, 'task-001');
-
-    // Only task-001's config dir should be cleaned
+    // Only session-001's config dir should be cleaned
     expect(removeSessionConfig).toHaveBeenCalledTimes(1);
-    const firstCall = vi.mocked(removeSessionConfig).mock.calls[0][0];
-    expect(firstCall).toContain('task-001');
+    expect(removeSessionConfig).toHaveBeenCalledWith(configDirFor('session-001'));
   });
 
-  it('removeHooks without taskId removes all sessions for that directory', () => {
+  it('a late release of an older session of the same task never removes the newer session\'s dir', () => {
+    // Keyed by task, the respawn overwrote the old dir's entry, and the old
+    // PTY's late exit removed the RUNNING session's config dir.
+    const projectRoot = '/home/dev/project';
+    adapter.buildCommand(makeOptions({ taskId: 'task-001', ptySessionId: 'old-session', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPathFor('old-session') }));
+    adapter.buildCommand(makeOptions({ taskId: 'task-001', ptySessionId: 'new-session', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPathFor('new-session') }));
+
+    adapter.removeHooks(projectRoot, 'old-session');
+    expect(removeSessionConfig).toHaveBeenCalledTimes(1);
+    expect(removeSessionConfig).toHaveBeenCalledWith(configDirFor('old-session'));
+
+    adapter.removeHooks(projectRoot, 'old-session');
+    expect(removeSessionConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('a worktree session\'s release removes its config dir', () => {
+    // The session layer releases with the worktree it ran in, while the
+    // project root is a different folder.
+    const projectRoot = '/home/dev/project';
+    const worktree = '/home/dev/project/.kangentic/worktrees/task-001';
+    adapter.buildCommand(makeOptions({ taskId: 'task-001', ptySessionId: 'session-001', cwd: worktree, projectRoot, eventsOutputPath: eventsPathFor('session-001') }));
+
+    adapter.removeHooks(worktree, 'session-001');
+
+    expect(removeSessionConfig).toHaveBeenCalledWith(configDirFor('session-001'));
+  });
+
+  it('removeHooks without a session id removes every session built for that directory', () => {
     const projectRoot = '/home/dev/project';
 
-    const eventsPath1 = path.join(tmpDir, 'sessions', 'task-001', 'events.jsonl');
-    const eventsPath2 = path.join(tmpDir, 'sessions', 'task-002', 'events.jsonl');
-
-    adapter.buildCommand(makeOptions({ taskId: 'task-001', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPath1 }));
-    adapter.buildCommand(makeOptions({ taskId: 'task-002', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPath2 }));
+    adapter.buildCommand(makeOptions({ taskId: 'task-001', ptySessionId: 'session-001', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPathFor('session-001') }));
+    adapter.buildCommand(makeOptions({ taskId: 'task-002', ptySessionId: 'session-002', cwd: projectRoot, projectRoot, eventsOutputPath: eventsPathFor('session-002') }));
+    adapter.buildCommand(makeOptions({ taskId: 'task-003', ptySessionId: 'session-003', cwd: '/home/dev/other', eventsOutputPath: eventsPathFor('session-003') }));
 
     adapter.removeHooks(projectRoot);
 
     expect(removeSessionConfig).toHaveBeenCalledTimes(2);
+    expect(removeSessionConfig).not.toHaveBeenCalledWith(configDirFor('session-003'));
   });
 
   it('clearSettingsCache does not throw', () => {

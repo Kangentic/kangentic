@@ -129,7 +129,7 @@ describe('Qwen Adapter - session ID capture', () => {
 // JSONL format and ~/.qwen/projects/<sanitized-cwd>/chats/ path scheme).
 // We don't duplicate them here.
 
-describe('Qwen Adapter - concurrent-session hook reference counting', () => {
+describe('Qwen Adapter - concurrent-session hook holds', () => {
   let sandbox: string;
   let adapter: QwenAdapter;
   let settingsPath: string;
@@ -160,58 +160,70 @@ describe('Qwen Adapter - concurrent-session hook reference counting', () => {
     fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
-  const buildOptions = (cwd: string, taskId: string) => ({
+  // Holds are keyed by the session's own id (`ptySessionId`), never by its
+  // task: a task's sessions overlap while an old PTY exits.
+  const buildOptions = (cwd: string, ptySessionId: string, taskId = `task-of-${ptySessionId}`) => ({
     agentPath: 'qwen',
     taskId,
+    ptySessionId,
     cwd,
     permissionMode: 'default' as const,
     eventsOutputPath: path.join(cwd, 'events.jsonl'),
   });
 
+  const sessionStartHookCount = (): number | undefined => {
+    if (!fs.existsSync(settingsPath)) return undefined;
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).hooks?.SessionStart?.length;
+  };
+
   it('strips hooks only after the last live session releases', () => {
-    adapter.buildCommand(buildOptions(sandbox, 'task-a'));
-    adapter.buildCommand(buildOptions(sandbox, 'task-b'));
+    adapter.buildCommand(buildOptions(sandbox, 'session-a'));
+    adapter.buildCommand(buildOptions(sandbox, 'session-b'));
 
     seedSettingsWithKangenticHook();
 
-    adapter.removeHooks(sandbox, 'task-a');
-    const afterFirst = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    expect(afterFirst.hooks?.SessionStart?.length).toBe(1);
+    adapter.removeHooks(sandbox, 'session-a');
+    expect(sessionStartHookCount()).toBe(1);
 
-    adapter.removeHooks(sandbox, 'task-b');
-    const afterSecondExists = fs.existsSync(settingsPath);
-    if (afterSecondExists) {
-      const afterSecond = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-      expect(afterSecond.hooks?.SessionStart).toBeUndefined();
-    } else {
-      expect(afterSecondExists).toBe(false);
-    }
+    adapter.removeHooks(sandbox, 'session-b');
+    expect(sessionStartHookCount()).toBeUndefined();
   });
 
-  it('double-release for the same taskId is idempotent (suspend + onExit)', () => {
-    adapter.buildCommand(buildOptions(sandbox, 'task-a'));
-    adapter.buildCommand(buildOptions(sandbox, 'task-b'));
+  it('double-release for the same session is idempotent (suspend + onExit)', () => {
+    adapter.buildCommand(buildOptions(sandbox, 'session-a'));
+    adapter.buildCommand(buildOptions(sandbox, 'session-b'));
     seedSettingsWithKangenticHook();
 
-    adapter.removeHooks(sandbox, 'task-a');
-    adapter.removeHooks(sandbox, 'task-a');
+    adapter.removeHooks(sandbox, 'session-a');
+    adapter.removeHooks(sandbox, 'session-a');
 
-    const afterDoubleRelease = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    expect(afterDoubleRelease.hooks?.SessionStart?.length).toBe(1);
+    expect(sessionStartHookCount()).toBe(1);
   });
 
-  it('decouples reference counts across different cwds', () => {
+  it('an older session of the same task releasing late keeps the newer session\'s hooks', () => {
+    adapter.buildCommand(buildOptions(sandbox, 'old-session', 'task-a'));
+    adapter.buildCommand(buildOptions(sandbox, 'new-session', 'task-a'));
+    seedSettingsWithKangenticHook();
+
+    adapter.removeHooks(sandbox, 'old-session');
+    expect(sessionStartHookCount()).toBe(1);
+
+    adapter.removeHooks(sandbox, 'new-session');
+    expect(sessionStartHookCount()).toBeUndefined();
+  });
+
+  it('decouples holds across different cwds', () => {
     const sandboxTwo = fs.mkdtempSync(path.join(os.tmpdir(), 'kg-qwen-refcount-b-'));
     try {
-      adapter.buildCommand(buildOptions(sandbox, 'task-a'));
-      adapter.buildCommand(buildOptions(sandboxTwo, 'task-b'));
+      adapter.buildCommand(buildOptions(sandbox, 'session-a'));
+      adapter.buildCommand(buildOptions(sandboxTwo, 'session-b'));
 
       seedSettingsWithKangenticHook();
       const settingsPathTwo = path.join(sandboxTwo, '.qwen', 'settings.json');
       fs.mkdirSync(path.dirname(settingsPathTwo), { recursive: true });
       fs.writeFileSync(settingsPathTwo, fs.readFileSync(settingsPath, 'utf-8'));
 
-      adapter.removeHooks(sandbox, 'task-a');
+      adapter.removeHooks(sandbox, 'session-a');
       const stillThere = JSON.parse(fs.readFileSync(settingsPathTwo, 'utf-8'));
       expect(stillThere.hooks?.SessionStart?.length).toBe(1);
     } finally {
@@ -221,7 +233,7 @@ describe('Qwen Adapter - concurrent-session hook reference counting', () => {
 
   it('tolerates removeHooks with no prior retain (crash/restart path)', () => {
     seedSettingsWithKangenticHook();
-    expect(() => adapter.removeHooks(sandbox, 'orphan-task')).not.toThrow();
+    expect(() => adapter.removeHooks(sandbox, 'orphan-session')).not.toThrow();
   });
 });
 
@@ -259,9 +271,10 @@ describe('Qwen Adapter - MCP-only spawn (no eventsOutputPath)', () => {
    * This is the "MCP-only" path introduced when the in-process MCP HTTP
    * server is wired into Qwen sessions.
    */
-  const buildMcpOnlyOptions = (cwd: string, taskId: string) => ({
+  const buildMcpOnlyOptions = (cwd: string, ptySessionId: string) => ({
     agentPath: 'qwen',
-    taskId,
+    taskId: `task-of-${ptySessionId}`,
+    ptySessionId,
     cwd,
     permissionMode: 'default' as const,
     mcpServerEnabled: true as const,
@@ -270,78 +283,53 @@ describe('Qwen Adapter - MCP-only spawn (no eventsOutputPath)', () => {
     // eventsOutputPath intentionally absent
   });
 
-  it('gap-1: does NOT retain a hook reference when only MCP is configured', () => {
-    // Call buildCommand twice with MCP-only options. If retainHooks were
-    // incorrectly called, the reference counter for `sandbox` would be 2
-    // and the first removeHooks call would leave the counter at 1 (not
-    // calling removeQwenHooks at all). The test proves the counter stays at
-    // zero: even after two spawns, a single removeHooks call with an
-    // unregistered taskId still invokes the underlying cleanup.
-    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'task-a'));
-    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'task-b'));
-
-    // Write a settings file that has only the kangentic MCP entry - this
-    // simulates what createMergedSettings wrote for the two spawns.
+  const seedKangenticMcpEntry = (extraServers: Record<string, unknown> = {}): string => {
     const qwenDir = path.join(sandbox, '.qwen');
     fs.mkdirSync(qwenDir, { recursive: true });
+    const settingsFile = path.join(qwenDir, 'settings.json');
     fs.writeFileSync(
-      path.join(qwenDir, 'settings.json'),
+      settingsFile,
       JSON.stringify({
         mcpServers: {
           kangentic: {
             httpUrl: 'http://127.0.0.1:51234/mcp/proj-1',
             headers: { 'X-Kangentic-Token': 'test-token-mcp' },
           },
+          ...extraServers,
         },
       }, null, 2),
     );
+    return settingsFile;
+  };
 
-    // removeHooks with an unregistered taskId (no retain was called for
-    // 'task-a' or 'task-b' because eventsOutputPath was absent). When
-    // hookHolders is empty for sandbox, removeQwenHooks runs unconditionally.
-    adapter.removeHooks(sandbox, 'task-a');
+  it('gap-1: an MCP-only spawn holds the file until its own session releases', () => {
+    // The builder writes the MCP entry with no events pipeline. Without a
+    // hold, the first session's exit stripped the entry from the second
+    // session while it ran.
+    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-a'));
+    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-b'));
+    const settingsFile = seedKangenticMcpEntry();
 
-    // mcpServers.kangentic must be stripped - the file should now be empty
-    // (no user hooks or user MCP servers) so either the key is gone or the
-    // file is deleted.
-    const stillExists = fs.existsSync(path.join(qwenDir, 'settings.json'));
-    if (stillExists) {
-      const result = JSON.parse(fs.readFileSync(path.join(qwenDir, 'settings.json'), 'utf-8')) as {
-        mcpServers?: Record<string, unknown>;
-      };
-      expect(result.mcpServers?.kangentic).toBeUndefined();
+    adapter.removeHooks(sandbox, 'session-a');
+    const afterFirst = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+    expect(afterFirst.mcpServers?.kangentic).toBeDefined();
+
+    adapter.removeHooks(sandbox, 'session-b');
+    // The file held only Kangentic's entry, so it is gone or empty of it.
+    if (fs.existsSync(settingsFile)) {
+      const afterSecond = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+      expect(afterSecond.mcpServers?.kangentic).toBeUndefined();
     }
-    // If the file was deleted entirely, that is also an acceptable outcome.
   });
 
-  it('gap-2: removeHooks after MCP-only spawn strips mcpServers.kangentic even with empty hookHolders', () => {
-    // Spawn once with MCP-only options. hookHolders map stays empty.
-    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'task-x'));
+  it('gap-2: the last MCP-only session\'s release strips mcpServers.kangentic and keeps user servers', () => {
+    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-x'));
+    const settingsFile = seedKangenticMcpEntry({ 'user-server': { httpUrl: 'http://example.com/mcp' } });
 
-    // Settings file written by createMergedSettings for the MCP-only spawn.
-    const qwenDir = path.join(sandbox, '.qwen');
-    fs.mkdirSync(qwenDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(qwenDir, 'settings.json'),
-      JSON.stringify({
-        mcpServers: {
-          kangentic: {
-            httpUrl: 'http://127.0.0.1:51234/mcp/proj-1',
-            headers: { 'X-Kangentic-Token': 'test-token-mcp' },
-          },
-          'user-server': { httpUrl: 'http://example.com/mcp' },
-        },
-      }, null, 2),
-    );
-
-    // With hookHolders empty for sandbox, the adapter calls removeQwenHooks
-    // immediately - no gating on a reference counter.
-    adapter.removeHooks(sandbox, 'task-x');
+    adapter.removeHooks(sandbox, 'session-x');
 
     // kangentic entry stripped; user-server preserved.
-    const result = JSON.parse(
-      fs.readFileSync(path.join(qwenDir, 'settings.json'), 'utf-8'),
-    ) as { mcpServers?: Record<string, unknown> };
+    const result = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')) as { mcpServers?: Record<string, unknown> };
     expect(result.mcpServers?.kangentic).toBeUndefined();
     expect(result.mcpServers?.['user-server']).toBeDefined();
   });

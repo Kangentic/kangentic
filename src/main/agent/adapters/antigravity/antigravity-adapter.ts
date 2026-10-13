@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { AntigravityDetector } from './detector';
-import { AntigravityCommandBuilder } from './command-builder';
+import { AntigravityCommandBuilder, antigravityMcpWiringEnabled } from './command-builder';
 import { removeHooks as removeAntigravityHooks } from './hook-manager';
 import { ensureWorkspaceTrust, removeWorkspaceTrust } from './trust-manager';
 import { migrateAntigravityProjectData } from './project-relocation';
@@ -16,6 +16,7 @@ import { antigravityTranscriptPath } from './data-paths';
 import { runAntigravityPrint } from './print-runner';
 import { buildSummarizePrompt, cleanSummarizeOutput } from '../../shared/auto-name';
 import { forwardStreamLines, runCliPrintAnswer, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
+import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { antigravityAnswerEvents, antigravityConversationId, removeAntigravityConversation } from './answer-stream';
 import type {
   AgentAdapter,
@@ -84,11 +85,11 @@ export class AntigravityAdapter implements AgentAdapter {
 
   private readonly detector = new AntigravityDetector();
   private readonly commandBuilder = new AntigravityCommandBuilder();
-  // Set of taskIds currently holding hook injections per directory. agy has
-  // no per-spawn settings flag, so `.agents/hooks.json` is shared across
-  // concurrent sessions in one cwd; removeHooks() only strips the file when
-  // the last taskId releases (the Gemini refcount pattern, same rationale).
-  private readonly hookHolders = new Map<string, Set<string>>();
+  // Sessions holding `.agents/hooks.json` and the MCP plugin dir per folder.
+  // agy has no per-spawn settings flag, so both are shared across concurrent
+  // sessions in one cwd; removeHooks() only strips them when the folder's
+  // last session releases. See SharedFolderHolds.
+  private readonly hookHolds = new SharedFolderHolds();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -120,37 +121,25 @@ export class AntigravityAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, ...rest } = options;
-    const command = this.commandBuilder.buildAntigravityCommand({
-      agyPath: agentPath,
-      ...rest,
-    });
-    if (options.eventsOutputPath) {
-      this.retainHooks(options.cwd, options.taskId);
+    const agyOptions = { agyPath: agentPath, ...rest };
+    const command = this.commandBuilder.buildAntigravityCommand(agyOptions);
+    // The build writes hooks.json for an events pipeline and the MCP plugin
+    // dir for MCP wiring; either one holds the folder until this session
+    // releases.
+    if (options.eventsOutputPath || antigravityMcpWiringEnabled(agyOptions)) {
+      this.hookHolds.retain(options.ptySessionId, options.cwd);
     }
     return command;
-  }
-
-  private retainHooks(directory: string, taskId: string): void {
-    let holders = this.hookHolders.get(directory);
-    if (!holders) {
-      holders = new Set<string>();
-      this.hookHolders.set(directory, holders);
-    }
-    holders.add(taskId);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
     return this.commandBuilder.interpolateTemplate(template, variables);
   }
 
-  removeHooks(directory: string, taskId?: string): void {
-    const holders = this.hookHolders.get(directory);
-    if (holders && taskId) {
-      holders.delete(taskId);
-      if (holders.size > 0) return; // another session still needs the hooks
-      this.hookHolders.delete(directory);
-    }
-    removeAntigravityHooks(directory);
+  removeHooks(directory: string, sessionId?: string): void {
+    const folder = this.hookHolds.release(sessionId, directory);
+    // Null while another session in the folder still needs the hooks.
+    if (folder) removeAntigravityHooks(folder);
   }
 
   clearSettingsCache(): void {

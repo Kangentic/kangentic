@@ -18,7 +18,7 @@ import type { PermissionMode } from '../../../../shared/types';
  * `geminiMcpWiringEnabled` / `codexMcpWiringEnabled`). Default-on: only an
  * explicit `false` suppresses it.
  */
-function antigravityMcpWiringEnabled(
+export function antigravityMcpWiringEnabled(
   options: AntigravityCommandOptions,
 ): options is AntigravityCommandOptions & { mcpServerUrl: string; mcpServerToken: string } {
   return (

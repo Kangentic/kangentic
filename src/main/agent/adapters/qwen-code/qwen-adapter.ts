@@ -10,6 +10,7 @@ import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { migrateQwenProjectData } from './project-relocation';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
+import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -43,16 +44,12 @@ export class QwenAdapter implements AgentAdapter {
 
   private readonly detector = new QwenDetector();
   private readonly commandBuilder = new QwenCommandBuilder();
-  // Set of taskIds currently holding hook injections per directory. Qwen
-  // (inheriting from gemini-cli) has no per-session settings flag, so
-  // `.qwen/settings.json` is shared across concurrent sessions in the
-  // same project. removeHooks() only actually strips hooks when the last
-  // taskId releases; otherwise a first session's suspend/exit would
-  // clobber a still-running second session's hooks. A Set (rather than
-  // a counter) makes double-releases for the same taskId idempotent,
-  // which matters because session-manager's suspend path calls
-  // removeHooks once explicitly and again from the PTY onExit handler.
-  private readonly hookHolders = new Map<string, Set<string>>();
+  // Sessions holding `.qwen/settings.json` per folder. Qwen (inheriting from
+  // gemini-cli) has no per-session settings flag, so the file is shared
+  // across concurrent sessions in the same folder, and removeHooks() strips
+  // it only when the folder's last session releases. Keyed by session id:
+  // see SharedFolderHolds.
+  private readonly hookHolds = new SharedFolderHolds();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -84,28 +81,14 @@ export class QwenAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, model, effort, ...rest } = options;
-    const command = this.commandBuilder.buildQwenCommand({
-      qwenPath: agentPath,
-      model,
-      effort,
-      ...rest,
-    });
-    // buildQwenCommand writes hooks into .qwen/settings.json whenever
-    // eventsOutputPath is present. Retain a reference for every such
-    // spawn so concurrent sessions in the same cwd serialize cleanup.
-    if (options.eventsOutputPath) {
-      this.retainHooks(options.cwd, options.taskId);
+    const qwenOptions = { qwenPath: agentPath, model, effort, ...rest };
+    const command = this.commandBuilder.buildQwenCommand(qwenOptions);
+    // Every spawn that writes the folder-shared .qwen/settings.json (an
+    // events pipeline or MCP wiring) holds it until its session releases.
+    if (this.commandBuilder.shouldWriteMergedSettings(qwenOptions)) {
+      this.hookHolds.retain(options.ptySessionId, options.cwd);
     }
     return command;
-  }
-
-  private retainHooks(directory: string, taskId: string): void {
-    let holders = this.hookHolders.get(directory);
-    if (!holders) {
-      holders = new Set<string>();
-      this.hookHolders.set(directory, holders);
-    }
-    holders.add(taskId);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -195,17 +178,10 @@ export class QwenAdapter implements AgentAdapter {
     },
   };
 
-  removeHooks(directory: string, taskId?: string): void {
-    const holders = this.hookHolders.get(directory);
-    if (holders && taskId) {
-      holders.delete(taskId);
-      if (holders.size > 0) {
-        // Another session in this directory still needs the hooks.
-        return;
-      }
-      this.hookHolders.delete(directory);
-    }
-    removeQwenHooks(directory);
+  removeHooks(directory: string, sessionId?: string): void {
+    const folder = this.hookHolds.release(sessionId, directory);
+    // Null while another session in the folder still needs the file.
+    if (folder) removeQwenHooks(folder);
   }
 
   getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {

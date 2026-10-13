@@ -70,6 +70,9 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     markRunningAsOrphanedExcluding = vi.fn();
     getLatestForTaskByTypeAndIsolation = () => latestForTaskByTypeAndIsolation();
     findByAnyId = (recordId: string) => sessionRepoFindByAnyId(recordId);
+    // The spawn pass's writes after a resume spawns.
+    insert = vi.fn();
+    updateAppliedSettings = vi.fn();
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -106,6 +109,8 @@ vi.mock('../../src/main/transition-engine/spawn-intent', () => ({
 // column-strategy and session-isolation are deliberately left UNMOCKED: the
 // profile fold and the isolation key are part of what this branch must get right.
 import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup/resume-suspended';
+// The mocked flag (see the shutdown-state mock above), so a test can raise it mid-pass.
+import { isShuttingDown } from '../../src/main/shutdown-state';
 // The real lock, which the file leaves unmocked: one test holds it as a Resume does.
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 
@@ -704,5 +709,100 @@ describe('resumeSuspendedSessions scoped to the sessions a pty host crash took d
     await runResume(makeSessionManager());
 
     expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+/**
+ * The preparation built the command, and a folder-shared adapter (Gemini,
+ * Cursor, ...) took its hold on the file it wrote under the prepared session's
+ * id. A resume the spawn pass skips never becomes that session, so the pass
+ * releases the hold; one never released keeps the folder's file in place for
+ * the rest of the run. A resume handed to spawn() leaves it to the session.
+ *
+ * Red-green: drop the `finally` release in resume-suspended.ts and the skip
+ * test fails; release unconditionally and the control fails.
+ */
+describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold', () => {
+  const removeHooks = vi.fn();
+  const consoleSpies: Array<{ mockRestore: () => void }> = [];
+
+  function preparedResume() {
+    return {
+      ok: true,
+      data: {
+        adapter: { name: 'gemini', sessionType: 'gemini_agent', removeHooks, getExitSequence: () => ['\x03'] },
+        agent: 'gemini',
+        command: 'gemini --resume',
+        cwd: '/project/cwd',
+        sessionRecordId: 'prepared-session',
+        agentSessionId: 'agent-session-1',
+        permissionMode: 'default',
+        statusOutputPath: '/project/.kangentic/sessions/prepared-session/status.json',
+        eventsOutputPath: '/project/.kangentic/sessions/prepared-session/events.jsonl',
+        extraEnv: null,
+        appliedModel: null,
+        appliedEffort: null,
+      },
+    };
+  }
+
+  beforeEach(() => {
+    swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    latestForTaskByTypeAndIsolation.mockReturnValue(makeRecord());
+    sessionRepoGetOrphaned.mockReturnValue([makeRecord({ status: 'orphaned', suspended_by: null })]);
+    prepareAgentSpawnMock.mockResolvedValue(preparedResume());
+    consoleSpies.push(vi.spyOn(console, 'log').mockImplementation(() => undefined));
+  });
+
+  afterEach(() => {
+    prepareAgentSpawnMock.mockReset();
+    latestForTaskByTypeAndIsolation.mockReturnValue(null);
+    // `clearAllMocks` leaves a `mockReturnValue` in place, and a flag left raised
+    // would make every later pass return at its first check.
+    vi.mocked(isShuttingDown).mockReturnValue(false);
+    for (const spy of consoleSpies.splice(0)) spy.mockRestore();
+  });
+
+  // The pass checks the flag at its top, then again after the preparation, which
+  // awaits the shell and every agent's detection: a quit can begin in between.
+  // The prepared command took a hold by then, and no spawn will run.
+  //
+  // Red-green: drop the release loop in resume-suspended.ts's shutdown branch
+  // and this fails.
+  it('releases a prepared command\'s hold when the app begins to quit during the preparation', async () => {
+    prepareAgentSpawnMock.mockImplementationOnce(async () => {
+      // Raised once the pass is past its first check, while it prepares the resume.
+      vi.mocked(isShuttingDown).mockReturnValue(true);
+      return preparedResume();
+    });
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(removeHooks).toHaveBeenCalledTimes(1);
+    expect(removeHooks).toHaveBeenCalledWith('/project/cwd', 'prepared-session');
+  });
+
+  it('releases with the prepared session id and cwd when a live session took the task meanwhile', async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.findLiveSessionByTaskId.mockReturnValue({ id: 'live-session' });
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(removeHooks).toHaveBeenCalledTimes(1);
+    expect(removeHooks).toHaveBeenCalledWith('/project/cwd', 'prepared-session');
+  });
+
+  it('control: a resume handed to spawn keeps its hold for its session', async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockResolvedValue({ id: 'prepared-session', status: 'running' });
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ id: 'prepared-session' }));
+    expect(removeHooks).not.toHaveBeenCalled();
   });
 });

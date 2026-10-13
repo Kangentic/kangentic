@@ -148,7 +148,11 @@ export class GeminiCommandBuilder {
     return structuredClone(baseSettings);
   }
 
-  private shouldWriteMergedSettings(options: GeminiCommandOptions): boolean {
+  /**
+   * True when the build writes the folder-shared `.gemini/settings.json`. The
+   * adapter takes its session's hold on the file under the same test.
+   */
+  shouldWriteMergedSettings(options: GeminiCommandOptions): boolean {
     return Boolean(options.eventsOutputPath) || geminiMcpWiringEnabled(options);
   }
 
@@ -177,9 +181,9 @@ export class GeminiCommandBuilder {
    *
    * Gemini has no --settings flag, so hooks live in a project-shared file.
    * Concurrent sessions in the same cwd are serialized by GeminiAdapter's
-   * hook reference counter: each spawn retains one reference, and
-   * removeHooks() only strips the file when the count drops to zero. The
-   * isKangenticHook() guard prevents affecting user-defined hooks. On crash
+   * per-session holds: each spawn holds the file under its own session id,
+   * and removeHooks() only strips it when the folder's last session
+   * releases. The isKangenticHook() guard prevents affecting user-defined hooks. On crash
    * / force-quit, stripping on the next spawn (buildHooks) cleans up.
    *
    * MCP server entry: Gemini natively supports inline `mcpServers` in

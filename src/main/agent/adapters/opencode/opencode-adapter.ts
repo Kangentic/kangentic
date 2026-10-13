@@ -13,6 +13,7 @@ import { probeOpenCodeServer, fetchOpenCodeSessionMessages } from './remote-clie
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
+import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
@@ -84,8 +85,8 @@ const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;?]*[a-zA-Z]/g;
  *    Kangentic MCP entry is injected via `buildEnv()` so the user's
  *    checked-in `opencode.json` is never touched. The activity-stream
  *    plugin is a separate file, copied into the project-shared
- *    `.opencode/plugins/` directory at spawn (refcounted via
- *    `hookHolders` since concurrent sessions share the file).
+ *    `.opencode/plugins/` directory at spawn (held per session via
+ *    `hookHolds` since concurrent sessions share the file).
  *  - No trust dialog and no per-mode permission flags. The
  *    `--dangerously-skip-permissions` flag exists only for the
  *    non-interactive `opencode run` subcommand. In TUI mode, users
@@ -136,13 +137,14 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   private readonly detector = new OpenCodeDetector();
   private readonly commandBuilder = new OpenCodeCommandBuilder();
-  // Per-project taskId set tracking which spawns currently hold the
-  // activity plugin. OpenCode auto-loads plugins from a project-shared
-  // `.opencode/plugins/` directory, so concurrent sessions in the same
-  // project share one plugin file. Refcount prevents premature deletion
-  // when the first task ends while a second is still active. Mirrors
-  // CodexAdapter.hookHolders.
-  private readonly hookHolders = new Map<string, Set<string>>();
+  // Sessions holding the activity plugin, per project root. OpenCode
+  // auto-loads plugins from a project-shared `.opencode/plugins/` directory,
+  // so concurrent sessions in the same project share one plugin file, and
+  // it is deleted only when the root's last session releases. A hold records
+  // the project root, so a worktree session's release (which arrives with
+  // the worktree path) removes the plugin the build installed. See
+  // SharedFolderHolds.
+  private readonly hookHolds = new SharedFolderHolds();
 
   // Keyed by spawn cwd, populated in buildCommand whenever a spawn resolves
   // to remote mode. Lets parseTranscript / locateSessionHistoryFile /
@@ -246,23 +248,13 @@ export class OpenCodeAdapter implements AgentAdapter {
 
     // buildOpenCodeCommand copies the activity plugin into
     // `<projectRoot>/.opencode/plugins/` whenever eventsOutputPath is set.
-    // Retain a reference keyed by the project root so concurrent sessions
-    // serialize their cleanup in `removeHooks`. Local mode only - remote
-    // mode never installs the plugin (see command-builder.ts).
+    // Hold the project root until this session releases, so concurrent
+    // sessions serialize their cleanup in `removeHooks`. Local mode only -
+    // remote mode never installs the plugin (see command-builder.ts).
     if (options.eventsOutputPath) {
-      const projectRoot = options.projectRoot || options.cwd;
-      this.retainHooks(projectRoot, options.taskId);
+      this.hookHolds.retain(options.ptySessionId, options.projectRoot || options.cwd);
     }
     return command;
-  }
-
-  private retainHooks(directory: string, taskId: string): void {
-    let holders = this.hookHolders.get(directory);
-    if (!holders) {
-      holders = new Set<string>();
-      this.hookHolders.set(directory, holders);
-    }
-    holders.add(taskId);
   }
 
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
@@ -363,25 +355,17 @@ export class OpenCodeAdapter implements AgentAdapter {
   /**
    * Remove the activity plugin from a project's `.opencode/plugins/`.
    *
-   * `taskId` is required when concurrent OpenCode sessions on the same
-   * project are possible (it identifies which spawn is releasing). When
-   * supplied, the call decrements the refcount and only deletes the
-   * plugin file once the last holder releases. When omitted, the call
-   * skips the refcount path and unconditionally deletes the file -
-   * intended only for shutdown / forced cleanup paths where every
-   * pending session is being torn down anyway.
+   * `sessionId` identifies which session is releasing its hold. When
+   * supplied, the plugin file is deleted from the project root that session
+   * held, once the root's last holder releases. When omitted, the call
+   * drops every hold on `directory` and deletes the file - intended only
+   * for forced cleanup paths (project delete) where every session is being
+   * torn down anyway.
    */
-  removeHooks(directory: string, taskId?: string): void {
-    const holders = this.hookHolders.get(directory);
-    if (holders && taskId) {
-      holders.delete(taskId);
-      if (holders.size > 0) {
-        // Another concurrent session in this project still needs the plugin.
-        return;
-      }
-      this.hookHolders.delete(directory);
-    }
-    removeOpenCodeHooks(directory);
+  removeHooks(directory: string, sessionId?: string): void {
+    const folder = this.hookHolds.release(sessionId, directory);
+    // Null while another session in this project still needs the plugin.
+    if (folder) removeOpenCodeHooks(folder);
   }
 
   getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {

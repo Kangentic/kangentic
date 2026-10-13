@@ -50,12 +50,20 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+// The real flag is one-way (`setShuttingDown` has no reset), so the quit is
+// flagged through this switch, which `beforeEach` clears.
+const shutdownSwitch = vi.hoisted(() => ({ shuttingDown: false }));
+vi.mock('../../src/main/shutdown-state', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/shutdown-state')>()),
+  isShuttingDown: () => shutdownSwitch.shuttingDown,
+}));
+
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import { InProcessPtyHostTransport, type PtyHostLifecycleListener } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostMethod, PtyHostRequestMap } from '../../src/main/pty/host/protocol';
-import type { Session } from '../../src/shared/types';
+import type { AgentParser, Session } from '../../src/shared/types';
 import { isAbortError } from '../../src/shared/abort-utils';
 
 /** The in-process host core, holding every `spawn` request while `holdSpawns`
@@ -193,6 +201,7 @@ async function promotionHeldAtTheHost(manager: SessionManager, transport: HeldSp
 
 beforeEach(() => {
   vi.clearAllMocks();
+  shutdownSwitch.shuttingDown = false;
   vi.useFakeTimers();
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-spawn-cancel-'));
 });
@@ -667,5 +676,151 @@ describe('SessionManager: a teardown while a direct spawn is in flight', () => {
     // Defined first: a renamed field would otherwise read as an empty map.
     expect(inFlight).toBeInstanceOf(Map);
     expect(inFlight?.size).toBe(0);
+  });
+});
+
+describe('SessionManager: a spawn that never runs releases its command\'s hold', () => {
+  // A folder-shared adapter (Gemini, Cursor, ...) takes its hold in
+  // buildCommand under the session's own id. A spawn that never becomes a
+  // running session has no PTY exit to release it, and a hold never released
+  // keeps the folder's file in place for the rest of the run. SessionManager
+  // releases every spawn it took that did not run. No row exists for a
+  // cancelled spawn, so the release comes from the spawn's own input.
+  //
+  // Red-green: dropping the release in doSpawn's catch, on its failed-spawn
+  // branch, in kill()'s dequeue branch, or in spawn()'s shutdown refusal fails
+  // the matching test. Making doSpawn's catch release unconditionally (not only
+  // for a spawn with no PTY row) fails the "keeps the hold" test below.
+
+  function holdingParser() {
+    const removeHooks = vi.fn();
+    const parser = {
+      detectFirstOutput: () => false,
+      removeHooks,
+      runtime: { sessionId: { fromOutput: () => null } },
+    } as unknown as AgentParser;
+    return { parser, removeHooks };
+  }
+
+  it('a direct spawn a teardown cancelled at the host releases with its id and requested cwd', async () => {
+    const { manager, transport } = makeManager();
+    const { parser, removeHooks } = holdingParser();
+    vi.mocked(pty.spawn).mockReturnValue(createMockPty(501) as unknown as pty.IPty);
+    transport.holdSpawns = true;
+
+    const spawning = manager.spawn({ id: 'cancelled-session', taskId: 'task-cancelled', command: '', cwd: tmpDir, agentParser: parser });
+    const outcome = spawning.then(() => 'resolved', (error: unknown) => error);
+    await flushUntil(() => transport.heldSpawns === 1);
+    manager.removeByTaskId('task-cancelled');
+    transport.releaseSpawns();
+
+    expect(isAbortError(await outcome)).toBe(true);
+    expect(removeHooks).toHaveBeenCalledWith(tmpDir, 'cancelled-session');
+  });
+
+  it('a spawn whose host spawn failed releases, since its exited row has no PTY to exit', async () => {
+    const { manager } = makeManager();
+    const { parser, removeHooks } = holdingParser();
+    vi.mocked(pty.spawn).mockImplementation(() => {
+      throw new Error('spawn failed');
+    });
+
+    const session = await manager.spawn({ id: 'failed-session', taskId: 'task-failed', command: '', cwd: tmpDir, agentParser: parser });
+
+    expect(session.status).toBe('exited');
+    expect(removeHooks).toHaveBeenCalledWith(tmpDir, 'failed-session');
+  });
+
+  it('a queued placeholder killed before its promotion releases', async () => {
+    const { manager } = makeManager();
+    const { parser, removeHooks } = holdingParser();
+    manager.setMaxConcurrent(1);
+    vi.mocked(pty.spawn).mockReturnValue(createMockPty(502) as unknown as pty.IPty);
+    await manager.spawn({ taskId: 'task-running', command: '', cwd: tmpDir });
+    const queued = await manager.spawn({ id: 'queued-session', taskId: 'task-queued', command: '', cwd: tmpDir, agentParser: parser });
+    expect(queued.status).toBe('queued');
+
+    manager.kill(queued.id);
+
+    expect(removeHooks).toHaveBeenCalledWith(tmpDir, 'queued-session');
+  });
+
+  // The caller handed the built command over by calling spawn(), so it does not
+  // release it itself; the refusal at the top of spawn() is then the only thing
+  // left to end a hold taken for a spawn that will never run.
+  it('a spawn refused because the quit began releases with its id and requested cwd', async () => {
+    const { manager, transport } = makeManager();
+    const { parser, removeHooks } = holdingParser();
+    shutdownSwitch.shuttingDown = true;
+
+    await expect(
+      manager.spawn({ id: 'refused-session', taskId: 'task-refused', command: '', cwd: tmpDir, agentParser: parser }),
+    ).rejects.toThrow('Cannot spawn session during shutdown');
+
+    expect(removeHooks).toHaveBeenCalledTimes(1);
+    expect(removeHooks).toHaveBeenCalledWith(tmpDir, 'refused-session');
+    // Refused before the host or the registry heard of it.
+    expect(transport.spawnRequests).toEqual([]);
+    expect(registryRow(manager, 'refused-session')).toBeUndefined();
+  });
+
+  // Control for the refusal above. A hold is taken under the id the caller
+  // passed, so a spawn with no id took none and has nothing to release.
+  it('control: a spawn with no id refused for the quit rejects without releasing', async () => {
+    const { manager } = makeManager();
+    const { parser, removeHooks } = holdingParser();
+    shutdownSwitch.shuttingDown = true;
+
+    await expect(
+      manager.spawn({ taskId: 'task-refused', command: '', cwd: tmpDir, agentParser: parser }),
+    ).rejects.toThrow('Cannot spawn session during shutdown');
+
+    expect(removeHooks).not.toHaveBeenCalled();
+  });
+
+  // performSpawn announces a new session with `session-changed` right after it
+  // registers the row and the PTY's exit listener, so a listener that throws
+  // there fails the spawn with a running PTY behind it (a stand-in for any
+  // late failure in the spawn flow). Stripping the folder's file now would pull
+  // the agent's hooks or MCP entry from under it, so the hold waits for the exit.
+  it('a spawn that fails after its PTY was registered keeps the hold until that PTY exits', async () => {
+    const { manager } = makeManager();
+    const { parser, removeHooks } = holdingParser();
+    const startedPty = createMockPty(504, { exitOnKill: false });
+    vi.mocked(pty.spawn).mockReturnValue(startedPty as unknown as pty.IPty);
+    let announcementsOfFailingSession = 0;
+    manager.on('session-changed', (sessionId: string) => {
+      if (sessionId !== 'failing-session') return;
+      // Only the spawn's own announcement fails; a later push for the row must not.
+      announcementsOfFailingSession++;
+      if (announcementsOfFailingSession === 1) throw new Error('listener failed');
+    });
+
+    await expect(
+      manager.spawn({ id: 'failing-session', taskId: 'task-failing', command: '', cwd: tmpDir, agentParser: parser }),
+    ).rejects.toThrow('listener failed');
+
+    // Precondition: the failure came after the row got its PTY, so the agent
+    // is running with nothing else to end its hold.
+    expect(registryRow(manager, 'failing-session')?.pty).toBeTruthy();
+    expect(removeHooks).not.toHaveBeenCalled();
+
+    startedPty.exit();
+    await flush();
+
+    expect(removeHooks).toHaveBeenCalledTimes(1);
+    expect(removeHooks).toHaveBeenCalledWith(tmpDir, 'failing-session');
+  });
+
+  it('control: a spawn that runs keeps its hold until its own end', async () => {
+    const { manager } = makeManager();
+    const { parser, removeHooks } = holdingParser();
+    vi.mocked(pty.spawn).mockReturnValue(createMockPty(503) as unknown as pty.IPty);
+
+    const session = await manager.spawn({ id: 'running-session', taskId: 'task-runs', command: '', cwd: tmpDir, agentParser: parser });
+
+    expect(session.status).toBe('running');
+    expect(removeHooks).not.toHaveBeenCalled();
+    manager.killAll();
   });
 });

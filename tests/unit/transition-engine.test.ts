@@ -378,6 +378,105 @@ describe('TransitionEngine - raw/sanitized description split', () => {
     expect(capturedTag).toBe(task.id);
   });
 
+  // A folder-shared adapter holds the file it writes under `ptySessionId`, the
+  // id the session layer releases with, so the builder and the spawn must agree.
+  it('executeAction (spawn_agent): hands the builder the same ptySessionId the spawn uses', async () => {
+    const task = makeTask();
+    let capturedSessionId: string | undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string; ptySessionId?: string }) => {
+      capturedSessionId = options.ptySessionId;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const { runSpawn, sessionManager } = makeEngine({});
+    await runSpawn(task);
+
+    expect(capturedSessionId).toBeDefined();
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ id: capturedSessionId }));
+    expect(mockAdapter.removeHooks).not.toHaveBeenCalled();
+  });
+
+  // An abort between the build and the spawn leaves a built command no session
+  // will release, so the engine releases its hold.
+  //
+  // Red-green: drop the catch's releaseCommandHold in transition-engine.ts and
+  // removeHooks is never called.
+  it('executeAction (spawn_agent): an abort after the build releases the command\'s hold', async () => {
+    const task = makeTask();
+    let capturedSessionId: string | undefined;
+    let capturedCwd: string | undefined;
+    const controller = new AbortController();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string; ptySessionId?: string; cwd: string }) => {
+      capturedSessionId = options.ptySessionId;
+      capturedCwd = options.cwd;
+      // The abort lands between the build and the spawn.
+      controller.abort();
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const { runSpawn, sessionManager } = makeEngine({});
+    await expect(runSpawn(task, undefined, controller.signal)).rejects.toThrow();
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(mockAdapter.removeHooks).toHaveBeenCalledWith(capturedCwd, capturedSessionId);
+  });
+
+  // A buildEnv failure is the other thing that can stop a built command short
+  // of spawn(), so it releases the hold the build took too.
+  //
+  // Red-green: take buildEnv out of the try (or drop the catch's
+  // releaseCommandHold) in transition-engine.ts and removeHooks is never called.
+  it('executeAction (spawn_agent): a buildEnv failure releases the command\'s hold and never spawns', async () => {
+    const task = makeTask();
+    let capturedSessionId: string | undefined;
+    let capturedCwd: string | undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string; ptySessionId?: string; cwd: string }) => {
+      capturedSessionId = options.ptySessionId;
+      capturedCwd = options.cwd;
+      return `claude ${options.prompt ?? ''}`;
+    });
+    const adapterWithEnv = mockAdapter as unknown as { buildEnv?: () => Record<string, string> | null };
+    const envFailure = new Error('buildEnv failed');
+    adapterWithEnv.buildEnv = vi.fn(() => {
+      throw envFailure;
+    });
+
+    try {
+      const { runSpawn, sessionManager } = makeEngine({});
+      await expect(runSpawn(task)).rejects.toBe(envFailure);
+
+      expect(capturedSessionId).toBeDefined();
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(mockAdapter.removeHooks).toHaveBeenCalledTimes(1);
+      expect(mockAdapter.removeHooks).toHaveBeenCalledWith(capturedCwd, capturedSessionId);
+    } finally {
+      // Back to the file-wide default (no buildEnv), so no later test sees it.
+      adapterWithEnv.buildEnv = undefined;
+    }
+  });
+
+  // From the spawn() call on, the session layer owns the hold: it releases a
+  // spawn that never ran, and keeps it for a PTY that started (so the folder's
+  // file is never stripped under a running agent). The engine releasing too
+  // would strip it under exactly that agent.
+  //
+  // Red-green: move sessionManager.spawn back inside the try that releases and
+  // removeHooks is called with the spawn's own id.
+  it('executeAction (spawn_agent): a sessionManager.spawn rejection does not release the hold from the engine', async () => {
+    const task = makeTask();
+    const spawnFailure = new Error('pty host unreachable');
+    const { runSpawn, sessionManager } = makeEngine({});
+    sessionManager.spawn.mockRejectedValueOnce(spawnFailure);
+
+    await expect(runSpawn(task)).rejects.toBe(spawnFailure);
+
+    // Precondition: the build ran and the engine did reach the spawn, so the
+    // assertion below is about the spawn's failure and not an earlier return.
+    expect(mockAdapter.buildCommand).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(mockAdapter.removeHooks).not.toHaveBeenCalled();
+  });
+
   it('executeAction (spawn_agent): task_xml contains raw multi-line description', async () => {
     const rawDescription = 'Step 1: check OAuth.\n\nStep 2: refresh token.';
     const task = makeTask({ description: rawDescription });
