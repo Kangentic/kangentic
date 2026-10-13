@@ -15,7 +15,9 @@
  *      say) may have left a dev server running.
  *   2. `handleTaskMove`'s Done branch (task-move.ts, REAL, the reap mocked at
  *      the barrel): suspend -> reap -> deleteTaskWorktree, including a Done
- *      move whose session had already ended before the move.
+ *      move whose session had already ended before the move. A removal that
+ *      fails schedules the one delayed retry (`scheduleDoneWorktreeRemovalRetry`),
+ *      right after it and for that task; a removal that succeeds schedules none.
  *   3. The deliberate negatives: a move into an auto_spawn=false column and
  *      the Stop / Pause handlers (SESSION_KILL, SESSION_SUSPEND) never reap.
  *      The user chose to keep a parked task's dev server running.
@@ -132,6 +134,12 @@ const mockDeleteTaskWorktree = vi.fn(async (): Promise<boolean> => {
   callOrder.push('deleteWorktree');
   return true;
 });
+// The Done move's one delayed retry of a failed worktree removal. Mocked, so
+// the test observes the CALL (its arguments and position); the timer and the
+// retry itself are pinned in leftover-worktree-retry.test.ts.
+const mockScheduleDoneWorktreeRemovalRetry = vi.fn((..._retryArguments: unknown[]): void => {
+  callOrder.push('scheduleRetry');
+});
 const mockGetProjectRepos = vi.fn();
 const mockEnsureTaskWorktree = vi.fn(async () => null);
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
@@ -148,6 +156,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   deleteTaskWorktree: (...args: unknown[]) => mockDeleteTaskWorktree(...args),
   autoSpawnForTask: vi.fn(async () => {}),
   reapTaskLeftovers: (...args: unknown[]) => mockReapTaskLeftovers(...args),
+  scheduleDoneWorktreeRemovalRetry: (...args: unknown[]) => mockScheduleDoneWorktreeRemovalRetry(...args),
 }));
 
 // ---------------------------------------------------------------------------
@@ -467,6 +476,59 @@ describe('handleTaskMove Done branch: suspend -> reap -> deleteTaskWorktree', ()
 
     expect(callOrder).toEqual(['reap', 'deleteWorktree']);
     expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-2', worktree_path: '/mock/project/.kangentic/worktrees/task-done-2' })]);
+  });
+
+  it('schedules the delayed removal retry when the worktree removal failed, right after it and for that task', async () => {
+    const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const task = makeTask({
+      id: 'task-done-3',
+      swimlane_id: SOURCE_LANE_ID,
+      session_id: null,
+      worktree_path: '/mock/project/.kangentic/worktrees/task-done-3',
+    });
+    const taskRepo = makeTaskRepo(task);
+    const swimlaneRepo = makeSwimlaneRepo([sourceLane, doneLane]);
+    const context = makeTaskMoveContext(taskRepo, swimlaneRepo);
+    // A holder still closing files in the directory: the removal reports failure.
+    mockDeleteTaskWorktree.mockImplementationOnce(async () => {
+      callOrder.push('deleteWorktree');
+      return false;
+    });
+
+    await handleTaskMove(
+      context as never,
+      { taskId: task.id, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+      'renderer',
+    );
+
+    expect(callOrder).toEqual(['reap', 'deleteWorktree', 'scheduleRetry']);
+    expect(mockScheduleDoneWorktreeRemovalRetry).toHaveBeenCalledTimes(1);
+    expect(mockScheduleDoneWorktreeRemovalRetry).toHaveBeenCalledWith(context, '/mock/project', 'task-done-3');
+  });
+
+  it('schedules no removal retry when the worktree was removed', async () => {
+    const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const task = makeTask({
+      id: 'task-done-4',
+      swimlane_id: SOURCE_LANE_ID,
+      session_id: null,
+      worktree_path: '/mock/project/.kangentic/worktrees/task-done-4',
+    });
+    const taskRepo = makeTaskRepo(task);
+    const swimlaneRepo = makeSwimlaneRepo([sourceLane, doneLane]);
+    const context = makeTaskMoveContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(
+      context as never,
+      { taskId: task.id, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+      'renderer',
+    );
+
+    // The removal ran and succeeded (the mock's default answer), so there is nothing to retry.
+    expect(mockDeleteTaskWorktree).toHaveBeenCalledTimes(1);
+    expect(mockScheduleDoneWorktreeRemovalRetry).not.toHaveBeenCalled();
   });
 });
 
