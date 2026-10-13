@@ -48,7 +48,7 @@
  * nothing is opened at all.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   Win32TaggedProcessReader,
   loadWin32OrphanApi,
@@ -104,6 +104,12 @@ interface FakeProcess {
   commandLine?: string;
   /** GetProcessTimes reports failure for this pid. */
   creationUnreadable?: boolean;
+  /** Its exit code is set (GetExitCodeProcess answers it, not STILL_ACTIVE) while it is still listed and openable: terminating. */
+  exited?: boolean;
+  /** GetExitCodeProcess reports failure for this pid, with the exit code of an ended process already in its out parameter, so only the call's result shows it failed. */
+  exitCodeUnreadable?: boolean;
+  /** Listed by Toolhelp, but OpenProcess refuses it (elevated, or a hardened DACL). */
+  openRefused?: boolean;
   /** A 32-bit process under WOW64: only its 32-bit PEB is laid out, so nothing reads through the 64-bit one. */
   wow64?: boolean;
   /**
@@ -261,6 +267,10 @@ class FakeWin32 {
   tcpTableGrowths = 0;
   /** A status GetExtendedTcpTable fails with every time. */
   tcpTableFailure: number | null = null;
+  /** Every CreateToolhelp32Snapshot call, failed ones included. */
+  snapshotsTaken = 0;
+  /** Calls still to fail CreateToolhelp32Snapshot with an invalid handle, as it can under heavy process churn. */
+  failingSnapshots = 0;
 
   private nextHandleId = 1;
   private snapshotCursor = 0;
@@ -279,7 +289,14 @@ class FakeWin32 {
   readonly api: Win32Api = {
     koffi: { address: (handle: unknown) => BigInt(handleOf(handle).id) } as unknown as Win32Api['koffi'],
     processEntrySize: 568,
-    createSnapshot: async () => this.create(0),
+    createSnapshot: async () => {
+      this.snapshotsTaken += 1;
+      if (this.failingSnapshots > 0) {
+        this.failingSnapshots -= 1;
+        return null;
+      }
+      return this.create(0);
+    },
     processFirst: (_snapshot, entry) => {
       this.snapshotCursor = 0;
       return this.fillEntry(entry) ? 1 : 0;
@@ -290,7 +307,7 @@ class FakeWin32 {
     },
     openProcess: (access, _inherit, pid) => {
       this.opens.push({ pid, access });
-      return this.byPid.has(pid) ? this.create(pid) : null;
+      return this.byPid.has(pid) && !this.byPid.get(pid)?.openRefused ? this.create(pid) : null;
     },
     closeHandle: (handle) => {
       this.closedHandleIds.push(handleOf(handle).id);
@@ -318,6 +335,18 @@ class FakeWin32 {
       const fakeProcess = this.byPid.get(handleOf(handle).pid);
       if (!fakeProcess || fakeProcess.creationUnreadable) return 0;
       creation[0] = creationOf(fakeProcess.pid);
+      return 1;
+    },
+    // STILL_ACTIVE (259) for a running process, as winbase.h defines it.
+    getExitCodeProcess: (handle, exitCode) => {
+      const fakeProcess = this.byPid.get(handleOf(handle).pid);
+      if (!fakeProcess) return 0;
+      // Reports failure after the out parameter holds the exit code of an ended process, so only the call's own result says it failed.
+      if (fakeProcess.exitCodeUnreadable) {
+        exitCode[0] = 0;
+        return 0;
+      }
+      exitCode[0] = fakeProcess.exited ? 0 : 259;
       return 1;
     },
     readProcessMemory: (handle, address, buffer, size) => {
@@ -684,6 +713,45 @@ describe('Win32TaggedProcessReader.scan: handles close when a read goes wrong', 
   });
 });
 
+describe('Win32TaggedProcessReader.scan: a process still listed while it terminates', () => {
+  it('marks it exited, reads none of its memory, and does not count it as an unreadable environment', async () => {
+    const fake = new FakeWin32([
+      // Measured: a /preview's dev.js, its exit code set, still listed under its tab's cmd.
+      { pid: 700, ppid: 600, exited: true, tag: TASK },
+      { pid: 701, ppid: 600, tag: TASK },
+    ]);
+    const scan = await readerFor(fake).scan();
+
+    expect(scanned(scan, 700)).toMatchObject({ exited: true, tagValue: null, startKey: fake.startKeyOf(700) });
+    expect(scanned(scan, 700).environmentUnreadable).toBeUndefined();
+    expect(scan.unreadableCount).toBe(0);
+    // Positive control: its running sibling is read as usual.
+    expect(scanned(scan, 701)).toMatchObject({ tagValue: TASK });
+    expect(scanned(scan, 701).exited).toBeUndefined();
+    expect(fake.openedPids(PROCESS_VM_READ)).toEqual([701]);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('does not mark a process exited when its exit code cannot be read, and reads it on as before', async () => {
+    const fake = new FakeWin32([
+      // Positive control: a process whose exit code is set is marked exited and read no further.
+      { pid: 700, ppid: 600, exited: true, tag: TASK },
+      // GetExitCodeProcess fails with an ended process's exit code in its out parameter. The call's result is the only sign it failed, so the scan has no evidence the process is ending.
+      { pid: 710, ppid: 600, exitCodeUnreadable: true, tag: TASK },
+    ]);
+    const scan = await readerFor(fake).scan();
+
+    expect(scanned(scan, 700)).toMatchObject({ exited: true, tagValue: null });
+    expect(fake.openedPids(PROCESS_VM_READ)).toEqual([710]);
+    const unreadableExitCode = scanned(scan, 710);
+    expect(unreadableExitCode.exited).toBeUndefined();
+    expect(unreadableExitCode).toMatchObject({ startKey: fake.startKeyOf(710), tagValue: TASK, workingDirectory: WORKING_DIRECTORY });
+    expect(unreadableExitCode.environmentUnreadable).toBeUndefined();
+    expect(scan.unreadableCount).toBe(0);
+    expectEveryHandleClosedOnce(fake);
+  });
+});
+
 describe('Win32TaggedProcessReader.kill', () => {
   it('terminates through the handle it verified, and closes it, when the creation time matches', async () => {
     const fake = new FakeWin32([{ pid: 700 }]);
@@ -725,6 +793,179 @@ describe('Win32TaggedProcessReader.kill', () => {
     expect(killed).toBe(false);
     expect(fake.opens).toEqual([]);
     expect(fake.terminatedHandleIds).toEqual([]);
+  });
+});
+
+/**
+ * The leftover list's recheck: `false` (ended) only on positive evidence,
+ * `null` when the reader cannot tell. A failed open alone must never read as
+ * ended, or a process the reader is merely refused would vanish from the list
+ * while it still runs. A failed exit-code read is unknown too, and the listing a
+ * failed open takes is shared by the checks that follow it.
+ */
+describe('Win32TaggedProcessReader.isRunning', () => {
+  const identityOf = (fake: FakeWin32, pid: number, startKey = fake.startKeyOf(pid)) => ({ pid, startKey });
+
+  it('reads a running process as running, through one limited handle it closes, with no memory read', async () => {
+    const fake = new FakeWin32([{ pid: 700, tag: TASK }]);
+
+    expect(await readerFor(fake).isRunning(identityOf(fake, 700))).toBe(true);
+    expect(fake.opens).toEqual([{ pid: 700, access: PROCESS_QUERY_LIMITED_INFORMATION }]);
+    expect(fake.reads).toEqual([]);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('reads an exited process another handle keeps openable as ended', async () => {
+    const fake = new FakeWin32([{ pid: 700, exited: true }]);
+
+    expect(await readerFor(fake).isRunning(identityOf(fake, 700))).toBe(false);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('reads a pid now created at another time as ended', async () => {
+    const fake = new FakeWin32([{ pid: 700 }]);
+
+    expect(await readerFor(fake).isRunning(identityOf(fake, 700, (creationOf(700) - 1n).toString()))).toBe(false);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('reads a pid in another Windows session as ended, without opening it', async () => {
+    const fake = new FakeWin32([{ pid: 700, session: SERVICES_SESSION }]);
+
+    expect(await readerFor(fake).isRunning(identityOf(fake, 700))).toBe(false);
+    expect(fake.opens).toEqual([]);
+  });
+
+  it('reads a pid the listing no longer has as ended', async () => {
+    const fake = new FakeWin32([{ pid: 800 }]);
+
+    expect(await readerFor(fake).isRunning({ pid: 700, startKey: creationOf(700).toString() })).toBe(false);
+  });
+
+  it('answers unknown for a pid that is still listed but refuses the open', async () => {
+    const fake = new FakeWin32([{ pid: 700, openRefused: true }]);
+
+    expect(await readerFor(fake).isRunning(identityOf(fake, 700))).toBeNull();
+    // Positive control: the open was attempted, so the unknown comes from the listing.
+    expect(fake.openedPids()).toEqual([700]);
+  });
+
+  it('answers unknown when the creation time cannot be read, and opens nothing for an empty start key', async () => {
+    const fake = new FakeWin32([{ pid: 700, creationUnreadable: true }]);
+    const reader = readerFor(fake);
+
+    expect(await reader.isRunning(identityOf(fake, 700))).toBeNull();
+    expectEveryHandleClosedOnce(fake);
+    const opensBefore = fake.opens.length;
+    expect(await reader.isRunning({ pid: 700, startKey: '' })).toBeNull();
+    expect(fake.opens).toHaveLength(opensBefore);
+  });
+
+  it('answers unknown, never ended, when the listing comes back empty', async () => {
+    // The pid is not in the table at all (so the open fails) and the snapshot lists nothing:
+    // an empty listing is a failed one, never "every process exited".
+    const fake = new FakeWin32([]);
+
+    expect(await readerFor(fake).isRunning({ pid: 700, startKey: creationOf(700).toString() })).toBeNull();
+  });
+
+  it('answers unknown, never running or ended, when an openable process with a matching start key has an unreadable exit code', async () => {
+    const fake = new FakeWin32([{ pid: 700, exitCodeUnreadable: true }, { pid: 710 }, { pid: 720, exited: true }]);
+    const reader = readerFor(fake);
+
+    expect(await reader.isRunning(identityOf(fake, 700))).toBeNull();
+    // Positive controls: the same open with a readable exit code answers running, and a set exit code answers ended,
+    // so the unknown above comes from the failed call and not from the open or the start key.
+    expect(await reader.isRunning(identityOf(fake, 710))).toBe(true);
+    expect(await reader.isRunning(identityOf(fake, 720))).toBe(false);
+    // All three opened, so none of them fell through to the listing.
+    expect(fake.openedPids()).toEqual([700, 710, 720]);
+    expect(fake.snapshotsTaken).toBe(0);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  /**
+   * A recheck of many processes that will not open takes one listing, not one
+   * each. The clock is pinned so the reuse window cannot lapse mid-test on a
+   * slow runner.
+   */
+  describe('the process listing it takes when an open fails', () => {
+    const clock = { nowMs: 1_000_000 };
+
+    beforeEach(() => {
+      clock.nowMs = 1_000_000;
+      vi.spyOn(Date, 'now').mockImplementation(() => clock.nowMs);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('takes one snapshot for a run of checks, answering listed pids unknown and unlisted pids ended', async () => {
+      const fake = new FakeWin32([{ pid: 700, openRefused: true }, { pid: 710, openRefused: true }, { pid: 720 }]);
+      const reader = readerFor(fake);
+
+      // Listed but refusing the open: unknown. This one takes the listing.
+      expect(await reader.isRunning(identityOf(fake, 700))).toBeNull();
+      expect(fake.snapshotsTaken).toBe(1);
+      // Not in the table (its open and its session lookup both fail): the listing lacks it, so it ended.
+      expect(await reader.isRunning(identityOf(fake, 800))).toBe(false);
+      expect(await reader.isRunning(identityOf(fake, 710))).toBeNull();
+      expect(await reader.isRunning(identityOf(fake, 810))).toBe(false);
+      expect(await reader.isRunning(identityOf(fake, 700))).toBeNull();
+
+      expect(fake.snapshotsTaken).toBe(1);
+      expectEveryHandleClosedOnce(fake);
+    });
+
+    it('retakes a listing older than the reuse window, and reuses the retaken one', async () => {
+      const fake = new FakeWin32([{ pid: 700, openRefused: true }]);
+      const reader = readerFor(fake);
+      const target = identityOf(fake, 700);
+
+      expect(await reader.isRunning(target)).toBeNull();
+      expect(fake.snapshotsTaken).toBe(1);
+      // Inside the 1000 ms window: reused.
+      clock.nowMs += 500;
+      expect(await reader.isRunning(target)).toBeNull();
+      expect(fake.snapshotsTaken).toBe(1);
+      // Past the window since the first listing: taken again.
+      clock.nowMs += 1000;
+      expect(await reader.isRunning(target)).toBeNull();
+      expect(fake.snapshotsTaken).toBe(2);
+      // 100 ms after the retake, but 1600 ms after the first listing: the retaken one is the one kept.
+      clock.nowMs += 100;
+      expect(await reader.isRunning(target)).toBeNull();
+      expect(fake.snapshotsTaken).toBe(2);
+      expectEveryHandleClosedOnce(fake);
+    });
+
+    it('does not keep a listing that came back empty, so the next check takes a fresh one', async () => {
+      const fake = new FakeWin32([{ pid: 700, openRefused: true }]);
+      // The snapshot call fails once, as it can under heavy process churn: an empty listing, which says nothing.
+      fake.failingSnapshots = 1;
+      const reader = readerFor(fake);
+
+      expect(await reader.isRunning(identityOf(fake, 810))).toBeNull();
+      expect(fake.snapshotsTaken).toBe(1);
+      // Reusing the empty listing would read this unlisted pid as unknown. A fresh one lists the table and lacks it.
+      expect(await reader.isRunning(identityOf(fake, 810))).toBe(false);
+      expect(fake.snapshotsTaken).toBe(2);
+      // The good listing is kept.
+      expect(await reader.isRunning(identityOf(fake, 700))).toBeNull();
+      expect(fake.snapshotsTaken).toBe(2);
+      expectEveryHandleClosedOnce(fake);
+    });
+
+    it('takes a fresh listing for every check while the table keeps coming back empty', async () => {
+      const fake = new FakeWin32([]);
+      const reader = readerFor(fake);
+
+      expect(await reader.isRunning(identityOf(fake, 700))).toBeNull();
+      expect(await reader.isRunning(identityOf(fake, 710))).toBeNull();
+      expect(fake.snapshotsTaken).toBe(2);
+      expectEveryHandleClosedOnce(fake);
+    });
   });
 });
 

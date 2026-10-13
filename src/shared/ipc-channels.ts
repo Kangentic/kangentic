@@ -561,9 +561,14 @@ export const IPC = {
   // process by its report id; main never stops a pid it did not report.
   // STOP_SETTLED is a push: the real outcome of a Stop that STOP answered
   // `failed` because main stopped waiting for the pty host, which finished it.
+  // CHECK is an invoke naming reported processes by their report ids; it
+  // answers the ids whose process has since ended (pid and start key), so a
+  // row the list still shows as running catches up with a process that exited
+  // on its own.
   LEFTOVER_PROCESSES_REPORT: 'leftoverProcesses:report',
   LEFTOVER_PROCESSES_STOP: 'leftoverProcesses:stop',
   LEFTOVER_PROCESSES_STOP_SETTLED: 'leftoverProcesses:stopSettled',
+  LEFTOVER_PROCESSES_CHECK: 'leftoverProcesses:check',
 
   // Host memory pressure (Sentry DESKTOP-16; see src/main/diagnostics/host-memory.ts)
   HOST_MEMORY_PRESSURE: 'hostMemory:pressure',

@@ -6950,6 +6950,12 @@ export interface ElectronAPI {
     stop: (processId: string) => Promise<LeftoverStopOutcome>;
     /** The real outcome of a Stop that `stop` answered `failed` because main stopped waiting for it. */
     onStopSettled: (callback: (settled: LeftoverStopSettled) => void) => () => void;
+    /**
+     * Which of these reported processes (`LeftoverProcess.id`) have ended since
+     * the report, checked by pid and start key. An id main no longer knows, or
+     * a process it cannot read, is left out: it is unknown, not ended.
+     */
+    check: (processIds: string[]) => Promise<string[]>;
   };
 
   // Keybindings

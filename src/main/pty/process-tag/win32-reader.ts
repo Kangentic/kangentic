@@ -43,6 +43,13 @@
  * on that handle, and terminates through the same handle, so a pid reused since
  * the scan is never touched.
  *
+ * `isRunning`, the leftover list's recheck of a process it still shows,
+ * opens only the limited handle: creation time for identity, then the exit
+ * code, since an exited process stays openable while another handle holds it.
+ * It lists processes only when the open fails, to tell gone from refused, and
+ * reuses that listing for a second, so a recheck of many such processes takes
+ * one snapshot.
+ *
  * The loop yields to the event loop every few processes: a full scan measured
  * ~30 ms for ~460 processes, and the pty host carries every terminal byte.
  * `CreateToolhelp32Snapshot` itself is one native call of about 5.7 ms (410
@@ -82,6 +89,18 @@ const MAX_ENVIRONMENT_BYTES = 1024 * 1024;
 const MAX_PATH_BYTES = 32767 * 2;
 const YIELD_EVERY_PROCESSES = 16;
 const CONSOLE_HOST_IMAGES = new Set(['conhost.exe', 'openconsole.exe']);
+/**
+ * `GetExitCodeProcess`'s answer for a process that has not exited. A process
+ * that exits with 259 itself reads as running too: the scan then treats it as
+ * it did before `exited` existed, and a recheck keeps its row until the
+ * process is gone. Both fail safe.
+ */
+const STILL_ACTIVE = 259;
+/**
+ * How long `isRunning` reuses a process listing it had to take, so a recheck
+ * of many processes that will not open (ended, or refused) takes one snapshot.
+ */
+const RUNNING_CHECK_LISTING_REUSE_MS = 1000;
 /** 100 ns FILETIME ticks between 1601-01-01 and the Unix epoch. */
 const FILETIME_UNIX_EPOCH_TICKS = 116444736000000000n;
 const AF_INET = 2;
@@ -111,6 +130,7 @@ interface Win32Api {
   processIdToSessionId(pid: number, sessionOut: number[]): number;
   isWow64Process(handle: NativeHandle, wowOut: number[]): number;
   getProcessTimes(handle: NativeHandle, creation: bigint[], exit: bigint[], kernel: bigint[], user: bigint[]): number;
+  getExitCodeProcess(handle: NativeHandle, exitCode: number[]): number;
   readProcessMemory(handle: NativeHandle, address: bigint, buffer: Buffer, size: number, bytesRead: null): number;
   terminateProcess(handle: NativeHandle, exitCode: number): number;
   openProcessToken(handle: NativeHandle, access: number, tokenOut: NativeHandle[]): number;
@@ -213,6 +233,7 @@ async function loadWin32Api(): Promise<Win32Api> {
     processIdToSessionId: kernel32.func('int ProcessIdToSessionId(uint32 pid, _Out_ uint32 *sessionId)'),
     isWow64Process: kernel32.func('int IsWow64Process(void *handle, _Out_ int *isWow64)'),
     getProcessTimes: kernel32.func('int GetProcessTimes(void *handle, _Out_ uint64_t *creation, _Out_ uint64_t *exit, _Out_ uint64_t *kernel, _Out_ uint64_t *user)'),
+    getExitCodeProcess: kernel32.func('int GetExitCodeProcess(void *handle, _Out_ uint32 *exitCode)'),
     readProcessMemory: kernel32.func('int ReadProcessMemory(void *handle, uintptr_t address, _Out_ uint8_t *buffer, size_t size, void *bytesRead)'),
     terminateProcess: kernel32.func('int TerminateProcess(void *handle, uint32 exitCode)'),
     openProcessToken: advapi32.func('int OpenProcessToken(void *process, uint32 access, _Out_ void **token)'),
@@ -305,6 +326,22 @@ function readCreationTime(api: Win32Api, handle: NativeHandle): bigint | null {
   const unused = [0n];
   if (!api.getProcessTimes(handle, creation, unused, unused, unused)) return null;
   return creation[0] > 0n ? creation[0] : null;
+}
+
+/** The process's exit code (`STILL_ACTIVE` while it runs), or null when the call failed. */
+function exitCodeOf(api: Win32Api, handle: NativeHandle): number | null {
+  const exitCode = [0];
+  return api.getExitCodeProcess(handle, exitCode) !== 0 ? exitCode[0] : null;
+}
+
+/**
+ * For the scan: true only when the exit code says so. A call that fails reads
+ * as still running, so the scan reads the process as it always did, where
+ * `isRunning` answers unknown instead.
+ */
+function hasExited(api: Win32Api, handle: NativeHandle): boolean {
+  const exitCode = exitCodeOf(api, handle);
+  return exitCode !== null && exitCode !== STILL_ACTIVE;
 }
 
 function readRemote(api: Win32Api, handle: NativeHandle, address: bigint, size: number): Buffer | null {
@@ -583,6 +620,8 @@ function readTcpTable(api: Win32Api, family: 'ipv4' | 'ipv6'): SocketRow[] {
 
 export class Win32TaggedProcessReader implements TaggedProcessReader {
   private readonly loadApi: () => Promise<Win32Api>;
+  /** The last listing `isRunning` took, never an empty one (see `RUNNING_CHECK_LISTING_REUSE_MS`). */
+  private runningCheckListing: { rows: Win32ProcessRow[]; takenAtMs: number } | null = null;
 
   constructor(loadApi?: () => Promise<Win32Api>) {
     this.loadApi = loadApi ?? sharedWin32Api;
@@ -626,16 +665,24 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
       const limited = api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, row.pid);
       if (isNullHandle(api, limited)) continue;
       let sameUser: boolean;
+      let exited: boolean;
       try {
         const creation = readCreationTime(api, limited);
         if (creation !== null) {
           scanned.startKey = creation.toString();
           scanned.startedAtMs = filetimeToEpochMs(creation);
         }
+        exited = hasExited(api, limited);
         const sid = readTokenUserSid(api, limited);
         sameUser = sid !== null && sid.equals(ownSid);
       } finally {
         api.closeHandle(limited);
+      }
+      // Still terminating: its memory is going, so there is nothing to read,
+      // and it is not an unreadable environment either (`ScannedProcess.exited`).
+      if (exited) {
+        scanned.exited = true;
+        continue;
       }
       if (!sameUser) continue;
       const { tagValue, workingDirectory, readable } = readTagAndDirectory(api, row.pid);
@@ -675,6 +722,64 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     } finally {
       api.closeHandle(handle);
     }
+  }
+
+  /**
+   * A reported process is one this reader opened in the caller's own session,
+   * and a process never changes session, so a pid in another session now
+   * names a different process. One that will not open is gone only if the
+   * listing no longer has its pid; still listed, it may just refuse the open,
+   * so the answer is unknown.
+   */
+  async isRunning(target: Pick<ScannedProcess, 'pid' | 'startKey'>): Promise<boolean | null> {
+    if (!target.startKey || target.pid <= 4) return null;
+    let api: Win32Api;
+    try {
+      api = await this.loadApi();
+    } catch {
+      return null;
+    }
+    try {
+      const ownSession = [0];
+      const targetSession = [0];
+      const sessionsRead = api.processIdToSessionId(process.pid, ownSession) !== 0
+        && api.processIdToSessionId(target.pid, targetSession) !== 0;
+      if (sessionsRead && targetSession[0] !== ownSession[0]) return false;
+      const handle = sessionsRead ? api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, target.pid) : null;
+      if (handle === null || isNullHandle(api, handle)) {
+        const rows = await this.listingForRunningCheck(api);
+        if (rows.length === 0) return null;
+        return rows.some((row) => row.pid === target.pid) ? null : false;
+      }
+      try {
+        const creation = readCreationTime(api, handle);
+        if (creation === null) return null;
+        if (creation.toString() !== target.startKey) return false;
+        // An exited process stays openable, creation time and all, while any
+        // other handle to it is open (its parent's, Windows Terminal's).
+        const exitCode = exitCodeOf(api, handle);
+        if (exitCode === null) return null;
+        return exitCode === STILL_ACTIVE;
+      } finally {
+        api.closeHandle(handle);
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * A process listing for `isRunning`, reused for `RUNNING_CHECK_LISTING_REUSE_MS`.
+   * A reused one is still evidence: the process was reported before it was
+   * taken, so a pid it lacks has ended, and a pid it lists answers unknown
+   * anyway. An empty listing is a failed one and is never kept.
+   */
+  private async listingForRunningCheck(api: Win32Api): Promise<Win32ProcessRow[]> {
+    const kept = this.runningCheckListing;
+    if (kept && Date.now() - kept.takenAtMs < RUNNING_CHECK_LISTING_REUSE_MS) return kept.rows;
+    const rows = await enumerateProcesses(api);
+    this.runningCheckListing = rows.length > 0 ? { rows, takenAtMs: Date.now() } : null;
+    return rows;
   }
 
   async describe(targets: readonly ScannedProcess[]): Promise<Map<number, string>> {

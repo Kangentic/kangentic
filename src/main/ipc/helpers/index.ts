@@ -21,6 +21,7 @@ export {
   deleteTaskWorktree,
   reapTaskLeftovers,
   leftoverSweepOptions,
+  scheduleDoneWorktreeRemovalRetry,
 } from './task-cleanup';
 export { reportAutomationFailures } from './automation-failures';
 export { openAttachmentFile } from './attachment-open';

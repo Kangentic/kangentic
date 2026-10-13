@@ -49,6 +49,7 @@ import {
   planReapDetailed,
   processIdentity,
   subtreeOf,
+  type KeptBecause,
   type KeptReason,
   type ReapPlan,
   type ReapPlanInput,
@@ -92,6 +93,13 @@ export interface TaggedReapRequest {
 /** What happened to one reported process. */
 export type LeftoverOutcome = 'stopped' | 'failed' | 'kept';
 
+/**
+ * A kept process's basis, with the label of the process that showed it (the
+ * descendant or the client), read the way a reported process's is, or null
+ * when there is none or it could not be read. For the local log only.
+ */
+export type KeptExplanation = KeptBecause & { evidenceLabel: string | null };
+
 /** One process a reap reports to the user. */
 export interface LeftoverProcessEntry {
   taskId: string;
@@ -103,8 +111,48 @@ export interface LeftoverProcessEntry {
   outcome: LeftoverOutcome;
   /** Why a `kept` process was left running; null when stopping is off, and for stopped or failed ones. */
   reason: KeptReason | null;
+  /**
+   * What `reason` rests on (`reap-plan.ts`), for main's log line. Never sent
+   * to the renderer: `leftover-process-reports.ts` builds its rows field by
+   * field. Null wherever `reason` is.
+   */
+  because: KeptExplanation | null;
   /** Whether it worked in the task's worktree or elsewhere in its project. */
   place: 'worktree' | 'project';
+}
+
+/** The process behind a `shared` verdict, as its label and pid. */
+function evidenceOf(because: KeptExplanation): string {
+  return `${because.evidenceLabel ?? UNNAMED_LABEL} (pid ${because.evidencePid})`;
+}
+
+/** Why a kept process was kept, in words, from its reason and what that rests on. */
+function keptWhyOf(reason: KeptReason, because: KeptExplanation | null): string {
+  if (!because) return reason;
+  switch (because.basis) {
+    case 'descendant':
+      return `shared, by descendant ${evidenceOf(because)}, which works outside the task's directories or does not carry its tag`;
+    case 'connection':
+      return `shared, by a connection from ${evidenceOf(because)}`;
+    case 'children':
+      return `${reason}, because every child it has is kept`;
+    case 'role':
+      return reason;
+  }
+}
+
+/**
+ * The local log line for a process a reap did not stop, or null for one it
+ * stopped. Only what the report already carries (the label, the pid, the
+ * place), the task's short id, and the plan's reason and evidence pid: never
+ * more of a command line or any environment text (`task-process-tag.md`).
+ */
+export function leftoverLogLine(entry: LeftoverProcessEntry): string | null {
+  const who = `${entry.label} (pid ${entry.pid}) of task ${entry.taskId.slice(0, 8)} in the ${entry.place}`;
+  if (entry.outcome === 'failed') return `could not stop ${who}`;
+  if (entry.outcome !== 'kept') return null;
+  if (entry.reason === null) return `left ${who} running: stopping is off`;
+  return `kept ${who}: ${keptWhyOf(entry.reason, entry.because)}`;
 }
 
 /**
@@ -178,6 +226,16 @@ class EmptyScanError extends Error {
   constructor() {
     super('the process scan listed nothing');
   }
+}
+
+/**
+ * The identities a scan shows still running. A Windows process still listed
+ * while it terminates has already exited (`ScannedProcess.exited`), so a kill
+ * that landed is not reported as a survivor, and a Stop of one that ended on
+ * its own reads `ended`.
+ */
+function runningIdentitiesOf(scan: ProcessScan): Set<string> {
+  return new Set(scan.processes.filter((scanned) => !scanned.exited).map(processIdentity));
 }
 
 /** A later scan's result, or an `EmptyScanError` when it listed nothing. */
@@ -345,20 +403,40 @@ export async function reapTaggedOnce(
       return { ...emptyReapResult(), failureReason: 'the process scan listed nothing', failureCode: 'empty_scan', failurePass: pass };
     }
     const firstPlan = await planWithConnections(deps.reader, planInput(firstScan.processes));
-    const labels = await describeSafely(deps.reader, [
-      ...firstPlan.roots.map((root) => root.process),
-      ...firstPlan.kept.map((kept) => kept.process),
-    ]);
-    const entryFor = (scanned: ScannedProcess, taskId: string, outcome: LeftoverOutcome, reason: KeptReason | null): LeftoverProcessEntry => ({
+    // The process behind each `shared` verdict is labeled too, for the local
+    // log line only: the report never names it. Each process is described
+    // once, however many verdicts it is behind.
+    const firstByPid = new Map(firstScan.processes.map((scanned) => [scanned.pid, scanned]));
+    const describedByPid = new Map<number, ScannedProcess>();
+    for (const scanned of [...firstPlan.roots.map((root) => root.process), ...firstPlan.kept.map((kept) => kept.process)]) {
+      describedByPid.set(scanned.pid, scanned);
+    }
+    for (const kept of firstPlan.kept) {
+      const evidence = kept.because.evidencePid === null ? undefined : firstByPid.get(kept.because.evidencePid);
+      if (evidence) describedByPid.set(evidence.pid, evidence);
+    }
+    const labels = await describeSafely(deps.reader, [...describedByPid.values()]);
+    const explain = (because: KeptBecause): KeptExplanation => ({
+      ...because,
+      evidenceLabel: because.evidencePid === null ? null : labels.get(because.evidencePid) ?? null,
+    });
+    const entryFor = (
+      scanned: ScannedProcess,
+      taskId: string,
+      outcome: LeftoverOutcome,
+      reason: KeptReason | null,
+      because: KeptExplanation | null = null,
+    ): LeftoverProcessEntry => ({
       taskId,
       pid: scanned.pid,
       startKey: scanned.startKey,
       label: labels.get(scanned.pid) ?? UNNAMED_LABEL,
       outcome,
       reason,
+      because,
       place: placeOf(scanned, taskId),
     });
-    const keptEntries = firstPlan.kept.map((kept) => entryFor(kept.process, kept.taskId, 'kept', kept.reason));
+    const keptEntries = firstPlan.kept.map((kept) => entryFor(kept.process, kept.taskId, 'kept', kept.reason, explain(kept.because)));
 
     if (!request.stop || firstPlan.targets.length === 0) {
       return {
@@ -401,14 +479,14 @@ export async function reapTaggedOnce(
     // as null, a new child made it shared) was not force-killed, so only a later
     // scan can say whether it stopped. Scan two alone cannot: on Windows a
     // process can still be listed there while it exits.
-    const listedAfterFirst = new Set(secondScan.processes.map(processIdentity));
+    const listedAfterFirst = runningIdentitiesOf(secondScan);
     const rootStillListed = firstPlan.roots.some((root) => listedAfterFirst.has(processIdentity(root.process)));
     if (secondPlan.targets.length > 0 || rootStillListed) {
       await wait(SURVIVOR_CHECK_MS);
       pass = 'last';
       const lastScan = requireProcesses(await deps.reader.scan());
       unreadableCount = lastScan.unreadableCount;
-      const alive = new Set(lastScan.processes.map(processIdentity));
+      const alive = runningIdentitiesOf(lastScan);
       // By identity, not pid: a root that exited can have its pid reused by a
       // new process, which must not be reported as that root failing.
       const reportedRootPidByIdentity = new Map(firstPlan.roots.map((root) => [processIdentity(root.process), root.process.pid]));
@@ -522,7 +600,7 @@ export async function stopProcessTree(
     // A scan that lists nothing failed (see `empty_scan`); it says nothing about whether the process ended.
     const scan = requireProcesses(await deps.reader.scan());
     const target = scan.processes.find((scanned) => scanned.pid === request.pid && scanned.startKey === request.startKey);
-    if (!target || !request.startKey) return stopAnswer('ended');
+    if (!target || target.exited || !request.startKey) return stopAnswer('ended');
     const safetyPids = buildSafetyProtectedPids({ processes: scan.processes, mainPid: request.mainPid, liveRootPids: deps.liveRootPids() });
     if (safetyPids.has(target.pid)) return stopAnswer('failed');
     const tree = subtreeOf(target, scan.processes, safetyPids);
@@ -532,7 +610,7 @@ export async function stopProcessTree(
     pass = 'second';
     // An empty later scan throws, so it reads as `failed`, never as `stopped`.
     const secondScan = requireProcesses(await deps.reader.scan());
-    const aliveAfterFirst = new Set(secondScan.processes.map(processIdentity));
+    const aliveAfterFirst = runningIdentitiesOf(secondScan);
     const survivors = tree.filter((scanned) => aliveAfterFirst.has(processIdentity(scanned)));
     if (survivors.length === 0) return stopAnswer('stopped');
     await killAll(deps.reader, survivors, 'force');
@@ -541,7 +619,7 @@ export async function stopProcessTree(
     const lastScan = requireProcesses(await deps.reader.scan());
     // Any survivor, not only the target: a child that outlived its parent
     // keeps the tree running.
-    const aliveAtLast = new Set(lastScan.processes.map(processIdentity));
+    const aliveAtLast = runningIdentitiesOf(lastScan);
     return stopAnswer(survivors.some((survivor) => aliveAtLast.has(processIdentity(survivor))) ? 'failed' : 'stopped');
   } catch (error) {
     return { outcome: 'failed', failureCode: failureCodeOf(error), failurePass: pass, failureReason: messageOf(error) };
@@ -602,6 +680,28 @@ export class TaggedReaper {
     });
     this.stopChain = run.then(() => undefined, () => undefined);
     return run;
+  }
+
+  /**
+   * Whether each process a report named is still running, for the leftover
+   * list's recheck: `true`, `false` (ended), or `null` (cannot tell). Outside
+   * both queues, since it kills nothing and must not wait behind a reap's
+   * grace. A reader without `isRunning` answers `null` for every one: a full
+   * scan reads every process's environment, which a recheck on a timer must
+   * never do.
+   */
+  async checkRunning(identities: ReadonlyArray<Pick<ScannedProcess, 'pid' | 'startKey'>>): Promise<Array<boolean | null>> {
+    const reader = this.deps.reader;
+    if (!reader.isRunning) return identities.map(() => null);
+    const answers: Array<boolean | null> = [];
+    for (const identity of identities) {
+      try {
+        answers.push(await reader.isRunning(identity));
+      } catch {
+        answers.push(null);
+      }
+    }
+    return answers;
   }
 
   /** A failure to tell main (a closed port at quit) must not strand a waiter: a reap never throws. */

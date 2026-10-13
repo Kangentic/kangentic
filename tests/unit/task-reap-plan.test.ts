@@ -505,6 +505,63 @@ describe('planReapDetailed: what the report names', () => {
   });
 });
 
+describe('planReapDetailed: what each kept process rests on, for the log', () => {
+  const becauseOf = (plan: ReturnType<typeof detailed>) => plan.kept.map((kept) => [kept.process.pid, kept.reason, kept.because.basis, kept.because.evidencePid]);
+
+  it('rests a window or a tmux server on its own role, with no other pid', () => {
+    const plan = detailed([
+      main,
+      scanned(2001, 1, { tag: TASK, role: 'visible-app' }),
+      scanned(2101, 1, { tag: TASK, role: 'multiplexer' }),
+    ]);
+    expect(becauseOf(plan)).toEqual([[2001, 'window', 'role', null], [2101, 'multiplexer', 'role', null]]);
+  });
+
+  it('names the descendant that made a root shared', () => {
+    const plan = detailed([
+      main,
+      scanned(2001, 1, { tag: TASK }),
+      scanned(2002, 2001, { tag: TASK }),
+      scanned(2003, 2001, { tag: null }),
+    ]);
+    expect(becauseOf(plan)).toEqual([[2001, 'shared', 'descendant', 2003]]);
+  });
+
+  it('a stopping /preview, as captured: its tab shell, its exited dev.js, and the trash deleter working in the temp folder', () => {
+    // Measured on Windows 40 ms after dev.js stopped answering: Toolhelp still
+    // lists the exited dev.js under the tab's cmd (its environment and directory
+    // no longer read), and under that the deleter dev.js started on its way out.
+    const tabShell = scanned(2001, 1, { tag: TASK, startedAtMs: 100 });
+    const exitedDevServer = scanned(2002, 2001, { tag: null, environmentUnreadable: true, workingDirectory: null, startedAtMs: 200 });
+    const trashDeleter = scanned(2003, 2002, { tag: TASK, workingDirectory: '/tmp', startedAtMs: 300 });
+
+    expect(becauseOf(detailed([main, tabShell, exitedDevServer, trashDeleter]))).toEqual([[2001, 'shared', 'descendant', 2003]]);
+    // Without the deleter (a stop that says the worktree is being removed), the
+    // exited dev.js is no evidence and the shell is the task's to stop.
+    const withoutDeleter = detailed([main, tabShell, exitedDevServer]);
+    expect(withoutDeleter.kept).toEqual([]);
+    expect(withoutDeleter.roots.map((root) => root.process.pid)).toEqual([2001]);
+  });
+
+  it('names the client whose connection made a listener shared', () => {
+    const plan = withConnections([
+      main,
+      scanned(2001, 1, { tag: TASK }),
+      scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+    ], connected([[2001, 3001]], [2001]));
+    expect(becauseOf(plan)).toEqual([[2001, 'shared', 'connection', 3001]]);
+  });
+
+  it('rests a launcher kept for its children on those children, with their reason', () => {
+    const plan = withConnections([
+      main,
+      scanned(2001, 1, { tag: TASK }),
+      scanned(2002, 2001, { tag: TASK, role: 'visible-app' }),
+    ], connected([], []));
+    expect(becauseOf(plan)).toEqual([[2001, 'window', 'children', null]]);
+  });
+});
+
 const OTHER_WORKTREE = `${PROJECT}/.kangentic/worktrees/task-2`;
 const OTHER_PROJECT = '/home/dev/other';
 const OUTER_TASK = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';

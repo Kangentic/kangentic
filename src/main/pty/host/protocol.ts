@@ -260,6 +260,10 @@ export interface PtyHostRequestMap {
   /** Stop one process a reap reported, and everything under it, after the
    *  user asked for it by name; its identity is re-checked first. */
   stopReportedProcess: { params: StopProcessRequest; result: StopProcessResult };
+  /** Whether each reported process (pid and start key) still runs: true,
+   *  false (ended), or null (cannot tell). Reads identities only, no scan,
+   *  and runs outside the reap and Stop queues. */
+  checkReportedProcesses: { params: { identities: Array<{ pid: number; startKey: string }> }; result: Array<boolean | null> };
   /** Spawn a raw PTY (no session). `write`, `resizePty` and `kill` reach it
    *  by its ptyId like any other; its output arrives as `rawData`. */
   spawnRaw: { params: PtyHostRawSpawnParams; result: PtyHostRawSpawnResult };

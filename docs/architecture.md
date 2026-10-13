@@ -23,7 +23,7 @@ with a crash policy and stderr capture:
   auto-name, the warm answer session) and the background-shell watcher's process table, because
   on Windows each spawn's CreateProcess is synchronous on the calling thread. It also scans for
   and stops what a task left running (`reapTaggedProcesses`, `src/main/pty/process-tag/`, loading
-  koffi on Windows and macOS), and stops one reported process when the user asks. Forked once at startup, restarted on
+  koffi on Windows and macOS), stops one reported process when the user asks, and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan). Forked once at startup, restarted on
   a crash (the lost agent sessions resume), and replaced by the same core running in main after
   five crashes. Measured under a 15 s terminal flood: main 40.6% busy before, 0.6 to 0.7% after.
   See `.claude/rules/pty-host-out-of-process.md`.
@@ -533,12 +533,13 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
 | `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/analytics.md` |
 
-### Leftover processes (3 channels)
+### Leftover processes (4 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `leftoverProcesses:report` | push | What a burst of terminal transitions stopped, could not stop, and left running (`LeftoverProcessReport`), one report per burst so a bulk delete is one toast, stamped with when it was sent (`reportedAt`, UTC) for the age the sticky toast and the list header show. Main window only. Never sent when nothing was left running. See `src/main/ipc/helpers/leftover-process-reports.ts` |
 | `leftoverProcesses:stop` | invoke | Stop one reported process, with everything under it, by the id its report minted (never a pid). Resolves `'stopped'`, `'ended'` or `'failed'`. Not project-scoped: the id carries its own identity |
 | `leftoverProcesses:stopSettled` | push | The real outcome of a Stop that `stop` answered `'failed'` because main stopped waiting for the pty host, which finished it anyway (`LeftoverStopSettled`). The row takes it only while it still reads failed; no toast. Main window only |
+| `leftoverProcesses:check` | invoke | Which reported processes, named by their report ids, have ended since the report. The pty host checks each by pid and start key, never a scan (`isRunning` on the reader), and an id main no longer knows, or a process it cannot read, is left out. Asked by `useLeftoverRecheck` while a row that claims a live process is on screen, through its toast or its open list; an ended one retries its Done task's worktree removal, as a Stop does |
 
 ### Host memory pressure (2 channels)
 | Channel | Pattern | Purpose |

@@ -17,6 +17,7 @@ import { test, expect, chromium } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 import path from 'node:path';
 import { launchPage, waitForViteReady, gotoVite } from './helpers';
+import { LEFTOVER_RECHECK_FAST_MS } from '../../src/renderer/lib/leftover-processes';
 import type { LeftoverProcess, LeftoverProcessReport } from '../../src/shared/types';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
@@ -448,6 +449,254 @@ test.describe('Leftover processes toast lifetime', () => {
       // leaves. A retrying zero-count assertion is avoided on purpose (see
       // toastCountRightNow in helpers.ts).
       await toast.waitFor({ state: 'detached', timeout: 6000 });
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/** Page time, as the page's own (fake) clock reads it. A report is stamped from this, never from the test process's clock. */
+async function pageNowMs(page: Page): Promise<number> {
+  return page.evaluate(() => Date.now());
+}
+
+/**
+ * Hold page time still: from here only `page.clock.runFor` moves it, so a
+ * recheck timer fires when the test says and not when a starved worker gets
+ * round to it. The page's timers are Playwright's, which is why this needs
+ * `launchPageWithClock`. A toast's exit animation is among the timers it holds,
+ * so a test that waits for a toast to leave `page.clock.resume()`s first.
+ */
+async function freezePageTime(page: Page): Promise<void> {
+  await page.clock.pauseAt(new Date((await pageNowMs(page)) + 1000));
+}
+
+/** A report from this instant of page time: the youngest possible, so its recheck is on the fast pace. */
+async function fireFreshReport(page: Page, report: TestReport): Promise<void> {
+  await fireReport(page, { ...report, reportedAt: new Date(await pageNowMs(page)).toISOString() });
+}
+
+async function checkCalls(page: Page): Promise<string[][]> {
+  return page.evaluate(() => window.__mockLeftoverCheckCalls ?? []);
+}
+
+/**
+ * An unrelated toast, raised and dismissed in one task: two toast-store changes
+ * (the hook subscribes to that store) that change nothing it watches.
+ */
+async function churnToastStore(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores: { toast: { getState: () => { addToast: (input: { message: string; duration: number }) => string; dismissToast: (id: string) => void } } };
+    }).__zustandStores;
+    const toastId = stores.toast.getState().addToast({ message: 'An unrelated toast', duration: 60_000 });
+    stores.toast.getState().dismissToast(toastId);
+  });
+}
+
+/**
+ * A process the reap kept can exit on its own: the case that surfaced it was a `/preview`'s
+ * shell, still quitting when the reap scanned, that was gone a moment later
+ * while the list said "still running" for as long as the app ran. The list
+ * rechecks the rows that claim a live process, by report id, while they are
+ * on screen; a row whose process ended reads Ended, and a toast with nothing
+ * left running closes.
+ *
+ * The tests that depend on a recheck TICK move page time with the fake clock
+ * (`page.clock.runFor`) instead of waiting out real seconds, which on a starved
+ * runner is a race with the tick. The ones that count calls also freeze page
+ * time first, so no tick happens that the test did not ask for.
+ */
+test.describe('Leftover processes: a kept process that exits on its own', () => {
+  const KEPT_SHELL: TestReport = {
+    id: 'report-kept-shell',
+    stoppingEnabled: true,
+    processes: [
+      leftover('stopped-vite'),
+      leftover('kept-cmd', { pid: 63776, label: 'cmd', outcome: 'kept', reason: 'shared' }),
+    ],
+  };
+  const TOAST_TEXT = '1 process from "Fix login" is still running.';
+
+  test('opening the list rechecks at once: the row reads Ended, and its toast closes', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await fireReport(page, KEPT_SHELL);
+      const toast = page.locator('[data-testid="toast"]', { hasText: TOAST_TEXT });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+      await page.evaluate(() => { window.__mockLeftoverEndedIds = ['kept-cmd']; });
+
+      await openReview(page, TOAST_TEXT);
+
+      const shell = row(page, 'cmd');
+      await expect(shell).toHaveAttribute('data-state', 'ended', { timeout: 5000 });
+      await expect(shell).toContainText('No longer running.');
+      await expect(shell.locator('[data-testid="leftover-process-stop"]')).toHaveText('Ended');
+      await expect(shell.locator('[data-testid="leftover-process-stop"]')).toBeDisabled();
+      // The row stays in its section while the list is open.
+      await expect(page.locator('[data-testid="leftover-processes-running"]')).toContainText('cmd');
+      // Nothing it named is running now, so the toast no longer says anything true.
+      await toast.waitFor({ state: 'detached', timeout: 5000 });
+      // Only the row that claimed a live process was asked about, by its report id.
+      const calls = await page.evaluate(() => window.__mockLeftoverCheckCalls ?? []);
+      expect(calls.flat()).toContain('kept-cmd');
+      expect(calls.flat()).not.toContain('stopped-vite');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a row whose process still runs keeps reading Still running, and its toast stays', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await fireReport(page, KEPT_SHELL);
+      await openReview(page, TOAST_TEXT);
+
+      await expect.poll(() => page.evaluate(() => (window.__mockLeftoverCheckCalls ?? []).length), { timeout: 5000 }).toBeGreaterThan(0);
+      await expect(row(page, 'cmd')).toHaveAttribute('data-state', 'running');
+      await expect(row(page, 'cmd')).toContainText('Other work uses it too.');
+      await page.locator('[data-testid="leftover-processes-close"]').click();
+      await expect(page.locator('[data-testid="toast"]', { hasText: TOAST_TEXT })).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a new report rechecks on its own, and its toast closes once the kept process ends', async () => {
+    const { browser, page } = await launchPageWithClock();
+    try {
+      // A report from just now is on the fast recheck pace (every 5 s).
+      await fireFreshReport(page, KEPT_SHELL);
+      const toast = page.locator('[data-testid="toast"]', { hasText: TOAST_TEXT });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+      await page.evaluate(() => { window.__mockLeftoverEndedIds = ['kept-cmd']; });
+
+      // No Review click: the recheck runs while the toast is up. One fast tick of
+      // page time, not five real seconds: the toast's exit then plays in real time.
+      await page.clock.runFor(LEFTOVER_RECHECK_FAST_MS);
+      await toast.waitFor({ state: 'detached', timeout: 10_000 });
+      expect((await checkCalls(page)).flat()).toContain('kept-cmd');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a new report is rechecked at the fast pace even while an old one\'s slow recheck is waiting', async () => {
+    const { browser, page } = await launchPageWithClock();
+    try {
+      // 37 minutes old: its recheck is armed on the 30 s pace.
+      await fireReport(page, KEPT_SHELL);
+      await expect(page.locator('[data-testid="toast"]', { hasText: TOAST_TEXT })).toBeVisible({ timeout: 5000 });
+      const fresh: TestReport = {
+        id: 'report-fresh',
+        stoppingEnabled: true,
+        processes: [leftover('kept-node', { pid: 70001, taskId: 'task-b', taskTitle: 'Update deps', label: 'node', outcome: 'kept', reason: 'shared' })],
+      };
+      await fireFreshReport(page, fresh);
+      const freshToast = page.locator('[data-testid="toast"]', { hasText: '1 process from "Update deps" is still running.' });
+      await expect(freshToast).toBeVisible({ timeout: 5000 });
+      await page.evaluate(() => { window.__mockLeftoverEndedIds = ['kept-node']; });
+
+      // One fast tick of page time, far short of the old report's 30 s: the fresh
+      // one brought the timer forward, or this tick would find nothing due.
+      await page.clock.runFor(LEFTOVER_RECHECK_FAST_MS);
+      await freshToast.waitFor({ state: 'detached', timeout: 10_000 });
+      // Positive control: the old report's process still runs, so its toast stays.
+      await expect(page.locator('[data-testid="toast"]', { hasText: TOAST_TEXT })).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a recheck in flight starts no second one, whatever changes meanwhile; the next comes a tick after it answers', async () => {
+    const { browser, page } = await launchPageWithClock();
+    try {
+      // Hold every answer open, so the first recheck stays in flight.
+      await page.evaluate(() => {
+        window.__mockLeftoverCheckGate = new Promise<void>((resolve) => { window.__mockReleaseLeftoverCheckGate = resolve; });
+      });
+      await freezePageTime(page);
+      await fireFreshReport(page, KEPT_SHELL);
+      await expect(page.locator('[data-testid="toast"]', { hasText: TOAST_TEXT })).toBeVisible({ timeout: 5000 });
+      expect(await checkCalls(page)).toEqual([]);
+
+      // The tick: one recheck goes out and stays outstanding.
+      await page.clock.runFor(LEFTOVER_RECHECK_FAST_MS);
+      await expect.poll(() => checkCalls(page), { timeout: 5000 }).toEqual([['kept-cmd']]);
+
+      // While it is outstanding, a toast-store change, then a leftover-store change
+      // (a report that names nothing running, and the toast it raises). Each would
+      // arm a fresh timer if nothing held the next recheck back until this one answers.
+      await churnToastStore(page);
+      await fireFreshReport(page, { id: 'report-unrelated-stopped', stoppingEnabled: true, processes: [leftover('unrelated-vite')] });
+      await churnToastStore(page);
+      // Three fast ticks of page time: any timer armed above would have fired.
+      await page.clock.runFor(3 * LEFTOVER_RECHECK_FAST_MS);
+      expect(await checkCalls(page)).toEqual([['kept-cmd']]);
+
+      // It answers. The next recheck is a tick away from the answer, not due at once.
+      await page.evaluate(() => window.__mockReleaseLeftoverCheckGate?.());
+      await page.clock.runFor(LEFTOVER_RECHECK_FAST_MS - 1000);
+      expect(await checkCalls(page)).toEqual([['kept-cmd']]);
+      await page.clock.runFor(1000);
+      await expect.poll(() => checkCalls(page), { timeout: 5000 }).toEqual([['kept-cmd'], ['kept-cmd']]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('changes elsewhere never push an armed recheck back: it lands on its tick, and on the next', async () => {
+    const { browser, page } = await launchPageWithClock();
+    try {
+      await freezePageTime(page);
+      await fireFreshReport(page, KEPT_SHELL);
+      await expect(page.locator('[data-testid="toast"]', { hasText: TOAST_TEXT })).toBeVisible({ timeout: 5000 });
+
+      // Quarter-tick steps, so each tick boundary is landed on exactly. After every
+      // step an unrelated toast is raised and dismissed. A timer that restarted on
+      // each change would be due a whole tick after the LAST one, and so never
+      // fire while the changes keep coming at under a tick apart.
+      const quarterTick = LEFTOVER_RECHECK_FAST_MS / 4;
+      for (const callsAfterTick of [1, 2]) {
+        for (let quarter = 1; quarter <= 4; quarter += 1) {
+          await page.clock.runFor(quarterTick);
+          if (quarter < 4) {
+            expect((await checkCalls(page)).length).toBe(callsAfterTick - 1);
+            await churnToastStore(page);
+          }
+        }
+        await expect.poll(async () => (await checkCalls(page)).length, { timeout: 5000 }).toBe(callsAfterTick);
+        await churnToastStore(page);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the user\'s own Stop settles a report: the row reads Stopped, its toast closes, and the list stays open', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      // One kept row, and `check` never answers that it ended: only the Stop can settle it.
+      await fireReport(page, KEPT_SHELL);
+      const toast = page.locator('[data-testid="toast"]', { hasText: TOAST_TEXT });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+      await openReview(page, TOAST_TEXT);
+
+      const shell = row(page, 'cmd');
+      // Positive control: the list's own recheck ran, found the process running, and left the toast up.
+      await expect.poll(async () => (await checkCalls(page)).length, { timeout: 5000 }).toBeGreaterThan(0);
+      await expect(shell).toHaveAttribute('data-state', 'running');
+      await expect(toast).toBeVisible();
+
+      await shell.getByRole('button', { name: 'Stop cmd' }).click();
+      await expect(shell).toHaveAttribute('data-state', 'stopped', { timeout: 5000 });
+      await expect(shell.locator('[data-testid="leftover-process-stop"]')).toHaveText('Stopped');
+      // Nothing it named is running now, so the toast no longer says anything true.
+      await toast.waitFor({ state: 'detached', timeout: 10_000 });
+      // Closing the toast does not close the list the user is working in.
+      await expect(page.locator('[data-testid="leftover-processes-dialog"]')).toBeVisible();
+      await expect(shell).toBeVisible();
+      expect(await page.evaluate(() => window.__mockLeftoverStopCalls)).toEqual(['kept-cmd']);
     } finally {
       await browser.close();
     }

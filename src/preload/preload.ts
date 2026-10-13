@@ -403,6 +403,7 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.LEFTOVER_PROCESSES_STOP_SETTLED, handler);
       return () => ipcRenderer.removeListener(IPC.LEFTOVER_PROCESSES_STOP_SETTLED, handler);
     },
+    check: (processIds) => ipcRenderer.invoke(IPC.LEFTOVER_PROCESSES_CHECK, processIds),
   },
 
   keybindings: {

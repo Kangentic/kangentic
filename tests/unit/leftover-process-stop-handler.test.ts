@@ -23,20 +23,44 @@ vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent }));
 const { sendToRenderer } = vi.hoisted(() => ({ sendToRenderer: vi.fn() }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer }));
 
-import { leftoverReportCounts, registerLeftoverProcessHandlers } from '../../src/main/ipc/handlers/leftover-processes';
-import { leftoverProcessReports } from '../../src/main/ipc/helpers/leftover-process-reports';
+import { MAX_CHECKED_PROCESSES, leftoverReportCounts, registerLeftoverProcessHandlers } from '../../src/main/ipc/handlers/leftover-processes';
+import { RETAINED_PROCESS_IDS, leftoverProcessReports } from '../../src/main/ipc/helpers/leftover-process-reports';
 import { IPC } from '../../src/shared/ipc-channels';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
+const OTHER_TASK = '0b1c2d3e-4f50-4617-8829-3a4b5c6d7e8f';
 const PROJECT_PATH = '/mock/project';
 const OTHER_PROJECT_PATH = '/mock/other-project';
 
-function reportOne(): Promise<string> {
+/** Mint one report id for a process of `taskId` in `projectPath`, the way a reap's report does. */
+function reportProcess(taskId: string, projectPath: string, pid = 4242, startKey = `start-${pid}`): Promise<string> {
   return new Promise((resolve) => {
     vi.useFakeTimers();
     leftoverProcessReports.add(
       (report: LeftoverProcessReport) => resolve(report.processes[0].id),
-      [{ taskId: TASK, pid: 4242, startKey: 'start-4242', label: 'chrome', outcome: 'kept', reason: 'window', place: 'worktree' }],
+      [{ taskId, pid, startKey, label: 'chrome', outcome: 'kept', reason: 'window', because: null, place: 'worktree' }],
+      new Map([[taskId, 'Fix login']]),
+      true,
+      projectPath,
+    );
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+}
+
+function reportOne(): Promise<string> {
+  return reportProcess(TASK, PROJECT_PATH);
+}
+
+/** Mint `count` ids in one report, each for its own process (pid 10000 + index), the way one big reap does. */
+function reportMany(count: number): Promise<string[]> {
+  return new Promise((resolve) => {
+    vi.useFakeTimers();
+    leftoverProcessReports.add(
+      (report: LeftoverProcessReport) => resolve(report.processes.map((reported) => reported.id)),
+      Array.from({ length: count }, (_unused, index) => ({
+        taskId: TASK, pid: 10_000 + index, startKey: `start-${10_000 + index}`, label: 'chrome', outcome: 'kept' as const, reason: 'window' as const, because: null, place: 'worktree' as const,
+      })),
       new Map([[TASK, 'Fix login']]),
       true,
       PROJECT_PATH,
@@ -153,6 +177,133 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
     expect(await stop('made-up')).toBe('ended');
     expect(stopReportedProcess).not.toHaveBeenCalled();
     expect(retryDoneWorktreeRemoval).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The list's recheck: it names reported processes by report id, like Stop,
+ * and answers only the ids whose process main's host read as ended. Unknown
+ * is never ended, and an id no report minted is never asked about.
+ */
+describe('LEFTOVER_PROCESSES_CHECK', () => {
+  function setupCheck(answers: Array<boolean | null> | Error) {
+    const checkReportedProcesses = vi.fn(async (identities: Array<{ pid: number; startKey: string }>) => {
+      if (answers instanceof Error) throw answers;
+      return identities.map((_identity, index) => answers[index] ?? null);
+    });
+    const context = { sessionManager: { stopReportedProcess: vi.fn(), checkReportedProcesses } } as unknown as IpcContext;
+    registerLeftoverProcessHandlers(context);
+    const handler = handlers.get(IPC.LEFTOVER_PROCESSES_CHECK)!;
+    return { context, checkReportedProcesses, check: (processIds: unknown) => handler({}, processIds) };
+  }
+
+  it('asks by the identity the report saw, answers the ended ids, and retries that task\'s Done worktree removal', async () => {
+    const endedId = await reportOne();
+    const runningId = await reportOne();
+    const { context, checkReportedProcesses, check } = setupCheck([false, true]);
+
+    expect(await check([endedId, runningId])).toEqual([endedId]);
+    expect(checkReportedProcesses).toHaveBeenCalledWith([{ pid: 4242, startKey: 'start-4242' }, { pid: 4242, startKey: 'start-4242' }]);
+    expect(retryDoneWorktreeRemoval).toHaveBeenCalledTimes(1);
+    expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
+  });
+
+  it('reads unknown as still running, and retries nothing for it', async () => {
+    const processId = await reportOne();
+    const { check } = setupCheck([null]);
+
+    expect(await check([processId])).toEqual([]);
+    expect(retryDoneWorktreeRemoval).not.toHaveBeenCalled();
+  });
+
+  it('never asks about an id no report minted, a raw pid, or a value that is not a list', async () => {
+    const { checkReportedProcesses, check } = setupCheck([false]);
+
+    expect(await check(['4242', 'made-up', 4242])).toEqual([]);
+    expect(await check('4242')).toEqual([]);
+    expect(await check(undefined)).toEqual([]);
+    expect(checkReportedProcesses).not.toHaveBeenCalled();
+  });
+
+  it('asks once per id however many times the renderer names it', async () => {
+    const processId = await reportOne();
+    const { checkReportedProcesses, check } = setupCheck([false]);
+
+    expect(await check([processId, processId])).toEqual([processId]);
+    expect(checkReportedProcesses).toHaveBeenCalledWith([{ pid: 4242, startKey: 'start-4242' }]);
+  });
+
+  // An ended process may have been what held its task's Done worktree, so the
+  // removal is retried. A task with several ended processes needs ONE retry:
+  // the removal is a whole-worktree operation, and every extra call repeats it.
+  // Still, a task is told apart by its project as well as its id.
+  it('retries a task\'s Done worktree removal once however many of its processes ended, and once more for each other task or project', async () => {
+    const firstOfTask = await reportProcess(TASK, PROJECT_PATH, 4242);
+    const secondOfTask = await reportProcess(TASK, PROJECT_PATH, 4243);
+    const otherTask = await reportProcess(OTHER_TASK, PROJECT_PATH, 4244);
+    const sameTaskIdInOtherProject = await reportProcess(TASK, OTHER_PROJECT_PATH, 4245);
+    const { context, checkReportedProcesses, check } = setupCheck([false, false, false, false]);
+
+    // Every ended id is answered: the dedupe is for the retry, never for the answer.
+    expect(await check([firstOfTask, secondOfTask, otherTask, sameTaskIdInOtherProject]))
+      .toEqual([firstOfTask, secondOfTask, otherTask, sameTaskIdInOtherProject]);
+    // Positive control: all four processes were asked about, so the retries below are the dedupe's doing.
+    expect(checkReportedProcesses.mock.calls[0][0]).toHaveLength(4);
+    expect(retryDoneWorktreeRemoval.mock.calls).toEqual([
+      [context, PROJECT_PATH, TASK],
+      [context, PROJECT_PATH, OTHER_TASK],
+      [context, OTHER_PROJECT_PATH, TASK],
+    ]);
+  });
+
+  it('keeps the retry dedupe to one recheck: a later recheck that finds the process ended retries again', async () => {
+    const processId = await reportOne();
+    const { check } = setupCheck([false]);
+
+    await check([processId]);
+    await check([processId]);
+
+    expect(retryDoneWorktreeRemoval).toHaveBeenCalledTimes(2);
+  });
+
+  // A recheck names at most as many ids as main keeps identities for, so an
+  // oversized list from the renderer costs main no more than a full one. Real
+  // minting cannot yield MAX_CHECKED_PROCESSES + 1 valid ids (main forgets the
+  // oldest past RETAINED_PROCESS_IDS), so the boundary is read by putting one
+  // unminted id in front: the last valid id then sits at position MAX + 1.
+  describe('a list longer than the cap', () => {
+    it('sets the cap to the number of ids main retains, so no valid id can lie past it', () => {
+      expect(MAX_CHECKED_PROCESSES).toBe(RETAINED_PROCESS_IDS);
+    });
+
+    it('asks about every id of a list exactly as long as the cap', async () => {
+      const mintedIds = await reportMany(MAX_CHECKED_PROCESSES);
+      expect(mintedIds).toHaveLength(MAX_CHECKED_PROCESSES);
+      const { checkReportedProcesses, check } = setupCheck([]);
+
+      await check(mintedIds);
+
+      expect(checkReportedProcesses).toHaveBeenCalledTimes(1);
+      expect(checkReportedProcesses.mock.calls[0][0]).toHaveLength(MAX_CHECKED_PROCESSES);
+    });
+
+    it('never asks about an id past the cap, however it got there', async () => {
+      const mintedIds = await reportMany(MAX_CHECKED_PROCESSES);
+      const overflowingIds = ['not-minted', ...mintedIds];
+      expect(overflowingIds).toHaveLength(MAX_CHECKED_PROCESSES + 1);
+      const { checkReportedProcesses, check } = setupCheck([]);
+
+      await check(overflowingIds);
+
+      // The cap cut the list at MAX positions: the unminted id, then the first MAX - 1 minted ones.
+      expect(checkReportedProcesses).toHaveBeenCalledTimes(1);
+      const askedIdentities = checkReportedProcesses.mock.calls[0][0];
+      expect(askedIdentities).toHaveLength(MAX_CHECKED_PROCESSES - 1);
+      expect(askedIdentities[0]).toEqual({ pid: 10_000, startKey: 'start-10000' });
+      const lastMintedPid = 10_000 + MAX_CHECKED_PROCESSES - 1;
+      expect(askedIdentities.map((identity) => identity.pid)).not.toContain(lastMintedPid);
+      expect(askedIdentities.at(-1)).toEqual({ pid: lastMintedPid - 1, startKey: `start-${lastMintedPid - 1}` });
+    });
   });
 });
 

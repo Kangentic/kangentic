@@ -451,6 +451,8 @@ export class PtyHostCore {
         return this.reapTaggedProcesses(params as TaggedReapRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'stopReportedProcess':
         return this.stopReportedProcess(params as StopProcessRequest) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'checkReportedProcesses':
+        return this.checkReportedProcesses((params as PtyHostRequestMap['checkReportedProcesses']['params']).identities) as Promise<PtyHostRequestMap[M]['result']>;
       case 'spawnRaw':
         return this.spawnRaw(params as PtyHostRawSpawnParams) as PtyHostRequestMap[M]['result'] | Promise<PtyHostRequestMap[M]['result']>;
       default: {
@@ -588,6 +590,16 @@ export class PtyHostCore {
     const reaper = this.ensureTaggedReaper();
     if (!reaper) return Promise.resolve(stopAnswer('failed'));
     return reaper.stop(request);
+  }
+
+  /**
+   * Whether each process a report named still runs, for the leftover list's
+   * recheck. Identity only (pid and start key), never a scan.
+   */
+  checkReportedProcesses(identities: ReadonlyArray<{ pid: number; startKey: string }>): Promise<Array<boolean | null>> {
+    const reaper = this.ensureTaggedReaper();
+    if (!reaper) return Promise.resolve(identities.map(() => null));
+    return reaper.checkRunning(identities);
   }
 
   private ensureTaggedReaper(): TaggedReaper | null {

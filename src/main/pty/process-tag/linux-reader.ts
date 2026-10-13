@@ -208,6 +208,22 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
     }
   }
 
+  /** One `stat` read: gone (no entry), a new start time, or a zombie is ended; any other failed read is unknown. */
+  async isRunning(target: Pick<ScannedProcess, 'pid' | 'startKey'>): Promise<boolean | null> {
+    if (!target.startKey) return null;
+    let text: string;
+    try {
+      text = await fsPromises.readFile(this.procPath(target.pid, 'stat'), 'utf8');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === 'ENOENT' || code === 'ESRCH' ? false : null;
+    }
+    const stat = parseProcStat(text);
+    if (!stat) return null;
+    if (stat.startTicks !== target.startKey) return false;
+    return stat.state !== 'Z' && stat.state !== 'X';
+  }
+
   async describe(targets: readonly ScannedProcess[]): Promise<Map<number, string>> {
     const labels = new Map<number, string>();
     await Promise.all(targets.map(async (target) => {

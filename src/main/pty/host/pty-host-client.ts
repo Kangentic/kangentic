@@ -547,6 +547,11 @@ export class PtyHostClient {
     return this.transport.request('stopReportedProcess', request, { timeoutMs, onLateResult });
   }
 
+  /** Whether each reported process still runs (see `process-tag/tagged-reap.ts`). */
+  checkReportedProcesses(identities: Array<{ pid: number; startKey: string }>, timeoutMs: number): Promise<Array<boolean | null>> {
+    return this.transport.request('checkReportedProcesses', { identities }, { timeoutMs });
+  }
+
   getDiagnostics(): Promise<PtyHostDiagnostics> {
     return this.transport.request('getDiagnostics', {});
   }

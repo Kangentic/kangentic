@@ -492,6 +492,23 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
     }
   }
 
+  /**
+   * The start time the kernel reports for the pid now. No row is gone only
+   * when the pid list no longer has it; listed with no row, it is a zombie or
+   * a read that failed, which this cannot tell apart, so the answer is unknown.
+   */
+  async isRunning(target: Pick<ScannedProcess, 'pid' | 'startKey'>): Promise<boolean | null> {
+    if (!target.startKey) return null;
+    try {
+      const kernel = await this.loadKernel();
+      const current = kernel.processRow(target.pid);
+      if (current && current.pid === target.pid) return current.startKey === target.startKey;
+      return kernel.listPids().includes(target.pid) ? null : false;
+    } catch {
+      return null;
+    }
+  }
+
   async describe(targets: readonly ScannedProcess[]): Promise<Map<number, string>> {
     const labels = new Map<number, string>();
     let kernel: DarwinKernel;
