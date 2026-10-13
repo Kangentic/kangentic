@@ -462,7 +462,7 @@ on a task that is not archived, so pruning can never reset a limit.
 `automation_name` and `type` are DENORMALIZED and there is no foreign key to `column_automations`:
 a run log that empties itself when you rename or delete the automation is not a log.
 
-Two indices, one per question the log is asked:
+Three indices, one per question the log is asked:
 
 | Index | Columns | Serves |
 |-------|---------|--------|

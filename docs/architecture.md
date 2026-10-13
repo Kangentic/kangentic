@@ -986,6 +986,7 @@ src/main/automations/
     legacy/spawn-agent.ts   # status 'legacy', never offered for a new automation
   turn-end/                 # the On agent turn end runner, per-task pass tracking, message delivery
   condition-check/          # the Automation agent's one call per group, its prompt and reply parser
+  automation-agent.ts       # resolveAutomationAgent and runNamingCall: the one resolver Condition checks and task and terminal names share
   move-target.ts            # resolveMoveTarget: a named column or the next one
   automation-registry.ts    # AutomationRegistry + automationRegistry singleton
   automation-runner.ts      # per-row isolation, timeouts, and the automation_runs record
