@@ -76,15 +76,23 @@ function findRootProject(worktreeDir) {
  * entries (the keys outside `node_modules/`). A release bumps those versions
  * without changing a dependency, and a root checkout one release ahead of the
  * branch would otherwise read as a different tree.
+ *
+ * `hasInstallScript` is dropped from every entry too. It records what npm
+ * inferred at install time, not which packages are installed, and an install
+ * can add it to a lockfile that did not carry it (better-sqlite3's implied
+ * `node-gyp rebuild`, see .claude/rules/dependency-block-parity.md). Counted,
+ * that one line made a root and a branch with the same packages read as
+ * different trees.
  */
 function dependencyTree(lockText) {
   const lock = JSON.parse(lockText);
   const packages = {};
   for (const [key, entry] of Object.entries(lock.packages ?? {})) {
-    if (!key.startsWith('node_modules/') && entry && typeof entry === 'object') {
-      const withoutVersion = { ...entry };
-      delete withoutVersion.version;
-      packages[key] = withoutVersion;
+    if (entry && typeof entry === 'object') {
+      const comparable = { ...entry };
+      delete comparable.hasInstallScript;
+      if (!key.startsWith('node_modules/')) delete comparable.version;
+      packages[key] = comparable;
     } else {
       packages[key] = entry;
     }

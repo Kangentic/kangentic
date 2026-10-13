@@ -112,11 +112,20 @@ install looks clean and the tree is unusable. `npm install-scripts ls` is what s
 Every package the lockfile marks `hasInstallScript` needs an entry. A new native dependency
 therefore needs one too. So does a package that ships a `binding.gyp` and declares no install
 script: npm infers `node-gyp rebuild` for it and checks that against `allowScripts`, even under
-`gypfile: false` and with no `hasInstallScript` in the lockfile. better-sqlite3 13 is that case. Its
-prebuilds ship in the package, so its entry is `false` (`npm install-scripts deny`), because
-running `node-gyp rebuild` would demand Python and a C++ toolchain to configure a build with nothing
-to compile. electron 42+ has no install script at all and downloads its binary on first use; the
-root package's own `postinstall` runs `install-electron` so a fresh install still has it, and a root
+`gypfile: false`, because a lockfile entry has no `gypfile` key to carry the opt-out. better-sqlite3
+13 is that case. Its prebuilds ship in the package, so its entry is `false` (`npm install-scripts
+deny`), because running `node-gyp rebuild` would demand Python and a C++ toolchain to configure a
+build with nothing to compile.
+
+The same inference makes every full `npm install`, on npm 11 and 12 alike, write
+`"hasInstallScript": true` for such a package, so the committed lockfile carries it. A lockfile
+without it is dirtied by the next install. Do not revert that line. It changes nothing npm builds,
+since npm 10 and 11 run the implied `node-gyp rebuild` with or without it and npm 12 asks
+`allowScripts` either way. A lockfile regenerated with `--ignore-scripts` or `--package-lock-only`
+drops it, and a full `npm install` restores it.
+
+electron 42+ has no install script at all and downloads its binary on first use; the root
+package's own `postinstall` runs `install-electron` so a fresh install still has it, and a root
 script is not something `allowScripts` governs.
 
 ### Changing a runtime dependency
@@ -142,8 +151,9 @@ config. See [[release-gates-fail-loudly]].
   the lockfile's own `hasInstallScript` flags and fails when the key is missing, when a package with
   an install script is not covered, or when an entry names a package the lockfile does not have. It
   also derives, from the installed tree, every package that ships a `binding.gyp` with no install
-  script and requires an entry (allow or deny) for each. It refuses to run against an empty derived
-  set. Runs in CI via `npm run test:unit`.
+  script and requires an entry (allow or deny) for each, and a `"hasInstallScript": true` lockfile
+  flag, so a regeneration that drops the flag fails here instead of dirtying every later install.
+  It refuses to run against an empty derived set. Runs in CI via `npm run test:unit`.
 - **Packaging (correctness):** the afterPack gate above, on `npm run package` / `make` / `publish`.
   It is the only check that proves a runtime dependency actually resolves in the packaged tree.
 - **Review:** `/code-review` flags a new `dependencies` entry whose package is bundled.

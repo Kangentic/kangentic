@@ -91,15 +91,22 @@ describe('allowScripts covers every package npm would otherwise block', () => {
     ).toEqual([]);
   });
 
-  it('covers packages npm gives an implied node-gyp install script, which the lockfile does not record', () => {
+  it('covers packages npm gives an implied node-gyp install script, and the lockfile records it', () => {
     // npm infers `install: node-gyp rebuild` for a package that ships a binding.gyp
     // and declares no install or preinstall script, and npm 12 checks that implied
     // script against allowScripts at install time. It does so even when the package
-    // sets `gypfile: false` and the lockfile records no `hasInstallScript`, so the
-    // derivation above never sees it. better-sqlite3 13 is that case: its prebuilds
-    // ship in the package, so it is denied (`false`) rather than allowed, because
-    // `node-gyp rebuild` would demand Python and a C++ toolchain to configure a build
-    // that has nothing to compile. Uncovered, every `npm ci` warns that it blocked it.
+    // sets `gypfile: false`: a lockfile entry carries no `gypfile` (arborist's
+    // shrinkwrap.js keeps no such key), so the opt-out is lost on every lockfile-driven
+    // install. better-sqlite3 13 is that case: its prebuilds ship in the package, so it
+    // is denied (`false`) rather than allowed, because `node-gyp rebuild` would demand
+    // Python and a C++ toolchain to configure a build that has nothing to compile.
+    // Uncovered, every `npm ci` warns that it blocked it.
+    //
+    // The same inference makes every full `npm install` (npm 11 and 12 alike) write
+    // `hasInstallScript: true` for the package. A lockfile without it is dirtied by the
+    // next install, which is how the line kept reappearing in every agent's worktree.
+    // The flag changes nothing npm builds: npm 10 and 11 run the implied script with or
+    // without it, and npm 12 asks allowScripts either way.
     const impliedGypPackages = Object.entries(lockfile.packages)
       .filter(([key, entry]) => key.startsWith('node_modules/') && !entry.link)
       .filter(([key]) => fs.existsSync(path.join(REPO_ROOT, key, 'binding.gyp')))
@@ -121,6 +128,15 @@ describe('allowScripts covers every package npm would otherwise block', () => {
       + 'ships prebuilds, or `approve` when it really has to compile.',
     ).toEqual([]);
     expect(manifest.allowScripts?.['better-sqlite3'], 'better-sqlite3 ships prebuilds; its implied compile stays denied').toBe(false);
+
+    const unrecorded = impliedGypPackages.filter((name) => lockfile.packages[`node_modules/${name}`]?.hasInstallScript !== true).sort();
+    expect(
+      unrecorded,
+      `${unrecorded.join(', ')} ship a binding.gyp with no install script, but package-lock.json does not mark `
+      + 'them "hasInstallScript": true. Every full `npm install` writes that flag for them, so a lockfile without '
+      + 'it is dirtied by the next install. Regenerate it with a full `npm install` (not --ignore-scripts or '
+      + '--package-lock-only) and commit the flag.',
+    ).toEqual([]);
   });
 
   it('can leave electron out of allowScripts only because the root postinstall and dev.js fetch its binary', () => {
