@@ -63,10 +63,12 @@ import {
  */
 /**
  * @param panelShowsTerminal whether the bottom panel currently has its terminal
- *   content mounted. Comes from `useTerminalResize`'s `showContent`, which is local
- *   React state rather than a store, so it has to be threaded in from `AppLayout`.
- *   A collapsed panel mounts no xterm, and a session nobody renders must not be
- *   focused - main would stream bytes with nothing to ack them.
+ *   content mounted: `useTerminalResize`'s `showContent` while the panel is rendered
+ *   at all. `showContent` is local React state rather than a store, so it has to be
+ *   threaded in from `AppLayout`. A collapsed panel mounts no xterm, and a session
+ *   nobody renders must not be focused - main would stream bytes with nothing to ack
+ *   them. Nor may it take a WebGL slot: the plan gives the panel's session the first
+ *   one, ahead of every visible window.
  */
 export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
   const activeView = useBoardStore((s) => s.activeView);
