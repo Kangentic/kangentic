@@ -470,7 +470,7 @@ test('re-expanding the bottom panel focuses its terminal while a detail window i
 
     // The pane does not exist until the 200ms collapse/expand height
     // transition ends and `showContent` flips true (`resolveContentAction`'s
-    // 'reveal-on-transition-end' branch, useTerminalResize.ts) - so checking
+    // 'reveal-when-transition-settles' branch, useTerminalResize.ts) - so checking
     // the veil's count before the pane has mounted matches zero descendants
     // under zero ancestors and passes on the very first poll, proving
     // nothing about the replay. Gate on the pane actually mounting first.

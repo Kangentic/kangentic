@@ -21,7 +21,7 @@ export type ContentRevealAction =
   | 'none'
   | 'hide-after-collapse'
   | 'reveal-immediately'
-  | 'reveal-on-transition-end';
+  | 'reveal-when-transition-settles';
 
 /**
  * Decide how the panel reveals/hides its terminal content on a collapse-state change.
@@ -29,20 +29,36 @@ export type ContentRevealAction =
  * - No change in collapsed state -> 'none'.
  * - Collapsing -> 'hide-after-collapse' (hide once the 200ms height animation finishes;
  *   content is harmlessly clipped by overflow-hidden in the meantime).
- * - Expanding with the height transition SUPPRESSED (a project switch snaps the panel
- *   open) -> 'reveal-immediately': no `transitionend` will fire, so the content must be
- *   revealed now or the panel stays blank.
- * - Expanding with the animation running -> 'reveal-on-transition-end': wait so the
+ * - Expanding while a height transition runs on the container ->
+ *   'reveal-when-transition-settles': wait for it to finish or be cancelled, so the
  *   terminal mounts at the container's final height.
+ * - Expanding with NO height transition running -> 'reveal-immediately'. Nothing will
+ *   settle, so waiting would leave the panel blank. This is every expand that does not
+ *   animate: a container that mounts already expanded (back from Workflows), no container
+ *   at all (Backlog), and a project-switch snap.
  */
 export function resolveContentAction(
   wasCollapsed: boolean,
   isCollapsed: boolean,
-  transitionSuppressed: boolean,
+  heightTransitionRunning: boolean,
 ): ContentRevealAction {
   if (wasCollapsed === isCollapsed) return 'none';
   if (isCollapsed) return 'hide-after-collapse';
-  return transitionSuppressed ? 'reveal-immediately' : 'reveal-on-transition-end';
+  return heightTransitionRunning ? 'reveal-when-transition-settles' : 'reveal-immediately';
+}
+
+/**
+ * The height transition running on the panel container, if any. Asked of the element
+ * after the commit rather than predicted from state: the reveal used to assume an expand
+ * always animated the mounted container up from its strip, and every way that assumption
+ * failed left the panel expanded and blank. `getAnimations()` flushes pending style
+ * first, so a transition the commit just started is already in the list.
+ */
+function findHeightTransition(element: HTMLElement | null): Animation | null {
+  if (!element || typeof element.getAnimations !== 'function') return null;
+  return element.getAnimations().find(
+    (animation) => 'transitionProperty' in animation && animation.transitionProperty === 'height',
+  ) ?? null;
 }
 
 export interface TerminalResizeState {
@@ -57,7 +73,6 @@ export interface TerminalResizeState {
   suppressTransition: boolean;
   onToggleCollapse: () => void;
   onResizeStart: (event: React.MouseEvent) => void;
-  handleTransitionEnd: () => void;
 }
 
 /**
@@ -89,12 +104,14 @@ function panelArrivalSessionId(): string | null {
  *  behavior (suppress the height transition for one settle window).
  *
  *  `contentColRef` is the content column the panel's available height is measured
- *  against. The CALLER owns it and attaches it to the element: a ref returned inside
- *  the state object would make React's compiler rules read every field of that
- *  object as a ref access during render. */
+ *  against, and `panelContainerRef` is the panel container whose height animates. The
+ *  CALLER owns both and attaches them to the elements: a ref returned inside the state
+ *  object would make React's compiler rules read every field of that object as a ref
+ *  access during render. */
 export function useTerminalResize(
   config: AppConfig,
   contentColRef: React.RefObject<HTMLDivElement | null>,
+  panelContainerRef: React.RefObject<HTMLDivElement | null>,
   forceCollapsed = false,
   switchKey: string | null = null,
 ): TerminalResizeState {
@@ -106,12 +123,17 @@ export function useTerminalResize(
   const [isResizing, setIsResizing] = useState(false);
   const [showContent, setShowContent] = useState(!((config.terminal.panelCollapsed ?? false) || forceCollapsed));
   const [ready, setReady] = useState(false);
-  // Snap (no animation) across a project switch. `suppressTransitionRef` mirrors the
-  // state so the showContent effect can read the latest value without re-subscribing.
+  // Snap (no animation) across a project switch. Raised during RENDER, as the config
+  // sync below is, so the commit that applies the switch's height change already lacks
+  // the transition class. Dropping the class a commit later does not stop a transition
+  // that commit started, because the bare `transition-property` falls back to `all`.
+  // The initial mount does not snap, since the key starts out equal.
   const [suppressTransition, setSuppressTransition] = useState(false);
-  const suppressTransitionRef = useRef(false);
-  const switchKeyRef = useRef(switchKey);
-  const switchSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [snapKey, setSnapKey] = useState(switchKey);
+  if (switchKey !== snapKey) {
+    setSnapKey(switchKey);
+    setSuppressTransition(true);
+  }
 
   // The panel collapses if the user collapsed it OR a task-detail window is open
   // (the panel steps aside while windows own the terminals). Everything
@@ -125,13 +147,18 @@ export function useTerminalResize(
   // over a stale value. A toggle while `forceCollapsed` holds flips only the
   // user's preference, so no terminal mounts and nothing arrives.
   const forceCollapsedRef = useRef(forceCollapsed);
+  // The committed collapse, for the reveal callback below. `effectiveCollapsedRef`
+  // moves only in the showContent effect, which is passive. After a collapse that is
+  // not a discrete event, a frame can cancel the expand's transition before that effect
+  // runs, and the reveal would then read the stale expanded value.
+  const committedCollapsedRef = useRef(effectiveCollapsed);
   // The three mirrors are written on commit, in a layout effect that runs ahead
   // of every passive effect and handler below that reads them; never during
   // render, which the compiler rules forbid.
   useLayoutEffect(() => {
-    suppressTransitionRef.current = suppressTransition;
     terminalConfigRef.current = config.terminal;
     forceCollapsedRef.current = forceCollapsed;
+    committedCollapsedRef.current = effectiveCollapsed;
   });
   const availableHeightRef = useRef(0);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -166,43 +193,27 @@ export function useTerminalResize(
     };
   }, []);
 
-  // On a project switch (switchKey change), suppress the height transition for one
-  // settle window so the panel snaps to the destination's state rather than animating
-  // the slide. Skips the initial mount (ref seeded to the first switchKey). Declared
-  // before the showContent effect so the ref is up to date when that effect reads it.
+  // Lift the snap after its settle window. Keyed on the switch key as well, so a second
+  // switch inside the window restarts it. A re-run of this effect (Fast Refresh, the
+  // StrictMode double mount) re-arms the timer while the suppression holds, so it can
+  // never strand at true and leave the panel without its animation.
   useEffect(() => {
-    if (switchKeyRef.current === switchKey) return;
-    switchKeyRef.current = switchKey;
-    setSuppressTransition(true);
-    if (switchSnapTimerRef.current) clearTimeout(switchSnapTimerRef.current);
-    switchSnapTimerRef.current = setTimeout(() => {
-      setSuppressTransition(false);
-      switchSnapTimerRef.current = null;
-    }, SWITCH_SNAP_WINDOW_MS);
-    return () => {
-      if (switchSnapTimerRef.current) {
-        clearTimeout(switchSnapTimerRef.current);
-        switchSnapTimerRef.current = null;
-        // Lift the suppression along with the timer that would have lifted it.
-        // Clearing the timer alone strands `suppressTransition` at true if the
-        // effect is torn down mid-window and re-runs with an unchanged key (the
-        // guard above returns early, so nothing re-arms) - and a stuck
-        // suppression drops the height-transition class, so the expand path
-        // waits for a `transitionend` that can never fire and the panel stays
-        // blank. Seen live during a Fast Refresh that changed the key's shape.
-        setSuppressTransition(false);
-      }
-    };
-  }, [switchKey]);
+    if (!suppressTransition) return;
+    const timer = setTimeout(() => setSuppressTransition(false), SWITCH_SNAP_WINDOW_MS);
+    return () => clearTimeout(timer);
+  }, [suppressTransition, switchKey]);
 
   // Drive showContent on every effectiveCollapsed transition (whether the user
   // toggled or a window opened/closed). Collapsing: hide content after the 200ms
-  // height animation. Expanding: handleTransitionEnd remounts it once the
-  // container reaches full height (so the terminal fits at the right size).
+  // height animation. Expanding: mount it once the container's height transition
+  // settles, so the terminal fits at the final size, or at once when no transition
+  // runs (see `resolveContentAction`).
   useEffect(() => {
     const wasCollapsed = effectiveCollapsedRef.current;
     effectiveCollapsedRef.current = effectiveCollapsed;
-    const action = resolveContentAction(wasCollapsed, effectiveCollapsed, suppressTransitionRef.current);
+    const expanding = wasCollapsed && !effectiveCollapsed;
+    const heightTransition = expanding ? findHeightTransition(panelContainerRef.current) : null;
+    const action = resolveContentAction(wasCollapsed, effectiveCollapsed, heightTransition !== null);
     if (action === 'none') return;
     if (contentTimerRef.current) {
       clearTimeout(contentTimerRef.current);
@@ -215,10 +226,18 @@ export function useTerminalResize(
       }, 200);
     } else if (action === 'reveal-immediately') {
       setShowContent(true);
+    } else if (heightTransition) {
+      // 'reveal-when-transition-settles', which comes back only with a transition in hand.
+      // `finished` resolves when the transition ends and rejects when it is cancelled:
+      // reversed by a collapse, or the container removed by a view switch mid-expand.
+      // Either way it settles, so the reveal never waits on an event that may not come.
+      // A collapse in between is the one settle that must not reveal.
+      const revealIfExpanded = () => {
+        if (!committedCollapsedRef.current) setShowContent(true);
+      };
+      heightTransition.finished.then(revealIfExpanded, revealIfExpanded);
     }
-    // 'reveal-on-transition-end': handleTransitionEnd mounts content once the height
-    // animation completes.
-  }, [effectiveCollapsed]);
+  }, [effectiveCollapsed, panelContainerRef]);
 
   const getMaxHeight = useCallback(() => {
     return Math.floor(availableHeightRef.current / 2) - 4;
@@ -289,14 +308,6 @@ export function useTerminalResize(
     });
   }, []);
 
-  const handleTransitionEnd = useCallback(() => {
-    // When expanding, mount content NOW (container has final height).
-    // TerminalTab's init effect handles fit at the correct size.
-    if (!effectiveCollapsedRef.current) {
-      setShowContent(true);
-    }
-  }, []);
-
   const onResizeStart = useCallback((event: React.MouseEvent) => {
     setIsResizing(true);
 
@@ -323,5 +334,5 @@ export function useTerminalResize(
     });
   }, [height, config.terminal, clampHeight]);
 
-  return { height, collapsed: effectiveCollapsed, isResizing, showContent, ready, suppressTransition, onToggleCollapse, onResizeStart, handleTransitionEnd };
+  return { height, collapsed: effectiveCollapsed, isResizing, showContent, ready, suppressTransition, onToggleCollapse, onResizeStart };
 }

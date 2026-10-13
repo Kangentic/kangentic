@@ -143,15 +143,18 @@ export function AppLayout() {
   const detailWindowRestorePending = useSessionStore(
     (s) => s.pendingDetailWindowsProjectId !== null && s.pendingDetailWindowsProjectId === currentProjectId,
   );
-  // The content column the panel's available height is measured against. Owned
-  // here and attached below, rather than returned by the hook (see its docblock).
+  // The content column the panel's available height is measured against, and the
+  // panel container whose height transition the expand waits on. Owned here and
+  // attached below, rather than returned by the hook (see its docblock).
   const terminalContentColRef = useRef<HTMLDivElement>(null);
+  const terminalPanelContainerRef = useRef<HTMLDivElement>(null);
   // The Workflows view collapses the panel for the most canvas, through the same
   // input a detached task window uses, so the user's own preference is never
   // overwritten and comes back on the way out.
   const terminal = useTerminalResize(
     config,
     terminalContentColRef,
+    terminalPanelContainerRef,
     everyTerminalDetached || activeView === 'workflows',
     `${currentProjectId ?? 'none'}:${detailWindowRestorePending ? 'restoring' : 'settled'}`,
   );
@@ -194,9 +197,15 @@ export function AppLayout() {
   }, [activeView, requestBoardSearchFocus]);
   const searchPalette = useSearchPalette({ onPlainFindKey: handlePlainFindKey });
   useViewToggle();
-  // `terminal.showContent` is what actually gates whether TerminalPanel mounts a
-  // TerminalTab, so it is the honest answer to "is there an xterm to receive bytes".
-  useFocusedSessionsSync(terminal.showContent);
+  // Whether the bottom panel is on screen at all: the Board view, with the panel not
+  // hidden in Settings. Backlog and Workflows render no panel. One flag for both the
+  // render below and the focused-sessions sync, so the two cannot disagree.
+  const terminalPanelRendered = config.terminalPanelVisible !== false && activeView === 'board';
+  // TerminalPanel mounts a TerminalTab only while it is rendered AND `showContent`
+  // holds, so that pair is the honest answer to "is there an xterm to receive bytes".
+  // `showContent` alone stays true while the panel is not rendered, and the panel's
+  // session then took the first WebGL slot ahead of every visible window.
+  useFocusedSessionsSync(terminal.showContent && terminalPanelRendered);
   useRemoteDetailOwnersSync();
   useMobileTerminalStreamsSync();
   // The monitor's ownership half, mounted here rather than in `MonitorDetailLayer`
@@ -528,7 +537,7 @@ export function AppLayout() {
                       and in Workflows, where it is held collapsed (useTerminalResize's
                       force) and its strip could only say so: the canvas and the agent
                       take the room, and a task's terminal is a double-click away. */}
-                  {config.terminalPanelVisible !== false && activeView !== 'workflows' && (
+                  {terminalPanelRendered && (
                     <>
                       {/* Resize handle - hidden when collapsed.
                           `data-no-dismiss` for the same reason as the sidebar handle above:
@@ -546,6 +555,7 @@ export function AppLayout() {
 
                       {/* Terminal panel */}
                       <div
+                        ref={terminalPanelContainerRef}
                         data-testid="terminal-panel-container"
                         data-collapsed={terminal.collapsed ? 'true' : 'false'}
                         style={{ height: terminal.collapsed ? COLLAPSED_HEIGHT : terminal.height }}
@@ -554,11 +564,6 @@ export function AppLayout() {
                             ? 'transition-[height] duration-200 ease-in-out'
                             : ''
                         } ${terminal.isResizing || sidebar.isResizing ? 'pointer-events-none' : ''}`}
-                        onTransitionEnd={(event) => {
-                          if (event.target === event.currentTarget && event.propertyName === 'height') {
-                            terminal.handleTransitionEnd();
-                          }
-                        }}
                       >
                         <TerminalPanel
                           collapsed={terminal.collapsed}
