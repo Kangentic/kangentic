@@ -32,7 +32,7 @@
           {
             "name": "On to Code Review",
             "type": "move_to_column",
-            "condition": "The last line of the final message is exactly \"Findings: applied\".",
+            "finalLine": "Findings: applied",
             "maxRuns": 4,
             "targetColumn": "Code Review"
           },
@@ -68,15 +68,15 @@
           {
             "name": "Back for revisions",
             "type": "move_to_column",
-            "condition": "The final message's verdict line reads \"Verdict: Blocked\".",
+            "finalLine": "Verdict: Blocked",
             "maxRuns": 3,
             "targetColumn": "Executing",
-            "message": "Code Review sent this back. Do the numbered steps under its verdict, commit, then end your turn.\n\n{{agentReply}}"
+            "message": "Code Review sent this back. Do the numbered steps above its verdict, commit, then end your turn.\n\n{{agentReply}}"
           },
           {
             "name": "On to Testing",
             "type": "move_to_column",
-            "condition": "The final message's verdict line reads \"Verdict: Ready\".",
+            "finalLine": "Verdict: Ready",
             "maxRuns": 1,
             "targetColumn": "Testing"
           }
@@ -105,7 +105,7 @@
           {
             "name": "On to Merge",
             "type": "move_to_column",
-            "condition": "The final message has a line that reads exactly \"PR: ready to merge\", and no line that reads \"PR: blocked\".",
+            "finalLine": "PR: ready to merge",
             "maxRuns": 1,
             "targetColumn": "Merge"
           }
