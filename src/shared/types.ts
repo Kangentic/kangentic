@@ -1472,6 +1472,145 @@ export interface SessionSummary {
   toolBreakdown: PerToolStat[];
 }
 
+// === Completed task report (`sessions.getTaskReport`) ===
+
+/** A board column as the completed task view draws it. */
+export interface TaskReportColumn {
+  swimlaneId: string;
+  name: string;
+  color: string;
+  /** The column's persisted lucide icon name, or null for its role default. */
+  icon: string | null;
+  role: SwimlaneRole | null;
+}
+
+/** One stay in a column, from `task_moves`. */
+export interface TaskReportVisit {
+  startedAt: string;
+  durationMs: number;
+}
+
+/** A column on the task's route: its total time and each visit, first first. */
+export interface TaskReportRouteColumn extends TaskReportColumn {
+  totalMs: number;
+  visits: TaskReportVisit[];
+}
+
+/** One session record: one run of an agent process. */
+export interface TaskReportRun {
+  recordId: string;
+  /** The agent that ran it (`sessions.session_type`), for reading its permission mode's label. */
+  agent: string;
+  startedAt: string;
+  /** How the run's process exited: null for a run that was suspended or is still going. */
+  exitCode: number | null;
+  /** The base model's label (a context-window note stripped), or null when none was reported. */
+  model: string | null;
+  /** The `--effort` applied to the run, or null for the agent's default. */
+  effort: string | null;
+  permissionMode: string | null;
+  /** This run's own share of its conversation's cost and runtime (`legDeltas`). */
+  costUsd: number | null;
+  runtimeMs: number | null;
+  toolCallCount: number;
+  compactionCount: number;
+  toolBreakdown: PerToolStat[];
+  /** The isolated column it ran in, else the route columns it overlapped; empty when unknown. */
+  columns: TaskReportColumn[];
+}
+
+/** The runs of one conversation (`COALESCE(agent_session_id, id)`), oldest first. */
+export interface TaskReportConversation {
+  /** The agent's session id when it has one, else the first record's id. */
+  conversationId: string;
+  /** The isolated column whose own conversation this is; null for the task's main one. */
+  isolatedColumn: TaskReportColumn | null;
+  runs: TaskReportRun[];
+}
+
+/** Turns and tokens one model spent on the task, from the turn ledger. */
+export interface TaskReportModelUsage {
+  model: string;
+  /** The subagent type the turns ran under, or null for the main thread. */
+  subagent: string | null;
+  turns: number;
+  freshInputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+}
+
+/** A model's tokens read from the session rows, when the turn ledger cannot be read. */
+export interface TaskReportModelFallback {
+  model: string;
+  inputWithCacheTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * A background call the task paid for that led somewhere: one per automation
+ * whose Condition the call met, plus each title call. A check that met no
+ * Condition fired nothing and is left out.
+ */
+export interface TaskReportBackgroundCall {
+  /** The `background_calls` row, or null when the run's call is not on record. */
+  callId: string | null;
+  job: BackgroundCallJob;
+  column: TaskReportColumn | null;
+  /** The automation the call fired, with its type; null for a call with no automation. */
+  automationName: string | null;
+  automationType: AutomationType | null;
+  /** The automation's Condition text, for the row's title. */
+  condition: string | null;
+  startedAt: string;
+  model: string | null;
+  effort: string | null;
+  durationMs: number | null;
+  /** Null, never zero, when the agent reported none. */
+  costUsd: number | null;
+  tokens: number | null;
+}
+
+/** Whether a task summary is written, and why not when it is not. */
+export type TaskReportSummaryState =
+  | { kind: 'written'; text: string }
+  | { kind: 'pending' }
+  | { kind: 'off' }
+  | { kind: 'indexing-off' };
+
+/** What the Knowledge Graph links to the task: its commits and the files its sessions changed. */
+export interface TaskReportKnowledge {
+  commits: Array<{ sha: string; subject: string; committedAt: string }>;
+  commitCount: number;
+  changedFiles: string[];
+  changedFileCount: number;
+}
+
+/** The agent's last message in the task's newest conversation (`sessions.getTaskLastMessage`). */
+export interface TaskLastMessage {
+  text: string;
+  /** When it was written, UTC ISO 8601; null when the transcript did not say. */
+  writtenAt: string | null;
+}
+
+/** Everything the completed task view shows, read in one call. */
+export interface TaskReport {
+  summary: SessionSummary | null;
+  /** The earlier of the first move into a working column and the first session start. */
+  startedAt: string | null;
+  /** The last move into Done, else the last session end. */
+  endedAt: string | null;
+  route: TaskReportRouteColumn[];
+  conversations: TaskReportConversation[];
+  /** Null when the turn ledger cannot be read (indexing off, or the index restarting). */
+  models: TaskReportModelUsage[] | null;
+  modelFallback: TaskReportModelFallback[];
+  backgroundCalls: TaskReportBackgroundCall[];
+  /** Null when the index cannot be read. */
+  knowledge: TaskReportKnowledge | null;
+  summaryState: TaskReportSummaryState;
+}
+
 // === Session Activity (Claude Code Hooks) ===
 
 /**
@@ -6922,6 +7061,11 @@ export interface ElectronAPI {
     onIdleTimeout: (callback: (sessionId: string, taskId: string, timeoutMinutes: number, projectId?: string) => void) => () => void;
     getSummary: (taskId: string) => Promise<SessionSummary | null>;
     listSummaries: () => Promise<Record<string, SessionSummary>>;
+    /** Everything the completed task view shows for one task, in one read. */
+    getTaskReport: (projectId: string, taskId: string) => Promise<TaskReport>;
+    /** The agent's last message in the task's newest conversation, or null. Read
+     *  on its own, only when no summary is written, since it parses a transcript. */
+    getTaskLastMessage: (projectId: string, taskId: string) => Promise<TaskLastMessage | null>;
     /**
      * Per-tool breakdown for an active session across its runs: the stored rows
      * of its earlier records (same task and isolated swimlane) merged by tool

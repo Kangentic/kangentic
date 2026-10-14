@@ -27,8 +27,18 @@ export const TASK_KNOWLEDGE_COMMITS = 3;
 /** Files listed per task, the same eight a summary is written from. */
 export const TASK_KNOWLEDGE_FILES = 8;
 
+/** How many commits and files to list; null lists every one. */
+export interface TaskKnowledgeLimits {
+  commits: number | null;
+  files: number | null;
+}
+
 /** Every requested task's knowledge, by task id. Index lookups only. */
-export function readTaskKnowledge(db: Database.Database, taskIds: ReadonlyArray<string>): Map<string, TaskKnowledge> {
+export function readTaskKnowledge(
+  db: Database.Database,
+  taskIds: ReadonlyArray<string>,
+  limits: TaskKnowledgeLimits = { commits: TASK_KNOWLEDGE_COMMITS, files: TASK_KNOWLEDGE_FILES },
+): Map<string, TaskKnowledge> {
   const knowledge = new Map<string, TaskKnowledge>();
   if (taskIds.length === 0) return knowledge;
   const store = new RetrievalStore(db);
@@ -40,13 +50,13 @@ export function readTaskKnowledge(db: Database.Database, taskIds: ReadonlyArray<
     const summary = summaries.get(taskId);
     knowledge.set(taskId, {
       summary: summary ? { text: summary.summary, writtenAt: summary.createdAt } : null,
-      commits: commits.slice(0, TASK_KNOWLEDGE_COMMITS).map((commit) => ({
+      commits: commits.slice(0, limits.commits ?? commits.length).map((commit) => ({
         sha: commit.sha,
         subject: subjectForAgents(commitSubjectOf(commit.text)),
         committedAt: new Date(commit.committedMs).toISOString(),
       })),
       commitCount: commits.length,
-      changedFiles: files.slice(0, TASK_KNOWLEDGE_FILES),
+      changedFiles: files.slice(0, limits.files ?? files.length),
       changedFileCount: files.length,
     });
   }

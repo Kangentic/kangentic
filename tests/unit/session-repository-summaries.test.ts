@@ -2,12 +2,14 @@
  * Real-DB tests for SessionRepository.listAllSummaries (the Completed Tasks
  * dialog aggregation, now pushed into SQL).
  *
- * The strongest pin is PARITY: getSummaryForTask (unchanged, per-task,
- * already SQL-aggregated) is the semantic oracle, and listAllSummaries must
- * deep-equal it for every task. On top of that, a few absolute assertions pin
- * the semantics both methods share, so a bug present in both cannot hide:
- *   - session-lineage token dedup (latest row per COALESCE(agent_session_id, id),
- *     summed across lineages - a flat SUM would double-count resumed sessions);
+ * The strongest pin is PARITY: getSummaryForTask is the semantic oracle, and
+ * listAllSummaries must deep-equal it for every task (both run one shared
+ * statement). On top of that, a few absolute assertions pin the semantics both
+ * methods share, so a bug present in both cannot hide:
+ *   - per-lineage roll-up (COALESCE(agent_session_id, id)): cost and duration
+ *     take the lineage's final cumulative (MAX), tokens its latest row, summed
+ *     across lineages - a flat SUM would bill a resumed conversation twice;
+ *   - git churn read from every row, costed or not;
  *   - MAX(files_changed) vs SUM for the other counters;
  *   - latest-record scalars (model, exit code);
  *   - the tool breakdown merged by tool name over every costed record;
@@ -223,9 +225,12 @@ describe('SessionRepository.listAllSummaries (real DB)', () => {
     // Lineage A contributes only record-a2 (its latest); lineage B adds on top.
     expect(summary.totalInputTokens).toBe(5000 + 300);
     expect(summary.totalOutputTokens).toBe(700 + 30);
-    // Cost/duration/tools/lines/compactions are flat SUMs across every record.
-    expect(summary.totalCostUsd).toBeCloseTo(1.25 + 2.5 + 0.75, 10);
-    expect(summary.durationMs).toBe(60_000 + 90_000);
+    // Cost and duration are each conversation's cumulative, so a lineage
+    // counts its final (MAX) reading once: record-a2 already includes
+    // record-a1's spend. Summing the two would bill lineage A twice.
+    expect(summary.totalCostUsd).toBeCloseTo(2.5 + 0.75, 10);
+    expect(summary.durationMs).toBe(90_000);
+    // Tool calls, lines and compactions are per-process counters and SUM.
     expect(summary.toolCallCount).toBe(5 + 8);
     expect(summary.linesAdded).toBe(10 + 20);
     expect(summary.linesRemoved).toBe(2 + 4);
@@ -293,6 +298,44 @@ describe('SessionRepository.listAllSummaries (real DB)', () => {
     expect(summary.toolCallCount).toBe(3);
     expect(summary.toolBreakdown).toEqual([{ toolName: 'Read', callCount: 3, totalDurationMs: 30, interruptedCount: 0 }]);
     expect(summary).toEqual(repository.getSummaryForTask('task-mixed'));
+  });
+
+  it('matches the per-leg usage deltas: a three-leg lineage plus an isolated lineage', () => {
+    insertTask('task-legs', '2026-01-07T08:00:00.000Z');
+    // Three --resume legs of one conversation, each row the CLI's cumulative
+    // reading at that leg's end, plus an isolated column's own conversation.
+    const legs = [
+      { id: 'leg-1', at: '2026-01-07T09:00:00.000Z', cost: 1.85, durationMs: 722_000 },
+      { id: 'leg-2', at: '2026-01-07T10:00:00.000Z', cost: 26.04, durationMs: 4_622_000 },
+      { id: 'leg-3', at: '2026-01-07T12:00:00.000Z', cost: 30.84, durationMs: 5_629_000 },
+    ];
+    for (const leg of legs) {
+      insertSession({ id: leg.id, taskId: 'task-legs', agentSessionId: 'main', startedAt: leg.at, totalCostUsd: leg.cost, totalDurationMs: leg.durationMs });
+    }
+    insertSession({ id: 'review', taskId: 'task-legs', agentSessionId: 'review', startedAt: '2026-01-07T11:00:00.000Z', totalCostUsd: 16.74, totalDurationMs: 1_415_000 });
+
+    // The SUM of each lineage's per-leg deltas is its last cumulative.
+    const legDeltaCost = (1.85 - 0) + (26.04 - 1.85) + (30.84 - 26.04) + 16.74;
+    const summary = repository.getSummaryForTask('task-legs');
+
+    expect(summary?.totalCostUsd).toBeCloseTo(legDeltaCost, 10);
+    expect(summary?.totalCostUsd).toBeCloseTo(47.58, 10);
+    expect(summary?.durationMs).toBe(5_629_000 + 1_415_000);
+    expect(repository.listAllSummaries()['task-legs']).toEqual(summary);
+  });
+
+  it('reads git churn from every row, including one with no cost', () => {
+    insertTask('task-churn', '2026-01-08T08:00:00.000Z');
+    insertSession({ id: 'costed-run', taskId: 'task-churn', startedAt: '2026-01-08T09:00:00.000Z', totalCostUsd: 0.4 });
+    // The capture landed on a row whose run never reported usage.
+    insertSession({ id: 'uncosted-run', taskId: 'task-churn', startedAt: '2026-01-08T10:00:00.000Z', totalCostUsd: null, linesAdded: 789, linesRemoved: 103, filesChanged: 13 });
+
+    const summary = repository.getSummaryForTask('task-churn');
+
+    expect(summary?.linesAdded).toBe(789);
+    expect(summary?.linesRemoved).toBe(103);
+    expect(summary?.filesChanged).toBe(13);
+    expect(repository.listAllSummaries()['task-churn']).toEqual(summary);
   });
 
   it('returns an empty record when no session has cost data', () => {

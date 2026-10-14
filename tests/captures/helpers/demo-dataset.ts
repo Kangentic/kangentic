@@ -576,6 +576,8 @@ export interface DemoArchivedSummary {
   modelDisplayName: string;
   /** The effort the run was made at, or null when it took the CLI's default. */
   effort: string | null;
+  /** The permission mode the run was made in, which the completed task view's Runs table shows. */
+  permissionMode: string;
   costUsd: number;
   durationMs: number;
   inputTokens: number;
@@ -608,9 +610,9 @@ function runModelDisplayName(modelId: string): string {
 export const DEMO_ARCHIVED_SUMMARIES: DemoArchivedSummary[] = DEMO_ARCHIVED_TASKS
   .filter((task) => DEMO_ARCHIVED_RUNS[task.id])
   .map((task) => {
-    const { model, effort, costUsd, durationMs, inputTokens, outputTokens, tools, filesChanged, linesAdded, linesRemoved } = DEMO_ARCHIVED_RUNS[task.id];
+    const { model, effort, permissionMode, costUsd, durationMs, inputTokens, outputTokens, tools, filesChanged, linesAdded, linesRemoved } = DEMO_ARCHIVED_RUNS[task.id];
     return {
-      taskId: task.id, modelDisplayName: runModelDisplayName(model), effort: effort ?? null,
+      taskId: task.id, modelDisplayName: runModelDisplayName(model), effort: effort ?? null, permissionMode,
       costUsd, durationMs, inputTokens, outputTokens, tools, filesChanged, linesAdded, linesRemoved,
     };
   });
@@ -1223,6 +1225,10 @@ export function buildDemoPreConfig(options: {
             exitedAt: new Date(exitedAtMs).toISOString(), exitCode: 0,
             toolBreakdown: toolBreakdown,
           };
+          // The completed task view derives its report from the summary above; the recorded run
+          // adds its agent, effort, and permission mode. The runs record no closing message, so the
+          // view shows none rather than an authored one.
+          state.taskRunFacts[summary.taskId] = { agent: task.agent, effort: summary.effort, permissionMode: summary.permissionMode };
         });
         data.sessions.forEach(function (session, index) {
           var project = projectsById[session.projectId];

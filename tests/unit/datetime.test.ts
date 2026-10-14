@@ -9,7 +9,33 @@ import {
   formatRelativeTime,
   formatTimeAgo,
   formatDurationBetween,
+  formatMonthDay,
+  formatMonthDayTime,
 } from '../../src/renderer/lib/datetime';
+
+describe('formatMonthDayTime and formatMonthDay', () => {
+  // Local-time constructors, so the assertions hold in every runner's zone.
+  const moment = new Date(2026, 9, 12, 23, 4);
+  const sameYear = new Date(2026, 9, 13, 12, 0);
+  const nextYear = new Date(2027, 0, 5, 12, 0);
+
+  it('reads a moment this year as month, day and time', () => {
+    __setLocaleForTests('en-US');
+    expect(formatMonthDayTime(moment, sameYear)).toMatch(/^Oct 12, 11:04\sPM$/u);
+    expect(formatMonthDay(moment, sameYear)).toBe('Oct 12');
+  });
+
+  it('adds the year to a moment from another year', () => {
+    __setLocaleForTests('en-US');
+    expect(formatMonthDayTime(moment, nextYear)).toMatch(/^Oct 12, 2026, 11:04\sPM$/u);
+    expect(formatMonthDay(moment, nextYear)).toBe('Oct 12, 2026');
+  });
+
+  it('returns empty string for invalid input', () => {
+    expect(formatMonthDayTime(null)).toBe('');
+    expect(formatMonthDay('not a date')).toBe('');
+  });
+});
 
 const SAMPLE_ISO = '2026-04-14T22:00:00Z';
 

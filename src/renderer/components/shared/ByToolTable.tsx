@@ -150,9 +150,10 @@ interface ByToolTableProps {
  * Per-tool breakdown table (Tool / Calls / Time / Avg, plus optional
  * Tokens / Cost / In / Out / Failed columns when the data is present). Tokens
  * is the `resultTokens` estimate, named by its unit; its header tooltip says
- * it is an estimate rather than marking every cell. Shared by
- * the archived-task Session Summary (DB-fed) and the live ContextBar tool-call
- * popover (telemetry-fed), so the two surfaces render and sort identically.
+ * it is an estimate rather than marking every cell. Rendered by
+ * `ToolBreakdownPopover`, for the live ContextBar's tool-call pill
+ * (telemetry-fed) and a completed task's runs (DB-fed), so the two surfaces
+ * render and sort identically.
  *
  * Every numeric header sorts on click: the active column shows a chevron, a
  * second click reverses it. The default is Calls, most first. Time and Avg

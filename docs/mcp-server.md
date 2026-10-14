@@ -509,6 +509,8 @@ series, kept only with `includeSeries`. None of it is added to any session figur
 
 Get session metrics for a specific task or across all tasks. Across all tasks, each row starts with the task's `#N`, so the agent can follow one up.
 
+Cost and agent runtime are the completed task view's: each conversation's running total read once, then added across conversations, so a resumed task is not counted once per `--resume` (see [database.md](database.md), the `sessions` table). With a `taskId`, the runtime line reads `Agent runtime`.
+
 With a `taskId`, the response also carries `bySubagentType`: the task's Task-tool
 subagent fan-out from `conversation_turn_usage`, one row per subagent type with its
 token counts, turn count and distinct-subagent count. On a `/code-review` or `/test`
@@ -535,14 +537,18 @@ totals directly above.
 | `taskId` | string | No | Specific task ID. If omitted, returns aggregate stats (no subagent breakdown). |
 | `query` | string | No | Filter tasks by keyword before aggregating |
 | `sortBy` | string | No | Sort metric: "tokens", "cost", "duration", "toolCalls", "linesChanged" |
+| `project` | string | No | Project name or UUID to target a different project than the active one. |
 
 ### kangentic_list_sessions
 
 List all session records for a task with metadata: start/end times, exit codes, suspension reasons, cost, token counts, and duration.
 
+A resume is a new record that reports the conversation's running total, so each record's cost and runtime are its own share (`legDeltas`, `src/shared/leg-deltas.ts`) and the records add up to `kangentic_get_task_stats`. A record that reported no usage has no share and reads as no cost and no runtime. The structured data also carries each record's running reading as `cumulativeCost` and `cumulativeDurationMs`.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID |
+| `project` | string | No | Project name or UUID to target a different project than the active one. |
 
 ### kangentic_get_session_history
 

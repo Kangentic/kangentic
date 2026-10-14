@@ -7,7 +7,7 @@
  * is deliberately no session picker: which session shows is not a setting.
  *
  * Fetches the structured transcript directly via `window.electronAPI.transcripts.get`
- * (precedent: SessionSummaryPanel calls the IPC bridge directly), renders it
+ * (precedent: the completed task view's `useTaskReport` calls the IPC bridge directly), renders it
  * through the pure `ConversationView`, and offers an "Open task" jump and a
  * "Copy as Markdown" export.
  *

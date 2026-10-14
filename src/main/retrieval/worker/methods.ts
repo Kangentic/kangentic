@@ -25,7 +25,7 @@ import {
 } from '../related-work';
 import { searchCommits, type CommitHit } from '../commit/commit-search';
 import { SummaryStore } from '../summary/summary-store';
-import { readTaskKnowledge, type TaskKnowledge } from '../task-knowledge';
+import { readTaskKnowledge, type TaskKnowledge, type TaskKnowledgeLimits } from '../task-knowledge';
 import type { BoardTaskFacts } from '../answer-tasks';
 import type { Embedder, StoredChunk } from '../types';
 import type {
@@ -36,7 +36,7 @@ import type {
   SubagentUsageTotals,
   TaskFanOut,
 } from '../../../shared/types';
-import { ConversationUsageStore } from '../conversation/conversation-usage-store';
+import { ConversationUsageStore, type TaskModelUsageRow } from '../conversation/conversation-usage-store';
 import type { RetrievalEventName } from './protocol';
 import { createIndexStatusReader, type IndexAllParams, type IndexAllStatus } from './index-status';
 import { createGraphService } from '../graph/graph-service';
@@ -231,10 +231,18 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, DevIn
     params: { projectId: string; taskId: string };
     result: { bySubagentType: SubagentUsageTotals[]; fanOuts: TaskFanOut[] };
   };
+  /** One task's turns and tokens by model and subagent type, from the turn
+   *  ledger, for the completed task view's Models card. */
+  'usage.taskModels': {
+    params: { projectId: string; taskId: string };
+    result: TaskModelUsageRow[];
+  };
   /** What the index knows about some tasks, for `kangentic_find_task` and
-   *  `kangentic_get_current_task`: summary, linked commits, changed files. */
+   *  `kangentic_get_current_task`: summary, linked commits, changed files.
+   *  `limits` raises the commit and file caps (the completed task view lists
+   *  every changed file); omitted, the MCP defaults apply. */
   'task.knowledge': {
-    params: { projectId: string; taskIds: string[] };
+    params: { projectId: string; taskIds: string[]; limits?: TaskKnowledgeLimits };
     result: Map<string, TaskKnowledge>;
   };
   /** The Projects picker: what each project's index holds. A project whose
@@ -419,7 +427,8 @@ export const retrievalHandlers: RetrievalHandlers = {
     return { ...status, vecError: context.vecLoadError() };
   },
   'summary.forTask': ({ projectId, taskId }, context) => new SummaryStore(context.getDb(projectId)).summariesFor([taskId]).get(taskId) ?? null,
-  'task.knowledge': ({ projectId, taskIds }, context) => readTaskKnowledge(context.getDb(projectId), taskIds),
+  'task.knowledge': ({ projectId, taskIds, limits }, context) => readTaskKnowledge(context.getDb(projectId), taskIds, limits),
+  'usage.taskModels': ({ projectId, taskId }, context) => new ConversationUsageStore(context.getDb(projectId)).getTaskModelUsage(taskId),
   'usage.taskSubagents': ({ projectId, taskId }, context) => {
     const usageStore = new ConversationUsageStore(context.getDb(projectId));
     const bySubagentType = usageStore.getSubagentTotalsByType(null, null, taskId);

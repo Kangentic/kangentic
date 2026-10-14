@@ -24,43 +24,40 @@ import type { SessionRecord } from '../../src/shared/types';
 // ---------------------------------------------------------------------------
 
 /**
- * A queue-based mock DB for `getSummaryForTask`.
- *
- * `getSummaryForTask` calls `prepare().get()` exactly three times, in order:
- *   call 0 - the latestRecord query (returns a SessionRecord row)
- *   call 1 - the aggregated query (SUM cost/duration/compactions/tool calls/lines)
- *   call 2 - the tokens query (latest row per lineage, SUMmed)
- * and then `prepare().all()` once, for every costed record's `tool_breakdown`.
- *
- * Pass `latestRecordReturn` for call 0, `aggregateReturn` for call 1, and
- * `tokensReturn` for call 2. Additional `prepare()` calls fall back to undefined.
- * The breakdown query answers with the latest record's own `tool_breakdown`
- * under the tests' task id, as a task with a single costed record would.
+ * A mock DB for `getSummaryForTask`, which runs two statements:
+ *   - the roll-up (`selectSummaryRows`), answered with one row built from the
+ *     latest record's scalars, the aggregate counters and the token sums, or
+ *     no row when `latestRecordReturn` is undefined (a task with no costed run);
+ *   - the breakdown read (`SELECT task_id, tool_breakdown FROM sessions`),
+ *     answered with the latest record's own `tool_breakdown` under the tests'
+ *     task id, as a task with a single costed record would.
  */
 function createGetSummaryMockDb(options: {
   latestRecordReturn: unknown;
   aggregateReturn: unknown;
   tokensReturn?: unknown;
 }): Database.Database {
-  const getReturns: unknown[] = [
-    options.latestRecordReturn,
-    options.aggregateReturn,
-    options.tokensReturn ?? { total_input_tokens: 0, total_output_tokens: 0 },
-  ];
-  const latestBreakdown = (options.latestRecordReturn as { tool_breakdown?: string | null } | undefined)?.tool_breakdown ?? null;
+  const latestRecord = options.latestRecordReturn as (SessionRecord & { task_created_at: string }) | undefined;
+  const tokens = (options.tokensReturn ?? { total_input_tokens: 0, total_output_tokens: 0 }) as Record<string, unknown>;
+  const summaryRows = latestRecord === undefined ? [] : [{
+    task_id: 'task-1',
+    task_created_at: latestRecord.task_created_at,
+    ...(options.aggregateReturn as Record<string, unknown>),
+    ...tokens,
+    agent_session_id: latestRecord.agent_session_id,
+    record_id: latestRecord.id,
+    model_display_name: latestRecord.model_display_name,
+    exit_code: latestRecord.exit_code,
+  }];
+  const latestBreakdown = latestRecord?.tool_breakdown ?? null;
   const breakdownRows = latestBreakdown === null ? [] : [{ task_id: 'task-1', tool_breakdown: latestBreakdown }];
-  let callIndex = 0;
 
   const mockDb = {
-    prepare: vi.fn((_sql: string) => {
-      const index = callIndex;
-      callIndex += 1;
-      return {
-        run: vi.fn(() => ({ changes: 0 })),
-        get: vi.fn((..._params: unknown[]) => getReturns[index]),
-        all: vi.fn(() => breakdownRows),
-      };
-    }),
+    prepare: vi.fn((sql: string) => ({
+      run: vi.fn(() => ({ changes: 0 })),
+      get: vi.fn(() => undefined),
+      all: vi.fn(() => (/SELECT task_id, tool_breakdown FROM sessions/.test(sql) ? breakdownRows : summaryRows)),
+    })),
   } as unknown as Database.Database;
 
   return mockDb;
@@ -360,24 +357,23 @@ describe('updateMetrics tool_breakdown round-trip', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Lifetime rollup wiring: getSummaryForTask maps the SUMmed aggregate
-// (cost / duration / compactions) and the latest-per-lineage token row onto the
-// summary, instead of taking cost/tokens/duration from the latest record.
-// (The SQL aggregation itself - SUM across rows, window-function token dedup -
-// needs a real database, which this mock-based suite does not use; it is
-// validated empirically and by the transcript-usage test below. This locks the
-// field mapping so a future refactor can't silently revert to "latest record".)
+// Lifetime rollup wiring: getSummaryForTask maps the roll-up row (cost and
+// duration per lineage, counters, latest-per-lineage tokens) onto the summary,
+// instead of taking cost/tokens/duration from the latest record. (The SQL
+// roll-up itself needs a real database, which this mock-based suite does not
+// use; `session-repository-summaries.test.ts` pins it. This locks the field
+// mapping so a future refactor can't silently revert to "latest record".)
 // ---------------------------------------------------------------------------
 
 describe('getSummaryForTask lifetime rollup mapping', () => {
-  it('maps SUMmed cost/duration/compactions and latest-per-lineage tokens, not the latest record snapshot', () => {
+  it('maps the rolled-up cost/duration/compactions and latest-per-lineage tokens, not the latest record snapshot', () => {
     // The latest record carries SNAPSHOT values that must NOT be used for the
     // lifetime totals: its cost (0.05) / duration (3600000) / tokens (1000/200)
     // differ from the aggregate + token rows the rollup must read instead.
     const db = createGetSummaryMockDb({
       latestRecordReturn: makeLatestRecord(null),
       aggregateReturn: {
-        total_cost_usd: 0.42, // SUM across runs, > the latest record's 0.05
+        total_cost_usd: 0.42, // rolled up across lineages, > the latest record's 0.05
         total_duration_ms: 9_000_000,
         total_tool_calls: 17,
         total_compactions: 3,

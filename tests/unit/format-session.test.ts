@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { formatCost, formatDuration } from '../../src/renderer/utils/format-session';
+import { formatCallDuration, formatCost, formatDuration, formatSpan, formatSpanCompact } from '../../src/renderer/utils/format-session';
+
+const SECOND = 1000;
+const MINUTE = 60 * SECOND;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 
 describe('formatCost', () => {
   it('returns $0.00 for NaN', () => {
@@ -67,5 +72,65 @@ describe('formatDuration', () => {
   it('rounds milliseconds to nearest second', () => {
     expect(formatDuration(1499)).toBe('1s');
     expect(formatDuration(1500)).toBe('2s');
+  });
+});
+
+describe('formatSpan', () => {
+  it('reads the two largest units, days included', () => {
+    expect(formatSpan(9 * DAY + 9 * HOUR + 12 * MINUTE)).toBe('9d 9h');
+    expect(formatSpan(HOUR + 59 * MINUTE + 30 * SECOND)).toBe('1h 59m');
+    expect(formatSpan(37 * MINUTE + 37 * SECOND)).toBe('37m 37s');
+    expect(formatSpan(5 * SECOND)).toBe('5s');
+  });
+
+  it('drops a zero second unit', () => {
+    expect(formatSpan(16 * DAY)).toBe('16d');
+    expect(formatSpan(2 * HOUR)).toBe('2h');
+    expect(formatSpan(20 * MINUTE)).toBe('20m');
+  });
+
+  it('reads a negative span as nothing', () => {
+    expect(formatSpan(-5 * SECOND)).toBe('0s');
+  });
+});
+
+describe('formatSpanCompact', () => {
+  it('rounds a span under an hour to whole minutes', () => {
+    expect(formatSpanCompact(23 * MINUTE + 43 * SECOND)).toBe('24m');
+    expect(formatSpanCompact(58 * MINUTE + 29 * SECOND)).toBe('58m');
+    expect(formatSpanCompact(MINUTE + 3 * SECOND)).toBe('1m');
+  });
+
+  it('rounds a span of hours to minutes, and of days to hours', () => {
+    expect(formatSpanCompact(HOUR + 5 * MINUTE + 40 * SECOND)).toBe('1h 6m');
+    expect(formatSpanCompact(7 * DAY + 9 * HOUR + 42 * MINUTE)).toBe('7d 10h');
+  });
+
+  it('keeps seconds under a minute', () => {
+    expect(formatSpanCompact(45 * SECOND)).toBe('45s');
+  });
+
+  it('rounds before choosing the unit, so a span just under an hour or a day reads as one', () => {
+    expect(formatSpanCompact(59 * MINUTE + 31 * SECOND)).toBe('1h');
+    expect(formatSpanCompact(23 * HOUR + 59 * MINUTE + 31 * SECOND)).toBe('1d');
+    expect(formatSpanCompact(HOUR)).toBe('1h');
+  });
+});
+
+describe('formatCallDuration', () => {
+  it('reads a short call to a tenth of a second', () => {
+    expect(formatCallDuration(2_400)).toBe('2.4s');
+    expect(formatCallDuration(25_600)).toBe('25.6s');
+  });
+
+  it('reads a call of a minute or more as a span', () => {
+    expect(formatCallDuration(MINUTE + 12 * SECOND)).toBe('1m 12s');
+  });
+
+  it('rounds before choosing the unit, so a call just under a minute reads as one', () => {
+    expect(formatCallDuration(59_960)).toBe('1m');
+    expect(formatCallDuration(MINUTE)).toBe('1m');
+    expect(formatCallDuration(59_940)).toBe('59.9s');
+    expect(formatCallDuration(0)).toBe('0.0s');
   });
 });

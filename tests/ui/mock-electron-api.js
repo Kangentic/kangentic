@@ -49,6 +49,69 @@
   let eventCache = {};
   let summaryCache = {};
   let currentProjectId = null;
+
+  // Whether a task summary is written, and why not, by main's rule
+  // (readTaskReport): the seeded written summary, else indexing off, else
+  // summaries off (the Knowledge Graph off, or its Task summaries switch off),
+  // else pending. Read when the report is asked for, so a seed that sets the
+  // config after its tasks still gets the state the config says.
+  function mockSummaryState(taskId) {
+    if (Object.prototype.hasOwnProperty.call(memoryTaskSummaries, taskId)) return { kind: 'written', text: memoryTaskSummaries[taskId] };
+    var knowledgeGraph = config.knowledgeGraph;
+    if (knowledgeGraph && knowledgeGraph.indexingEnabled === false) return { kind: 'indexing-off' };
+    if (!knowledgeGraph || knowledgeGraph.enabled !== true || knowledgeGraph.taskSummaries === false) return { kind: 'off' };
+    return { kind: 'pending' };
+  }
+
+  // The completed task view's report, derived from a task's summary the way
+  // main assembles one for a task with no column moves and no index: one run in
+  // one conversation, no route, models from the summary's own tokens. What a
+  // seed knows about the run beyond its summary (its agent, effort and
+  // permission mode) comes from taskRunFacts.
+  function buildMockTaskReport(taskId) {
+    var summary = summaryCache[taskId] || null;
+    var facts = taskRunFacts[taskId] || {};
+    var conversations = [];
+    var modelFallback = [];
+    if (summary) {
+      conversations.push({
+        conversationId: summary.sessionId,
+        isolatedColumn: null,
+        runs: [{
+          recordId: summary.sessionId,
+          agent: facts.agent || 'claude',
+          startedAt: summary.startedAt,
+          exitCode: summary.exitCode === undefined ? null : summary.exitCode,
+          model: summary.modelDisplayName || null,
+          effort: facts.effort || null,
+          permissionMode: facts.permissionMode || null,
+          costUsd: summary.totalCostUsd,
+          runtimeMs: summary.durationMs,
+          toolCallCount: summary.toolCallCount,
+          compactionCount: summary.compactionCount || 0,
+          toolBreakdown: summary.toolBreakdown || [],
+          columns: [],
+        }],
+      });
+      modelFallback.push({
+        model: summary.modelDisplayName || 'Unknown model',
+        inputWithCacheTokens: summary.totalInputTokens,
+        outputTokens: summary.totalOutputTokens,
+      });
+    }
+    return {
+      summary: summary,
+      startedAt: summary ? summary.startedAt : null,
+      endedAt: summary ? summary.exitedAt : null,
+      route: [],
+      conversations: conversations,
+      models: null,
+      modelFallback: modelFallback,
+      backgroundCalls: [],
+      knowledge: null,
+      summaryState: mockSummaryState(taskId),
+    };
+  }
   // A row tagged with a projectId belongs to that project alone, the way each
   // project's tasks and archive live in its own DB, and an untagged row shows
   // everywhere. tasks.list and the archived lists both filter by this rule.
@@ -81,6 +144,16 @@
   // Task summaries by task id, for the selected conversation's panel. Empty by
   // default, the same as summaries switched off.
   let memoryTaskSummaries = {};
+  // The completed task view's report by task id, mutable in place through
+  // __mockPreConfigure. A task missing here gets one derived from its summary
+  // (buildMockTaskReport).
+  const taskReportCache = {};
+  // The agent's last message by task id ({ text, writtenAt }), for a completed
+  // task whose summary is not written. Missing reads as none.
+  const taskLastMessages = {};
+  // A derived report's run facts by task id ({ agent, effort, permissionMode }),
+  // for a seed that recorded the run (the web demo's archived tasks).
+  const taskRunFacts = {};
   // Per-project snapshots for a multi-project scope, keyed by project id.
   // A project missing here falls back to knowledgeGraphSnapshot.
   let knowledgeGraphSnapshotsByProject = {};
@@ -2480,6 +2553,13 @@
       },
       listSummaries: async function () {
         return Object.assign({}, summaryCache);
+      },
+      getTaskReport: async function (_projectId, taskId) {
+        if (Object.prototype.hasOwnProperty.call(taskReportCache, taskId)) return taskReportCache[taskId];
+        return buildMockTaskReport(taskId);
+      },
+      getTaskLastMessage: async function (_projectId, taskId) {
+        return Object.prototype.hasOwnProperty.call(taskLastMessages, taskId) ? taskLastMessages[taskId] : null;
       },
       getToolBreakdown: async function (_sessionId) {
         // Live telemetry is not captured in UI tests; specs that need a
@@ -6448,6 +6528,12 @@
       activityStatsCache: activityStatsCache,
       eventCache: eventCache,
       summaryCache: summaryCache,
+      taskReportCache: taskReportCache,
+      taskLastMessages: taskLastMessages,
+      taskRunFacts: taskRunFacts,
+      // The report the mock derives from a seeded summary, for a test that
+      // holds the derivation to its summary.
+      buildTaskReport: buildMockTaskReport,
       projectConfigs: projectConfigs,
       // The GLOBAL app config object, mutable in place. Seeds a starting value for a
       // key the renderer reads back (e.g. a persisted window layout blob). Safe to

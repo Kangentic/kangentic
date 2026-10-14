@@ -324,6 +324,8 @@ const api: ElectronAPI = {
     },
     getSummary: (taskId: string) => ipcRenderer.invoke(IPC.SESSION_GET_SUMMARY, taskId),
     listSummaries: () => ipcRenderer.invoke(IPC.SESSION_LIST_SUMMARIES),
+    getTaskReport: (projectId: string, taskId: string) => ipcRenderer.invoke(IPC.SESSION_GET_TASK_REPORT, projectId, taskId),
+    getTaskLastMessage: (projectId: string, taskId: string) => ipcRenderer.invoke(IPC.SESSION_GET_TASK_LAST_MESSAGE, projectId, taskId),
     getToolBreakdown: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_GET_TOOL_BREAKDOWN, sessionId),
     getToolResultTokens: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_GET_TOOL_RESULT_TOKENS, sessionId),
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),

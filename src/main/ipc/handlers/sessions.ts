@@ -14,6 +14,7 @@ import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../p
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { nextOnRoute } from '../../../shared/workflow-route';
 import { loadTaskProfile } from '../helpers/task-profile';
+import { readTaskLastMessage, readTaskReport } from '../helpers/task-report';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed, trackMilestone } from '../../analytics/usage';
@@ -175,6 +176,11 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     if (!context.currentProjectId) return {};
     return retrievalClient.call('sessions.summaries', { projectId: context.currentProjectId });
   });
+
+  // The completed task view's report and its last message. Both take the
+  // project explicitly: the view can be hosted for another project's task.
+  ipcMain.handle(IPC.SESSION_GET_TASK_REPORT, (_, projectId: string, taskId: string) => readTaskReport(context, projectId, taskId));
+  ipcMain.handle(IPC.SESSION_GET_TASK_LAST_MESSAGE, (_, projectId: string, taskId: string) => readTaskLastMessage(projectId, taskId));
 
   // Per-tool breakdown for an active session's track: its earlier runs' stored
   // rows (one indexed read of the session's records) merged with the live

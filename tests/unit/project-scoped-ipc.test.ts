@@ -63,6 +63,9 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_GET_MESSAGE_TRAILS',
   'SESSION_GET_SUMMARY',
   'SESSION_LIST_SUMMARIES',
+  // Reads, and they already take the project explicitly.
+  'SESSION_GET_TASK_REPORT',
+  'SESSION_GET_TASK_LAST_MESSAGE',
   'SESSION_GET_TOOL_BREAKDOWN',
   'SESSION_GET_TOOL_RESULT_TOKENS',
   // Session by-session-id / global / transient (separate ephemeral lifecycle)

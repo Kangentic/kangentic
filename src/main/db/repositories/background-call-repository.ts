@@ -59,6 +59,21 @@ export interface BackgroundCallGroupRow {
   durationMs: number;
 }
 
+/** One task's call, as the completed task view lists it. */
+export interface TaskBackgroundCallRow {
+  id: string;
+  job: string;
+  swimlaneId: string | null;
+  /** The model the CLI reported, else the one asked for, else null (the agent's default). */
+  modelId: string | null;
+  effort: string | null;
+  /** Null, never zero, when the agent reported no usage. */
+  tokens: number | null;
+  costUsd: number | null;
+  durationMs: number;
+  startedAt: string;
+}
+
 /** True once the table exists. The retrieval worker opens a project's database
  *  with migrations off, so a project main has not opened since the upgrade has
  *  none yet, and its dashboard read must come back empty rather than throw. */
@@ -100,6 +115,30 @@ export class BackgroundCallRepository {
         input.detail,
         input.startedAt,
       );
+  }
+
+  /** Every call made for one task, oldest first. Empty for a database with no table yet. */
+  listForTask(taskId: string): TaskBackgroundCallRow[] {
+    if (!hasBackgroundCallsTable(this.db)) return [];
+    return this.db.prepare(`
+      SELECT id,
+             job,
+             swimlane_id AS swimlaneId,
+             COALESCE(model, requested_model) AS modelId,
+             effort,
+             CASE
+               WHEN input_tokens IS NULL AND output_tokens IS NULL
+                 AND cache_creation_input_tokens IS NULL AND cache_read_input_tokens IS NULL THEN NULL
+               ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+                 + COALESCE(cache_creation_input_tokens, 0) + COALESCE(cache_read_input_tokens, 0)
+             END AS tokens,
+             cost_usd AS costUsd,
+             duration_ms AS durationMs,
+             started_at AS startedAt
+      FROM background_calls
+      WHERE task_id = ?
+      ORDER BY started_at ASC
+    `).all(taskId) as TaskBackgroundCallRow[];
   }
 
   /**

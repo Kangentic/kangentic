@@ -60,6 +60,26 @@ export function formatShortDateTime(value: DateLike): string {
   return getDateTimeFormatter({ dateStyle: 'short', timeStyle: 'short' }).format(date);
 }
 
+/**
+ * Month, day and time: "Oct 12, 11:04 PM", with the year when it is not the
+ * current one. For a table or strip where every row is a recent moment.
+ */
+export function formatMonthDayTime(value: DateLike, now: Date = new Date()): string {
+  return formatMonthDayWith(value, now, { hour: 'numeric', minute: '2-digit' });
+}
+
+/** Month and day: "Oct 12", with the year when it is not the current one. */
+export function formatMonthDay(value: DateLike, now: Date = new Date()): string {
+  return formatMonthDayWith(value, now, {});
+}
+
+function formatMonthDayWith(value: DateLike, now: Date, timeOptions: Intl.DateTimeFormatOptions): string {
+  const date = toDate(value);
+  if (!date) return '';
+  const year = date.getFullYear() === now.getFullYear() ? undefined : 'numeric';
+  return getDateTimeFormatter({ year, month: 'short', day: 'numeric', ...timeOptions }).format(date);
+}
+
 /** Medium date only. */
 export function formatDate(value: DateLike): string {
   const date = toDate(value);
