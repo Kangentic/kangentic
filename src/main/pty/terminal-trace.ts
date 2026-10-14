@@ -15,11 +15,17 @@
  * (terminal-grid-registry) and the route merges the two by timestamp, which avoids
  * a new IPC channel for a dev-only diagnostic.
  *
- * Writes are gated on `__KANGENTIC_DEV__`. The ONLY reader is the inspection
- * server under `src/devtools/`, which production dead-code-eliminates - so in a
- * packaged build this ring would fill forever with bytes nothing could ever read.
- * If a shipped reader is ever added (a "copy diagnostics" affordance for a bug
+ * Writes are gated on `__KANGENTIC_DEV__`. The ONLY readers are under
+ * `src/devtools/`, which production dead-code-eliminates - so in a packaged
+ * build this ring would fill forever with bytes nothing could ever read. If a
+ * shipped reader is ever added (a "copy diagnostics" affordance for a bug
  * report), drop the guard; until then it is pure cost.
+ *
+ * The ring dies with the process, and a restart once erased the only record of
+ * two terminals whose agents drew for the panel's grid inside a task window.
+ * Listeners (`addTerminalTraceListener`) see every kept entry: the devtools
+ * install persists them to disk and samples the child's composed width after
+ * each resize.
  */
 
 /** Why `waitForResizeRepaint` stopped waiting. The field that makes a stale-frame
@@ -37,17 +43,30 @@ export type RepaintSettleReason =
   | 'markerless-quiesce'
   | 'deadline';
 
+/** Which process recorded an entry. The pty host's entries reach the ring
+ *  through main's relay, so `source` alone cannot tell a resize main applied
+ *  from one the host applied. After the host falls back into main (five
+ *  crashes), its entries are recorded in main and read `main` too. */
+export type TerminalTraceProcess = 'main' | 'pty-host';
+
 export interface TerminalTraceEvent {
   ts: number;
+  /** The ring the entry lives in, beside the renderer's ring. Always `main`,
+   *  even for a relayed host entry; `process` names the recorder. */
   source: 'main';
+  process: TerminalTraceProcess;
   sessionId: string;
   event: string;
   detail?: Record<string, unknown>;
 }
 
+export type TerminalTraceListener = (entry: TerminalTraceEvent) => void;
+
 const RING_SIZE = 300;
 // hmr-safe: main is not hot-reloaded; the ring is rebuilt on app restart.
 const ring: TerminalTraceEvent[] = [];
+// hmr-safe: main is not hot-reloaded; listeners are installed once at startup.
+const listeners = new Set<TerminalTraceListener>();
 
 /** Set in the pty host, whose buffer traces belong in main's ring. */
 let traceRelay: ((sessionId: string, event: string, detail: Record<string, unknown> | undefined, ts: number) => void) | null = null;
@@ -75,10 +94,27 @@ export function recordTerminalTrace(
   event: string,
   detail: Record<string, unknown> | undefined,
   ts: number,
+  recordedBy: TerminalTraceProcess = 'main',
 ): void {
   if (!__KANGENTIC_DEV__) return;
-  ring.push({ ts, source: 'main', sessionId, event, detail });
+  const entry: TerminalTraceEvent = { ts, source: 'main', process: recordedBy, sessionId, event, detail };
+  ring.push(entry);
   while (ring.length > RING_SIZE) ring.shift();
+  for (const listener of listeners) {
+    try {
+      listener(entry);
+    } catch {
+      // A diagnostic listener must never break the resize or replay that traced.
+    }
+  }
+}
+
+/** Observe every entry the ring keeps. Returns the unsubscribe. */
+export function addTerminalTraceListener(listener: TerminalTraceListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function readTerminalTrace(sessionId?: string): TerminalTraceEvent[] {

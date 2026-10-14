@@ -412,7 +412,9 @@ export interface PtyEchoReassertInput {
  *   holding the grid - the mobile sub-floor guard), so healing attempts stop
  *   until the hold window lapses, whatever dims later echoes carry.
  * - `parked`: this terminal is off-view; it must not reshape a grid it is not
- *   showing (the reveal reload re-fits when it comes back).
+ *   showing. Deferred, not dropped: the reveal reload sends no resize of its
+ *   own, so its settle judges the last echo again (see
+ *   isPtyEchoDeferredToReplaySettle).
  * - `replay-in-flight`: deferred, not dropped. A replay sends a resize only
  *   when its fit changes the grid, and a divergence it did not cause changes
  *   nothing on this side, so the replay's settle judges the last echo again
@@ -453,18 +455,27 @@ export function resolvePtyEchoReassert(input: PtyEchoReassertInput): PtyEchoReas
 }
 
 /**
- * Whether a skipped echo is judged again when the replay in flight settles.
+ * Whether a skipped echo is judged again when the next replay settles.
  *
- * Only `replay-in-flight`. That skip used to assume the replay's own fit and
- * resize would settle the dims, but xterm reports a resize only when its own
- * grid changes, and a PTY reshaped under the terminal changes nothing on this
- * side. The replay then settled without sending anything, no later echo came to
- * retry, and the PTY stayed at the rogue grid for good. `own-resize-pending` is
- * not deferred: the pending send carries this terminal's own dims, so it heals
- * the PTY by itself. Pure and exported for unit tests.
+ * `replay-in-flight`: that skip used to assume the replay's own fit and resize
+ * would settle the dims, but xterm reports a resize only when its own grid
+ * changes, and a PTY reshaped under the terminal changes nothing on this side.
+ * The replay then settled without sending anything, no later echo came to
+ * retry, and the PTY stayed at the rogue grid for good.
+ *
+ * `parked`: the same assumption about the reveal. The reveal reloads with
+ * `skipResize` and the window kept its size, so it sent nothing either, and a
+ * divergence that landed while parked survived the reveal (measured in the UI
+ * tier: zero resize calls after the reveal). Deferring keeps the parked rule,
+ * because a settle while still parked skips as `parked` again; the reveal's
+ * settle is the first judgment that can heal.
+ *
+ * `own-resize-pending` is not deferred: the pending send carries this
+ * terminal's own dims, so it heals the PTY by itself. Pure and exported for
+ * unit tests.
  */
 export function isPtyEchoDeferredToReplaySettle(reason: PtyEchoSkipReason): boolean {
-  return reason === 'replay-in-flight';
+  return reason === 'replay-in-flight' || reason === 'parked';
 }
 
 /** Options for `reloadScrollback` (and the ref the watchdog re-issues through).
@@ -1679,10 +1690,14 @@ export function useTerminal(options: UseTerminalOptions) {
     if (!terminal || !fitAddonRef.current) return;
     // Re-checked at fire time (the debounce is 150ms of drift): a parked
     // terminal must not reshape a grid it is not showing, and a replay that
-    // started meanwhile must not be raced. That replay sends a resize only if
-    // its fit changes the grid, so the divergence is deferred to its settle.
-    if (scrollbackPendingRef.current || isTerminalParked(sessionId)) {
-      if (scrollbackPendingRef.current) ptyEchoRecheckOwedRef.current = true;
+    // started meanwhile must not be raced. Neither sends a resize of its own
+    // (the reveal reloads with skipResize), so the divergence is deferred to
+    // the next settle, as the echo-time skips are.
+    const parked = isTerminalParked(sessionId);
+    if (scrollbackPendingRef.current || parked) {
+      const reason: PtyEchoSkipReason = parked ? 'parked' : 'replay-in-flight';
+      if (isPtyEchoDeferredToReplaySettle(reason)) ptyEchoRecheckOwedRef.current = true;
+      traceTerminalRenderer(sessionId, 'echo-reassert-deferred', { reason });
       return;
     }
     // Re-fit first: the container may have moved during the debounce, and our

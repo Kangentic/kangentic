@@ -207,14 +207,16 @@ describe('isPtyEchoDeferredToReplaySettle', () => {
   // was in flight, was skipped as replay-in-flight, and the replay settled
   // without sending a resize (its fit changed nothing on this side), so the PTY
   // stayed at the rogue grid. A replay-in-flight skip is only safe if the
-  // settle judges it again. Every other skip either needs no heal (in-sync),
-  // must not heal (the holds, parked, the cap), or heals by itself (the pending
-  // own resize carries this terminal's dims).
+  // settle judges it again. A parked skip is the same case on the reveal: the
+  // reveal reload sends no resize of its own, so its settle must judge the echo
+  // again (a settle while still parked skips as parked once more). Every other
+  // skip either needs no heal (in-sync), must not heal (the holds, the cap), or
+  // heals by itself (the pending own resize carries this terminal's dims).
   const expectedDeferral: Record<PtyEchoSkipReason, boolean> = {
     'in-sync': false,
     'foreign-hold': false,
     'refused-hold': false,
-    parked: false,
+    parked: true,
     'replay-in-flight': true,
     'own-resize-pending': false,
     'attempt-cap': false,

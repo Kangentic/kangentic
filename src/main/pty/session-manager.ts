@@ -887,7 +887,7 @@ export class SessionManager extends EventEmitter {
         if (event.events && event.events.length > 0) this.telemetry.ingestEvents(event.sessionId, event.events);
         return;
       case 'trace':
-        recordTerminalTrace(event.sessionId, event.event, event.detail, event.ts);
+        recordTerminalTrace(event.sessionId, event.event, event.detail, event.ts, 'pty-host');
         return;
       case 'exit':
       case 'rawData':
