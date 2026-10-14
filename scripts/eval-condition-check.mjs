@@ -537,13 +537,15 @@ async function build(options) {
  * design of only Text match rows once, in code. Appends one record per judgment.
  */
 async function run(options) {
+  // First, before any file is read: the run is manual only, so it refuses under CI even when every
+  // design is a Text match that would spend nothing.
+  refuseIfAutomated();
   const cases = JSON.parse(fs.readFileSync(options.cases, 'utf8'));
   const labels = JSON.parse(fs.readFileSync(options.expect, 'utf8'));
   const designs = JSON.parse(fs.readFileSync(options.designs, 'utf8')).filter((design) => options.only.length === 0 || options.only.includes(design.name));
   for (const design of designs) assertDesignRows(design);
   const asksAgent = designs.some((design) => design.rows.some(hasConditionRow));
   if (asksAgent) {
-    refuseIfAutomated();
     if (options.arms.length === 0) throw new Error('A design has a condition the Automation agent answers: pass --arms model:effort,...');
     // Node will not start a .cmd or .bat without a shell, and a shell drops the empty `--tools ''`.
     if (process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(options.cli)) {
