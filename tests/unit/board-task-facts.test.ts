@@ -145,6 +145,39 @@ describe('BOARD_TASK_FACTS_SQL (real DB)', () => {
     expect(facts.tokens).toBe(33 + 6 + 8);
   });
 
+  it('takes a lineage\'s tokens from its latest leg that reported tokens, in both readers', () => {
+    const taskId = 'task-null-leg';
+    insertTask(taskId);
+    insertSession({ id: 'leg-1', taskId, agentSessionId: 'main', startedAt: '2026-10-12T09:00:00.000Z', costUsd: 1, inputTokens: 10, outputTokens: 1 });
+    insertSession({ id: 'leg-2', taskId, agentSessionId: 'main', startedAt: '2026-10-12T10:00:00.000Z', costUsd: 2, inputTokens: 20, outputTokens: 2 });
+    // The newest leg reported a cost but no tokens: no reading, so leg-2's stands.
+    insertSession({ id: 'leg-3', taskId, agentSessionId: 'main', startedAt: '2026-10-12T11:00:00.000Z', costUsd: 3, inputTokens: null, outputTokens: null });
+
+    const facts = factsFor(taskId);
+    const summary = new SessionRepository(db).getSummaryForTask(taskId);
+    if (!summary) throw new Error('no summary for the task');
+
+    expect(facts.tokens).toBe(22);
+    expect(summary.totalInputTokens).toBe(20);
+    expect(summary.totalOutputTokens).toBe(2);
+  });
+
+  it('keeps a task whose costed rows report no tokens in the summary, at zero, where the facts read null', () => {
+    const taskId = 'task-no-tokens';
+    insertTask(taskId);
+    insertSession({ id: 'costed', taskId, agentSessionId: 'main', startedAt: '2026-10-12T09:00:00.000Z', costUsd: 1.5, durationMs: 60_000 });
+
+    const repository = new SessionRepository(db);
+    const summary = repository.getSummaryForTask(taskId);
+    if (!summary) throw new Error('no summary for the task');
+    expect(summary.totalCostUsd).toBe(1.5);
+    expect(summary.totalInputTokens).toBe(0);
+    expect(summary.totalOutputTokens).toBe(0);
+    expect(repository.listAllSummaries()[taskId]).toBeDefined();
+
+    expect(factsFor(taskId).tokens).toBeNull();
+  });
+
   it('reads null, not zero, for a task with no recorded cost, duration or tokens', () => {
     insertTask('task-empty');
     insertSession({ id: 'empty', taskId: 'task-empty', startedAt: '2026-10-12T09:00:00.000Z' });

@@ -5,10 +5,15 @@
  * Covers: the header strip and its status, the Summary / Usage / Description
  * tabs and their keyboard, a failed report read, the summary states and when the
  * last message is read, View conversation, the Route, Commits and Files changed
- * cards, the Runs table (null-aware totals, repeat columns) and its per-tool
+ * cards, the Runs table (its Total row, repeat columns) and its per-tool
  * popover (which fetches nothing), the Models and tokens card (ledger and
  * fallback), Background calls, the Completed Tasks dialog's Agent runtime
  * column, and the Done column's section.
+ *
+ * Every Total row reads `report.totals`, which main computes
+ * (`assembleTaskReport`). A report seeded here carries totals written by hand,
+ * so these tests pin how a total is shown (a null as a dash); the arithmetic,
+ * such as a shared call counting once, is pinned in task-report-assemble.test.ts.
  *
  * "Was never called" checks wrap the bridge method with `recordBridgeCalls` and
  * read the recorded arguments; each is paired with a state that does call it.
@@ -247,6 +252,15 @@ function reportRun(
   };
 }
 
+/** `fullReport`'s Total rows, as main computes them from its runs, ledger and calls. */
+const FULL_REPORT_TOTALS = {
+  // The three runs: 1.85 + 24.19 + 16.74, and 722,000 + 3,900,000 + 1,415,000 ms.
+  runs: { runCount: 3, runtimeMs: 6_037_000, costUsd: 42.78, toolCallCount: 538, compactionCount: 1 },
+  models: { turns: 248, freshInputTokens: 524, cacheWriteTokens: 1_187_000, cacheReadTokens: 78_240_000, outputTokens: 266_900 },
+  // The title, call-1 once (it answered two automations), and call-2.
+  backgroundCalls: { durationMs: 37_500, costUsd: 0.007, tokens: 25_900 },
+};
+
 /** A report in #797's shape: a route with a repeat column, two conversations, the ledger, and fired calls. */
 function fullReport(overrides: Record<string, unknown> = {}) {
   const summary = {
@@ -303,6 +317,7 @@ function fullReport(overrides: Record<string, unknown> = {}) {
       { callId: 'call-1', job: 'condition_check', column: EXECUTING, automationName: 'On to Code Review', automationType: 'move_to_column', condition: 'The work is finished.', outcome: 'skipped', reason: 'The reply still lists findings to apply.', startedAt: '2026-10-13T04:10:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 5_100, costUsd: 0.004, tokens: 14_800 },
       { callId: 'call-2', job: 'condition_check', column: REVIEW, automationName: 'On to Testing', automationType: 'move_to_column', condition: 'The verdict reads Ready.', outcome: 'error', reason: 'The Automation agent could not check the condition: timed out', startedAt: '2026-10-13T04:37:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 30_000, costUsd: 0.002, tokens: 9_000 },
     ],
+    totals: FULL_REPORT_TOTALS,
     knowledge: {
       commits: [{ sha: 'f9a8d40aabbccdd', subject: 'fix(terminal): drop the blank bottom strip', committedAt: '2026-10-13T05:03:00.000Z' }],
       commitCount: 1,
@@ -711,13 +726,17 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('Background calls recorded before the call ledger total to dashes, not zeros', async () => {
+  test('Background calls show a total no call reported as a dash, not a zero', async () => {
     const unrecorded = (name: string) => ({
       callId: null, job: 'condition_check', column: EXECUTING, automationName: name, automationType: 'move_to_column', condition: null,
       outcome: 'ran', reason: null,
       startedAt: '2026-10-13T04:10:00.000Z', model: null, effort: null, durationMs: null, costUsd: null, tokens: null,
     });
-    const report = fullReport({ backgroundCalls: [unrecorded('Apply findings'), unrecorded('On to Code Review')] });
+    // Calls recorded before the call ledger carry no figures, so main totals each to null.
+    const report = fullReport({
+      backgroundCalls: [unrecorded('Apply findings'), unrecorded('On to Code Review')],
+      totals: { ...FULL_REPORT_TOTALS, backgroundCalls: { durationMs: null, costUsd: null, tokens: null } },
+    });
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
     try {
       await openCompletedTask(page);
@@ -782,6 +801,7 @@ test.describe('Completed task view', () => {
           reportRun('leg-1', '2026-10-13T03:04:00.000Z', 1.85, 722_000, 23, [PLANNING, EXECUTING, PLANNING]),
         ],
       }],
+      totals: { ...FULL_REPORT_TOTALS, runs: { runCount: 1, runtimeMs: 722_000, costUsd: 1.85, toolCallCount: 23, compactionCount: 0 } },
     });
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
     try {
@@ -795,7 +815,7 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('Runs totals are null-aware: runs with no cost or runtime total to dashes, and a missing figure never zeroes the rest', async () => {
+  test('the Runs Total shows a total no run reported as a dash, and a reported one formatted', async () => {
     const onlyUnrecorded = fullReport({
       conversations: [{
         conversationId: '0407afe2-1111-2222-3333-444444444444', isolatedColumn: null, runs: [
@@ -803,6 +823,7 @@ test.describe('Completed task view', () => {
           reportRun('leg-2', '2026-10-13T03:18:00.000Z', null, null, 241, [PLANNING]),
         ],
       }],
+      totals: { ...FULL_REPORT_TOTALS, runs: { runCount: 2, runtimeMs: null, costUsd: null, toolCallCount: 264, compactionCount: 0 } },
     });
     const unrecorded = await launchWithState(makePreConfig({ withSummary: true, report: onlyUnrecorded }));
     try {
@@ -826,6 +847,8 @@ test.describe('Completed task view', () => {
           reportRun('leg-2', '2026-10-13T03:18:00.000Z', null, null, 241, [PLANNING]),
         ],
       }],
+      // Main's total for these runs: the one reported runtime and cost, never zeroed by the other.
+      totals: { ...FULL_REPORT_TOTALS, runs: { runCount: 2, runtimeMs: 722_000, costUsd: 1.85, toolCallCount: 264, compactionCount: 0 } },
     });
     const partial = await launchWithState(makePreConfig({ withSummary: true, report: onePartial }));
     try {
@@ -921,7 +944,35 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('Background calls lists every check with its outcome and reason, and counts a shared call once', async () => {
+  test('the Usage Total rows show report.totals, not a sum of the rows above them', async () => {
+    // These totals are deliberately NOT the sum of the rows `fullReport` seeds (the rows sum to
+    // $42.78 and 6,037,000 ms of runtime, 248 turns, and 40.7k background tokens in 42.6s), so
+    // the test proves the cards read `report.totals`. A card that summed its rows would show those.
+    const report = fullReport({
+      totals: {
+        runs: { runCount: 3, runtimeMs: 3_600_000, costUsd: 99.5, toolCallCount: 538, compactionCount: 1 },
+        models: { turns: 999, freshInputTokens: 524, cacheWriteTokens: 1_187_000, cacheReadTokens: 78_240_000, outputTokens: 266_900 },
+        backgroundCalls: { durationMs: 61_000, costUsd: 0.5, tokens: 77_000 },
+      },
+    });
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      // Runs Total cells: label, Compactions (one run has some), Runtime, Cost, Tool calls.
+      const runsTotal = page.locator('[data-testid="completed-runs"] [data-testid="completed-runs-total"] td');
+      await expect(runsTotal.nth(2)).toHaveText('1h');
+      await expect(runsTotal.nth(3)).toHaveText('$99.50');
+      // Models Total cells: label, Turns, then the four token kinds.
+      const modelsTotal = page.locator('[data-testid="completed-models"] [data-testid="completed-models-total"] td');
+      await expect(modelsTotal.nth(1)).toHaveText('999');
+      await expect(page.locator('[data-testid="completed-background-calls-total"] td')).toHaveText(['Total', '1m 1s', '$0.50', '77k']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Background calls lists every check with its outcome and reason, and shows the report\'s total', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
     try {
       await openCompletedTask(page);
@@ -946,7 +997,7 @@ test.describe('Completed task view', () => {
       await expect(outcomes.nth(2)).toHaveText('Error');
       await expect(outcomes.nth(2)).toHaveAttribute('data-outcome', 'error');
       await expect(outcomes.nth(2)).toHaveAttribute('title', 'Error: The Automation agent could not check the condition: timed out');
-      // 2.1k + 14.8k + 9k, the shared call once.
+      // The report's total, 25,900 tokens: 2.1k + 14.8k + 9k, the shared call once.
       await expect(card.locator('[data-testid="completed-background-calls-total"]')).toContainText('25.9k');
       await expect(card.locator('[data-testid="completed-background-calls-toggle"]')).toHaveCount(0);
     } finally {
@@ -960,7 +1011,11 @@ test.describe('Completed task view', () => {
       automationType: 'notify', condition: null, outcome: 'skipped', reason: null, startedAt: `2026-10-13T04:${String(10 + index).padStart(2, '0')}:00.000Z`,
       model: 'Haiku 5.5', effort: 'low', durationMs: 4_000, costUsd: 0.003, tokens: 13_000,
     });
-    const report = fullReport({ backgroundCalls: Array.from({ length: 12 }, (_, index) => call(index)) });
+    const report = fullReport({
+      backgroundCalls: Array.from({ length: 12 }, (_, index) => call(index)),
+      // Twelve distinct calls of 4,000 ms, $0.003 and 13,000 tokens each.
+      totals: { ...FULL_REPORT_TOTALS, backgroundCalls: { durationMs: 48_000, costUsd: 0.036, tokens: 156_000 } },
+    });
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
     try {
       await openCompletedTask(page);

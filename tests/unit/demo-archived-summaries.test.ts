@@ -123,6 +123,11 @@ describe('demo archived task reports', () => {
         runs: Array<{ agent: string; effort: string | null; permissionMode: string | null; costUsd: number; runtimeMs: number; toolCallCount: number; model: string | null }>;
       }>;
       modelFallback: Array<{ model: string; inputWithCacheTokens: number; outputTokens: number }>;
+      totals: {
+        runs: { runCount: number; runtimeMs: number | null; costUsd: number | null; toolCallCount: number; compactionCount: number };
+        models: unknown;
+        backgroundCalls: { durationMs: number | null; costUsd: number | null; tokens: number | null };
+      };
       summaryState: { kind: string };
     };
   }
@@ -209,6 +214,12 @@ describe('demo archived task reports', () => {
       expect(report.modelFallback, summary.taskId).toEqual([
         { model: summary.modelDisplayName, inputWithCacheTokens: summary.inputTokens, outputTokens: summary.outputTokens },
       ]);
+      // The Usage tab's Total rows read the report's totals, which are this one run's.
+      expect(report.totals, summary.taskId).toEqual({
+        runs: { runCount: 1, runtimeMs: summary.durationMs, costUsd: summary.costUsd, toolCallCount, compactionCount: 0 },
+        models: null,
+        backgroundCalls: { durationMs: null, costUsd: null, tokens: null },
+      });
       // Summaries are on in the sample install and none is written (no agent is chosen to write
       // one), so main reports pending and the card names what is missing. The runs record no
       // closing message, so the card shows none rather than an authored one.

@@ -14,9 +14,11 @@ import type {
   PermissionMode,
   TaskReport,
   TaskReportBackgroundCall,
+  TaskReportBackgroundCallsTotal,
   TaskReportCallOutcome,
   TaskReportConversation,
   TaskReportModelFallback,
+  TaskReportModelsTotal,
   TaskReportModelUsage,
   TaskReportRun,
 } from '../../../../../shared/types';
@@ -69,15 +71,15 @@ function ColumnGrid({ labelColumns, dataColumns }: { labelColumns: number; dataC
   );
 }
 
+/** Every total comes computed with the report (`assembleTaskReport`); the cards only format them. */
 export function UsageTab({ report }: { report: TaskReport }) {
-  const runCount = report.conversations.reduce((sum, conversation) => sum + conversation.runs.length, 0);
   return (
     <div className="flex flex-col gap-5">
-      {runCount > 0
+      {report.totals.runs.runCount > 0
         ? <RunsCard report={report} />
         : <div className="py-8 text-center text-sm text-fg-disabled" data-testid="completed-no-runs">No agent runs on record</div>}
-      <ModelsCard models={report.models} fallback={report.modelFallback} />
-      {report.backgroundCalls.length > 0 && <BackgroundCallsCard calls={report.backgroundCalls} />}
+      <ModelsCard models={report.models} total={report.totals.models} fallback={report.modelFallback} />
+      {report.backgroundCalls.length > 0 && <BackgroundCallsCard calls={report.backgroundCalls} total={report.totals.backgroundCalls} />}
     </div>
   );
 }
@@ -92,15 +94,6 @@ function usePermissionLabel(): (agent: string, mode: string | null) => string | 
   };
 }
 
-/** The sum of the values that were reported, or null when none was. */
-function sumReported(values: ReadonlyArray<number | null>): number | null {
-  let total: number | null = null;
-  for (const value of values) {
-    if (value !== null) total = (total ?? 0) + value;
-  }
-  return total;
-}
-
 function conversationLabel(conversation: TaskReportConversation): string {
   return conversation.isolatedColumn ? `${conversation.isolatedColumn.name} conversation` : 'Main conversation';
 }
@@ -110,10 +103,8 @@ function RunsCard({ report }: { report: TaskReport }) {
   const runs = report.conversations.flatMap((conversation) => conversation.runs);
   const showColumn = runs.some((run) => run.columns.length > 0);
   const showCompactions = runs.some((run) => run.compactionCount > 0);
-  // A field no run reported totals to a dash, never a measured zero.
-  const totalRuntimeMs = sumReported(runs.map((run) => run.runtimeMs));
-  const totalCostUsd = sumReported(runs.map((run) => run.costUsd));
-  const totalToolCalls = runs.reduce((sum, run) => sum + run.toolCallCount, 0);
+  // A field no run reported totals to null, shown as a dash, never a measured zero.
+  const total = report.totals.runs;
   // Started, Model, Effort, Permissions, Runtime, Cost and Tool calls always show.
   const columnCount = 7 + (showColumn ? 1 : 0) + (showCompactions ? 1 : 0);
   // The Total's label spans every column before the first number.
@@ -159,11 +150,11 @@ function RunsCard({ report }: { report: TaskReport }) {
             ))}
             <tr data-testid="completed-runs-total">
               <td colSpan={totalLabelSpan} className={cellClass('total', 'left', true)}>Total</td>
-              {showCompactions && <td className={cellClass('total', 'right')}>{runs.reduce((sum, run) => sum + run.compactionCount, 0)}</td>}
-              <td className={cellClass('total', 'right')}>{totalRuntimeMs === null ? <Dash /> : formatSpan(totalRuntimeMs)}</td>
-              <td className={cellClass('total', 'right')}>{totalCostUsd === null ? <Dash /> : formatCost(totalCostUsd)}</td>
+              {showCompactions && <td className={cellClass('total', 'right')}>{total.compactionCount}</td>}
+              <td className={cellClass('total', 'right')}>{total.runtimeMs === null ? <Dash /> : formatSpan(total.runtimeMs)}</td>
+              <td className={cellClass('total', 'right')}>{total.costUsd === null ? <Dash /> : formatCost(total.costUsd)}</td>
               <td className={cellClass('total', 'right')}>
-                <ToolCallsPill count={totalToolCalls} rows={report.summary?.toolBreakdown ?? []} testId="completed-total-tool-calls" />
+                <ToolCallsPill count={total.toolCallCount} rows={report.summary?.toolBreakdown ?? []} testId="completed-total-tool-calls" />
               </td>
             </tr>
           </tbody>
@@ -269,23 +260,17 @@ function Dash() {
  * (indexing off, or the index restarting) or holds nothing for the task, each
  * model's input and output from the session totals stand in.
  */
-function ModelsCard({ models, fallback }: { models: TaskReportModelUsage[] | null; fallback: TaskReportModelFallback[] }) {
-  if (models && models.length > 0) return <LedgerModelsCard models={models} />;
+function ModelsCard({ models, total, fallback }: {
+  models: TaskReportModelUsage[] | null;
+  total: TaskReportModelsTotal | null;
+  fallback: TaskReportModelFallback[];
+}) {
+  if (models && models.length > 0 && total) return <LedgerModelsCard models={models} total={total} />;
   if (fallback.length > 0) return <FallbackModelsCard fallback={fallback} />;
   return null;
 }
 
-function LedgerModelsCard({ models }: { models: TaskReportModelUsage[] }) {
-  const total = models.reduce(
-    (sum, row) => ({
-      turns: sum.turns + row.turns,
-      freshInputTokens: sum.freshInputTokens + row.freshInputTokens,
-      cacheWriteTokens: sum.cacheWriteTokens + row.cacheWriteTokens,
-      cacheReadTokens: sum.cacheReadTokens + row.cacheReadTokens,
-      outputTokens: sum.outputTokens + row.outputTokens,
-    }),
-    { turns: 0, freshInputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0 },
-  );
+function LedgerModelsCard({ models, total }: { models: TaskReportModelUsage[]; total: TaskReportModelsTotal }) {
   return (
     <ReportCard title="Models and tokens" testId="completed-models">
       <div className={AUTO_TABLE_WRAPPER}>
@@ -381,31 +366,15 @@ const JOB_CALLS: Record<BackgroundCallJob, { label: string; icon: ReactElement }
 /**
  * One row per automation a Condition check was asked about, with its Outcome
  * (ran, skipped or error), and each call with no automation behind it (a
- * title). One check answers every automation of its group, so the Total counts
- * a call once, however many rows it answered. A check no run names, such as a
+ * title). One check answers every automation of its group, so the Total
+ * (`TaskReport.totals`) counts a call once, however many rows it answered, and
+ * a field no call reported totals to a dash. A check no run names, such as a
  * failed check repeated later in the same visit, has no row.
  */
-function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
+function BackgroundCallsCard({ calls, total }: { calls: TaskReportBackgroundCall[]; total: TaskReportBackgroundCallsTotal }) {
   const [showAll, setShowAll] = useState(false);
   const shown = showAll ? calls : calls.slice(0, BACKGROUND_CALLS_SHOWN);
   const hidden = calls.length - BACKGROUND_CALLS_SHOWN;
-
-  // A run recorded before calls were (the `background_calls` ledger) carries no
-  // figures, so a field no row has totals to a dash, never a measured zero.
-  const counted = new Set<string>();
-  let totalDurationMs: number | null = null;
-  let totalCostUsd: number | null = null;
-  let totalTokens: number | null = null;
-  const add = (total: number | null, value: number | null): number | null => (value === null ? total : (total ?? 0) + value);
-  for (const call of calls) {
-    if (call.callId !== null) {
-      if (counted.has(call.callId)) continue;
-      counted.add(call.callId);
-    }
-    totalDurationMs = add(totalDurationMs, call.durationMs);
-    totalCostUsd = add(totalCostUsd, call.costUsd);
-    totalTokens = add(totalTokens, call.tokens);
-  }
 
   return (
     <ReportCard
@@ -451,9 +420,9 @@ function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
             ))}
             <tr data-testid="completed-background-calls-total">
               <td colSpan={6} className={cellClass('total', 'left', true)}>Total</td>
-              <td className={cellClass('total', 'right')}>{totalDurationMs === null ? <Dash /> : formatCallDuration(totalDurationMs)}</td>
-              <td className={cellClass('total', 'right')}>{totalCostUsd === null ? <Dash /> : formatCost(totalCostUsd)}</td>
-              <td className={cellClass('total', 'right')}>{totalTokens === null ? <Dash /> : formatTokenCount(totalTokens)}</td>
+              <td className={cellClass('total', 'right')}>{total.durationMs === null ? <Dash /> : formatCallDuration(total.durationMs)}</td>
+              <td className={cellClass('total', 'right')}>{total.costUsd === null ? <Dash /> : formatCost(total.costUsd)}</td>
+              <td className={cellClass('total', 'right')}>{total.tokens === null ? <Dash /> : formatTokenCount(total.tokens)}</td>
             </tr>
           </tbody>
         </table>

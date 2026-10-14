@@ -1586,6 +1586,44 @@ export interface TaskReportBackgroundCall {
   tokens: number | null;
 }
 
+/** The Runs table's Total row, over every run of every conversation. */
+export interface TaskReportRunsTotal {
+  runCount: number;
+  /** Null, never zero, when no run reported one; a run that did not leaves the rest. */
+  runtimeMs: number | null;
+  costUsd: number | null;
+  toolCallCount: number;
+  compactionCount: number;
+}
+
+/** The Models and tokens card's Total row: the ledger's rows added up. */
+export interface TaskReportModelsTotal {
+  turns: number;
+  freshInputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * The Background calls card's Total. A call counts once, however many
+ * automations it answered. Each figure is null, never zero, when no call
+ * reported it (a run recorded before the call ledger carries none).
+ */
+export interface TaskReportBackgroundCallsTotal {
+  durationMs: number | null;
+  costUsd: number | null;
+  tokens: number | null;
+}
+
+/** The Total rows of the Usage tab's cards. */
+export interface TaskReportTotals {
+  runs: TaskReportRunsTotal;
+  /** Null when the turn ledger cannot be read, as `TaskReport.models` is. */
+  models: TaskReportModelsTotal | null;
+  backgroundCalls: TaskReportBackgroundCallsTotal;
+}
+
 /** Whether a task summary is written, and why not when it is not. */
 export type TaskReportSummaryState =
   | { kind: 'written'; text: string }
@@ -1621,6 +1659,7 @@ export interface TaskReport {
   models: TaskReportModelUsage[] | null;
   modelFallback: TaskReportModelFallback[];
   backgroundCalls: TaskReportBackgroundCall[];
+  totals: TaskReportTotals;
   /** Null when the index cannot be read. */
   knowledge: TaskReportKnowledge | null;
   summaryState: TaskReportSummaryState;

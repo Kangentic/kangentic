@@ -54,7 +54,7 @@ async function readFromIndex<Result>(read: () => Promise<Result>): Promise<Resul
 export async function readTaskReport(context: IpcContext, projectId: string, taskId: string): Promise<TaskReport> {
   const repos = getProjectRepos(context, projectId);
   const sessionRepo = new SessionRepository(getProjectDb(projectId));
-  const sessions = sessionRepo.listForTaskNewestFirst(taskId);
+  const sessions = sessionRepo.listTaskReportRecords(taskId);
   const automationRuns = repos.automationRuns.listForTask(taskId, AUTOMATION_RUNS_READ);
   const conditionsByAutomationId = new Map<string, string>();
   for (const automation of repos.automations.listAll()) {
@@ -111,7 +111,7 @@ export async function readTaskLastMessage(projectId: string, taskId: string): Pr
   // An empty id would open a database file named for nothing.
   if (!projectId) return null;
   const sessionRepo = new SessionRepository(getProjectDb(projectId));
-  const newest = sessionRepo.listForTaskNewestFirst(taskId).find((record) => record.agent_session_id !== null);
+  const newest = sessionRepo.getLatestAgentSessionForTask(taskId);
   if (!newest?.agent_session_id) return null;
   try {
     const reply = await retrievalClient.call(
