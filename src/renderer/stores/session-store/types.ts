@@ -92,8 +92,8 @@ export interface CoreSessionSlice {
    *  search palette when a hit is selected. */
   scrollToEventKey: string | null;
   /** The Kangentic session id whose conversation viewer should be open. Set by the
-   *  search palette (conversation hit), the session-summary "View conversation"
-   *  button, and the task-detail kebab. The conversation window bridge opens/focuses
+   *  search palette (conversation hit), the completed task view's "View
+   *  conversation" button, and the task-detail kebab. The conversation window bridge opens/focuses
    *  a window for it, and mirrors the window's close back to null. Mirrors
    *  `detailTaskId` for the task-detail bridge. */
   conversationSessionId: string | null;
@@ -110,7 +110,7 @@ export interface CoreSessionSlice {
    *  scroll to once the destination project has loaded. Kept separate because the
    *  project switch resets `scrollToTurnUuid`, which would otherwise drop it. */
   _pendingScrollToTurnUuid: string | null;
-  /** One-shot: captured at `TaskDetailHeader.openTaskConversation` click time
+  /** One-shot: captured at `openTaskConversation` (`open-task-conversation.ts`) click time
    *  from the task's terminal (if any) - the visible scrollback lines and
    *  whether it was at the live tail. `ConversationWindow` matches this to a
    *  transcript turn (`tui-anchor.ts`) so the viewer opens centered there

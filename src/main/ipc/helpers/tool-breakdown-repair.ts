@@ -12,7 +12,7 @@ import type { ToolBreakdownReplayResult } from '../../activity-engine/tool-break
  * cancelled parallel sibling) shifted that tool's queue for the rest of the
  * session, and every later call reported the gap since the previous call as
  * its duration. Every `tool_breakdown` written before the fix carries those
- * numbers into the archived Session Summary.
+ * numbers into the completed task view.
  *
  * Each record's own event log still exists under
  * `<project>/.kangentic/sessions/<record id>/events.jsonl`, so `replay`
