@@ -4,7 +4,7 @@ import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
 import { PreSpawnContextBar } from '../../terminal/PreSpawnContextBar';
 import { LaunchOverlay } from '../../LaunchOverlay';
-import { SessionSummaryPanel } from '../SessionSummaryPanel';
+import { CompletedTaskView } from './completed/CompletedTaskView';
 import { BrowserPane } from '../../browser/BrowserPane';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { LabelPills } from '../../Pill';
@@ -324,23 +324,14 @@ export function TaskDetailBody({
     </div>
   );
 
-  // Archived task: description + attachments as scrollable body, summary bar as footer
+  // Completed task: what it took, then its summary, usage and description as tabs.
   if (isArchived) {
     return (
-      <>
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          {hasDescriptionContent ? (
-            <div className="px-4 py-4 space-y-3 max-h-[40vh] overflow-y-auto">
-              {descriptionContent}
-            </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-fg-disabled text-sm p-8 h-full">
-              No description
-            </div>
-          )}
-          <SessionSummaryPanel taskId={task.id} />
-        </div>
-      </>
+      <CompletedTaskView
+        task={task}
+        projectId={paneProjectId}
+        description={hasDescriptionContent ? descriptionContent : null}
+      />
     );
   }
 

@@ -1,0 +1,1217 @@
+/**
+ * UI tests for the completed task view (an archived task's window) and the
+ * Done column's completed section.
+ *
+ * Covers: the header strip and its status, the Summary / Usage / Description
+ * tabs and their keyboard, a failed report read, the summary states and when the
+ * last message is read, View conversation, the Route, Commits and Files changed
+ * cards, the Runs table (null-aware totals, repeat columns) and its per-tool
+ * popover (which fetches nothing), the Models and tokens card (ledger and
+ * fallback), Background calls, the Completed Tasks dialog's Agent runtime
+ * column, and the Done column's section.
+ *
+ * "Was never called" checks wrap the bridge method with `recordBridgeCalls` and
+ * read the recorded arguments; each is paired with a state that does call it.
+ */
+import { test, expect } from '@playwright/test';
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
+import path from 'node:path';
+import { waitForViteReady, gotoVite } from './helpers';
+
+// Each test launches its own browser, so the file fans out across UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
+const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
+const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
+
+async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
+  await waitForViteReady(VITE_URL);
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const page = await context.newPage();
+
+  await page.addInitScript({ path: MOCK_SCRIPT });
+  await page.addInitScript(preConfigScript);
+
+  await gotoVite(page, VITE_URL);
+  await page.waitForLoadState('load');
+  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+
+  return { browser, page };
+}
+
+const PROJECT_ID = 'proj-completed-test';
+const TASK_ID = 'task-completed-1';
+const SESSION_ID = 'abc12345-6789-4def-abcd-000000000001';
+/** The app window's minimum width (`minWidth` in src/main/index.ts), where the strip is tightest. */
+const NARROW_WINDOW_WIDTH = 900;
+
+interface ToolRow {
+  toolName: string;
+  callCount: number;
+  totalDurationMs: number;
+  interruptedCount: number;
+  waitedCount?: number;
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  resultTokens?: number;
+}
+
+/** Build a pre-configure script with an archived task and optional summary, report and last message. */
+function makePreConfig(options: {
+  withSummary: boolean;
+  exitCode?: number | null;
+  extraArchivedTasks?: number;
+  compactions?: number;
+  toolBreakdown?: ToolRow[];
+  /** A full TaskReport to serve instead of the one the mock derives from the summary. */
+  report?: object;
+  /** The written task summary; omitted reads as summaries off. */
+  writtenSummary?: string;
+  lastMessage?: { text: string; writtenAt: string | null };
+  prNumber?: number;
+  /** Seeds `config.knowledgeGraph`; unset leaves the Knowledge Graph off, which reads as summaries off. */
+  knowledgeGraph?: Record<string, unknown>;
+  /** The task's past sessions as `transcripts.listSessions` serves them; unset reads as no history. */
+  transcriptSessions?: object[];
+}): string {
+  const exitCode = options.exitCode !== undefined ? options.exitCode : 0;
+  const summaryBlock = options.withSummary
+    ? `
+      state.summaryCache['${TASK_ID}'] = {
+        sessionId: '${SESSION_ID}',
+        totalCostUsd: 0.08,
+        totalInputTokens: 12500,
+        totalOutputTokens: 545,
+        modelDisplayName: 'Opus 4.6',
+        durationMs: 17000,
+        toolCallCount: 5,
+        compactionCount: ${options.compactions ?? 0},
+        linesAdded: 469,
+        linesRemoved: 181,
+        filesChanged: 18,
+        taskCreatedAt: '2026-03-13T15:40:00.000Z',
+        startedAt: '2026-03-13T15:44:00.000Z',
+        exitedAt: '2026-03-13T15:45:00.000Z',
+        exitCode: ${exitCode === null ? 'null' : exitCode},
+        toolBreakdown: ${JSON.stringify(options.toolBreakdown ?? [])},
+      };
+    `
+    : '';
+  const reportBlock = options.report ? `state.taskReportCache['${TASK_ID}'] = ${JSON.stringify(options.report)};` : '';
+  const lastMessageBlock = options.lastMessage ? `state.taskLastMessages['${TASK_ID}'] = ${JSON.stringify(options.lastMessage)};` : '';
+  const memoryBlock = options.writtenSummary !== undefined
+    ? `memoryTaskSummaries: { '${TASK_ID}': ${JSON.stringify(options.writtenSummary)} },`
+    : '';
+  const knowledgeGraphBlock = options.knowledgeGraph ? `state.config.knowledgeGraph = ${JSON.stringify(options.knowledgeGraph)};` : '';
+  const transcriptBlock = options.transcriptSessions
+    ? `transcriptSessionsByTask: { '${TASK_ID}': ${JSON.stringify(options.transcriptSessions)} },`
+    : '';
+
+  let extraTasksBlock = '';
+  for (let index = 0; index < (options.extraArchivedTasks ?? 0); index++) {
+    const extraId = `task-extra-${index}`;
+    extraTasksBlock += `
+      state.archivedTasks.push({
+        id: '${extraId}', title: 'Extra Task ${index + 1}', description: 'Description for extra task ${index + 1}',
+        swimlane_id: doneLane.id, position: ${index + 1}, agent: null, session_id: null, worktree_path: null,
+        branch_name: null, pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: null,
+        attachment_count: 0, archived_at: ts, created_at: ts, updated_at: ts,
+      });
+      state.summaryCache['${extraId}'] = {
+        sessionId: state.uuid(), totalCostUsd: ${(0.02 * (index + 1)).toFixed(2)},
+        totalInputTokens: ${1000 * (index + 1)}, totalOutputTokens: ${200 * (index + 1)},
+        modelDisplayName: 'Opus 4.6', durationMs: ${5000 * (index + 1)}, toolCallCount: ${index + 1},
+        compactionCount: 0, linesAdded: ${10 * (index + 1)}, linesRemoved: ${5 * (index + 1)},
+        filesChanged: ${index + 1}, taskCreatedAt: '2026-03-13T14:${String(50 + index).padStart(2, '0')}:00.000Z',
+        startedAt: '2026-03-13T15:00:00.000Z', exitedAt: '2026-03-13T15:${String(index + 1).padStart(2, '0')}:00.000Z',
+        exitCode: 0, toolBreakdown: [],
+      };
+    `;
+  }
+
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${PROJECT_ID}', name: 'Completed Test', path: '/mock/completed-test', github_url: null,
+        default_agent: 'claude', position: 0, last_opened: ts, created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (template, index) {
+        state.swimlanes.push({
+          id: state.uuid(), name: template.name, role: template.role, color: template.color, icon: template.icon,
+          is_archived: template.is_archived, is_ghost: template.is_ghost,
+          permission_strategy: template.permission_strategy ?? null, auto_spawn: template.auto_spawn ?? false,
+          auto_command: template.auto_command ?? null, plan_exit_target_id: null, position: index, created_at: ts,
+        });
+      });
+      var doneLane = state.swimlanes.find(function (lane) { return lane.role === 'done'; });
+      state.archivedTasks.push({
+        id: '${TASK_ID}', title: 'Completed Test Task', description: 'A task that has been completed',
+        swimlane_id: doneLane.id, position: 0, agent: null, session_id: null, worktree_path: null,
+        branch_name: null, pr_number: ${options.prNumber ?? 'null'},
+        pr_url: ${options.prNumber ? `'https://example.com/pull/${options.prNumber}'` : 'null'},
+        pr_state: ${options.prNumber ? "'merged'" : 'null'}, base_branch: null, use_worktree: null,
+        attachment_count: 0, archived_at: ts, created_at: ts, updated_at: ts,
+      });
+      ${summaryBlock}
+      ${reportBlock}
+      ${lastMessageBlock}
+      ${knowledgeGraphBlock}
+      ${extraTasksBlock}
+      return { currentProjectId: '${PROJECT_ID}', ${memoryBlock} ${transcriptBlock} };
+    });
+  `;
+}
+
+async function openCompletedTask(page: Page): Promise<void> {
+  await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('text=Completed Test Task').click();
+  await expect(page.locator('[data-testid="completed-task-view"]')).toBeVisible({ timeout: 5000 });
+}
+
+async function openUsageTab(page: Page): Promise<void> {
+  await page.getByRole('tab', { name: 'Usage' }).click();
+  await expect(page.locator('[data-testid="completed-panel-usage"]')).toBeVisible();
+}
+
+/**
+ * Wrap bridge methods (`'sessions.getTaskLastMessage'`) so each call's arguments
+ * are recorded on the page while the original still runs. Install it after the
+ * page loads and before the step under test: the renderer reads
+ * `window.electronAPI.<namespace>.<method>` at call time, so a late wrap is seen.
+ */
+async function recordBridgeCalls(page: Page, qualifiedNames: string[]): Promise<void> {
+  await page.evaluate((names) => {
+    const scope = window as unknown as {
+      electronAPI: Record<string, Record<string, (...args: unknown[]) => unknown>>;
+      __recordedBridgeCalls: Record<string, unknown[][]>;
+    };
+    scope.__recordedBridgeCalls = {};
+    for (const qualifiedName of names) {
+      const [namespace, method] = qualifiedName.split('.');
+      const original = scope.electronAPI[namespace][method];
+      scope.electronAPI[namespace][method] = (...args: unknown[]) => {
+        (scope.__recordedBridgeCalls[qualifiedName] ??= []).push(args);
+        return original.apply(scope.electronAPI[namespace], args);
+      };
+    }
+  }, qualifiedNames);
+}
+
+/** The arguments of every recorded call to one wrapped bridge method, oldest first. */
+async function bridgeCalls(page: Page, qualifiedName: string): Promise<unknown[][]> {
+  return page.evaluate(
+    (name) => (window as unknown as { __recordedBridgeCalls: Record<string, unknown[][]> }).__recordedBridgeCalls[name] ?? [],
+    qualifiedName,
+  );
+}
+
+/** Forget the recorded calls, keeping the wrappers installed. */
+async function resetBridgeCalls(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as { __recordedBridgeCalls: Record<string, unknown[][]> }).__recordedBridgeCalls = {};
+  });
+}
+
+/**
+ * Two animation frames: React has committed and flushed its passive effects for
+ * everything rendered so far. It is how a "was never called" check knows an
+ * effect that would have called has had its chance, without a timed wait.
+ */
+async function flushRenderer(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+}
+
+const COLUMN = (swimlaneId: string, name: string, color: string) => ({ swimlaneId, name, color, icon: null, role: null });
+const PLANNING = COLUMN('lane-planning', 'Planning', '#8b5cf6');
+const EXECUTING = COLUMN('lane-executing', 'Executing', '#3b82f6');
+const REVIEW = COLUMN('lane-review', 'Code Review', '#f59e0b');
+
+/** One run of a conversation. A null cost or runtime is a figure the run never recorded. */
+function reportRun(
+  recordId: string,
+  startedAt: string,
+  costUsd: number | null,
+  runtimeMs: number | null,
+  toolCallCount: number,
+  columns: object[],
+  extra: object = {},
+) {
+  return {
+    recordId, agent: 'claude', startedAt, exitCode: null as number | null, model: 'Opus 5.5', effort: 'xhigh', permissionMode: 'plan',
+    costUsd, runtimeMs, toolCallCount, compactionCount: 0, toolBreakdown: [], columns, ...extra,
+  };
+}
+
+/** A report in #797's shape: a route with a repeat column, two conversations, the ledger, and fired calls. */
+function fullReport(overrides: Record<string, unknown> = {}) {
+  const summary = {
+    sessionId: SESSION_ID, totalCostUsd: 47.58, totalInputTokens: 93_000_000, totalOutputTokens: 282_000,
+    modelDisplayName: 'Opus 5.5', durationMs: 7_020_000, toolCallCount: 630, compactionCount: 1,
+    linesAdded: 789, linesRemoved: 103, filesChanged: 13, taskCreatedAt: '2026-10-13T03:00:00.000Z',
+    startedAt: '2026-10-13T03:04:00.000Z', exitedAt: '2026-10-13T05:03:00.000Z', exitCode: 0,
+    toolBreakdown: [{ toolName: 'Read', callCount: 82, totalDurationMs: 13_100, interruptedCount: 0 }],
+  };
+  const run = reportRun;
+  return {
+    summary,
+    startedAt: '2026-10-13T03:04:00.000Z',
+    endedAt: '2026-10-13T05:03:00.000Z',
+    route: [
+      { ...PLANNING, totalMs: 1_200_000, visits: [{ startedAt: '2026-10-13T03:04:00.000Z', durationMs: 1_200_000 }] },
+      {
+        ...EXECUTING, totalMs: 3_600_000, visits: [
+          { startedAt: '2026-10-13T03:24:00.000Z', durationMs: 3_000_000 },
+          { startedAt: '2026-10-13T04:30:00.000Z', durationMs: 600_000 },
+          { startedAt: '2026-10-13T04:45:00.000Z', durationMs: 20_000 },
+        ],
+      },
+      { ...REVIEW, totalMs: 1_440_000, visits: [{ startedAt: '2026-10-13T04:14:00.000Z', durationMs: 1_440_000 }] },
+    ],
+    conversations: [
+      {
+        conversationId: '0407afe2-1111-2222-3333-444444444444', isolatedColumn: null, runs: [
+          run('leg-1', '2026-10-13T03:04:00.000Z', 1.85, 722_000, 23, [PLANNING]),
+          run('leg-2', '2026-10-13T03:18:00.000Z', 24.19, 3_900_000, 241, [PLANNING, EXECUTING], {
+            compactionCount: 1,
+            toolBreakdown: [
+              { toolName: 'Edit', callCount: 61, totalDurationMs: 8_900, interruptedCount: 0 },
+              { toolName: 'Grep', callCount: 38, totalDurationMs: 9_400, interruptedCount: 0 },
+            ],
+          }),
+        ],
+      },
+      {
+        conversationId: '096842a0-5555-6666-7777-888888888888', isolatedColumn: REVIEW, runs: [
+          run('review-1', '2026-10-13T04:14:00.000Z', 16.74, 1_415_000, 274, [REVIEW], { permissionMode: 'auto' }),
+        ],
+      },
+    ],
+    models: [
+      { model: 'Opus 5.5', subagent: null, turns: 237, freshInputTokens: 498, cacheWriteTokens: 984_000, cacheReadTokens: 76_600_000, outputTokens: 233_000 },
+      { model: 'Haiku 5.5', subagent: 'doc-auditor', turns: 11, freshInputTokens: 26, cacheWriteTokens: 203_000, cacheReadTokens: 1_640_000, outputTokens: 33_900 },
+    ],
+    modelFallback: [],
+    backgroundCalls: [
+      { callId: 'call-title', job: 'task_title', column: null, automationName: null, automationType: null, condition: null, startedAt: '2026-10-13T03:03:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 2_400, costUsd: 0.001, tokens: 2_100 },
+      { callId: 'call-1', job: 'condition_check', column: EXECUTING, automationName: 'Apply findings', automationType: 'send_message', condition: 'The final message lists findings.', startedAt: '2026-10-13T04:10:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 5_100, costUsd: 0.004, tokens: 14_800 },
+      // The same check fired a second automation: its call counts once in the Total.
+      { callId: 'call-1', job: 'condition_check', column: EXECUTING, automationName: 'On to Code Review', automationType: 'move_to_column', condition: 'The work is finished.', startedAt: '2026-10-13T04:10:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 5_100, costUsd: 0.004, tokens: 14_800 },
+    ],
+    knowledge: {
+      commits: [{ sha: 'f9a8d40aabbccdd', subject: 'fix(terminal): drop the blank bottom strip', committedAt: '2026-10-13T05:03:00.000Z' }],
+      commitCount: 1,
+      changedFiles: Array.from({ length: 10 }, (_, index) => `src/file-${index}.ts`),
+      changedFileCount: 10,
+    },
+    summaryState: { kind: 'written', text: 'Fixed the blank bottom strip.' },
+    ...overrides,
+  };
+}
+
+test.describe('Completed task view', () => {
+  test('the header strip reads the task and its status, and the Summary tab is selected', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
+    try {
+      await openCompletedTask(page);
+      const strip = page.locator('[data-testid="completed-header-strip"]');
+      await expect(strip.locator('[data-testid="completed-metric-started"]')).toContainText('Started');
+      await expect(strip.locator('[data-testid="completed-metric-ended"]')).toContainText('Ended');
+      await expect(strip.locator('[data-testid="completed-metric-elapsed"]')).toContainText('1m');
+      await expect(strip.locator('[data-testid="completed-metric-agent-runtime"]')).toContainText('17s');
+      await expect(strip.locator('[data-testid="completed-metric-changes"]')).toContainText('+469');
+      await expect(strip.locator('[data-testid="completed-metric-changes"]')).toContainText('-181');
+      await expect(strip.locator('[data-testid="completed-metric-changes"]')).toContainText('18 files');
+      await expect(strip.locator('[data-testid="completed-metric-pull-request"]')).toContainText('#550');
+      await expect(strip.locator('[data-testid="completed-metric-pull-request"]')).toContainText('merged');
+      await expect(strip.locator('[data-testid="completed-metric-cost"]')).toContainText('$0.08');
+      await expect(page.locator('[data-testid="completed-status"]')).toHaveAttribute('aria-label', 'Completed');
+      await expect(page.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
+   * Open the completed task at full width (a narrow board folds the Done
+   * column's list away), then narrow the page and wait for the strip to take the
+   * new width. The window gives up the room the page lost, so a bound the strip
+   * already met at full width would let a check run before the container query
+   * has reacted to anything.
+   */
+  async function narrowStrip(page: Page): Promise<Locator> {
+    await openCompletedTask(page);
+    const strip = page.locator('[data-testid="completed-header-strip"]');
+    const stripWidth = () => strip.evaluate((element) => element.getBoundingClientRect().width);
+    const widthBefore = await stripWidth();
+    await page.setViewportSize({ width: NARROW_WINDOW_WIDTH, height: 700 });
+    await expect.poll(stripWidth).toBeLessThan(Math.min(widthBefore, NARROW_WINDOW_WIDTH));
+    return strip;
+  }
+
+  test('at a narrow window the strip keeps every figure and leaves the moments to Elapsed', async () => {
+    // The guard for the overflow test below: it sets up the same narrow strip and
+    // fails loudly if the fixture, the shrink, or the metrics are not what that
+    // test assumes. Under 640px the strip drops Started and Ended and keeps the
+    // span in Elapsed's title.
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
+    try {
+      const strip = await narrowStrip(page);
+      await expect(strip.locator('[data-testid^="completed-metric-"]')).toHaveCount(7);
+      for (const key of ['elapsed', 'agent-runtime', 'changes', 'pull-request', 'cost']) {
+        await expect(strip.locator(`[data-testid="completed-metric-${key}"]`)).toBeVisible();
+      }
+      await expect(strip.locator('[data-testid="completed-metric-started"]')).toBeHidden();
+      await expect(strip.locator('[data-testid="completed-metric-ended"]')).toBeHidden();
+      await expect(strip.locator('[data-testid="completed-metric-elapsed"]')).toHaveAttribute('title', / to /);
+      await expect(page.locator('[data-testid="completed-status"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('at a narrow window the last metric and the status stay inside the strip', async () => {
+    // At a 900px page the task window scales to about 520px. Seven metrics and
+    // the status need about 720px, so before the strip dropped Started and Ended
+    // at that width, Cost and the status ended past its right edge and
+    // `overflow-hidden` clipped them.
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
+    try {
+      const strip = await narrowStrip(page);
+      // A row that cannot wrap and clips (`overflow-hidden`) keeps every metric
+      // on one line at any width, so line position proves nothing. What shows a
+      // metric or the status pushed past the edge is its right edge against the
+      // strip's own, which the clip leaves unchanged. A pixel of tolerance
+      // absorbs sub-pixel rounding between platforms.
+      const overflowOf = (selector: string) => strip.evaluate((stripElement, targetSelector) => {
+        const targets = Array.from(stripElement.querySelectorAll(targetSelector));
+        const lastTarget = targets[targets.length - 1];
+        return lastTarget
+          ? lastTarget.getBoundingClientRect().right - stripElement.getBoundingClientRect().right
+          : Number.NaN;
+      }, selector);
+      await expect.poll(() => overflowOf('[data-testid^="completed-metric-"]')).toBeLessThanOrEqual(1);
+      await expect.poll(() => overflowOf('[data-testid="completed-status"]')).toBeLessThanOrEqual(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a non-zero exit reads Exited with its code, and a null exit reads Completed', async () => {
+    const exited = await launchWithState(makePreConfig({ withSummary: true, exitCode: 1 }));
+    try {
+      await openCompletedTask(exited.page);
+      await expect(exited.page.locator('[data-testid="completed-status"]')).toHaveAttribute('aria-label', 'Exited (1)');
+    } finally {
+      await exited.browser.close();
+    }
+    const suspended = await launchWithState(makePreConfig({ withSummary: true, exitCode: null }));
+    try {
+      await openCompletedTask(suspended.page);
+      await expect(suspended.page.locator('[data-testid="completed-status"]')).toHaveAttribute('aria-label', 'Completed');
+    } finally {
+      await suspended.browser.close();
+    }
+  });
+
+  test('the arrow keys, Home and End move between tabs and select them', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
+    try {
+      await openCompletedTask(page);
+      const summaryTab = page.getByRole('tab', { name: 'Summary' });
+      await summaryTab.focus();
+      await page.keyboard.press('ArrowRight');
+      await expect(page.getByRole('tab', { name: 'Usage' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tab', { name: 'Usage' })).toBeFocused();
+      await expect(page.locator('[data-testid="completed-panel-usage"]')).toBeVisible();
+      await page.keyboard.press('End');
+      await expect(page.getByRole('tab', { name: 'Description' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('[data-testid="completed-panel-description"]')).toContainText('A task that has been completed');
+      await page.keyboard.press('ArrowRight');
+      await expect(summaryTab).toHaveAttribute('aria-selected', 'true');
+      await page.keyboard.press('ArrowLeft');
+      await expect(page.getByRole('tab', { name: 'Description' })).toHaveAttribute('aria-selected', 'true');
+      await page.keyboard.press('Home');
+      await expect(summaryTab).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tab', { name: 'Usage' })).toHaveAttribute('tabindex', '-1');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('with summaries off, the summary card says so, offers Settings, and shows the last message', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      lastMessage: { text: 'PR #552 is **merged** into main.', writtenAt: null },
+    }));
+    try {
+      await openCompletedTask(page);
+      await expect(page.locator('[data-testid="completed-summary-state-off"]')).toContainText('Task summaries are off');
+      await expect(page.locator('[data-testid="completed-summary-open-settings"]')).toBeVisible();
+      await expect(page.locator('[data-testid="completed-last-message"]')).toContainText('PR #552 is merged into main.');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('with summaries on and no agent chosen, the summary card names what is missing', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, knowledgeGraph: { enabled: true } }));
+    try {
+      await openCompletedTask(page);
+      const line = page.locator('[data-testid="completed-summary-state-pending"]');
+      await expect(line).toContainText(/Needs (an agent|a supported agent|a model)/);
+      await expect(line).not.toContainText('Summary pending');
+      await expect(page.locator('[data-testid="completed-summary-open-settings"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a written summary is shown, and the last message is never read', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      writtenSummary: 'Fixed the blank strip under the board.',
+      lastMessage: { text: 'Should not show', writtenAt: null },
+    }));
+    try {
+      await recordBridgeCalls(page, ['sessions.getTaskLastMessage']);
+      await openCompletedTask(page);
+      await expect(page.locator('[data-testid="completed-task-summary-text"]')).toHaveText('Fixed the blank strip under the board.');
+      await expect(page.locator('[data-testid="completed-last-message"]')).toHaveCount(0);
+      // A transcript is parsed only for a view that shows its last message, so
+      // a written summary reads none. The count is checked once the card has
+      // rendered and its effects have run, so an absent call is not just an early look.
+      await flushRenderer(page);
+      expect(await bridgeCalls(page, 'sessions.getTaskLastMessage')).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a pending summary reads the last message for this task and project', async () => {
+    // The converse of the written case, and the control that shows the counter
+    // counts: the same recorder sees a call here.
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      knowledgeGraph: { enabled: true },
+      lastMessage: { text: 'PR #552 is **merged** into main.', writtenAt: null },
+    }));
+    try {
+      await recordBridgeCalls(page, ['sessions.getTaskLastMessage']);
+      await openCompletedTask(page);
+      await expect(page.locator('[data-testid="completed-last-message"]')).toContainText('PR #552 is merged into main.');
+      // At least one read, never none; the dev renderer runs under StrictMode, which
+      // mounts an effect twice, so the exact count is not the contract.
+      const calls = await bridgeCalls(page, 'sessions.getTaskLastMessage');
+      expect(calls.length).toBeGreaterThan(0);
+      for (const callArguments of calls) expect(callArguments).toEqual([PROJECT_ID, TASK_ID]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a summary state with no last message on record shows the state and no Last message block', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
+    try {
+      await recordBridgeCalls(page, ['sessions.getTaskLastMessage']);
+      await openCompletedTask(page);
+      // The state line proves the card rendered and asked: the Last message
+      // block carries a skeleton while the read is out, so the count of 0
+      // below only holds once the read has answered null.
+      await expect(page.locator('[data-testid="completed-summary-state-off"]')).toContainText('Task summaries are off');
+      await expect(page.locator('[data-testid="completed-last-message"]')).toHaveCount(0);
+      expect((await bridgeCalls(page, 'sessions.getTaskLastMessage')).length).toBeGreaterThan(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('with Knowledge Graph indexing off, the summary card says so and offers Settings', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      knowledgeGraph: { enabled: true, indexingEnabled: false },
+    }));
+    try {
+      await openCompletedTask(page);
+      await expect(page.locator('[data-testid="completed-summary-state-indexing-off"]')).toContainText('Knowledge Graph indexing is off');
+      await expect(page.locator('[data-testid="completed-summary-open-settings"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a summary that is pending with nothing missing reads Summary pending and offers no Settings', async () => {
+    // The Knowledge Graph on, with an installed agent that can answer and the
+    // model it takes: no requirement left, so the card says only that it waits.
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      knowledgeGraph: { enabled: true, agent: 'claude', model: 'opus' },
+    }));
+    try {
+      await openCompletedTask(page);
+      const line = page.locator('[data-testid="completed-summary-state-pending"]');
+      await expect(line).toContainText('Summary pending');
+      await expect(line).not.toContainText('Needs');
+      await expect(page.locator('[data-testid="completed-summary-open-settings"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a failed report read says the record could not be read and shows no header strip', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
+    try {
+      await page.evaluate(() => {
+        (window as unknown as {
+          electronAPI: { sessions: { getTaskReport: () => Promise<never> } };
+        }).electronAPI.sessions.getTaskReport = () => Promise.reject(new Error('mock report read failure'));
+      });
+      await openCompletedTask(page);
+      // The message first: the strip is also absent while the read is out, so
+      // its absence only means a failure once the failure has been shown.
+      await expect(page.locator('[data-testid="completed-panel-summary"]')).toContainText('Could not read this task\'s record');
+      await expect(page.locator('[data-testid="completed-report-loading"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="completed-header-strip"]')).toHaveCount(0);
+      // The description is the task's own and needs no report.
+      await page.getByRole('tab', { name: 'Description' }).click();
+      await expect(page.locator('[data-testid="completed-panel-description"]')).toContainText('A task that has been completed');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('View conversation opens the newest session of this task and asks with the host project', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      transcriptSessions: [
+        { sessionId: 'sess-older', agentName: 'Claude Code', startedAt: '2026-03-13T15:44:00.000Z', exitedAt: '2026-03-13T15:45:00.000Z', isolatedSwimlaneId: null, status: 'exited' },
+        { sessionId: 'sess-newest', agentName: 'Claude Code', startedAt: '2026-03-13T16:44:00.000Z', exitedAt: '2026-03-13T16:45:00.000Z', isolatedSwimlaneId: null, status: 'exited' },
+      ],
+    }));
+    try {
+      await recordBridgeCalls(page, ['transcripts.listSessions']);
+      await openCompletedTask(page);
+      // The header asks once on mount whether there is any history; only the click's call counts.
+      await resetBridgeCalls(page);
+      await page.locator('[data-testid="completed-view-conversation"]').click();
+      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
+      const calls = await bridgeCalls(page, 'transcripts.listSessions');
+      expect(calls.length).toBeGreaterThan(0);
+      for (const callArguments of calls) expect(callArguments).toEqual([TASK_ID, PROJECT_ID]);
+      const conversationSessionId = await page.evaluate(() => (window as unknown as {
+        __zustandStores: { session: { getState: () => { conversationSessionId: string | null } } };
+      }).__zustandStores.session.getState().conversationSessionId);
+      expect(conversationSessionId).toBe('sess-newest');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('View conversation on a task with no session history says so in a toast and opens nothing', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
+    try {
+      await recordBridgeCalls(page, ['transcripts.listSessions']);
+      await openCompletedTask(page);
+      await resetBridgeCalls(page);
+      await page.locator('[data-testid="completed-view-conversation"]').click();
+      await expect(page.locator('[data-testid="toast"]')).toContainText('No conversation history for this task yet');
+      await expect(page.getByTestId('conversation-window')).toHaveCount(0);
+      const calls = await bridgeCalls(page, 'transcripts.listSessions');
+      expect(calls.length).toBeGreaterThan(0);
+      for (const callArguments of calls) expect(callArguments).toEqual([TASK_ID, PROJECT_ID]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Route lists each column, with visit cards only under a column with two real stays', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+    try {
+      await openCompletedTask(page);
+      const route = page.locator('[data-testid="completed-route"]');
+      await expect(route.locator('[data-testid="route-column-pill"]')).toHaveCount(3);
+      await expect(route.locator('[data-testid="route-column-pill"][data-swimlane-name="Executing"]')).toContainText('1h');
+      // Executing's 20s pass is not a stay, so it has two cards, and the single-visit columns none.
+      await expect(route.locator('[data-testid="route-visit"]')).toHaveCount(2);
+      await expect(page.locator('[data-testid="completed-commits"]')).toContainText('f9a8d40');
+      await expect(page.locator('[data-testid="completed-changed-file"]')).toHaveCount(8);
+      await page.locator('[data-testid="completed-files-toggle"]').click();
+      await expect(page.locator('[data-testid="completed-changed-file"]')).toHaveCount(10);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Commits says how many of the total it lists only when some are left out', async () => {
+    const commit = { sha: 'f9a8d40aabbccdd', subject: 'fix(terminal): drop the blank bottom strip', committedAt: '2026-10-13T05:03:00.000Z' };
+    const changedFiles = ['src/file-0.ts'];
+    const truncated = await launchWithState(makePreConfig({
+      withSummary: true,
+      report: fullReport({ knowledge: { commits: [commit], commitCount: 5, changedFiles, changedFileCount: 1 } }),
+    }));
+    try {
+      await openCompletedTask(truncated.page);
+      await expect(truncated.page.locator('[data-testid="completed-commits"]')).toContainText('1 of 5');
+    } finally {
+      await truncated.browser.close();
+    }
+    const whole = await launchWithState(makePreConfig({
+      withSummary: true,
+      report: fullReport({ knowledge: { commits: [commit], commitCount: 1, changedFiles, changedFileCount: 1 } }),
+    }));
+    try {
+      await openCompletedTask(whole.page);
+      const commits = whole.page.locator('[data-testid="completed-commits"]');
+      await expect(commits).toContainText('f9a8d40');
+      await expect(commits).not.toContainText(/\d+ of \d+/);
+    } finally {
+      await whole.browser.close();
+    }
+  });
+
+  test('a Route whose move log begins after the task started says where it begins', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport({ startedAt: '2026-09-26T22:49:00.000Z' }) }));
+    try {
+      await openCompletedTask(page);
+      // The first logged move is 03:04 UTC on Oct 13, which is Oct 12 in a zone west of UTC.
+      await expect(page.locator('[data-testid="completed-route"]')).toContainText(/Moves logged from Oct 1[23]/);
+    } finally {
+      await browser.close();
+    }
+    const whole = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+    try {
+      await openCompletedTask(whole.page);
+      await expect(whole.page.locator('[data-testid="completed-route"]')).not.toContainText('Moves logged');
+    } finally {
+      await whole.browser.close();
+    }
+  });
+
+  test('Background calls recorded before the call ledger total to dashes, not zeros', async () => {
+    const unrecorded = (name: string) => ({
+      callId: null, job: 'condition_check', column: EXECUTING, automationName: name, automationType: 'move_to_column', condition: null,
+      startedAt: '2026-10-13T04:10:00.000Z', model: null, effort: null, durationMs: null, costUsd: null, tokens: null,
+    });
+    const report = fullReport({ backgroundCalls: [unrecorded('Apply findings'), unrecorded('On to Code Review')] });
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const total = page.locator('[data-testid="completed-background-calls-total"] td');
+      await expect(total).toHaveText(['Total', '-', '-', '-']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a task with no column history shows no Route and no Column column', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
+    try {
+      await openCompletedTask(page);
+      await expect(page.locator('[data-testid="completed-route"]')).toHaveCount(0);
+      await openUsageTab(page);
+      const runs = page.locator('[data-testid="completed-runs"]');
+      await expect(runs.locator('thead')).not.toContainText('Column');
+      await expect(runs.locator('thead')).not.toContainText('Compactions');
+      await expect(runs.locator('[data-testid="completed-run-row"]')).toHaveCount(1);
+      await expect(runs.locator('[data-testid="completed-conversation-header"]')).toContainText('Main conversation');
+      await expect(runs.locator('[data-testid="completed-conversation-header"]')).toContainText('abc12345');
+      await expect(runs.locator('[data-testid="completed-runs-total"]')).toContainText('17s');
+      await expect(runs.locator('[data-testid="completed-runs-total"]')).toContainText('$0.08');
+      // No ledger behind the mock's derived report: the session totals stand in.
+      await expect(page.locator('[data-testid="completed-models-fallback"]')).toContainText('From session totals');
+      await expect(page.locator('[data-testid="completed-models-fallback"]')).toContainText('12.5k');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Runs groups runs by conversation, with columns, permissions and a Compactions column', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const runs = page.locator('[data-testid="completed-runs"]');
+      await expect(runs.locator('thead')).toContainText('Column');
+      await expect(runs.locator('thead')).toContainText('Compactions');
+      const headers = runs.locator('[data-testid="completed-conversation-header"]');
+      await expect(headers).toHaveCount(2);
+      await expect(headers.nth(0)).toContainText('Main conversation');
+      await expect(headers.nth(1)).toContainText('Code Review conversation');
+      const rows = runs.locator('[data-testid="completed-run-row"]');
+      await expect(rows).toHaveCount(3);
+      await expect(rows.nth(1).locator('[data-testid="report-column-label"]')).toHaveText(['Planning', 'Executing']);
+      await expect(rows.nth(0)).toContainText('Plan');
+      await expect(rows.nth(2)).toContainText('Auto');
+      await expect(runs.locator('[data-testid="completed-runs-total"]')).toContainText('$42.78');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a run that returns to a column lists it each time, in order', async () => {
+    // A, B, A: the third label is the first column again, and it still gets its own label.
+    const report = fullReport({
+      conversations: [{
+        conversationId: '0407afe2-1111-2222-3333-444444444444', isolatedColumn: null, runs: [
+          reportRun('leg-1', '2026-10-13T03:04:00.000Z', 1.85, 722_000, 23, [PLANNING, EXECUTING, PLANNING]),
+        ],
+      }],
+    });
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const row = page.locator('[data-testid="completed-run-row"]').nth(0);
+      await expect(row.locator('[data-testid="report-column-label"]')).toHaveCount(3);
+      await expect(row.locator('[data-testid="report-column-label"]')).toHaveText(['Planning', 'Executing', 'Planning']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Runs totals are null-aware: runs with no cost or runtime total to dashes, and a missing figure never zeroes the rest', async () => {
+    const onlyUnrecorded = fullReport({
+      conversations: [{
+        conversationId: '0407afe2-1111-2222-3333-444444444444', isolatedColumn: null, runs: [
+          reportRun('leg-1', '2026-10-13T03:04:00.000Z', null, null, 23, [PLANNING]),
+          reportRun('leg-2', '2026-10-13T03:18:00.000Z', null, null, 241, [PLANNING]),
+        ],
+      }],
+    });
+    const unrecorded = await launchWithState(makePreConfig({ withSummary: true, report: onlyUnrecorded }));
+    try {
+      await openCompletedTask(unrecorded.page);
+      await openUsageTab(unrecorded.page);
+      const runs = unrecorded.page.locator('[data-testid="completed-runs"]');
+      await expect(runs.locator('[data-testid="completed-run-row"]')).toHaveCount(2);
+      // No run has a compaction, so the Total row is: label, Runtime, Cost, Tool calls.
+      await expect(runs.locator('thead')).not.toContainText('Compactions');
+      const totalCells = runs.locator('[data-testid="completed-runs-total"] td');
+      await expect(totalCells).toHaveCount(4);
+      await expect(totalCells.nth(1)).toHaveText('-');
+      await expect(totalCells.nth(2)).toHaveText('-');
+    } finally {
+      await unrecorded.browser.close();
+    }
+    const onePartial = fullReport({
+      conversations: [{
+        conversationId: '0407afe2-1111-2222-3333-444444444444', isolatedColumn: null, runs: [
+          reportRun('leg-1', '2026-10-13T03:04:00.000Z', 1.85, 722_000, 23, [PLANNING]),
+          reportRun('leg-2', '2026-10-13T03:18:00.000Z', null, null, 241, [PLANNING]),
+        ],
+      }],
+    });
+    const partial = await launchWithState(makePreConfig({ withSummary: true, report: onePartial }));
+    try {
+      await openCompletedTask(partial.page);
+      await openUsageTab(partial.page);
+      const totalCells = partial.page.locator('[data-testid="completed-runs"] [data-testid="completed-runs-total"] td');
+      await expect(totalCells).toHaveCount(4);
+      await expect(totalCells.nth(1)).toHaveText('12m 2s');
+      await expect(totalCells.nth(2)).toHaveText('$1.85');
+    } finally {
+      await partial.browser.close();
+    }
+  });
+
+  test('a run that crashed is marked in Runs while the task, whose last run ended cleanly, reads Completed', async () => {
+    const report = fullReport();
+    report.conversations[0].runs[0] = { ...report.conversations[0].runs[0], exitCode: 1073807364 };
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
+    try {
+      await openCompletedTask(page);
+      await expect(page.locator('[data-testid="completed-status"]')).toHaveAttribute('aria-label', 'Completed');
+      await openUsageTab(page);
+      const marks = page.locator('[data-testid="completed-run-exited"]');
+      await expect(marks).toHaveCount(1);
+      await expect(marks).toHaveAttribute('aria-label', 'Exited (1073807364)');
+      await expect(page.locator('[data-testid="completed-run-row"]').nth(0).locator('[data-testid="completed-run-exited"]')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a run\'s tool pill opens its own per-tool table below it', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      // The first run has no per-tool rows on record, so its count is plain text.
+      const rows = page.locator('[data-testid="completed-run-row"]');
+      await expect(rows.nth(0).locator('[data-testid="completed-run-tool-calls"]')).toHaveCount(0);
+      const pill = rows.nth(1).locator('[data-testid="completed-run-tool-calls"]');
+      await pill.click();
+      const popover = page.locator('[data-testid="completed-tool-breakdown-popover"]');
+      await expect(popover).toBeVisible();
+      await expect(popover.locator('tbody tr td:first-child')).toHaveText(['Edit', 'Grep']);
+      const pillBox = await pill.boundingBox();
+      const popoverBox = await popover.boundingBox();
+      expect(pillBox && popoverBox && popoverBox.y >= pillBox.y + pillBox.height - 1).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(popover).toHaveCount(0);
+      await expect(page.locator('[data-testid="completed-task-view"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a run\'s tool pill shows the rows it was given and fetches nothing', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+    try {
+      await recordBridgeCalls(page, ['sessions.getToolBreakdown', 'sessions.getToolResultTokens']);
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      await resetBridgeCalls(page);
+      await page.locator('[data-testid="completed-run-row"]').nth(1).locator('[data-testid="completed-run-tool-calls"]').click();
+      const popover = page.locator('[data-testid="completed-tool-breakdown-popover"]');
+      await expect(popover.locator('tbody tr td:first-child')).toHaveText(['Edit', 'Grep']);
+      // The popover's mount effects have run once its rows show and a frame has passed.
+      await flushRenderer(page);
+      expect(await bridgeCalls(page, 'sessions.getToolBreakdown')).toEqual([]);
+      expect(await bridgeCalls(page, 'sessions.getToolResultTokens')).toEqual([]);
+      // Closing it is a second chance for a fetch that waited for the refresh signal.
+      await page.keyboard.press('Escape');
+      await expect(popover).toHaveCount(0);
+      await flushRenderer(page);
+      expect(await bridgeCalls(page, 'sessions.getToolBreakdown')).toEqual([]);
+      expect(await bridgeCalls(page, 'sessions.getToolResultTokens')).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Models and tokens reads the ledger, names a subagent, and totals two or more rows', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const models = page.locator('[data-testid="completed-models"]');
+      await expect(models.locator('[data-testid="completed-model-row"]')).toHaveCount(2);
+      await expect(models).toContainText('doc-auditor subagent');
+      await expect(models).toContainText('76.6M');
+      await expect(models.locator('[data-testid="completed-models-total"]')).toContainText('248');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Background calls lists each fired automation and the title call, and counts a shared call once', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const card = page.locator('[data-testid="completed-background-calls"]');
+      const rows = card.locator('[data-testid="completed-background-call-row"]');
+      await expect(rows).toHaveCount(3);
+      await expect(rows.nth(0)).toContainText('Generate title');
+      await expect(rows.nth(1)).toContainText('Apply findings');
+      await expect(rows.nth(1).locator('span[title="Condition: The final message lists findings."]')).toHaveCount(1);
+      // 2.1k + 14.8k, the shared call once.
+      await expect(card.locator('[data-testid="completed-background-calls-total"]')).toContainText('16.9k');
+      await expect(card.locator('[data-testid="completed-background-calls-toggle"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Background calls shows ten rows, then Show all', async () => {
+    const call = (index: number) => ({
+      callId: `call-${index}`, job: 'condition_check', column: null, automationName: `Automation ${index}`,
+      automationType: 'notify', condition: null, startedAt: `2026-10-13T04:${String(10 + index).padStart(2, '0')}:00.000Z`,
+      model: 'Haiku 5.5', effort: 'low', durationMs: 4_000, costUsd: 0.003, tokens: 13_000,
+    });
+    const report = fullReport({ backgroundCalls: Array.from({ length: 12 }, (_, index) => call(index)) });
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const rows = page.locator('[data-testid="completed-background-call-row"]');
+      await expect(rows).toHaveCount(10);
+      await page.locator('[data-testid="completed-background-calls-toggle"]').click();
+      await expect(rows).toHaveCount(12);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a task with no runs on record says so on the Usage tab', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: false }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      await expect(page.locator('[data-testid="completed-no-runs"]')).toBeVisible();
+      await expect(page.locator('[data-testid="completed-view-conversation"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('Per-tool table on a completed task', () => {
+  async function openTotalBreakdown(page: Page): Promise<void> {
+    await openCompletedTask(page);
+    await openUsageTab(page);
+    await page.locator('[data-testid="completed-total-tool-calls"]').click();
+    await expect(page.locator('[data-testid="session-summary-by-tool"]')).toBeVisible();
+  }
+
+  test('the Total has no pill when no per-tool rows are on record', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      await expect(page.locator('[data-testid="completed-runs-total"]')).toContainText('5');
+      await expect(page.locator('[data-testid="completed-total-tool-calls"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Cost / token / interrupted columns are conditional on row data', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [{ toolName: 'Bash', callCount: 3, totalDurationMs: 4_200, interruptedCount: 0 }],
+    }));
+    try {
+      await openTotalBreakdown(page);
+      const headerRow = page.locator('[data-testid="session-summary-by-tool"] table thead tr');
+      await expect(headerRow).not.toContainText('Cost');
+      await expect(headerRow).not.toContainText('In');
+      await expect(headerRow).not.toContainText('Out');
+      await expect(headerRow).not.toContainText('Failed');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Cost and Failed columns appear when at least one row has them', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Bash', callCount: 5, totalDurationMs: 12_000, interruptedCount: 1, costUsd: 0.04 },
+        { toolName: 'Read', callCount: 20, totalDurationMs: 1_500, interruptedCount: 0 },
+      ],
+    }));
+    try {
+      await openTotalBreakdown(page);
+      const headerRow = page.locator('[data-testid="session-summary-by-tool"] table thead tr');
+      await expect(headerRow).toContainText('Cost');
+      await expect(headerRow).toContainText('Failed');
+      const readRow = page.locator('[data-testid="session-summary-by-tool"] table tbody tr', { hasText: 'Read' });
+      await expect(readRow).toContainText('-');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('rows default to Calls, most first, and a header click re-sorts and then reverses', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Bash', callCount: 3, totalDurationMs: 4_200, interruptedCount: 0 },
+        { toolName: 'Read', callCount: 12, totalDurationMs: 850, interruptedCount: 0 },
+        { toolName: 'Edit', callCount: 7, totalDurationMs: 9_000, interruptedCount: 0 },
+      ],
+    }));
+    try {
+      await openTotalBreakdown(page);
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const toolCells = table.locator('tbody tr td:first-child');
+      await expect(toolCells).toHaveText(['Read', 'Edit', 'Bash']);
+      await expect(table.locator('th', { has: page.locator('[data-testid="by-tool-sort-calls"]') }))
+        .toHaveAttribute('aria-sort', 'descending');
+
+      await page.locator('[data-testid="by-tool-sort-time"]').click();
+      await expect(toolCells).toHaveText(['Edit', 'Bash', 'Read']);
+      await page.locator('[data-testid="by-tool-sort-time"]').click();
+      await expect(toolCells).toHaveText(['Read', 'Bash', 'Edit']);
+      await expect(table.locator('th', { has: page.locator('[data-testid="by-tool-sort-time"]') }))
+        .toHaveAttribute('aria-sort', 'ascending');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Tool header sorts A to Z on the first click and Z to A on the second', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Read', callCount: 3, totalDurationMs: 850, interruptedCount: 0 },
+        { toolName: 'Edit', callCount: 12, totalDurationMs: 9_000, interruptedCount: 0 },
+        { toolName: 'Bash', callCount: 7, totalDurationMs: 4_200, interruptedCount: 0 },
+      ],
+    }));
+    try {
+      await openTotalBreakdown(page);
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const toolCells = table.locator('tbody tr td:first-child');
+      const toolHeader = table.locator('th', { has: page.locator('[data-testid="by-tool-sort-tool"]') });
+      const callsHeader = table.locator('th', { has: page.locator('[data-testid="by-tool-sort-calls"]') });
+      await expect(toolCells).toHaveText(['Edit', 'Bash', 'Read']);
+      await expect(toolHeader).toHaveAttribute('aria-sort', 'none');
+
+      await page.locator('[data-testid="by-tool-sort-tool"]').click();
+      await expect(toolCells).toHaveText(['Bash', 'Edit', 'Read']);
+      await expect(toolHeader).toHaveAttribute('aria-sort', 'ascending');
+      await expect(callsHeader).toHaveAttribute('aria-sort', 'none');
+
+      await page.locator('[data-testid="by-tool-sort-tool"]').click();
+      await expect(toolCells).toHaveText(['Read', 'Edit', 'Bash']);
+      await expect(toolHeader).toHaveAttribute('aria-sort', 'descending');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a row with no result tokens sorts last under the Tokens header in both directions', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Edit', callCount: 20, totalDurationMs: 0, interruptedCount: 0 },
+        { toolName: 'Read', callCount: 9, totalDurationMs: 0, interruptedCount: 0, resultTokens: 41_000 },
+        { toolName: 'Bash', callCount: 4, totalDurationMs: 0, interruptedCount: 0, resultTokens: 2_300 },
+      ],
+    }));
+    try {
+      await openTotalBreakdown(page);
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const toolCells = table.locator('tbody tr td:first-child');
+      await expect(toolCells).toHaveText(['Edit', 'Read', 'Bash']);
+
+      await page.locator('[data-testid="by-tool-sort-tokens"]').click();
+      await expect(toolCells).toHaveText(['Read', 'Bash', 'Edit']);
+      await page.locator('[data-testid="by-tool-sort-tokens"]').click();
+      await expect(toolCells).toHaveText(['Bash', 'Read', 'Edit']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('calls that waited on the user are left out of Time and Avg, and the header says how many', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Bash', callCount: 3, totalDurationMs: 4_200, interruptedCount: 0, waitedCount: 1 },
+        { toolName: 'Read', callCount: 12, totalDurationMs: 850, interruptedCount: 0 },
+        { toolName: 'AskUserQuestion', callCount: 2, totalDurationMs: 0, interruptedCount: 0, waitedCount: 2 },
+      ],
+    }));
+    try {
+      await openTotalBreakdown(page);
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      await expect(page.locator('[data-testid="by-tool-sort-time"]')).toHaveAttribute(
+        'title',
+        'How long each tool ran. Leaves out the 3 calls that waited for your answer or approval.',
+      );
+      const askRow = table.locator('tbody tr', { hasText: 'AskUserQuestion' });
+      await expect(askRow.locator('td').nth(2)).toHaveText('-');
+      await expect(askRow.locator('td').nth(3)).toHaveText('-');
+      const bashRow = table.locator('tbody tr', { hasText: 'Bash' });
+      await expect(bashRow.locator('td').nth(2)).toHaveText('4.2s');
+      await expect(bashRow.locator('td').nth(3)).toHaveText('2.1s');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('count-only rows hide Time and Avg and still show estimated result tokens', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Bash', callCount: 4, totalDurationMs: 0, interruptedCount: 0, resultTokens: 2_300 },
+        { toolName: 'Read', callCount: 9, totalDurationMs: 0, interruptedCount: 0, resultTokens: 41_000 },
+      ],
+    }));
+    try {
+      await openTotalBreakdown(page);
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const headerRow = table.locator('thead tr');
+      await expect(headerRow).toContainText('Tokens');
+      await expect(headerRow).not.toContainText('Time');
+      await expect(headerRow).not.toContainText('Avg');
+      await expect(table.locator('tbody tr', { hasText: 'Read' })).toContainText('41k');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('Done Column', () => {
+  test('completed section is always visible with header', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
+    try {
+      const doneColumn = page.locator('[data-swimlane-name="Done"]');
+      await doneColumn.waitFor({ state: 'visible', timeout: 10000 });
+      await expect(doneColumn).toContainText('Completed (1)');
+      await expect(doneColumn.locator('text=Completed Test Task')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('shows completed tasks and "View all" button', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, extraArchivedTasks: 6 }));
+    try {
+      const doneColumn = page.locator('[data-swimlane-name="Done"]');
+      await doneColumn.waitFor({ state: 'visible', timeout: 10000 });
+      await expect(doneColumn).toContainText('Completed (7)');
+      await expect(doneColumn.locator('[data-testid="compact-title"]')).toHaveCount(7);
+      await expect(doneColumn.locator('[data-testid="view-all-completed"]')).toBeVisible();
+      await expect(doneColumn.locator('[data-testid="view-all-completed"]')).toContainText('View all');
+      await expect(doneColumn.locator('[data-testid="view-all-completed"]')).toContainText('7');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('completed dialog opens from "View all" and reads Agent runtime', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, extraArchivedTasks: 6 }));
+    try {
+      const doneColumn = page.locator('[data-swimlane-name="Done"]');
+      await doneColumn.waitFor({ state: 'visible', timeout: 10000 });
+      await doneColumn.locator('[data-testid="view-all-completed"]').click();
+      const dialog = page.locator('[data-testid="completed-tasks-dialog"]');
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+      await expect(dialog).toContainText('Completed Tasks (7)');
+      await expect(dialog).toContainText('Agent runtime');
+      await expect(dialog).not.toContainText('Duration');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('empty state shows when no completed tasks exist', async () => {
+    const preConfig = `
+      window.__mockPreConfigure(function (state) {
+        var ts = new Date().toISOString();
+        state.projects.push({
+          id: '${PROJECT_ID}', name: 'Empty Done Test', path: '/mock/empty-done', github_url: null,
+          default_agent: 'claude', position: 0, last_opened: ts, created_at: ts,
+        });
+        state.DEFAULT_SWIMLANES.forEach(function (template, index) {
+          state.swimlanes.push({
+            id: state.uuid(), name: template.name, role: template.role, color: template.color, icon: template.icon,
+            is_archived: template.is_archived, is_ghost: template.is_ghost,
+            permission_strategy: template.permission_strategy ?? null, auto_spawn: template.auto_spawn ?? false,
+            auto_command: template.auto_command ?? null, plan_exit_target_id: null, position: index, created_at: ts,
+          });
+        });
+        return { currentProjectId: '${PROJECT_ID}' };
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      const doneColumn = page.locator('[data-swimlane-name="Done"]');
+      await doneColumn.waitFor({ state: 'visible', timeout: 10000 });
+      await expect(doneColumn).toContainText('Completed (0)');
+      await expect(doneColumn).toContainText('No completed tasks yet');
+    } finally {
+      await browser.close();
+    }
+  });
+});

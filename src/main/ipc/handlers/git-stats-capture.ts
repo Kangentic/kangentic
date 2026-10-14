@@ -73,6 +73,13 @@ function readChurnShared(gitDir: string, baseBranch: string): Promise<ChurnSumma
  *   flow, where the worktree is gone and HEAD is already past the merge-base)
  *   is treated as "nothing to report," not "the branch has 0 churn," so it
  *   can never wipe a real capture made earlier in the task's life.
+ * - A landed-work guard: once the task's PR is merged, or the task is archived
+ *   (only the move into Done archives) with a capture already stored, the
+ *   stored capture is the branch's final measure and nothing is read. A merged
+ *   branch is often reset onto the base and gains unrelated commits or
+ *   leftover edits, which read as a small NON-zero churn the zero guard lets
+ *   through: #732's +52,801 / -2,054 over 489 files was overwritten that way by
+ *   a later release commit's +38 / -1 in 1 file.
  * - Two captures that overlap share one git read (`readChurnShared`), and each
  *   still writes its own record, in the order its read settled.
  *
@@ -90,8 +97,15 @@ export function captureGitChurn(
   try {
     const gitDir = task.worktree_path ?? projectPath;
     if (!gitDir) return;
+    if (task.pr_state === 'merged') return;
 
-    const recordIds = sessionRepo.listForTaskNewestFirst(task.id).map((record) => record.id);
+    const records = sessionRepo.listForTaskNewestFirst(task.id);
+    const hasStoredCapture = records.some((record) => (
+      (record.lines_added ?? 0) > 0 || (record.lines_removed ?? 0) > 0 || (record.files_changed ?? 0) > 0
+    ));
+    if (task.archived_at !== null && hasStoredCapture) return;
+
+    const recordIds = records.map((record) => record.id);
     const baseBranch = task.base_branch || defaultBaseBranch || 'main';
 
     void readChurnShared(gitDir, baseBranch)

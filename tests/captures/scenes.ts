@@ -1186,7 +1186,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'completed-tasks',
     reach: 'boot',
     description: 'The Completed Tasks dialog over the archived contoso rows, opened from the Done column\'s Completed header.',
-    alt: 'The Completed Tasks dialog: a table of archived tasks with columns for cost, duration, tokens, tools, files, and lines, when each was completed, and restore and delete controls on every row.',
+    alt: 'The Completed Tasks dialog: a table of archived tasks with columns for cost, agent runtime, tokens, tools, files, and lines, when each was completed, and restore and delete controls on every row.',
     ready: '[data-testid="completed-task-checkbox"]',
     focus: '[data-testid="completed-tasks-dialog"]',
     steps: [{ click: '[data-testid="expand-completed-btn"]', waitFor: '[data-testid="completed-tasks-dialog"]' }],

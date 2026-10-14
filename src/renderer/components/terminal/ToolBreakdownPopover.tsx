@@ -6,6 +6,20 @@ import { ByToolTable } from '../shared/ByToolTable';
 import type { PerToolStat } from '../../../shared/types';
 
 /**
+ * Where the rows come from: a live session, fetched on open and refetched as
+ * its count moves, or rows the caller already holds (a completed task's runs),
+ * shown as given with nothing fetched.
+ */
+type ToolBreakdownSource =
+  | {
+    sessionId: string;
+    /** The pill's tool-call count; a change triggers a refetch so the table stays current. */
+    refreshSignal: number;
+    rows?: undefined;
+  }
+  | { rows: PerToolStat[]; sessionId?: undefined; refreshSignal?: undefined };
+
+/**
  * Per-tool breakdown popover for the ContextBar's tool-call pill, covering
  * every run of the session: a resume is a new run, and the earlier runs' rows
  * are merged in by main.
@@ -20,7 +34,9 @@ import type { PerToolStat } from '../../../shared/types';
  * agent's transcripts in the retrieval worker, which replaces each row's value
  * by tool name). Both refetch whenever `refreshSignal` (the tool-call count)
  * changes, so the table stays current while open; nothing runs while it is
- * closed.
+ * closed. Given `rows` instead (a completed task's run, from the
+ * Usage tab), it shows them and fetches nothing, and `placement` opens it
+ * below its trigger in a table.
  *
  * The rows arrive after the popover has mounted and been measured in its empty
  * state. `usePopoverPosition` anchors the fixed popover on its trigger-facing
@@ -31,34 +47,37 @@ export function ToolBreakdownPopover({
   triggerRef,
   sessionId,
   refreshSignal,
+  rows: givenRows,
+  placement: preferredPlacement = 'above',
   onClose,
   testId,
 }: {
   triggerRef: React.RefObject<HTMLElement | null>;
-  sessionId: string;
-  /** The pill's tool-call count; a change triggers a refetch so the table stays current. */
-  refreshSignal: number;
+  /** The side it opens on when both fit: above for the bottom-pinned ContextBar, below in a table. */
+  placement?: 'above' | 'below';
   onClose: () => void;
   testId?: string;
-}) {
+} & ToolBreakdownSource) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [rows, setRows] = useState<PerToolStat[]>([]);
+  const [fetchedRows, setRows] = useState<PerToolStat[]>([]);
+  const rows = givenRows ?? fetchedRows;
   // Tagged with the session they were read for, so a `sessionId` change never
   // merges the previous session's estimates while the new one has none.
   const [resultTokens, setResultTokens] = useState<{ sessionId: string; byTool: Record<string, number> } | null>(null);
-  const resultTokensByTool = resultTokens?.sessionId === sessionId ? resultTokens.byTool : null;
+  const resultTokensByTool = resultTokens !== null && resultTokens.sessionId === sessionId ? resultTokens.byTool : null;
   // Portal + fixed, matching ContextBarPopover. `fixed` alone is not enough
   // here: the ContextBar's own container carries `[transform:translateZ(0)]`,
   // which makes it a containing block for fixed descendants, so the popover has
-  // to leave the subtree entirely. `preferVertical: 'above'` stays - the bar is
-  // pinned to the bottom of its pane.
+  // to leave the subtree entirely. The ContextBar opens it above, since the bar
+  // is pinned to the bottom of its pane.
   const { style: popoverStyle, placement } = usePopoverPosition(triggerRef, popoverRef, true, {
     mode: 'dropdown',
     strategy: 'fixed',
-    preferVertical: 'above',
+    preferVertical: preferredPlacement,
   });
 
   useEffect(() => {
+    if (sessionId === undefined) return;
     let cancelled = false;
     (async () => {
       try {
@@ -72,6 +91,7 @@ export function ToolBreakdownPopover({
   }, [sessionId, refreshSignal]);
 
   useEffect(() => {
+    if (sessionId === undefined) return;
     let cancelled = false;
     (async () => {
       try {

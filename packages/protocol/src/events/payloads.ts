@@ -158,9 +158,10 @@ export interface SessionUsageWire {
  * task, which is what makes it meaningful for a completed one: a task worked
  * across five `--resume` legs has five session rows, and reporting only the
  * final leg would under-report everything. The desktop's getSummaryForTask
- * owns those aggregation rules (SUM cost/duration/tool calls/lines, MAX files
- * changed, and tokens taken as the latest row per session lineage so a
- * resumed session is not double-counted) - they are not re-derived here.
+ * owns those aggregation rules - they are not re-derived here. Cost, duration
+ * and tokens are each conversation's cumulative reading, so they count once per
+ * session lineage and add across lineages; tool calls and lines SUM; files
+ * changed takes the MAX.
  *
  * `sessionId` is the transcript ANCHOR, not a live session: it resolves
  * through the desktop's session records, which outlive the agent, so it reads

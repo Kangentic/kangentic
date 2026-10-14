@@ -68,6 +68,19 @@ export interface GroupedTurnUsageRow {
   allocatedCostUsd: number;
 }
 
+/** One model's tokens on one task (`getTaskModelUsage`). */
+export interface TaskModelUsageRow {
+  /** The model id the transcript named, or null when it named none. */
+  modelId: string | null;
+  /** Null for the main thread; the subagent type otherwise ('' when unknown). */
+  subagentType: string | null;
+  turns: number;
+  freshInputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+}
+
 interface TurnUsageRow {
   turn_uuid: string;
   agent_session_id: string | null;
@@ -481,6 +494,36 @@ export class ConversationUsageStore {
       )
       .all(...turnUuids) as TurnUsageRow[];
     return rows.map(toRecord);
+  }
+
+  /**
+   * One task's turns and tokens by model, the main thread apart from each
+   * subagent type, for the completed task view's Models card. Oldest model
+   * first. Reports NO cost, for the reason `getSubagentTotalsByType` gives.
+   *
+   * A turn that reports no tokens at all is left out, and so is a model named
+   * in angle brackets: an agent's own sentinel for a turn no model produced
+   * (Claude's `<synthetic>`), a shape rather than an agent name.
+   */
+  getTaskModelUsage(taskId: string): TaskModelUsageRow[] {
+    return this.db
+      .prepare(
+        `SELECT
+           model AS modelId,
+           CASE WHEN subagent_id IS NULL THEN NULL ELSE COALESCE(agent_type, '') END AS subagentType,
+           COUNT(*) AS turns,
+           SUM(input_tokens) AS freshInputTokens,
+           SUM(cache_creation_input_tokens) AS cacheWriteTokens,
+           SUM(cache_read_input_tokens) AS cacheReadTokens,
+           SUM(output_tokens) AS outputTokens
+         FROM conversation_turn_usage
+         WHERE task_id = ?
+           AND (input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens) > 0
+           AND (model IS NULL OR NOT (model LIKE '<%' AND model LIKE '%>'))
+         GROUP BY model, subagentType
+         ORDER BY MIN(ts) ASC`,
+      )
+      .all(taskId) as TaskModelUsageRow[];
   }
 
   /**

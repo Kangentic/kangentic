@@ -18,10 +18,12 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 import { humanizeClaudeModelId } from '../../src/main/agent/adapters/claude/model-display-name';
 import {
-  DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_ARCHIVED_TASKS, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS,
-  archivedRunPromptOf, taskSlugOf,
+  DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_ARCHIVED_TASKS, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_KNOWLEDGE_GRAPH_CONFIG, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS,
+  archivedRunPromptOf, archivedSessionIdOf, buildDemoPreConfig, taskSlugOf,
 } from '../../tests/captures/helpers/demo-dataset';
 import { archivedClonePath, archivedCloneSegments, scratchClonePath, scratchRootFromArgv } from '../../scripts/lib/demo-archived-clone.mjs';
 
@@ -56,7 +58,8 @@ describe('demo archived task summaries', () => {
     for (const summary of DEMO_ARCHIVED_SUMMARIES) {
       const run = DEMO_ARCHIVED_RUNS[summary.taskId];
       expect(summary, summary.taskId).toMatchObject({
-        taskId: summary.taskId, effort: run.effort ?? null, costUsd: run.costUsd, durationMs: run.durationMs, inputTokens: run.inputTokens,
+        taskId: summary.taskId, effort: run.effort ?? null, permissionMode: run.permissionMode,
+        costUsd: run.costUsd, durationMs: run.durationMs, inputTokens: run.inputTokens,
         outputTokens: run.outputTokens, tools: run.tools, filesChanged: run.filesChanged,
         linesAdded: run.linesAdded, linesRemoved: run.linesRemoved,
       });
@@ -99,6 +102,149 @@ describe('demo archived task summaries', () => {
   it('is derived, never written here: the seed reads the run file', () => {
     const dataset = fs.readFileSync(path.join(REPO_ROOT, 'tests/captures/helpers/demo-dataset.ts'), 'utf-8');
     expect(dataset).toContain("from '../fixtures/demo/archived/runs.json'");
+  });
+});
+
+/**
+ * An archived task's window shows the completed task view, whose report the mock derives from the
+ * task's summary (`buildTaskReport`) and the seed completes with what the recorded run adds: its
+ * agent, effort and permission mode. The mock is evaluated here as the browser evaluates it, so the
+ * Runs table, the header strip and the Models card are held to the same run the Completed Tasks
+ * row is.
+ */
+describe('demo archived task reports', () => {
+  interface MockState {
+    summaryCache: Record<string, unknown>;
+    taskRunFacts: Record<string, { agent: string | null; effort: string | null; permissionMode: string }>;
+    config: Record<string, unknown>;
+    buildTaskReport: (taskId: string) => {
+      summary: unknown;
+      conversations: Array<{
+        runs: Array<{ agent: string; effort: string | null; permissionMode: string | null; costUsd: number; runtimeMs: number; toolCallCount: number; model: string | null }>;
+      }>;
+      modelFallback: Array<{ model: string; inputWithCacheTokens: number; outputTokens: number }>;
+      summaryState: { kind: string };
+    };
+  }
+
+  type PreConfigure = (configure: (state: MockState) => unknown) => void;
+
+  /** The browser's `window` once the mock has run in it. */
+  function loadMockWindow(): Record<string, unknown> {
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'tests/ui/mock-electron-api.js'), 'utf-8');
+    const windowObject: Record<string, unknown> = {};
+    windowObject.window = windowObject;
+    vm.runInNewContext(source, { window: windowObject, document: undefined, crypto: webcrypto, setTimeout, clearTimeout, console }, { timeout: 5000 });
+    return windowObject;
+  }
+
+  /** The mock's state, as `__mockPreConfigure` hands it to a seed. */
+  function stateOf(windowObject: Record<string, unknown>): MockState {
+    const captured: { state: MockState | null } = { state: null };
+    (windowObject.__mockPreConfigure as PreConfigure)((state) => { captured.state = state; });
+    if (!captured.state) throw new Error('the mock did not hand __mockPreConfigure its state');
+    return captured.state;
+  }
+
+  function loadMockState(): MockState {
+    return stateOf(loadMockWindow());
+  }
+
+  /** Thrown from the wrapped `__mockPreConfigure` to end the generated script once its seed has run. */
+  const SEED_RAN = new Error('the dataset seed ran');
+
+  /**
+   * The mock's state after the dataset's own seed has run against it: the generated script
+   * (`buildDemoPreConfig`) evaluated as the page evaluates it, with its `__mockPreConfigure` call
+   * answered by the real mock. The script is ended right after that call. What follows it replaces
+   * bridge methods and arms the session clocks, none of which the seed's rows depend on.
+   */
+  function loadSeededMockState(): MockState {
+    const windowObject = loadMockWindow();
+    const preConfigure = windowObject.__mockPreConfigure as PreConfigure;
+    const seeded: { state: MockState | null } = { state: null };
+    windowObject.__mockPreConfigure = (configure: (state: MockState) => unknown) => {
+      preConfigure(configure);
+      preConfigure((state) => { seeded.state = state; });
+      throw SEED_RAN;
+    };
+    // A stub recording per session is all the build's recordings check wants.
+    const script = buildDemoPreConfig({
+      scrollback: Object.fromEntries(DEMO_SESSIONS.map((session) => [session.id, 'recording'])),
+      knowledgeGraph: 'fetched',
+    });
+    try {
+      new Function('window', script)(windowObject);
+    } catch (error) {
+      if (error !== SEED_RAN) throw error;
+    }
+    if (!seeded.state) throw new Error('the dataset seed never called __mockPreConfigure');
+    return seeded.state;
+  }
+
+  it('derives one run per archived task that matches its summary and its recorded run', () => {
+    const state = loadMockState();
+    // The sample install's Knowledge Graph settings, as the seed applies them.
+    state.config.knowledgeGraph = { ...DEMO_KNOWLEDGE_GRAPH_CONFIG };
+    expect(DEMO_ARCHIVED_SUMMARIES.length).toBeGreaterThan(0);
+    for (const summary of DEMO_ARCHIVED_SUMMARIES) {
+      const task = DEMO_TASKS.find((candidate) => candidate.id === summary.taskId);
+      state.taskRunFacts[summary.taskId] = { agent: task?.agent ?? null, effort: summary.effort, permissionMode: summary.permissionMode };
+      const toolCallCount = Object.values(summary.tools).reduce((sum, calls) => sum + calls, 0);
+      state.summaryCache[summary.taskId] = {
+        sessionId: archivedSessionIdOf(summary.taskId), totalCostUsd: summary.costUsd, totalInputTokens: summary.inputTokens,
+        totalOutputTokens: summary.outputTokens, modelDisplayName: summary.modelDisplayName, durationMs: summary.durationMs,
+        toolCallCount, compactionCount: 0, linesAdded: summary.linesAdded, linesRemoved: summary.linesRemoved,
+        filesChanged: summary.filesChanged, taskCreatedAt: '2026-10-01T00:00:00.000Z', startedAt: '2026-10-01T00:00:00.000Z',
+        exitedAt: '2026-10-01T01:00:00.000Z', exitCode: 0, toolBreakdown: [],
+      };
+      const report = state.buildTaskReport(summary.taskId);
+      expect(report.summary, summary.taskId).toBe(state.summaryCache[summary.taskId]);
+      expect(report.conversations, summary.taskId).toHaveLength(1);
+      const run = DEMO_ARCHIVED_RUNS[summary.taskId];
+      expect(report.conversations[0].runs[0], summary.taskId).toMatchObject({
+        costUsd: summary.costUsd, runtimeMs: summary.durationMs, toolCallCount, model: summary.modelDisplayName,
+        agent: run.agent, effort: run.effort ?? null, permissionMode: run.permissionMode,
+      });
+      expect(report.modelFallback, summary.taskId).toEqual([
+        { model: summary.modelDisplayName, inputWithCacheTokens: summary.inputTokens, outputTokens: summary.outputTokens },
+      ]);
+      // Summaries are on in the sample install and none is written (no agent is chosen to write
+      // one), so main reports pending and the card names what is missing. The runs record no
+      // closing message, so the card shows none rather than an authored one.
+      expect(report.summaryState.kind, summary.taskId).toBe('pending');
+    }
+  });
+
+  it('reads summaries as off where the Knowledge Graph is off, as main does', () => {
+    const state = loadMockState();
+    const [summary] = DEMO_ARCHIVED_SUMMARIES;
+    state.summaryCache[summary.taskId] = { sessionId: archivedSessionIdOf(summary.taskId), toolBreakdown: [] };
+    expect(state.buildTaskReport(summary.taskId).summaryState.kind).toBe('off');
+    state.config.knowledgeGraph = { ...DEMO_KNOWLEDGE_GRAPH_CONFIG, taskSummaries: false };
+    expect(state.buildTaskReport(summary.taskId).summaryState.kind).toBe('off');
+    state.config.knowledgeGraph = { ...DEMO_KNOWLEDGE_GRAPH_CONFIG, indexingEnabled: false };
+    expect(state.buildTaskReport(summary.taskId).summaryState.kind).toBe('indexing-off');
+  });
+
+  it('seeds each archived task\'s run facts from its recorded run', () => {
+    const state = loadSeededMockState();
+    // Vacuity guard: the sample install archives tasks, so the loop below checks something.
+    expect(DEMO_ARCHIVED_SUMMARIES.length).toBeGreaterThan(0);
+    // One entry per archived task with a summary, and none for any other task.
+    expect(Object.keys(state.taskRunFacts).sort()).toEqual(DEMO_ARCHIVED_SUMMARIES.map((summary) => summary.taskId).sort());
+    for (const summary of DEMO_ARCHIVED_SUMMARIES) {
+      const task = DEMO_TASKS.find((candidate) => candidate.id === summary.taskId);
+      expect(task, summary.taskId).toBeDefined();
+      // The expected facts are non-empty, or an entry the seed left blank would equal them.
+      expect(task?.agent, `${summary.taskId} names no agent`).toMatch(/\S/);
+      expect(summary.permissionMode, `${summary.taskId} names no permission mode`).toMatch(/\S/);
+      expect(state.taskRunFacts[summary.taskId], summary.taskId).toEqual({
+        agent: task?.agent, effort: summary.effort, permissionMode: summary.permissionMode,
+      });
+    }
+    // The history's runs ran at an effort, so at least one entry carries one rather than null.
+    expect(DEMO_ARCHIVED_SUMMARIES.some((summary) => summary.effort !== null)).toBe(true);
   });
 });
 

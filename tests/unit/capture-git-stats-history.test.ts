@@ -85,10 +85,13 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-function makeRepos(recordIds: string[] = ['record-001']) {
+function makeRepos(recordIds: string[] = ['record-001'], storedChurn: { lines_added: number; lines_removed: number; files_changed: number } | null = null) {
   const sessionSetTaskGitStats = vi.fn();
   const historySetTaskGitStats = vi.fn();
-  const listForTaskNewestFirst = vi.fn(() => recordIds.map((id) => ({ id })));
+  const listForTaskNewestFirst = vi.fn(() => recordIds.map((id, index) => ({
+    id,
+    ...(index === 0 && storedChurn ? storedChurn : { lines_added: 0, lines_removed: 0, files_changed: 0 }),
+  })));
   const sessionRepo = {
     setTaskGitStats: sessionSetTaskGitStats,
     listForTaskNewestFirst,
@@ -132,6 +135,44 @@ describe('captureGitChurn', () => {
 
     expect(sessionSetTaskGitStats).not.toHaveBeenCalled();
     expect(historySetTaskGitStats).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored capture once the task\'s PR is merged: no read, no write', async () => {
+    // #732: after its PR merged, the branch was reset onto main and a release
+    // commit landed on top, so a later capture read +38 / -1 over the real
+    // +52,801 / -2,054. Red-green: without the guard the read runs and writes over it.
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats, historySetTaskGitStats } =
+      makeRepos(['record-001'], { lines_added: 52_801, lines_removed: 2_054, files_changed: 489 });
+
+    captureGitChurn(makeTask({ pr_state: 'merged' }), sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await flushAsync();
+
+    expect(mockGetChurnSummary).not.toHaveBeenCalled();
+    expect(sessionSetTaskGitStats).not.toHaveBeenCalled();
+    expect(historySetTaskGitStats).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored capture once the task is archived (in Done) and a capture exists', async () => {
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats } =
+      makeRepos(['record-001'], { lines_added: 789, lines_removed: 103, files_changed: 13 });
+
+    captureGitChurn(makeTask({ archived_at: '2026-10-13T05:03:47.329Z' }), sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await flushAsync();
+
+    expect(mockGetChurnSummary).not.toHaveBeenCalled();
+    expect(sessionSetTaskGitStats).not.toHaveBeenCalled();
+  });
+
+  it('still captures for an archived task that has no capture yet, and mid-work captures still update', async () => {
+    const archived = makeRepos(['record-001']);
+    captureGitChurn(makeTask({ archived_at: '2026-10-13T05:03:47.329Z' }), archived.sessionRepo, archived.usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await flushAsync();
+    expect(archived.sessionSetTaskGitStats).toHaveBeenCalledTimes(1);
+
+    const midWork = makeRepos(['record-001'], { lines_added: 10, lines_removed: 1, files_changed: 2 });
+    captureGitChurn(makeTask({ pr_state: 'open' }), midWork.sessionRepo, midWork.usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await flushAsync();
+    expect(midWork.sessionSetTaskGitStats).toHaveBeenCalledWith(['record-001'], 'record-001', { linesAdded: 42, linesRemoved: 7, filesChanged: 3 });
   });
 
   it('returns early without touching DiffService or either repo when there is no git directory', async () => {

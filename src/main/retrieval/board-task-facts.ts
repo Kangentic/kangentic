@@ -15,12 +15,61 @@ import type { BoardTaskFacts } from './answer-tasks';
  * The outcome rule is the same CASE `documentMetadata` uses: a Done lane or an
  * archived task is done, since only the move into Done archives.
  *
+ * Cost, duration and tokens roll up the way the task summary does
+ * (SessionRepository.getSummaryForTask; keep the two in step): a session row
+ * holds its whole conversation's CUMULATIVE reading and a `--resume` is a new
+ * row, so each conversation lineage (`COALESCE(agent_session_id, id)`) counts
+ * once, cost and duration by their final (MAX) reading and tokens by the
+ * lineage's latest reading, and the lineages add up. A flat SUM billed a
+ * resumed conversation once per leg. Like the summary, only rows that reported
+ * usage (a cost, zero when the agent has none) are readings. One difference is
+ * kept on purpose: a lineage's latest row with no tokens is skipped here, so
+ * the facts say null rather than zero, where the summary counts it as zero.
+ * The model is the newest session's, not the alphabetically last.
+ *
  * Git churn is branch-cumulative and written to ONE session record per task,
- * with the task's other records zeroed (setTaskGitStats). It is rolled up the
- * way the task summary does (SessionRepository.getSummaryForTask): lines
- * summed, files by their largest capture. Null when no record ever captured it.
+ * with the task's other records zeroed (setTaskGitStats): lines summed, files by
+ * their largest capture. Null when no record ever captured it.
  */
-export const BOARD_TASK_FACTS_SQL = `SELECT t.id AS taskId,
+export const BOARD_TASK_FACTS_SQL = `WITH lineage_totals AS (
+  SELECT task_id,
+         SUM(lineage_cost_usd) AS cost_usd,
+         SUM(lineage_duration_ms) AS duration_ms
+  FROM (
+    SELECT task_id,
+           MAX(total_cost_usd) AS lineage_cost_usd,
+           MAX(total_duration_ms) AS lineage_duration_ms
+    FROM sessions
+    WHERE total_cost_usd IS NOT NULL
+    GROUP BY task_id, COALESCE(agent_session_id, id)
+  )
+  GROUP BY task_id
+),
+lineage_tokens AS (
+  SELECT task_id,
+         SUM(COALESCE(total_input_tokens, 0) + COALESCE(total_output_tokens, 0)) AS tokens
+  FROM (
+    SELECT task_id, total_input_tokens, total_output_tokens,
+           ROW_NUMBER() OVER (
+             PARTITION BY task_id, COALESCE(agent_session_id, id)
+             ORDER BY started_at DESC, id DESC
+           ) AS rn
+    FROM sessions
+    -- Null, never zero, when no session recorded tokens.
+    WHERE total_cost_usd IS NOT NULL
+      AND (total_input_tokens IS NOT NULL OR total_output_tokens IS NOT NULL)
+  )
+  WHERE rn = 1
+  GROUP BY task_id
+),
+latest_model AS (
+  SELECT task_id,
+         COALESCE(applied_model, model_display_name) AS model,
+         ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY started_at DESC, id DESC) AS rn
+  FROM sessions
+  WHERE COALESCE(applied_model, model_display_name) IS NOT NULL
+)
+SELECT t.id AS taskId,
        t.display_id AS displayId,
        t.title AS title,
        CASE
@@ -28,16 +77,12 @@ export const BOARD_TASK_FACTS_SQL = `SELECT t.id AS taskId,
          ELSE 'active'
        END AS outcome,
        COUNT(s.id) AS sessions,
-       SUM(s.total_cost_usd) AS costUsd,
-       SUM(s.total_duration_ms) AS durationMs,
-       -- Null, never zero, when no session recorded tokens.
-       SUM(CASE
-         WHEN s.total_input_tokens IS NULL AND s.total_output_tokens IS NULL THEN NULL
-         ELSE COALESCE(s.total_input_tokens, 0) + COALESCE(s.total_output_tokens, 0)
-       END) AS tokens,
+       lineage_totals.cost_usd AS costUsd,
+       lineage_totals.duration_ms AS durationMs,
+       lineage_tokens.tokens AS tokens,
        MAX(COALESCE(s.exited_at, s.suspended_at, s.started_at, t.updated_at)) AS lastActivity,
        MAX(s.session_type) AS agent,
-       MAX(COALESCE(s.applied_model, s.model_display_name)) AS model,
+       latest_model.model AS model,
        MAX(s.files_changed) AS filesChanged,
        SUM(s.lines_added) AS linesAdded,
        SUM(s.lines_removed) AS linesRemoved,
@@ -46,6 +91,9 @@ export const BOARD_TASK_FACTS_SQL = `SELECT t.id AS taskId,
 FROM tasks t
 LEFT JOIN swimlanes w ON w.id = t.swimlane_id
 LEFT JOIN sessions s ON s.task_id = t.id
+LEFT JOIN lineage_totals ON lineage_totals.task_id = t.id
+LEFT JOIN lineage_tokens ON lineage_tokens.task_id = t.id
+LEFT JOIN latest_model ON latest_model.task_id = t.id AND latest_model.rn = 1
 GROUP BY t.id`;
 
 /** One row of `BOARD_TASK_FACTS_SQL`, as the database returns it. */

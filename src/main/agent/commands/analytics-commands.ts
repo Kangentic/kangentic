@@ -12,6 +12,7 @@ import { retrievalClient } from '../../retrieval/retrieval-client';
 import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
+import { legDeltas } from '../../../shared/leg-deltas';
 import type { SessionSummary, SubagentUsageTotals, Task, TaskFanOut } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
@@ -79,7 +80,7 @@ export const handleGetTaskStats: CommandHandler = async (
       `Stats for "${task.title}":`,
       `  Tokens: ${summary.totalInputTokens.toLocaleString()} input + ${summary.totalOutputTokens.toLocaleString()} output = ${(summary.totalInputTokens + summary.totalOutputTokens).toLocaleString()} total`,
       `  Cost: $${summary.totalCostUsd.toFixed(4)}`,
-      `  Duration: ${Math.round(summary.durationMs / 1000)}s`,
+      `  Agent runtime: ${Math.round(summary.durationMs / 1000)}s`,
       `  Tool calls: ${summary.toolCallCount}`,
       `  Sessions compacted: ${summary.compactionCount}`,
       `  Lines: +${summary.linesAdded} / -${summary.linesRemoved} across ${summary.filesChanged} file(s)`,
@@ -468,8 +469,21 @@ export const handleListSessions: CommandHandler = (
 
   const lines = [`Sessions for "${task.title}" (${records.length} session${records.length !== 1 ? 's' : ''}):\n`];
 
+  // A record's cost and duration are its conversation's CUMULATIVE reading, so
+  // each line prints the record's own share (the rule usage_history applies),
+  // and the lines add up to the task's total instead of counting a resumed
+  // conversation once per leg.
+  const shares = legDeltas(records.map((record) => ({
+    recordId: record.id,
+    lineageId: record.agent_session_id,
+    startedAt: record.started_at,
+    cumulativeCostUsd: record.total_cost_usd,
+    cumulativeDurationMs: record.total_duration_ms,
+  })));
+
   for (let index = 0; index < records.length; index++) {
     const record = records[index];
+    const share = shares.get(record.id);
     const endTime = record.exited_at ?? record.suspended_at ?? 'still running';
     const parts = [
       `#${index + 1}: ${record.status}`,
@@ -479,12 +493,12 @@ export const handleListSessions: CommandHandler = (
     if (record.exit_code !== null) parts.push(`exit code: ${record.exit_code}`);
     if (record.suspended_by) parts.push(`suspended by: ${record.suspended_by}`);
     if (record.permission_mode) parts.push(`permissions: ${record.permission_mode}`);
-    if (record.total_cost_usd !== null) parts.push(`cost: $${record.total_cost_usd.toFixed(4)}`);
+    if (share?.costUsd != null) parts.push(`cost: $${share.costUsd.toFixed(4)}`);
     if (record.total_input_tokens !== null && record.total_output_tokens !== null) {
       parts.push(`tokens: ${(record.total_input_tokens + record.total_output_tokens).toLocaleString()}`);
     }
     if (record.tool_call_count !== null) parts.push(`tool calls: ${record.tool_call_count}`);
-    if (record.total_duration_ms !== null) parts.push(`duration: ${Math.round(record.total_duration_ms / 1000)}s`);
+    if (share?.durationMs != null) parts.push(`runtime: ${Math.round(share.durationMs / 1000)}s`);
     lines.push(`  ${parts.join(' | ')}`);
   }
 
@@ -505,12 +519,15 @@ export const handleListSessions: CommandHandler = (
       endedAt: record.exited_at ?? record.suspended_at,
       suspendedBy: record.suspended_by,
       permissionMode: record.permission_mode,
-      cost: record.total_cost_usd,
+      // This record's own share; the conversation's running total is kept beside it.
+      cost: shares.get(record.id)?.costUsd ?? null,
+      cumulativeCost: record.total_cost_usd,
       tokens: record.total_input_tokens !== null && record.total_output_tokens !== null
         ? record.total_input_tokens + record.total_output_tokens
         : null,
       toolCalls: record.tool_call_count,
-      durationMs: record.total_duration_ms,
+      durationMs: shares.get(record.id)?.durationMs ?? null,
+      cumulativeDurationMs: record.total_duration_ms,
     })),
   };
 };

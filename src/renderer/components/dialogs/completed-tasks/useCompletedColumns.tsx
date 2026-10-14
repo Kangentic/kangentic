@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { formatRelativeTime } from '../../../lib/datetime';
 import type { DataTableColumn } from '../../DataTable';
-import { formatCost, formatDuration } from '../../../utils/format-session';
+import { formatCost, formatSpan } from '../../../utils/format-session';
 import { formatTokenCount } from '../../../utils/format-tokens';
 import type { Task, Swimlane, SessionSummary } from '../../../../shared/types';
 import { StaleTaskWarning } from './StaleTaskWarning';
@@ -108,13 +108,13 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'duration' as SortKey,
-      label: 'Duration',
+      label: 'Agent runtime',
       align: 'right',
       width: 'w-[90px]',
       sortValue: (row) => row.summary?.durationMs ?? -1,
       render: (row) =>
         row.summary && row.summary.durationMs > 0 ? (
-          <span className="tabular-nums text-fg-secondary">{formatDuration(row.summary.durationMs)}</span>
+          <span className="tabular-nums text-fg-secondary">{formatSpan(row.summary.durationMs)}</span>
         ) : (
           <span className="text-fg-disabled">-</span>
         ),
