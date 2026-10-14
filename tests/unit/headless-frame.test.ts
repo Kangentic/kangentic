@@ -438,5 +438,62 @@ describe('HeadlessFrameBuffer', () => {
       buffer.dispose();
       replayed.dispose();
     });
+
+    it('keeps a wide glyph that ends exactly on the new last column', async () => {
+      // `中` covers columns 8 and 9 of a 10-column grid, so both halves fit. Only a
+      // glyph whose right half is cut off may be blanked. The text past it is cut.
+      const buffer = await shrinkInsideAltScreen(
+        ['row0 tex中tail', 'second', 'third', 'fourth'],
+        '',
+      );
+
+      const replayed = await replayIntoFreshTerminal(await buffer.serialize(), 10, 4);
+
+      expect(replayedRows(replayed)).toEqual(['row0 tex中', 'second', 'third', 'fourth']);
+      expect(sourceRows(buffer)).toEqual(['row0 tex中', 'second', 'third', 'fourth']);
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+
+    it('does not bring the cut cells back when the grid grows to its old width again', async () => {
+      // Without the trim the alt lines keep their old width, so growing back to 20
+      // columns would uncover the stale cells that were off-grid at 10.
+      const buffer = await shrinkInsideAltScreen(
+        ['wide row zero', 'wide row one', 'wide row two', 'wide row three'],
+        '',
+      );
+      buffer.resize(20, 4);
+
+      const replayed = await replayIntoFreshTerminal(await buffer.serialize(), 20, 4);
+
+      expect(sourceRows(buffer)).toEqual(['wide row z', 'wide row o', 'wide row t', 'wide row t']);
+      expect(replayedRows(replayed)).toEqual(['wide row z', 'wide row o', 'wide row t', 'wide row t']);
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+
+    it('leaves the normal buffer to its own reflow, and an alt screen entered afterwards starts at the new width', async () => {
+      // The trim reads only the alt lines, which are empty while the normal buffer
+      // is active. A shrink here must reflow the normal rows as xterm does, and
+      // the alt screen entered next must be built at 10 columns.
+      const buffer = new HeadlessFrameBuffer(20, 4);
+      // The second row keeps the cursor off the long row, which xterm does not reflow.
+      buffer.write('normal text here\r\nnext');
+      await buffer.serialize();
+      buffer.resize(10, 4);
+      buffer.write('\x1b[?1049h\x1b[1;1Halt row 0\x1b[2;1Halt row 1');
+      const altReplayed = await replayIntoFreshTerminal(await buffer.serialize(), 10, 4);
+      expect(replayedRows(altReplayed)).toEqual(['alt row 0', 'alt row 1', '', '']);
+
+      buffer.write('\x1b[?1049l');
+      const normalReplayed = await replayIntoFreshTerminal(await buffer.serialize(), 10, 4);
+      expect(replayedRows(normalReplayed)).toEqual(['normal tex', 't here', 'next', '']);
+
+      buffer.dispose();
+      altReplayed.dispose();
+      normalReplayed.dispose();
+    });
   });
 });
