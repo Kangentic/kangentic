@@ -643,7 +643,7 @@ a header-only check misses when a shot is cut short. The pure half is
 `release.yml`'s `demo-posters` job runs it after `publish-release`, beside `deploy-demo`, and
 attaches the zip with `gh release upload --clobber`, so a re-run of a finished release replaces
 the asset in place. It is deliberately not in `scripts/release-assets.js`: that manifest is
-verified before the job runs, and a twelfth expected asset would fail every release. Being after
+verified before the job runs, and listing the zip there would fail every release. Being after
 publish also means the release stands when the job fails; the run goes red and the site's own
 sync fails on the missing asset.
 

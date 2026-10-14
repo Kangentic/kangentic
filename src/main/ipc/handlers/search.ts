@@ -24,6 +24,7 @@ import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
 import { codeIndexOn, taskSummariesOn } from '../../../shared/answer-agent';
+import { isLocalEmbeddingSupported } from '../../retrieval/embedder/embedding-runtime-support';
 import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
 import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
 import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
@@ -315,7 +316,9 @@ export function registerSearchHandlers(context: IpcContext): void {
         // scope, or no primed turn yet, sends the whole prompt.
         // Source code, when indexed, is searched beside the tasks and handed as
         // passages; the setting, not what a question finds, decides the rules.
-        const codeIndexed = codeIndexOn(context.configManager.load().knowledgeGraph);
+        // Never where the local model cannot load: the sweep indexes no code
+        // there (retrieval-service.ts codePlan), whatever the config says.
+        const codeIndexed = isLocalEmbeddingSupported() && codeIndexOn(context.configManager.load().knowledgeGraph);
         const scopeSignature = answerScopeSignature(
           scopeProjects.map((entry) => entry.id),
           homeProject.id,

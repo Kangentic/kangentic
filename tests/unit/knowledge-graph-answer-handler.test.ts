@@ -12,7 +12,7 @@
  * off a mocked `ipcMain.handle`, then drive one channel.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -206,6 +206,15 @@ vi.mock('../../src/main/retrieval/retrieval-client', async () => {
     ),
   };
   return { RetrievalUnavailableError, retrievalClient };
+});
+// Whether this platform can load the local model at all (not on Intel macOS), flipped per case and
+// back to supported after each.
+const runtimeSupport = vi.hoisted(() => ({ supported: true }));
+vi.mock('../../src/main/retrieval/embedder/embedding-runtime-support', () => ({
+  isLocalEmbeddingSupported: () => runtimeSupport.supported,
+}));
+afterEach(() => {
+  runtimeSupport.supported = true;
 });
 vi.mock('../../src/main/search/search-core', () => ({ runSearchEverything: vi.fn() }));
 vi.mock('../../src/main/pop-out/window-broadcast', () => ({ broadcast: vi.fn() }));
@@ -842,6 +851,33 @@ describe('the Ask handler', () => {
     await ask('where is the sphere fitted?');
     expect(relatedSpy.mock.calls[1][0].code).toBe(false);
     expect(answerSpy.mock.calls[1][0]).not.toContain('source_code');
+  });
+
+  // The sweep indexes no code where the local model cannot load (Intel macOS), so a config that
+  // reads as indexed there would search an empty index and send rules for a block that never comes.
+  //
+  // Red-green: drop `isLocalEmbeddingSupported() &&` from `codeIndexed` in search.ts. The first
+  // question then searches code (`code` true) and its prompt carries the source code block.
+  it('treats source code as not indexed where the local model cannot load, whatever the config says', async () => {
+    const answerSpy = vi.fn(async () => 'fitSphere in src/sphere.ts does it.\nSELECTED: none');
+    mockAdapters = [claudeAdapter(answerSpy)];
+    mockRelated = {
+      ...relatedWork([relatedTask()]),
+      code: [{ path: 'src/sphere.ts', text: 'export function fitSphere() {}', relevance: 0.6 }],
+    };
+    registerSearchHandlers(makeContext() as unknown as Parameters<typeof registerSearchHandlers>[0]);
+    knowledgeGraphConfig = { agent: 'claude', model: 'haiku', sourceCode: true, enabled: true };
+
+    runtimeSupport.supported = false;
+    await ask('where is the sphere fitted?');
+    expect(relatedSpy.mock.calls[0][0].code).toBe(false);
+    expect(answerSpy.mock.calls[0][0]).not.toContain('source_code');
+
+    // The control: the same config and the same question where the model can load.
+    runtimeSupport.supported = true;
+    await ask('where is the sphere fitted?');
+    expect(relatedSpy.mock.calls[1][0].code).toBe(true);
+    expect(answerSpy.mock.calls[1][0]).toContain('<source_code>\n--- src/sphere.ts\nexport function fitSphere() {}\n</source_code>');
   });
 
   it('runs the answer at the configured model', async () => {
