@@ -399,7 +399,7 @@ is skipped with a warning, never read as `enter`.
 
 `condition` is the row's Condition in plain words, judged by the Automation agent before the row
 runs; NULL (or blank) means the row always runs. `max_runs` is its Frequency, the most times it may
-run on one task across every visit; NULL means no limit. Both are nullable so a build from before
+run on one task across every visit since the task last left Done; NULL means no limit. Both are nullable so a build from before
 them still inserts into a database that has them.
 
 `position` is assigned PER TRIGGER, so each group numbers from 0 independently and the three can
@@ -456,8 +456,10 @@ calls were recorded has none.
 **What counts as a run.** A row "has run" (for a turn-end row's once-per-visit rule and for
 Frequency) when it has a row here with status `running`, `succeeded`, `failed` or `interrupted`. A
 `skipped` row, including a Condition that answered no, is not a run, so the next trigger checks it
-again. The project-open prune keeps every counted run of an automation that has a Frequency limit,
-on a task that is not archived, so pruning can never reset a limit.
+again. Frequency counts only the runs since the task last left Done: its newest `task_moves` row
+whose `from_swimlane_id` is a `done` column and whose origin is not `rollback`. A reopened task
+starts its limits over. The project-open prune keeps every counted run of an automation that has a
+Frequency limit, on a task that is not archived, so pruning can never reset a limit.
 
 `automation_name` and `type` are DENORMALIZED and there is no foreign key to `column_automations`:
 a run log that empties itself when you rename or delete the automation is not a log.
@@ -1341,8 +1343,8 @@ Operates on a per-project DB.
 | `hasWorkflowStepSince(taskId, swimlaneId, since)` | Has a workflow step check answered for this task in this column since `since`? A check writes its row after the reply it judged, so a resumed task's catch-up asks it with the reply's time to tell a judged reply from one a Pause or a quit left unjudged. |
 | `recordWorkflowStep({ taskId, swimlaneId, workflowId, met, reason })` | Record a workflow step check's answer, so "why did the task not move on" has an answer in the same log. Its automation id is `workflow-step:<workflowId>` and its type `workflow_step`, neither of which names a column automation; a yes that moved the task is `succeeded`, a no is `skipped`, each with the answer's reason. |
 | `hasRunSince(automationId, taskId, since)` | Whether the automation has run on the task since `since`, the task's entry into the column. Counts executed runs only (`running`, `succeeded`, `failed`, `interrupted`), never a skip. A null `since` (no recorded entry) counts every run. The turn-end group's once-per-visit check. |
-| `hasSkipSince(automationId, taskId, since, detail)` | Whether a `skipped` row with exactly this `detail` exists since `since`. A null `since` counts every such skip. Lets a turn-end group record "Set up an Automation agent" once per visit rather than at every turn end. |
-| `countRuns(automationId, taskId)` | How many executed runs the automation has on the task, across every visit. What Frequency (`max_runs`) checks. |
+| `hasSkipSince(automationId, taskId, since, detail)` | Whether a `skipped` row with exactly this `detail` exists since `since`. A null `since` counts every such skip. Lets a turn-end group record "Set up an Automation agent", or a spent Frequency, once per visit rather than at every turn end. |
+| `countRuns(automationId, taskId)` | How many executed runs the automation has on the task, across every visit since the task last left Done (its newest non-`rollback` `task_moves` row out of a `done` column). What Frequency (`max_runs`) checks. |
 | `listForTask(taskId, limit)` | Everything that ran for one card, newest first, each with the check that answered it (`AutomationRun.check`, joined from `background_calls`) |
 | `listForAutomation(automationId, limit)` | Every run of one automation, newest first, with its check. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
 | `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |

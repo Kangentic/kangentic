@@ -844,7 +844,8 @@ Every row also takes two guards:
   Workflows) before the row runs. A no is not a run, so the next trigger checks it again. Omit or
   `null` to always run. A row with a Condition is skipped until an Automation agent is set up.
 - **`maxRuns`**: Frequency, the most times the row may run on one task across every visit (a review
-  loop's round-trip limit). Omit or `null` for no limit.
+  loop's round-trip limit). The count starts over when the task leaves Done. Omit or `null` for no
+  limit.
 
 A `turn_end` row runs when the column's agent finishes a turn on its own (not an interrupt or a
 failed turn), at most once per visit, top to bottom. `{{agentReply}}` resolves to that agent's final

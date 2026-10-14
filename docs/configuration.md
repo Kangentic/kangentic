@@ -675,7 +675,8 @@ read-only call answers every pending Condition of a group at once; at a turn end
 task and the agent's final message, on enter or exit the task and the move. Until an Automation
 agent is set up, a row with a Condition is skipped (a Condition written earlier is kept). A row's
 **Frequency** is the most times it may run on one task, counted across every visit; a row past it
-is skipped. Both are off on every row unless set, so a board from before them runs as it did.
+is skipped. The count starts over when the task leaves Done, so a reopened task can loop and
+advance again. Both are off on every row unless set, so a board from before them runs as it did.
 
 The Code Review loop is two `move_to_column` rows on a review column's On agent turn end: "Back for
 revisions" to Executing with the reviewer's `{{agentReply}}` in its message, behind a Condition and

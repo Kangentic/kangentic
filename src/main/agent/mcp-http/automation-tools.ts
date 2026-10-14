@@ -39,7 +39,7 @@ const AUTOMATION_ROW_SCHEMA = z.object({
   on: z.enum(AUTOMATION_TRIGGERS).optional().describe('When it runs: "enter" as a task ENTERS this column, "turn_end" each time the column\'s agent FINISHES A TURN there, "exit" as the task LEAVES. Defaults to "enter". To Do and Done can only run exit automations.'),
   enabled: z.boolean().optional().describe('Defaults to true. A switched-off automation stays in the list and is skipped.'),
   condition: z.string().max(2000).nullable().optional().describe('Condition, in plain words, judged by the Automation agent before the row runs (e.g. "the review found work the implementer can do"). A no is not a run: the row is checked again next time. Omit or null to always run. Needs an Automation agent set up in Settings > Workflows.'),
-  maxRuns: z.number().int().min(1).nullable().optional().describe('Frequency: the most times this row may run on one task, counted across every visit to the column (a review loop\'s round-trip limit). Omit or null for no limit.'),
+  maxRuns: z.number().int().min(1).nullable().optional().describe('Frequency: the most times this row may run on one task, counted across every visit to the column since the task last left Done (a review loop\'s round-trip limit). Omit or null for no limit.'),
 
   // The per-type fields. Every type's keys live on one object because the row
   // shape is flat; a key belonging to another type is dropped on write rather

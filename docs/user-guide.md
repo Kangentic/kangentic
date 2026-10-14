@@ -481,7 +481,8 @@ the row did not run: it is checked again next time. The agent that checks is the
 agent**, chosen in Settings > Workflows; until one is set up, Condition stays off. The same agent names
 tasks and Command Terminals, and without one naming is off. **Frequency**
 caps how many times a row runs on one task, across every visit, which is what keeps a review loop
-from bouncing a task forever. Both start off.
+from bouncing a task forever. Taking a task back out of Done starts the count over, so a reopened
+task runs through the board's automations again. Both start off.
 
 **Reading a row.** Every row has the same two lines. The second says what the row does, and to
 what: the verb and the type's one required value, such as `Sends "Review the changes"`, `Moves the

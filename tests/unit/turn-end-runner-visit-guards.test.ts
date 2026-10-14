@@ -13,6 +13,9 @@
  * - **A "not set up" skip is written once per visit.** A column whose Condition
  *   cannot be checked (no Automation agent chosen) would otherwise write the same
  *   skipped row at every turn end of a long chat and bury the log.
+ * - **A spent Frequency is written once per visit.** A row that has run its
+ *   limit is never checked or run, but says why, and a task that came back
+ *   from Done counts its Frequency from there.
  * - **A turn that never settles.** When the wait for idle and a quiet terminal
  *   runs out, no row runs and nothing is recorded, so the pass warns once.
  *
@@ -434,6 +437,117 @@ describe('a turn end and the rows it may run', () => {
 
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(2);
       expect(skippedRows()).toHaveLength(2);
+    });
+  });
+
+  // #803 came back from Done, and its second review ended Ready with the card
+  // left in place: "On to Testing" had spent its one run on the first pass, and
+  // the turn end dropped it with no record, so the log showed only the revisions
+  // row's "Condition not met". A spent row now says so, once per visit, and a
+  // task that left Done counts its Frequency from there.
+  describe('a row whose Frequency is spent', () => {
+    const SPENT_REASON = 'Already ran once on this task, its limit.';
+
+    /** An executed run of the row, stamped `startedAt`: one from an earlier visit. */
+    function ranAt(automation: ColumnAutomation, startedAt: string): void {
+      const runId = randomUUID();
+      runs.start({ id: runId, automation, taskId });
+      runs.finish(runId, 'succeeded', 'Moved to Testing.');
+      database.prepare('UPDATE automation_runs SET started_at = ? WHERE id = ?').run(startedAt, runId);
+    }
+
+    /** Record that the task was taken out of Done at `at`. */
+    function leaveDoneAt(at: string): void {
+      const doneLaneId = new SwimlaneRepository(database).list().find((lane) => lane.role === 'done')!.id;
+      database
+        .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(randomUUID(), taskId, doneLaneId, laneId, 'renderer', null, at);
+    }
+
+    it('is skipped with its limit once per visit, and never checked or run', async () => {
+      const spentRow = row({ max_runs: 1, condition: 'The verdict reads Ready' });
+      hoisted.rows = [spentRow];
+      ranAt(spentRow, secondsAgo(120));
+      enterColumnAt(secondsAgo(60));
+
+      await endTurn();
+      await endTurn();
+      await endTurn();
+
+      expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(3);
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      const skipped = skippedRows();
+      expect(skipped.map((run) => run.detail)).toEqual([SPENT_REASON]);
+      expect(skipped[0]).toMatchObject({ automation_name: 'On to Testing', trigger: 'turn_end', swimlane_id: laneId });
+      // A skip is not a run, so it spends nothing more.
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+    });
+
+    it('is recorded even when nothing else in the pass has work to do', async () => {
+      hoisted.workflowStepApplies.mockImplementation(() => false);
+      const spentRow = row({ max_runs: 1 });
+      hoisted.rows = [spentRow];
+      ranAt(spentRow, secondsAgo(120));
+      enterColumnAt(secondsAgo(60));
+
+      await endTurn();
+
+      // The pass stopped at the cheap gate, after writing the skip.
+      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+      expect(skippedRows().map((run) => run.detail)).toEqual([SPENT_REASON]);
+    });
+
+    it('is recorded again in the next visit (the control)', async () => {
+      const spentRow = row({ max_runs: 1 });
+      hoisted.rows = [spentRow];
+      ranAt(spentRow, secondsAgo(120));
+      enterColumnAt(secondsAgo(60));
+      await endTurn();
+      // Age the first visit's skip to before the second visit began.
+      database.prepare('UPDATE automation_runs SET started_at = ? WHERE status = ?').run(secondsAgo(30), 'skipped');
+      enterColumnAt(secondsAgo(10));
+
+      await endTurn();
+
+      expect(skippedRows().map((run) => run.detail)).toEqual([SPENT_REASON, SPENT_REASON]);
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+    });
+
+    it('runs again once the task has come back from Done', async () => {
+      const spentRow = row({ max_runs: 1 });
+      hoisted.rows = [spentRow];
+      // The first life: the row ran, then the task finished and was reopened.
+      ranAt(spentRow, secondsAgo(300));
+      leaveDoneAt(secondsAgo(200));
+      enterColumnAt(secondsAgo(60));
+
+      await endTurn();
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      const [, , , options] = hoisted.executeTransition.mock.calls[0] as [unknown, unknown, string, ExecuteOptions];
+      expect([...options.onlyIds]).toEqual(['row-on-to-testing']);
+      expect(skippedRows()).toEqual([]);
+      // The run this life made is the one that counts now.
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+    });
+
+    it('does not stop the rows after it: they still run, and only the spent row is skipped', async () => {
+      const spentRow = row({ max_runs: 1 });
+      const runnableRow = row({ id: 'row-after-the-spent-one', name: 'Move on after review', position: 1 });
+      hoisted.rows = [spentRow, runnableRow];
+      ranAt(spentRow, secondsAgo(120));
+      enterColumnAt(secondsAgo(60));
+
+      await endTurn();
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      const [, , , options] = hoisted.executeTransition.mock.calls[0] as [unknown, unknown, string, ExecuteOptions];
+      expect([...options.onlyIds]).toEqual(['row-after-the-spent-one']);
+      const skipped = skippedRows();
+      expect(skipped.map((run) => run.detail)).toEqual([SPENT_REASON]);
+      expect(skipped[0].automation_id).toBe('row-on-to-testing');
+      expect(runs.countRuns('row-after-the-spent-one', taskId)).toBe(1);
     });
   });
 
