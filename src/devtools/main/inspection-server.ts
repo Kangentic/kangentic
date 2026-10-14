@@ -50,7 +50,7 @@ import type { SessionManager } from '../../main/pty/session-manager';
 import { readTerminalTrace } from '../../main/pty/terminal-trace';
 import {
   measureComposedCols,
-  COMPOSED_MATCH_TOLERANCE_COLUMNS,
+  composedMatchesPty,
   type ComposedWidthMeasurement,
 } from './composed-width';
 import { detailOwnerRegistry } from '../../main/ipc/handlers/task-detail-ownership';
@@ -706,10 +706,7 @@ async function respondTerminalState(
     return {
       composedCols: measurement.composedCols,
       composedColsSampleCount: measurement.sampleCount,
-      composedMatchesPty:
-        measurement.composedCols !== null && ptyCols !== null
-          ? Math.abs(measurement.composedCols - ptyCols) <= COMPOSED_MATCH_TOLERANCE_COLUMNS
-          : null,
+      composedMatchesPty: composedMatchesPty(measurement.composedCols, ptyCols),
     };
   };
   const evaluated = await runtimeEvaluate(

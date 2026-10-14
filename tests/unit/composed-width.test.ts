@@ -11,7 +11,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  composedMatchesPty,
   measureComposedCols,
+  COMPOSED_MATCH_TOLERANCE_COLUMNS,
   COMPOSED_WIDTH_MIN_SIGNAL_COLUMNS,
 } from '../../src/devtools/main/composed-width';
 import { TUI_SETUP, DEFECTIVE_JUMP_FRAME } from '../fixtures/claude-code-frames';
@@ -231,5 +233,37 @@ describe('measureComposedCols', () => {
     const measurement = measureComposedCols(stream);
     expect(measurement.composedCols).toBe(100);
     expect(measurement.sampleCount).toBe(3);
+  });
+});
+
+describe('composedMatchesPty', () => {
+  it('is null when the composed width is unknown', () => {
+    expect(composedMatchesPty(null, 210)).toBeNull();
+  });
+
+  it('is null when the PTY width is unknown', () => {
+    expect(composedMatchesPty(210, null)).toBeNull();
+  });
+
+  it('is null when both widths are unknown', () => {
+    expect(composedMatchesPty(null, null)).toBeNull();
+  });
+
+  it('is true when the widths are equal', () => {
+    expect(composedMatchesPty(210, 210)).toBe(true);
+  });
+
+  it('is true when the composed width is off by exactly the tolerance, in either direction', () => {
+    expect(composedMatchesPty(210 - COMPOSED_MATCH_TOLERANCE_COLUMNS, 210)).toBe(true);
+    expect(composedMatchesPty(210 + COMPOSED_MATCH_TOLERANCE_COLUMNS, 210)).toBe(true);
+  });
+
+  it('is false when the composed width is off by one more than the tolerance, in either direction', () => {
+    expect(composedMatchesPty(210 - COMPOSED_MATCH_TOLERANCE_COLUMNS - 1, 210)).toBe(false);
+    expect(composedMatchesPty(210 + COMPOSED_MATCH_TOLERANCE_COLUMNS + 1, 210)).toBe(false);
+  });
+
+  it('is false for the real defect gap, a 120-column child inside a 306-column PTY', () => {
+    expect(composedMatchesPty(120, 306)).toBe(false);
   });
 });

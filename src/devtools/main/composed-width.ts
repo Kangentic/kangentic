@@ -372,3 +372,15 @@ export function measureComposedCols(
     windowChars: scannedWindow.length,
   };
 }
+
+/**
+ * Whether the composed width agrees with the PTY grid, within
+ * `COMPOSED_MATCH_TOLERANCE_COLUMNS`. Null when either width is unknown. The
+ * terminal-state route and the persisted `composed-sample` both read their
+ * verdict here, so the live route and the trace file cannot disagree on one
+ * session.
+ */
+export function composedMatchesPty(composedCols: number | null, ptyCols: number | null): boolean | null {
+  if (composedCols === null || ptyCols === null) return null;
+  return Math.abs(composedCols - ptyCols) <= COMPOSED_MATCH_TOLERANCE_COLUMNS;
+}
