@@ -830,6 +830,9 @@ test.describe('terminal panel reveal', () => {
   });
 
   test('closing the window brings the panel back at the height the user dragged it to', async () => {
+    // Launch, a drag, a window open and close, and their saves run about 10s on a loaded shard,
+    // so the 15s UI budget leaves no room for a slow poll.
+    test.slow();
     const { browser, page } = await launch();
     try {
       const container = page.locator(PANEL_CONTAINER);
@@ -863,6 +866,9 @@ test.describe('terminal panel reveal', () => {
   });
 
   test('a warm switch back to the project keeps the sizes dragged since it was left', async () => {
+    // Launch, three project switches and two drags run about 10s on a loaded shard, so the 15s
+    // UI budget leaves no room for a slow poll.
+    test.slow();
     const { browser, page } = await launch();
     try {
       const container = page.locator(PANEL_CONTAINER);
