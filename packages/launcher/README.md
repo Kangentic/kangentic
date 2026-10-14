@@ -1,61 +1,51 @@
 # Kangentic
 
-**Visual Agent Orchestration for Claude Code**
+**Drag a card. An agent starts.**
 
-One command to install and launch [Kangentic](https://github.com/Kangentic/kangentic) -- a cross-platform desktop Kanban for Claude Code agents.
+An agentic development environment for AI coding agents. This package installs the desktop app and opens it.
 
-## Install
+![The Kangentic board with tasks in To Do, Planning, Executing, and Code Review, and the selected agent's terminal open below.](https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png)
+
+## Install and run
 
 ```bash
 npx kangentic
 ```
 
-This downloads the pre-built binary for your platform from GitHub Releases, installs it, and launches the app. After the first run, the app manages its own updates automatically on every platform.
+The launcher downloads the release that matches its own version from [GitHub Releases](https://github.com/Kangentic/kangentic/releases), installs it, and opens it:
 
-### Open a specific project
+- **Windows.** A per-user install to `%LOCALAPPDATA%\Programs\Kangentic`.
+- **macOS.** `Kangentic.app` in `~/Applications`.
+- **Linux.** The `.rpm` package (dnf, zypper, or rpm) or the `.deb` package (apt or dpkg). This asks for your password.
+
+To open a project directly:
 
 ```bash
 npx kangentic /path/to/your/project
 ```
 
-## How it works
-
-1. Detects your platform (Windows, macOS, Linux) and architecture (x64, arm64)
-2. Downloads the matching installer from [GitHub Releases](https://github.com/Kangentic/kangentic/releases)
-3. Installs per platform:
-   - **Windows:** Runs NSIS installer silently to `%LOCALAPPDATA%\Programs\Kangentic\`
-   - **macOS:** Extracts .zip to `~/Applications/Kangentic.app`
-   - **Linux:** Installs .rpm on RPM-family systems (`sudo dnf install` on Fedora/RHEL,
-     `sudo zypper install` on openSUSE, falling back to `sudo rpm -Uvh`) or .deb elsewhere
-     (`sudo apt install`, falling back to `sudo dpkg -i`); prompts for password
-4. Launches the app
+To install a specific release, run `npx kangentic@<version>`. The launcher version matches the app version.
 
 ## Updates
 
-After the initial install, you generally don't need to run `npx kangentic` again:
+The app updates itself. On Windows and macOS a downloaded update installs when you quit. On Linux, click **Restart to update** and enter your password. If that fails, run `npx kangentic@latest`, then quit and reopen the app.
 
-- **Windows:** electron-updater installs new versions silently on restart.
-- **macOS:** Built-in auto-updater downloads in the background and prompts to restart. (Requires code signing.)
-- **Linux:** The app downloads the new deb/rpm and installs it when you click "Restart to update", asking for your password once. If that fails (no polkit agent, for example), re-run `npx kangentic@latest` (the `@latest` matters: a cached launcher reinstalls its own version), then quit and reopen the app.
+## Requirements
 
-### Install a specific version
+- Windows x64, macOS 13 or later on Apple Silicon, or Linux x64.
+- Node.js 20 or later, and Git 2.26 or later.
+- At least one supported agent CLI, such as Claude Code, Codex CLI, or Gemini CLI, installed and signed in.
 
-```bash
-npx kangentic@0.2.0
-```
+## Privacy
 
-The launcher version matches the app version. Specifying a version downloads that exact release.
-
-## Prerequisites
-
-- **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)** installed and on your PATH
-- **[Git 2.26+](https://git-scm.com/)** for worktree support
+Release builds send anonymous usage events and error reports by default. Set `KANGENTIC_TELEMETRY=0` to turn them off. See the [privacy page](https://www.kangentic.com/privacy/).
 
 ## Links
 
-- [GitHub](https://github.com/Kangentic/kangentic)
-- [Documentation](https://github.com/Kangentic/kangentic/tree/main/docs)
-- [Installation Guide](https://github.com/Kangentic/kangentic/blob/main/docs/installation.md)
+- [Source code and full README](https://github.com/Kangentic/kangentic)
+- [Live demo](https://kangentic.github.io/kangentic/)
+- [Quickstart](https://www.kangentic.com/getting-started/)
+- [Installation guide](https://www.kangentic.com/guide/installation/)
 
 ## License
 

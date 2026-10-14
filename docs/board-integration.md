@@ -150,7 +150,7 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | Linear | stub | - | Tracked in #482. |
 | Trello | stub | - | Tracked in #483. |
 
-The registry enumerates all 7 providers. Stable providers dispatch normally; stub providers (`jira`, `linear`, `trello`) are rendered as "coming soon" in the settings UI, and IPC handlers short-circuit them before any throwing method runs.
+The registry enumerates all 7 providers. Stable providers dispatch normally. Stub providers (`jira`, `linear`, `trello`) are not offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers short-circuit them before any throwing method runs.
 
 ## See Also
 

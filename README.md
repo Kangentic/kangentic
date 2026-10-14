@@ -1,120 +1,118 @@
 <p align="center">
-  <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic Logo" width="128" /></a>
+  <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic logo" width="96" /></a>
 </p>
 
-<h1 align="center"><a href="https://www.kangentic.com">Kangentic</a></h1>
+<h1 align="center">Kangentic</h1>
 
 <p align="center">
-  <strong>Drag a card. An agent starts.</strong>
+  <strong>Drag a card. An agent starts.</strong><br />
+  An agentic development environment for AI coding agents.
 </p>
 
 <p align="center">
+  <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="Latest release" /></a>
   <a href="https://www.npmjs.com/package/kangentic"><img src="https://img.shields.io/npm/v/kangentic?style=flat-square" alt="npm version" /></a>
-  <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="GitHub release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 License" /></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-brightgreen.svg?style=flat-square" alt="Platform" />
-  <a href="https://www.kangentic.com"><img src="https://img.shields.io/badge/website-kangentic.com-purple.svg?style=flat-square" alt="Website" /></a>
-  <a href="https://github.com/Kangentic/kangentic/stargazers"><img src="https://img.shields.io/github/stars/Kangentic/kangentic?style=social" alt="GitHub Stars" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 license" /></a>
 </p>
-
----
-
-<p align="center">A Kanban board for AI coding agents. Spawn, suspend, and resume sessions across fourteen agent CLIs from one board, with your own backlog. Local, free, open source. One board shows every agent's status, output, and progress: respond when needed, and let them work autonomously the rest of the time.</p>
 
 <p align="center">
-  <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/mobile/android-feature-graphic-1024x500.png" alt="Kangentic: Kanban board for AI coding agents" width="800" /></a>
+  <a href="https://kangentic.github.io/kangentic/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-light.png" />
+      <img src="https://raw.githubusercontent.com/Kangentic/kangentic/main/docs/images/readme-board-dark.png" alt="The Kangentic board with tasks in To Do, Planning, Executing, and Code Review. Each running card shows its agent's latest message, and the selected agent's terminal is open below the board. Opens the live demo." width="900" />
+    </picture>
+  </a>
 </p>
 
-<p align="center"><em>If Kangentic saves you time, hit ⭐ at the top of this page so others can find it.</em></p>
+<p align="center">
+  <a href="https://kangentic.github.io/kangentic/">Live demo</a> |
+  <a href="https://www.kangentic.com/getting-started/">Quickstart</a> |
+  <a href="https://www.kangentic.com/overview/">Documentation</a>
+</p>
 
-## Features
+## What it does
 
-- **Customizable workflows** - build pipelines like Plan, Execute, Review, with permission modes, auto-commands, plan-exit targets, entry prompts, and exit scripts or PRs set per column.
-- **Real-time status** - see which agents are thinking or idle right on the card, via native hooks where available and PTY fallbacks where not, with desktop notifications when one needs you.
-- **Agent Monitor** - one overlay watches every project on your machine: live and recently finished sessions as cards, a table, or a dense list, each with a peek at the agent's latest output.
-- **Usage & cost analytics** - tokens, cost, and burn rate by project, agent, model, and effort, over any time range, down to a per-project ledger with cost share and dollars per million tokens.
-- **Git worktrees & review** - each agent runs in its own worktree, so parallel work never collides. The built-in Changes panel opens a split or inline diff with file tree and commit graph, one click from the card.
-- **Session persistence** - session data is written incrementally, so even a hard crash loses nothing. On relaunch running agents auto-resume with full context, and sessions you paused stay paused.
-- **Handoff context** - move a card from a Claude plan column to a Codex execute column and the next agent starts with the full history. Both directions for Claude, Codex, Gemini, Antigravity, Qwen, Kimi, Grok, and OpenCode.
-- **Model & effort routing** - Opus at xhigh for Planning, Sonnet for Executing, another agent for review. Save ladders as named Board Profiles; Kangentic applies them live as cards cross columns.
-- **Project & global settings** - every project carries its own agent, model, effort, permission mode, base branch, and worktree defaults, separate from machine-wide ones, in a searchable settings panel.
-- **Backlog, labels & priorities** - stage work before it hits the board, tag it with custom labels and a fully-customizable priority scale, and batch-promote in one move. The tags keep working as board filters afterward.
-- **Agent-to-board tools** - every session gets MCP tools to create tasks, move cards, add columns, search prior sessions, and even message another task's running agent, so agents self-organize.
-- **Quick Find & Knowledge Graph** - Ctrl+Shift+F / Cmd+Shift+F searches tasks, backlog, session events, projects, and every past agent conversation by keyword. The Knowledge Graph maps that history by meaning with an on-device model and answers questions about it through the agent you already use. No API key.
-- **Terminal & activity log** - a real xterm.js terminal per session with WebGL rendering, scrollback that survives restarts, and clipboard image paste, plus an Activity tab that distills output into a structured event feed.
-- **Command Terminal** - Ctrl+Shift+P / Cmd+Shift+P opens an ephemeral agent session over any board, no task card needed. Run up to four tiled side by side, with a layout that persists across projects and restarts.
-- **Context Bar** - a live strip under every terminal: model, cost, tokens, tool calls, elapsed time, context-window fraction, and Claude rate-limit meters. The profile, model, and effort pills double as pickers.
-- **Embedded browser** - point a sandboxed Chromium pane at any URL inside the task dialog, annotate it, and send the frame to the agent. Agents can screenshot, inspect, and click the same pane through MCP.
-- **Voice dictation** - hold your push-to-talk button, talk, release: on-device speech-to-text drops your words wherever you are focused, a text field or the agent's terminal, with a streaming preview and a refinement pass.
-- **Your CLIs, your machine** - runs on your desktop (Windows, macOS, Linux, and WSL) with your data in a local database. No OAuth, no wrappers, no API proxies: Kangentic launches the native CLIs you already have, with your own logins and subscriptions.
+A coding agent can carry a task on its own, and git worktrees let several run at once. The limit then becomes you: which agent is waiting on a prompt, which one finished, and where each branch went. Kangentic puts every session on one board and marks the ones that need you.
 
-## How It Works
+### Run your agents from one board
 
-1. **Create a task** - add a card with a title and prompt. Paste screenshots, choose a source branch, and toggle worktree isolation, all from the create dialog.
-2. **Drag to run** - drag the card to any active column. Kangentic creates a worktree, picks the permission mode, and spawns your chosen agent automatically. Columns ship preconfigured, To Do through Done; reshape the pipeline, agents, and permissions per column anytime.
-3. **Watch it code** - your agent starts writing immediately. Follow along in the live terminal: see diffs, test results, and tool calls as they happen. Drag between columns to steer, or drag to Done to pause and pick up later.
+- **One board, every agent.** Each card shows its model, how much of the context window is used, and what the agent last said, with a mark on the ones that need you.
+- **Kangentic Mobile.** Pair your phone once, then check on agents, answer the question one stopped on, and review its diff away from your desk. The connection is end-to-end encrypted, through Kangentic's relay or one you host. Get it on the [App Store](https://apps.apple.com/app/kangentic/id6794952339) or [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile).
+- **Fifteen agent CLIs.** Plan with Claude Code and build with Codex, or use one CLI everywhere. Kangentic runs the CLIs you already have with the credentials you already configured. No API key, no proxy, no Kangentic account.
+- **Every project in one place.** Each repo gets its own board, and the Agent Monitor shows the agents running across all of them.
+- **Review on the board.** The Changes panel shows each task's diff and commit history. A linked pull request on GitHub or Azure DevOps shows its state and whether it is ready to merge.
+- **Free and open source.** AGPL-3.0, with every feature included and no paid tier.
 
-## Supported Agents
+### Shape the workflow
 
-Fifteen coding-agent CLIs, all first-class, on one Kanban board. Mix agents per column and hand off context between them:
+- **Columns.** Rename, add, and rewire columns until the board matches how you ship. Each column carries its own agent, model, effort, and permission mode. The setup commits with the repo in `kangentic.json`, so teammates get the same board, while tasks and agent sessions stay on each person's machine.
+- **Automations.** When a task enters a column, when its agent finishes a turn, or when the task leaves, a column can send the agent a message or slash command, run a script, call a webhook, notify you, or move the task to the next column. A condition in plain words, checked by an agent, decides whether a step runs.
+- **Workflows.** Give the workflow agent a brief, review the linked tasks it plans, and press Start. Each task starts when the tasks it waits for reach Done, and one workflow can span several projects.
+- **Agents that work the board.** Kangentic's MCP server lets a running agent create tasks, move its own card, search past conversations, and message another task's agent, so a rule written in a prompt can move work along.
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic)
-- [Codex CLI](https://developers.openai.com/codex/cli) (OpenAI)
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) (Google)
-- [Antigravity CLI](https://antigravity.google/docs/cli/getting-started) (Google)
-- [Qwen Code](https://github.com/QwenLM/qwen-code) (Alibaba)
-- [Kimi Code](https://github.com/MoonshotAI/kimi-cli) (Moonshot AI)
-- [Grok Build](https://github.com/xai-org/grok-build) (xAI)
-- [OpenCode](https://opencode.ai/docs) (sst)
-- [Droid](https://docs.factory.ai/cli/getting-started/overview) (Factory)
-- [Cursor CLI](https://cursor.com/docs/cli/overview)
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started)
-- [Aider](https://aider.chat/)
-- [Oz CLI](https://docs.warp.dev/reference/cli/cli) (Warp)
-- [Goose CLI](https://github.com/aaif-goose/goose) (Block)
-- [Ollama](https://ollama.com) (local models)
+## Is it right for you?
 
-## Supported Boards
+**It's a good fit if you:**
 
-Bring your own backlog. Pull tasks in from the tools your team already uses, including titles, descriptions, labels, and inline images. Already-imported items are detected automatically so re-syncing is safe:
+- run several coding agents at once and lose track of which one is waiting on you.
+- juggle tasks across several projects or clients and want every agent in one view.
+- want to mix Claude Code, Codex, and other CLIs on plans you already pay for.
+- have a multi-step workflow and want to customize its agents and automations per project.
+- want to answer your agents from your phone when you step away.
 
-| Board | Status |
-|-------|--------|
-| GitHub Issues | Supported |
-| GitHub Projects | Supported |
-| Azure DevOps | Supported |
-| Asana | Supported |
-| Jira | Coming soon |
-| Linear | Coming soon |
-| Trello | Coming soon |
-| GitLab | Coming soon |
-| Obsidian | Coming soon |
+**It's probably not for you if you:**
 
-## Prerequisites
+- prefer to work on one task at a time, start to finish.
+- work in a single project and rarely switch.
+- don't use agent CLIs, or prefer apps like Cursor or Claude Desktop.
+- have no use for workflows or automations in how you develop.
+- want your agents to run in the cloud instead of on your machine.
 
-- [Node.js](https://nodejs.org/) 20+ (for npx)
-- [Git 2.26+](https://git-scm.com/)
-- On a Mac, macOS 13 or later
-- At least one supported agent CLI (see [Supported Agents](#supported-agents))
+If this looks useful, a ⭐ helps other developers find Kangentic.
 
-## Setup
+## Install
 
 ```bash
 npx kangentic
 ```
 
-One command to download, install, and launch. After the first run, auto-updates handle everything.
+This downloads the latest release for your platform from [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest), installs it, and opens it. The app updates itself after that. The installers are also on the releases page if you would rather run one yourself.
 
-For more details, see the [Installation & Setup guide](https://www.kangentic.com/getting-started/).
+**Requirements**
+
+- Windows x64, macOS 13 or later on Apple Silicon, or Linux x64 (`.deb` or `.rpm`).
+- Node.js 20 or later for `npx`, and Git 2.26 or later.
+- At least one [supported agent CLI](#supported-agents), installed and signed in.
+
+WSL users install the Windows version and can pick a WSL distro as the terminal shell. Agents run the Windows install of each CLI, so a CLI installed only inside the distro is not found. The [installation guide](https://www.kangentic.com/guide/installation/) covers each platform.
+
+## How it works
+
+1. **Configure your board.** Keep the default columns or reshape them, and pick the agent and permission mode each one runs.
+2. **Create a task.** Give it a title and a prompt, or import one from GitHub Issues, GitHub Projects, Azure DevOps, or Asana.
+3. **Drag to run.** Kangentic creates the worktree, applies the column's permission mode, and starts the agent.
+4. **Watch it code.** Follow the agent in its live terminal, answer when it asks, and drag the card on when it is done.
+
+## Supported agents
+
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://developers.openai.com/codex/cli), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Cursor CLI](https://cursor.com/docs/cli/overview), [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started), [Grok Build](https://github.com/xai-org/grok-build), [Antigravity CLI](https://antigravity.google/docs/cli/getting-started), [Goose CLI](https://github.com/aaif-goose/goose), [OpenCode](https://opencode.ai/docs), [Aider](https://aider.chat/), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-cli), [Factory Droid](https://docs.factory.ai/cli/getting-started/overview), [Warp (Oz CLI)](https://docs.warp.dev/reference/cli/cli), and [Ollama](https://ollama.com) for local models as single-turn chat.
+
+Resuming after a restart, the MCP board tools, and handing history to the next agent depend on the CLI. See [what each agent supports](https://www.kangentic.com/features/agent-orchestration/#supported-agents).
+
+## Data and privacy
+
+Your boards, tasks, and transcripts stay in a local SQLite database. The agent CLIs reach their own providers under your own accounts, as they would in your terminal.
+
+Release builds send anonymous usage events (Aptabase) and error reports (Sentry) by default. Usage events never contain task text, prompts, or code. Set `KANGENTIC_TELEMETRY=0` to turn both off, or `KANGENTIC_ERROR_REPORTING=0` to turn off error reports only. There is no in-app switch. The app also checks GitHub for updates and announcements. See the [privacy policy](https://www.kangentic.com/privacy/) for the full list.
 
 ## Documentation
 
-Get started at [kangentic.com/getting-started](https://www.kangentic.com/getting-started/).
+Start with the [quickstart](https://www.kangentic.com/getting-started/), then the [documentation](https://www.kangentic.com/overview/) for columns, automations, workflows, the MCP server, and configuration.
 
 ## Development
 
-Building from source requires Node.js 22.14+ or 24+ (the npx floor above is for end users running
-the launcher).
+Building from source needs Node.js 22.14 or later, or 24 or later.
 
 ```bash
 git clone https://github.com/Kangentic/kangentic.git
@@ -123,11 +121,9 @@ npm install
 npm start
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for project structure, testing, and conventions.
-
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. All contributors must sign a [CLA](CLA.md) before their first PR can be merged.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for project structure, tests, and conventions. Contributors sign a [CLA](CLA.md) before their first pull request is merged.
 
 ## Support
 
@@ -135,27 +131,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. All contributors must sig
 - [GitHub Issues](https://github.com/Kangentic/kangentic/issues) for bug reports
 - [support@kangentic.com](mailto:support@kangentic.com) if you would rather not post publicly
 
-Found a security issue? See [SECURITY.md](SECURITY.md) instead.
+To report a security issue, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-[AGPL-3.0](LICENSE). If AGPL doesn't work for you, drop us a line at licensing@kangentic.com.
-
----
-
-<h4 align="center">Built with</h4>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Electron-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron" />
-  <img src="https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React" />
-  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite" />
-  <img src="https://img.shields.io/badge/xterm.js-000000?style=for-the-badge" alt="xterm.js" />
-  <img src="https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
-  <img src="https://img.shields.io/badge/Playwright-2EAD33?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright" />
-</p>
-
-<p align="center">
-  <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/brandmark-small.svg" alt="Kangentic app icon" width="26" height="26" /></a>
-</p>
+[AGPL-3.0](LICENSE). For a commercial license, email licensing@kangentic.com.
