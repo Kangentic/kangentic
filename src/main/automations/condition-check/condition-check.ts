@@ -217,18 +217,44 @@ export async function checkAutomationConditions(
   }
 }
 
+/** How many characters of a trimmed reply the warning keeps. A well-formed reply
+ *  is one short line per condition, so this is plenty to see how a malformed one
+ *  went wrong. */
+const UNANSWERED_REPLY_LOG_CHARS = 1_000;
+
+/**
+ * One warning for a reply that left conditions unanswered: which labels, the
+ * call (`background_calls.id`), and the trimmed reply cut to
+ * `UNANSWERED_REPLY_LOG_CHARS`. A warning because only warnings and errors
+ * reach the log file without Persist Console Logs. `[automations]` is not a
+ * Sentry breadcrumb tag (`shared/sentry-breadcrumbs.ts`), so the reply's text,
+ * written from the task's own, stays in the local log.
+ */
+function warnUnanswered(labels: ReadonlyArray<string>, callId: string, reply: string): void {
+  const trimmed = reply.trim();
+  const clipped = trimmed.slice(0, UNANSWERED_REPLY_LOG_CHARS);
+  const leftOut = trimmed.length - clipped.length;
+  const more = leftOut > 0 ? ` (${leftOut} more characters)` : '';
+  console.warn(`[automations] The Automation agent left ${labels.join(', ')} unanswered (call ${callId}). Its reply: ${JSON.stringify(clipped)}${more}`);
+}
+
 /** Every row's answer from the reply, each naming the call that gave it; a row
- *  the reply skipped is not met, and says so. */
+ *  the reply skipped is not met, and says so. A reply that skipped a row is
+ *  logged (`warnUnanswered`), so why it did can be read afterwards. */
 function answersFrom(reply: string, input: ConditionPromptInput, callId: string): Map<string, ConditionAnswer> {
   const parsed = parseConditionReply(reply, input.rows.length);
   const answers = new Map<string, ConditionAnswer>();
+  const unansweredLabels: string[] = [];
   input.rows.forEach((row, index) => {
-    const answer = parsed.get(index) ?? {
+    const parsedAnswer = parsed.get(index);
+    if (!parsedAnswer) unansweredLabels.push(`C${index + 1}`);
+    const answer = parsedAnswer ?? {
       met: false,
       reason: 'The Automation agent did not answer this condition.',
     };
     answers.set(row.automationId, { ...answer, callId });
   });
+  if (unansweredLabels.length > 0) warnUnanswered(unansweredLabels, callId, reply);
   return answers;
 }
 

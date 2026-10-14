@@ -16,7 +16,9 @@
  * that gives up leaves the slot queue instead of taking a slot nobody releases.
  * The Automation agent is a fake whose answers the test holds and releases, and
  * the answer-run directory is mocked, so everything up to the slot runs in
- * microtasks and fake timers decide when a limit fires.
+ * microtasks and fake timers decide when a limit fires. The same fake agent
+ * drives the warning a reply that skips a condition writes, which keeps the
+ * reply in the log so the skip can be explained.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as ConditionCheckModule from '../../src/main/automations/condition-check/condition-check';
@@ -440,6 +442,79 @@ describe('checkAutomationConditions limits', () => {
       await settle();
 
       expect(recordCall).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a reply that leaves a condition unanswered', () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    /** Ask, hand the check `reply`, and return what it answered. */
+    async function answeredWith(reply: string): Promise<Extract<ConditionCheckOutcome, { ok: true }>> {
+      const pending = check(agent.deps, input());
+      await settle();
+      agent.held[0].answer(reply);
+      const outcome = await pending;
+      if (!outcome.ok) throw new Error(`expected an answer, got: ${outcome.reason}`);
+      return outcome;
+    }
+
+    const warnings = (): string[] => warnSpy.mock.calls.map((call) => String(call[0]));
+
+    it('records the skipped row as not met, and warns once with its label and the call', async () => {
+      const outcome = await answeredWith('C2: yes - fine');
+
+      expect(outcome.answers.get('clean')).toEqual({
+        met: false, reason: 'The Automation agent did not answer this condition.', callId: outcome.callId,
+      });
+      expect(outcome.answers.get('revise')).toEqual({ met: true, reason: 'fine', callId: outcome.callId });
+      expect(warnings()).toHaveLength(1);
+      expect(warnings()[0]).toContain('left C1 unanswered');
+      expect(warnings()[0]).toContain(`(call ${outcome.callId})`);
+      // The reply itself, so why the row was skipped can be read later.
+      expect(warnings()[0]).toContain(JSON.stringify('C2: yes - fine'));
+    });
+
+    it('does not warn when every condition is answered (the control)', async () => {
+      await answeredWith(BOTH_MET_REPLY);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the first 1,000 characters of a long reply and says how many it left out', async () => {
+      const reply = `I could not decide. ${'x'.repeat(1_500)}`;
+
+      await answeredWith(reply);
+
+      expect(warnings()).toHaveLength(1);
+      expect(warnings()[0]).toContain(JSON.stringify(reply.slice(0, 1_000)));
+      expect(warnings()[0]).not.toContain(reply);
+      expect(warnings()[0]).toContain(`(${reply.length - 1_000} more characters)`);
+    });
+
+    it('names every skipped label in one warning, and logs the reply without its surrounding whitespace', async () => {
+      const reply = '  I could not tell.  \n';
+
+      const outcome = await answeredWith(reply);
+
+      for (const automationId of ['clean', 'revise']) {
+        expect(outcome.answers.get(automationId)).toEqual({
+          met: false, reason: 'The Automation agent did not answer this condition.', callId: outcome.callId,
+        });
+      }
+      expect(warnings()).toHaveLength(1);
+      expect(warnings()[0]).toContain('left C1, C2 unanswered');
+      // The trimmed text, so the padding is not logged and cannot count toward the clip.
+      expect(warnings()[0]).toContain(JSON.stringify('I could not tell.'));
+      expect(warnings()[0]).not.toContain(JSON.stringify(reply));
+      expect(warnings()[0]).not.toContain('more characters');
     });
   });
 });

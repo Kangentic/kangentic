@@ -33,6 +33,7 @@ import { trackTurnEndGroup } from './turn-end-passes';
  * - **A turn end is the agent's own,** the activity engine's `'turn-ended'`:
  *   a Stop, settled past any background work, never an interrupt, a failed
  *   turn or a watchdog guess. Then 1.5 s of PTY silence (`waitForTurnCompletion`).
+ *   A wait that runs out leaves no run record, so it logs a warning instead.
  * - **Only a turn that began in this visit counts.** A task dragged in while
  *   its agent was mid-turn ends that turn here, but the turn did the last
  *   column's work, and `{{agentReply}}` would carry the wrong reply. A plan
@@ -196,6 +197,7 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
   try {
     // The turn's bytes may still be landing: wait out the CLI's last paint.
     const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal });
+    if (settled === 'timeout') warnUnsettledTurn(context, payload, `in ${column.name}`, 'no turn-end automation ran');
     if (settled !== 'completed') return;
     // Cheap, and ahead of the paid check: a turn begun since this turn end
     // has left this one with nothing to judge.
@@ -248,6 +250,7 @@ async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promi
   try {
     // The resume repaints the conversation: wait for it to settle idle.
     const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal });
+    if (settled === 'timeout') warnUnsettledTurn(context, payload, 'after its resume', 'no workflow step ran');
     if (settled !== 'completed') return;
     // Work begun since the resume is a turn of its own, which its turn end judges.
     if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return;
@@ -369,6 +372,22 @@ async function runRows(
   });
   reportAutomationFailures(context, summary, current.task, payload.projectId);
   return { messagedAgent, newerTurn: false };
+}
+
+/**
+ * A pass that gave up waiting for its turn to settle runs nothing and writes no
+ * run record, so this line is its only trace. A warning, so it reaches the log
+ * file without Persist Console Logs. The activity at the give-up tells the two
+ * causes apart: `idle` means the terminal never stayed quiet for the settle
+ * window (the CLI still painting, such as a status line it animates while its
+ * own background work runs), and anything else means the session never went idle.
+ */
+function warnUnsettledTurn(context: IpcContext, payload: TurnEndedPayload, where: string, consequence: string): void {
+  const activity = context.sessionManager.getActivityCache()[payload.sessionId] ?? 'unknown';
+  console.warn(
+    `[turn-end] Gave up waiting for task ${payload.taskId.slice(0, 8)}'s turn to settle ${where} `
+    + `(session ${payload.sessionId.slice(0, 8)}, activity ${activity}), so ${consequence}.`,
+  );
 }
 
 function mentionsAgentReply(row: ColumnAutomation): boolean {
