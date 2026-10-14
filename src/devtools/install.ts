@@ -10,6 +10,10 @@ import {
   startStallProfiler,
   stopStallProfiler,
 } from './main/stall-profiler';
+import { createTerminalTracePersistListener, terminalTraceFilePath } from './main/terminal-trace-persist';
+import { createComposedWidthSampler } from './main/composed-width-sampler';
+import { addTerminalTraceListener, recordTerminalTrace } from '../main/pty/terminal-trace';
+import { PATHS } from '../main/config/paths';
 import type { SessionManager } from '../main/pty/session-manager';
 import type { IpcContext } from '../main/ipc/ipc-context';
 
@@ -68,10 +72,21 @@ export function installDevtools(context: DevtoolsContext): void {
   // Count every child-process spawn on main by caller (spawn-tracer.ts).
   installSpawnTracer();
 
+  // Keep the terminal trace past a restart, plus the agent's composed width
+  // after each resize. Independent of the inspection-server toggle: the trace
+  // is wanted most after the restart that ends a stuck-terminal incident.
+  addTerminalTraceListener(createTerminalTracePersistListener(terminalTraceFilePath(PATHS.configDir)));
+  const composedWidthSampler = createComposedWidthSampler({
+    getSource: context.getSessionManager,
+    record: (sessionId, event, detail) => recordTerminalTrace(sessionId, event, detail, Date.now()),
+  });
+  addTerminalTraceListener(composedWidthSampler.listener);
+
   // Synchronous before-quit per .claude/rules/synchronous-shutdown.md. Removes
   // the lockfile, detaches CDP, closes the HTTP server. No async work in
   // the quit path.
   app.on('before-quit', () => {
+    composedWidthSampler.dispose();
     stopStallProfiler();
     teardownBridge(context);
   });

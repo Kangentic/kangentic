@@ -1163,12 +1163,15 @@ phone needs and reads the rest by request.
   pure `resolvePtyEchoReassert` (exported from `useTerminal.ts`): in-sync self-filter first,
   then foreign-hold (`mobile`/`park` origins - a phone or the park legitimately holds the grid;
   `spawn` is healable), refused-hold (see below), parked, replay-in-flight, own-resize-pending,
-  and last a TIME-WINDOWED budget. A replay-in-flight skip is deferred, not dropped
-  (`isPtyEchoDeferredToReplaySettle`): a replay sends a resize only when its fit changes the
+  and last a TIME-WINDOWED budget. A replay-in-flight or parked skip is deferred, not
+  dropped (`isPtyEchoDeferredToReplaySettle`): a replay sends a resize only when its fit changes the
   grid, and a PTY reshaped under the terminal changes nothing on its side, so `settleScrollback`
-  judges the last echo again once the replay ends. The same holds for a re-assert whose debounce
-  fires while a replay is in flight. Before this, a rogue resize landing during a slow replay was
-  never healed. The budget allows 2 re-asserts per divergence signature per 10s and is
+  judges the last echo again once the replay ends. A parked skip is deferred the same way: the
+  reveal reloads with `skipResize`, so its settle is the first judgment that can heal, and a
+  settle while still parked skips as parked again. The same holds for a re-assert whose debounce
+  fires while a replay is in flight or after the terminal parked (traced
+  `echo-reassert-deferred`). Before this, a rogue resize landing during a slow replay, or while
+  the terminal was parked, was never healed. The budget allows 2 re-asserts per divergence signature per 10s and is
   deliberately not reset by an in-sync echo, because in a two-surface fight each side's successful re-assert
   lands an in-sync echo at the other side, so a reset-on-heal budget never binds in exactly the
   livelock it exists to bound. `resize()` also reports `refused: true` from the mobile sub-floor
@@ -1499,6 +1502,26 @@ phone needs and reads the rest by request.
   `kangentic_devtools_terminal_state`'s timeline alongside the resize and replay events above. `kangentic_devtools_terminal_forensics` is the session-scoped
   companion: renderer viewport rows, main's re-parsed grid, and the raw byte ring side by side,
   which is what separates "the agent never sent these rows" from "we lost them".
+- **The main trace survives a restart (dev builds).** Both rings live in memory, and the usual
+  response to a stuck terminal is to restart, which erased the only record of one: two task
+  windows whose agents painted full-width rows for the bottom panel's 306x19 grid inside a 210x48
+  window, while main's last applied grid (`sessions.last_pty_cols/rows`) was the window's. The
+  devtools install (`src/devtools/install.ts`) now appends every main-ring entry to
+  `<configDir>/logs/terminal-trace.jsonl` (`terminal-trace-persist.ts`, one JSON line each, 8 MB
+  cap plus one rotated `.1` copy, never truncated on a resume). Each line carries `process`
+  (`main` or `pty-host`), so a resize main applied reads apart from the one the host applied.
+  After the host falls back into main, its entries are recorded there and read `main`. One
+  second after a session's last `pty-resize`, `composed-width-sampler.ts` measures the width the
+  agent itself is composing at from the raw ring and, for an alt-screen session only (a
+  normal-buffer session records none), records a `composed-sample` entry with
+  `composedCols`, the main grid (`ptyCols`/`ptyRows`), the host buffer's grid (`hostCols`/
+  `hostRows`) and `matchesPty`. That sample is the only persisted reading of the third layer, and
+  `matchesPty: false` beside matching main and host grids names an agent that did not follow the
+  resize. Trust the verdict over the number: rows glued by autowrap make the evidence ambiguous
+  between a width and its multiples, the PTY grid breaks that tie (as in the terminal-state route,
+  so a healthy session never reads double), and a disagreeing width can come out as a multiple or
+  sub-multiple of the true one (an agent composing 306 in a 210 grid reads 153). The renderer ring
+  is not persisted.
 - **Replay veil for a warm mount.** For an already-running session, `TerminalTab`'s launch overlay
   never shows (`terminalReady` starts true), so the whole mount-time fit -> replay -> refit ->
   held-byte-flush sequence used to paint live, occasionally as a visible flash. `TerminalTab` now

@@ -242,6 +242,20 @@ async function readRefusedTraceEvents(page: Page): Promise<Array<Record<string, 
   }, SESSION_ID);
 }
 
+/** Same shape again, for the event reassertOwnGrid traces when its fire-time
+ *  re-check finds the terminal parked or a replay in flight and defers the
+ *  divergence to the next settle instead of sending. Its own reader, like
+ *  readRefusedTraceEvents, so it cannot change what the other tests read. */
+async function readDeferredTraceEvents(page: Page): Promise<Array<Record<string, unknown>>> {
+  return page.evaluate((sessionId) => {
+    const readTrace = (window as unknown as TestWindow).__kangenticTerminalTrace;
+    if (typeof readTrace !== 'function') return [];
+    return readTrace()
+      .filter((entry) => entry.event === 'echo-reassert-deferred' && entry.sessionId === sessionId)
+      .map((entry) => entry.detail ?? {});
+  }, SESSION_ID);
+}
+
 /** Quiescence gate: waits until the renderer trace ring stops growing for two
  *  consecutive checks. A StrictMode second mount's replay can still be in
  *  flight right after openDetailAndCaptureOwnerDims resolves (skips a
@@ -447,6 +461,131 @@ test.describe('Terminal width-drift echo re-assert', () => {
       expect((await readEchoTraceEvents(page)).at(-1)).toEqual(expect.objectContaining({
         action: 'reassert', trigger: 'replay-settle', cols: secondRogueCols, rows: 15,
       }));
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a divergence that lands while the terminal is parked is healed on reveal', async () => {
+    // A parked terminal must not reshape a grid it is not showing, so the echo
+    // is skipped as 'parked'. The reveal reloads with skipResize, and its fit
+    // sends nothing when this side's grid is unchanged, so unless the reveal's
+    // settle judges the skipped echo again the PTY keeps the other grid.
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      const ownerDims = await openDetailAndCaptureOwnerDims(page);
+      const dialog = page.locator('[data-testid="task-detail-dialog"]');
+      await waitForTerminalTraceQuiescence(page);
+
+      // Park: the Backlog view keeps the window mounted and parks its terminal.
+      await page.locator('[data-testid="view-toggle-backlog"]').click();
+      await expect(page.locator('[data-testid="backlog-view"]')).toBeVisible();
+      await waitForTerminalTraceQuiescence(page);
+      await clearResizeCalls(page);
+
+      // The divergence lands while parked. Positive control: it was skipped as
+      // parked, and nothing was sent while the terminal was off view.
+      const rogueCols = ownerDims.cols + 80;
+      await page.evaluate(
+        ({ sessionId, cols }) => {
+          (window as unknown as TestWindow).__mockFirePtyResized?.(sessionId, cols, 15, 'desktop');
+        },
+        { sessionId: SESSION_ID, cols: rogueCols },
+      );
+      await expect
+        .poll(async () => (await readEchoTraceEvents(page)).map((event) => event.reason ?? event.action), { timeout: 5000 })
+        .toEqual(['parked']);
+      expect(
+        await page.evaluate(() => (window as unknown as TestWindow).electronAPI?.sessions.__resizeCalls ?? []),
+      ).toEqual([]);
+
+      // Reveal: back to the Board.
+      await page.locator('[data-testid="view-toggle-board"]').click();
+      await expect(dialog).toBeVisible();
+
+      // The heal: the reveal's replay settle judges the parked echo again and
+      // re-asserts the OWNER's grid.
+      await expect
+        .poll(async () => (await readEchoTraceEvents(page)).at(-1), { timeout: 10000 })
+        .toEqual(expect.objectContaining({
+          action: 'reassert', trigger: 'replay-settle', cols: rogueCols, rows: 15,
+        }));
+      await expect
+        .poll(
+          async () => page.evaluate(() => (window as unknown as TestWindow).electronAPI?.sessions.__resizeCalls ?? []),
+          { timeout: 10000 },
+        )
+        .toContainEqual({ sessionId: SESSION_ID, cols: ownerDims.cols, rows: ownerDims.rows });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a divergence judged while visible then parked inside the re-assert debounce is healed on reveal', async () => {
+    // The sibling of the test above, one step earlier in the timeline: here the
+    // echo is judged 'reassert' while the terminal is still showing, and the park
+    // lands inside the 150ms debounce. reassertOwnGrid's fire-time re-check then
+    // finds the terminal parked and returns without resizing. It used to owe the
+    // settle a second judgment only for the replay case, so the reveal (which
+    // reloads with skipResize and sends nothing when this side's grid is
+    // unchanged) settled without judging the echo again and the PTY kept the
+    // rogue grid for good.
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      const ownerDims = await openDetailAndCaptureOwnerDims(page);
+      const dialog = page.locator('[data-testid="task-detail-dialog"]');
+      await waitForTerminalTraceQuiescence(page);
+      await clearResizeCalls(page);
+
+      // Fire the rogue echo and park in ONE synchronous evaluate. The debounce
+      // timer cannot fire inside a single JS turn, so the park deterministically
+      // lands before it, with no timing race to tune.
+      const rogueCols = ownerDims.cols + 80;
+      await page.evaluate(
+        ({ sessionId, cols }) => {
+          (window as unknown as TestWindow).__mockFirePtyResized?.(sessionId, cols, 15, 'desktop');
+          const backlogToggle = document.querySelector('[data-testid="view-toggle-backlog"]');
+          (backlogToggle as HTMLElement | null)?.click();
+        },
+        { sessionId: SESSION_ID, cols: rogueCols },
+      );
+      await expect(page.locator('[data-testid="backlog-view"]')).toBeVisible();
+
+      // Positive control: the echo really was judged a re-assert while visible
+      // (not skipped as parked at echo time, which the test above already pins),
+      // and the debounced pass really did fire after the park and deferred.
+      await expect
+        .poll(async () => readEchoTraceEvents(page), { timeout: 5000 })
+        .toEqual([
+          expect.objectContaining({ action: 'reassert', trigger: 'echo', cols: rogueCols, rows: 15 }),
+        ]);
+      await expect
+        .poll(async () => readDeferredTraceEvents(page), { timeout: 5000 })
+        .toEqual([{ reason: 'parked' }]);
+
+      // The deferred trace is the deterministic "the timer fired and returned"
+      // signal, so nothing was sent while the terminal was off view.
+      expect(
+        await page.evaluate(() => (window as unknown as TestWindow).electronAPI?.sessions.__resizeCalls ?? []),
+      ).toEqual([]);
+
+      // Reveal: back to the Board.
+      await page.locator('[data-testid="view-toggle-board"]').click();
+      await expect(dialog).toBeVisible();
+
+      // The heal: the reveal's replay settle judges the deferred echo again and
+      // re-asserts the OWNER's grid.
+      await expect
+        .poll(async () => (await readEchoTraceEvents(page)).at(-1), { timeout: 10000 })
+        .toEqual(expect.objectContaining({
+          action: 'reassert', trigger: 'replay-settle', cols: rogueCols, rows: 15,
+        }));
+      await expect
+        .poll(
+          async () => page.evaluate(() => (window as unknown as TestWindow).electronAPI?.sessions.__resizeCalls ?? []),
+          { timeout: 10000 },
+        )
+        .toContainEqual({ sessionId: SESSION_ID, cols: ownerDims.cols, rows: ownerDims.rows });
     } finally {
       await browser.close();
     }
