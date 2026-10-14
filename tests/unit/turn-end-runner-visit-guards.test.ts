@@ -686,6 +686,23 @@ describe('a turn end and the rows it may run', () => {
       warnSpy.mockRestore();
     });
 
+    it('runs nothing when the activity cache has no entry for the session, since unknown is not idle', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+      sessionManager.getActivityCache = () => ({});
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+      const lines = turnEndWarnings(warnSpy);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('activity unknown');
+      expect(lines[0]).toContain('nothing ran');
+      warnSpy.mockRestore();
+    });
+
     it('does not warn when a move superseded the wait (the control)', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       hoisted.waitForTurnCompletion.mockImplementation(async () => 'aborted');
