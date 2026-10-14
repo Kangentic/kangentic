@@ -20,7 +20,7 @@
  * as the app drives it, with `catchUpAfterResume` awaited directly where a test
  * needs the pass to have finished before it asserts that nothing ran.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { SessionResumedPayload, TurnEndedPayload } from '../../src/main/pty/session-manager';
@@ -115,11 +115,17 @@ describe('a resumed workflow task and its unjudged reply', () => {
   let sessionManager: FakeSessionManager;
   let context: IpcContext;
   let currentWorkSerial: number;
+  /** What the session manager reports for each session's activity; a test may change it. */
+  let activityCache: Record<string, string>;
+  // Armed in beforeEach and restored in afterEach, so a failed assertion cannot
+  // leave console.warn silenced for the tests after it.
+  let warnSpy: MockInstance<typeof console.warn>;
   let taskCounter = 0;
   let taskId: string;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     hoisted.runWorkflowStep.mockImplementation(async () => undefined);
     hoisted.workflowStepApplies.mockImplementation(() => true);
     hoisted.executeTransition.mockImplementation(async () => ({ results: [] }));
@@ -144,8 +150,9 @@ describe('a resumed workflow task and its unjudged reply', () => {
     hoisted.column = { id: 'lane-executing', name: 'Executing', role: null, auto_spawn: true };
 
     currentWorkSerial = RESUMED_WORK_SERIAL;
+    activityCache = { [SESSION_ID]: 'idle' };
     sessionManager = Object.assign(new EventEmitter(), {
-      getActivityCache: () => ({ [SESSION_ID]: 'idle' }),
+      getActivityCache: () => activityCache,
       isLatestTurn: (sessionId: string, workSerial: number) =>
         sessionId === SESSION_ID && workSerial === currentWorkSerial,
     });
@@ -156,6 +163,21 @@ describe('a resumed workflow task and its unjudged reply', () => {
     } as unknown as IpcContext;
     registerTurnEndAutomations(context);
   });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  /** What the runner warned: a pass that gave up writes no run record, so this is its only trace. */
+  function turnEndWarnings(): string[] {
+    return warnSpy.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.startsWith('[turn-end]'));
+  }
+
+  function gaveUpWarnings(): string[] {
+    return turnEndWarnings().filter((line) => line.includes('Gave up waiting'));
+  }
 
   function resumed(): SessionResumedPayload {
     return {
@@ -233,6 +255,54 @@ describe('a resumed workflow task and its unjudged reply', () => {
     await catchUpAfterResume(context, resumed());
 
     expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  it('says so when the resumed agent never settled idle, since the pass writes no run record', async () => {
+    hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+
+    await catchUpAfterResume(context, resumed());
+
+    const warnings = turnEndWarnings();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Gave up waiting');
+    expect(warnings[0]).toContain(`task ${taskId.slice(0, 8)}'s turn`);
+    expect(warnings[0]).toContain('after its resume');
+    expect(warnings[0]).toContain(`session ${SESSION_ID.slice(0, 8)}`);
+    expect(warnings[0]).toContain('activity idle');
+    expect(warnings[0]).toContain('no workflow step ran');
+  });
+
+  it('names the activity as unknown when the session manager has none for the session', async () => {
+    // The `?? 'unknown'` fallback: a session absent from the activity cache.
+    activityCache = {};
+    hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+
+    await catchUpAfterResume(context, resumed());
+
+    const warnings = turnEndWarnings();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Gave up waiting');
+    expect(warnings[0]).toContain('activity unknown');
+  });
+
+  it('writes no give-up warning when the resumed agent settled', async () => {
+    // The control for the two above: the default wait is 'completed', and the
+    // pass judges the reply, so a warning there would be a false alarm.
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+    expect(gaveUpWarnings()).toEqual([]);
+  });
+
+  it('writes no give-up warning when the wait was aborted', async () => {
+    // A newer pass or a move abandoned this one on purpose: nothing was given up on.
+    hoisted.waitForTurnCompletion.mockImplementation(async () => 'aborted');
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(1);
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+    expect(gaveUpWarnings()).toEqual([]);
   });
 
   it('reads nothing for a task outside a running workflow', async () => {
