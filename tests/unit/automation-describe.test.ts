@@ -22,13 +22,14 @@ function marksOf(
   type: AutomationType,
   trigger: AutomationTrigger,
   config: AutomationConfig,
-  guards: { condition?: string | null; max_runs?: number | null } = {},
+  guards: { condition?: string | null; final_line?: string | null; max_runs?: number | null } = {},
 ) {
   return describeAutomationMarks({
     type,
     trigger,
     config,
     condition: guards.condition ?? null,
+    final_line: guards.final_line ?? null,
     max_runs: guards.max_runs ?? null,
   });
 }
@@ -126,6 +127,27 @@ describe('the marks beside a row name', () => {
     expect(condition.phrase).toBe('only if the review is clean and CI is green');
   });
 
+  it('marks a Text match as its own Condition kind, first, with the pattern quoted whole', () => {
+    const marks = marksOf('move_to_column', 'turn_end', { targetColumn: 'Testing' }, { final_line: 'Verdict:   Ready', max_runs: 1 });
+    expect(marks.map((mark) => mark.kind)).toEqual(['text-match', 'frequency']);
+    expect(marks[0]).toEqual({
+      kind: 'text-match',
+      label: 'Condition: only if the last line reads "Verdict: Ready".',
+      phrase: 'only if the last line reads "Verdict: Ready"',
+    });
+  });
+
+  it('marks one Condition kind, the Text match, when a row somehow carries both', () => {
+    const marks = marksOf('notify', 'turn_end', { title: 'a' }, { condition: 'The review is clean', final_line: 'Verdict: *' });
+    expect(marks.map((mark) => mark.kind)).toEqual(['text-match']);
+  });
+
+  it('marks no Text match off a turn end, where it never runs', () => {
+    expect(marksOf('notify', 'enter', { title: 'a' }, { final_line: 'Verdict: Ready' })).toEqual([]);
+    expect(marksOf('notify', 'exit', { title: 'a' }, { final_line: 'Verdict: Ready', condition: 'Tests pass' }).map((mark) => mark.kind))
+      .toEqual(['condition']);
+  });
+
   it("gives a webhook's body and headers and a notification's body no mark", () => {
     expect(marksOf('webhook', 'exit', { url: 'https://example.com', body: '{"a":1}', headers: { Authorization: 'x' } })).toEqual([]);
     expect(marksOf('notify', 'exit', { title: 'Done', body: 'It moved' })).toEqual([]);
@@ -183,18 +205,30 @@ describe('the marks in words, for the MCP list', () => {
       trigger: 'turn_end',
       config: { targetColumn: 'Executing', message: '{{agentReply}}\nand the rest' },
       condition: 'The review is clean',
+      final_line: null,
       max_runs: 3,
     })).toBe('with a message; only if the review is clean; at most 3 times for each task');
   });
 
+  it('words a Text match as a guard, after the action\'s own options', () => {
+    expect(describeAutomationMarksInWords({
+      type: 'move_to_column',
+      trigger: 'turn_end',
+      config: { targetColumn: 'Testing', message: 'Ship it' },
+      condition: null,
+      final_line: 'Verdict: Ready',
+      max_runs: 1,
+    })).toBe('with a message; only if the last line reads "Verdict: Ready"; at most once for each task');
+  });
+
   it('says a Send message waits only where Delivery applies', () => {
-    const row = { type: 'send_message' as const, config: { message: 'Review', mode: 'deferred' }, condition: null, max_runs: null };
+    const row = { type: 'send_message' as const, config: { message: 'Review', mode: 'deferred' }, condition: null, final_line: null, max_runs: null };
     expect(describeAutomationMarksInWords({ ...row, trigger: 'enter' })).toBe('waits for the current turn to end');
     expect(describeAutomationMarksInWords({ ...row, trigger: 'turn_end' })).toBeNull();
   });
 
   it('is null for a row with no options on', () => {
-    expect(describeAutomationMarksInWords({ type: 'run_script', trigger: 'enter', config: { script: 'npm ci' }, condition: null, max_runs: null }))
+    expect(describeAutomationMarksInWords({ type: 'run_script', trigger: 'enter', config: { script: 'npm ci' }, condition: null, final_line: null, max_runs: null }))
       .toBeNull();
   });
 });

@@ -18,6 +18,7 @@ import {
   type AutomationRunnability,
 } from '../../../../shared/automation-manifest';
 import { describeAutomation } from '../../../../shared/automation-describe';
+import { conditionKindsAsStored } from '../../../../shared/final-line-match';
 import { TEMPLATE_VARIABLE_PATTERN } from '../../../../shared/task-template-vars';
 import type {
   AutomationConfig,
@@ -40,8 +41,15 @@ export interface AutomationDraft {
   trigger: AutomationTrigger;
   enabled: boolean;
   config: AutomationConfig;
-  /** Condition: prose the Automation agent judges. Null: always runs. */
+  /** Condition, Agent evaluation: prose the Automation agent judges. Null: always runs. */
   condition: string | null;
+  /**
+   * Condition, Text match: the line the agent's final message must end on.
+   * Null: none. A row holds one kind, and a turn end only; the save
+   * (`toWriteInput`) holds both rules, so a draft may carry one a moment
+   * longer while the dialog keeps it for a Trigger switched back.
+   */
+  final_line: string | null;
   /** Frequency: the most runs on one task. Null: no limit. */
   max_runs: number | null;
 }
@@ -78,6 +86,11 @@ export function toDraft(automation: ColumnAutomation): AutomationDraft {
     enabled: automation.enabled,
     config: { ...automation.config },
     condition: automation.condition,
+    // `?? null`: a main process from before Text match sends rows with no
+    // field at all, which the dialog would otherwise read as an empty Text
+    // match switched on (it tests `!== null`). A dev renderer reloads ahead of
+    // its main process, so that pairing is real for one restart.
+    final_line: automation.final_line ?? null,
     max_runs: automation.max_runs,
   };
 }
@@ -126,8 +139,9 @@ export function makeNewAutomation(type: AutomationType, trigger: AutomationTrigg
     trigger,
     enabled: true,
     config: defaultConfigForType(type),
-    // Both start off, so a new row runs the way every row did before they existed.
+    // Every guard starts off, so a new row runs the way every row did before they existed.
     condition: null,
+    final_line: null,
     max_runs: null,
   };
 }
@@ -146,6 +160,7 @@ export function copyAutomation(source: AutomationDraft, trigger: AutomationTrigg
     enabled: source.enabled,
     config: { ...source.config },
     condition: source.condition,
+    final_line: source.final_line,
     max_runs: source.max_runs,
   };
 }
@@ -343,7 +358,7 @@ export function serializeAutomation(draft: AutomationDraft): string {
     trigger: draft.trigger,
     enabled: draft.enabled,
     config,
-    condition: normalizeDraftCondition(draft.condition),
+    ...draftConditionKinds(draft),
     max_runs: normalizeDraftMaxRuns(draft.max_runs),
   });
 }
@@ -352,6 +367,21 @@ export function serializeAutomation(draft: AutomationDraft): string {
 export function normalizeDraftCondition(condition: string | null): string | null {
   const trimmed = condition?.trim() ?? '';
   return trimmed ? trimmed : null;
+}
+
+/**
+ * The Condition as it is saved: one kind per row, a Text match on a turn end
+ * only. A Text match wins over prose, and off a turn end it is dropped, so a
+ * row moved to On task enter saves without a check it could never run. The
+ * dialog keeps the line in its own state until Done, which is what lets a
+ * Trigger switched back restore it.
+ */
+export function draftConditionKinds(draft: Pick<AutomationDraft, 'condition' | 'final_line' | 'trigger'>): {
+  condition: string | null;
+  final_line: string | null;
+} {
+  // The repository's own rule, so the saved draft is the row a read returns.
+  return conditionKindsAsStored(draft);
 }
 
 /** A Frequency below 1, or not a whole number, is no limit. */
@@ -466,7 +496,7 @@ export function toWriteInput(draft: AutomationDraft): AutomationWriteInput {
     trigger: draft.trigger,
     enabled: draft.enabled,
     config: config as AutomationConfig,
-    condition: normalizeDraftCondition(draft.condition),
+    ...draftConditionKinds(draft),
     max_runs: normalizeDraftMaxRuns(draft.max_runs),
   };
 }

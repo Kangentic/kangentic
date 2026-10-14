@@ -12,7 +12,10 @@
  *   default   prints the Summary block, the Decisions made list, and the closing verdict block.
  *             The skill pastes that output verbatim and makes the closing block the LAST thing in
  *             the pass's final message, so a person and an agent read the same signal: the line
- *             `Verdict: Ready`, or `Verdict: Blocked` followed by one numbered step per blocker.
+ *             `Verdict: Ready`, or one numbered step per blocker followed by `Verdict: Blocked`.
+ *             The verdict is the block's LAST line either way, so the board's Code Review rows
+ *             route on it with a Text match (an exact final line, checked in code) rather than
+ *             asking an agent to find it.
  *             The old prose verdicts above included a "Clean"; the new one is "Ready" so it
  *             cannot be read as the report's "no uncommitted files" line.
  *   --ledger  prints only the `Refuted:` and `Decisions:` lines for the review commit body. A later
@@ -219,11 +222,14 @@ export function renderSummary(report) {
   return lines.join('\n');
 }
 
-/** The last block of the pass's final message: the verdict, then any blocking steps. */
+/**
+ * The last block of the pass's final message: any blocking steps, then the verdict. The verdict
+ * comes last so it is the message's final line, which is what the board's Text match rows read.
+ */
 export function renderClosingBlock(report) {
   const { verdict, blockers } = computeVerdict(report);
-  const lines = [`Verdict: ${verdict}`];
-  blockers.forEach((blocker, blockerIndex) => lines.push(`${blockerIndex + 1}. ${blocker.location}: ${blocker.step}`));
+  const lines = blockers.map((blocker, blockerIndex) => `${blockerIndex + 1}. ${blocker.location}: ${blocker.step}`);
+  lines.push(`Verdict: ${verdict}`);
   return lines.join('\n');
 }
 

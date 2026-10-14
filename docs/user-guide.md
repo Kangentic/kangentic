@@ -475,24 +475,35 @@ the trash keep their own jobs and do not open it. A name is required and must be
 column. Every text field takes template variables: type `{{` to pick one, or use the **Template
 variable** button. A known variable is highlighted; an unknown one is flagged and sent as written.
 
-**Condition and Frequency.** Any row can carry a **Condition**, a sentence in plain words ("the
-review found work the implementer can do"). An agent checks it before the row runs, and a no means
-the row did not run: it is checked again next time. The agent that checks is the **Automation
-agent**, chosen in Settings > Workflows; until one is set up, Condition stays off. The same agent names
-tasks and Command Terminals, and without one naming is off. **Frequency**
-caps how many times a row runs on one task, across every visit, which is what keeps a review loop
-from bouncing a task forever. Taking a task back out of Done starts the count over, so a reopened
-task runs through the board's automations again. Both start off.
+**Condition and Frequency.** Any row can carry a **Condition**, and the Condition card picks how
+it is checked:
+
+- **Agent evaluation** is a sentence in plain words ("the review found work the implementer can
+  do"). The **Automation agent**, chosen in Settings > Workflows, checks it before the row runs.
+  Until one is set up, this kind shows a notice with Open Settings where its field would be. The
+  same agent names tasks and Command Terminals, and without one naming is off.
+- **Text match** is a line the agent's last message must end on, such as `Verdict: Ready`. It is
+  checked on the spot, with no agent and no cost. Use `*` as a wildcard (`Ready for *`); case,
+  punctuation and markdown are ignored, so `**Verdict: Ready.**` matches too. It reads the agent's
+  last message, so it is offered on **On agent turn end** only: on enter or exit it is shown
+  disabled, with the reason. Hover the info icon after its hint for examples.
+
+Either way, a no means the row did not run, and it is checked again next time. A row holds one kind.
+A new Condition starts on Agent evaluation, or on Text match at a turn end when no Automation agent
+is set up. **Frequency** caps how many times a row runs on one task, across every visit, which is
+what keeps a review loop from bouncing a task forever. Taking a task back out of Done starts the
+count over, so a reopened task runs through the board's automations again. Both start off.
 
 **Reading a row.** Every row has the same two lines. The second says what the row does, and to
 what: the verb and the type's one required value, such as `Sends "Review the changes"`, `Moves the
 task to Executing`, or `Runs npm run lint` (a script shows in code type). A long value ends where
 the row ends, and a message or script with several lines shows its first line; hover the line to
 read all of it, every line. Any option you switched on is a mark after the name,
-in the editor's card order: a funnel for a Condition, a repeat icon with the run limit for a
-Frequency, a clock on a Send message row that waits for the current turn, and a speech bubble on a
-Move to column row that carries a Message. Hover a mark to read its card and value ("Condition:
-only if the review is clean.", "Frequency: at most 3 times for each task."); a Message or a
+in the editor's card order: a robot for an Agent evaluation or a magnifier over text for a Text
+match, a repeat icon with the run limit for a Frequency, a clock on a Send message row that waits
+for the current turn, and a speech bubble on a Move to column row that carries a Message. Hover a
+mark to read its card and value ("Condition: only if the review is clean.", "Condition: only if the
+last line reads "Verdict: Ready".", "Frequency: at most 3 times for each task."); a Message or a
 Condition reads in full there. A webhook's body and headers and a notification's body are not
 marked: open the row for those. The rows under **Copy existing** in the Add automation picker carry
 the same marks.
@@ -1089,7 +1100,7 @@ Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift
 - **Range** - Live (trailing 2 hours), Today, This Week, This Month, All Time, or a custom month range. Click a day in a chart to drill into that single day.
 - **Breakdowns** - by model, by agent, by reasoning effort, and, when a session fanned out to subagents, by subagent type, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, files, cache reads, compactions, burn rate, average active time, subagent tokens) with "vs previous period" deltas. The Subagents tile's tooltip adds how many of those subagents another subagent spawned, and names any agent in the range that cannot report subagent usage at all - only Claude can today, so a Codex or Gemini range says so rather than showing a dash that looks like "nothing fanned out".
 
-- **Background** - the headless agent calls Kangentic makes for you: Condition checks, workflow step checks, Knowledge Graph task summaries, task titles and Command Terminal names. A card under the tiles shows the range's total and each job's calls and model, in the selected metric. Below the burn rate chart, "Background calls by day" lists each day and job with all four token types, failures, average time and cost. None of these calls is a session, so none of it is added to the tiles above. An agent whose CLI reports no usage shows a dash, never a zero.
+- **Background** - the headless agent calls Kangentic makes for you: Condition checks (Agent evaluations; a Text match makes no call), workflow step checks, Knowledge Graph task summaries, task titles and Command Terminal names. A card under the tiles shows the range's total and each job's calls and model, in the selected metric. Below the burn rate chart, "Background calls by day" lists each day and job with all four token types, failures, average time and cost. None of these calls is a session, so none of it is added to the tiles above. An agent whose CLI reports no usage shows a dash, never a zero.
 
 Totals are read from the durable usage ledgers, so they survive task and session deletion. The selected range and scope persist across app restarts (one global value shared across all projects).
 

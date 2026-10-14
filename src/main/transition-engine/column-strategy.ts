@@ -21,7 +21,7 @@
  * an in-flight task.
  */
 
-import { hasCondition, hasFrequencyLimit } from '../automations/row-guards';
+import { hasGuard } from '../automations/row-guards';
 import type {
   AutoCommandMode,
   BoardProfile,
@@ -252,7 +252,7 @@ export function resolveEffectiveAutoCommand(
  * one. `BoardProfileEntry.autoCommand` is the retired key that used to do it.
  */
 export function resolveColumnMessage(
-  automations: ReadonlyArray<Pick<ColumnAutomation, 'id' | 'type' | 'trigger' | 'enabled' | 'position' | 'config' | 'condition' | 'max_runs'>>,
+  automations: ReadonlyArray<Pick<ColumnAutomation, 'id' | 'type' | 'trigger' | 'enabled' | 'position' | 'config' | 'condition' | 'final_line' | 'max_runs'>>,
 ): { id: string; message: string; mode: AutoCommandMode; guarded: boolean } | null {
   const row = [...automations]
     .filter((candidate) => candidate.type === 'send_message' && candidate.trigger === 'enter' && candidate.enabled)
@@ -270,8 +270,8 @@ export function resolveColumnMessage(
   // `guarded` says the row carries a Condition or a Frequency limit. Only the
   // runner applies those, so a caller that delivers the message itself must
   // leave a guarded row to the runner: delivering it would skip both. Asked
-  // through the runner's own predicates, so the two never disagree.
-  const guarded = hasCondition(row) || hasFrequencyLimit(row);
+  // through the runner's own predicate, so the two never disagree.
+  const guarded = hasGuard(row);
   return { id: row.id, message, mode: row.config.mode ?? 'immediate', guarded };
 }
 

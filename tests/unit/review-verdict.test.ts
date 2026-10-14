@@ -12,9 +12,10 @@
  * 3. A quick fix never changes the verdict, even when it could not be applied.
  * 4. Validation refuses `skipped`, a refuted or blocked finding with no reason, a blocked finding
  *    with no step, a decision with no alternative, and follow-ups with no filed task.
- * 5. The closing block's first line is exactly `Verdict: Ready` or `Verdict: Blocked`, a Blocked
- *    verdict lists one numbered step per blocker, no `Next:` line follows, and the default output
- *    ends with the block.
+ * 5. The closing block's LAST line is exactly `Verdict: Ready` or `Verdict: Blocked`, a Blocked
+ *    verdict lists one numbered step per blocker above it, no `Next:` line follows, and the
+ *    default output ends with the block, so the message's final line is the verdict the board's
+ *    Text match rows read.
  * 6. Ledger lines are keyed by file, symbol and mechanism and carry no line number.
  * 7. The Summary counts leave quick findings out of the status counts, count re-raises, list
  *    severities in critical, high, medium, low order, and name each check's value.
@@ -201,10 +202,10 @@ describe('review-verdict.mjs: verdict rules', () => {
       { checks: { typecheck: 'pass', hmrVitest: 'fail', scopedTests: 'fail' } },
     );
     const lines = closingBlockLines(report);
-    expect(lines[0]).toBe('Verdict: Blocked');
-    expect(lines[1]).toBe('1. src/main/example-1.ts:11: log in to the vendor CLI and capture a reply');
-    expect(lines[2]).toMatch(/^2\. HMR vitest: /);
-    expect(lines[3]).toMatch(/^3\. Scoped runs of added tests: /);
+    expect(lines[0]).toBe('1. src/main/example-1.ts:11: log in to the vendor CLI and capture a reply');
+    expect(lines[1]).toMatch(/^2\. HMR vitest: /);
+    expect(lines[2]).toMatch(/^3\. Scoped runs of added tests: /);
+    expect(lines[3]).toBe('Verdict: Blocked');
     expect(lines).toHaveLength(4);
   });
 
@@ -463,9 +464,9 @@ describe('review-verdict.mjs: one-line collapsing', () => {
     ]);
     expect(validateFindings(report)).toEqual([]);
     const expectedLines = [
-      'Verdict: Blocked',
       '1. src/main/first.ts:10 (inside the reap loop): capture a reply from the CLI, then rerun',
       '2. src/main/second.ts:20: rebuild the fixture',
+      'Verdict: Blocked',
     ];
     const closingLines = closingBlockLines(report);
     expect(closingLines).toEqual(expectedLines);
@@ -518,8 +519,10 @@ describe('review-verdict.mjs: command line', () => {
     );
     expect(blocked.exitCode).toBe(0);
     const outputLines = blocked.stdout.trimEnd().split('\n');
-    expect(outputLines).toContain('Verdict: Blocked');
-    expect(outputLines[outputLines.length - 1]).toBe('1. src/main/example-1.ts:11: run the packaged build on macOS');
+    expect(outputLines.slice(-2)).toEqual([
+      '1. src/main/example-1.ts:11: run the packaged build on macOS',
+      'Verdict: Blocked',
+    ]);
   });
 
   it('ends the default output of a Ready report with the verdict line and exits 0', () => {

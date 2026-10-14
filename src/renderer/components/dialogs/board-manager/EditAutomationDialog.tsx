@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Funnel, Info, Repeat, Settings, Zap } from 'lucide-react';
+import { Bot, Funnel, Info, Repeat, Settings, TextSearch, Zap } from 'lucide-react';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGER_LABELS,
@@ -11,6 +11,7 @@ import {
   stableAutomationTypes,
 } from '../../../../shared/automation-manifest';
 import type { AutomationField } from '../../../../shared/automation-manifest';
+import { TEXT_MATCH_PLACEHOLDER, TEXT_MATCH_UNAVAILABLE_REASON } from '../../../../shared/final-line-match';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { BaseDialog, DialogFooterActions } from '../BaseDialog';
 import { Select, ToggleSwitch } from '../../settings/shared';
@@ -23,8 +24,10 @@ import { OptionalTag } from '../../OptionalTag';
 import { AutomationTypePicker } from './AutomationTypePicker';
 import { AutomationColumnPicker, type AutomationColumnChoice } from './AutomationColumnPicker';
 import { AutomationIcon } from './automation-icons';
+import { WildcardExamplesTip } from './WildcardExamplesTip';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import {
+  draftConditionKinds,
   findNameConflict,
   formatHeaderLines,
   parseHeaderLines,
@@ -59,6 +62,52 @@ const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
 
 /** What a switched-off Condition shows, and the placeholder of an empty one. */
 const CONDITION_EXAMPLE = 'All tests pass';
+
+/**
+ * How the Condition is checked: the Automation agent judging prose, or a Text
+ * match in code against the agent's last line. A row holds one at a time.
+ */
+type ConditionKind = 'agent' | 'text';
+
+/**
+ * Agent evaluation first: it runs on every trigger and is what a Condition has
+ * always meant, so the one option that can be unavailable (Text match, off a
+ * turn end) sits last. Module scope for the same ResizeObserver reason as
+ * `TRIGGER_OPTIONS` below, one array per state.
+ */
+const AGENT_KIND_OPTION: SegmentedControlOption<ConditionKind> = {
+  value: 'agent',
+  label: 'Agent evaluation',
+  icon: <Bot size={14} />,
+  testId: 'edit-automation-condition-kind-agent',
+};
+const TEXT_KIND_OPTION: SegmentedControlOption<ConditionKind> = {
+  value: 'text',
+  label: 'Text match',
+  icon: <TextSearch size={14} />,
+  testId: 'edit-automation-condition-kind-text',
+};
+const CONDITION_KIND_OPTIONS: SegmentedControlOption<ConditionKind>[] = [AGENT_KIND_OPTION, TEXT_KIND_OPTION];
+/** Off a turn end there is no final message, so Text match is shown and disabled, with the reason as its tip. */
+const CONDITION_KIND_OPTIONS_NO_TEXT: SegmentedControlOption<ConditionKind>[] = [
+  AGENT_KIND_OPTION,
+  { ...TEXT_KIND_OPTION, disabled: true, title: TEXT_MATCH_UNAVAILABLE_REASON },
+];
+
+/** The Text match hint, under its field. */
+const TEXT_MATCH_HINT = "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard.";
+
+/**
+ * The kind a Condition opens on. A saved one keeps its own; a new one starts
+ * on the first kind that can run here, so Text match is a deliberate pick
+ * wherever an Automation agent can evaluate instead. Without one, a turn end
+ * starts on Text match, the kind that works with no agent at all.
+ */
+function initialConditionKind(draft: AutomationDraft, automationAgentReady: boolean): ConditionKind {
+  if (draft.final_line !== null) return 'text';
+  if (draft.condition !== null) return 'agent';
+  return !automationAgentReady && draft.trigger === 'turn_end' ? 'text' : 'agent';
+}
 /** How tall a growing prose field may get before it scrolls. */
 const PROSE_MAX_ROWS = 8;
 /** The Type label's info tip. Type is the dialog's own field, not a manifest one, so its note lives here. */
@@ -187,8 +236,13 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
   // is what makes the dialog safe to experiment in.
   const [local, setLocal] = useState<AutomationDraft>(props.draft);
   // What a switched-off guard returns to when switched back on, so turning a
-  // Condition off and on again does not lose what was written.
+  // Condition off and on again, or flipping its kind, does not lose what was
+  // written. Each kind keeps its own text.
   const [conditionDraft, setConditionDraft] = useState<string>(props.draft.condition ?? '');
+  const [finalLineDraft, setFinalLineDraft] = useState<string>(props.draft.final_line ?? '');
+  const [conditionKindChoice, setConditionKindChoice] = useState<ConditionKind>(
+    () => initialConditionKind(props.draft, props.automationAgentReady),
+  );
   const [maxRunsDraft, setMaxRunsDraft] = useState<number>(props.draft.max_runs ?? 1);
   const nameRef = useRef<HTMLInputElement | null>(null);
   const conditionInsertRef = useRef<TemplateTextFieldInsert | null>(null);
@@ -243,12 +297,28 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only, see above
   }, []);
 
-  // The Condition card. With no Automation agent its switch reads off and is
-  // disabled, and a Condition written earlier is KEPT on the row, untouched, so
-  // it returns once an agent is set up.
-  const conditionOn = props.automationAgentReady && local.condition !== null;
+  // The Condition card, two kinds. Text match needs the agent's final message,
+  // so off a turn end the card shows Agent evaluation while the Text match line
+  // waits in `finalLineDraft`, back if the Trigger returns before Done. With no
+  // Automation agent the switch still works: Text match needs none, and an
+  // Agent evaluation shows the setup notice in its own field.
+  const textMatchAvailable = local.trigger === 'turn_end';
+  const conditionKind: ConditionKind = conditionKindChoice === 'text' && !textMatchAvailable ? 'agent' : conditionKindChoice;
+  const conditionOn = conditionKind === 'text' ? local.final_line !== null : local.condition !== null;
+  // An empty value while on is kept as '' so the switch stays on mid-edit; the
+  // save normalizes a blank one to none.
+  const withCondition = (current: AutomationDraft, kind: ConditionKind, on: boolean): AutomationDraft => ({
+    ...current,
+    condition: on && kind === 'agent' ? conditionDraft : null,
+    final_line: on && kind === 'text' ? finalLineDraft : null,
+  });
   const setConditionOn = (on: boolean): void => {
-    setLocal((current) => ({ ...current, condition: on ? (conditionDraft.trim() || null) ?? '' : null }));
+    setConditionKindChoice(conditionKind);
+    setLocal((current) => withCondition(current, conditionKind, on));
+  };
+  const changeConditionKind = (kind: ConditionKind): void => {
+    setConditionKindChoice(kind);
+    setLocal((current) => withCondition(current, kind, conditionOn));
   };
   const frequencyOn = local.max_runs !== null;
   const setFrequencyOn = (on: boolean): void => {
@@ -279,7 +349,9 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
       footer={
         <DialogFooterActions
           onCancel={props.onCancel}
-          onConfirm={() => props.onDone(local)}
+          // Saved with one Condition kind, and no Text match off a turn end:
+          // the line kept for a Trigger switched back goes no further than Done.
+          onConfirm={() => props.onDone({ ...local, ...draftConditionKinds(local) })}
           confirmLabel="Done"
           confirmDisabled={blocked}
           cancelTestId="edit-automation-cancel"
@@ -340,60 +412,98 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           testId="edit-automation-card-condition"
           icon={<Funnel size={16} />}
           title="Condition"
-          description="Describe it in plain words; an agent checks it."
+          description="Runs only when this holds."
           checked={conditionOn}
-          onToggle={props.automationAgentReady ? setConditionOn : undefined}
-          switchDisabled={!props.automationAgentReady}
-          dimmed={!props.automationAgentReady}
+          onToggle={setConditionOn}
           switchLabel="Condition"
         >
-          {props.automationAgentReady ? (
-            <div className="flex flex-col gap-2">
-              <TemplateTextField
-                value={conditionOn ? (local.condition ?? '') : ''}
-                onChange={(next) => {
-                  setConditionDraft(next);
-                  // An empty Condition while on is kept as '' in the dialog so
-                  // the field does not switch itself off mid-edit; the save
-                  // normalizes a blank one to none.
-                  setLocal((current) => ({ ...current, condition: next }));
-                }}
-                context="automation"
-                testId="edit-automation-condition"
-                placeholder={CONDITION_EXAMPLE}
-                ariaLabel="Condition"
-                grow={{ maxRows: PROSE_MAX_ROWS }}
+          {/* Full width, as the Trigger is: two options that each name who
+              checks. Dimmed with the field while the Condition is off, still
+              live, so the kind can be picked before switching it on. */}
+          <div className={conditionOn ? '' : 'opacity-50'}>
+            <SegmentedControl
+              quiet
+              fullWidth
+              ariaLabel="Condition kind"
+              testId="edit-automation-condition-kind"
+              options={textMatchAvailable ? CONDITION_KIND_OPTIONS : CONDITION_KIND_OPTIONS_NO_TEXT}
+              value={conditionKind}
+              onChange={changeConditionKind}
+            />
+          </div>
+          {/* One slot for both kinds' bodies: stacked in a single grid cell, the
+              inactive one hidden, so the cell is always the taller of the two
+              and flipping the kind (or the setup notice standing in for the
+              field) never moves anything below the card. */}
+          <div data-testid="edit-automation-condition-slot" className="grid">
+            <ConditionKindBody active={conditionKind === 'agent'} testId="edit-automation-condition-agent-body">
+              {props.automationAgentReady ? (
+                <>
+                  <TemplateTextField
+                    value={conditionOn && conditionKind === 'agent' ? (local.condition ?? '') : ''}
+                    onChange={(next) => {
+                      setConditionDraft(next);
+                      setLocal((current) => ({ ...current, condition: next }));
+                    }}
+                    context="automation"
+                    testId="edit-automation-condition"
+                    placeholder={CONDITION_EXAMPLE}
+                    ariaLabel="Condition"
+                    grow={{ maxRows: PROSE_MAX_ROWS }}
+                    disabled={!conditionOn}
+                    insertRef={conditionInsertRef}
+                  />
+                  <div className={`flex ${conditionOn ? '' : 'pointer-events-none opacity-50'}`}>
+                    <props.templatePicker onInsert={(variable) => conditionInsertRef.current?.(variable)} />
+                  </div>
+                </>
+              ) : (
+                // No field and no Template variable: there is nothing to write
+                // an evaluation for until an agent can make it. Fills the slot,
+                // so it takes exactly the room the field would.
+                <div
+                  data-testid="edit-automation-condition-setup"
+                  className="flex flex-1 items-center gap-3 rounded-md border border-accent/40 bg-accent/10 px-3 py-2.5"
+                >
+                  <Info size={16} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
+                  <span data-testid="edit-automation-condition-setup-text" className="min-w-0 flex-1 text-[13px] font-semibold text-fg">
+                    Set up an Automation agent
+                  </span>
+                  {/* Accent outline and text: the one thing to do here, so it reads as
+                      the way forward rather than a neutral secondary button. */}
+                  <button
+                    type="button"
+                    data-testid="edit-automation-open-settings"
+                    onClick={props.onOpenAutomationSettings}
+                    className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded border border-accent/50 px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent/10"
+                  >
+                    <Settings size={14} aria-hidden="true" />
+                    Open Settings
+                  </button>
+                </div>
+              )}
+            </ConditionKindBody>
+            <ConditionKindBody active={conditionKind === 'text'} testId="edit-automation-condition-text-body">
+              <input
+                data-testid="edit-automation-final-line"
+                aria-label="Text match"
+                value={conditionOn && conditionKind === 'text' ? (local.final_line ?? '') : ''}
+                placeholder={TEXT_MATCH_PLACEHOLDER}
                 disabled={!conditionOn}
-                insertRef={conditionInsertRef}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setFinalLineDraft(next);
+                  setLocal((current) => ({ ...current, final_line: next }));
+                }}
+                className={`${FIELD_CONTROL_CLASS} disabled:opacity-50`}
               />
-              <div className={`flex ${conditionOn ? '' : 'pointer-events-none opacity-50'}`}>
-                <props.templatePicker onInsert={(variable) => conditionInsertRef.current?.(variable)} />
-              </div>
-            </div>
-          ) : (
-            // No field and no Template variable: there is nothing to write a
-            // condition for until something can check it.
-            <div
-              data-testid="edit-automation-condition-setup"
-              className="flex items-center gap-3 rounded-md border border-accent/40 bg-accent/10 px-3 py-2.5"
-            >
-              <Info size={16} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
-              <span data-testid="edit-automation-condition-setup-text" className="min-w-0 flex-1 text-[13px] font-semibold text-fg">
-                Set up an Automation agent
+              {/* The template picker's height, so the two bodies line up. */}
+              <span className={`flex min-h-7 items-center gap-1.5 ${SETTING_DESCRIPTION_CLASS} ${conditionOn ? '' : 'opacity-50'}`}>
+                <span data-testid="edit-automation-final-line-hint">{TEXT_MATCH_HINT}</span>
+                <WildcardExamplesTip />
               </span>
-              {/* Accent outline and text: the one thing to do here, so it reads as
-                  the way forward rather than a neutral secondary button. */}
-              <button
-                type="button"
-                data-testid="edit-automation-open-settings"
-                onClick={props.onOpenAutomationSettings}
-                className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded border border-accent/50 px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent/10"
-              >
-                <Settings size={14} aria-hidden="true" />
-                Open Settings
-              </button>
-            </div>
-          )}
+            </ConditionKindBody>
+          </div>
         </RuleCard>
 
         <RuleCard
@@ -492,6 +602,24 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
 }
 
 /**
+ * One Condition kind's body in the card's shared slot. Both bodies sit in one
+ * grid cell and the inactive one is hidden and inert, so the cell is always
+ * the taller of the two.
+ */
+function ConditionKindBody({ active, testId, children }: { active: boolean; testId: string; children: React.ReactNode }) {
+  return (
+    <div
+      data-testid={testId}
+      aria-hidden={!active}
+      inert={!active}
+      className={`col-start-1 row-start-1 flex min-w-0 flex-col gap-2 ${active ? '' : 'invisible'}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
  * One part of the rule: a settings card's header over one lighter panel.
  *
  * The geometry is `settings-card.tsx`'s (a tile-shaped header target, the
@@ -500,7 +628,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
  * Settings and in this dialog reads as one design.
  */
 function RuleCard({
-  testId, icon, title, description, checked, onToggle, switchDisabled, dimmed, switchLabel, children,
+  testId, icon, title, description, checked, onToggle, switchLabel, children,
 }: {
   testId: string;
   icon: React.ReactNode;
@@ -509,14 +637,11 @@ function RuleCard({
   /** The card's switch, when it has one. */
   checked?: boolean;
   onToggle?: (on: boolean) => void;
-  switchDisabled?: boolean;
-  /** Dim the header (the Condition card with no Automation agent). */
-  dimmed?: boolean;
   switchLabel?: string;
   children: React.ReactNode;
 }) {
   const hasSwitch = checked !== undefined;
-  const toggle = hasSwitch && onToggle && !switchDisabled ? () => onToggle(!checked) : undefined;
+  const toggle = hasSwitch && onToggle ? () => onToggle(!checked) : undefined;
   return (
     <section data-testid={testId} aria-label={title} className="rounded-lg border border-edge">
       <div className="px-3 py-1.5">
@@ -529,10 +654,10 @@ function RuleCard({
           } : undefined}
           className={`flex items-center gap-3 rounded-md px-4 py-2 ${toggle ? 'cursor-pointer select-none transition-colors hover:bg-surface-hover/40' : ''}`}
         >
-          <span className={`flex w-4 flex-shrink-0 justify-center text-fg-muted ${dimmed ? 'opacity-50' : ''}`} aria-hidden="true">
+          <span className="flex w-4 flex-shrink-0 justify-center text-fg-muted" aria-hidden="true">
             {icon}
           </span>
-          <span className={`min-w-0 flex-1 ${dimmed ? 'opacity-50' : ''}`}>
+          <span className="min-w-0 flex-1">
             <span className="block text-sm font-semibold text-fg">{title}</span>
             <span className="mt-0.5 block text-xs text-fg-tertiary">{description}</span>
           </span>
@@ -541,7 +666,6 @@ function RuleCard({
               <ToggleSwitch
                 checked={checked}
                 onChange={(next) => onToggle?.(next)}
-                disabled={switchDisabled}
                 ariaLabel={switchLabel ?? title}
                 testId={`${testId}-switch`}
               />

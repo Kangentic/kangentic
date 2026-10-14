@@ -8,6 +8,7 @@ import type {
   ColumnAutomation,
 } from '../../../shared/types';
 import { AUTOMATION_MANIFEST, isAutomationTrigger } from '../../../shared/automation-manifest';
+import { conditionKindsAsStored } from '../../../shared/final-line-match';
 import { columnNameKey } from '../../automations/move-target';
 import { writeTransaction } from '../transaction';
 
@@ -21,6 +22,7 @@ interface AutomationRow {
   enabled: number;
   config_json: string;
   condition: string | null;
+  final_line: string | null;
   max_runs: number | null;
   created_at: string;
   updated_at: string;
@@ -85,8 +87,8 @@ export class AutomationRepository {
     const now = new Date().toISOString();
     const insert = this.db.prepare(`
       INSERT INTO column_automations
-        (id, swimlane_id, name, type, trigger, position, enabled, config_json, condition, max_runs, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, swimlane_id, name, type, trigger, position, enabled, config_json, condition, final_line, max_runs, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const tx = writeTransaction(this.db, () => {
@@ -112,6 +114,10 @@ export class AutomationRepository {
         const reusable = kept !== undefined && !explicitIds.has(kept) && !usedIds.has(kept) ? kept : undefined;
         const id = automation.id ?? reusable ?? randomUUID();
         usedIds.add(id);
+        // One Condition kind per row, Text match on a turn end only. Every
+        // writer already holds to this (the dialog, the file reader, MCP), so
+        // this is the backstop, not the rule.
+        const kinds = conditionKindsAsStored(automation);
         insert.run(
           id,
           swimlaneId,
@@ -121,7 +127,8 @@ export class AutomationRepository {
           nextPosition[automation.trigger],
           automation.enabled ? 1 : 0,
           JSON.stringify(automation.config ?? {}),
-          normalizeCondition(automation.condition),
+          kinds.condition,
+          kinds.final_line,
           normalizeMaxRuns(automation.max_runs),
           existing.get(id) ?? now,
           now,
@@ -178,6 +185,16 @@ export function normalizeCondition(condition: string | null | undefined): string
   return trimmed ? trimmed : null;
 }
 
+/**
+ * A Text match as stored: trimmed, a blank one is none, and none off a turn
+ * end, the only trigger with a final message to read.
+ */
+export function normalizeFinalLine(finalLine: string | null | undefined, trigger: string): string | null {
+  if (trigger !== 'turn_end' || typeof finalLine !== 'string') return null;
+  const trimmed = finalLine.trim();
+  return trimmed ? trimmed : null;
+}
+
 /** What makes a row in a column "the same automation" when a writer carries no id. Names are unique per column. */
 function automationIdentity(name: string, type: string, trigger: string): string {
   return `${name}\n${type}\n${trigger}`;
@@ -225,6 +242,7 @@ function mapRow(row: AutomationRow): ColumnAutomation | null {
     enabled: row.enabled === 1,
     config: parseConfig(row.config_json),
     condition: normalizeCondition(row.condition),
+    final_line: normalizeFinalLine(row.final_line, row.trigger),
     max_runs: normalizeMaxRuns(row.max_runs),
     created_at: row.created_at,
     updated_at: row.updated_at,

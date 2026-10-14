@@ -312,6 +312,98 @@ describe('automation MCP commands', () => {
       }, context);
       expect(context.onSwimlaneUpdated).toHaveBeenCalled();
     });
+
+    describe('finalLine, the Text match kind', () => {
+      it('stores a turn-end Text match, trimmed, and reads it back as finalLine', () => {
+        const response = handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'On to Code Review', type: 'move_to_column', on: 'turn_end', targetColumn: 'Code Review', finalLine: '  Findings: applied  ', maxRuns: 4 }],
+        }, context);
+
+        expect(response.success).toBe(true);
+        const [row] = automations.listForColumn(executingId());
+        expect(row).toMatchObject({ final_line: 'Findings: applied', condition: null, max_runs: 4 });
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved).toMatchObject({ finalLine: 'Findings: applied', condition: null, maxRuns: 4 });
+      });
+
+      it('refuses a finalLine that is not text, naming the row, and saves nothing', () => {
+        const response = handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'Move', type: 'move_to_column', on: 'turn_end', finalLine: 3 }],
+        }, context);
+
+        expect(response.success).toBe(false);
+        expect(response.error).toBe('automations[0]: finalLine must be text (or null for no text match). Nothing was saved.');
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+
+      it('refuses a finalLine off a turn end, with the reason, and saves nothing', () => {
+        const response = handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'Review', type: 'send_message', on: 'enter', message: '/code-review', finalLine: 'Ready for review' }],
+        }, context);
+
+        expect(response.success).toBe(false);
+        expect(response.error).toContain('finalLine works only with on: "turn_end", not enter.');
+        expect(response.error).toContain('Nothing was saved.');
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+
+      it('refuses a finalLine with no letter, number or *, which no last line can match, and saves nothing', () => {
+        const response = handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'Move', type: 'move_to_column', on: 'turn_end', finalLine: '---' }],
+        }, context);
+
+        expect(response.success).toBe(false);
+        expect(response.error).toContain('finalLine "---" has no letter, number or *, so no last line can match it.');
+        expect(response.error).toContain('Nothing was saved.');
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+
+      it('accepts a bare wildcard finalLine, which matches any last line', () => {
+        const response = handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'Any', type: 'notify', on: 'turn_end', title: 'Done', finalLine: '*' }],
+        }, context);
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]?.final_line).toBe('*');
+      });
+
+      it('refuses a row with both a condition and a finalLine, and saves nothing', () => {
+        const response = handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'Move', type: 'move_to_column', on: 'turn_end', condition: 'The work is done', finalLine: 'Findings: applied' }],
+        }, context);
+
+        expect(response.success).toBe(false);
+        expect(response.error).toContain('give a condition or a finalLine, not both');
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+
+      it('reads a blank finalLine as none, beside a condition, with no refusal', () => {
+        const response = handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'Move', type: 'move_to_column', on: 'turn_end', condition: 'The work is done', finalLine: '   ' }],
+        }, context);
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({ condition: 'The work is done', final_line: null });
+      });
+
+      it('words the Text match in the list, as a guard', () => {
+        handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'On to Code Review', type: 'move_to_column', on: 'turn_end', targetColumn: 'Code Review', finalLine: 'Findings: applied' }],
+        }, context);
+
+        const lines = (handleListAutomations({ column: 'Executing' }, context).message ?? '').split('\n');
+        expect(lines).toContain('    1. On to Code Review (move_to_column) Moves the task to Code Review'
+          + ' (only if the last line reads "Findings: applied")');
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -507,6 +599,24 @@ describe('automation MCP commands', () => {
       expect(rows).toHaveLength(2);
       expect(rows.find((row) => row.name === 'Ping')?.config.url).toBe('https://example.com');
     });
+
+    // The message write rebuilds the whole column, so a row it does not touch
+    // must come back with its Text match. Losing it would turn a guarded Move
+    // into one that fires at every turn end.
+    it('keeps another row\'s Text match through the whole-column rewrite, on add, change and delete', () => {
+      handleSetAutomations({
+        column: 'Executing',
+        automations: [{ name: 'On to Code Review', type: 'move_to_column', on: 'turn_end', targetColumn: 'Code Review', finalLine: 'Findings: applied' }],
+      }, context);
+      const textMatchOf = () => automations.listForColumn(executingId()).find((row) => row.name === 'On to Code Review')?.final_line;
+
+      handleUpdateColumn({ column: 'Executing', autoCommand: '/first' }, context);
+      expect(textMatchOf()).toBe('Findings: applied');
+      handleUpdateColumn({ column: 'Executing', autoCommand: '/second', autoCommandMode: 'deferred' }, context);
+      expect(textMatchOf()).toBe('Findings: applied');
+      handleUpdateColumn({ column: 'Executing', autoCommand: null }, context);
+      expect(textMatchOf()).toBe('Findings: applied');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -590,6 +700,22 @@ describe('automation MCP commands', () => {
       expect(response.message).toContain('(claude-haiku-5-5, low): 2,104 fresh input + 45 output, 120 cache write, 1,012 cache read, $0.0026, 1.9s, one call for 2 rows');
       // An agent that reports no usage says so, never zeros.
       expect(response.message).toContain('(default model): usage not reported, 4.6s');
+    });
+
+    it('reports a Text match outcome with the line it read, and no check line: no agent was asked', () => {
+      const columnId = executingId();
+      db.prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run('task-matched', 'Matched task', '', columnId, 0, '2026-10-13T00:00:00.000Z', '2026-10-13T00:00:00.000Z');
+      const runs = new AutomationRunRepository(db);
+      const row = { id: 'a-text', name: 'On to Testing', type: 'move_to_column' as const, swimlane_id: columnId, trigger: 'turn_end' as const };
+      const missed = { met: false, reason: 'The final line reads "Verdict: Blocked".' };
+      runs.recordSkipped({ id: 'run-text', automation: row, taskId: 'task-matched', finalLine: missed }, `Text match not met: ${missed.reason}`);
+
+      const response = handleGetAutomationRuns({ task: 'task-matched' }, context);
+
+      expect(response.message).toContain('[text match not met: The final line reads "Verdict: Blocked".]');
+      expect(response.message).not.toContain('checked by');
+      expect(response.message).not.toContain('[condition');
     });
   });
 

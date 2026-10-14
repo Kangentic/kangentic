@@ -259,6 +259,75 @@ describe('kangentic.json automations round-trip', () => {
       for (const row of after) expect(row.id).toBe(before.get(row.name));
     });
 
+    describe('Text match (finalLine)', () => {
+      it('writes finalLine in place of condition, and round-trips it through apply with the row\'s id', () => {
+        const { lanes, automations } = freshDatabase();
+        const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
+        automations.replaceForColumn(codeReview.id, [
+          { name: 'On to Testing', type: 'move_to_column', trigger: 'turn_end', enabled: true, config: { targetColumn: 'Testing' }, final_line: 'Verdict: Ready', max_runs: 1 },
+        ]);
+        const [before] = automations.listForColumn(codeReview.id);
+
+        const first = build();
+        expect(columnNamed(first, 'Code Review')?.automations?.onTurnEnd).toEqual([
+          { name: 'On to Testing', type: 'move_to_column', finalLine: 'Verdict: Ready', maxRuns: 1, targetColumn: 'Testing' },
+        ]);
+
+        applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(first)) as BoardConfig);
+        const [after] = automations.listForColumn(codeReview.id);
+        expect(after).toMatchObject({ id: before.id, final_line: 'Verdict: Ready', condition: null, max_runs: 1 });
+        expect(build().columns).toEqual(first.columns);
+      });
+
+      it('moves a row from a Condition to a Text match when the file says so, keeping its id', () => {
+        const { lanes, automations } = freshDatabase();
+        const testing = lanes.list().find((lane) => lane.name === 'Testing')!;
+        automations.replaceForColumn(testing.id, [
+          { name: 'On to Merge', type: 'move_to_column', trigger: 'turn_end', enabled: true, config: {}, condition: 'The PR is ready to merge.', final_line: null },
+        ]);
+        const [before] = automations.listForColumn(testing.id);
+
+        const file = build();
+        columnNamed(file, 'Testing')!.automations = {
+          onTurnEnd: [{ name: 'On to Merge', type: 'move_to_column', finalLine: 'PR: ready to merge' }],
+        };
+        applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(file)) as BoardConfig);
+
+        const [after] = automations.listForColumn(testing.id);
+        expect(after).toMatchObject({ id: before.id, condition: null, final_line: 'PR: ready to merge' });
+      });
+
+      it('warns about a finalLine that is not text, one off a turn end, and one beside a condition', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onEnter: [{ name: 'Too early', type: 'notify', finalLine: 'Verdict: Ready' }],
+            onTurnEnd: [
+              { name: 'Number', type: 'notify', finalLine: 3 as unknown as string },
+              { name: 'Both', type: 'notify', condition: 'The review is clean', finalLine: 'Verdict: Ready' },
+              { name: 'Blank', type: 'notify', finalLine: '   ' },
+              { name: 'Rule', type: 'notify', finalLine: '---' },
+            ],
+          },
+        });
+
+        expect(plan.rows.map((row) => [row.name, row.condition, row.final_line])).toEqual([
+          ['Too early', null, null],
+          ['Number', null, null],
+          ['Both', null, 'Verdict: Ready'],
+          ['Blank', null, null],
+          // Kept: dropped, the row would run at every turn end.
+          ['Rule', null, '---'],
+        ]);
+        expect(plan.warnings).toEqual([
+          'Automation "Too early" on "Code Review" has a finalLine in onEnter. A text match reads the agent\'s last message, so it works in onTurnEnd only. It runs without it.',
+          'Automation "Number" on "Code Review" has a finalLine that is not text. It runs without one.',
+          'Automation "Both" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the finalLine.',
+          'Automation "Rule" on "Code Review" has a finalLine with no letter, number or *, so no last line can match it and the row never runs.',
+        ]);
+      });
+    });
+
     it('warns and skips a Move to column row filed under onEnter or onExit', () => {
       const plan = planColumnAutomations({
         name: 'Code Review',

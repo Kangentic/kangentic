@@ -23,6 +23,11 @@
  * The label is ALSO rendered `sr-only` inside the trigger, always. A mapping
  * that exists only while a pointer is over it does not exist at all to someone
  * not using one, and the portal content is mounted only while open.
+ *
+ * `content` makes a rich tip: the node is drawn in place of the one-line label,
+ * in a panel that wraps and lets the content lay itself out (the Text match
+ * field's wildcard examples, a header band over a grid). `label` then stays the
+ * plain-text version a screen reader reads.
  */
 
 import {
@@ -39,6 +44,13 @@ const TIP_OFFSET = 8;
 /** Minimum distance the tip keeps from the viewport edge. */
 const VIEWPORT_PADDING = 8;
 
+/** What every tip draws: the raised panel, above everything, never hit by the pointer. */
+const TIP_PANEL_CLASS = 'pointer-events-none z-[2147483646] border border-edge bg-surface-raised text-fg shadow-lg';
+/** A one-line label tip. */
+const LABEL_TIP_CLASS = 'whitespace-nowrap rounded px-2 py-1 text-[11px] leading-none';
+/** A rich tip: it wraps, and its content lays itself out. */
+const RICH_TIP_CLASS = 'block w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-md text-xs';
+
 function clamp(value: number, low: number, high: number): number {
   // `high` can fall below `low` for a tip wider than the viewport; the low edge
   // wins there, since a tip that starts off-screen is unreadable from the first
@@ -48,11 +60,14 @@ function clamp(value: number, low: number, high: number): number {
 
 export function HoverTip({
   label,
+  content,
   children,
   className,
   testId,
 }: {
   label: string;
+  /** A rich tip drawn in place of `label`, which stays the screen-reader text. */
+  content?: ReactNode;
   children: ReactNode;
   /** Applied to the trigger wrapper, which is an inline-flex span. */
   className?: string;
@@ -116,9 +131,9 @@ export function HoverTip({
               role="tooltip"
               data-testid={testId}
               style={style}
-              className="pointer-events-none z-[2147483646] whitespace-nowrap rounded border border-edge bg-surface-raised px-2 py-1 text-[11px] leading-none text-fg shadow-lg"
+              className={`${TIP_PANEL_CLASS} ${content === undefined ? LABEL_TIP_CLASS : RICH_TIP_CLASS}`}
             >
-              {label}
+              {content === undefined ? label : content}
             </span>,
             document.body,
           )

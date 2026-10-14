@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { canColumnRun, EXIT_GROUP_BUDGET_MS } from '../../shared/automation-manifest';
+import { matchFinalLine, type FinalLineMatch } from '../../shared/final-line-match';
 import type { AutomationRunStatus, ColumnAutomation, Swimlane } from '../../shared/types';
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
 import type { ConditionCheckLimits } from './condition-check/condition-check';
 import { interpolateAutomationConfig } from './interpolate-config';
-import { hasCondition, hasFrequencyLimit } from './row-guards';
+import { hasCondition, hasFinalLine, hasFrequencyLimit } from './row-guards';
 import type { AutomationContext } from './shared/automation-adapter';
 import {
   AutomationTimeoutError,
@@ -128,6 +129,13 @@ export interface RunAutomationsOptions {
   /** The call that ran without answering (a timeout), so the skips it caused
    *  link to it: it was still paid for. */
   conditionUnavailableCallId?: string | null;
+  /**
+   * Turn end only: the agent's final message, which a row's Text match is
+   * checked against in code. Null when the read failed (the match then reads
+   * as not met, with that reason). Undefined on enter and exit, which have no
+   * final message; a Text match is never stored there, so none is checked.
+   */
+  agentReply?: string | null;
 }
 
 /**
@@ -157,6 +165,14 @@ export function frequencyLimitReason(automation: ColumnAutomation, runs: Automat
 export function conditionNotMetReason(answer: RunConditionAnswer): string {
   return answer.reason ? `Condition not met: ${answer.reason}` : 'Condition not met.';
 }
+
+/** The run-log reason for a Text match that did not match. */
+export function textMatchNotMetReason(match: FinalLineMatch): string {
+  return `Text match not met: ${match.reason}`;
+}
+
+/** Why a Text match row was skipped when the caller had no final message to give it. */
+export const TEXT_MATCH_NO_TURN_REASON = 'A text match is checked only at an agent turn end.';
 
 export async function runAutomations(options: RunAutomationsOptions): Promise<AutomationRunSummary> {
   const { automations, column, context, runs, signal } = options;
@@ -272,6 +288,26 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       runs.recordSkipped(started, spent);
       record('skipped', spent);
       continue;
+    }
+
+    // Text match: the Condition kind checked here, in code, against the agent's
+    // last line. Free, so it comes before anything that costs: a miss never
+    // reaches an Automation agent. Like a Condition's no, a miss is not a run,
+    // and what was read rides the run row either way.
+    if (hasFinalLine(automation)) {
+      if (options.agentReply === undefined) {
+        runs.recordSkipped(started, TEXT_MATCH_NO_TURN_REASON);
+        record('skipped', TEXT_MATCH_NO_TURN_REASON);
+        continue;
+      }
+      const match = matchFinalLine(automation.final_line, options.agentReply);
+      started.finalLine = match;
+      if (!match.met) {
+        const reason = textMatchNotMetReason(match);
+        runs.recordSkipped(started, reason);
+        record('skipped', reason);
+        continue;
+      }
     }
 
     // Condition: a no is not a run. The answer, yes or no, rides the run row so

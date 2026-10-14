@@ -26,6 +26,14 @@
  * recommendations or follow-up changes unapplied, offers to make them, or asks the user to decide.
  * Each row names the truth it should match (`leftWork`, `done` or `endsWithLine`), so one label
  * grades every wording. A case a careful reader could send either way carries `acceptEither`.
+ *
+ * A design row may carry `finalLine` in place of `condition`: a Text match, judged in code with the
+ * shipped `matchFinalLine` exactly as the runner judges it. A design made only of those rows makes no
+ * agent call, needs no `--arms`, and reports as the `code` arm at no cost. Every record also carries
+ * the outcome the case's production answers give under the design, so a run says how often it would
+ * have routed the task the way the board did. `run` writes `disagreements.json`: every case where the
+ * shipped matcher and the strict `lastLineIs` read a design's line differently. The `endsWithLine`
+ * truth is `lastLineIs`, so those cases are the ones to read by hand before trusting that truth.
  */
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -48,6 +56,8 @@ const TURN_END_GROUP_MS = 5_000;
 export const ANSWER_SETTINGS = { advisorModel: '', autoMemoryEnabled: false };
 /** The line the Apply findings message asks the agent to end on. */
 const FINDINGS_LINE = 'Findings: applied';
+/** The arm a design of only Text match rows runs on: the shipped matcher, no agent. */
+export const CODE_ARM = { model: 'code', effort: 'none' };
 
 /**
  * One task's judged rows grouped into turn ends. `rows` must be sorted by task, then time.
@@ -74,20 +84,97 @@ export function lastLineIs(reply, line) {
   return lines.length > 0 && bare(lines[lines.length - 1]) === bare(line);
 }
 
+/** Whether a design row has a Condition an agent judges. */
+function hasConditionRow(row) {
+  return (row.condition ?? null) !== null;
+}
+
+/** Whether a design row has a Text match, judged in code. */
+function hasFinalLineRow(row) {
+  return (row.finalLine ?? null) !== null;
+}
+
+/** Whether a design row only runs when a check says yes: a Condition, or a Text match. */
+export function isGuarded(row) {
+  return hasConditionRow(row) || hasFinalLineRow(row);
+}
+
+/**
+ * What production decided for one judged run row: its Agent evaluation's answer when it had one,
+ * otherwise its Text match's. The two are separate columns, and a Text match leaves the first
+ * pair null, so reading only `condition_met` would score every Text match as not met.
+ * @param {{ condition_met: number | null, condition_reason: string | null, final_line_met?: number | null, final_line_reason?: string | null }} row
+ */
+export function productionAnswerOf(row) {
+  if (row.condition_reason !== null || row.condition_met !== null) {
+    return { met: row.condition_met === null ? null : row.condition_met === 1, reason: row.condition_reason };
+  }
+  const finalLineMet = row.final_line_met ?? null;
+  return { met: finalLineMet === null ? null : finalLineMet === 1, reason: row.final_line_reason ?? null };
+}
+
+/**
+ * Throws on a design the runner could never hold: a row with both a Condition and a Text match. The
+ * repository keeps one kind per row, so grading such a row would measure nothing the board does.
+ */
+export function assertDesignRows(design) {
+  for (const row of design.rows) {
+    if (hasConditionRow(row) && hasFinalLineRow(row)) {
+      throw new Error(`${design.name}: the row ${row.name} has both a condition and a finalLine; a row holds one kind`);
+    }
+  }
+}
+
 /**
  * What the runner does with a turn end's answers: rows in board order, an unconditional row or one
  * answered yes runs, and a row that moves the task ends the group. 'none' when nothing runs.
- * @param {Array<{ key: string, condition: string | null, endsGroup?: boolean }>} rows
+ * @param {Array<{ key: string, condition?: string | null, finalLine?: string | null, endsGroup?: boolean }>} rows
  * @param {Map<string, boolean>} metByKey
  */
 export function outcomeOf(rows, metByKey) {
   const ran = [];
   for (const row of rows) {
-    if (row.condition !== null && metByKey.get(row.key) !== true) continue;
+    if (isGuarded(row) && metByKey.get(row.key) !== true) continue;
     ran.push(row.key);
     if (row.endsGroup) break;
   }
   return ran.length > 0 ? ran.join('+') : 'none';
+}
+
+/**
+ * Each Text match row's answer on a reply, from the shipped matcher: what the runner decides for it,
+ * with no agent asked. `matchFinalLine` is passed in so a test can hand it the real module.
+ */
+export function matchRowsInCode(rows, reply, matchFinalLine) {
+  const metByKey = new Map();
+  for (const row of rows) {
+    if (hasFinalLineRow(row)) metByKey.set(row.key, matchFinalLine(row.finalLine, reply).met);
+  }
+  return metByKey;
+}
+
+/** The outcome a case's production answers give under a design's rows: what the board did, as far as these rows go. */
+export function productionOutcomeOf(rows, testCase) {
+  const production = testCase.production ?? {};
+  return outcomeOf(rows, new Map(rows.filter(isGuarded).map((row) => [row.key, production[row.name]?.met === true])));
+}
+
+/**
+ * Every case where the shipped matcher and the strict `lastLineIs` read a line differently. A line
+ * with a wildcard is left out: `lastLineIs` reads it as literal text, so it would differ everywhere.
+ */
+export function lineDisagreements(cases, lines, matchFinalLine) {
+  const found = [];
+  for (const testCase of cases) {
+    if (!testCase.reply) continue;
+    for (const line of lines) {
+      if (line.includes('*')) continue;
+      const code = matchFinalLine(line, testCase.reply).met;
+      const strict = lastLineIs(testCase.reply, line);
+      if (code !== strict) found.push({ caseId: testCase.id, line, code, strict });
+    }
+  }
+  return found;
 }
 
 /**
@@ -157,13 +244,15 @@ function median(values) {
 
 /**
  * Per design and arm: how many outcomes matched, how many stalled the task (nothing ran where
- * something should have), how many rows went unanswered, and what the calls cost.
+ * something should have), how many rows went unanswered, and what the calls cost. `calls` counts the
+ * judged cases; `agentCalls` counts the ones that asked an agent, which is none on the code arm.
  */
 export function summarize(records) {
   const groups = new Map();
   for (const record of records) {
-    const key = `${record.design}|${record.model}:${record.effort}`;
-    const group = groups.get(key) ?? { design: record.design, arm: `${record.model}:${record.effort}`, records: [] };
+    const arm = record.model === CODE_ARM.model ? CODE_ARM.model : `${record.model}:${record.effort}`;
+    const key = `${record.design}|${arm}`;
+    const group = groups.get(key) ?? { design: record.design, arm, records: [] };
     group.records.push(record);
     groups.set(key, group);
   }
@@ -173,7 +262,9 @@ export function summarize(records) {
       design,
       arm,
       calls: armRecords.length,
+      agentCalls: armRecords.filter((record) => record.agentCall !== false).length,
       correct: armRecords.filter((record) => record.correct).length,
+      matchesProduction: armRecords.filter((record) => record.matchesProduction === true).length,
       stalls: armRecords.filter((record) => record.outcome === 'none' && record.expected !== 'none').length,
       unansweredRows: armRecords.reduce((sum, record) => sum + record.unanswered.length, 0),
       failedCalls: armRecords.filter((record) => record.isError || record.exitCode !== 0).length,
@@ -187,11 +278,12 @@ export function summarize(records) {
   });
 }
 
-/** The shipped prompt builder, reply parser, transcript parser and reply reader, bundled on the fly. */
+/** The shipped prompt builder, reply parser, Text matcher, transcript parser and reply reader, bundled on the fly. */
 async function loadAppModules() {
   const esbuild = await import('esbuild');
   const entry = [
     "export { buildConditionPrompt, parseConditionReply } from './src/main/automations/condition-check/condition-prompt.ts';",
+    "export { matchFinalLine } from './src/shared/final-line-match.ts';",
     "export { finalAgentReply } from './src/main/agent/shared/agent-reply.ts';",
     "export { parseClaudeTranscript, locateClaudeTranscriptFile } from './src/main/agent/adapters/claude/transcript-parser.ts';",
   ].join('\n');
@@ -362,10 +454,15 @@ async function build(options) {
   const app = await loadAppModules();
   const db = new DatabaseSync(options.db, { readOnly: true });
   try {
+    // A Text match run carries its answer in its own columns, which a database from before them lacks.
+    const runColumns = new Set(db.prepare("SELECT name FROM pragma_table_info('automation_runs')").all().map((column) => column.name));
+    const hasTextMatch = runColumns.has('final_line_met') && runColumns.has('final_line_reason');
     const rows = db.prepare(`
-      SELECT r.task_id, r.started_at, r.automation_name, r.condition_met, r.condition_reason, r.background_call_id
+      SELECT r.task_id, r.started_at, r.automation_name, r.condition_met, r.condition_reason, r.background_call_id,
+        ${hasTextMatch ? 'r.final_line_met, r.final_line_reason' : 'NULL AS final_line_met, NULL AS final_line_reason'}
       FROM automation_runs r JOIN swimlanes s ON s.id = r.swimlane_id
-      WHERE s.name = ? AND r.trigger = 'turn_end' AND r.condition_reason IS NOT NULL AND r.started_at >= ?
+      WHERE s.name = ? AND r.trigger = 'turn_end'
+        AND (r.condition_reason IS NOT NULL${hasTextMatch ? ' OR r.final_line_reason IS NOT NULL' : ''}) AND r.started_at >= ?
       ORDER BY r.task_id, r.started_at
     `).all(options.column, options.since);
     const taskQuery = db.prepare('SELECT display_id, title, description, labels, pr_url, pr_state, pr_merge_readiness FROM tasks WHERE id = ?');
@@ -408,7 +505,7 @@ async function build(options) {
         at: group.at,
         sessionId: session?.id ?? null,
         pendingNames: group.rows.map((row) => row.automation_name),
-        production: Object.fromEntries(group.rows.map((row) => [row.automation_name, { met: row.condition_met === null ? null : row.condition_met === 1, reason: row.condition_reason }])),
+        production: Object.fromEntries(group.rows.map((row) => [row.automation_name, productionAnswerOf(row)])),
         task: {
           title: task?.title ?? '',
           description: task?.description ?? '',
@@ -435,28 +532,41 @@ async function build(options) {
   return 0;
 }
 
-/** Judge every case under every design and arm, `runs` times each, and append one record per call. */
+/**
+ * Judge every case under every design: a design with a Condition once per arm, `runs` times each; a
+ * design of only Text match rows once, in code. Appends one record per judgment.
+ */
 async function run(options) {
-  refuseIfAutomated();
-  // Node will not start a .cmd or .bat without a shell, and a shell drops the empty `--tools ''`.
-  if (process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(options.cli)) {
-    throw new Error(`--cli names the shim ${options.cli}; pass the CLI's own executable`);
-  }
-  assertCliStarts(options.cli);
-  const app = await loadAppModules();
   const cases = JSON.parse(fs.readFileSync(options.cases, 'utf8'));
   const labels = JSON.parse(fs.readFileSync(options.expect, 'utf8'));
   const designs = JSON.parse(fs.readFileSync(options.designs, 'utf8')).filter((design) => options.only.length === 0 || options.only.includes(design.name));
+  for (const design of designs) assertDesignRows(design);
+  const asksAgent = designs.some((design) => design.rows.some(hasConditionRow));
+  if (asksAgent) {
+    refuseIfAutomated();
+    if (options.arms.length === 0) throw new Error('A design has a condition the Automation agent answers: pass --arms model:effort,...');
+    // Node will not start a .cmd or .bat without a shell, and a shell drops the empty `--tools ''`.
+    if (process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(options.cli)) {
+      throw new Error(`--cli names the shim ${options.cli}; pass the CLI's own executable`);
+    }
+    assertCliStarts(options.cli);
+  }
+  const app = await loadAppModules();
   fs.mkdirSync(options.out, { recursive: true });
-  const settingsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-condition-check-settings-'));
-  const settingsPath = path.join(settingsDirectory, 'settings.json');
-  fs.writeFileSync(settingsPath, JSON.stringify(ANSWER_SETTINGS));
   const recordsPath = path.join(options.out, 'records.jsonl');
+  const selected = cases.filter((testCase) => options.caseIds.length === 0 || options.caseIds.includes(testCase.id));
+
+  const lines = [...new Set(designs.flatMap((design) => design.rows.map((row) => row.finalLine ?? null)).filter((line) => line !== null))];
+  const disagreements = lineDisagreements(selected, lines, app.matchFinalLine);
+  fs.writeFileSync(path.join(options.out, 'disagreements.json'), JSON.stringify(disagreements, null, 2));
+  if (lines.length > 0) {
+    console.log(`matchFinalLine and lastLineIs disagree on ${disagreements.length} case line(s)`);
+    for (const entry of disagreements) console.log(`  ${entry.caseId} "${entry.line}" code=${entry.code} strict=${entry.strict}`);
+  }
 
   const jobs = [];
-  for (const testCase of cases) {
+  for (const testCase of selected) {
     if (!testCase.reply) continue;
-    if (options.caseIds.length > 0 && !options.caseIds.includes(testCase.id)) continue;
     const label = labels[testCase.id];
     if (!label || (typeof label.leftWork !== 'boolean' && !label.rows)) {
       throw new Error(`${testCase.id} has no leftWork label or row answers in ${options.expect}`);
@@ -464,17 +574,56 @@ async function run(options) {
     const facts = { leftWork: label.leftWork === true, endsWithLine: testCase.endsWithLine, rows: label.rows ?? {} };
     for (const design of designs) {
       const rows = pendingRows(design, testCase);
-      const judged = rows.filter((row) => row.condition !== null);
-      if (judged.length === 0) continue;
-      const expected = outcomeOf(rows, new Map(judged.map((row) => [row.key, truthOf(row.truth, facts, row.name)])));
+      const guarded = rows.filter(isGuarded);
+      if (guarded.length === 0) continue;
+      const judged = rows.filter(hasConditionRow);
+      const expected = outcomeOf(rows, new Map(guarded.map((row) => [row.key, truthOf(row.truth, facts, row.name)])));
+      const job = { testCase, design, rows, guarded, judged, expected, facts, acceptEither: label.acceptEither === true };
+      if (judged.length === 0) {
+        jobs.push({ ...job, arm: CODE_ARM, attempt: 1 });
+        continue;
+      }
       for (const arm of options.arms) {
-        for (let attempt = 1; attempt <= options.runs; attempt += 1) {
-          jobs.push({ testCase, design, rows, judged, expected, facts, arm, attempt, acceptEither: label.acceptEither === true });
-        }
+        for (let attempt = 1; attempt <= options.runs; attempt += 1) jobs.push({ ...job, arm, attempt });
       }
     }
   }
-  console.log(`${jobs.length} calls queued`);
+  const agentJobs = jobs.filter((job) => job.arm !== CODE_ARM).length;
+  console.log(`${jobs.length} judgments queued, ${agentJobs} of them agent calls`);
+
+  let settingsDirectory = null;
+  let settingsPath = null;
+  if (agentJobs > 0) {
+    settingsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-condition-check-settings-'));
+    settingsPath = path.join(settingsDirectory, 'settings.json');
+    fs.writeFileSync(settingsPath, JSON.stringify(ANSWER_SETTINGS));
+  }
+
+  /** The agent's answers to the judged rows, or none at all on the code arm. */
+  const askAgent = async (job) => {
+    if (job.arm === CODE_ARM) {
+      return { answers: {}, unanswered: [], result: { answer: null, costUsd: 0, tokens: null, durationMs: 0, models: [], isError: false }, exitCode: 0, stderr: '' };
+    }
+    const prompt = app.buildConditionPrompt({
+      task: job.testCase.task,
+      column: options.column ?? 'Executing',
+      trigger: 'turn_end',
+      move: null,
+      agentReply: job.testCase.reply,
+      rows: job.judged.map((row) => ({ automationId: row.key, name: row.name, condition: row.condition })),
+    });
+    const outcome = await runOnce(options.cli, conditionCheckArgs({ settingsPath, model: MODEL_IDS[job.arm.model], effort: job.arm.effort }), prompt, conditionCheckEnv(process.env, job.arm.effort));
+    const result = readJsonResult(outcome.stdout);
+    const parsed = result.answer ? app.parseConditionReply(result.answer, job.judged.length) : new Map();
+    const answers = {};
+    const unanswered = [];
+    job.judged.forEach((row, index) => {
+      const answer = parsed.get(index);
+      if (!answer) unanswered.push(row.key);
+      answers[row.key] = answer ?? null;
+    });
+    return { answers, unanswered, result, exitCode: outcome.code, stderr: outcome.stderr };
+  };
 
   let next = 0;
   let done = 0;
@@ -482,62 +631,51 @@ async function run(options) {
     while (next < jobs.length) {
       const job = jobs[next];
       next += 1;
-      const { testCase, design, rows, judged, expected, facts, arm, attempt } = job;
-      const prompt = app.buildConditionPrompt({
-        task: testCase.task,
-        column: options.column ?? 'Executing',
-        trigger: 'turn_end',
-        move: null,
-        agentReply: testCase.reply,
-        rows: judged.map((row) => ({ automationId: row.key, name: row.name, condition: row.condition })),
-      });
-      const model = MODEL_IDS[arm.model];
-      const outcome = await runOnce(options.cli, conditionCheckArgs({ settingsPath, model, effort: arm.effort }), prompt, conditionCheckEnv(process.env, arm.effort));
-      const result = readJsonResult(outcome.stdout);
-      const parsed = result.answer ? app.parseConditionReply(result.answer, judged.length) : new Map();
-      const answers = {};
-      const metByKey = new Map();
-      const unanswered = [];
-      judged.forEach((row, index) => {
-        const answer = parsed.get(index);
-        if (!answer) unanswered.push(row.key);
-        answers[row.key] = answer ?? null;
-        metByKey.set(row.key, answer?.met === true);
-      });
+      const { testCase, design, rows, guarded, expected, facts, arm, attempt } = job;
+      const { answers, unanswered, result, exitCode, stderr } = await askAgent(job);
+      const metByKey = matchRowsInCode(rows, testCase.reply, app.matchFinalLine);
+      for (const row of job.judged) metByKey.set(row.key, answers[row.key]?.met === true);
       const got = outcomeOf(rows, metByKey);
+      const production = productionOutcomeOf(rows, testCase);
+      const model = arm === CODE_ARM ? null : MODEL_IDS[arm.model];
       const record = {
         caseId: testCase.id,
         design: design.name,
         model: arm.model,
         effort: arm.effort,
         attempt,
+        agentCall: arm !== CODE_ARM,
         expected,
         outcome: got,
+        production,
+        matchesProduction: got === production,
         acceptEither: Boolean(job.acceptEither),
-        correct: outcomePasses({ got, expected, acceptEither: job.acceptEither, judgedTruths: judged.map((row) => row.truth) }),
-        rowsCorrect: Object.fromEntries(judged.map((row) => [row.key, answers[row.key] ? answers[row.key].met === truthOf(row.truth, facts, row.name) : false])),
+        correct: outcomePasses({ got, expected, acceptEither: job.acceptEither, judgedTruths: guarded.map((row) => row.truth) }),
+        rowsCorrect: Object.fromEntries(guarded.map((row) => [row.key, unanswered.includes(row.key) ? false : metByKey.get(row.key) === truthOf(row.truth, facts, row.name)])),
         answers,
+        textMatches: Object.fromEntries(guarded.filter(hasFinalLineRow).map((row) => [row.key, metByKey.get(row.key)])),
         unanswered,
         costUsd: result.costUsd,
         tokens: result.tokens,
         durationMs: result.durationMs,
         models: result.models,
-        wrongModel: result.models.some((name) => !name.startsWith(model)),
+        wrongModel: model !== null && result.models.some((name) => !name.startsWith(model)),
         isError: result.isError,
-        exitCode: outcome.code,
+        exitCode,
         reply: result.answer,
-        ...(outcome.code !== 0 ? { stderr: outcome.stderr } : {}),
+        ...(exitCode !== 0 ? { stderr } : {}),
       };
       fs.appendFileSync(recordsPath, `${JSON.stringify(record)}\n`);
       done += 1;
       const mark = record.correct ? 'ok  ' : 'MISS';
-      console.log(`${String(done).padStart(4)}/${jobs.length} ${mark} ${design.name} ${arm.model}:${arm.effort} ${testCase.id} #${attempt} expected=${expected} got=${got} $${result.costUsd ?? '?'} ${result.durationMs ?? '?'}ms${unanswered.length ? ` unanswered=${unanswered.join(',')}` : ''}`);
+      const armName = arm === CODE_ARM ? CODE_ARM.model : `${arm.model}:${arm.effort}`;
+      console.log(`${String(done).padStart(4)}/${jobs.length} ${mark} ${design.name} ${armName} ${testCase.id} #${attempt} expected=${expected} got=${got} production=${production} $${result.costUsd ?? '?'} ${result.durationMs ?? '?'}ms${unanswered.length ? ` unanswered=${unanswered.join(',')}` : ''}`);
     }
   };
   try {
     await Promise.all(Array.from({ length: Math.min(options.concurrency, jobs.length) }, worker));
   } finally {
-    removeDirectory(settingsDirectory);
+    if (settingsDirectory) removeDirectory(settingsDirectory);
   }
   return summary(options);
 }
@@ -548,12 +686,14 @@ function summary(options) {
   const records = fs.readFileSync(recordsPath, 'utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
   const rows = summarize(records);
   fs.writeFileSync(path.join(options.out, 'summary.json'), JSON.stringify(rows, null, 2));
-  console.log('\ndesign | arm | correct | stalls | unanswered rows | failed calls | median $ | total $ | median ms | median output tokens | calls writing cache | wrong cases');
+  console.log('\ndesign | arm | correct | matches production | agent calls | stalls | unanswered rows | failed calls | median $ | total $ | median ms | median output tokens | calls writing cache | wrong cases');
   for (const row of rows) {
     console.log([
       row.design,
       row.arm,
       `${row.correct}/${row.calls}`,
+      `${row.matchesProduction}/${row.calls}`,
+      row.agentCalls,
       row.stalls,
       row.unansweredRows,
       row.failedCalls,
@@ -571,13 +711,14 @@ function summary(options) {
 async function main(argv) {
   const options = parseArgs(argv);
   if (options.mode === 'build' && options.db && options.column && options.since && options.out) return build(options);
-  if (options.mode === 'run' && options.cases && options.expect && options.designs && options.out && options.arms.length > 0) return run(options);
+  if (options.mode === 'run' && options.cases && options.expect && options.designs && options.out) return run(options);
   if (options.mode === 'summary' && options.out) return summary(options);
   console.error([
     'usage: node scripts/eval-condition-check.mjs build --db <project.db> --column <name> --since <iso> --out <dir>',
     '       node scripts/eval-condition-check.mjs run --cases <cases.json> --expect <expect.json> --designs <designs.json>',
-    '         --arms model:effort,... [--runs N] [--concurrency N] [--only design,...] [--case-ids id,...]',
+    '         [--arms model:effort,...] [--runs N] [--concurrency N] [--only design,...] [--case-ids id,...]',
     '         [--cli <path>] [--column <name>] --out <dir>',
+    '         (--arms is needed when a design has a condition; a design of only finalLine rows runs in code)',
     '       node scripts/eval-condition-check.mjs summary --out <dir>',
   ].join('\n'));
   return 2;

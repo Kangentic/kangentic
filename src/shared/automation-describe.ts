@@ -97,8 +97,13 @@ function prose(text: string, tooltip: string = text): AutomationSentence {
   return { text, tooltip, code: false };
 }
 
-/** What a row's mark stands for, in the Edit automation dialog's card order. */
-export type AutomationRowMarkKind = 'condition' | 'frequency' | 'delivery' | 'message';
+/**
+ * What a row's mark stands for, in the Edit automation dialog's card order.
+ * The Condition marks by its kind: `condition` for an Agent evaluation,
+ * `text-match` for a Text match, so a row says without a hover whether its
+ * check costs an agent call.
+ */
+export type AutomationRowMarkKind = 'condition' | 'text-match' | 'frequency' | 'delivery' | 'message';
 
 /** One mark beside a row's name: an option that is switched on. */
 export interface AutomationRowMark {
@@ -134,12 +139,19 @@ export function describeAutomationMarks(row: {
   trigger: AutomationTrigger;
   config: AutomationConfig;
   condition: string | null;
+  final_line: string | null;
   max_runs: number | null;
 }): AutomationRowMark[] {
   const marks: AutomationRowMark[] = [];
+  // One Condition kind per row. A Text match is matched only at a turn end, so
+  // a draft that still holds one on another trigger earns no mark: it would
+  // promise a check that never runs.
+  const textMatch = row.trigger === 'turn_end' ? describeAutomationTextMatch(row.final_line) : null;
   const condition = onlyIf(row.condition, 'keep-lines');
   const conditionPhrase = onlyIf(row.condition, 'one-line');
-  if (condition !== null && conditionPhrase !== null) {
+  if (textMatch !== null) {
+    marks.push({ kind: 'text-match', label: labelled('Condition', textMatch), phrase: asPhrase(textMatch) });
+  } else if (condition !== null && conditionPhrase !== null) {
     marks.push({ kind: 'condition', label: labelled('Condition', condition), phrase: asPhrase(conditionPhrase) });
   }
   const frequency = describeAutomationFrequency(row.max_runs);
@@ -161,7 +173,7 @@ export function describeAutomationMarks(row: {
  */
 export function describeAutomationMarksInWords(row: Parameters<typeof describeAutomationMarks>[0]): string | null {
   const marks = describeAutomationMarks(row);
-  const isGuard = (mark: AutomationRowMark): boolean => mark.kind === 'condition' || mark.kind === 'frequency';
+  const isGuard = (mark: AutomationRowMark): boolean => mark.kind === 'condition' || mark.kind === 'text-match' || mark.kind === 'frequency';
   const ordered = [...marks.filter((mark) => !isGuard(mark)), ...marks.filter(isGuard)];
   return ordered.length > 0 ? ordered.map((mark) => mark.phrase).join('; ') : null;
 }
@@ -250,6 +262,16 @@ function onlyIf(condition: string | null, lines: 'keep-lines' | 'one-line'): str
 }
 
 /**
+ * A row's Text match as one sentence, or null when it has none: "Only if the
+ * last line reads "Verdict: Ready"." The pattern is quoted whole and as
+ * written, its wildcards included, since the exact text is the whole point.
+ */
+export function describeAutomationTextMatch(finalLine: string | null): string | null {
+  const line = (finalLine ?? '').replace(/\s+/g, ' ').trim();
+  return line ? `Only if the last line reads "${line}".` : null;
+}
+
+/**
  * A row's Frequency as one sentence, or null when it has none: "At most 3 times
  * for each task." The tooltip of the Frequency mark, whose visible part is the
  * bare count.
@@ -260,12 +282,21 @@ export function describeAutomationFrequency(maxRuns: number | null): string | nu
 }
 
 /**
- * Both guards as one string, or null when the row has neither, read in the
- * order the rule runs: "Only if the review is clean. At most 3 times for each
- * task." Built from the two sentences above, so the wording lives in one place.
+ * A row's guards as one string, or null when it has none, read in the order
+ * the rule runs: "Only if the review is clean. At most 3 times for each task."
+ * A row holds one Condition kind, so a Text match stands in for the prose, on
+ * a turn end only, as `describeAutomationMarks` reads it. Built from the
+ * sentences above, so the wording lives in one place.
  */
-export function describeAutomationGuards(guards: { condition: string | null; max_runs: number | null }): string | null {
-  const parts = [describeAutomationCondition(guards.condition), describeAutomationFrequency(guards.max_runs)]
+export function describeAutomationGuards(guards: {
+  trigger: AutomationTrigger;
+  condition: string | null;
+  final_line: string | null;
+  max_runs: number | null;
+}): string | null {
+  const textMatch = guards.trigger === 'turn_end' ? describeAutomationTextMatch(guards.final_line) : null;
+  const condition = textMatch ?? describeAutomationCondition(guards.condition);
+  const parts = [condition, describeAutomationFrequency(guards.max_runs)]
     .filter((part): part is string => part !== null);
   return parts.length > 0 ? parts.join(' ') : null;
 }

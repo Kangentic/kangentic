@@ -1025,6 +1025,14 @@ export interface ColumnAutomation {
    */
   condition: string | null;
   /**
+   * The Condition's other kind, Text match: the line the agent's final message
+   * must end on, `*` a wildcard, checked in code with no agent call
+   * (`src/shared/final-line-match.ts`). Turn end only, since only a turn end
+   * has a final message. A row holds one kind at a time, so a row with this
+   * set has no `condition`. Null means no Text match.
+   */
+  final_line: string | null;
+  /**
    * The most times this row may run on one task, counted across every visit
    * to the column since the task last left Done (a review loop's round-trip
    * limit). Null means no limit.
@@ -1044,6 +1052,13 @@ export interface AutomationWriteInput {
   config: AutomationConfig;
   /** See `ColumnAutomation.condition`. Omitted or null: always runs. */
   condition?: string | null;
+  /**
+   * See `ColumnAutomation.final_line`. REQUIRED, unlike `condition`:
+   * `replaceForColumn` rewrites every row of a column, so a caller that left
+   * this out would silently drop a Text match and leave a Move to column
+   * firing at every turn end. Required, the compiler names each such caller.
+   */
+  final_line: string | null;
   /** See `ColumnAutomation.max_runs`. Omitted or null: no limit. */
   max_runs?: number | null;
 }
@@ -1108,6 +1123,15 @@ export interface AutomationRun {
   condition_met: boolean | null;
   /** The Automation agent's one-line reason for its answer, or null. */
   condition_reason: string | null;
+  /**
+   * What the row's Text match decided: true (met), false (a skipped run,
+   * checked again at the next turn end), null when the row has no Text match.
+   * Kept apart from `condition_met` because no agent was asked: a Text match
+   * makes no background call and costs nothing.
+   */
+  final_line_met: boolean | null;
+  /** The line Text match read ("The final line reads ..."), or null. */
+  final_line_reason: string | null;
   /**
    * The background call that answered the row's Condition: which agent and
    * model, and what it cost. Null when the row has no Condition, the answer
@@ -6440,8 +6464,8 @@ export interface BoardColumnConfig {
  * The type's own fields sit FLAT on the row rather than under a `with` object:
  * `{ "name": "Ping", "type": "webhook", "url": "..." }` reads better in a file
  * a team reviews in diffs than wrapping a single field. The price is that a
- * field key could collide with a key the row shape owns, which is why
- * `name`, `type` and `enabled` are reserved and
+ * field key could collide with a key the row shape owns, which is why every
+ * key in `RESERVED_AUTOMATION_KEYS` is reserved and
  * `tests/unit/automation-manifest-reserved-keys.test.ts` fails an adapter that
  * declares one of them.
  */
@@ -6452,6 +6476,12 @@ export type BoardAutomationConfig = {
   enabled?: boolean;
   /** Prose the Automation agent judges before the row runs. Omitted means it always runs. */
   condition?: string;
+  /**
+   * Text match: the line the agent's final message must end on, `*` a
+   * wildcard, checked in code. `onTurnEnd` rows only, and never beside a
+   * `condition`. Omitted means none.
+   */
+  finalLine?: string;
   /** The most times the row may run on one task, across visits. Omitted means no limit. */
   maxRuns?: number;
 } & Record<string, unknown>;

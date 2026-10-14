@@ -6,7 +6,7 @@ import type {
   BoardColumnConfig,
 } from '../../../shared/types';
 import type { AutomationWriteInput } from '../../db/repositories/automation-repository';
-import { isWholeMaxRuns, normalizeCondition, normalizeMaxRuns } from '../../db/repositories/automation-repository';
+import { isWholeMaxRuns, normalizeCondition, normalizeFinalLine, normalizeMaxRuns } from '../../db/repositories/automation-repository';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
@@ -15,6 +15,7 @@ import {
   isRetiredActionType,
   isTypeOfferedOnTrigger,
 } from '../../../shared/automation-manifest';
+import { textMatchCanMatch } from '../../../shared/final-line-match';
 import { uniqueName } from '../../automations/column-message';
 import { isJsonObject, isMalformedList } from './config-helpers';
 
@@ -161,6 +162,7 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
       trigger: 'enter',
       enabled: true,
       config: { message: legacyMessage, mode: column.autoCommandMode ?? 'immediate' },
+      final_line: null,
     });
   }
 
@@ -234,13 +236,43 @@ function readRow(
       + (readAs === null ? 'It runs without a limit.' : `Its limit is read as ${readAs}.`),
     );
   }
+  // Text match, the Condition's other kind. Only a turn end has a final
+  // message to match, and a row holds one kind, so a `finalLine` anywhere else,
+  // or beside a `condition`, is read as written by hand and said so.
+  const rawFinalLine: unknown = entry.finalLine;
+  let finalLine: string | null = null;
+  if (rawFinalLine !== undefined && rawFinalLine !== null && typeof rawFinalLine !== 'string') {
+    warnings.push(`Automation "${name}" on "${columnName}" has a finalLine that is not text. It runs without one.`);
+  } else if (typeof rawFinalLine === 'string' && rawFinalLine.trim() !== '') {
+    if (trigger === 'turn_end') {
+      finalLine = normalizeFinalLine(rawFinalLine, trigger);
+      // Kept, not dropped: without it the row would run at every turn end.
+      if (finalLine !== null && !textMatchCanMatch(finalLine)) {
+        warnings.push(
+          `Automation "${name}" on "${columnName}" has a finalLine with no letter, number or *, so no last line can match it and the row never runs.`,
+        );
+      }
+    } else {
+      warnings.push(
+        `Automation "${name}" on "${columnName}" has a finalLine in ${AUTOMATION_TRIGGER_FILE_KEYS[trigger]}. `
+        + `A text match reads the agent's last message, so it works in ${AUTOMATION_TRIGGER_FILE_KEYS.turn_end} only. It runs without it.`,
+      );
+    }
+  }
+  const condition = normalizeCondition(typeof rawCondition === 'string' ? rawCondition : null);
+  if (finalLine !== null && condition !== null) {
+    warnings.push(
+      `Automation "${name}" on "${columnName}" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the finalLine.`,
+    );
+  }
   return {
     name,
     type: type as AutomationType,
     trigger,
     enabled: entry.enabled !== false,
     config: readConfig(entry, type as AutomationType),
-    condition: normalizeCondition(typeof rawCondition === 'string' ? rawCondition : null),
+    condition: finalLine === null ? condition : null,
+    final_line: finalLine,
     max_runs: normalizeMaxRuns(typeof rawMaxRuns === 'number' ? rawMaxRuns : null),
   };
 }
