@@ -136,6 +136,125 @@ describe('BackgroundCallRepository', () => {
   });
 });
 
+describe('BackgroundCallRepository.listForTask', () => {
+  /** A row with only the named token column set: `record` always writes all four, so this goes around it. */
+  function insertCallWithOneTokenColumn(database: DatabaseType.Database, id: string, column: string, value: number): void {
+    database
+      .prepare(`INSERT INTO background_calls (id, job, task_id, agent, ${column}, duration_ms, outcome, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, 'condition_check', 'task-1', 'claude', value, 900, 'succeeded', '2026-10-13T14:02:11.402Z');
+  }
+
+  it('maps a recorded call to the row the completed task view lists', () => {
+    const { database, columnId, taskId } = migratedDatabase();
+    new BackgroundCallRepository(database).record(call({ id: 'a', job: 'workflow_step', swimlaneId: columnId }));
+
+    expect(new BackgroundCallRepository(database).listForTask(taskId)).toEqual([{
+      id: 'a',
+      job: 'workflow_step',
+      swimlaneId: columnId,
+      modelId: 'claude-haiku-5-5',
+      effort: 'low',
+      tokens: 2974,
+      costUsd: 0.00050345,
+      durationMs: 1151,
+      startedAt: '2026-10-13T14:02:11.402Z',
+    }]);
+  });
+
+  it('reads the tokens of a call whose agent reported no usage as null, never zero', () => {
+    const { database, taskId } = migratedDatabase();
+    const calls = new BackgroundCallRepository(database);
+    calls.record(call({ id: 'unreported', agent: 'codex', requestedModel: null, usage: null }));
+
+    const [row] = calls.listForTask(taskId);
+
+    expect(row.tokens).toBeNull();
+    expect(row.costUsd).toBeNull();
+  });
+
+  it('reads a reported zero as zero, so it stays apart from a call that reported nothing', () => {
+    const { database, taskId } = migratedDatabase();
+    const calls = new BackgroundCallRepository(database);
+    calls.record(call({
+      id: 'zero',
+      usage: { model: null, inputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, costUsd: null },
+    }));
+
+    expect(calls.listForTask(taskId)[0].tokens).toBe(0);
+  });
+
+  it.each([
+    'input_tokens',
+    'cache_creation_input_tokens',
+    'cache_read_input_tokens',
+    'output_tokens',
+  ])('counts a call that reported only %s, instead of reading it as unreported', (column) => {
+    const { database, taskId } = migratedDatabase();
+    insertCallWithOneTokenColumn(database, 'partial', column, 535);
+
+    expect(new BackgroundCallRepository(database).listForTask(taskId)[0].tokens).toBe(535);
+  });
+
+  it('sums all four token columns when the call reported all four', () => {
+    const { database, taskId } = migratedDatabase();
+    const calls = new BackgroundCallRepository(database);
+    calls.record(call({ id: 'full' }));
+
+    // 2 fresh input + 2402 cache write + 535 cache read + 35 output.
+    expect(calls.listForTask(taskId)[0].tokens).toBe(2974);
+  });
+
+  it('names the model the CLI reported over the one asked for', () => {
+    const { database, taskId } = migratedDatabase();
+    const calls = new BackgroundCallRepository(database);
+    // An alias was asked for and the CLI answered with the full id it resolved to.
+    calls.record(call({ id: 'a', requestedModel: 'haiku' }));
+
+    expect(calls.listForTask(taskId)[0].modelId).toBe('claude-haiku-5-5');
+  });
+
+  it('falls back to the model asked for when the CLI reported none, and to null when neither exists', () => {
+    const { database, taskId } = migratedDatabase();
+    const calls = new BackgroundCallRepository(database);
+    calls.record(call({ id: 'asked', requestedModel: 'haiku', usage: { ...HAIKU_USAGE, model: null }, startedAt: '2026-10-13T14:00:00.000Z' }));
+    calls.record(call({ id: 'default', requestedModel: null, usage: null, startedAt: '2026-10-13T14:10:00.000Z' }));
+
+    expect(calls.listForTask(taskId).map((row) => [row.id, row.modelId])).toEqual([
+      ['asked', 'haiku'],
+      ['default', null],
+    ]);
+  });
+
+  it('lists only the calls made for the task asked about', () => {
+    const { database, taskId } = migratedDatabase();
+    const calls = new BackgroundCallRepository(database);
+    calls.record(call({ id: 'mine' }));
+    calls.record(call({ id: 'theirs', taskId: 'task-2' }));
+    calls.record(call({ id: 'no-task', taskId: null }));
+
+    expect(calls.listForTask(taskId).map((row) => row.id)).toEqual(['mine']);
+    expect(calls.listForTask('task-2').map((row) => row.id)).toEqual(['theirs']);
+    expect(calls.listForTask('task-with-none')).toEqual([]);
+  });
+
+  it('lists the calls oldest first, whatever order they were recorded in', () => {
+    const { database, taskId } = migratedDatabase();
+    const calls = new BackgroundCallRepository(database);
+    calls.record(call({ id: 'latest', startedAt: '2026-10-13T14:30:00.000Z' }));
+    calls.record(call({ id: 'earliest', startedAt: '2026-10-13T14:00:00.000Z' }));
+    calls.record(call({ id: 'middle', startedAt: '2026-10-13T14:15:00.000Z' }));
+
+    expect(calls.listForTask(taskId).map((row) => row.id)).toEqual(['earliest', 'middle', 'latest']);
+  });
+
+  it('reads as empty on a database that has no table yet (the worker opens without migrating)', () => {
+    const database = openTestDatabase();
+    openDatabases.push(database);
+
+    expect(new BackgroundCallRepository(database).listForTask('task-1')).toEqual([]);
+  });
+});
+
 describe('the run log names the call that answered it', () => {
   const automation = (id: string, swimlaneId: string) => ({
     id, name: `Row ${id}`, type: 'send_message' as const, swimlane_id: swimlaneId, trigger: 'turn_end' as const,

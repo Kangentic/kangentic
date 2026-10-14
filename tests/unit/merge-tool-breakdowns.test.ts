@@ -1,7 +1,7 @@
 /**
  * Unit tests for `mergeToolBreakdowns` (src/shared/tool-call-totals.ts), the
  * one place per-tool rows from several session records (and the live run) are
- * summed. The context bar's popover and the Session Summary both read through
+ * summed. The context bar's popover and the task summary both read through
  * it, so a field it drops or invents shows up in both tables. Also
  * `sumToolResultTokens`, which sums the popover's Tokens estimates the same way.
  */

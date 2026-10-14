@@ -2,8 +2,8 @@
  * Bridges the renderer's single "which conversation is open" signal
  * (`session-store.conversationSessionId`) to a managed window on the board
  * task-detail layer. Mirrors `useTaskDetailWindowBridge`: every entry point
- * (search palette conversation hit, session-summary "View conversation" button,
- * task-detail kebab) calls `setConversationSessionId`; this hook turns that into
+ * (search palette conversation hit, the completed task view's "View conversation"
+ * button, task-detail kebab) calls `setConversationSessionId`; this hook turns that into
  * an `openWindow` of kind 'conversation' anchored on the session id, focusing an
  * existing window for the same session instead of duplicating. It also mirrors a
  * window close back to clearing the signal.

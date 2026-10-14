@@ -1101,7 +1101,7 @@ export class SessionTelemetry {
 
   /**
    * This run's tool-call count only, on purpose: `captureSessionMetrics` writes
-   * it to this run's record, and the Session Summary sums records. A count that
+   * it to this run's record, and the task summary sums records. A count that
    * included earlier runs would be stored again on every record.
    */
   getToolCallCount(sessionId: string): number {

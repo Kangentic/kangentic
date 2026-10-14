@@ -362,6 +362,69 @@ describe('readTaskKnowledge', () => {
     expect(knowledge?.changedFileCount).toBe(11);
   });
 
+  describe('limits', () => {
+    /** One task with more commits and changed files than the default caps list. */
+    function withMoreThanTheDefaultCaps() {
+      const fixture = project();
+      fixture.addTask('task-a', 1, 'One');
+      fixture.addSession('task-a', 'agent-first');
+      fixture.addChangeDocument('agent-first', 'task-a', Array.from({ length: 11 }, (_unused, index) => `src/file-${index}.ts`));
+      for (let index = 0; index < 5; index += 1) {
+        fixture.addCommit(shaStartingWith('a', String(index)), `feat(relay): step ${index} of the rework`, BASE_MS + index * DAY, 'task-a');
+      }
+      return fixture;
+    }
+
+    it('caps the commits and the files at the defaults when given no limits', () => {
+      const fixture = withMoreThanTheDefaultCaps();
+
+      const knowledge = readTaskKnowledge(fixture.database, ['task-a']).get('task-a');
+
+      expect(knowledge?.commits).toHaveLength(TASK_KNOWLEDGE_COMMITS);
+      expect(knowledge?.changedFiles).toHaveLength(TASK_KNOWLEDGE_FILES);
+      expect(knowledge?.commitCount).toBe(5);
+      expect(knowledge?.changedFileCount).toBe(11);
+    });
+
+    it('lists every file when files is null, and every commit the limit leaves room for', () => {
+      const fixture = withMoreThanTheDefaultCaps();
+
+      const knowledge = readTaskKnowledge(fixture.database, ['task-a'], { commits: 20, files: null }).get('task-a');
+
+      expect(knowledge?.changedFiles).toHaveLength(11);
+      expect([...(knowledge?.changedFiles ?? [])].sort()).toEqual(
+        Array.from({ length: 11 }, (_unused, index) => `src/file-${index}.ts`).sort(),
+      );
+      // A limit above the count lists them all, it does not pad.
+      expect(knowledge?.commits).toHaveLength(5);
+      expect(knowledge?.commitCount).toBe(5);
+      expect(knowledge?.changedFileCount).toBe(11);
+    });
+
+    it('lists every commit when commits is null, and still caps the files it is given a number for', () => {
+      const fixture = withMoreThanTheDefaultCaps();
+
+      const knowledge = readTaskKnowledge(fixture.database, ['task-a'], { commits: null, files: 4 }).get('task-a');
+
+      expect(knowledge?.commits).toHaveLength(5);
+      expect(knowledge?.changedFiles).toHaveLength(4);
+      expect(knowledge?.commitCount).toBe(5);
+      expect(knowledge?.changedFileCount).toBe(11);
+    });
+
+    it('slices to the numbers it is given, keeping the newest commits and the most-changed files, and counts them all', () => {
+      const fixture = withMoreThanTheDefaultCaps();
+      const everyFile = readTaskKnowledge(fixture.database, ['task-a'], { commits: null, files: null }).get('task-a')?.changedFiles ?? [];
+
+      const knowledge = readTaskKnowledge(fixture.database, ['task-a'], { commits: 1, files: 2 }).get('task-a');
+
+      expect(knowledge?.commits.map((commit) => commit.sha)).toEqual([shaStartingWith('a', '4')]);
+      expect(knowledge?.changedFiles).toEqual(everyFile.slice(0, 2));
+      expect(knowledge?.commitCount).toBe(5);
+      expect(knowledge?.changedFileCount).toBe(11);
+    });
+  });
+
   it('keeps each task\'s knowledge apart when asked for several', () => {
     const fixture = project();
     fixture.addTask('task-a', 1, 'One');

@@ -3223,7 +3223,7 @@ export class SessionManager extends EventEmitter {
    * Cumulative ToolEnd count for this run of a session. Tracked independently
    * of the bounded event cache so captureSessionMetrics can write a faithful
    * tool_call_count even after the cache has rolled past 500 events. Per run on
-   * purpose: it is written to this run's record, and the Session Summary sums
+   * purpose: it is written to this run's record, and the task summary sums
    * records. The count across runs is the stamped `usage.toolCallCount`.
    */
   getToolCallCount(sessionId: string): number {
@@ -3232,8 +3232,8 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Per-tool aggregate snapshot for this run of a session. Used by
-   * captureSessionMetrics to persist a JSON breakdown so the Session Summary
-   * panel can render a "By tool" section for archived tasks. Per run for the
+   * captureSessionMetrics to persist a JSON breakdown so the completed task
+   * view can render a per-tool table for archived tasks. Per run for the
    * same reason as getToolCallCount; see refreshToolBreakdownAcrossRuns.
    */
   getToolBreakdown(sessionId: string): PerToolStat[] {
