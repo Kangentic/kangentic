@@ -249,15 +249,15 @@ describe('a resumed workflow task and its unjudged reply', () => {
     expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
   });
 
-  it('asks nothing when the resumed agent never settled idle', async () => {
+  it('goes on to the step when the wait ran out with the resumed agent idle, since its repaint is not a turn', async () => {
     hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
 
     await catchUpAfterResume(context, resumed());
 
-    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+    expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
   });
 
-  it('says so when the resumed agent never settled idle, since the pass writes no run record', async () => {
+  it('says so when the wait ran out, naming the resume and the activity at the give-up', async () => {
     hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
 
     await catchUpAfterResume(context, resumed());
@@ -269,7 +269,20 @@ describe('a resumed workflow task and its unjudged reply', () => {
     expect(warnings[0]).toContain('after its resume');
     expect(warnings[0]).toContain(`session ${SESSION_ID.slice(0, 8)}`);
     expect(warnings[0]).toContain('activity idle');
-    expect(warnings[0]).toContain('no workflow step ran');
+    expect(warnings[0]).toContain('the pass goes on without a quiet terminal');
+  });
+
+  it('asks nothing when the wait ran out with the resumed agent not idle, since the turn is not over', async () => {
+    activityCache = { [SESSION_ID]: 'thinking' };
+    hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+    const warnings = turnEndWarnings();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('activity thinking');
+    expect(warnings[0]).toContain('nothing ran');
   });
 
   it('names the activity as unknown when the session manager has none for the session', async () => {
@@ -345,13 +358,14 @@ describe('a resumed workflow task and its unjudged reply', () => {
 
     /**
      * Holds the next pass open at its wait for the agent to settle, and returns
-     * what lets it go. Released as 'timeout', the held pass ends having done
-     * nothing, so every effect the test then sees belongs to the queued pass.
+     * what lets it go. Released as 'aborted' (a wait a move superseded), the
+     * held pass ends having done nothing, so every effect the test then sees
+     * belongs to the queued pass.
      */
     function holdNextPassOpen(): () => void {
       let release!: () => void;
       const held = new Promise<string>((resolve) => {
-        release = () => resolve('timeout');
+        release = () => resolve('aborted');
       });
       hoisted.waitForTurnCompletion.mockImplementationOnce(() => held);
       return release;

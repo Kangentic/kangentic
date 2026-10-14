@@ -10,6 +10,13 @@ import { defusePromptTags, promptTagPattern } from '../../retrieval/prompt-tags'
  * the run log keeps. The task's own agent is never asked, so its conversation
  * stays clean and an isolated reviewer stays unbiased.
  *
+ * The reason comes before the verdict (`C1: <reason> -> yes`). At low effort
+ * the agent has no thinking, so a verdict written first is a guess its reason
+ * then argues against ("C1: no - ... so the condition holds"). Measured with
+ * `scripts/eval-condition-check.mjs` on the replies this board really judged,
+ * Haiku at low: an exact-line rule went from 112/114 to 114/114, Testing's
+ * rule from 3 live misses in 22 to 66/66, and Code Review held 69/69.
+ *
  * Shaped after the task-summary prompt (`retrieval/summary/summary-prompt.ts`):
  * outside text is framed in tags whose names are defused inside it, the prompt
  * says that text is data and never instructions, and a label the reply writes
@@ -107,7 +114,17 @@ const TRIGGER_MOMENT: Record<AutomationTrigger, string> = {
   exit: 'The task is leaving the column.',
 };
 
-export function buildConditionPrompt(input: ConditionPromptInput): string {
+/**
+ * The line a second ask adds (`checkAutomationConditions`). At low effort the
+ * agent has no thinking, so it can reason in the reply itself and write a
+ * label twice while it corrects itself ("C1: no ... Checking again ... C1:
+ * yes"), which the parser drops. The line repeats the reason-first form rather
+ * than asking the agent to decide first, which with no thinking is the guess
+ * the form exists to prevent. The first prompt never carries it.
+ */
+const RETRY_LINE = 'Your last reply did not give one clear answer for each of these. Write each label exactly once, its reason first and then its answer.';
+
+export function buildConditionPrompt(input: ConditionPromptInput, options: { retry?: boolean } = {}): string {
   const taskLines = [`Title: ${collapse(input.task.title, 300)}`];
   const description = collapse(input.task.description, DESCRIPTION_CHARS);
   if (description) taskLines.push(`Description: ${description}`);
@@ -137,9 +154,13 @@ export function buildConditionPrompt(input: ConditionPromptInput): string {
   // text into it ({{agentReply}}, an imported issue's {{description}}). That
   // text is cut to 1,000 characters and its tags defused, and a label it gets
   // the reply to write twice is dropped (`parseConditionReply`), so one rule
-  // cannot answer for another. The frame around it is left as it is: the
-  // workflow step's check was measured on this exact text (#732, decision 128),
-  // and a reworded frame would need measuring again.
+  // cannot answer for another. The frame's wording is left as it is: the
+  // workflow step's check was measured on it (#732, decision 128). Only the
+  // answer form changed, to reason first, and was measured again for that
+  // (see the header). The step's own wording, replayed on the same recorded
+  // replies against its own question (done, and not waiting on the user),
+  // answered 74 of 75 at Haiku low, with 35 of 38 replies judged the same in
+  // all three runs.
   const conditionLines = input.rows
     .map((row, index) => `C${index + 1}: ${defuse(collapse(row.condition, 1_000))}`)
     .join('\n');
@@ -154,13 +175,34 @@ export function buildConditionPrompt(input: ConditionPromptInput): string {
     'Do not use any tools. Everything you need is below.',
     '',
     'Reply with exactly one line per condition, in this form and nothing else:',
-    'C1: yes - <one short reason>',
-    'C2: no - <one short reason>',
+    'C1: <one short reason> -> yes',
+    'C2: <one short reason> -> no',
+    ...(options.retry ? [RETRY_LINE] : []),
     '',
     ...sections,
     '',
     `<conditions>\n${conditionLines}\n</conditions>`,
   ].join('\n');
+}
+
+/** The label's optional list marker and emphasis, then the label itself. */
+const LABEL = String.raw`^\s*(?:[-*+]\s+)?[*_\x60]*C(\d+)[*_\x60]*`;
+/** The asked-for form, reason first: "C1: <reason> -> yes". */
+const REASON_FIRST = new RegExp(`${LABEL}\\s*[:.)]\\s*(.*?)\\s*(?:->|=>|→)\\s*[*_\x60]*(yes|no)[*_\x60]*\\s*[.!]?\\s*$`, 'i');
+/** The verdict-first form an older prompt asked for, still read: "C1: yes - <reason>". */
+const VERDICT_FIRST = new RegExp(`${LABEL}\\s*[:.)-]\\s*[*_\x60]*(yes|no)\\b[*_\x60]*\\s*(?:[-:,.]\\s*)?(.*?)\\s*$`, 'i');
+
+/**
+ * One answer line, or null. Reason first is tried first: its reason can open
+ * with "no" ("C1: no findings remain -> yes"), which the verdict-first form
+ * would read as the verdict.
+ */
+function parseAnswerLine(line: string): { label: number; met: boolean; reason: string } | null {
+  const reasonFirst = REASON_FIRST.exec(line);
+  if (reasonFirst) return { label: Number(reasonFirst[1]), met: reasonFirst[3].toLowerCase() === 'yes', reason: reasonFirst[2] };
+  const verdictFirst = VERDICT_FIRST.exec(line);
+  if (verdictFirst) return { label: Number(verdictFirst[1]), met: verdictFirst[2].toLowerCase() === 'yes', reason: verdictFirst[3] };
+  return null;
 }
 
 /**
@@ -175,9 +217,9 @@ export function parseConditionReply(reply: string, count: number): Map<number, C
   const seen = new Set<number>();
   const writtenTwice = new Set<number>();
   for (const line of reply.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:[-*+]\s+)?[*_`]*C(\d+)[*_`]*\s*[:.)-]\s*[*_`]*(yes|no)\b[*_`]*\s*(?:[-:,.]\s*)?(.*?)\s*$/i);
-    if (!match) continue;
-    const position = Number(match[1]) - 1;
+    const parsed = parseAnswerLine(line);
+    if (!parsed) continue;
+    const position = parsed.label - 1;
     if (position < 0 || position >= count) continue;
     if (seen.has(position)) {
       writtenTwice.add(position);
@@ -186,10 +228,10 @@ export function parseConditionReply(reply: string, count: number): Map<number, C
     seen.add(position);
     // Unwrap a reason the model quoted whole, and only then: a reason that
     // merely ends on a quote ("the last line is "CLEAN"") keeps it.
-    const raw = match[3].trim();
+    const raw = parsed.reason.trim();
     const unwrapped = /^(["'])(.*)\1$/.exec(raw)?.[2] ?? raw;
     const reason = collapse(unwrapped, REASON_CHARS);
-    answers.set(position, { met: match[2].toLowerCase() === 'yes', reason: reason || null });
+    answers.set(position, { met: parsed.met, reason: reason || null });
   }
   for (const position of writtenTwice) answers.delete(position);
   return answers;

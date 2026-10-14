@@ -125,6 +125,68 @@ describe('onTurnEnded', () => {
     harness.engine.dispose();
   });
 
+  it('starts the turn again where a plan approval resolves its prompt, for a task dragged in mid-plan and approved after', () => {
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    harness.send(EventType.ToolStart, { tool: 'ExitPlanMode', toolId: 'plan' });
+    harness.send(EventType.Idle, { detail: IdleReason.Permission });
+    // The user reads the plan for a while, and drags the task meanwhile.
+    vi.advanceTimersByTime(40 * 60_000);
+    const approvedAt = Date.now();
+    harness.send(EventType.ToolEnd, { tool: 'ExitPlanMode', toolId: 'plan' });
+    // Inside the stale-thinking watchdog, which would end a silent turn.
+    vi.advanceTimersByTime(30_000);
+    harness.send(EventType.ToolStart, { tool: 'Edit', toolId: 'edit' });
+    harness.send(EventType.ToolEnd, { tool: 'Edit', toolId: 'edit' });
+    harness.send(EventType.Idle);
+    expect(harness.turnStarts).toEqual([approvedAt]);
+    harness.engine.dispose();
+  });
+
+  it('keeps the turn start when the user sends a plan back, since a rejected plan never resolves with its tool_end', () => {
+    const harness = createHarness();
+    const start = Date.now();
+    harness.send(EventType.Prompt);
+    harness.send(EventType.ToolStart, { tool: 'ExitPlanMode', toolId: 'plan' });
+    harness.send(EventType.Idle, { detail: IdleReason.Permission });
+    vi.advanceTimersByTime(5_000);
+    // "Keep planning" with feedback: a prompt, and no tool_end for the plan.
+    harness.send(EventType.Prompt);
+    vi.advanceTimersByTime(5_000);
+    harness.send(EventType.Idle);
+    expect(harness.turnStarts).toEqual([start]);
+    harness.engine.dispose();
+  });
+
+  it('starts the turn again only at the plan approval in a real session, not at the question answered before it (session-007)', () => {
+    const events = loadFixture('session-007-exit-plan-mode-resume.jsonl');
+    let currentTs = events[0].ts;
+    const turnStarts: Array<number | null> = [];
+    const engine = new ActivityEngine(
+      {
+        onActivityChange() {},
+        onTurnEnded(_sessionId, turnStartedAt) {
+          turnStarts.push(turnStartedAt);
+        },
+      },
+      { idleStabilityWindowMs: 0, bgShellEscapeHatchMs: 1000, staleThinkingTimeoutMs: 600_000, now: () => currentTs },
+    );
+    // The excerpt opens mid-turn, on an AskUserQuestion prompt the user answers
+    // before the plan. It has no Stop of its own, so one is added after it.
+    engine.initSession(SESSION_ID, true);
+    const stop: SessionEvent = { ts: events[events.length - 1].ts + 60_000, type: EventType.Idle };
+    for (const event of [...events, stop]) {
+      currentTs = event.ts;
+      engine.processEvent(SESSION_ID, event);
+    }
+    engine.dispose();
+    const approval = events.find((event) => event.type === EventType.ToolEnd && event.tool === 'ExitPlanMode');
+    const answer = events.find((event) => event.type === EventType.ToolEnd && event.tool === 'AskUserQuestion');
+    if (!approval || !answer) throw new Error('The fixture lost its plan approval or its answered question');
+    expect(turnStarts).toEqual([approval.ts]);
+    expect(turnStarts).not.toContain(answer.ts);
+  });
+
   it('names the turn by its work serial, which a trailing paint leaves alone and new work moves', () => {
     // The turn-end runner and the workflow step act on a turn only while it is
     // still the latest (`SessionManager.isLatestTurn`), and this is what they

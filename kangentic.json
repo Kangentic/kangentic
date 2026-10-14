@@ -30,17 +30,16 @@
       "automations": {
         "onTurnEnd": [
           {
-            "name": "Apply findings",
-            "type": "send_message",
-            "condition": "The final message lists findings, recommendations or follow-up changes the agent has not applied yet, or offers to make them.",
-            "message": "Apply the other findings and recommendations from your last message here in this task, not as follow-up tasks. Where one needs a decision, take your recommended option and name the alternative. When you are done, end your turn with a short summary and the line \"Findings: applied\"."
-          },
-          {
             "name": "On to Code Review",
             "type": "move_to_column",
-            "condition": "The final message ends with the line \"Findings: applied\", or it reports the work finished with no findings or recommendations left to apply and asks the user nothing.",
+            "condition": "The last line of the final message is exactly \"Findings: applied\".",
             "maxRuns": 4,
             "targetColumn": "Code Review"
+          },
+          {
+            "name": "Apply findings",
+            "type": "send_message",
+            "message": "Check your last message for findings, recommendations or follow-up changes you have not applied yet, and apply them here in this task, not as follow-up tasks. Where one needs a decision, take your recommended option and name the alternative. If there are none, say so. Either way, end your turn with a short summary and the line \"Findings: applied\"."
           }
         ]
       }

@@ -228,6 +228,37 @@ describe('kangentic.json automations round-trip', () => {
       expect(frequencyLimitReason(reapplied, runs, taskId)).toBe('Already ran 2 times on this task, its limit.');
     });
 
+    it('clears a Condition the file stops carrying and takes the file\'s new order, keeping each row\'s id', () => {
+      // The Executing loop as the board had it: a judged Apply findings first,
+      // then a judged move. The file now asks every time and moves on an exact
+      // last line, with the move first.
+      const { lanes, automations } = freshDatabase();
+      const executing = lanes.list().find((lane) => lane.name === 'Executing')!;
+      automations.replaceForColumn(executing.id, [
+        { name: 'Apply findings', type: 'send_message', trigger: 'turn_end', enabled: true, config: { message: 'Apply them.' }, condition: 'The final message lists findings it has not applied.' },
+        { name: 'On to Code Review', type: 'move_to_column', trigger: 'turn_end', enabled: true, config: { targetColumn: 'Code Review' }, condition: 'The work is finished.', max_runs: 4 },
+      ]);
+      const before = new Map(automations.listForColumn(executing.id).map((row) => [row.name, row.id]));
+
+      const file = build();
+      const lastLine = 'The last line of the final message is exactly "Findings: applied".';
+      columnNamed(file, 'Executing')!.automations = {
+        onTurnEnd: [
+          { name: 'On to Code Review', type: 'move_to_column', condition: lastLine, maxRuns: 4, targetColumn: 'Code Review' },
+          { name: 'Apply findings', type: 'send_message', message: 'Apply them, then end with the line "Findings: applied".' },
+        ],
+      };
+      applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(file)) as BoardConfig);
+
+      const after = automations.listForColumn(executing.id).filter((row) => row.trigger === 'turn_end');
+      expect(after.map((row) => [row.name, row.position, row.condition])).toEqual([
+        ['On to Code Review', 0, lastLine],
+        ['Apply findings', 1, null],
+      ]);
+      // Same ids, so once-per-visit and Frequency history carry over.
+      for (const row of after) expect(row.id).toBe(before.get(row.name));
+    });
+
     it('warns and skips a Move to column row filed under onEnter or onExit', () => {
       const plan = planColumnAutomations({
         name: 'Code Review',

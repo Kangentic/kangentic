@@ -230,9 +230,10 @@ describe('the workflow step and the turn it judged', () => {
     );
   });
 
-  // The check is one recorded call, and its run-log row links to it so the log
-  // can show what the check cost. The row carries the call the outcome names,
-  // whatever the answer or what became of the move.
+  // The check is a recorded call, and its run-log row links to it so the log
+  // can show what the check cost. The row carries the call that gave the
+  // answer (a retry's, when the first reply skipped it), else the call the
+  // outcome names, whatever the answer or what became of the move.
   describe('the step\'s run-log row links the call that answered the check', () => {
     const answeredBy = (callId: string | null, met = true) => async () => ({
       ok: true,
@@ -277,6 +278,20 @@ describe('the workflow step and the turn it judged', () => {
 
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ backgroundCallId: null }));
+    });
+
+    it('links the retry\'s call when the first reply skipped the step and a second ask answered it', async () => {
+      // The outcome names the first call; the answer names the call that gave it.
+      hoisted.checkAutomationConditions.mockImplementation(async () => ({
+        ok: true,
+        answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: false, reason: 'Still working.', callId: 'call-step-retry' }]]),
+        agentName: 'Mock agent',
+        callId: 'call-step-first',
+      }));
+
+      await runStep();
+
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ backgroundCallId: 'call-step-retry' }));
     });
   });
 

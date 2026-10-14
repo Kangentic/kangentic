@@ -520,7 +520,10 @@ export interface SessionEngineState {
    * turn that began before some boundary from one that began after it: a task
    * dragged into a column while its agent is mid-turn must not have that
    * column's turn-end automations judge the old column's work. A permission
-   * prompt resolving back to thinking is the same turn and does not restamp it.
+   * prompt resolving back to thinking is the same turn and does not restamp it,
+   * except a plan approval (`AgentTool.ExitPlanMode`'s `tool_end` resolving the
+   * prompt): the agent implements in the turn that planned, so the approval is
+   * where this column's work begins.
    */
   turnStartedAt: number | null;
   /**

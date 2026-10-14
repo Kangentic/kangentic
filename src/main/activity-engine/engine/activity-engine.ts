@@ -1,4 +1,4 @@
-import { EventType, IdleReason } from '../../../shared/types';
+import { AgentTool, EventType, IdleReason } from '../../../shared/types';
 import type { ActivityState, ActivityReason, SessionEvent } from '../../../shared/types';
 import { requiresUserInteraction } from '../../../shared/activity-state';
 import {
@@ -351,6 +351,15 @@ export class ActivityEngine {
       state.turnForcedByHeartbeat = false;
       state.turnEndSource = null;
       state.pendingIdleAt = null;
+      // A plan approval starts the turn's work again: the agent implements in
+      // the turn that planned, so what ran before the approval was planning.
+      // Stamped here, not on the call (`tool_start`), because only an approved
+      // plan resolves the prompt with its `tool_end`; a rejected one never
+      // does. A turn-end automation reads this to tell this column's work from
+      // a carried-in turn, as for a task dragged in mid-plan and approved after.
+      if (event.type === EventType.ToolEnd && event.tool === AgentTool.ExitPlanMode) {
+        state.turnStartedAt = this.now();
+      }
     }
 
     // TurnRetrying (a transient StopFailure error the agent is auto-retrying,
@@ -1015,7 +1024,8 @@ export class ActivityEngine {
     // background shells, which start no turn).
     if (newActivity === 'thinking') state.turnEndSource = null;
     // A turn begins on idle to thinking. Permission back to thinking is the
-    // same turn resuming, so it keeps the turn's original start.
+    // same turn resuming, so it keeps the turn's start, except after a plan
+    // approval, which re-stamps it where the prompt resolves (`processEvent`).
     if (newActivity === 'thinking' && fromActivity === 'idle') state.turnStartedAt = this.now();
     const reason = deriveReason(state);
     this.recordTransition(state, fromActivity, newActivity, reason.kind, trigger, counterDelta);
