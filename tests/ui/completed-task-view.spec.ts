@@ -976,6 +976,38 @@ test.describe('Completed task view', () => {
     }
   });
 
+  test('the Usage tables share one column grid, so Runs and Background calls line up by name', async () => {
+    const report = fullReport();
+    // A Compactions column gives Runs an eighth data column, which cannot line up with Background calls' seven.
+    for (const conversation of report.conversations) for (const run of conversation.runs) run.compactionCount = 0;
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
+    try {
+      await openCompletedTask(page);
+      await page.getByRole('button', { name: 'Maximize dialog' }).click();
+      await openUsageTab(page);
+      // Each pair is a Runs header and the Background calls header that shares its edge.
+      const pairs: Array<[string, string]> = [
+        ['Started', 'Started'], ['Model', 'Model'], ['Effort', 'Effort'], ['Permissions', 'Outcome'],
+        ['Runtime', 'Runtime'], ['Cost', 'Cost'], ['Tool calls', 'Tokens'],
+      ];
+      // Polled, so the measurement waits out the maximize transition.
+      await expect.poll(() => page.evaluate((headerPairs) => {
+        const leftEdges = (testId: string) => new Map(
+          [...document.querySelectorAll(`[data-testid="${testId}"] thead th`)].map((header) => [header.textContent, header.getBoundingClientRect().left]),
+        );
+        const runs = leftEdges('completed-runs');
+        const models = leftEdges('completed-models');
+        const background = leftEdges('completed-background-calls');
+        const offsets = headerPairs.map(([runsHeader, backgroundHeader]) => Math.abs((runs.get(runsHeader) ?? 0) - (background.get(backgroundHeader) ?? Infinity)));
+        // Every card's first data column starts on the same line.
+        offsets.push(Math.abs((models.get('Turns') ?? 0) - (runs.get('Started') ?? Infinity)));
+        return Math.max(...offsets);
+      }, pairs)).toBeLessThan(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a task with no runs on record says so on the Usage tab', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: false }));
     try {

@@ -42,13 +42,32 @@ function cellClass(kind: CellKind, align: 'left' | 'right', first = false): stri
 }
 
 /**
- * The Runs and Background calls tables size each column to its content and
- * give the slack to one column (`w-full` on its header). They sit in a
- * container, so a column cell drops to its disc below 860px (`ColumnLabel`)
- * and the table fits a default-size window; past what that saves, the table
- * scrolls sideways rather than clipping.
+ * The tables sit in a container, so a column cell drops to its disc below
+ * 860px (`ColumnLabel`) and the table fits a default-size window; past what
+ * that saves, the table scrolls sideways rather than clipping.
  */
 const AUTO_TABLE_WRAPPER = '@container overflow-x-auto';
+
+/** The share of every table's width that its label columns hold. */
+const LABEL_SHARE_PERCENT = 30;
+
+/**
+ * The grid every table on this tab shares: the label columns (Column, Call,
+ * Model) hold the first 30% and each data column takes an equal part of the
+ * rest. Every card's data columns then start on one line, and Runs and
+ * Background calls, which both have seven data columns unless Runs adds
+ * Compactions, line up column for column. A column never narrows below its
+ * content, so a long name widens its column rather than clipping.
+ */
+function ColumnGrid({ labelColumns, dataColumns }: { labelColumns: number; dataColumns: number }) {
+  const dataColumnWidth = `${(100 - LABEL_SHARE_PERCENT) / dataColumns}%`;
+  return (
+    <colgroup>
+      {Array.from({ length: labelColumns }, (_, index) => <col key={`label-${index}`} />)}
+      {Array.from({ length: dataColumns }, (_, index) => <col key={`data-${index}`} style={{ width: dataColumnWidth }} />)}
+    </colgroup>
+  );
+}
 
 export function UsageTab({ report }: { report: TaskReport }) {
   const runCount = report.conversations.reduce((sum, conversation) => sum + conversation.runs.length, 0);
@@ -104,10 +123,12 @@ function RunsCard({ report }: { report: TaskReport }) {
     <ReportCard title="Runs" testId="completed-runs">
       <div className={AUTO_TABLE_WRAPPER}>
         <table className="w-full border-collapse text-[13px] tabular-nums">
+          {/* With no Column column, Started is the label column. */}
+          <ColumnGrid labelColumns={1} dataColumns={columnCount - 1} />
           <thead>
             <tr>
-              {showColumn && <th className={`${cellClass('header', 'left', true)} w-full`}>Column</th>}
-              <th className={`${cellClass('header', 'left', !showColumn)} ${showColumn ? '' : 'w-full'}`}>Started</th>
+              {showColumn && <th className={cellClass('header', 'left', true)}>Column</th>}
+              <th className={cellClass('header', 'left', !showColumn)}>Started</th>
               <th className={cellClass('header', 'left')}>Model</th>
               <th className={cellClass('header', 'left')}>Effort</th>
               <th className={cellClass('header', 'left')}>Permissions</th>
@@ -267,45 +288,48 @@ function LedgerModelsCard({ models }: { models: TaskReportModelUsage[] }) {
   );
   return (
     <ReportCard title="Models and tokens" testId="completed-models">
-      <table className="w-full table-fixed border-collapse text-[13px] tabular-nums">
-        <thead>
-          <tr>
-            <th className={cellClass('header', 'left', true)}>Model</th>
-            <th className={`${cellClass('header', 'right')} w-[96px]`}>Turns</th>
-            <th className={`${cellClass('header', 'right')} w-[110px]`}>Fresh input</th>
-            <th className={`${cellClass('header', 'right')} w-[110px]`}>Cache write</th>
-            <th className={`${cellClass('header', 'right')} w-[110px]`}>Cache read</th>
-            <th className={`${cellClass('header', 'right')} w-[110px]`}>Output</th>
-          </tr>
-        </thead>
-        <tbody>
-          {models.map((row) => (
-            <tr key={`${row.model}\u0000${row.subagent ?? ''}`} data-testid="completed-model-row">
-              <td className={`${cellClass('body', 'left', true)} overflow-hidden`}>
-                <span className="inline-flex max-w-full items-center gap-2.5">
-                  <span className="truncate font-medium text-fg">{row.model}</span>
-                  {row.subagent !== null && <ValuePill>{`${row.subagent} subagent`}</ValuePill>}
-                </span>
-              </td>
-              <td className={cellClass('body', 'right')}>{row.turns.toLocaleString()}</td>
-              <TokenCell value={row.freshInputTokens} kind="body" />
-              <TokenCell value={row.cacheWriteTokens} kind="body" />
-              <TokenCell value={row.cacheReadTokens} kind="body" />
-              <TokenCell value={row.outputTokens} kind="body" />
+      <div className={AUTO_TABLE_WRAPPER}>
+        <table className="w-full border-collapse text-[13px] tabular-nums">
+          <ColumnGrid labelColumns={1} dataColumns={5} />
+          <thead>
+            <tr>
+              <th className={cellClass('header', 'left', true)}>Model</th>
+              <th className={cellClass('header', 'right')}>Turns</th>
+              <th className={cellClass('header', 'right')}>Fresh input</th>
+              <th className={cellClass('header', 'right')}>Cache write</th>
+              <th className={cellClass('header', 'right')}>Cache read</th>
+              <th className={cellClass('header', 'right')}>Output</th>
             </tr>
-          ))}
-          {models.length >= 2 && (
-            <tr data-testid="completed-models-total">
-              <td className={cellClass('total', 'left', true)}>Total</td>
-              <td className={cellClass('total', 'right')}>{total.turns.toLocaleString()}</td>
-              <TokenCell value={total.freshInputTokens} kind="total" />
-              <TokenCell value={total.cacheWriteTokens} kind="total" />
-              <TokenCell value={total.cacheReadTokens} kind="total" />
-              <TokenCell value={total.outputTokens} kind="total" />
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {models.map((row) => (
+              <tr key={`${row.model}\u0000${row.subagent ?? ''}`} data-testid="completed-model-row">
+                <td className={cellClass('body', 'left', true)}>
+                  <span className="inline-flex items-center gap-2.5">
+                    <span className="font-medium text-fg">{row.model}</span>
+                    {row.subagent !== null && <ValuePill>{`${row.subagent} subagent`}</ValuePill>}
+                  </span>
+                </td>
+                <td className={cellClass('body', 'right')}>{row.turns.toLocaleString()}</td>
+                <TokenCell value={row.freshInputTokens} kind="body" />
+                <TokenCell value={row.cacheWriteTokens} kind="body" />
+                <TokenCell value={row.cacheReadTokens} kind="body" />
+                <TokenCell value={row.outputTokens} kind="body" />
+              </tr>
+            ))}
+            {models.length >= 2 && (
+              <tr data-testid="completed-models-total">
+                <td className={cellClass('total', 'left', true)}>Total</td>
+                <td className={cellClass('total', 'right')}>{total.turns.toLocaleString()}</td>
+                <TokenCell value={total.freshInputTokens} kind="total" />
+                <TokenCell value={total.cacheWriteTokens} kind="total" />
+                <TokenCell value={total.cacheReadTokens} kind="total" />
+                <TokenCell value={total.outputTokens} kind="total" />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </ReportCard>
   );
 }
@@ -313,24 +337,27 @@ function LedgerModelsCard({ models }: { models: TaskReportModelUsage[] }) {
 function FallbackModelsCard({ fallback }: { fallback: TaskReportModelFallback[] }) {
   return (
     <ReportCard title="Models and tokens" aside="From session totals" testId="completed-models-fallback">
-      <table className="w-full table-fixed border-collapse text-[13px] tabular-nums">
-        <thead>
-          <tr>
-            <th className={cellClass('header', 'left', true)}>Model</th>
-            <th className={`${cellClass('header', 'right')} w-[140px]`}>Input with cache</th>
-            <th className={`${cellClass('header', 'right')} w-[110px]`}>Output</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fallback.map((row) => (
-            <tr key={row.model} data-testid="completed-model-row">
-              <td className={`${cellClass('body', 'left', true)} truncate font-medium text-fg`}>{row.model}</td>
-              <TokenCell value={row.inputWithCacheTokens} kind="body" />
-              <TokenCell value={row.outputTokens} kind="body" />
+      <div className={AUTO_TABLE_WRAPPER}>
+        <table className="w-full border-collapse text-[13px] tabular-nums">
+          <ColumnGrid labelColumns={1} dataColumns={2} />
+          <thead>
+            <tr>
+              <th className={cellClass('header', 'left', true)}>Model</th>
+              <th className={cellClass('header', 'right')}>Input with cache</th>
+              <th className={cellClass('header', 'right')}>Output</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {fallback.map((row) => (
+              <tr key={row.model} data-testid="completed-model-row">
+                <td className={`${cellClass('body', 'left', true)} font-medium text-fg`}>{row.model}</td>
+                <TokenCell value={row.inputWithCacheTokens} kind="body" />
+                <TokenCell value={row.outputTokens} kind="body" />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </ReportCard>
   );
 }
@@ -392,14 +419,17 @@ function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
     >
       <div className={AUTO_TABLE_WRAPPER}>
         <table className="w-full border-collapse text-[13px] tabular-nums">
+          <ColumnGrid labelColumns={2} dataColumns={7} />
           <thead>
             <tr>
+              {/* The data columns follow Runs' order, Outcome where Runs has
+                  Permissions, so the two cards line up column for column. */}
               <th className={cellClass('header', 'left', true)}>Column</th>
-              <th className={`${cellClass('header', 'left')} w-full`}>Call</th>
-              <th className={cellClass('header', 'left')}>Outcome</th>
+              <th className={cellClass('header', 'left')}>Call</th>
               <th className={cellClass('header', 'left')}>Started</th>
               <th className={cellClass('header', 'left')}>Model</th>
               <th className={cellClass('header', 'left')}>Effort</th>
+              <th className={cellClass('header', 'left')}>Outcome</th>
               <th className={cellClass('header', 'right')}>Runtime</th>
               <th className={cellClass('header', 'right')}>Cost</th>
               <th className={cellClass('header', 'right')}>Tokens</th>
@@ -410,10 +440,10 @@ function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
               <tr key={`${call.callId ?? 'call'}-${call.automationName ?? call.job}-${index}`} data-testid="completed-background-call-row">
                 <td className={`${cellClass('body', 'left', true)} overflow-hidden`}>{call.column ? <ColumnLabel column={call.column} /> : <Dash />}</td>
                 <td className={`${cellClass('body', 'left')} overflow-hidden`}><CallLabel call={call} /></td>
-                <td className={cellClass('body', 'left')}><OutcomePill call={call} /></td>
                 <td className={cellClass('body', 'left')} title={formatDateTime(call.startedAt)}>{formatMonthDayTime(call.startedAt)}</td>
                 <td className={cellClass('body', 'left')}>{call.model ? <ValuePill>{call.model}</ValuePill> : <Dash />}</td>
                 <td className={cellClass('body', 'left')}>{call.effort ? <ValuePill>{call.effort}</ValuePill> : <Dash />}</td>
+                <td className={cellClass('body', 'left')}><OutcomePill call={call} /></td>
                 <td className={cellClass('body', 'right')}>{call.durationMs === null ? <Dash /> : formatCallDuration(call.durationMs)}</td>
                 <td className={cellClass('body', 'right')}>{call.costUsd === null ? <Dash /> : formatCost(call.costUsd)}</td>
                 <td className={cellClass('body', 'right')}>{call.tokens === null ? <Dash /> : formatTokenCount(call.tokens)}</td>
