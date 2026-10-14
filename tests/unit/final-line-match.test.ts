@@ -3,8 +3,8 @@
  * agent's final message (`src/shared/final-line-match.ts`).
  *
  * The endings below are the tails of real replies this board's agents wrote,
- * taken from the recorded cases the condition eval harness replays
- * (`scripts/eval-condition-check.mjs build`), trimmed to the lines that matter
+ * taken from the recorded cases the Condition eval replays (its `build` step
+ * writes them), trimmed to the lines that matter
  * and stripped of task and PR numbers. Where a real reply never showed a shape
  * the matcher must forgive (bold, a closing period, a bullet), the case is that
  * same real ending with the mark added, and says so.
