@@ -9,6 +9,8 @@ declare global {
   interface Window {
     /** Override `window.electronAPI.platform` per-spec. Set in addInitScript. */
     __mockPlatform?: 'win32' | 'darwin' | 'linux';
+    /** Override `window.electronAPI.arch` per-spec (default 'x64'). Set in addInitScript. */
+    __mockArch?: 'x64' | 'arm64';
 
     /** Browser-pane mock state hooks. See mock-electron-api.js. */
     __mockBrowser?: {

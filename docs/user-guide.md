@@ -1031,7 +1031,7 @@ The structured transcript of each session: user turns, assistant replies (includ
 
 ### Keyword and Semantic Search
 
-Keyword (full-text) search is always available while indexing is on. Turning on the **Knowledge Graph** in Settings > Knowledge Graph downloads a small embedding model once and then runs fully offline. The **Search quality** row picks it: **Best** is IBM's Granite embedding English R2 (153 MB), **Light** is bge-small (33 MB). The status row under it reads **Downloading** over a progress track, then **Local model** with the model's name, size and where it runs, or **Download failed** in red, and a **License** line links the model's license. It powers the [Knowledge Graph](#knowledge-graph) and hybrid `kangentic_search` for agents; Quick Find stays keyword-only. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU). Changing Search quality re-indexes in the background by itself. **Rebuild the index**, in the Index card, reads every source again in every project without deleting anything: the open project now, every other one the next time you open it. It is only needed if search misses something you know is there, or after a new agent or model, when it also rewrites the task summaries written the old way. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+Keyword (full-text) search is always available while indexing is on. Turning on the **Knowledge Graph** in Settings > Knowledge Graph downloads a small embedding model once and then runs fully offline (it is unavailable on Intel Macs, see [Knowledge Graph](configuration.md#knowledge-graph)). The **Search quality** row picks it: **Best** is IBM's Granite embedding English R2 (153 MB), **Light** is bge-small (33 MB). The status row under it reads **Downloading** over a progress track, then **Local model** with the model's name, size and where it runs, or **Download failed** in red, and a **License** line links the model's license. It powers the [Knowledge Graph](#knowledge-graph) and hybrid `kangentic_search` for agents; Quick Find stays keyword-only. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU). Changing Search quality re-indexes in the background by itself. **Rebuild the index**, in the Index card, reads every source again in every project without deleting anything: the open project now, every other one the next time you open it. It is only needed if search misses something you know is there, or after a new agent or model, when it also rewrites the task summaries written the old way. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
 
 ### Where It Surfaces
 
@@ -1269,6 +1269,8 @@ press Enter.
 that reads their history are different choices. The **Knowledge Graph** card in Settings >
 Knowledge Graph holds the switch that turns the feature on, then the local model that finds work by
 meaning, then the agent that answers: its **Agent** and **Model**, one choice for the whole app.
+On an Intel Mac the card has no switch and reads **Unavailable**, because the local model has no
+Intel macOS build.
 Nothing picks them for you: until both are set, pressing Enter in the box opens Settings > Knowledge
 Graph at that row and keeps your question typed, so you can come back and press Enter again. The same agent and model write the
 task summaries, so it is chosen once. Reading the index is lighter work than writing code, so a
@@ -1295,7 +1297,8 @@ Graph's All projects map draws, so the two read the same. Source code switched o
 its estimate is the open project's. Both wait for the Knowledge Graph and its agent, spending nothing until then, and say
 so ("Needs the Knowledge Graph", "Needs an agent"): the agent writes the summaries, and only its
 answers read the code. Their switches still work while they wait, so you can turn one off before
-choosing the agent that would start it.
+choosing the agent that would start it. On an Intel Mac both lines read **Unavailable** instead,
+since the Knowledge Graph cannot run there.
 
 **Task summaries** start once the Knowledge Graph has an agent and a model. The agent writes a
 sentence or two about each Done task: what it set out to do and what it ended up doing, from the
@@ -1378,7 +1381,9 @@ lists, and an **Open Settings** button. The Index card joins the left panel once
 It needs the Knowledge Graph's embeddings (Settings > Knowledge Graph). Without them there is no
 meaningful notion of "near", so until the Knowledge Graph has embedded anything the graph shows an
 Off card with an **Open Settings** button rather than drawing a map that would imply a meaning it
-does not have. Switching the Knowledge Graph off later keeps the map it already drew.
+does not have. Switching the Knowledge Graph off later keeps the map it already drew. On an Intel
+Mac, where the local model cannot run, the graph shows an **Unavailable** card with no
+**Open Settings** button, since there is nothing to turn on.
 
 Like the Agent Monitor and Usage Stats, it detaches into its own window from the pop-out control in
 its header.

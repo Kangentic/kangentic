@@ -245,7 +245,40 @@ type AfterPackFunction = ((context: FakeAfterPackContext) => Promise<void>) & {
     targetArch: string;
     log?: (line: string) => void;
   }) => void;
+  embedWorkerProbePlan: (options: {
+    unpackedRoot: string;
+    platform: string;
+    targetArch: string;
+    gaps?: string[];
+    log?: (line: string) => void;
+  }) => 'probe' | 'skip';
 };
+
+/** Writes the onnxruntime-node binding the embed worker probe checks for, where a packed tree
+ *  carries it, so afterPack runs that probe rather than skipping or refusing it. */
+function writeOnnxBinding(unpackedRoot: string, platform: string, arch: string): void {
+  const directory = path.join(unpackedRoot, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', platform, arch);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, 'onnxruntime_binding.node'), 'binding');
+}
+
+const temporaryOutDirs: string[] = [];
+
+afterEach(() => {
+  for (const directory of temporaryOutDirs.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+});
+
+/** A throwaway appOutDir whose unpacked tree carries onnxruntime's binding for this target
+ *  (unless `withBinding` is false). Removed after each test. */
+function packedAppOutDir(platform: 'darwin' | 'win32' | 'linux', arch: 'x64' | 'arm64', withBinding = true): { appOutDir: string; unpackedRoot: string } {
+  const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'afterpack-out-'));
+  temporaryOutDirs.push(appOutDir);
+  const unpackedRoot = platform === 'darwin'
+    ? path.join(appOutDir, 'Kangentic.app', 'Contents', 'Resources', 'app.asar.unpacked')
+    : path.join(appOutDir, 'resources', 'app.asar.unpacked');
+  if (withBinding) writeOnnxBinding(unpackedRoot, platform, arch);
+  return { appOutDir, unpackedRoot };
+}
 
 async function importAfterPack(): Promise<AfterPackFunction> {
   const imported = (await import('../../build/afterPack.js')) as unknown as {
@@ -263,14 +296,23 @@ beforeEach(() => {
 });
 
 describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('on darwin, points at <Product>.app/Contents/Resources/app.asar.unpacked - not the lowercase resources/ dir Windows and Linux use', async () => {
     const fakeFuses = installFakeElectronFuses();
     const fakeVerify = installFakeVerifyUnpackedWorker();
     const fakeSpawnHelper = installFakeInstallSpawnHelper();
     try {
       const afterPack = await importAfterPack();
-      const appOutDir = path.join('afterpack-fake-out', 'mac-out');
-      await afterPack(buildFakeContext({ platform: 'darwin', appOutDir }));
+      // Apple silicon, the arch onnxruntime-node ships a macOS binding for.
+      const { appOutDir } = packedAppOutDir('darwin', 'arm64');
+      await afterPack(buildFakeContext({ platform: 'darwin', appOutDir, arch: 3 }));
 
       const unpackedRoot = path.join(
         appOutDir,
@@ -311,7 +353,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
     const fakeSpawnHelper = installFakeInstallSpawnHelper();
     try {
       const afterPack = await importAfterPack();
-      const appOutDir = path.join('afterpack-fake-out', 'win-out');
+      const { appOutDir } = packedAppOutDir('win32', 'x64');
       await afterPack(buildFakeContext({ platform: 'win32', appOutDir }));
 
       const unpackedRoot = path.join(appOutDir, 'resources', 'app.asar.unpacked');
@@ -365,7 +407,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
     const fakeSpawnHelper = installFakeInstallSpawnHelper();
     try {
       const afterPack = await importAfterPack();
-      const appOutDir = path.join('afterpack-fake-out', 'win-out-broken');
+      const { appOutDir } = packedAppOutDir('win32', 'x64');
 
       await expect(afterPack(buildFakeContext({ platform: 'win32', appOutDir }))).rejects.toBe(
         verificationError,
@@ -389,7 +431,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
     const fakeSpawnHelper = installFakeInstallSpawnHelper();
     try {
       const afterPack = await importAfterPack();
-      const appOutDir = path.join('afterpack-fake-out', 'win-out-no-sqlite');
+      const { appOutDir } = packedAppOutDir('win32', 'x64');
       await expect(afterPack(buildFakeContext({ platform: 'win32', appOutDir }))).rejects.toBe(loadError);
       expect(fakeVerify.calls.at(-1)).toEqual({
         unpackedRoot: path.join(appOutDir, 'resources', 'app.asar.unpacked'),
@@ -401,6 +443,131 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       fakeVerify.restore();
       fakeSpawnHelper.restore();
     }
+  });
+
+  // onnxruntime-node ships no darwin x64 binding, so on the Intel leg the embed worker probe would
+  // fail the package over a worker the app never forks there (src/shared/embedding-runtime.ts).
+  it('on Intel macOS, skips only the embed worker probe, says so, and still runs every other gate', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir, unpackedRoot } = packedAppOutDir('darwin', 'x64', false);
+      await afterPack(buildFakeContext({ platform: 'darwin', appOutDir, arch: 1 }));
+
+      const binary = path.join(appOutDir, 'Kangentic.app', 'Contents', 'MacOS', 'Kangentic');
+      expect(fakeVerify.calls).toEqual([
+        { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
+        { unpackedRoot, moduleNames: ['better-sqlite3'] },
+        { unpackedRoot, loadProbeBinary: binary },
+        { unpackedRoot, moduleNames: ['node-pty'] },
+        { unpackedRoot, ptyHostProbeBinary: binary },
+      ]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/embed worker: onnxruntime-node ships no darwin-x64 binding.*Skipping the embed worker probe only/));
+      expect(fakeFuses.calls).toHaveLength(1);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+
+  // An arch id afterPack.js cannot name leaves the target unknown, so the plan has nothing to
+  // look up. The probe then runs, the fail-safe direction: a gap in the arch map must not
+  // quietly drop a gate. The tree carries no onnxruntime binding, so the plan would throw if it
+  // were consulted for an unnamed arch; the probe running anyway is what shows it is not.
+  //
+  // Red-green: drop `!targetArch ||` from the embed worker condition in afterPack.js. The plan is
+  // then asked about `win32-undefined`, `path.join` throws a TypeError on the undefined arch, and
+  // afterPack rejects before it reaches any gate.
+  it('on an arch it cannot name, still runs the embed worker probe, and does not say it skipped it', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir, unpackedRoot } = packedAppOutDir('win32', 'x64', false);
+      await afterPack(buildFakeContext({ platform: 'win32', appOutDir, arch: 99 }));
+
+      // The unmapped branch is what ran.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/Unknown arch enum 99/));
+      // The embed worker's call (default moduleNames) is first, then every other gate.
+      const binary = path.join(appOutDir, 'Kangentic.exe');
+      expect(fakeVerify.calls).toEqual([
+        { unpackedRoot },
+        { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
+        { unpackedRoot, moduleNames: ['better-sqlite3'] },
+        { unpackedRoot, loadProbeBinary: binary },
+        { unpackedRoot, moduleNames: ['node-pty'] },
+        { unpackedRoot, ptyHostProbeBinary: binary },
+      ]);
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringMatching(/Skipping the embed worker probe/));
+      expect(fakeFuses.calls).toHaveLength(1);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+
+  // The skip is not "no binding, so skip": a target the gaps file does not list fails, or a
+  // packaging filter that dropped onnxruntime's binaries would read as a skip on every platform.
+  it('fails a target with no onnxruntime binding that the gaps file does not list, before flipping fuses', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir } = packedAppOutDir('linux', 'arm64', false);
+      await expect(afterPack(buildFakeContext({ platform: 'linux', appOutDir, arch: 3 })))
+        .rejects.toThrow(/onnxruntime-node has no linux-arm64 binding .* does not list linux-arm64/);
+      expect(fakeVerify.calls).toEqual([]);
+      expect(fakeFuses.calls).toEqual([]);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+});
+
+describe('afterPack: embedWorkerProbePlan', () => {
+  let unpackedRoot: string;
+
+  beforeEach(() => {
+    unpackedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'afterpack-embed-plan-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(unpackedRoot, { recursive: true, force: true });
+  });
+
+  it('probes a target whose binding is there, even one the gaps file lists', async () => {
+    // A listed target that gained a binding still gets the probe; embedding-runtime.test.ts is
+    // what then fails, so the gap is lifted rather than left in place.
+    const afterPack = await importAfterPack();
+    writeOnnxBinding(unpackedRoot, 'darwin', 'x64');
+    expect(afterPack.embedWorkerProbePlan({ unpackedRoot, platform: 'darwin', targetArch: 'x64', log: () => {} })).toBe('probe');
+  });
+
+  it('skips a listed target with no binding, and logs it at normal level', async () => {
+    const afterPack = await importAfterPack();
+    const lines: string[] = [];
+    expect(afterPack.embedWorkerProbePlan({ unpackedRoot, platform: 'darwin', targetArch: 'x64', log: (line) => lines.push(line) })).toBe('skip');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('darwin-x64');
+  });
+
+  it('reads the gaps list the app reads', async () => {
+    const afterPack = await importAfterPack();
+    expect(() => afterPack.embedWorkerProbePlan({ unpackedRoot, platform: 'darwin', targetArch: 'x64', gaps: [], log: () => {} }))
+      .toThrow(/does not list darwin-x64/);
+    const appGaps = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'shared', 'embedding-runtime-gaps.json'), 'utf8')) as string[];
+    expect(appGaps).toContain('darwin-x64');
   });
 });
 
@@ -435,7 +602,7 @@ describe('afterPack: fuse configuration', () => {
     const fakeSpawnHelper = installFakeInstallSpawnHelper();
     try {
       const afterPack = await importAfterPack();
-      await afterPack(buildFakeContext({ platform: 'win32', appOutDir: path.join('afterpack-fake-out', 'fuses') }));
+      await afterPack(buildFakeContext({ platform: 'win32', appOutDir: packedAppOutDir('win32', 'x64').appOutDir }));
       expect(fakeFuses.configs).toHaveLength(1);
       return fakeFuses.configs[0];
     } finally {
@@ -557,6 +724,10 @@ describe('afterPack: running the better-sqlite3 prebuild strip on the packed tre
     prebuildsDir = path.join(appOutDir, 'resources', 'app.asar.unpacked', 'node_modules', 'better-sqlite3', 'prebuilds');
     fs.mkdirSync(prebuildsDir, { recursive: true });
     for (const name of ALL_PREBUILDS) fs.writeFileSync(path.join(prebuildsDir, name), 'addon');
+    // Both targets below get the embed worker probe, as their real packed trees would.
+    const unpackedRoot = path.join(appOutDir, 'resources', 'app.asar.unpacked');
+    writeOnnxBinding(unpackedRoot, 'win32', 'x64');
+    writeOnnxBinding(unpackedRoot, 'linux', 'arm64');
   });
 
   afterEach(() => {

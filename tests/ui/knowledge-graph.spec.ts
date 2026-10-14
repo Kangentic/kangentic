@@ -438,6 +438,26 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  // onnxruntime-node ships no Intel macOS binding, so nothing there ever builds a map. The page says
+  // why first, ahead of whatever the snapshot holds, and offers no way to Settings, since there is
+  // nothing to turn on.
+  test('says the local model does not run on an Intel Mac, instead of a map or an Off card', async () => {
+    const intelMac = "window.__mockPlatform = 'darwin'; window.__mockArch = 'x64';";
+    const { browser, page } = await launchWithState(`${intelMac}\n${snapshotScript({ projection: projectionLiteral(20) })}`);
+    try {
+      await openKnowledgeGraph(page);
+      const card = page.locator('[data-testid="knowledge-graph-unsupported-card"]');
+      await expect(card).toContainText('Knowledge Graph');
+      await expect(card).toContainText('Unavailable');
+      await expect(page.locator('[data-testid="knowledge-graph-unsupported-why"]')).toHaveText('The local model does not run on Intel Macs.');
+      await expect(page.locator('[data-testid="knowledge-graph-off-card"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="knowledge-graph-off-settings"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="knowledge-graph-index-toggle"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('explains a missing semantic layer with an Off card instead of an empty map', async () => {
     const { browser, page } = await launchWithState(snapshotScript({ semanticAvailable: false }));
     try {

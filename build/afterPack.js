@@ -13,6 +13,47 @@ const {
   PTY_HOST_PROBE_DEPENDENCIES,
 } = require('./verify-unpacked-worker');
 const { installSpawnHelper } = require('./install-spawn-helper');
+// The targets the local embedding model has no build for, shared with the app
+// (src/shared/embedding-runtime.ts), which reports the Knowledge Graph
+// unavailable on them and never forks the embed worker there.
+const EMBEDDING_RUNTIME_GAPS = require('../src/shared/embedding-runtime-gaps.json');
+
+/**
+ * Whether the embed worker probe can run on this target. The worker requires
+ * onnxruntime-node at module scope, which loads
+ * `bin/napi-v6/<platform>/<arch>/onnxruntime_binding.node`, and onnxruntime-node
+ * ships no such binding for Intel macOS. There the probe would fail the package
+ * over a worker the app never forks.
+ *
+ * Skips only a target that both lacks the binding AND is listed in
+ * embedding-runtime-gaps.json, and says so. A target that lacks it without
+ * being listed throws: packaging dropped onnxruntime-node's binaries, or a
+ * version bump stopped shipping one, and either way the app would ship a
+ * Knowledge Graph whose worker exits on every fork.
+ *
+ * @returns {'probe' | 'skip'}
+ */
+function embedWorkerProbePlan({ unpackedRoot, platform, targetArch, gaps = EMBEDDING_RUNTIME_GAPS, log = console.log }) {
+  const target = `${platform}-${targetArch}`;
+  const bindingPath = path.join(
+    unpackedRoot, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', platform, targetArch, 'onnxruntime_binding.node',
+  );
+  if (fs.existsSync(bindingPath)) return 'probe';
+  if (gaps.includes(target)) {
+    log(
+      `[afterPack] embed worker: onnxruntime-node ships no ${target} binding, and ` +
+        `src/shared/embedding-runtime-gaps.json lists ${target}, so the app reports the Knowledge Graph ` +
+        'unavailable here and never forks the worker. Skipping the embed worker probe only.',
+    );
+    return 'skip';
+  }
+  throw new Error(
+    `[afterPack] embed worker: onnxruntime-node has no ${target} binding at ${bindingPath}, and ` +
+      `src/shared/embedding-runtime-gaps.json does not list ${target}. If packaging dropped it, check ` +
+      "electron-builder.yml's files and asarUnpack for onnxruntime-node. If onnxruntime-node stopped " +
+      'shipping it, list the target there so the Knowledge Graph reports itself unavailable.',
+  );
+}
 
 /**
  * better-sqlite3 13 ships every platform's Node-API addon in one package
@@ -113,8 +154,12 @@ module.exports = async function afterPack(context) {
 
   // The packaged embed worker must be able to load its externals from the
   // unpacked tree, or it exits 1 on every fork (DESKTOP-H). Throws on failure,
-  // which fails the package; see build/verify-unpacked-worker.js.
-  verifyUnpackedWorkerModules({ unpackedRoot });
+  // which fails the package; see build/verify-unpacked-worker.js. Skipped, with
+  // a log line, only on a target the local model has no build for, where the
+  // app never forks the worker (embedWorkerProbePlan).
+  if (!targetArch || embedWorkerProbePlan({ unpackedRoot, platform, targetArch }) === 'probe') {
+    verifyUnpackedWorkerModules({ unpackedRoot });
+  }
 
   // Same gate for the dictation (sherpa-onnx) worker added for DESKTOP-X: a
   // packaging regression here would re-ship the DESKTOP-H shape for
@@ -172,3 +217,4 @@ module.exports = async function afterPack(context) {
 };
 
 module.exports.stripBetterSqlitePrebuilds = stripBetterSqlitePrebuilds;
+module.exports.embedWorkerProbePlan = embedWorkerProbePlan;

@@ -81,7 +81,7 @@ This downloads the latest release for your platform from [GitHub Releases](https
 
 **Requirements**
 
-- Windows x64, macOS 13 or later on Apple Silicon, or Linux x64 (`.deb` or `.rpm`).
+- Windows x64, macOS 13 or later on Apple Silicon or Intel, or Linux x64 or arm64 (`.deb` or `.rpm`). The Knowledge Graph is unavailable on Intel Macs.
 - Node.js 20 or later for `npx`, and Git 2.26 or later.
 - At least one [supported agent CLI](#supported-agents), installed and signed in.
 

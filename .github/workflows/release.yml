@@ -75,11 +75,47 @@ jobs:
         run: |
           if [ -z "${KANGENTIC_SENTRY_TOKEN}" ]; then
             echo "::error::KANGENTIC_SENTRY_TOKEN is not set, so this release would ship with no sourcemaps and no native debug files."
-            echo "::error::Add it as a repository secret on this repo. Repo scope is enough; all three release-<platform> environments inherit it."
+            echo "::error::Add it as a repository secret on this repo. Repo scope is enough; every release-<platform> environment inherits it."
             echo "::error::The token needs the project:releases and project:write scopes."
             exit 1
           fi
           echo "Sentry symbol-upload token is present."
+
+  # Prove the Apple signing and notarization secrets exist BEFORE anything is
+  # built or drafted, for the same reason preflight-symbols exists.
+  #
+  # Both macOS legs sign and notarize, and build/afterSign.js only LOGS a skip
+  # when the notarization credentials are missing, so an unset secret builds an
+  # app Gatekeeper refuses while every job reports success. That gap matters most
+  # when a leg runs in a new release-<platform> environment, as the Intel leg did
+  # when it was added: a secret scoped to one environment would not reach the
+  # other. The secrets are repository secrets today, so every environment sees
+  # them and so does this job, which carries no `environment:` for the same
+  # reason preflight-symbols does not.
+  preflight-signing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the Apple signing and notarization secrets
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          missing=""
+          for name in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing Apple secret(s):$missing. Both macOS legs would build an app that is unsigned or not notarized, and macOS refuses to open it."
+            echo "::error::Add them as repository secrets on this repo, so every release-<platform> environment inherits them."
+            exit 1
+          fi
+          echo "Apple signing and notarization secrets are present."
 
   # Create THE single draft release, before any platform build starts.
   #
@@ -87,21 +123,24 @@ jobs:
   # getOrCreateRelease() lists releases, scans for a matching tag_name, and creates
   # a draft if it finds none (electron-publish/out/gitHubPublisher.js:55, verified
   # against electron-builder 26.8.1 - a caret range, so re-check the line numbers
-  # after a bump). The three matrix legs each run `npm run publish` in parallel, so
-  # on v0.35.0 all three listed before any had created, all three saw nothing, and
-  # all three created a draft. GitHub permits duplicate drafts for one tag (a draft
-  # binds no git ref), so all three succeeded and the release split three ways.
+  # after a bump). The matrix legs each run `npm run publish` in parallel, so on
+  # v0.35.0 (three legs then) all three listed before any had created, all three
+  # saw nothing, and all three created a draft. GitHub permits duplicate drafts for
+  # one tag (a draft binds no git ref), so all three succeeded and the release split
+  # three ways.
   #
   # Pre-creating the draft closes that: `needs:` is a hard barrier, so the draft
   # provably exists before any leg lists releases, and every leg then takes the
   # `if (release.draft) return release` branch at gitHubPublisher.js:66 and reuses
-  # it. The legs upload disjoint filenames and never read-modify-write the release
+  # it. The legs upload disjoint filenames, except latest-mac.yml, which both macOS
+  # legs write and publish-release rebuilds from the binaries on the release
+  # (scripts/merge-mac-update-feeds.js). They never read-modify-write the release
   # object, so nothing else races.
   #
   # Deliberately carries no `environment:`: the matrix legs gate on the
   # release-<platform> environments, and a required reviewer or wait timer here
-  # would stall draft creation for all three.
-  # The preflight-symbols clause is load-bearing in BOTH halves, exactly like the
+  # would stall draft creation for every leg.
+  # The preflight clauses are load-bearing in BOTH halves, exactly like the
   # create-draft-release clause on the `release` job below. always() is here to
   # tolerate the conditional create-tag, and it also defeats the implicit
   # "skip me if a dependency failed" behaviour - so a job named in `needs:` but
@@ -110,8 +149,8 @@ jobs:
   # an orphaned draft release behind; the `release` job then inherits the gate
   # through its existing create-draft-release clause.
   create-draft-release:
-    needs: [create-tag, preflight-symbols]
-    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.preflight-symbols.result == 'success'
+    needs: [create-tag, preflight-symbols, preflight-signing]
+    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.preflight-symbols.result == 'success' && needs.preflight-signing.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -142,7 +181,7 @@ jobs:
       # published by hand mid-run, and the first thing to notice was a downstream
       # gate whose error named the wrong cause. So a published-but-incomplete
       # release fails HERE, in seconds, naming the recovery, rather than after
-      # three platform builds have run for nothing.
+      # every platform build has run for nothing.
       #
       # A published and COMPLETE release is the opposite case and must stay green:
       # that is the idempotent re-run this workflow supports on purpose (publish-npm
@@ -202,7 +241,7 @@ jobs:
             exit 0
           fi
           echo "::error::$tag is already PUBLISHED and scripts/verify-release-assets.js did not pass on it."
-          echo "::error::Building into it is not an option either way: electron-builder uploads only into a draft, so it would skip every artifact with 'existing type not compatible with publishing type' while all three builds still reported success."
+          echo "::error::Building into it is not an option either way: electron-builder uploads only into a draft, so it would skip every artifact with 'existing type not compatible with publishing type' while every build still reported success."
           echo "::error::This step cannot tell the three causes apart, so read the verification output above before acting."
           echo "::error::If it could not reach the GitHub API, re-run this workflow and delete nothing."
           echo "::error::If it found more than one release object for $tag, consolidate the assets onto one and delete the EXTRAS, not $tag itself."
@@ -218,16 +257,34 @@ jobs:
     # FAILED, straight back to the three-way split this job exists to prevent.
     if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.create-draft-release.result == 'success'
     environment: release-${{ matrix.platform }}
+    # Every leg builds on a runner of its own arch, never cross-built: npm installs
+    # only the host's per-arch native packages (sherpa-onnx, sqlite-vec, koffi,
+    # sharp), and build/afterPack.js loads the native modules with the packaged
+    # Electron binary. scripts/release-assets.js lists what each leg must produce.
+    #
+    # The Linux legs carry electron-builder's per-format arch names, because the
+    # package files are named with them (builder-util's getArtifactArchName) and
+    # every Linux step below reads them instead of a literal.
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             platform: linux
+            deb_arch: amd64
+            rpm_arch: x86_64
+            unpacked_dir: linux-unpacked
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            deb_arch: arm64
+            rpm_arch: aarch64
+            unpacked_dir: linux-arm64-unpacked
           - os: windows-latest
             platform: windows
           - os: macos-latest
             platform: macos-arm64
+          - os: macos-26-intel
+            platform: macos-x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
 
@@ -346,12 +403,14 @@ jobs:
       # its supportsAutoUpdate list, so a missing one means the publish config
       # did not resolve at build time and Linux auto-update is dead on arrival.
       - name: Verify app-update.yml and package-type are packaged (Linux)
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'linux')
+        env:
+          UNPACKED_DIR: ${{ matrix.unpacked_dir }}
         run: |
           set -e
           missing=0
           for file in app-update.yml package-type; do
-            path="out/linux-unpacked/resources/$file"
+            path="out/$UNPACKED_DIR/resources/$file"
             if [ ! -f "$path" ]; then
               echo "::error::Missing $path"
               missing=1
@@ -360,7 +419,7 @@ jobs:
             fi
           done
           [ "$missing" = "0" ]
-          package_type=$(cat out/linux-unpacked/resources/package-type)
+          package_type=$(cat "out/$UNPACKED_DIR/resources/package-type")
           case "$package_type" in
             deb|rpm|pacman) echo "package-type: $package_type" ;;
             *) echo "::error::Unexpected package-type '$package_type' (electron-updater maps only deb/rpm/pacman)"; exit 1 ;;
@@ -379,38 +438,50 @@ jobs:
       # RPM's %_pkgverify_level from "digest" to "all", so without the override an unsigned local
       # package is refused outright and every release would fail here on a signature error rather
       # than on the dependency resolution this gate actually tests.
+      #
+      # All four images are multi-arch, so on the arm64 leg docker pulls their arm64 variants and
+      # these steps prove the aarch64 rpm and arm64 deb install on real arm64 systems. That is the
+      # only check that the soname capabilities in rpm.depends resolve on aarch64.
       - name: Verify rpm installs on Fedora
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'linux')
+        env:
+          RPM_ARCH: ${{ matrix.rpm_arch }}
         run: |
           set -e
-          rpm_file=$(ls out/kangentic-*.x86_64.rpm)
+          rpm_file=$(ls out/kangentic-*."$RPM_ARCH".rpm)
           echo "Testing $rpm_file"
           docker run --rm -v "$PWD/out:/out:ro" fedora:latest \
             dnf install -y --nogpgcheck "/out/$(basename "$rpm_file")"
 
       - name: Verify rpm installs on openSUSE
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'linux')
+        env:
+          RPM_ARCH: ${{ matrix.rpm_arch }}
         run: |
           set -e
-          rpm_file=$(ls out/kangentic-*.x86_64.rpm)
+          rpm_file=$(ls out/kangentic-*."$RPM_ARCH".rpm)
           echo "Testing $rpm_file"
           docker run --rm -v "$PWD/out:/out:ro" opensuse/tumbleweed:latest \
             zypper --non-interactive --no-gpg-checks install "/out/$(basename "$rpm_file")"
 
       - name: Verify deb installs on Debian
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'linux')
+        env:
+          DEB_ARCH: ${{ matrix.deb_arch }}
         run: |
           set -e
-          deb_file=$(ls out/kangentic_*_amd64.deb)
+          deb_file=$(ls out/kangentic_*_"$DEB_ARCH".deb)
           echo "Testing $deb_file"
           docker run --rm -v "$PWD/out:/out:ro" debian:stable sh -c \
             "apt-get update -qq && apt-get install -y \"/out/$(basename "$deb_file")\""
 
       - name: Verify deb installs on Ubuntu
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'linux')
+        env:
+          DEB_ARCH: ${{ matrix.deb_arch }}
         run: |
           set -e
-          deb_file=$(ls out/kangentic_*_amd64.deb)
+          deb_file=$(ls out/kangentic_*_"$DEB_ARCH".deb)
           echo "Testing $deb_file"
           docker run --rm -v "$PWD/out:/out:ro" ubuntu:24.04 sh -c \
             "apt-get update -qq && apt-get install -y \"/out/$(basename "$deb_file")\""
@@ -432,16 +503,21 @@ jobs:
       # release later: re-run an older tag after a newer version has shipped and
       # the "upgrade" is a downgrade. See the baseline lookup below.
       #
-      # Skipping is deliberately narrow: only "there is no published release older
-      # than this one to upgrade FROM" skips, which happens once, on the first
-      # release ever. A baseline that exists but whose package cannot be downloaded
-      # FAILS, because the only ways that happens are an incomplete previous release
-      # or an artifact rename - and a gate that silently stops testing on a rename
-      # is worse than no gate, since it still reads as coverage.
+      # Skipping is deliberately narrow, and each skip can be true only once.
+      # "There is no published release older than this one to upgrade FROM" skips
+      # on the first release ever. "No older published release carries a package
+      # for this arch" skips on the first release of a new arch (linux-arm64 joined
+      # after x64 had shipped many), and can never be true again once that release
+      # ships. A baseline that exists, in an arch that has shipped before, but whose
+      # package cannot be downloaded FAILS, because the only ways that happens are
+      # an incomplete previous release or an artifact rename - and a gate that
+      # silently stops testing on a rename is worse than no gate, since it still
+      # reads as coverage.
       - name: Verify rpm upgrades from the previous release
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'linux')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RPM_ARCH: ${{ matrix.rpm_arch }}
         run: |
           set -euo pipefail
           # What we just built is resolved FIRST, because the baseline lookup below
@@ -452,9 +528,10 @@ jobs:
           # status, so a zero-match glob sails past `set -e` with new_file empty
           # and fails later as an opaque docker error. Direct assignment aborts
           # here, matching the fresh-install steps above.
-          rpm_path=$(ls out/kangentic-*-1.x86_64.rpm)
+          rpm_path=$(ls out/kangentic-*-1."$RPM_ARCH".rpm)
           new_file=$(basename "$rpm_path")
-          new_version=$(echo "$new_file" | sed -E 's/^kangentic-(.+)-1\.x86_64\.rpm$/\1/')
+          new_version="${new_file#kangentic-}"
+          new_version="${new_version%-1.${RPM_ARCH}.rpm}"
           # The baseline lookup below feeds $new_version through jq's tonumber. The tags it
           # reads from the API get a regex gate first; this one is the build's own version and
           # cannot be dropped the same way, because dropping it would leave nothing to compare
@@ -523,8 +600,21 @@ jobs:
             echo "No published release older than v$new_version; skipping rpm upgrade check. The API returned $(jq 'length' /tmp/releases.json) release(s) in total."
             exit 0
           fi
+          # The first release of a new arch has a baseline with no package in that
+          # arch. Counted over every published release OLDER than this build, not
+          # over the baseline alone: once any of them carries the arch, a baseline
+          # missing it is an incomplete release and fails below, and a re-run of
+          # the first arch release still finds nothing older and skips again.
+          arch_releases=$(jq -r --arg self "v$new_version" --arg suffix "-1.$RPM_ARCH.rpm" \
+            'def ver: ltrimstr("v") | split(".") | map(tonumber); [.[] | select(.draft == false and .prerelease == false) | select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$")) | select((.tag_name | ver) < ($self | ver)) | select(any(.assets[]?; .name | endswith($suffix)))] | length' \
+            /tmp/releases.json)
+          if [ "$arch_releases" -eq 0 ]; then
+            echo "No published release older than v$new_version carries an $RPM_ARCH rpm, so v$new_version is the first $RPM_ARCH release and has nothing in its arch to upgrade from; skipping rpm upgrade check. The baseline would have been $prev_tag, and the API returned $(jq 'length' /tmp/releases.json) release(s) in total."
+            exit 0
+          fi
+          echo "$arch_releases published release(s) older than v$new_version carry an $RPM_ARCH rpm; upgrading from $prev_tag."
           prev_version="${prev_tag#v}"
-          prev_file="kangentic-${prev_version}-1.x86_64.rpm"
+          prev_file="kangentic-${prev_version}-1.${RPM_ARCH}.rpm"
           mkdir -p prev
           if ! curl -fsSL -o "prev/$prev_file" "https://github.com/${{ github.repository }}/releases/download/${prev_tag}/${prev_file}"; then
             echo "::error::$prev_file is missing from release $prev_tag."
@@ -548,17 +638,19 @@ jobs:
             "dnf install -y --nogpgcheck /prev/$prev_file && dnf install -y --nogpgcheck /out/$new_file && rpm -q kangentic-$new_version"
 
       - name: Verify deb upgrades from the previous release
-        if: matrix.platform == 'linux'
+        if: startsWith(matrix.platform, 'linux')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
         run: |
           set -euo pipefail
           # Built version first, then the baseline whose version is lower than it - same
           # ordering and same reasons as the rpm step above.
           # Two-step assignment for the same set -e reason as the rpm step above.
-          deb_path=$(ls out/kangentic_*_amd64.deb)
+          deb_path=$(ls out/kangentic_*_"$DEB_ARCH".deb)
           new_file=$(basename "$deb_path")
-          new_version=$(echo "$new_file" | sed -E 's/^kangentic_(.+)_amd64\.deb$/\1/')
+          new_version="${new_file#kangentic_}"
+          new_version="${new_version%_${DEB_ARCH}.deb}"
           # Same assertion as the rpm step above, and for the same reason: the baseline lookup
           # parses this version numerically, so a non-triple has to name itself here rather
           # than surface as a jq parse error.
@@ -598,8 +690,17 @@ jobs:
             echo "No published release older than v$new_version; skipping deb upgrade check. The API returned $(jq 'length' /tmp/releases.json) release(s) in total."
             exit 0
           fi
+          # The first release of a new arch: same count, same reasons, as the rpm step above.
+          arch_releases=$(jq -r --arg self "v$new_version" --arg suffix "_$DEB_ARCH.deb" \
+            'def ver: ltrimstr("v") | split(".") | map(tonumber); [.[] | select(.draft == false and .prerelease == false) | select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$")) | select((.tag_name | ver) < ($self | ver)) | select(any(.assets[]?; .name | endswith($suffix)))] | length' \
+            /tmp/releases.json)
+          if [ "$arch_releases" -eq 0 ]; then
+            echo "No published release older than v$new_version carries an $DEB_ARCH deb, so v$new_version is the first $DEB_ARCH release and has nothing in its arch to upgrade from; skipping deb upgrade check. The baseline would have been $prev_tag, and the API returned $(jq 'length' /tmp/releases.json) release(s) in total."
+            exit 0
+          fi
+          echo "$arch_releases published release(s) older than v$new_version carry an $DEB_ARCH deb; upgrading from $prev_tag."
           prev_version="${prev_tag#v}"
-          prev_file="kangentic_${prev_version}_amd64.deb"
+          prev_file="kangentic_${prev_version}_${DEB_ARCH}.deb"
           mkdir -p prev
           if ! curl -fsSL -o "prev/$prev_file" "https://github.com/${{ github.repository }}/releases/download/${prev_tag}/${prev_file}"; then
             echo "::error::$prev_file is missing from release $prev_tag."
@@ -631,7 +732,9 @@ jobs:
     needs: [release]
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The macOS feed merge downloads both arches' zip and dmg (about 800 MB) to
+    # hash them, which the old 5 minutes left too little room for.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -649,13 +752,27 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
+      # Both macOS legs published a latest-mac.yml listing only their own files,
+      # and whichever finished last replaced the other on the release. This
+      # rebuilds the one feed both arches update from, hashing the zip and dmg of
+      # each arch as they sit on the release (scripts/merge-mac-update-feeds.js),
+      # so it holds across a re-run of only some jobs and changes nothing on a
+      # re-run over a release that is already published. Before the
+      # minimumSystemVersion patch below, which then edits the merged feed, and
+      # before the verify, which fails unless the feed lists every mac zip.
+      - name: Merge the macOS update feeds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: node scripts/merge-mac-update-feeds.js "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+
       # electron-updater skips an update only when latest-mac.yml carries
       # minimumSystemVersion, and electron-builder never writes it there (only into
       # Info.plist). Without this, a Mac below mac.minimumSystemVersion downloads
       # the update and macOS refuses to open it. The value is the Darwin version
       # the updater compares against os.release() (macOS 13 = 22.0.0), derived
       # from electron-builder.yml so the two cannot drift. It runs here rather than
-      # in the mac leg because this job runs after every leg, so a re-run of the mac
+      # in a mac leg because this job runs after every leg, so a re-run of a mac
       # leg cannot put the unpatched file back before publishing. Before
       # --draft=false, so a failure leaves the release a draft. The tag reaches
       # this step and the two after it through the environment, as in the draft
@@ -717,7 +834,8 @@ jobs:
   # a failure here marks the run red while the site's own sync fails loudly on the
   # missing asset. It is NOT in scripts/release-assets.js: that manifest is checked
   # before this job runs (in publish-release, and in create-draft-release's re-run
-  # check), so a 12th expected asset would fail every release.
+  # check), so listing the zip there as one more expected asset would fail every
+  # release.
   #
   # The version chain is three links, none redundant: the tag must match
   # package.json (the gate below), package.json must match dist/demo/scenes.json

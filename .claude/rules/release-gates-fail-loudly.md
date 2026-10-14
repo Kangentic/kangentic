@@ -56,7 +56,7 @@ Any step in the release path that exists to guarantee something must fail when i
   It also pins the poster job (`demo-posters`): that it checks out the same ref `publish-release`
   did, that its version gate can fail, that it uploads with `--clobber` and says whether it
   attached or replaced, and that the file still carries the decision keeping the zip out of
-  `scripts/release-assets.js` (a twelfth expected asset would fail the verify that runs before
+  `scripts/release-assets.js` (one more expected asset would fail the verify that runs before
   the job). Its font step is pinned too: it runs before the shoot, it can fail when `fc-match`
   resolves another family, and the family it installs is still in Tailwind's default
   `--font-sans`, with no renderer stylesheet overriding the stack. The families ahead of it are
@@ -77,6 +77,20 @@ Any step in the release path that exists to guarantee something must fail when i
   set: a runner image that stopped shipping it would otherwise skip every executed case and still
   report green. The step's own version is asserted rather than regex-gated like the API tags,
   because dropping it would leave nothing to compare against. Runs via `npm run test:unit`.
+- **Test (mechanical, CI):** the same file pins the five-leg matrix. Every Linux gate runs on every
+  Linux leg (`startsWith(matrix.platform, 'linux')`, never `== 'linux'`, which silently skipped the
+  arm64 leg's distro installs) and names no x64 package. The upgrade gates' first-arch skip counts
+  the arch over every published release OLDER than the build, so it can be true once and never
+  again; it is pinned as text and executed through jq against a first release, its re-run, and a
+  later baseline missing its arm64 package, which must fail. `preflight-signing` must be able to
+  fail, carry no `environment:`, check every Apple secret the legs use, and be named in
+  `create-draft-release`'s `needs:` and `if:`: `build/afterSign.js` only logs a notarization skip.
+  `publish-release` must rebuild `latest-mac.yml` from the binaries on the release (never from
+  workflow artifacts, which do not reliably carry across run attempts) before the
+  minimumSystemVersion patch and the verify, and `scripts/verify-release-assets.js` fails a
+  `latest-mac.yml` that does not list every mac zip (`tests/unit/release-asset-manifest.test.ts`,
+  `tests/unit/merge-mac-update-feeds.test.ts`), since the legs' uploads replace each other and a
+  one-arch feed passes a name check.
 - **Test (mechanical, CI):** `tests/unit/upload-native-debug-files.test.ts` pins the build-side
   (esbuild/main+preload) half: the skip line is printed, a present-token upload failure throws, the
   `NODE_ENV` guard rejects unset and non-production values, and `resolveSentryReleaseName` throws

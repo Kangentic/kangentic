@@ -32,8 +32,8 @@ Each doc file and the source files that are its authority:
 | `adapter-session-history.md` | `src/main/agent/adapters/*/session-history-parser.ts`, `src/main/pty/readers/session-history-reader.ts`, `src/main/agent/handoff/session-history-reference.ts` |
 | `transcript-pipeline-audit.md` | `src/main/agent/transcript-service.ts`, `src/main/agent/transcript-cache.ts`, `src/main/agent/shared/transcript-truncation.ts`, `src/main/agent/adapters/*/transcript-parser.ts`, `src/shared/transcript-format.ts` |
 | `analytics.md` | `src/main/analytics/analytics.ts`, `src/main/analytics/usage.ts` (ANALYTICS_FEATURES, ONBOARDING_MILESTONES), `src/main/analytics/run-uptime.ts`, `src/main/analytics/settings-snapshot.ts` (SETTINGS_SNAPSHOT_ALLOWLIST) |
-| `deployment.md` | `electron-builder.yml`, `.github/workflows/release.yml`, `scripts/verify-release-assets.js`, `src/main/updater.ts`, `src/main/updater-release-notes.ts` |
-| `installation.md` | `packages/launcher/**`, `electron-builder.yml`, `README.md` |
+| `deployment.md` | `electron-builder.yml`, `.github/workflows/release.yml`, `scripts/release-assets.js`, `scripts/verify-release-assets.js`, `scripts/merge-mac-update-feeds.js`, `src/main/updater.ts`, `src/main/updater-release-notes.ts` |
+| `installation.md` | `packages/launcher/**`, `electron-builder.yml`, `README.md`, `src/shared/embedding-runtime-gaps.json` |
 | `release-checklist.md` | `.claude/skills/release/SKILL.md`, `.github/workflows/release.yml`, `scripts/verify-release-assets.js` |
 | `overview.md` | `README.md`, high-level features |
 | `user-guide.md` | `src/renderer/components/`, `src/renderer/stores/`, `src/shared/types.ts`, `src/shared/index-summary.ts` (what the Index card and the map's Index panel count, and the line each source reads) |

@@ -81,9 +81,9 @@ To roll back to a previous version, run `npx kangentic@X.Y.Z` with the desired v
 
 1. **`/release patch`** (or `minor`/`major`) - analyzes conventional commits, bumps version in root `package.json` + `packages/launcher/package.json`, generates CHANGELOG entry + user-friendly release notes (commit subjects plus any `Release-Note:` commit trailers) written to `RELEASE_NOTES.md` at the repo root, commits, tags, pushes.
 2. **`electron-builder.yml`'s `releaseInfo.releaseNotesFile: RELEASE_NOTES.md`** bakes that file's contents into every generated `latest*.yml` update manifest at build time. `electron-updater`'s GitHub provider prefers a populated `releaseNotes` key over its Atom-feed fallback, so this is also the source for the pre-restart release-notes modal (see [Auto-Update Behavior](#auto-update-behavior)), with no separate fetch and no new IPC channel. The post-restart "What's New" dialog reads the same file by a different route - inlined into the renderer bundle at build time - since a relaunched app has no update manifest for its own version. Both paths therefore render identical markdown, and so does the GitHub release body (step 5 sets it from this same file), which is what the dialogs' "GitHub Release" link opens.
-3. **Tag push triggers `release.yml`** - requires approval from the `release` environment (Settings > Environments). Builds all platforms (Linux x64, Windows x64, macOS arm64), signs binaries (when signing secrets are configured), creates a **draft** GitHub Release with artifacts attached. Before any of that, the `preflight-symbols` job fails the release in seconds if the `KANGENTIC_SENTRY_TOKEN` repository secret is missing, and gates `create-draft-release` so a failure leaves no orphaned draft behind. Without that secret the build produces no sourcemaps and no native debug files, which is how v0.37.0 and v0.38.0 shipped with unreadable stacks while every job reported success (see [Analytics](analytics.md)). `/release` checks the same secret before it tags, since on a tag push the tag already exists by the time the workflow starts.
+3. **Tag push triggers `release.yml`** - each build leg runs in its own `release-<platform>` environment (Settings > Environments), which is where an approval rule goes. Builds all five targets (Windows x64, macOS arm64 and x64, Linux x64 and arm64), signs binaries (when signing secrets are configured), creates a **draft** GitHub Release with artifacts attached. Before any of that, the `preflight-symbols` job fails the release in seconds if the `KANGENTIC_SENTRY_TOKEN` repository secret is missing, and `preflight-signing` does the same for the Apple signing and notarization secrets (`build/afterSign.js` only logs a skip, so a missing one would ship an un-notarized Mac build). Both gate `create-draft-release`, so a failure leaves no orphaned draft behind. Without that secret the build produces no sourcemaps and no native debug files, which is how v0.37.0 and v0.38.0 shipped with unreadable stacks while every job reported success (see [Analytics](analytics.md)). `/release` checks the same secret before it tags, since on a tag push the tag already exists by the time the workflow starts.
 4. **Run the [release smoke checklist](release-checklist.md)** against the built artifacts. Automated tests use mock CLI fixtures, so this is the only place real model latency, real tool calls, and conversation continuity across resume get exercised. It does not gate publishing: `publish-release` fires as soon as the builds succeed (step 5), so the lever for a failure here is [Rollback](#rollback), not withholding the release. To gate on the checklist instead, the approval in step 3 has to be the decision point.
-5. **The `publish-release` job publishes the draft automatically** once every platform build succeeds: it clears draft status (`--draft=false`) and sets the body from `RELEASE_NOTES.md` in the same `gh release edit` call, so the release is never live with an empty body. The human gate sits earlier, on the `release` environment approval in step 3 - `publish-release` declares no `environment:` of its own, so nothing blocks between the builds finishing and the release going live. Watch the run at [github.com/Kangentic/kangentic/actions](https://github.com/Kangentic/kangentic/actions), NOT the releases page. `/release` Step 7 waits on the run with `gh run watch` and confirms `draft: false`, 12 assets (the 11 build assets plus `demo-posters-X.Y.Z.zip` from step 8), and the new `npm view kangentic version` before it opens the releases page at all. Opening it while the builds are still running is how v0.39.0 shipped published and empty: it puts a Publish button in front of a human for the ten minutes when clicking it does the most damage, and electron-builder uploads only into a draft, so a hand-publish mid-run makes every platform job skip its artifacts while all three still exit 0.
+5. **The `publish-release` job publishes the draft automatically** once every platform build succeeds: it clears draft status (`--draft=false`) and sets the body from `RELEASE_NOTES.md` in the same `gh release edit` call, so the release is never live with an empty body. Any human gate sits earlier, on the `release-<platform>` environments in step 3 - `publish-release` declares no `environment:` of its own, so nothing blocks between the builds finishing and the release going live. Before publishing it rebuilds `latest-mac.yml` to list both macOS arches (see [One macOS feed for both arches](#one-macos-feed-for-both-arches)). Watch the run at [github.com/Kangentic/kangentic/actions](https://github.com/Kangentic/kangentic/actions), NOT the releases page. `/release` Step 7 waits on the run with `gh run watch` and confirms `draft: false`, 19 assets (the 18 build assets plus `demo-posters-X.Y.Z.zip` from step 8), and the new `npm view kangentic version` before it opens the releases page at all. Opening it while the builds are still running is how v0.39.0 shipped published and empty: it puts a Publish button in front of a human for the ten minutes when clicking it does the most damage, and electron-builder uploads only into a draft, so a hand-publish mid-run makes every platform job skip its artifacts while every one still exits 0.
 6. **The `publish-npm` job in `release.yml`** publishes the launcher package to npm after `publish-release` succeeds, using Trusted Publishing (OIDC) - no token required.
 7. **The `deploy-demo` job in `release.yml`** calls `deploy-demo.yml` with the release tag, also after `publish-release` succeeds. It rebuilds the static web demo at the `/kangentic/` base, smoke-tests the built bytes with `npm run test:demo`, and publishes them to GitHub Pages at [kangentic.github.io/kangentic](https://kangentic.github.io/kangentic/), so the demo always shows the shipped app. It fails loudly, after the release is already live, when Pages is not enabled with the GitHub Actions source or the `github-pages` environment does not allow `v*` tags to deploy. Dispatch `deploy-demo.yml` by hand with a `ref` to redeploy.
 8. **The `demo-posters` job in `release.yml`** shoots the docs poster set from the same tag, also after `publish-release` succeeds, and attaches it to the release as `demo-posters-X.Y.Z.zip`: one 3200 by 2000 still per demo scene in the `clay` and `rust` themes plus a `manifest.json`, which [kangentic.com](https://kangentic.com)'s figures read by version (`npm run demo:posters`; `demo/README.md`, "The poster set"). It is outside `scripts/release-assets.js` on purpose, since that manifest is verified before this job runs, and it uploads with `--clobber` so a re-run replaces the asset in place. Like `deploy-demo`, a failure here lands after the release is live: the release stands, the run goes red, and the site's own sync fails on the missing asset.
@@ -100,19 +100,20 @@ Common prefixes: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`, `perf
 
 Releases require two things:
 - **Write** role (minimum) to trigger the workflow or push a tag
-- **`release` environment reviewer** to approve the workflow run
+- **`release-<platform>` environment reviewer** to approve the workflow run, when the environments carry a reviewer rule
 
-Configure the `release` environment in Settings > Environments with required reviewers. Even Admin users cannot bypass environment approval.
+Each build leg names its own environment: `release-linux`, `release-linux-arm64`, `release-windows`, `release-macos-arm64` and `release-macos-x64`. Add required reviewers to each in Settings > Environments; even Admin users cannot bypass environment approval. GitHub creates an environment the workflow names on its first run, with no rules, so a newly added leg runs unreviewed until one is added. Secrets stay repository secrets, which every environment inherits; `preflight-signing` and `preflight-symbols` read them with no environment at all.
 
 ### Code Signing Secrets
 
-Signing only activates when the corresponding env vars are present. Local dev builds remain unsigned. CI builds sign when secrets exist.
+Signing only activates when the corresponding env vars are present. Local dev builds remain unsigned. A release requires the five Apple secrets: `preflight-signing` fails the run before anything builds when one is missing.
 
 | Secret | Source |
 |--------|--------|
-| `APPLE_IDENTITY` | Apple Developer ID Application certificate name |
+| `APPLE_CERTIFICATE_BASE64` | Developer ID Application certificate (`.p12`), base64-encoded |
+| `APPLE_CERTIFICATE_PASSWORD` | Password of that `.p12` |
 | `APPLE_ID` | Apple ID email |
-| `APPLE_PASSWORD` | App-specific password (not account password) |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password (not account password) |
 | `APPLE_TEAM_ID` | Apple Developer Team ID |
 | `AZURE_TENANT_ID` | Azure AD tenant ID |
 | `AZURE_CLIENT_ID` | App registration (service principal) client ID |
@@ -128,24 +129,25 @@ package: GitHub Actions, org `Kangentic`, repo `kangentic`, workflow `release.ym
 
 ### macOS Auto-Update Requires Signing
 
-Electron's `autoUpdater` on macOS only works with signed apps (Electron docs: "mandatory for auto-update on macOS"). Until the Apple Developer certificate secrets are configured:
+Electron's `autoUpdater` on macOS only works with signed apps (Electron docs: "mandatory for auto-update on macOS"). Released builds are always signed and notarized: `preflight-signing` blocks a release when an Apple secret is missing. Only a local or ad-hoc build (`mac.identity` set to `-`, as package-smoke builds) is unsigned, and for such a build:
 
 - macOS users will NOT receive auto-updates
 - They must re-run `npx kangentic` manually to get new versions
-- The Gatekeeper bypass is also required on each install (see [Installation Guide](installation.md#macos-gatekeeper))
+- The Gatekeeper bypass is required on each install (see [Installation Guide](installation.md#macos-gatekeeper))
 
 ### Draft Releases Are Invisible to Auto-Updater
 
 `electron-updater` only sees **published** releases. Draft releases are invisible to the auto-updater and to `npx kangentic`.
 
-That invisibility is what made the v0.35.0 failure user-facing: the three platform jobs each raced
+That invisibility is what made the v0.35.0 failure user-facing: the three platform jobs it had then each raced
 to create their own draft for the same tag, the publish step resolved the tag to the Windows one,
 and the macOS and Linux artifacts stayed on drafts nobody could download. Two things now prevent a
 repeat. `create-draft-release` creates the single draft before any build starts, so every platform
 job attaches to the same release. Then `scripts/verify-release-assets.js` runs before
 `--draft=false` and fails the release unless the tag resolves to exactly one release object
-carrying all 11 expected build assets, all fully uploaded. A build that succeeds on every platform
-is not evidence that the release is complete; only the asset check is.
+carrying all 18 expected build assets, all fully uploaded, with a `latest-mac.yml` that lists both
+macOS zips. A build that succeeds on every platform is not evidence that the release is complete;
+only the asset check is.
 
 v0.39.0 found the mirror image of that, a release for the tag that is already PUBLISHED and
 missing assets. electron-builder's GitHub publisher uploads only into a draft: handed a published
@@ -155,7 +157,32 @@ starts, rather than reusing whatever release it finds. No release for the tag cr
 existing draft is reused. A published release that still passes `scripts/verify-release-assets.js`
 is left alone, which is what keeps an idempotent re-run of a finished release green. A published
 release that does not pass fails the run in seconds with `::error::` lines naming the recovery,
-instead of letting three platform builds run and skip every upload.
+instead of letting every platform build run and skip every upload.
+
+### One macOS feed for both arches
+
+Each macOS leg runs its own electron-builder, which writes a `latest-mac.yml` listing only that
+leg's zip, and the second leg's upload deletes and replaces the first's on the release. Left
+alone, whichever leg finished last would decide every Mac's updates: an Intel-only feed moves Apple
+silicon Macs onto the Intel build under Rosetta, and an arm64-only feed leaves Intel Macs no zip.
+`electron-updater`'s `MacUpdater` picks the zip whose URL names `arm64` on Apple silicon and the
+other on Intel, so one feed listing both is right for both. `publish-release` builds it with
+`scripts/merge-mac-update-feeds.js` before the minimumSystemVersion patch below. The script
+downloads both arches' zip and dmg from the release and hashes them (sha512 in base64 and size,
+the fields electron-builder writes), so the feed always describes the files a Mac downloads. The
+version, release notes and release date come from whichever `latest-mac.yml` is on the release,
+and the top-level `path` and `sha512` older clients read name the arm64 zip. Reading the release,
+not anything the legs hand over, is what makes it hold on every re-run. Workflow artifacts do not
+reliably carry across run attempts, and a re-run over a release that is already published rebuilds
+binaries electron-builder never uploads. There the computed feed equals the published one and
+nothing is uploaded, which was checked against v0.45.0's real files. The script fails, leaving a
+draft, when a zip, a dmg or the feed is missing, or the feed names another version.
+`scripts/verify-release-assets.js` then fails the release unless the feed lists every mac zip,
+since a one-arch feed carries the right file name. `node scripts/merge-mac-update-feeds.js vX.Y.Z
+--dry-run` prints the result without uploading.
+
+Linux needs none of this: electron-updater reads `latest-linux.yml` on x64 and
+`latest-linux-arm64.yml` on arm64, and each Linux leg writes its own.
 
 ### Macs below the minimum macOS are not offered the update
 
@@ -176,29 +203,45 @@ for any release without uploading.
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | Push to main, PRs | Typecheck, unit tests, UI tests |
-| `package-smoke.yml` | PRs touching packaging, the pty host, the retrieval worker or their clients; `workflow_dispatch` | `npm run package` on Windows, macOS (ad-hoc signed) and Linux, then `scripts/package-smoke.mjs` runs the packaged app: a terminal, a Knowledge Graph read, a task reap that must stop a detached process the task's terminal left, a user's quit, and a fail on any crash or fallback log line. Not a required check |
+| `package-smoke.yml` | PRs touching packaging, the pty host, the retrieval worker or their clients; `workflow_dispatch` | `npm run package` on every release target (Windows x64, macOS arm64 and x64 ad-hoc signed, Linux x64 and arm64), each on the same runner the release uses, then `scripts/package-smoke.mjs` runs the packaged app: a terminal, a Knowledge Graph read, a task reap that must stop a detached process the task's terminal left, a user's quit, and a fail on any crash or fallback log line. Not a required check |
 | `macos-spawn-helper.yml` | PRs touching the spawn-helper, its gates or `package-lock.json` | Compiles and proves Kangentic's macOS spawn-helper on a real Mac. Not a required check |
 | `task-reap-real-processes.yml` | PRs and pushes to main touching `src/main/pty/process-tag/`, the source files outside it that its tests import (the host process table, the process-tree probe, `zombie-reaper.ts`, `process-liveness.ts`), its tests, `vitest.config.ts`, `package.json` or the lockfile (a koffi bump); `workflow_dispatch` | Runs the task leftover reap against real processes on Linux (with a display, tmux and xterm), macOS on Apple silicon and Intel, and Windows, including the visible-app case. On Windows it unpacks a portable Windows Terminal, pinned by version and SHA-256, and reaps a program in one of its tabs. Prints `csrutil status` on macOS: GitHub's runners have SIP off, so the test stands an `env -i` process in for the environment a SIP-on Mac hides. Not a required check |
 | `shell-quoting-windows.yml` | PRs and pushes to main touching `shell-quote.ts`, `paths.ts`, `cli-print.ts`, the Claude and Aider command builders, their tests, `vitest.config.ts` or the workflow; `workflow_dispatch` | Runs the live cmd.exe, Windows PowerShell 5.1 and pwsh round trips for the shell escapes on `windows-latest`. Fails if pwsh is missing from the runner. Not a required check |
-| `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Fail fast if the Sentry symbol-upload secret is absent, create one draft Release, build + sign on all 3 platforms into it, write the macOS floor into `latest-mac.yml`, verify the asset manifest, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) + redeploy the web demo + attach the docs poster set (`demo-posters-<version>.zip`) |
+| `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Fail fast if the Sentry symbol-upload secret or an Apple signing secret is absent, create one draft Release, build + sign all 5 targets into it, rebuild `latest-mac.yml` for both macOS arches from the binaries on the release and write the macOS floor into it, verify the asset manifest, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) + redeploy the web demo + attach the docs poster set (`demo-posters-<version>.zip`) |
 
 ### CI Build Matrix
 
-The release workflow produces 3 builds, contributing 11 build assets to one release. The full
+The release workflow produces 5 builds, contributing 18 build assets to one release. The full
 expected filename set is `scripts/release-assets.js`, which the publish gate checks against and
 `tests/unit/release-asset-manifest.test.ts` keeps in sync with `electron-builder.yml` and the
-launcher. The `demo-posters` job attaches a twelfth, `demo-posters-<version>.zip`, after the
+launcher. The `demo-posters` job attaches a nineteenth, `demo-posters-<version>.zip`, after the
 release is published; it is outside that manifest by design, because the manifest is verified
 before the job runs, and the gate does not fail on an asset it does not list.
 
+Every leg builds on a runner of its own arch, never cross-built: npm installs only the host's
+per-arch native packages (sherpa-onnx, sqlite-vec, koffi, sharp), and `build/afterPack.js` loads
+the native modules with the packaged Electron binary.
+
 | Runner | Platform | Artifacts |
 |--------|----------|-----------|
-| `ubuntu-latest` | linux-x64 | `.deb`, `.rpm`, `latest-linux.yml` |
-| `windows-latest` | windows-x64 | `Setup.exe`, `.exe.blockmap`, `latest.yml` |
-| `macos-latest` | macos-arm64 | `.dmg`, `.zip`, a `.blockmap` for each, `latest-mac.yml` |
+| `ubuntu-latest` | linux | `_amd64.deb`, `.x86_64.rpm`, `latest-linux.yml` |
+| `ubuntu-24.04-arm` | linux-arm64 | `_arm64.deb`, `.aarch64.rpm`, `latest-linux-arm64.yml` |
+| `windows-latest` | windows | `Setup.exe`, `.exe.blockmap`, `latest.yml` |
+| `macos-latest` | macos-arm64 | `-arm64.dmg`, `-arm64-mac.zip`, a `.blockmap` for each, its `latest-mac.yml` |
+| `macos-26-intel` | macos-x64 | `-x64.dmg`, `-x64-mac.zip`, a `.blockmap` for each, its `latest-mac.yml` |
 
-The three `latest*.yml` files are the update manifests `electron-updater` fetches, so a release
-missing one is broken for that platform even when its installer uploaded fine.
+The four `latest*.yml` files are the update manifests `electron-updater` fetches, so a release
+missing one is broken for that platform even when its installer uploaded fine. The two macOS legs'
+feeds become one `latest-mac.yml` in `publish-release` (see
+[One macOS feed for both arches](#one-macos-feed-for-both-arches)). The Linux arm64 leg runs the
+same distro install and upgrade gates as x64, in arm64 containers. Its upgrade gates skip on the
+first release that ships arm64, since no older release has an arm64 package to upgrade from, and
+never again after it: the skip counts arm64 packages across every older published release, not
+the baseline alone.
+
+The Knowledge Graph's local model has no Intel macOS build (onnxruntime-node ships no darwin x64
+binding), so `build/afterPack.js` skips the embed worker probe on the Intel leg, and the app
+reports the feature unavailable there. See [Knowledge Graph](configuration.md#knowledge-graph).
 
 Every artifact filename is pinned via `artifactName` in `electron-builder.yml` rather than
 inherited from electron-builder's defaults. Three of the five templates (the macOS zip, the dmg,
@@ -206,7 +249,9 @@ and the deb) were inherited until v0.35.0; only `nsis` and `rpm` were already pi
 hardcodes the names it downloads, so a default change would have silently 404'd `npx kangentic` on
 that platform.
 
-Linux arm64 and macOS x64 are not built in v1. Documented in the [Installation Guide](installation.md).
+Windows ships x64 only; Windows on ARM runs it under emulation. A native arm64 build would lose
+dictation (sherpa-onnx ships no win-arm64 package) and vector search (sqlite-vec ships
+windows-x64 only).
 
 ### Local Testing
 
@@ -227,7 +272,7 @@ The installed app and `npm run dev` share the same data directory. Set `KANGENTI
 
 - Verify the release is **published** (not draft) on GitHub
 - The app checks every 4 hours - restart the app to trigger an immediate check
-- On macOS, auto-update requires code signing. Without it, updates won't be detected.
+- On macOS, auto-update requires code signing. Without it, updates won't be detected. Released builds are signed; this applies to a local or ad-hoc build.
 
 ### Rollback
 

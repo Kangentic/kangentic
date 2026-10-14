@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 // A gate that stops gating without saying so is worse than no gate, because it still reads as
 // coverage. release.yml has been bitten by that four times now. The first two shapes are below;
@@ -118,6 +119,7 @@ describe('release.yml job graph', () => {
   it('parses the jobs it is meant to guard (proves the regex still matches)', () => {
     const names = jobs.map((job) => job.name);
     expect(names).toContain('preflight-symbols');
+    expect(names).toContain('preflight-signing');
     expect(names).toContain('create-draft-release');
     expect(names).toContain('release');
     expect(names).toContain('publish-release');
@@ -201,6 +203,31 @@ describe('release.yml job graph', () => {
     // No environment: - a required reviewer or wait timer here would stall every release on an
     // approval gate, the same reason create-draft-release declares none.
     expect(preflight?.body).not.toMatch(/^ {4}environment:/m);
+  });
+
+  // build/afterSign.js only LOGS a skip when the notarization credentials are missing, so an unset
+  // secret ships an app Gatekeeper refuses while every job is green. A new macOS leg in a new
+  // release-<platform> environment is exactly when a secret scoped to one environment goes missing.
+  it('gates the draft on the Apple signing preflight, which can fail and carries no approval gate', () => {
+    const draft = jobs.find((job) => job.name === 'create-draft-release');
+    expect(draft?.needs).toContain('preflight-signing');
+    const preflight = jobs.find((job) => job.name === 'preflight-signing');
+    expect(preflight).toBeDefined();
+    expect(preflight?.body).toContain('exit 1');
+    expect(preflight?.body).toContain('::error::');
+    expect(preflight?.body).not.toMatch(/^ {4}environment:/m);
+    for (const secret of ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_CERTIFICATE_BASE64', 'APPLE_CERTIFICATE_PASSWORD']) {
+      expect(preflight?.body).toContain(`${secret}: \${{ secrets.${secret} }}`);
+      // ...and the loop that checks them names it too, or the env line is decoration.
+      expect(preflight?.body).toMatch(new RegExp(`for name in [A-Z0-9_ ]*\\b${secret}\\b`));
+    }
+    // Every secret a mac leg signs or notarizes with is one the preflight checks.
+    const appleSecretsUsed = new Set(
+      [...(jobs.find((job) => job.name === 'release')?.body ?? '').matchAll(/secrets\.(APPLE_[A-Z_]+)/g)].map((match) => match[1]),
+    );
+    for (const secret of appleSecretsUsed) {
+      expect(preflight?.body, `the release legs use ${secret}, which preflight-signing does not check`).toContain(secret);
+    }
   });
 
   it('authorizes the release build\'s symbol upload explicitly, not through the runner\'s ambient CI', () => {
@@ -296,13 +323,88 @@ describe('release.yml job graph', () => {
     expect(patch).not.toContain('--dry-run');
 
     const body = jobs.find((job) => job.name === 'publish-release')?.body ?? '';
+    const mergeAt = body.indexOf('      - name: Merge the macOS update feeds');
     const patchAt = body.indexOf('      - name: Block macOS updates below the minimum system version');
     const verifyAt = body.indexOf('      - name: Verify the release carries every expected asset');
     const publishAt = body.indexOf('      - name: Publish release with notes (remove draft status)');
-    expect(patchAt).toBeGreaterThan(-1);
+    expect(mergeAt).toBeGreaterThan(-1);
+    expect(mergeAt).toBeLessThan(patchAt);
     expect(patchAt).toBeLessThan(verifyAt);
     expect(verifyAt).toBeLessThan(publishAt);
     expect(fs.existsSync(path.join(REPO_ROOT, 'scripts', 'patch-mac-update-info.js'))).toBe(true);
+  });
+
+  // Each macOS leg's electron-builder writes a latest-mac.yml naming only its own files, and the
+  // second upload replaces the first on the release, so whichever leg finished last decided every
+  // Mac's updates. publish-release rebuilds one feed from the binaries on the release, before the
+  // patch above edits the result and before the verify checks it lists every zip. It reads the
+  // release, never workflow artifacts: those do not reliably carry across run attempts, and on a
+  // re-run over a published release they would hold hashes of rebuilt binaries nobody downloads.
+  it('rebuilds the macOS feed from the release in publish-release, with no artifact hand-off', () => {
+    const merge = stepBody('publish-release', 'Merge the macOS update feeds');
+    expect(merge).toContain('node scripts/merge-mac-update-feeds.js "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"');
+    expect(merge).toContain('RELEASE_TAG: ${{ steps.version.outputs.tag }}');
+    expect(merge).toContain('GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}');
+    expect(merge).not.toContain('--dry-run');
+    expect(fs.existsSync(path.join(REPO_ROOT, 'scripts', 'merge-mac-update-feeds.js'))).toBe(true);
+    expect(workflowSource).not.toContain('mac-update-feed-');
+
+    // The merge downloads both arches' zip and dmg, about 800 MB, to hash them.
+    const publishRelease = jobs.find((job) => job.name === 'publish-release');
+    const timeoutMinutes = Number(publishRelease?.body.match(/^ {4}timeout-minutes: (\d+)$/m)?.[1]);
+    expect(timeoutMinutes).toBeGreaterThanOrEqual(10);
+  });
+
+  // Every leg builds on a runner of its own arch: npm installs only the host's per-arch native
+  // packages, and afterPack loads them with the packaged Electron binary. The macOS legs must be
+  // exactly the arches the asset manifest expects zips for, or the merge refuses to run.
+  it('builds every arch the asset manifest expects, each on its own runner', () => {
+    const releaseBody = jobs.find((job) => job.name === 'release')?.body ?? '';
+    const legs = [...releaseBody.matchAll(/^ {10}- os: (\S+)\n {12}platform: (\S+)$/gm)].map((match) => [match[1], match[2]]);
+    expect(legs).toEqual([
+      ['ubuntu-latest', 'linux'],
+      ['ubuntu-24.04-arm', 'linux-arm64'],
+      ['windows-latest', 'windows'],
+      ['macos-latest', 'macos-arm64'],
+      ['macos-26-intel', 'macos-x64'],
+    ]);
+    const requireFromRepo = createRequire(path.join(REPO_ROOT, 'package.json'));
+    const { MAC_ARCHES, LINUX_TARGETS } = requireFromRepo('./scripts/release-assets.js') as {
+      MAC_ARCHES: string[];
+      LINUX_TARGETS: { arch: string; debArch: string; rpmArch: string }[];
+    };
+    expect(legs.filter(([, platform]) => platform.startsWith('macos')).map(([, platform]) => platform.replace('macos-', '')).sort())
+      .toEqual([...MAC_ARCHES].sort());
+
+    // Each Linux leg carries electron-builder's arch names for its packages, matching the manifest.
+    for (const target of LINUX_TARGETS) {
+      const platform = target.arch === 'x64' ? 'linux' : `linux-${target.arch}`;
+      const unpacked = target.arch === 'x64' ? 'linux-unpacked' : `linux-${target.arch}-unpacked`;
+      expect(releaseBody).toContain(
+        `            platform: ${platform}\n            deb_arch: ${target.debArch}\n            rpm_arch: ${target.rpmArch}\n            unpacked_dir: ${unpacked}`,
+      );
+    }
+  });
+
+  // A step keyed `== 'linux'` silently skips the arm64 leg, which would ship an aarch64 rpm and an
+  // arm64 deb that no distro install ever tried: the exact gap release-gates-fail-loudly forbids.
+  it('runs every Linux gate on every Linux leg, with no x64 names left in them', () => {
+    expect(workflowSource).not.toContain("matrix.platform == 'linux'");
+    const releaseBody = jobs.find((job) => job.name === 'release')?.body ?? '';
+    const linuxSteps = [...releaseBody.matchAll(/^ {6}- name: (.+)\n {8}if: startsWith\(matrix\.platform, 'linux'\)$/gm)].map((match) => match[1]);
+    expect(linuxSteps).toEqual([
+      'Verify app-update.yml and package-type are packaged (Linux)',
+      'Verify rpm installs on Fedora',
+      'Verify rpm installs on openSUSE',
+      'Verify deb installs on Debian',
+      'Verify deb installs on Ubuntu',
+      'Verify rpm upgrades from the previous release',
+      'Verify deb upgrades from the previous release',
+    ]);
+    for (const name of linuxSteps) {
+      const body = stepBody('release', name);
+      expect(body, `${name} still names an x64 package or directory`).not.toMatch(/x86_64|amd64|linux-unpacked/);
+    }
   });
 
   // A git ref name may contain `"`, `$` and a backtick, a dispatch's version input is free text,
@@ -441,10 +543,28 @@ const IGNORED_TAGS_PROGRAM =
   "'[.[] | select(.draft == false and .prerelease == false) | "
   + 'select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$") | not) | .tag_name] | join(" ")\'';
 
+// The first release of a new arch (linux-arm64 joined after x64 had shipped for many releases)
+// has a baseline with no package in that arch. The skip counts the arch over every published
+// release OLDER than the build, never over the baseline alone: once one carries the arch the skip
+// can never fire again, so a later baseline missing its package (a hand-published partial release)
+// fails instead of quietly skipping forever.
+const ARCH_HISTORY_PROGRAM =
+  "'def ver: ltrimstr(\"v\") | split(\".\") | map(tonumber); "
+  + '[.[] | select(.draft == false and .prerelease == false) | '
+  + 'select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$")) | '
+  + 'select((.tag_name | ver) < ($self | ver)) | '
+  + 'select(any(.assets[]?; .name | endswith($suffix)))] | length\'';
+
 const upgradeSteps = [
   ['rpm', stepBody('release', 'Verify rpm upgrades from the previous release')],
   ['deb', stepBody('release', 'Verify deb upgrades from the previous release')],
 ] as const;
+
+/** Per step: the --arg suffix it passes, and the arm64 and x64 asset names that suffix must tell apart. */
+const ARCH_SUFFIXES = {
+  rpm: { suffixArgument: '--arg suffix "-1.$RPM_ARCH.rpm"', arm64Suffix: '-1.aarch64.rpm', x64Suffix: '-1.x86_64.rpm', asset: (version: string, suffix: string) => `kangentic-${version}${suffix}` },
+  deb: { suffixArgument: '--arg suffix "_$DEB_ARCH.deb"', arm64Suffix: '_arm64.deb', x64Suffix: '_amd64.deb', asset: (version: string, suffix: string) => `kangentic_${version}${suffix}` },
+} as const;
 
 describe('release.yml upgrade gates baseline on the newest release OLDER than the build', () => {
   it.each(upgradeSteps)('the %s gate resolves the baseline by version, below this build\'s own', (_name, body) => {
@@ -502,6 +622,19 @@ describe('release.yml upgrade gates baseline on the newest release OLDER than th
     // makes the log able to tell them apart.
     expect(body).toContain("jq 'length' /tmp/releases.json");
   });
+
+  it.each(upgradeSteps)('the %s gate skips a first-arch release only by the arch history, and says so', (name, body) => {
+    expect(body).toContain(ARCH_HISTORY_PROGRAM);
+    expect(body).toContain(ARCH_SUFFIXES[name].suffixArgument);
+    // Both branches say which way they went.
+    expect(body).toMatch(/echo "No published release older than v\$new_version carries an \$(RPM|DEB)_ARCH (rpm|deb), so v\$new_version is the first/);
+    expect(body).toMatch(/echo "\$arch_releases published release\(s\) older than v\$new_version carry an \$(RPM|DEB)_ARCH (rpm|deb); upgrading from \$prev_tag\."/);
+    // After the no-baseline skip and before the download, so a baseline missing its package in an
+    // arch that HAS shipped still reaches the download's failure.
+    const historyAt = body.indexOf('arch_releases=$(');
+    expect(historyAt).toBeGreaterThan(body.indexOf('if [ -z "$prev_tag" ]; then'));
+    expect(historyAt).toBeLessThan(body.indexOf('if ! curl -fsSL'));
+  });
 });
 
 // The pins above prove the text. This block proves the rule, by running the program the workflow
@@ -524,10 +657,11 @@ interface ReleaseRow {
   tag_name: string;
   draft: boolean;
   prerelease: boolean;
+  assets?: { name: string }[];
 }
 
-function published(tagName: string): ReleaseRow {
-  return { tag_name: tagName, draft: false, prerelease: false };
+function published(tagName: string, assetNames: string[] = []): ReleaseRow {
+  return { tag_name: tagName, draft: false, prerelease: false, assets: assetNames.map((assetName) => ({ name: assetName })) };
 }
 
 /**
@@ -616,6 +750,82 @@ describe.runIf(HAS_JQ)('release.yml upgrade baseline program, executed', () => {
   });
 });
 
+describe.runIf(HAS_JQ)('release.yml first-arch upgrade skip, executed', () => {
+  const cases = upgradeSteps.map(([name, body]) => [
+    name,
+    extractProgram(body, 'arch_releases=$(', 'endswith($suffix)'),
+    ARCH_SUFFIXES[name],
+  ] as const);
+
+  const olderWithArch = (program: string, self: string, suffix: string, releases: ReleaseRow[]): string =>
+    runJq(program, releases, ['--arg', 'self', self, '--arg', 'suffix', suffix]);
+
+  it.each(cases)('the %s gate skips the first arm64 release, whose baseline predates arm64', (_name, program, names) => {
+    const releases = [
+      published('v0.45.0', [names.asset('0.45.0', names.x64Suffix)]),
+      published('v0.44.0', [names.asset('0.44.0', names.x64Suffix)]),
+    ];
+    expect(olderWithArch(program, 'v0.46.0', names.arm64Suffix, releases)).toBe('0');
+  });
+
+  it.each(cases)('the %s gate still skips a re-run of that first arm64 release after it shipped', (_name, program, names) => {
+    // Counted over releases OLDER than the build: the published first arm64 release carries arm64
+    // itself, and counting it would turn its own re-run red against a baseline that never had it.
+    const releases = [
+      published('v0.46.0', [names.asset('0.46.0', names.x64Suffix), names.asset('0.46.0', names.arm64Suffix)]),
+      published('v0.45.0', [names.asset('0.45.0', names.x64Suffix)]),
+    ];
+    expect(olderWithArch(program, 'v0.46.0', names.arm64Suffix, releases)).toBe('0');
+  });
+
+  it.each(cases)('the %s gate does NOT skip once arm64 has shipped, even past a baseline missing it', (_name, program, names) => {
+    // v0.47.0 was published without its arm64 package. The baseline for v0.48.0 is v0.47.0, its
+    // download fails, and the step goes red, which is the point: the skip cannot reach this.
+    const releases = [
+      published('v0.47.0', [names.asset('0.47.0', names.x64Suffix)]),
+      published('v0.46.0', [names.asset('0.46.0', names.x64Suffix), names.asset('0.46.0', names.arm64Suffix)]),
+    ];
+    expect(olderWithArch(program, 'v0.48.0', names.arm64Suffix, releases)).toBe('1');
+  });
+
+  it.each(cases)('the %s gate never skips on x64, whose every release carries the arch', (_name, program, names) => {
+    const releases = [
+      published('v0.45.0', [names.asset('0.45.0', names.x64Suffix)]),
+      published('v0.44.0', [names.asset('0.44.0', names.x64Suffix)]),
+    ];
+    expect(olderWithArch(program, 'v0.46.0', names.x64Suffix, releases)).toBe('2');
+  });
+
+  it.each(cases)('the %s gate counts no draft or prerelease as having shipped the arch', (_name, program, names) => {
+    const releases = [
+      { ...published('v0.46.0', [names.asset('0.46.0', names.arm64Suffix)]), draft: true },
+      { ...published('v0.45.1', [names.asset('0.45.1', names.arm64Suffix)]), prerelease: true },
+      published('v0.45.0', [names.asset('0.45.0', names.x64Suffix)]),
+    ];
+    expect(olderWithArch(program, 'v0.47.0', names.arm64Suffix, releases)).toBe('0');
+  });
+
+  it.each(cases)('the %s gate tells the arches apart by suffix, not by a substring', (_name, program, names) => {
+    // An x64 package must not count as arm64 history, nor the reverse.
+    const releases = [published('v0.45.0', [names.asset('0.45.0', names.x64Suffix)])];
+    expect(olderWithArch(program, 'v0.46.0', names.arm64Suffix, releases)).toBe('0');
+  });
+
+  // The x64 case above cannot catch endswith decaying to contains or test: neither arch suffix is a
+  // substring of the other. A sidecar of an arm64 package (a signature, a blockmap) CONTAINS the
+  // suffix without ENDING with it, and must not count as a release that shipped the arch.
+  it.each(cases)('the %s gate does not count a file that only contains the arm64 suffix', (_name, program, names) => {
+    const releases = [
+      published('v0.45.0', [
+        names.asset('0.45.0', names.x64Suffix),
+        `${names.asset('0.45.0', names.arm64Suffix)}.sig`,
+        `${names.asset('0.45.0', names.arm64Suffix)}.blockmap`,
+      ]),
+    ];
+    expect(olderWithArch(program, 'v0.46.0', names.arm64Suffix, releases)).toBe('0');
+  });
+});
+
 describe.runIf(!HAS_JQ)('release.yml upgrade baseline program, executed (skipped)', () => {
   it('skipped - jq is not on PATH; CI runs this on ubuntu-latest where it is preinstalled', () => {
     expect(HAS_JQ).toBe(false);
@@ -631,6 +841,64 @@ describe.runIf(!HAS_JQ)('release.yml upgrade baseline program, executed (skipped
 describe.runIf(RUNNING_ON_CI)('release.yml upgrade baseline program, executed (CI invariant)', () => {
   it('finds jq on PATH, so CI never skips the executed block', () => {
     expect(HAS_JQ).toBe(true);
+  });
+});
+
+// package-smoke.yml packages the app on the runners the release legs use, so a packaged build is
+// launched before a tag exists. A runner the release gains and this workflow lacks is a platform
+// whose first packaged launch happens after the tag, which is the gap the workflow was added to
+// close. Its path filter has the mirror hazard: build/afterPack.js reads
+// src/shared/embedding-runtime-gaps.json to decide whether a missing embed runtime is a known gap
+// or a packaging fault, so an edit to that file changes the packaged result and must trigger the
+// smoke run.
+//
+// Both reads go through a function that throws on a miss, and the runner lists are also pinned to
+// a literal five entries. Two regexes that broke the same way would both return [] and an equality
+// between them would pass with nothing checked.
+const SMOKE_WORKFLOW_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'package-smoke.yml');
+const smokeWorkflowSource = fs.readFileSync(SMOKE_WORKFLOW_PATH, 'utf8');
+
+const RELEASE_RUNNERS = ['ubuntu-latest', 'ubuntu-24.04-arm', 'windows-latest', 'macos-latest', 'macos-26-intel'];
+
+/** The `os:` of each matrix leg in a job body. Legs open with `- os: <runner>` at ten spaces. */
+function matrixRunners(workflowName: string, jobBody: string): string[] {
+  const runners = [...jobBody.matchAll(/^ {10}- os: (\S+)$/gm)].map((match) => match[1]);
+  if (runners.length === 0) {
+    throw new Error(`${workflowName} has no matrix legs at the indentation this test reads (was the matrix reshaped?)`);
+  }
+  return runners;
+}
+
+/** The `pull_request` path filter, entry by entry. */
+function smokePathFilter(source: string): string[] {
+  const lines = source.split(/\r?\n/);
+  const start = lines.findIndex((line) => line === '    paths:');
+  if (start === -1) {
+    throw new Error('package-smoke.yml has no pull_request `paths:` filter at four spaces (was it moved?)');
+  }
+  const entries: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const entry = line.match(/^ {6}- '(.+)'$/);
+    if (!entry) break;
+    entries.push(entry[1]);
+  }
+  return entries;
+}
+
+describe('package-smoke.yml mirrors the release workflow', () => {
+  const smokeBody = parseJobs(smokeWorkflowSource).find((job) => job.name === 'smoke')?.body ?? '';
+  const releaseBody = jobs.find((job) => job.name === 'release')?.body ?? '';
+
+  it('packages on exactly the runners the release legs build on', () => {
+    const smokeRunners = matrixRunners('package-smoke.yml', smokeBody);
+    const releaseRunners = matrixRunners('release.yml', releaseBody);
+    expect([...smokeRunners].sort()).toEqual([...releaseRunners].sort());
+    // The literal list keeps the equality above from passing on two lists that shrank together.
+    expect([...smokeRunners].sort()).toEqual([...RELEASE_RUNNERS].sort());
+  });
+
+  it('re-runs when the embedding runtime gap list changes', () => {
+    expect(smokePathFilter(smokeWorkflowSource)).toContain('src/shared/embedding-runtime-gaps.json');
   });
 });
 

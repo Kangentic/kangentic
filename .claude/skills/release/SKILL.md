@@ -122,7 +122,7 @@ PREVIOUS version. That is why Step 2 reads all three files back.
 
    A leftover DRAFT is the surface CI will not catch. `create-draft-release` treats an existing
    draft for the tag as a resumable one, logs "A draft release already exists for $tag; reusing
-   it", and exits 0, so all three platform builds then upload into whatever a cancelled run left
+   it", and exits 0, so all five platform builds then upload into whatever a cancelled run left
    behind. It fast-fails only on a release that is already PUBLISHED and incomplete, which is the
    state Step 7 describes. So this check, not the workflow, is what stands between a stale draft
    and a published release built on top of it.
@@ -379,7 +379,7 @@ Summarize the release:
 - Commits included: N
 - Changelog entry: show the generated entry
 - **Release notes:** Read `RELEASE_NOTES.md` and display the contents. Tell the user: "These release notes will be applied to the draft GitHub Release automatically by CI."
-- GitHub Actions: link to `https://github.com/Kangentic/kangentic/actions`. The tag push triggers the Release workflow, which creates ONE draft Release, builds all three platforms into it, verifies the asset manifest, and then publishes it automatically.
+- GitHub Actions: link to `https://github.com/Kangentic/kangentic/actions`. The tag push triggers the Release workflow, which creates ONE draft Release, builds all five targets into it (Windows x64, macOS arm64 and x64, Linux x64 and arm64), rebuilds the macOS update feed for both arches, verifies the asset manifest, and then publishes it automatically.
 
 **Watch the run before opening anything.** Get the run id with `gh run list --repo
 Kangentic/kangentic --workflow=release.yml --limit 1`, then wait on it with `gh run watch <runId>
@@ -391,7 +391,7 @@ already published).
 releases page in the user's browser with `start
 https://github.com/Kangentic/kangentic/releases`:
 
-- `gh api repos/Kangentic/kangentic/releases/tags/vX.Y.Z --jq '{draft, asset_count: (.assets | length)}'` must report `draft: false` and 12 assets: the 11 build assets `scripts/release-assets.js` lists, plus `demo-posters-X.Y.Z.zip` from the `demo-posters` job, which runs after the release is published. 11 after a green `gh run watch` means that job did not attach the poster set; read its log.
+- `gh api repos/Kangentic/kangentic/releases/tags/vX.Y.Z --jq '{draft, asset_count: (.assets | length)}'` must report `draft: false` and 19 assets: the 18 build assets `scripts/release-assets.js` lists, plus `demo-posters-X.Y.Z.zip` from the `demo-posters` job, which runs after the release is published. 18 after a green `gh run watch` means that job did not attach the poster set; read its log.
 - `npm view kangentic version` must report the new version.
 
 Opening the releases page while the builds are still running is what caused the v0.39.0 failure
@@ -400,13 +400,16 @@ front of a human for the ten minutes when clicking it does the most damage.
 
 **Never publish the draft by hand.** Publishing is automatic once
 `scripts/verify-release-assets.js` confirms the tag resolves to exactly one release carrying all
-11 expected build assets. So a release still sitting as a draft after the workflow finishes means that
+18 expected build assets, with a `latest-mac.yml` that lists both macOS zips. So a release still sitting as a draft after the workflow finishes means that
 gate FAILED, and the draft is presumed incomplete. Clicking Publish in the GitHub UI bypasses the
 only check that stands between a partial release and every user's auto-updater, which is exactly
 how v0.35.0 shipped macOS-less. Read the `publish-release` job log, fix the cause, and re-run the
-workflow instead. The same job's first step, `scripts/patch-mac-update-info.js`, also leaves the
-release a draft when it cannot write `minimumSystemVersion` into `latest-mac.yml`; publishing past
-it would auto-update Macs below the macOS floor into a build that will not open.
+workflow instead. The same job's first steps also leave the release a draft when they fail.
+`scripts/merge-mac-update-feeds.js` rebuilds the one `latest-mac.yml` both arches update from,
+hashing both arches' zip and dmg on the release; publishing past it leaves one arch's Macs with no
+update, or moves Apple silicon onto the Intel build. `scripts/patch-mac-update-info.js` writes `minimumSystemVersion` into
+that feed; publishing past it would auto-update Macs below the macOS floor into a build that will
+not open.
 
 Publishing it EARLY, while the builds are still running, is the worse half and is how v0.39.0
 first shipped empty. electron-builder uploads only into a draft: handed a published release it

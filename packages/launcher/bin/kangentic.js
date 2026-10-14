@@ -39,18 +39,54 @@ function isUnsupportedMacOS(platform, osRelease) {
   return Number.isFinite(darwinMajor) && darwinMajor < MINIMUM_DARWIN_MAJOR;
 }
 
+// The Linux arches a release ships, under electron-builder's per-format names
+// (amd64 / x86_64 for x64, arm64 / aarch64 for arm64), which is how the deb and
+// rpm files are named. scripts/release-assets.js lists the same pairs, and
+// tests/unit/release-asset-manifest.test.ts pins the two together.
+const LINUX_PACKAGE_ARCHES = {
+  x64: { deb: 'amd64', rpm: 'x86_64' },
+  arm64: { deb: 'arm64', rpm: 'aarch64' },
+};
+
+// The macOS arches a release ships, one zip each.
+const MAC_ARCHES = ['arm64', 'x64'];
+
+/**
+ * Whether this process is an x64 binary translated by Rosetta on Apple
+ * silicon. An x64 Node reports process.arch 'x64' there, and installing the
+ * Intel build would run the whole app under translation. The sysctl key is
+ * 1 under Rosetta, 0 for a native process, and absent on Intel Macs, so any
+ * failure reads as "not translated". Called by its absolute path, where macOS
+ * always ships it, so a PATH without /usr/sbin cannot turn the probe off.
+ */
+function isTranslatedByRosetta() {
+  try {
+    const output = execFileSync('/usr/sbin/sysctl', ['-n', 'sysctl.proc_translated'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return String(output).trim() === '1';
+  } catch {
+    return false;
+  }
+}
+
 function getPlatformInfo() {
   const platform = process.platform;
   const arch = process.arch;
 
   if (platform === 'win32') {
+    // x64 only. Windows on ARM runs it under emulation.
     return { platform: 'win32', arch: 'x64', extension: 'exe' };
   }
   if (platform === 'darwin') {
-    return { platform: 'darwin', arch, extension: 'zip' };
+    const macArch = arch === 'x64' && isTranslatedByRosetta() ? 'arm64' : arch;
+    if (!MAC_ARCHES.includes(macArch)) return null;
+    return { platform: 'darwin', arch: macArch, extension: 'zip' };
   }
   if (platform === 'linux') {
-    return { platform: 'linux', arch: 'x64' };
+    if (!Object.prototype.hasOwnProperty.call(LINUX_PACKAGE_ARCHES, arch)) return null;
+    return { platform: 'linux', arch };
   }
 
   return null;
@@ -102,10 +138,12 @@ function getArtifactFilename(platformInfo) {
     return `Kangentic-${version}-${platformInfo.arch}-mac.zip`;
   }
   if (platformInfo.platform === 'linux') {
+    if (!Object.prototype.hasOwnProperty.call(LINUX_PACKAGE_ARCHES, platformInfo.arch)) return null;
+    const packageArches = LINUX_PACKAGE_ARCHES[platformInfo.arch];
     if (commandExists('rpm') && !commandExists('apt')) {
-      return `kangentic-${version}-1.x86_64.rpm`;
+      return `kangentic-${version}-1.${packageArches.rpm}.rpm`;
     }
-    return `kangentic_${version}_amd64.deb`;
+    return `kangentic_${version}_${packageArches.deb}.deb`;
   }
   return null;
 }
@@ -456,7 +494,8 @@ async function main() {
   const platformInfo = getPlatformInfo();
   if (!platformInfo) {
     console.error(`Unsupported platform: ${process.platform} ${process.arch}`);
-    console.error(`Download manually from: https://github.com/${REPO_OWNER}/${REPO_NAME}/releases`);
+    console.error('Kangentic ships for Windows x64, macOS on Apple silicon or Intel, and Linux x64 or arm64.');
+    console.error(`Releases: https://github.com/${REPO_OWNER}/${REPO_NAME}/releases`);
     process.exit(1);
   }
 
@@ -552,6 +591,8 @@ module.exports = {
   getTempDir,
   getPlatformInfo,
   getArtifactFilename,
+  LINUX_PACKAGE_ARCHES,
+  MAC_ARCHES,
   installLinux,
   isAppRunning,
   shouldAdviseReopen,

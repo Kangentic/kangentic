@@ -33,10 +33,16 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 | Platform | File | Notes |
 |----------|------|-------|
-| Windows | `Kangentic-Setup-X.Y.Z.exe` | NSIS installer. Auto-updates. |
+| Windows (x64) | `Kangentic-Setup-X.Y.Z.exe` | NSIS installer. Auto-updates. Runs on Windows on ARM under emulation. |
 | macOS (Apple Silicon) | `Kangentic-X.Y.Z-arm64.dmg` | Drag to Applications. See [Gatekeeper note](#macos-gatekeeper). |
-| Linux (Debian/Ubuntu) | `kangentic_X.Y.Z_amd64.deb` | `sudo apt install ./kangentic_*.deb` |
-| Linux (Fedora/RHEL/openSUSE) | `kangentic-X.Y.Z-1.x86_64.rpm` | `sudo dnf install kangentic-*.rpm` |
+| macOS (Intel) | `Kangentic-X.Y.Z-x64.dmg` | Drag to Applications. The Knowledge Graph is unavailable on Intel Macs, see [below](#intel-macs). |
+| Linux x64 (Debian/Ubuntu) | `kangentic_X.Y.Z_amd64.deb` | `sudo apt install ./kangentic_*.deb` |
+| Linux x64 (Fedora/RHEL/openSUSE) | `kangentic-X.Y.Z-1.x86_64.rpm` | `sudo dnf install kangentic-*.rpm` |
+| Linux arm64 (Debian/Ubuntu) | `kangentic_X.Y.Z_arm64.deb` | `sudo apt install ./kangentic_*.deb` |
+| Linux arm64 (Fedora/RHEL/openSUSE) | `kangentic-X.Y.Z-1.aarch64.rpm` | `sudo dnf install kangentic-*.rpm` |
+
+`npx kangentic` picks the right file itself. On a Mac it installs the Apple Silicon build even
+when an Intel build of Node runs it under Rosetta.
 
 ### Windows
 
@@ -47,9 +53,16 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 ### macOS
 
-1. Download the `.dmg` file.
+1. Download the `.dmg` for your Mac: `arm64` for Apple Silicon, `x64` for Intel.
 2. Open it and drag Kangentic to your Applications folder.
 3. Releases are signed and notarized, so macOS opens them normally. If Gatekeeper blocks the app anyway, see [Gatekeeper bypass](#macos-gatekeeper) below.
+
+#### Intel Macs
+
+Everything works on an Intel Mac except the Knowledge Graph. Its local model runs on
+onnxruntime, which ships no Intel macOS build, so Settings > Knowledge Graph shows the feature as
+unavailable and the app never downloads the model. The index and Quick Find still search your
+conversations, tasks and commits by keyword.
 
 #### macOS Gatekeeper
 
@@ -65,13 +78,13 @@ A build you made yourself is not notarized, and macOS blocks it on first launch:
 Install with your package manager:
 
 ```bash
-# Debian/Ubuntu
+# Debian/Ubuntu (on arm64: kangentic_X.Y.Z_arm64.deb)
 sudo apt install ./kangentic_X.Y.Z_amd64.deb
 
-# Fedora/RHEL
+# Fedora/RHEL (on arm64: kangentic-X.Y.Z-1.aarch64.rpm)
 sudo dnf install kangentic-X.Y.Z-1.x86_64.rpm
 
-# openSUSE
+# openSUSE (on arm64: kangentic-X.Y.Z-1.aarch64.rpm)
 sudo zypper install kangentic-X.Y.Z-1.x86_64.rpm
 ```
 
@@ -117,10 +130,6 @@ codex --version
 ```
 
 If the CLI is installed somewhere PATH does not reach, set its location in **Settings > Agent > CLI path**.
-
-### Linux arm64
-
-Pre-built arm64 Linux binaries are not available in v1. arm64 Linux users should [build from source](#from-source).
 
 ### Windows SmartScreen warning
 

@@ -1,0 +1,15 @@
+version: 0.43.2
+files:
+  - url: Kangentic-0.43.2-x64-mac.zip
+    sha512: 9xQp2Vb0yS6mXk1Lr4Hn8Tz3Wc7Jf5Ud0Ge2Ri6Oa9Kw1Ys4Bt8Mv3Nl7Pq0Zh5Cx2Fe6Dj9Gu1Ik4Al8Sm3Ob7Wr==
+    size: 214410332
+  - url: Kangentic-0.43.2-x64.dmg
+    sha512: 3Lk8Rf1Vt6Yw0Qe5Ub9Ip2Oa7Sd4Hg8Jz1Xc6Nm3Bv0Ka5Lt9Ry2Ew7Qu4Io1Pa6Sd3Fg8Hj0Kz5Xc2Vb9Nm4Mq7Wt==
+    size: 213902114
+path: Kangentic-0.43.2-x64-mac.zip
+sha512: 9xQp2Vb0yS6mXk1Lr4Hn8Tz3Wc7Jf5Ud0Ge2Ri6Oa9Kw1Ys4Bt8Mv3Nl7Pq0Zh5Cx2Fe6Dj9Gu1Ik4Al8Sm3Ob7Wr==
+releaseNotes: |
+  ## Bug Fixes
+
+  - Error reports sent to Sentry no longer carry breadcrumbs holding your file paths, agent command lines, task titles, column prompts, or branch names. Both the main process and the renderer now drop or redact each breadcrumb before it leaves the app.
+releaseDate: '2026-09-24T22:41:07.913Z'

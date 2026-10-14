@@ -1,6 +1,7 @@
 /**
  * The Knowledge Graph with no map to draw: the first build, a project with
- * nothing indexed, or the Knowledge Graph switched off.
+ * nothing indexed, the Knowledge Graph switched off, or a build its local model
+ * cannot run in (Intel Macs).
  *
  * One card in the middle says what is happening, in the Settings card's
  * language. While the first map builds it is the one place the index shows:
@@ -24,10 +25,12 @@ import type { KnowledgeGraphBuildProgress, KnowledgeGraphIndexSummary } from '..
 import { CARD_CLASS, GroupLabel, OpenSettingsButton, SectionHeader } from './panel-card';
 import { buildProgressRow } from './index-panel-lines';
 import { useIndexSourceLines } from './use-index-source-lines';
+import { KNOWLEDGE_GRAPH_UNAVAILABLE_TAG, knowledgeGraphUnsupportedLine } from '../../lib/knowledge-graph-support';
 
 export interface KnowledgeGraphNoMapProps {
-  /** `off`: the Knowledge Graph is switched off. `pending`: on, and no map yet. */
-  mode: 'off' | 'pending';
+  /** `off`: the Knowledge Graph is switched off. `pending`: on, and no map yet.
+   *  `unsupported`: its local model cannot load in this build (Intel Macs). */
+  mode: 'off' | 'pending' | 'unsupported';
   /** A first build is running; without it a pending map has nothing indexed to draw. */
   building: boolean;
   /** How far the first build has got; null before its first figure. */
@@ -85,7 +88,20 @@ export function KnowledgeGraphNoMap({ mode, building, buildProgress, index, proj
               : 'mx-auto max-w-[calc(100%_-_32px)]'} w-[460px] flex-shrink-0 rounded-lg bg-surface-raised/80`}
             data-testid="knowledge-graph-no-map"
           >
-            {mode === 'off' ? (
+            {mode === 'unsupported' ? (
+              // Nothing to turn on, so no way to Settings either.
+              <SettingsCard
+                icon={<Brain size={16} />}
+                label={knowledgeGraphLabel}
+                description="Places conversations by meaning, with a local model."
+                tag={KNOWLEDGE_GRAPH_UNAVAILABLE_TAG}
+                testId="knowledge-graph-unsupported-card"
+              >
+                <CardTile testId="knowledge-graph-unsupported-why">
+                  <p className="text-xs text-fg-secondary">{knowledgeGraphUnsupportedLine()}</p>
+                </CardTile>
+              </SettingsCard>
+            ) : mode === 'off' ? (
               <SettingsCard
                 icon={<Brain size={16} />}
                 label={knowledgeGraphLabel}

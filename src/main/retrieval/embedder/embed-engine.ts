@@ -40,6 +40,7 @@ import { CONVERSATION_CORPUS } from '../corpora';
 import { EmbedClient } from './embed-client';
 import { EMBED_DRAIN_BATCH, EMBED_DUTY_CYCLE, resolveEmbeddingModel, type EmbeddingModelDef } from './embedding-config';
 import { isEmbeddingModelPresent } from './embedding-model';
+import { isLocalEmbeddingSupported } from './embedding-runtime-support';
 import { retrievalClient, RetrievalUnavailableError } from '../retrieval-client';
 import type { EmbedStoreAccess } from './embed-store-access';
 import type { IpcContext } from '../../ipc/ipc-context';
@@ -146,8 +147,11 @@ const defaultDeps: EmbedEngineDeps = {
 
 /** Config/model accessors the engine needs from an IpcContext. Kept as free
  *  functions (mirroring retrieval-service.ts) rather than methods so the
- *  engine has no dependency on the service module. */
+ *  engine has no dependency on the service module. On a platform the model
+ *  cannot load on (Intel macOS), semantic search is off whatever the config
+ *  says, so no client is ever built there. */
 function isSemanticEnabled(context: IpcContext): boolean {
+  if (!isLocalEmbeddingSupported()) return false;
   try {
     return context.configManager.load().knowledgeGraph?.enabled === true;
   } catch {

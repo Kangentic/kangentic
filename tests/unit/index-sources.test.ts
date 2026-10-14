@@ -43,14 +43,24 @@ describe('the time left', () => {
 
 describe('what the summaries and code lines wait for', () => {
   /** Everything in place: the Knowledge Graph on, an agent installed and chosen, nothing missing. */
-  const READY: SourceRequirementInput = { semanticEnabled: true, answerCapableAgents: 2, agentSetup: null, agentChosen: true };
+  const READY: SourceRequirementInput = { knowledgeGraphSupported: true, semanticEnabled: true, answerCapableAgents: 2, agentSetup: null, agentChosen: true };
 
   it('is nothing for either line once the Knowledge Graph, an agent and a model are all in place', () => {
     expect(sourceRequirements(READY)).toEqual({ summaries: undefined, code: undefined });
   });
 
+  // On an Intel Mac the local model cannot load, so "Needs the Knowledge Graph" would name a
+  // prerequisite no click can meet. Both lines read the Knowledge Graph card's own tag instead,
+  // whatever else is or is not set up.
+  it('reads Unavailable on both lines where the local model cannot run, over every other state', () => {
+    expect(sourceRequirements({ ...READY, knowledgeGraphSupported: false }))
+      .toEqual({ summaries: 'Unavailable', code: 'Unavailable' });
+    expect(sourceRequirements({ knowledgeGraphSupported: false, semanticEnabled: false, answerCapableAgents: 0, agentSetup: 'agent', agentChosen: false }))
+      .toEqual({ summaries: 'Unavailable', code: 'Unavailable' });
+  });
+
   it('puts the Knowledge Graph first, over every other gap', () => {
-    const everythingElseMissing: SourceRequirementInput = { semanticEnabled: false, answerCapableAgents: 0, agentSetup: 'agent', agentChosen: false };
+    const everythingElseMissing: SourceRequirementInput = { knowledgeGraphSupported: true, semanticEnabled: false, answerCapableAgents: 0, agentSetup: 'agent', agentChosen: false };
     expect(sourceRequirements(everythingElseMissing)).toEqual({ summaries: 'Needs the Knowledge Graph', code: 'Needs the Knowledge Graph' });
     expect(sourceRequirements({ ...READY, semanticEnabled: false }))
       .toEqual({ summaries: 'Needs the Knowledge Graph', code: 'Needs the Knowledge Graph' });
@@ -59,7 +69,7 @@ describe('what the summaries and code lines wait for', () => {
   it('puts a supported agent second, over the choice of agent and model', () => {
     expect(sourceRequirements({ ...READY, answerCapableAgents: 0 }))
       .toEqual({ summaries: 'Needs a supported agent', code: 'Needs a supported agent' });
-    expect(sourceRequirements({ semanticEnabled: true, answerCapableAgents: 0, agentSetup: 'model', agentChosen: false }))
+    expect(sourceRequirements({ knowledgeGraphSupported: true, semanticEnabled: true, answerCapableAgents: 0, agentSetup: 'model', agentChosen: false }))
       .toEqual({ summaries: 'Needs a supported agent', code: 'Needs a supported agent' });
   });
 
