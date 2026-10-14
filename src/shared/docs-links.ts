@@ -25,4 +25,5 @@ export const DOCS_URLS = {
   relay: `${DOCS_BASE_URL}/relay/`,
   mcpServer: `${DOCS_BASE_URL}/mcp-server/`,
   workflows: `${DOCS_BASE_URL}/features/workflows/`,
+  columnsAndAutomations: `${DOCS_BASE_URL}/features/columns-and-automations/`,
 } as const;
