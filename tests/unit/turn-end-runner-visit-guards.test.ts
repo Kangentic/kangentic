@@ -13,6 +13,8 @@
  * - **A "not set up" skip is written once per visit.** A column whose Condition
  *   cannot be checked (no Automation agent chosen) would otherwise write the same
  *   skipped row at every turn end of a long chat and bury the log.
+ * - **A turn that never settles.** When the wait for idle and a quiet terminal
+ *   runs out, no row runs and nothing is recorded, so the pass warns once.
  *
  * Driven through `registerTurnEndAutomations` and the session manager's
  * 'turn-ended' event, the way the app drives it. The run log and the visit
@@ -499,6 +501,49 @@ describe('a turn end and the rows it may run', () => {
       expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
       // The same object the engine returned, as the third argument.
       expect(hoisted.checkConditions.mock.calls[0][2]).toBe(checkCall);
+    });
+  });
+
+  // A turn whose session never settles (idle with a quiet terminal) before the
+  // wait runs out runs no row and writes no run record, so the warning is the
+  // only trace that the turn end arrived at all.
+  describe('a turn that never settles', () => {
+    beforeEach(() => {
+      hoisted.rows = [row({ condition: 'The review is clean' })];
+      enterColumnAt(secondsAgo(60));
+    });
+
+    const turnEndWarnings = (warnSpy: { mock: { calls: unknown[][] } }): string[] => warnSpy.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.startsWith('[turn-end]'));
+
+    it('runs nothing and warns once, naming the task, the column and the activity', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+      const lines = turnEndWarnings(warnSpy);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(`task ${taskId.slice(0, 8)}'s turn to settle in Code Review`);
+      // Idle at the give-up: the terminal never went quiet, not the session never idle.
+      expect(lines[0]).toContain('activity idle');
+      expect(lines[0]).toContain('no turn-end automation ran');
+      warnSpy.mockRestore();
+    });
+
+    it('does not warn when a move superseded the wait (the control)', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      hoisted.waitForTurnCompletion.mockImplementation(async () => 'aborted');
+
+      await endTurn();
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(turnEndWarnings(warnSpy)).toEqual([]);
+      warnSpy.mockRestore();
     });
   });
 
