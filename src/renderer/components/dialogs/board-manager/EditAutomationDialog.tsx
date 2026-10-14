@@ -416,7 +416,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               className={`flex min-w-0 flex-1 items-center gap-1.5 ${frequencyOn ? '' : 'opacity-50'}`}
             >
               <span className={SETTING_LABEL_CLASS}>Maximum runs</span>
-              <InfoTip label="Maximum runs" text="Counted for each task, across every visit. A run its Condition skipped does not count." />
+              <InfoTip label="Maximum runs" text="Counted per task, starting over when the task leaves Done. A run its Condition skipped does not count." />
             </span>
             <NumberStepper
               testId="edit-automation-max-runs"

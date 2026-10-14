@@ -27,9 +27,9 @@ import { isAutomationTrigger } from '../../../shared/automation-manifest';
  *
  * It is also what the turn-end run rule counts: a row has "run this visit" when
  * a run that was not a skip exists for it after the task entered the column,
- * and its Frequency counts those runs across every visit. A skipped run (a
- * Condition that answered no, an agent that was not running) is never counted,
- * so it is checked again at the next turn end.
+ * and its Frequency counts those runs across every visit since the task last
+ * left Done. A skipped run (a Condition that answered no, an agent that was
+ * not running) is never counted, so it is checked again at the next turn end.
  */
 
 interface AutomationRunRow {
@@ -261,11 +261,27 @@ export class AutomationRunRepository {
     return row !== undefined;
   }
 
-  /** How many times this automation has run on this task, across every visit. */
+  /**
+   * How many times this automation has run on this task, across every visit
+   * since the task last left Done. A task taken back out of Done (a drag, or a
+   * restore from the Completed list) goes through the board again as if for the
+   * first time, so its earlier runs no longer spend the limit. A rollback is not
+   * a return: it undoes a move into Done that failed, and the task never finished.
+   * A Done column's own exit rows run after the move out of Done is written, so
+   * every return starts their count at zero and their Frequency never stops them.
+   */
   countRuns(automationId: string, taskId: string): number {
     const row = this.db
-      .prepare(`SELECT COUNT(*) AS runs FROM automation_runs WHERE automation_id = ? AND task_id = ? AND ${EXECUTED_STATUSES_SQL}`)
-      .get(automationId, taskId) as { runs: number } | undefined;
+      .prepare(`
+        SELECT COUNT(*) AS runs FROM automation_runs
+        WHERE automation_id = ? AND task_id = ? AND ${EXECUTED_STATUSES_SQL}
+          AND started_at >= COALESCE((
+            SELECT MAX(moves.at) FROM task_moves moves
+            JOIN swimlanes lane ON lane.id = moves.from_swimlane_id
+            WHERE moves.task_id = ? AND lane.role = 'done' AND moves.origin != 'rollback'
+          ), '')
+      `)
+      .get(automationId, taskId, taskId) as { runs: number } | undefined;
     return row?.runs ?? 0;
   }
 

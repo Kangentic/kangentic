@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { canColumnRun } from '../../../shared/automation-manifest';
 import type { ColumnAutomation, Swimlane, Task } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
@@ -43,7 +44,8 @@ import { trackTurnEndGroup } from './turn-end-passes';
  * - **Rows run top to bottom, each at most once per visit, and only a row that
  *   executes counts.** A Condition that answers no has not run, so the next
  *   turn end checks it again. A Move to column row that runs ends the group:
- *   the task has left.
+ *   the task has left. A row whose Frequency is spent (counted since the task
+ *   last left Done) is skipped with its limit, recorded once per visit.
  * - **Outside the task lock.** A row can take minutes, and a Move to column
  *   row's own move takes that lock (`withTaskLock` is not reentrant). A move
  *   made meanwhile supersedes the group instead (`supersedeTurnEndWork`).
@@ -57,7 +59,9 @@ import { trackTurnEndGroup } from './turn-end-passes';
  *   (`isLatestTurn`). Being idle is not enough: a turn the user started
  *   meanwhile can fail (`turn_failed`) or be interrupted back to idle with no
  *   turn end of its own, and acting then would act on the old turn's reply.
- *   A newer turn abandons the pass and writes nothing.
+ *   A newer turn abandons the pass and writes nothing more. A spent
+ *   Frequency's skip is written before the wait: it is about the row, not the
+ *   turn.
  * - **Cheap when there is nothing to do.** Every hook agent's every turn ends
  *   here; a column with no turn-end rows costs one indexed query.
  * - **A resume catches up the workflow step, never the rows.** A session that
@@ -183,13 +187,23 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
 
   const facts = { autoSpawn: column.auto_spawn, role: column.role };
   const runs = repos.automationRuns;
-  // The rows still pending this visit. A row that already ran, has spent its
-  // Frequency, or that the column cannot run is left out without a record: a
-  // record at every turn end of a long chat would bury the ones that matter.
-  const pending = rows.filter((row) => automationRegistry.get(row.type) !== undefined
-    && canColumnRun(row.type, facts, 'turn_end').ok
-    && !runs.hasRunSince(row.id, task.id, visitStartedAt)
-    && frequencyLimitReason(row, runs, task.id) === null);
+  // The rows still pending this visit. A row that already ran, or that the
+  // column cannot run, is left out without a record: a record at every turn end
+  // of a long chat would bury the ones that matter. A row that has spent its
+  // Frequency is left out too, but says so once per visit, or a gate that
+  // stopped moving the task looks like a failure with no reason.
+  const pending: ColumnAutomation[] = [];
+  for (const row of rows) {
+    if (automationRegistry.get(row.type) === undefined
+      || !canColumnRun(row.type, facts, 'turn_end').ok
+      || runs.hasRunSince(row.id, task.id, visitStartedAt)) continue;
+    const spent = frequencyLimitReason(row, runs, task.id);
+    if (spent === null) {
+      pending.push(row);
+    } else if (!runs.hasSkipSince(row.id, task.id, visitStartedAt, spent)) {
+      runs.recordSkipped({ id: randomUUID(), automation: row, taskId: task.id }, spent);
+    }
+  }
   if (pending.length === 0 && !stepApplies) return;
 
   const controller = new AbortController();

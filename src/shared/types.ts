@@ -1026,7 +1026,8 @@ export interface ColumnAutomation {
   condition: string | null;
   /**
    * The most times this row may run on one task, counted across every visit
-   * to the column (a review loop's round-trip limit). Null means no limit.
+   * to the column since the task last left Done (a review loop's round-trip
+   * limit). Null means no limit.
    */
   max_runs: number | null;
   created_at: string;
