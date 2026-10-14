@@ -71,6 +71,15 @@ const GAMMA_INSERT_AFTER_LINE = 10;
 // result (see readModifiedFirstChangeLine).
 const GAMMA_CHANGE_LINE = GAMMA_INSERT_AFTER_LINE + 1;
 
+// beta.ts appends one line to a one-line file, so its single change starts at
+// modified line 2. It is the tiny file the asymmetric test parks on between two
+// visits to gamma.ts, and its distinct line identifies beta's own diff result.
+const BETA_CHANGE_LINE = 2;
+
+// How long the diff editor must go without a diff update before
+// waitForDiffToSettle trusts that no compute is still on its way.
+const DIFF_QUIET_MS = 500;
+
 // Build a long file whose only change sits deep in the middle (line 100), with a
 // recognizable token on line 1 so we can tell whether the viewport is at the top.
 function buildFixtureScript(): string {
@@ -142,8 +151,16 @@ interface MonacoTestHandle {
       getModifiedEditor: () => ModifiedEditorHandle;
       getOriginalEditor: () => OriginalEditorHandle;
       getLineChanges: () => { modifiedStartLineNumber: number }[] | null;
+      onDidUpdateDiff: (listener: () => void) => unknown;
+      waitForDiff: () => Promise<void>;
     }[];
   };
+}
+
+/** Per-page record of the last diff update waitForDiffToSettle has seen, keyed to the editor it watches. */
+interface DiffSettleTracker {
+  editor: unknown;
+  lastActivityAt: number;
 }
 
 interface ModifiedScrollState {
@@ -183,7 +200,8 @@ async function readModifiedScrollState(target: Page): Promise<ModifiedScrollStat
  * 3000 lines while the changes still read alpha's line 100, and delta's own
  * result (line 5) landed 154 ms later. A "length > 0" poll passes inside
  * that window. Every fixture file here has exactly one change at a distinct
- * line (alpha 100, beta 2, delta 5), so the line identifies whose diff it is.
+ * line (alpha 100, beta 2, delta 5, gamma 11), so the line identifies whose
+ * diff it is.
  */
 async function readModifiedFirstChangeLine(target: Page): Promise<number> {
   return target.evaluate(() => {
@@ -192,6 +210,63 @@ async function readModifiedFirstChangeLine(target: Page): Promise<number> {
     if (diffEditors.length === 0) return -1;
     return diffEditors[0].getLineChanges()?.[0]?.modifiedStartLineNumber ?? -1;
   });
+}
+
+/**
+ * Wait until the diff editor has no diff computation left to deliver. Call it
+ * before leaving a file whose diff you waited for, and before the final
+ * page-error assertion.
+ *
+ * `readModifiedFirstChangeLine` proves ONE result for the file landed, not
+ * that the last one did. Monaco can have a second compute for the same content
+ * pending or in flight (measured: an option update or a debounced content
+ * change right after the first result, and under CI load two computes started
+ * together). Its stale-result guard is a single token that only cancels on
+ * dispose, so a result for the OLD file that lands after the models were
+ * swapped to the next file is applied against the new line counts and
+ * `UnchangedRegion.fromDiffs` throws "startLineNumber 11 cannot be after
+ * endLineNumberExclusive 2" (gamma's insertion line against beta's one line).
+ * That surfaces as an unhandled rejection, which collectPageErrors reports.
+ *
+ * Two signals, because neither is enough alone. `waitForDiff()` resolves once
+ * the editor's diff is up to date, which covers a compute that has started.
+ * It cannot see one that has not been posted yet, so the editor must also go
+ * DIFF_QUIET_MS without a diff update, longer than Monaco's 200ms content
+ * debounce plus a compute on a loaded runner. The quiet clock is a page-side
+ * `onDidUpdateDiff` listener, installed on first use and kept per editor.
+ */
+async function waitForDiffToSettle(target: Page): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        target.evaluate(async (requiredQuietMs) => {
+          const pageWindow = window as unknown as {
+            __monaco?: MonacoTestHandle;
+            __diffSettleTracker?: DiffSettleTracker;
+          };
+          const diffEditors = pageWindow.__monaco?.editor.getDiffEditors() ?? [];
+          if (diffEditors.length === 0) return false;
+          const diffEditor = diffEditors[0];
+          if (pageWindow.__diffSettleTracker?.editor !== diffEditor) {
+            const freshTracker: DiffSettleTracker = { editor: diffEditor, lastActivityAt: performance.now() };
+            diffEditor.onDidUpdateDiff(() => {
+              freshTracker.lastActivityAt = performance.now();
+            });
+            pageWindow.__diffSettleTracker = freshTracker;
+          }
+          const tracker = pageWindow.__diffSettleTracker as DiffSettleTracker;
+          // A compute that never lands must not hang the poll: give up on this
+          // read after 2s and let the poll try again.
+          const upToDate = await Promise.race([
+            diffEditor.waitForDiff().then(() => true),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
+          ]);
+          if (!upToDate) return false;
+          return performance.now() - tracker.lastActivityAt >= requiredQuietMs;
+        }, DIFF_QUIET_MS),
+      { timeout: 15000, intervals: [100, 200, 400] },
+    )
+    .toBe(true);
 }
 
 /**
@@ -495,6 +570,10 @@ test.describe('Changes view: diff scroll memory', () => {
     await expect
       .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
       .toBe(DELTA_CHANGE_LINE);
+    // One delta.ts result landing does not mean none is left in flight, and one
+    // that lands after the swap to beta.ts throws against beta's one-line models
+    // (the same race the asymmetric test pins; see waitForDiffToSettle).
+    await waitForDiffToSettle(page);
 
     await scrollModifiedToBottom(page);
     await expect(page.locator('.view-line', { hasText: DELTA_TAIL_TOKEN }).first()).toBeVisible({ timeout: 10000 });
@@ -505,6 +584,12 @@ test.describe('Changes view: diff scroll memory', () => {
     // Switch away so the deep position is committed under delta.ts's key.
     await page.locator('button', { hasText: 'beta.ts' }).click();
     await expect(page.locator('.view-line', { hasText: 'const b = 2;' })).toBeVisible({ timeout: 10000 });
+    // Wait for beta's own diff before turning collapse on and swapping back, for
+    // the same reason as above: the editor reports delta's changes until it lands.
+    await expect
+      .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
+      .toBe(BETA_CHANGE_LINE);
+    await waitForDiffToSettle(page);
 
     // Turn on "Collapse unchanged" while delta.ts is NOT the open file, so the
     // next visit restores a position saved against the expanded layout onto a
@@ -524,6 +609,14 @@ test.describe('Changes view: diff scroll memory', () => {
       await expect
         .poll(async () => page.locator('.diff-hidden-lines').count(), { timeout: 10000 })
         .toBeGreaterThan(0);
+
+      // Let delta's own diff land and go quiet before the error check, so a
+      // throw from the refold's recompute is caught below instead of landing
+      // after the assertion.
+      await expect
+        .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
+        .toBe(DELTA_CHANGE_LINE);
+      await waitForDiffToSettle(page);
 
       // Restoring past the end must saturate inside the folded layout rather than
       // leaving an out-of-range offset for Monaco to resolve into a line past the
@@ -613,6 +706,12 @@ test.describe('Changes view: diff scroll memory', () => {
       await expect
         .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
         .toBe(GAMMA_CHANGE_LINE);
+      // That line proves one gamma result landed, not that the last one did. Do
+      // not leave for beta.ts until none is left in flight: a gamma result that
+      // lands after the swap throws against beta's one-line models (see
+      // waitForDiffToSettle). Page errors stay collected from the start of the
+      // test, so this narrows nothing the final assertion covers.
+      await waitForDiffToSettle(page);
 
       // Drive deep, so the position committed under gamma's key is one the
       // folded layout cannot reach and the mirrored offset is large.
@@ -627,6 +726,14 @@ test.describe('Changes view: diff scroll memory', () => {
       // deep position and forces the refold in the same diff-update turn.
       await page.locator('button', { hasText: 'beta.ts' }).click();
       await expect(page.locator('.view-line', { hasText: 'const b = 2;' })).toBeVisible({ timeout: 10000 });
+      // The visible text proves the model swapped, not that beta's diff landed:
+      // until it does, the editor still reports gamma's changes. Turning
+      // collapse on, or swapping back to gamma, inside that window is the same
+      // stale-result race in the other direction.
+      await expect
+        .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
+        .toBe(BETA_CHANGE_LINE);
+      await waitForDiffToSettle(page);
 
       await setCollapseUnchanged(page, true);
       await page.locator('button', { hasText: 'gamma.ts' }).click();
@@ -637,6 +744,14 @@ test.describe('Changes view: diff scroll memory', () => {
       await expect
         .poll(async () => page.locator('.diff-hidden-lines').count(), { timeout: 10000 })
         .toBeGreaterThan(0);
+
+      // Wait for gamma's own diff to land and go quiet before the error check,
+      // so a throw from the refold's recompute is caught here instead of
+      // landing after the assertion and being missed.
+      await expect
+        .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
+        .toBe(GAMMA_CHANGE_LINE);
+      await waitForDiffToSettle(page);
 
       // Wait for the original pane's viewport to actually resolve before
       // trusting maxVisibleLine: getVisibleRanges() can return an empty array
