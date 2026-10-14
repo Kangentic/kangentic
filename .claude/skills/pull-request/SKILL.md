@@ -426,7 +426,7 @@ line is a contract:
   fallback, prints none either. It opens no PR, so Merge would have nothing to merge.
 
 The `PR:` prefix is this column's own. Code Review ends on `Verdict: Ready`, and a separate token
-keeps each column's condition readable on its own.
+keeps each column's Text match readable on its own.
 
 ## Rules
 
