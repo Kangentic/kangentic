@@ -1,7 +1,7 @@
 {
   "name": "kangentic",
   "version": "0.45.0",
-  "description": "Install and launch Kangentic -- visual agent orchestration for Claude Code",
+  "description": "Install and launch Kangentic, an agentic development environment for AI coding agents",
   "bin": {
     "kangentic": "bin/kangentic.js"
   },
@@ -14,6 +14,10 @@
     "kanban",
     "claude",
     "claude-code",
+    "codex",
+    "gemini-cli",
+    "coding-agent",
+    "ai-agents",
     "agent",
     "electron",
     "desktop"

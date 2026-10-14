@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- **Claude Code CLI** -- installed and on your PATH. [Get Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+- **At least one agent CLI**, such as Claude Code, Codex CLI, or Gemini CLI, installed, signed in, and on your PATH. The app opens without one but needs one to run tasks. See [supported agents](../README.md#supported-agents).
+- **Node.js 20 or later** to run `npx kangentic`. The app itself does not need Node.
 - **Git 2.26+** -- required for worktree support. Run `git --version` to check.
 - **macOS 13 (Ventura) or later** on a Mac. Electron 44 does not start on macOS 12.
 
@@ -12,7 +13,7 @@
 npx kangentic
 ```
 
-This downloads the pre-built binary for your platform, installs it, and launches the app. After the first run, auto-updates handle everything on Windows, macOS, and Linux.
+This downloads the pre-built binary for your platform, installs it, and launches the app. After the first run, the app updates itself. Windows and macOS install an update when you quit, and Linux installs it when you click **Restart to update**.
 
 To open a specific project:
 
@@ -106,15 +107,16 @@ Requires:
 
 ## Troubleshooting
 
-### Claude Code CLI not found
+### Agent CLI not found
 
-Kangentic requires the Claude Code CLI (`claude`) on your PATH. Verify it's installed:
+Kangentic finds each agent CLI on your PATH and offers only the ones it finds. Check that the CLI you want answers its version command:
 
 ```bash
 claude --version
+codex --version
 ```
 
-If not installed, follow the [Claude Code setup guide](https://docs.anthropic.com/en/docs/claude-code).
+If the CLI is installed somewhere PATH does not reach, set its location in **Settings > Agent > CLI path**.
 
 ### Linux arm64
 

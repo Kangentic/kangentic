@@ -2,7 +2,7 @@
   "name": "kangentic",
   "productName": "Kangentic",
   "version": "0.45.0",
-  "description": "Cross-platform desktop Kanban for Claude Code agents",
+  "description": "An agentic development environment for AI coding agents",
   "main": ".vite/build/index.js",
   "repository": "https://github.com/Kangentic/kangentic",
   "private": true,

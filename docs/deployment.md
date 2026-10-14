@@ -10,7 +10,7 @@ This document covers the full deployment pipeline for maintainers and the update
 npx kangentic
 ```
 
-This downloads the pre-built binary for your platform, installs it, and launches the app. After the first run, auto-updates handle everything (Windows and macOS).
+This downloads the pre-built binary for your platform, installs it, and launches the app. After the first run, the app updates itself on Windows, macOS, and Linux. The table below shows what each platform asks of the user.
 
 ### Auto-Update Behavior
 

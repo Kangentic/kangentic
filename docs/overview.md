@@ -24,7 +24,7 @@ Drag a task card into an active column to spawn an agent. Drag it to Done to ter
 
 ### Backlog & Import
 
-Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, and Azure DevOps with full metadata (descriptions, labels, attachments, comments). Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [User Guide](user-guide.md#backlog) for details.
+Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, Azure DevOps, and Asana with their titles, descriptions, labels, and images. Azure DevOps and Asana also bring file attachments, and Azure DevOps brings comments. Imports are one-way, and re-importing skips items already imported. Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [User Guide](user-guide.md#backlog) for details.
 
 ### Board Filtering
 
@@ -48,7 +48,7 @@ Teams commit a `kangentic.json` file to share column layout, colors, icons, acti
 
 ### Session Persistence
 
-Claude Code sessions survive application restarts. Kangentic uses `--resume` to reconnect to existing sessions, so agents pick up exactly where they left off. No lost context, no repeated work. Sessions paused manually by the user (via the pause button) stay paused on relaunch, respecting user intent. Only system-suspended sessions auto-resume.
+Agent sessions survive application restarts. Kangentic resumes each session with its CLI's own resume flag (Claude Code's `--resume`, for example), so the agent picks up its conversation. Every agent supports this except Aider, Oz CLI, and Ollama, which start fresh. Sessions paused manually by the user (via the pause button) stay paused on relaunch. Only system-suspended sessions auto-resume.
 
 ### Git Worktrees
 
@@ -72,7 +72,7 @@ Embedded xterm.js terminals with WebGL acceleration, full scrollback, resize sup
 
 ### Activity Detection
 
-Real-time thinking and idle status indicators powered by Claude Code hooks. See at a glance which agents are actively working, which are waiting for input, and which are idle.
+Real-time thinking and idle status indicators, from each agent's hooks where it has them and from its terminal output where it does not. See at a glance which agents are actively working, which are waiting for input, and which are idle.
 
 ### Configurable Context Bar
 
@@ -89,8 +89,8 @@ Twelve built-in themes, picked from a swatch grid that shows each one in its own
 ## How It Works
 
 1. **Create a board** with columns representing your workflow stages (To Do, In Progress, Review, Done, or any custom stages).
-2. **Add task cards** describing units of work - features, bugs, refactors. Create them directly on the board, stage them in the backlog, or import them from GitHub Issues, GitHub Projects, or Azure DevOps.
-3. **Drag a card** into an active column. Kangentic spawns a Claude Code CLI session, passes it the task description as a prompt, and begins streaming terminal output.
+2. **Add task cards** describing units of work - features, bugs, refactors. Create them directly on the board, stage them in the backlog, or import them from GitHub Issues, GitHub Projects, Azure DevOps, or Asana.
+3. **Drag a card** into an active column. Kangentic spawns the column's agent CLI, passes it the task description as a prompt, and begins streaming terminal output.
 4. **Monitor progress** via the embedded terminal, activity indicators, and board-level status at a glance. Filter by priority or label to focus on what matters.
 5. **Drag the card forward** through your workflow. Each transition can trigger additional actions - commands, scripts, webhooks.
 6. **Drag to Done** to complete and terminate the session, or back to To Do to suspend it for later.
@@ -98,7 +98,7 @@ Twelve built-in themes, picked from a swatch grid that shows each one in its own
 ## What Kangentic Is Not
 
 - **Not a task tracker.** It is not Jira, Linear, or Trello. There are no sprints, story points, or grooming features. The board exists to control agents, not to manage project management metadata.
-- **Not a CI system.** It does not run pipelines, deploy artifacts, or manage environments. It orchestrates interactive Claude Code sessions on your local machine.
+- **Not a CI system.** It does not run pipelines, deploy artifacts, or manage environments. It orchestrates interactive agent CLI sessions on your local machine.
 - **Not a wrapper around a web API.** Kangentic works with agent CLIs directly. It spawns real terminal sessions with full PTY support.
 
 Kangentic is an **agent orchestration desktop app** - a visual control surface for running multiple AI coding agents in parallel.
