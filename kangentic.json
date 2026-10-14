@@ -106,7 +106,7 @@
           {
             "name": "On to Merge",
             "type": "move_to_column",
-            "condition": "The final message's last line reads \"PR: ready to merge\".",
+            "condition": "The final message has a line that reads exactly \"PR: ready to merge\", and no line that reads \"PR: blocked\".",
             "maxRuns": 1,
             "targetColumn": "Merge"
           }
