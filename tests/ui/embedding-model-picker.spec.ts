@@ -671,6 +671,53 @@ test.describe('Index card', () => {
   });
 });
 
+// onnxruntime-node ships no Intel macOS binding, so there the local model cannot load at all
+// (src/shared/embedding-runtime.ts). The mock reports an Intel Mac through __mockPlatform and
+// __mockArch. launchWithState turns the Knowledge Graph ON in config first, so these also prove
+// the card does not take the raw config value: a config carried from another machine says on.
+const INTEL_MAC_SCRIPT = "window.__mockPlatform = 'darwin'; window.__mockArch = 'x64';";
+
+test.describe('Knowledge Graph card on an Intel Mac', () => {
+  test('says the local model does not run there, with no switch and none of its rows, and leaves the Index alone', async () => {
+    const { browser, page } = await launchWithState(`${INTEL_MAC_SCRIPT}\n${makePreConfig('ready')}`);
+    try {
+      await openKnowledgeGraphTab(page);
+      const card = page.getByTestId('knowledge-graph-card');
+      await expect(card).toContainText('Unavailable');
+      await expect(page.getByTestId('knowledge-graph-unsupported')).toHaveText('The local model does not run on Intel Macs.');
+      // No switch to flip, and none of the rows the switch reveals.
+      await expect(page.getByTestId('setting-row-knowledgeGraph.enabled')).toHaveCount(0);
+      await expect(card.getByRole('switch')).toHaveCount(0);
+      await expect(page.getByTestId('embedding-model-choice')).toHaveCount(0);
+      await expect(page.getByTestId('knowledge-graph-acceleration-choice')).toHaveCount(0);
+      // The Index runs no model, so it keeps its switch.
+      await expect(page.getByTestId('index-card').getByTestId('setting-row-knowledgeGraph.indexingEnabled')).toBeVisible();
+      // The two sources found by meaning say they cannot run, never that they wait for a
+      // Knowledge Graph no click can turn on here.
+      for (const source of ['summaries', 'code']) {
+        const line = page.getByTestId(`index-source-${source}`);
+        await expect(line).toContainText('Unavailable');
+        await expect(line).not.toContainText('Needs the Knowledge Graph');
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('keeps the switch on Apple silicon, the same config otherwise', async () => {
+    // Guards the case above against passing for nothing: only the arch differs.
+    const { browser, page } = await launchWithState(`window.__mockPlatform = 'darwin'; window.__mockArch = 'arm64';\n${makePreConfig('ready')}`);
+    try {
+      await openKnowledgeGraphTab(page);
+      await expect(page.getByTestId('setting-row-knowledgeGraph.enabled')).toBeVisible();
+      await expect(page.getByTestId('knowledge-graph-unsupported')).toHaveCount(0);
+      await expect(page.getByTestId('embedding-model-choice')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
 test.describe('Local model error state', () => {
   test('shows the worker error detail when the local model is unavailable', async () => {
     const { browser, page } = await launchWithState(makeErrorPreConfig('exit 1: Cannot find module sharp'));

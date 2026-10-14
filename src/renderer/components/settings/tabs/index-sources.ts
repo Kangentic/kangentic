@@ -13,6 +13,7 @@
  * - waiting on something missing: a tag in place of the value.
  */
 
+import { KNOWLEDGE_GRAPH_UNAVAILABLE_TAG } from '../../../lib/knowledge-graph-support';
 import type { CardSourceLineProps } from '../settings-card';
 import type { AnswerSetupGap, SummaryChoice, KnowledgeGraphCodeStatus, KnowledgeGraphSummaryStatus, KnowledgeGraphSourceStatus } from '../../../../shared/types';
 
@@ -25,6 +26,9 @@ export const SUMMARIES_INFO = 'A sentence or two per Done task, written in the b
 export const CODE_INFO = 'The default branch\'s source and docs, kept current; tests, data files and files over 256 KB are skipped.';
 
 export interface SourceRequirementInput {
+  /** Whether the Knowledge Graph's local model can run in this build at all
+   *  (`knowledgeGraphSupported`: not on Intel Macs). */
+  knowledgeGraphSupported: boolean;
   semanticEnabled: boolean;
   /** Installed agents that can answer from context. */
   answerCapableAgents: number;
@@ -38,10 +42,13 @@ export interface SourceRequirementInput {
  * or undefined when nothing. Summaries are written by the agent, so they need it
  * and its model; code is read only by its answers, so it waits for the agent too.
  * The Settings card and the Knowledge Graph's Index panel both read this, so the
- * two never disagree about a tag.
+ * two never disagree about a tag. In a build the local model cannot run in, both
+ * read "Unavailable", the Knowledge Graph card's own tag, rather than naming a
+ * prerequisite that can never be met there.
  */
 export function sourceRequirements(input: SourceRequirementInput): { summaries: string | undefined; code: string | undefined } {
-  const { semanticEnabled, answerCapableAgents, agentSetup, agentChosen } = input;
+  const { knowledgeGraphSupported, semanticEnabled, answerCapableAgents, agentSetup, agentChosen } = input;
+  if (!knowledgeGraphSupported) return { summaries: KNOWLEDGE_GRAPH_UNAVAILABLE_TAG, code: KNOWLEDGE_GRAPH_UNAVAILABLE_TAG };
   const summaries = !semanticEnabled
     ? 'Needs the Knowledge Graph'
     : answerCapableAgents === 0

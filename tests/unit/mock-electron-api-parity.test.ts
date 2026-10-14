@@ -283,12 +283,14 @@ describe('mock-electron-api implements the whole ElectronAPI interface', () => {
     ).toEqual([]);
   });
 
-  it('platform is a string on the mock', () => {
-    // `platform` is the one top-level non-namespace member. The mock exposes it
-    // as a getter (so `window.__mockPlatform` can override it per spec), and a
-    // getter that returned undefined would pass a bare presence check.
+  it('platform and arch are strings on the mock', () => {
+    // `platform` and `arch` are the top-level non-namespace members. The mock
+    // exposes each as a getter (so `window.__mockPlatform` / `__mockArch` can
+    // override it per spec), and a getter that returned undefined would pass a
+    // bare presence check.
     const electronApi = loadMockElectronApi();
     expect(typeof electronApi.platform).toBe('string');
+    expect(typeof electronApi.arch).toBe('string');
   });
 
   it('sanity: the interface parse found a plausible bridge', () => {

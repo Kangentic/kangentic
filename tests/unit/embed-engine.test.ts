@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
 // The real isEmbeddingModelPresent does fs.existsSync against PATHS.embeddingModelsDir;
@@ -7,6 +7,13 @@ import type Database from 'better-sqlite3';
 vi.mock('../../src/main/retrieval/embedder/embedding-model', () => ({
   isEmbeddingModelPresent: vi.fn(() => true),
   downloadEmbeddingModel: vi.fn(),
+}));
+
+// Whether this process's platform can load the local model. True everywhere a release builds
+// except Intel macOS; flipped per case to stand in for an Intel Mac.
+const runtimeSupport = vi.hoisted(() => ({ supported: true }));
+vi.mock('../../src/main/retrieval/embedder/embedding-runtime-support', () => ({
+  isLocalEmbeddingSupported: () => runtimeSupport.supported,
 }));
 
 import {
@@ -595,6 +602,51 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
     expect(engine.getEmbedder(context)).toBe(client);
     // A query never holds the worker; its own embed() re-arms the idle timer.
     expect(client.setWarmHold).not.toHaveBeenCalled();
+  });
+});
+
+// onnxruntime-node ships no binding for Intel macOS, so an embed worker forked there exits before
+// it can report anything, three times, and Sentry gets the crash latch. The engine never builds a
+// client there, whatever the config says: a config can carry `enabled: true` from another machine.
+describe('createEmbedEngine on a platform the local model cannot load on', () => {
+  afterEach(() => {
+    runtimeSupport.supported = true;
+  });
+
+  it('builds no client for a query, a prewarm, a reconcile, or a dirty project, even with the Knowledge Graph enabled', async () => {
+    runtimeSupport.supported = false;
+    const store = new FakeStore('proj-intel', [makeChunk(40)], []);
+    const db = { name: 'proj-intel' } as unknown as Database.Database;
+    markVecCapable(db);
+    const createClient = vi.fn(() => makeFakeClient());
+    const engine = createEmbedEngine({
+      store: localEmbedStoreAccess(() => db, () => store),
+      createClient,
+      delay: immediateDelay,
+    });
+    const context = makeContext({ currentProjectId: 'proj-intel', enabled: true });
+
+    expect(engine.getEmbedder(context)).toBeNull();
+    engine.prewarm(context);
+    engine.reconcile(context);
+    engine.attach(context);
+    engine.markDirty('proj-intel');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(createClient).not.toHaveBeenCalled();
+    expect(store.remaining).toBe(1);
+    engine.dispose();
+  });
+
+  it('builds one as soon as the platform can load it (the same config, supported)', () => {
+    const createClient = vi.fn(() => makeFakeClient());
+    const engine = createEmbedEngine({
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-arm', [], [])),
+      createClient,
+      delay: immediateDelay,
+    });
+    expect(engine.getEmbedder(makeContext({ currentProjectId: 'proj-arm', enabled: true }))).not.toBeNull();
+    expect(createClient).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -6,8 +6,9 @@
  *
  * What each line still waits for comes through the rule the Settings card
  * reads. The agent's half comes from config, so choosing one shows at once.
- * The Knowledge Graph counts as on only while its setting is on and the
- * snapshot has vectors, as the Settings card reads it. The vectors alone are
+ * The Knowledge Graph counts as on only while its setting is on (in a build
+ * that can run it, `knowledgeGraphOn`) and the snapshot has vectors, as the
+ * Settings card reads it. The vectors alone are
  * the map's off card signal, so the card and the lines never disagree, but they
  * outlive switching the Knowledge Graph off: a map still drawn from them would
  * otherwise show shares that never move, since nothing embeds while it is off.
@@ -17,6 +18,7 @@ import { useMemo } from 'react';
 import { sourceRequirements } from '../settings/tabs/index-sources';
 import { useConfigStore } from '../../stores/config-store';
 import { agentJobChoice, answerSetupGap, taskSummariesOn } from '../../../shared/answer-agent';
+import { knowledgeGraphOn, knowledgeGraphSupported } from '../../lib/knowledge-graph-support';
 import type { CardSourceLineProps } from '../settings/settings-card';
 import type { KnowledgeGraphIndexSummary } from '../../../shared/types';
 import { indexSourceLines } from './index-panel-lines';
@@ -25,17 +27,18 @@ export function useIndexSourceLines(index: KnowledgeGraphIndexSummary, semanticA
   const knowledgeGraphConfig = useConfigStore((state) => state.config.knowledgeGraph);
   const agentList = useConfigStore((state) => state.agentList);
   return useMemo(() => {
-    const knowledgeGraphOn = semanticAvailable && knowledgeGraphConfig?.enabled === true;
+    const semanticOn = semanticAvailable && knowledgeGraphOn(knowledgeGraphConfig);
     const choice = agentJobChoice(knowledgeGraphConfig, 'answer');
     const requirements = sourceRequirements({
-      semanticEnabled: knowledgeGraphOn,
+      knowledgeGraphSupported: knowledgeGraphSupported(),
+      semanticEnabled: semanticOn,
       answerCapableAgents: agentList.filter((agent) => agent.found && agent.supportsAnswerFromContext).length,
       agentSetup: answerSetupGap({ agents: agentList, configured: choice.agent, configuredModel: choice.model, requireFound: true }),
       agentChosen: Boolean(choice.agent),
     });
     return indexSourceLines({
       index,
-      semanticAvailable: knowledgeGraphOn,
+      semanticAvailable: semanticOn,
       summariesOn: taskSummariesOn(knowledgeGraphConfig),
       codeOn: knowledgeGraphConfig?.sourceCode !== false,
       requirements,

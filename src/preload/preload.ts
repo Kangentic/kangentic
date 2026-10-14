@@ -901,6 +901,7 @@ const api: ElectronAPI = {
   },
 
   platform: process.platform,
+  arch: process.arch,
 
   webUtils: {
     getPathForFile: (file: File) => webUtils.getPathForFile(file),

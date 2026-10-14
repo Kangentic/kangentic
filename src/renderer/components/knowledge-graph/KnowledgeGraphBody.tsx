@@ -25,7 +25,7 @@ import { Brain, Compass, CornerDownLeft, Loader2, Sparkles, X } from 'lucide-rea
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useConfigStore } from '../../stores/config-store';
 import { KnowledgeGraphChat } from './KnowledgeGraphChat';
-import { KnowledgeGraphNoMap } from './KnowledgeGraphNoMap';
+import { KnowledgeGraphNoMap, type KnowledgeGraphNoMapProps } from './KnowledgeGraphNoMap';
 import { KnowledgeGraphCanvas, type KnowledgeGraphColorMode } from './KnowledgeGraphCanvas';
 import type { RememberedCamera } from './useKnowledgeGraphScene';
 import {
@@ -44,6 +44,7 @@ import { availableGranularities, DEFAULT_GRANULARITY, resolveClustering } from '
 import { availableColorModes } from './color-mode-availability';
 import { answerFocusIndices } from './answer-focus';
 import { answerSetupGap, codeIndexOn, resolveAnswerAgent } from '../../../shared/answer-agent';
+import { knowledgeGraphSupported } from '../../lib/knowledge-graph-support';
 import { HoverTip } from '../HoverTip';
 import type { KnowledgeGraphGranularity, KnowledgeGraphRelatedTask } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
@@ -63,6 +64,14 @@ const FEW_LIT = 3;
 /** A related task's strength is scaled by this in the one answered map that
  *  still shows the related set: an answer whose tasks have no node of their own. */
 const RELATED_AFTER_ANSWER = 0.3;
+
+/** Which card stands in for the map. A build the local model cannot run in
+ *  says so first: nothing there will ever build a map, whatever the snapshot
+ *  holds. */
+function noMapMode(supported: boolean, semanticAvailable: boolean): KnowledgeGraphNoMapProps['mode'] {
+  if (!supported) return 'unsupported';
+  return semanticAvailable ? 'pending' : 'off';
+}
 
 function CenteredNotice({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
@@ -702,7 +711,8 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     );
   }
 
-  if (!snapshot.semanticAvailable || snapshot.projection === null) {
+  const supported = knowledgeGraphSupported();
+  if (!supported || !snapshot.semanticAvailable || snapshot.projection === null) {
     // With the Knowledge Graph off this is deliberately NOT a structural
     // fallback graph: without embeddings there is no meaningful notion of
     // "near", and a structural tree would imply a meaning the data cannot
@@ -711,7 +721,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     return (
       <KnowledgeGraphNoMap
         key={snapshot.projectId}
-        mode={snapshot.semanticAvailable ? 'pending' : 'off'}
+        mode={noMapMode(supported, snapshot.semanticAvailable)}
         building={snapshot.building}
         buildProgress={snapshot.buildProgress}
         index={snapshot.index}

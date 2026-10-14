@@ -13,6 +13,7 @@ import { SUMMARY_BATCH_SIZE } from '../../../../shared/task-summaries';
 import { EMBEDDING_MODELS, resolveEmbeddingModel } from '../../../../shared/embedding-models';
 import { licenseLinks } from '../../../../shared/model-licenses';
 import { alwaysOnLine, codeLine, CODE_INFO, sourceRequirements, SUMMARIES_INFO, summariesLine } from './index-sources';
+import { KNOWLEDGE_GRAPH_UNAVAILABLE_TAG, knowledgeGraphOn, knowledgeGraphSupported, knowledgeGraphUnsupportedLine } from '../../../lib/knowledge-graph-support';
 import type {
   AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
 } from '../../../../shared/types';
@@ -49,8 +50,11 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
   const updateGlobal = useScopedUpdate('global');
   // Default on when unset (matches DEFAULT_CONFIG.knowledgeGraph.indexingEnabled).
   const indexingEnabled = globalConfig.knowledgeGraph?.indexingEnabled ?? true;
-  // Default off when unset (matches DEFAULT_CONFIG.knowledgeGraph.enabled).
-  const semanticEnabled = globalConfig.knowledgeGraph?.enabled ?? false;
+  // Off when unset (matches DEFAULT_CONFIG.knowledgeGraph.enabled), and off in a
+  // build whose platform the local model has no build for (Intel Macs), where
+  // main never runs it whatever the config says.
+  const supported = knowledgeGraphSupported();
+  const semanticEnabled = knowledgeGraphOn(globalConfig.knowledgeGraph);
   // The model main runs: the saved id, or the default when it is unset or names a
   // model the registry dropped (bge-base, bge-large), so the control always
   // shows a selection.
@@ -172,6 +176,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
   // Graph's Index panel reads. Both are on by default, and their switches stay
   // usable while they wait.
   const { summaries: summariesRequirement, code: codeRequirement } = sourceRequirements({
+    knowledgeGraphSupported: supported,
     semanticEnabled,
     answerCapableAgents: answerCapableAgents.length,
     agentSetup,
@@ -208,76 +213,92 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
           (one switch; the local model that finds by meaning, then the agent
           that answers), and the Index it reads. The Index also feeds Quick
           Find by keyword, which works with the Knowledge Graph off. */}
-      <SettingsCard
-        icon={<Brain size={16} />}
-        {...settingProps('knowledgeGraph.enabled')}
-        searchIds={['knowledgeGraph.localModel', 'knowledgeGraph.acceleration', 'knowledgeGraph.agent', 'knowledgeGraph.model', 'knowledgeGraph.effort']}
-        // Reads off while the index is off, since it cannot run then, and turning
-        // it on turns the index on too, in one write: the index's switch is
-        // further down the tab.
-        checked={semanticReady}
-        onChange={(value) => updateGlobal({ knowledgeGraph: value ? { enabled: true, indexingEnabled: true } : { enabled: false } })}
-        requirement={indexingEnabled ? undefined : 'Needs indexing'}
-        testId="knowledge-graph-card"
-      >
-        {/* Gated on indexingEnabled too: with the index off the Knowledge
-            Graph cannot run, so its rows stay hidden until the index is back. */}
-        {semanticReady ? (
-          <>
-            {/* The local model: it finds by meaning and draws the map. */}
-            <CardChoiceRow
-              {...settingProps('knowledgeGraph.localModel')}
-              options={EMBEDDING_MODELS.map((option) => ({ value: option.id, label: option.tierLabel, testId: `embedding-model-${option.id}` }))}
-              value={embeddingModelId}
-              onChange={(next: string) => updateGlobal({ knowledgeGraph: { localModel: next } })}
-              testId="embedding-model-choice"
-            />
-            {/* The chosen model's state, as a status row right under the
-                control that picks it, then the license it ships under. */}
-            {model ? <EmbeddingModelStatus model={model} activeBackend={status?.activeBackend ?? null} /> : null}
-            <CardLinkRow
-              label="License"
-              links={licenseLinks([embeddingModel.license])}
-              onOpen={(href) => void window.electronAPI.shell.openExternal(href)}
-              testId="embedding-model-license"
-            />
-
-            <CardChoiceRow
-              {...settingProps('knowledgeGraph.acceleration')}
-              options={[
-                { value: 'auto', label: 'Auto', testId: 'knowledge-graph-acceleration-auto' },
-                { value: 'gpu', label: 'GPU', testId: 'knowledge-graph-acceleration-gpu' },
-                { value: 'cpu', label: 'CPU', testId: 'knowledge-graph-acceleration-cpu' },
-              ]}
-              value={acceleration}
-              onChange={(value: KnowledgeGraphAcceleration) => updateGlobal({ knowledgeGraph: { acceleration: value } })}
-              testId="knowledge-graph-acceleration-choice"
-            />
-
-            {platformNote ? (
-              <CardTile className="text-xs text-fg-muted" testId="semantic-status">
-                {platformNote}
-              </CardTile>
-            ) : null}
-
-            {/* The agent: it answers from what the local model finds, and
-                writes the task summaries. Only the agents that can actually
-                answer; an agent with no `answerFromContext` is not a choice,
-                it is a way to turn Ask off by accident. */}
-            {answerCapableAgents.length === 0 ? (
-              <CardStatusRow label="Agent" value="Needs a supported agent" testId="knowledge-graph-no-agent" />
-            ) : (
-              <AnswerAgentRows
-                choice={agentChoice}
-                capableAgents={answerCapableAgents}
-                onChange={updateKnowledgeGraph}
-                settingIds={{ agent: 'knowledgeGraph.agent', model: 'knowledgeGraph.model', effort: 'knowledgeGraph.effort' }}
-                testIdPrefix="knowledge-graph-answer"
+      {!supported ? (
+        // No switch to offer: the local model cannot load in this build, so
+        // the card says so instead of a toggle that would do nothing.
+        <SettingsCard
+          icon={<Brain size={16} />}
+          {...settingProps('knowledgeGraph.enabled')}
+          searchIds={['knowledgeGraph.localModel', 'knowledgeGraph.acceleration', 'knowledgeGraph.agent', 'knowledgeGraph.model', 'knowledgeGraph.effort']}
+          tag={KNOWLEDGE_GRAPH_UNAVAILABLE_TAG}
+          testId="knowledge-graph-card"
+        >
+          <CardTile testId="knowledge-graph-unsupported">
+            <p className="text-xs text-fg-secondary">{knowledgeGraphUnsupportedLine()}</p>
+          </CardTile>
+        </SettingsCard>
+      ) : (
+        <SettingsCard
+          icon={<Brain size={16} />}
+          {...settingProps('knowledgeGraph.enabled')}
+          searchIds={['knowledgeGraph.localModel', 'knowledgeGraph.acceleration', 'knowledgeGraph.agent', 'knowledgeGraph.model', 'knowledgeGraph.effort']}
+          // Reads off while the index is off, since it cannot run then, and turning
+          // it on turns the index on too, in one write: the index's switch is
+          // further down the tab.
+          checked={semanticReady}
+          onChange={(value) => updateGlobal({ knowledgeGraph: value ? { enabled: true, indexingEnabled: true } : { enabled: false } })}
+          requirement={indexingEnabled ? undefined : 'Needs indexing'}
+          testId="knowledge-graph-card"
+        >
+          {/* Gated on indexingEnabled too: with the index off the Knowledge
+              Graph cannot run, so its rows stay hidden until the index is back. */}
+          {semanticReady ? (
+            <>
+              {/* The local model: it finds by meaning and draws the map. */}
+              <CardChoiceRow
+                {...settingProps('knowledgeGraph.localModel')}
+                options={EMBEDDING_MODELS.map((option) => ({ value: option.id, label: option.tierLabel, testId: `embedding-model-${option.id}` }))}
+                value={embeddingModelId}
+                onChange={(next: string) => updateGlobal({ knowledgeGraph: { localModel: next } })}
+                testId="embedding-model-choice"
               />
-            )}
-          </>
-        ) : null}
-      </SettingsCard>
+              {/* The chosen model's state, as a status row right under the
+                  control that picks it, then the license it ships under. */}
+              {model ? <EmbeddingModelStatus model={model} activeBackend={status?.activeBackend ?? null} /> : null}
+              <CardLinkRow
+                label="License"
+                links={licenseLinks([embeddingModel.license])}
+                onOpen={(href) => void window.electronAPI.shell.openExternal(href)}
+                testId="embedding-model-license"
+              />
+
+              <CardChoiceRow
+                {...settingProps('knowledgeGraph.acceleration')}
+                options={[
+                  { value: 'auto', label: 'Auto', testId: 'knowledge-graph-acceleration-auto' },
+                  { value: 'gpu', label: 'GPU', testId: 'knowledge-graph-acceleration-gpu' },
+                  { value: 'cpu', label: 'CPU', testId: 'knowledge-graph-acceleration-cpu' },
+                ]}
+                value={acceleration}
+                onChange={(value: KnowledgeGraphAcceleration) => updateGlobal({ knowledgeGraph: { acceleration: value } })}
+                testId="knowledge-graph-acceleration-choice"
+              />
+
+              {platformNote ? (
+                <CardTile className="text-xs text-fg-muted" testId="semantic-status">
+                  {platformNote}
+                </CardTile>
+              ) : null}
+
+              {/* The agent: it answers from what the local model finds, and
+                  writes the task summaries. Only the agents that can actually
+                  answer; an agent with no `answerFromContext` is not a choice,
+                  it is a way to turn Ask off by accident. */}
+              {answerCapableAgents.length === 0 ? (
+                <CardStatusRow label="Agent" value="Needs a supported agent" testId="knowledge-graph-no-agent" />
+              ) : (
+                <AnswerAgentRows
+                  choice={agentChoice}
+                  capableAgents={answerCapableAgents}
+                  onChange={updateKnowledgeGraph}
+                  settingIds={{ agent: 'knowledgeGraph.agent', model: 'knowledgeGraph.model', effort: 'knowledgeGraph.effort' }}
+                  testIdPrefix="knowledge-graph-answer"
+                />
+              )}
+            </>
+          ) : null}
+        </SettingsCard>
+      )}
 
       <SettingsCard
         icon={<Database size={16} />}

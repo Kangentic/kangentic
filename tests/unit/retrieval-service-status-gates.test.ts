@@ -29,6 +29,7 @@ import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project } from '../../src/shared/types';
 import { waitingCorporaOf, type SummaryActivity } from '../../src/shared/index-summary';
 import type { BranchSize } from '../../src/main/retrieval/code/code-status';
+import type { SummarySchedulerDeps } from '../../src/main/retrieval/summary/summary-scheduler';
 import { BoardEventBus } from '../../src/main/mobile-bridge/board-event-bus';
 
 vi.mock('../../src/main/db/database', () => ({
@@ -44,6 +45,12 @@ const modelPresence = vi.hoisted(() => ({ present: true }));
 vi.mock('../../src/main/retrieval/embedder/embedding-model', () => ({
   isEmbeddingModelPresent: vi.fn(() => modelPresence.present),
   downloadEmbeddingModel: vi.fn(async () => {}),
+}));
+
+// Whether this platform can load the local model at all (not on Intel macOS), flipped per case.
+const runtimeSupport = vi.hoisted(() => ({ supported: true }));
+vi.mock('../../src/main/retrieval/embedder/embedding-runtime-support', () => ({
+  isLocalEmbeddingSupported: () => runtimeSupport.supported,
 }));
 
 const embedEngineMock = vi.hoisted(() => ({
@@ -183,6 +190,8 @@ const WRITER = { ok: true, run: { agentName: 'claude', model: 'claude-opus-5-5',
 const NOW_MS = Date.UTC(2026, 0, 15, 12, 0, 0);
 /** How long the map's push waits for a state to hold (`SUMMARY_PUSH_DEBOUNCE_MS`). */
 const PUSH_DEBOUNCE_MS = 250;
+/** What the launch waits before asking every project for a summary pass (`BRANCH_FULL_READ_DELAY_MS`). */
+const LAUNCH_DELAY_MS = 60_000;
 
 let scratch: string;
 
@@ -197,13 +206,15 @@ interface ContextOptions {
   /** Semantic search (`knowledgeGraph.enabled`). */
   semanticOn?: boolean;
   sourceCode?: boolean;
+  /** Task summaries (`knowledgeGraph.taskSummaries`). Off unless a case turns it on. */
+  taskSummaries?: boolean;
 }
 
 function makeContext(openProjectId: string | null, projects: Project[], options: ContextOptions = {}): IpcContext {
-  const { indexingEnabled = true, semanticOn = true, sourceCode = true } = options;
+  const { indexingEnabled = true, semanticOn = true, sourceCode = true, taskSummaries = false } = options;
   return {
     configManager: {
-      load: () => ({ knowledgeGraph: { indexingEnabled, enabled: semanticOn, agent: 'claude', taskSummaries: false, sourceCode } }),
+      load: () => ({ knowledgeGraph: { indexingEnabled, enabled: semanticOn, agent: 'claude', taskSummaries, sourceCode } }),
     },
     currentProjectId: openProjectId,
     projectRepo: {
@@ -252,6 +263,7 @@ describe('the retrieval service status paths', () => {
     embedEngineMock.workerCrashed = false;
     embedEngineMock.workerCrashReason = null;
     modelPresence.present = true;
+    runtimeSupport.supported = true;
     vi.useRealTimers();
     vi.restoreAllMocks();
     fs.rmSync(scratch, { recursive: true, force: true });
@@ -320,6 +332,210 @@ describe('the retrieval service status paths', () => {
     // other way round. Reverting both makes it red.
     it('marks nothing while indexing is off', async () => {
       expect(await markedDirtyAfterPoll('gate-indexing', { indexingEnabled: false })).not.toContain(waitingIdOf('gate-indexing'));
+    });
+
+    // Red-green: dropping the `isLocalEmbeddingSupported()` line from isSemanticEnabled marks it.
+    it('marks nothing on a platform the local model cannot load on, even with the Knowledge Graph enabled', async () => {
+      runtimeSupport.supported = false;
+      expect(await markedDirtyAfterPoll('gate-runtime')).not.toContain(waitingIdOf('gate-runtime'));
+    });
+  });
+
+  // onnxruntime-node ships no Intel macOS binding, so there the Knowledge Graph reports itself off
+  // and the ~153 MB model is never downloaded: a config can carry `enabled: true` from another
+  // machine, and a download would fetch a model nothing can run.
+  describe('on a platform the local model cannot load on', () => {
+    it('reports the Knowledge Graph disabled and starts no model download, whatever the config says', async () => {
+      runtimeSupport.supported = false;
+      modelPresence.present = false;
+      const { downloadEmbeddingModel } = await import('../../src/main/retrieval/embedder/embedding-model');
+      indexState.byProject.set('intel-open', caughtUp());
+
+      const status = await retrievalService.getStatus(makeContext('intel-open', [folderProject('intel-open')], { semanticOn: true }));
+
+      expect(status.semantic).toBe('disabled');
+      expect(status.model?.state).toBe('absent');
+      expect(status.summaries).toBeUndefined();
+      expect(status.code).toBeUndefined();
+      expect(downloadEmbeddingModel).not.toHaveBeenCalled();
+    });
+
+    // Guards the case above against passing for nothing: the same config on a supported platform
+    // does start the download.
+    it('starts the download for the same config where the model can load', async () => {
+      modelPresence.present = false;
+      const { downloadEmbeddingModel } = await import('../../src/main/retrieval/embedder/embedding-model');
+      indexState.byProject.set('arm-open', caughtUp());
+
+      const status = await retrievalService.getStatus(makeContext('arm-open', [folderProject('arm-open')], { semanticOn: true }));
+
+      expect(status.semantic).toBe('downloading');
+      expect(downloadEmbeddingModel).toHaveBeenCalled();
+    });
+  });
+
+  // The passes that spend something: a summary is an agent call, and the code sweep chunks
+  // thousands of passages that would never get a vector. The config has every switch on and an
+  // agent chosen, so only the platform gate stands between it and the work. Each case drives the
+  // real caller on a platform that cannot load the model, and pairs it with a control that does the
+  // work where the model can load, so a negative is not passing for a driver that never ran. The
+  // gate is read at each call, so a case can flip the platform mid-test; the launch ask fires once
+  // a module, so its control is its own case.
+  describe('the summary pass and the code sweep, with every switch on, on a platform the local model cannot load on', () => {
+    const SWITCHES_ON: ContextOptions = { taskSummaries: true };
+
+    async function schedulerDeps(): Promise<SummarySchedulerDeps<IpcContext>> {
+      const { createSummaryScheduler } = await import('../../src/main/retrieval/summary/summary-scheduler');
+      const deps = vi.mocked(createSummaryScheduler).mock.calls.at(-1)?.[0] as SummarySchedulerDeps<IpcContext> | undefined;
+      if (!deps) throw new Error('the service gave no summary scheduler its dependencies');
+      return deps;
+    }
+
+    function untilSettled(): Promise<void> {
+      return new Promise((resolve) => setImmediate(resolve));
+    }
+
+    // Red-green: delete `if (!isLocalEmbeddingSupported()) return false;` from summariesEnabled.
+    // The scheduler's `isEnabled` is that function, so it then accepts the request and resolves a
+    // writer on the unsupported platform: the first assertion goes red.
+    it('starts no summary pass: the real scheduler resolves no writer and calls no agent until the platform allows it', async () => {
+      const { createSummaryScheduler } = await vi.importActual<typeof import('../../src/main/retrieval/summary/summary-scheduler')>(
+        '../../src/main/retrieval/summary/summary-scheduler',
+      );
+      const scheduler = createSummaryScheduler(await schedulerDeps());
+      const context = makeContext('pass-open', [folderProject('pass-open')], SWITCHES_ON);
+      try {
+        runtimeSupport.supported = false;
+        scheduler.request(context, 'pass-open');
+        await untilSettled();
+        expect(answerRunMock.resolveAnswerRun).not.toHaveBeenCalled();
+        expect(scheduler.busy).toBe(false);
+
+        // The control: the same request, the same config, where the model can load.
+        runtimeSupport.supported = true;
+        scheduler.request(context, 'pass-open');
+        await vi.waitFor(() => expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(1));
+        expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledWith(context, 'pass-open', 'summary', expect.objectContaining({ job: 'summary' }));
+      } finally {
+        scheduler.dispose();
+      }
+    });
+
+    // Red-green: the same deletion in summariesEnabled. `requestEveryProject` then asks every
+    // project for a pass at the launch.
+    it('asks no project for a summary pass at the launch', () => {
+      runtimeSupport.supported = false;
+      const projects = [folderProject('launch-off-open'), folderProject('launch-off-other')];
+      retrievalService.attach(makeContext('launch-off-open', projects, SWITCHES_ON));
+
+      vi.advanceTimersByTime(LAUNCH_DELAY_MS);
+
+      expect(summarySchedulerMock.request).not.toHaveBeenCalled();
+    });
+
+    // The control for the case above. The launch ask fires once a module, so it is its own case.
+    it('asks every project at the launch where the model can load', () => {
+      const projects = [folderProject('launch-on-open'), folderProject('launch-on-other')];
+      retrievalService.attach(makeContext('launch-on-open', projects, SWITCHES_ON));
+
+      vi.advanceTimersByTime(LAUNCH_DELAY_MS);
+
+      expect(summarySchedulerMock.request.mock.calls.map((call) => (call as unknown[])[1])).toEqual(['launch-on-open', 'launch-on-other']);
+    });
+
+    // Red-green: the same deletion in summariesEnabled. `resolveRewriteChoice` then resolves a
+    // writer for Rebuild's plan and asks the worker what it would rewrite.
+    it('resolves no writer for Rebuild\'s plan, and asks the worker to rewrite nothing', async () => {
+      const { retrievalClient } = await import('../../src/main/retrieval/retrieval-client');
+      const context = makeContext('rebuild-open', [folderProject('rebuild-open')], SWITCHES_ON);
+      const methodsCalled = (): unknown[] => vi.mocked(retrievalClient.call).mock.calls.map((call) => call[0]);
+
+      runtimeSupport.supported = false;
+      expect(await retrievalService.rebuildPlan(context)).toEqual({ summariesToRewrite: 0 });
+      expect(answerRunMock.resolveAnswerRun).not.toHaveBeenCalled();
+      expect(methodsCalled()).not.toContain('index.rebuildPlan');
+
+      // The control: where the model can load, the plan resolves its writer and reads the worker.
+      runtimeSupport.supported = true;
+      await retrievalService.rebuildPlan(context);
+      expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(1);
+      expect(methodsCalled()).toContain('index.rebuildPlan');
+    });
+
+    // Red-green: the same deletion in summariesEnabled. `refreshSummaryChoice` then resolves the
+    // writer on a settings change.
+    it('resolves no writer when a settings change refreshes the summary choice', async () => {
+      const context = makeContext('refresh-open', [folderProject('refresh-open')], SWITCHES_ON);
+
+      runtimeSupport.supported = false;
+      retrievalService.reconcileEmbedWorker(context);
+      await untilSettled();
+      expect(answerRunMock.resolveAnswerRun).not.toHaveBeenCalled();
+
+      // The control: the same settings change where the model can load.
+      runtimeSupport.supported = true;
+      retrievalService.reconcileEmbedWorker(context);
+      await vi.waitFor(() => expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(1));
+    });
+
+    /** Run one record sweep for a project, and wait for the worker to finish it. */
+    async function sweepRecords(context: IpcContext, projectId: string) {
+      const { retrievalClient } = await import('../../src/main/retrieval/retrieval-client');
+      vi.mocked(retrievalClient.call).mockClear();
+      retrievalService.refreshRecords(context, projectId);
+      const sweepPosition = (): number => vi.mocked(retrievalClient.call).mock.calls.findIndex((call) => call[0] === 'index.sweep');
+      await vi.waitFor(() => expect(sweepPosition()).toBeGreaterThanOrEqual(0));
+      await vi.mocked(retrievalClient.call).mock.results[sweepPosition()].value;
+      return retrievalClient;
+    }
+
+    // Kept, not cleared: `codeSweepPlan` clears the index only when the Source code switch itself is
+    // off. While the Knowledge Graph is unavailable the plan is keep, so nothing is purged either.
+    //
+    // Red-green: make codePlan return `codeSweepPlan(() => context.configManager.load().knowledgeGraph)`
+    // as it was, without the platform test. The sweep then plans 'index' and chunks the branch.
+    it('sweeps no source code: the plan is keep, nothing is chunked, and nothing is purged', async () => {
+      const { sweepCodeRecords, purgeCodeRecords } = await import('../../src/main/retrieval/code/code-indexer');
+      const { sweepTaskRecords } = await import('../../src/main/retrieval/task/task-indexer');
+      runtimeSupport.supported = false;
+
+      const retrievalClient = await sweepRecords(makeContext('sweep-off', [folderProject('sweep-off')], SWITCHES_ON), 'sweep-off');
+
+      // The sweep ran its other steps, so the missing code step is its plan and not a sweep that never ran.
+      expect(sweepTaskRecords).toHaveBeenCalledTimes(1);
+      expect(retrievalClient.call).toHaveBeenCalledWith('index.sweep', expect.objectContaining({ code: expect.objectContaining({ plan: 'keep' }) }), expect.anything());
+      expect(sweepCodeRecords).not.toHaveBeenCalled();
+      expect(purgeCodeRecords).not.toHaveBeenCalled();
+    });
+
+    // The control for the case above: the same config and the same sweep where the model can load.
+    it('sweeps the source code for the same config where the model can load', async () => {
+      const { sweepCodeRecords } = await import('../../src/main/retrieval/code/code-indexer');
+
+      const retrievalClient = await sweepRecords(makeContext('sweep-on', [folderProject('sweep-on')], SWITCHES_ON), 'sweep-on');
+
+      expect(retrievalClient.call).toHaveBeenCalledWith('index.sweep', expect.objectContaining({ code: expect.objectContaining({ plan: 'index' }) }), expect.anything());
+      expect(sweepCodeRecords).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(sweepCodeRecords).mock.calls[0][0]).toBe('sweep-on');
+    });
+
+    // The map's snapshot asks for a project's waiting passages to be drained. Code is worth draining
+    // only while it is indexed (`worthDraining`, which reads the plan).
+    //
+    // Red-green: the same change to codePlan. The first call then marks the project dirty.
+    it('drains no waiting code for the map\'s snapshot, and drains it where the model can load', async () => {
+      const { graphService } = await import('../../src/main/retrieval/graph-facade');
+      retrievalService.attach(makeContext('drain-code-open', [folderProject('drain-code-open')], SWITCHES_ON));
+      const listener = vi.mocked(graphService.setOnEmbeddingsWaiting).mock.calls.at(-1)?.[0];
+      if (!listener) throw new Error('attach registered no embeddings-waiting listener');
+
+      runtimeSupport.supported = false;
+      listener('drain-code-open', ['code']);
+      expect(embedEngineMock.markDirty).not.toHaveBeenCalled();
+
+      runtimeSupport.supported = true;
+      listener('drain-code-open', ['code']);
+      expect(embedEngineMock.markDirty).toHaveBeenCalledWith('drain-code-open');
     });
   });
 

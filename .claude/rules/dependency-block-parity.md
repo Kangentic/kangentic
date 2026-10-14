@@ -135,8 +135,8 @@ script is not something `allowScripts` governs.
 `app.asar.unpacked`. The required CI checks never package, so a package wrongly moved out of
 `dependencies` fails there: locally, on the release matrix, or in the path-filtered
 `package-smoke` workflow (`.github/workflows/package-smoke.yml`, not a required check), which
-packages on all three platforms when a pull request touches `package.json` or the packaging
-config. See [[release-gates-fail-loudly]].
+packages every release target (five legs, as that file lists them) when a pull request touches
+`package.json` or the packaging config. See [[release-gates-fail-loudly]].
 
 ## Enforcement (self-maintaining)
 

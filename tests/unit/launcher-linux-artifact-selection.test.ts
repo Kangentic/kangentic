@@ -46,10 +46,23 @@ let mockPgrepMatches = false;
 // matching a real process.
 let pgrepInvocations: string[][] = [];
 
+// What `sysctl -n sysctl.proc_translated` prints: '1' for an x64 process under Rosetta on Apple
+// silicon, '0' for a native one. null models an Intel Mac, where the key does not exist and
+// sysctl exits non-zero.
+let mockSysctlTranslated: string | null = null;
+let sysctlInvocations: string[][] = [];
+
 beforeAll(() => {
   vi.spyOn(childProcess, 'execFileSync').mockImplementation(((command: string, args: readonly string[]) => {
     if (command === 'which' && !mockAvailableCommands.includes(args[0])) {
       throw new Error(`command not found: ${args[0]}`);
+    }
+    if (command === '/usr/sbin/sysctl') {
+      sysctlInvocations.push([...args]);
+      if (mockSysctlTranslated === null) {
+        throw new Error('sysctl: unknown oid');
+      }
+      return `${mockSysctlTranslated}\n`;
     }
     if (command === 'pgrep') {
       pgrepInvocations.push([...args]);
@@ -78,20 +91,76 @@ beforeEach(() => {
   sudoInvocations = [];
   mockPgrepMatches = false;
   pgrepInvocations = [];
+  mockSysctlTranslated = null;
+  sysctlInvocations = [];
 });
+
+/** getPlatformInfo() as it reads on a given platform and arch, restoring the real ones after. */
+function platformInfoOn(platform: string, arch: string): { platform: string; arch?: string; extension?: string } | null {
+  const originalPlatform = process.platform;
+  const originalArch = process.arch;
+  Object.defineProperty(process, 'platform', { value: platform });
+  Object.defineProperty(process, 'arch', { value: arch });
+  try {
+    return launcherModule.getPlatformInfo();
+  } finally {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+    Object.defineProperty(process, 'arch', { value: originalArch });
+  }
+}
 
 describe('Launcher Linux artifact selection', () => {
   describe('getPlatformInfo', () => {
     it('linux platform info has no extension field (rpm vs deb is decided later)', () => {
-      const originalPlatform = process.platform;
-      Object.defineProperty(process, 'platform', { value: 'linux' });
-      try {
-        const platformInfo = launcherModule.getPlatformInfo();
-        expect(platformInfo).toEqual({ platform: 'linux', arch: 'x64' });
-        expect(platformInfo).not.toHaveProperty('extension');
-      } finally {
-        Object.defineProperty(process, 'platform', { value: originalPlatform });
-      }
+      const platformInfo = platformInfoOn('linux', 'x64');
+      expect(platformInfo).toEqual({ platform: 'linux', arch: 'x64' });
+      expect(platformInfo).not.toHaveProperty('extension');
+    });
+
+    // It used to report x64 on every Linux machine, so an ARM board downloaded an amd64 package it
+    // could not run.
+    it('passes arm64 through on linux', () => {
+      expect(platformInfoOn('linux', 'arm64')).toEqual({ platform: 'linux', arch: 'arm64' });
+    });
+
+    it('refuses a linux arch no release ships, rather than building a URL that 404s', () => {
+      expect(platformInfoOn('linux', 'arm')).toBeNull();
+      expect(platformInfoOn('linux', 'ppc64')).toBeNull();
+    });
+
+    // A mac arch no release ships a zip for would otherwise build a download URL that 404s. The
+    // sysctl probe is for an x64 Node only, so neither of these may reach it.
+    it('refuses a darwin arch no release ships, without asking sysctl', () => {
+      mockSysctlTranslated = '1';
+      expect(platformInfoOn('darwin', 'ia32')).toBeNull();
+      expect(platformInfoOn('darwin', 'ppc64')).toBeNull();
+      expect(sysctlInvocations).toEqual([]);
+    });
+
+    it('takes an Intel Mac as x64 when sysctl has no proc_translated key', () => {
+      mockSysctlTranslated = null;
+      expect(platformInfoOn('darwin', 'x64')).toEqual({ platform: 'darwin', arch: 'x64', extension: 'zip' });
+      expect(sysctlInvocations).toEqual([['-n', 'sysctl.proc_translated']]);
+    });
+
+    it('takes an x64 Node under Rosetta as Apple silicon, so it installs the native build', () => {
+      mockSysctlTranslated = '1';
+      expect(platformInfoOn('darwin', 'x64')).toEqual({ platform: 'darwin', arch: 'arm64', extension: 'zip' });
+    });
+
+    it('keeps x64 when sysctl reports a native process', () => {
+      mockSysctlTranslated = '0';
+      expect(platformInfoOn('darwin', 'x64')).toEqual({ platform: 'darwin', arch: 'x64', extension: 'zip' });
+    });
+
+    it('does not ask sysctl when Node is already arm64', () => {
+      mockSysctlTranslated = '1';
+      expect(platformInfoOn('darwin', 'arm64')).toEqual({ platform: 'darwin', arch: 'arm64', extension: 'zip' });
+      expect(sysctlInvocations).toEqual([]);
+    });
+
+    it('keeps Windows on x64 whatever the arch, since Windows on ARM runs it under emulation', () => {
+      expect(platformInfoOn('win32', 'arm64')).toEqual({ platform: 'win32', arch: 'x64', extension: 'exe' });
     });
   });
 
@@ -113,6 +182,24 @@ describe('Launcher Linux artifact selection', () => {
       const filename = launcherModule.getArtifactFilename({ platform: 'linux', arch: 'x64' });
       expect(filename).toBe(`kangentic_${launcherVersion}_amd64.deb`);
     });
+
+    // electron-builder names arm64 packages arm64 for deb and aarch64 for rpm.
+    it('selects the aarch64 rpm on arm64', () => {
+      mockAvailableCommands = ['rpm'];
+      expect(launcherModule.getArtifactFilename({ platform: 'linux', arch: 'arm64' }))
+        .toBe(`kangentic-${launcherVersion}-1.aarch64.rpm`);
+    });
+
+    it('selects the arm64 deb on arm64', () => {
+      mockAvailableCommands = ['apt'];
+      expect(launcherModule.getArtifactFilename({ platform: 'linux', arch: 'arm64' }))
+        .toBe(`kangentic_${launcherVersion}_arm64.deb`);
+    });
+
+    it('names no file for an arch no release ships', () => {
+      mockAvailableCommands = ['apt'];
+      expect(launcherModule.getArtifactFilename({ platform: 'linux', arch: 'arm' })).toBeNull();
+    });
   });
 
   describe('getArtifactFilename on other platforms', () => {
@@ -124,6 +211,11 @@ describe('Launcher Linux artifact selection', () => {
     it('returns the mac zip filename on darwin', () => {
       const filename = launcherModule.getArtifactFilename({ platform: 'darwin', arch: 'arm64' });
       expect(filename).toBe(`Kangentic-${launcherVersion}-arm64-mac.zip`);
+    });
+
+    it('returns the Intel mac zip filename on an Intel Mac', () => {
+      expect(launcherModule.getArtifactFilename({ platform: 'darwin', arch: 'x64' }))
+        .toBe(`Kangentic-${launcherVersion}-x64-mac.zip`);
     });
   });
 

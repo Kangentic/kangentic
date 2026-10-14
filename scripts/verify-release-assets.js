@@ -13,7 +13,10 @@
  */
 
 const { execFileSync } = require('node:child_process');
-const { expectedReleaseAssets, CHANNEL_FILES } = require('./release-assets');
+const { expectedReleaseAssets, expectedMacZips, CHANNEL_FILES } = require('./release-assets');
+const { feedFileUrls } = require('./merge-mac-update-feeds');
+
+const MAC_FEED = 'latest-mac.yml';
 
 function parseArgs(argv) {
   const positional = [];
@@ -58,14 +61,38 @@ function releasesForTag(repo, tag) {
 }
 
 /**
+ * One asset's content, read through the API so it works on a draft, whose
+ * browser_download_url is not public yet.
+ *
+ * @param {string} repo
+ * @returns {(asset: { id: number }) => string}
+ */
+function assetTextReader(repo) {
+  return (asset) =>
+    execFileSync(
+      'gh',
+      ['api', '-H', 'Accept: application/octet-stream', `repos/${repo}/releases/assets/${asset.id}`],
+      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }
+    );
+}
+
+/**
  * The pure decision. Split out from the I/O above so every failure branch is
  * unit-testable without a network round trip.
  *
+ * Names alone do not prove the macOS feed is right. Both mac legs upload a
+ * latest-mac.yml listing only their own zip, and publish-release rebuilds one
+ * feed for both (scripts/merge-mac-update-feeds.js), so a feed holding one arch
+ * carries the right name and still strands every Mac of the other arch. So the
+ * feed's content is read too, through `readAssetText`, and must list every mac
+ * zip.
+ *
  * @param {Array} releases Release objects already filtered to one tag.
  * @param {string} tag
+ * @param {(asset: object) => string} readAssetText Returns an asset's content.
  * @returns {{ ok: boolean, problems: string[], release: object | null }}
  */
-function verifyReleaseAssets(releases, tag) {
+function verifyReleaseAssets(releases, tag, readAssetText) {
   const version = tag.replace(/^v/, '');
   const expected = expectedReleaseAssets(version);
   const problems = [];
@@ -113,7 +140,33 @@ function verifyReleaseAssets(releases, tag) {
     );
   }
 
+  const macFeed = assetsByName.get(MAC_FEED);
+  if (macFeed && macFeed.state === 'uploaded') {
+    const feedProblem = macFeedProblem(macFeed, version, readAssetText);
+    if (feedProblem) problems.push(feedProblem);
+  }
+
   return { ok: problems.length === 0, problems, release };
+}
+
+/**
+ * Why the release's latest-mac.yml would strand a Mac, or null when it lists
+ * every mac zip.
+ */
+function macFeedProblem(asset, version, readAssetText) {
+  let urls;
+  try {
+    urls = feedFileUrls(readAssetText(asset));
+  } catch (error) {
+    return `Could not read ${MAC_FEED} to check which zips it lists: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const missing = expectedMacZips(version).filter((zip) => !urls.includes(zip));
+  if (missing.length === 0) return null;
+  return (
+    `${MAC_FEED} does not list ${missing.join(', ')}, so those Macs would get no update. It lists: ` +
+    `${urls.join(', ') || 'nothing'}.\n` +
+    '      publish-release rebuilds it from the binaries on the release (scripts/merge-mac-update-feeds.js) before this check; re-run publish-release.'
+  );
 }
 
 function main() {
@@ -123,7 +176,7 @@ function main() {
     process.exit(1);
   }
 
-  const { ok, problems, release } = verifyReleaseAssets(releasesForTag(repo, tag), tag);
+  const { ok, problems, release } = verifyReleaseAssets(releasesForTag(repo, tag), tag, assetTextReader(repo));
 
   if (!ok) {
     console.error(`\nRelease verification FAILED for ${tag}.\n`);
@@ -136,9 +189,11 @@ function main() {
     process.exit(1);
   }
 
-  const expectedCount = expectedReleaseAssets(tag.replace(/^v/, '')).length;
+  const version = tag.replace(/^v/, '');
+  const expectedCount = expectedReleaseAssets(version).length;
   console.log(
-    `Release verification passed for ${tag}: release id=${release.id} carries all ${expectedCount} expected assets.`
+    `Release verification passed for ${tag}: release id=${release.id} carries all ${expectedCount} expected assets, ` +
+      `and ${MAC_FEED} lists ${expectedMacZips(version).join(', ')}.`
   );
 }
 
@@ -149,4 +204,4 @@ if (require.main === module) {
 // parseArgs and main are exported for tests: main is what turns an `ok: false`
 // decision into the nonzero exit that actually blocks the publish step, so it is
 // load-bearing rather than glue.
-module.exports = { verifyReleaseAssets, releasesForTag, parseArgs, main };
+module.exports = { verifyReleaseAssets, releasesForTag, assetTextReader, parseArgs, main };

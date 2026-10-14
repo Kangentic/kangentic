@@ -6303,6 +6303,16 @@
       return (typeof window !== 'undefined' && window.__mockPlatform) || 'win32';
     },
 
+    // Arch string. Overridden per spec via window.__mockArch; with
+    // __mockPlatform: darwin, x64 is an Intel Mac, where the Knowledge Graph
+    // reports itself unavailable. The default follows the platform, arm64 on a
+    // Mac and x64 elsewhere, so a spec that sets only __mockPlatform: darwin
+    // gets the Mac the release mostly ships to, not an Intel one.
+    get arch() {
+      if (typeof window !== 'undefined' && window.__mockArch) return window.__mockArch;
+      return typeof window !== 'undefined' && window.__mockPlatform === 'darwin' ? 'arm64' : 'x64';
+    },
+
     webUtils: {
       getPathForFile: function () { return '/mock/path/file.txt'; },
     },

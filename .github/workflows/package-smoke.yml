@@ -1,7 +1,8 @@
 name: Package smoke
 
-# Packages the app on Windows, macOS and Linux exactly as `npm run package`
-# does locally (electron-builder --dir: no installer, nothing published), then
+# Packages the app on Windows x64, macOS (Apple silicon and Intel) and Linux
+# (x64 and arm64) exactly as `npm run package` does locally (electron-builder
+# --dir: no installer, nothing published), then
 # runs scripts/package-smoke.mjs against the result. The script launches the
 # packaged app isolated, runs a terminal (the pty host), reads the Knowledge
 # Graph snapshot (the retrieval worker), deletes a task whose terminal left a
@@ -11,9 +12,10 @@ name: Package smoke
 #
 # Every other tier starts the app from the repo, so before this workflow a
 # packaged build first ran on macOS and Linux on the release matrix, after the
-# tag existed. The afterPack gates (build/afterPack.js) run here too, on all
-# three platforms: they load each forked process's native modules from the
-# unpacked tree before the fuses flip.
+# tag existed. The afterPack gates (build/afterPack.js) run here too, on every
+# target: they load each forked process's native modules from the unpacked tree
+# before the fuses flip. On Intel macOS that includes the logged skip of the
+# embed worker probe, since onnxruntime-node ships no darwin x64 binding.
 #
 # macOS: electron-builder skips signing on a pull request, and an unsigned
 # arm64 binary whose fuses were flipped after packing is killed at launch. So
@@ -25,7 +27,7 @@ name: Package smoke
 #
 # Path-filtered and deliberately NOT a required check, like
 # macos-spawn-helper.yml: ci.yml runs at its 21-job concurrency ceiling (see the
-# note at the top of that file), so these three jobs queue rather than fail
+# note at the top of that file), so these jobs queue rather than fail
 # when they overlap a CI run. The filter covers what decides whether a packaged
 # build launches: the packaging config and scripts, the forked processes'
 # entries and their clients, and the code they share.
@@ -54,6 +56,7 @@ on:
       - 'src/main/shared/**'
       - 'src/main/db/database.ts'
       - 'src/main/config/paths.ts'
+      - 'src/shared/embedding-runtime-gaps.json'
       - '.github/workflows/package-smoke.yml'
   workflow_dispatch:
 
@@ -71,15 +74,23 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # One leg per release leg, on the same runner (release.yml's matrix), since
+      # each target builds natively and loads its own arch's native packages.
       matrix:
         include:
           - os: ubuntu-latest
+            package: npm run package -- --publish never
+            smoke: xvfb-run -a node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
+          - os: ubuntu-24.04-arm
             package: npm run package -- --publish never
             smoke: xvfb-run -a node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
           - os: windows-latest
             package: npm run package -- --publish never
             smoke: node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
           - os: macos-latest
+            package: npm run package -- --publish never --config.mac.identity=-
+            smoke: node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
+          - os: macos-26-intel
             package: npm run package -- --publish never --config.mac.identity=-
             smoke: node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
     steps:

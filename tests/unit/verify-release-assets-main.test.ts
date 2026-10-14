@@ -3,7 +3,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 // scripts/verify-release-assets.js is the CI gate that blocks `gh release edit --draft=false`
-// unless a tag resolves to exactly one release carrying all 11 expected assets. This file covers
+// unless a tag resolves to exactly one release carrying every expected asset, with a latest-mac.yml
+// that lists every mac zip. This file covers
 // the two things tests/unit/release-asset-manifest.test.ts does NOT: main() (the wrapper that
 // turns an `ok: false` decision into the nonzero exit that actually blocks publishing) and
 // releasesForTag's pagination loop. The pure decision function verifyReleaseAssets is fully
@@ -49,7 +50,8 @@ interface RawRelease {
 interface VerifyReleaseAssetsExports {
   verifyReleaseAssets: (
     releases: RawRelease[],
-    tag: string
+    tag: string,
+    readAssetText: (asset: { name: string }) => string
   ) => { ok: boolean; problems: string[]; release: RawRelease | null };
   releasesForTag: (repo: string, tag: string) => RawRelease[];
   parseArgs: (argv: string[]) => { tag: string | undefined; repo: string };
@@ -145,19 +147,45 @@ describe('main', () => {
     expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Usage:'));
   });
 
-  it('does not exit nonzero when verification passes', () => {
-    const { expectedReleaseAssets } = requireFromRepo('./scripts/release-assets.js') as {
-      expectedReleaseAssets: (version: string) => string[];
-    };
-    const release: RawRelease = {
+  const { expectedReleaseAssets, expectedMacZips } = requireFromRepo('./scripts/release-assets.js') as {
+    expectedReleaseAssets: (version: string) => string[];
+    expectedMacZips: (version: string) => string[];
+  };
+
+  /** A release carrying every expected asset, each with the id the asset API addresses it by. */
+  function completeRelease(): RawRelease & { assets: { id: number; name: string; state: string }[] } {
+    return {
       id: 1,
       draft: true,
       tag_name: TAG,
-      assets: expectedReleaseAssets(VERSION).map((name) => ({ name, state: 'uploaded' })),
+      assets: expectedReleaseAssets(VERSION).map((name, index) => ({ id: 1000 + index, name, state: 'uploaded' })),
     };
+  }
+
+  function feedListing(zips: string[]): string {
+    return [
+      `version: ${VERSION}`,
+      'files:',
+      ...zips.flatMap((zip) => [`  - url: ${zip}`, '    sha512: c2hhNTEy', '    size: 100']),
+      `path: ${zips[0]}`,
+      '',
+    ].join('\n');
+  }
+
+  it('does not exit nonzero when verification passes', () => {
+    const release = completeRelease();
+    const feedAsset = release.assets.find((asset) => asset.name === 'latest-mac.yml');
+    const calls: string[][] = [];
     // A single release satisfies the whole expected set, so page 1 (length 1, under 100) is the
-    // only page requested; the loop breaks there regardless of what a page 2 would contain.
-    const { main } = loadScriptWithMockedExecFileSync(() => JSON.stringify([release]));
+    // only page requested; the loop breaks there regardless of what a page 2 would contain. The
+    // other call reads latest-mac.yml through the asset API, which works on a draft.
+    const { main } = loadScriptWithMockedExecFileSync((_file, args) => {
+      calls.push([...args]);
+      if (args.includes(`repos/Kangentic/kangentic/releases/assets/${feedAsset?.id}`)) {
+        return feedListing(expectedMacZips(VERSION));
+      }
+      return JSON.stringify([release]);
+    });
     const exitSpy = spyOnProcessExit();
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -166,6 +194,30 @@ describe('main', () => {
     expect(() => main()).not.toThrow();
     expect(exitSpy).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Release verification passed'));
+    // The pass line names what was checked in the feed, so a log reader can see both arches were
+    // listed rather than trusting the green. Spelled out, not built from expectedMacZips, so a
+    // dropped arch or a reordered list fails here instead of changing both sides together.
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`latest-mac.yml lists Kangentic-${VERSION}-arm64-mac.zip, Kangentic-${VERSION}-x64-mac.zip`),
+    );
+    expect(calls).toContainEqual(['api', '-H', 'Accept: application/octet-stream', `repos/Kangentic/kangentic/releases/assets/${feedAsset?.id}`]);
+  });
+
+  it('exits nonzero when every name is there but latest-mac.yml lists one arch', () => {
+    const release = completeRelease();
+    const { main } = loadScriptWithMockedExecFileSync((_file, args) => (
+      args.some((arg) => arg.includes('/releases/assets/'))
+        ? feedListing([expectedMacZips(VERSION)[0]])
+        : JSON.stringify([release])
+    ));
+    const exitSpy = spyOnProcessExit();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    process.argv = [...originalArgv.slice(0, 2), TAG, '--repo', 'Kangentic/kangentic'];
+
+    expect(() => main()).toThrow(ProcessExitSentinel);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(`does not list ${expectedMacZips(VERSION)[1]}`));
   });
 });
 

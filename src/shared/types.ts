@@ -7908,6 +7908,10 @@ export interface ElectronAPI {
 
   // Platform
   platform: string;
+  /** `process.arch` (`x64`, `arm64`). Read with `platform` where a feature
+   *  depends on the build, as the Knowledge Graph does on Intel Macs
+   *  (`src/shared/embedding-runtime.ts`). */
+  arch: string;
 
   // Web utilities
   webUtils: {

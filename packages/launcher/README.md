@@ -15,7 +15,7 @@ npx kangentic
 The launcher downloads the release that matches its own version from [GitHub Releases](https://github.com/Kangentic/kangentic/releases), installs it, and opens it:
 
 - **Windows.** A per-user install to `%LOCALAPPDATA%\Programs\Kangentic`.
-- **macOS.** `Kangentic.app` in `~/Applications`.
+- **macOS.** `Kangentic.app` in `~/Applications`. An x64 Node running under Rosetta on Apple Silicon still gets the Apple Silicon build.
 - **Linux.** The `.rpm` package (dnf, zypper, or rpm) or the `.deb` package (apt or dpkg). This asks for your password.
 
 To open a project directly:
@@ -32,7 +32,7 @@ The app updates itself. On Windows and macOS a downloaded update installs when y
 
 ## Requirements
 
-- Windows x64, macOS 13 or later on Apple Silicon, or Linux x64.
+- Windows x64, macOS 13 or later on Apple Silicon or Intel, or Linux x64 or arm64.
 - Node.js 20 or later, and Git 2.26 or later.
 - At least one supported agent CLI, such as Claude Code, Codex CLI, or Gemini CLI, installed and signed in.
 

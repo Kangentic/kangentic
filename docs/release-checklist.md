@@ -4,7 +4,7 @@ Manual validation against real, authenticated agent CLIs, run against a release'
 
 Run from a packaged build (`npm run make`) on the platform you primarily ship from, against a project that has the agent CLI installed and authenticated. Use a throwaway project directory so file writes do not pollute real work.
 
-If any step fails, file a bug, fix forward, and cut a new tag. The lever is [Rollback](deployment.md#rollback), not withholding the release: `publish-release` publishes as soon as the builds succeed, and no human decides whether the draft goes live. Never publish a draft by hand either, least of all while the builds are still running. That is how v0.39.0 shipped with none of its 11 assets. See [Draft Releases Are Invisible to Auto-Updater](deployment.md#draft-releases-are-invisible-to-auto-updater).
+If any step fails, file a bug, fix forward, and cut a new tag. The lever is [Rollback](deployment.md#rollback), not withholding the release: `publish-release` publishes as soon as the builds succeed, and no human decides whether the draft goes live. Never publish a draft by hand either, least of all while the builds are still running. That is how v0.39.0 shipped with none of its assets. See [Draft Releases Are Invisible to Auto-Updater](deployment.md#draft-releases-are-invisible-to-auto-updater).
 
 ## OpenCode
 

@@ -46,6 +46,7 @@ import { backgroundCallSink } from '../ipc/helpers/background-call-sink';
 import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
+import { isLocalEmbeddingSupported } from './embedder/embedding-runtime-support';
 import { requiresUserInteraction } from '../../shared/activity-state';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
@@ -116,7 +117,11 @@ function isIndexingEnabled(context: IpcContext): boolean {
   }
 }
 
+/** The Knowledge Graph is on: enabled in config, on a platform its local model
+ *  can load on (`isLocalEmbeddingSupported`). Off on Intel macOS whatever the
+ *  config says, so the model is never downloaded there. */
 function isSemanticEnabled(context: IpcContext): boolean {
+  if (!isLocalEmbeddingSupported()) return false;
   try {
     return context.configManager.load().knowledgeGraph?.enabled === true;
   } catch {
@@ -361,7 +366,12 @@ function commitStep(context: IpcContext, projectPath: string | null): IndexSweep
 
 /** What a sweep does with the source code index (`codeSweepPlan`). */
 function codePlan(context: IpcContext): CodeSweepPlan {
-  return codeSweepPlan(() => context.configManager.load().knowledgeGraph);
+  return codeSweepPlan(() => {
+    const config = context.configManager.load().knowledgeGraph;
+    // Code is found by meaning only, so with no model to embed it the index
+    // would chunk thousands of passages that never get a vector.
+    return config && !isLocalEmbeddingSupported() ? { ...config, enabled: false } : config;
+  });
 }
 
 /**
@@ -463,8 +473,11 @@ function queueRecordSweeps(context: IpcContext, projectId: string): void {
 
 /** Task summaries are wanted: switched on (the default, `taskSummariesOn`),
  *  with indexing and semantic search on, since the Knowledge Graph needs both.
- *  With no agent chosen the pass resolves no writer, so nothing is spent. */
+ *  With no agent chosen the pass resolves no writer, so nothing is spent. Never
+ *  where the local model cannot load, so no agent call is spent on summaries
+ *  for a Knowledge Graph that cannot run. */
 function summariesEnabled(context: IpcContext): boolean {
+  if (!isLocalEmbeddingSupported()) return false;
   try {
     const config = context.configManager.load().knowledgeGraph;
     return config?.indexingEnabled !== false && config?.enabled === true && taskSummariesOn(config);
