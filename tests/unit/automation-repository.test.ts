@@ -218,6 +218,43 @@ describe('AutomationRepository', () => {
     expect(saved.config).toEqual({ url: 'https://example.com', method: 'PUT', headers: { 'X-A': '1' } });
   });
 
+  describe('a Text match (final_line)', () => {
+    it('round-trips a turn-end Text match, trimmed', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [webhook('Ping', { trigger: 'turn_end', final_line: '  Verdict: Ready  ' })]);
+
+      expect(automations.listForColumn(columnId)[0]).toMatchObject({ final_line: 'Verdict: Ready', condition: null });
+    });
+
+    // Every writer already holds to both rules; this is the backstop, so a row
+    // written past them can never carry a check the runner would not run, or two.
+    it('stores no Text match off a turn end, and none that is blank', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [
+        webhook('On enter', { trigger: 'enter', final_line: 'Verdict: Ready' }),
+        webhook('Blank', { trigger: 'turn_end', final_line: '   ' }),
+      ]);
+
+      expect(automations.listForColumn(columnId).map((row) => [row.name, row.final_line])).toEqual([
+        ['On enter', null],
+        ['Blank', null],
+      ]);
+    });
+
+    it('keeps one Condition kind: a Text match wins over prose on the same row', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [
+        webhook('Both', { trigger: 'turn_end', condition: 'The review is clean', final_line: 'Verdict: Ready' }),
+        webhook('Prose only', { trigger: 'turn_end', condition: 'The review is clean', final_line: null }),
+      ]);
+
+      expect(automations.listForColumn(columnId).map((row) => [row.name, row.condition, row.final_line])).toEqual([
+        ['Both', null, 'Verdict: Ready'],
+        ['Prose only', 'The review is clean', null],
+      ]);
+    });
+  });
+
   describe('getForTrigger', () => {
     it('returns only that trigger, in position order, skipping disabled rows', () => {
       const { automations, columnId } = setup();
@@ -414,6 +451,21 @@ describe('AutomationRunRepository', () => {
     expect(row.status).toBe('skipped');
     expect(row.detail).toBe('Start an agent here is off.');
     expect(row.attempts).toBe(0);
+  });
+
+  it('records a Text match outcome in its own columns, apart from any Condition answer', () => {
+    const { runs, columnId, taskId } = setup();
+    runs.start({ id: 'run-met', automation: automation('a1', columnId), taskId, finalLine: { met: true, reason: 'The final line reads "Verdict: Ready".' } });
+    runs.recordSkipped(
+      { id: 'run-missed', automation: automation('a2', columnId), taskId, finalLine: { met: false, reason: 'The final line reads "Verdict: Blocked".' } },
+      'Text match not met: The final line reads "Verdict: Blocked".',
+    );
+    runs.start({ id: 'run-plain', automation: automation('a3', columnId), taskId });
+
+    const byId = new Map(runs.listForTask(taskId).map((row) => [row.id, row]));
+    expect(byId.get('run-met')).toMatchObject({ final_line_met: true, final_line_reason: 'The final line reads "Verdict: Ready".', condition_met: null, check: null });
+    expect(byId.get('run-missed')).toMatchObject({ final_line_met: false, status: 'skipped', condition_met: null });
+    expect(byId.get('run-plain')).toMatchObject({ final_line_met: null, final_line_reason: null });
   });
 
   it('closes out runs the app died in the middle of', () => {

@@ -838,11 +838,16 @@ leaves. Each column owns one ordered list, split into three groups (`on`: `enter
 | `notify` | Raises one desktop notification | `title`, `body` |
 | `move_to_column` | `turn_end` only. Moves the task, and hands the agent there a message; ends the group | `targetColumn` (omit for the next column), `message` |
 
-Every row also takes two guards:
+Every row also takes guards, a Condition of one kind or the other and a Frequency:
 
 - **`condition`**: a sentence in plain words, answered yes or no by the Automation agent (Settings >
   Workflows) before the row runs. A no is not a run, so the next trigger checks it again. Omit or
-  `null` to always run. A row with a Condition is skipped until an Automation agent is set up.
+  `null` to always run. A row with a `condition` is skipped until an Automation agent is set up.
+- **`finalLine`**: a Text match, the other kind of Condition, checked in code with no agent call. The
+  row runs only when the last line of the agent's final message matches it, ignoring case,
+  punctuation (markdown marks included) and extra spaces, with `*` as a wildcard (`"Verdict: Ready"`,
+  `"PR: *"`). The pattern must cover the whole line. `turn_end` rows only, and a row gives this or
+  `condition`, not both. A miss is not a run, like a no.
 - **`maxRuns`**: Frequency, the most times the row may run on one task across every visit (a review
   loop's round-trip limit). The count starts over when the task leaves Done. Omit or `null` for no
   limit.
@@ -894,9 +899,9 @@ board do": a board-wide read answers it once instead of one call per column.
 | `column` | string | No | Column name (case-insensitive). Omit to read every column. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
-Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `condition`, `maxRuns`, and
-the type's own fields. `condition` and `maxRuns` are null when the row has none.
-A row that cannot run as things stand is flagged with the reason.
+Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `condition`, `finalLine`,
+`maxRuns`, and the type's own fields. `condition`, `finalLine` and `maxRuns` are null when the row
+has none. A row that cannot run as things stand is flagged with the reason.
 
 The text lists each row on one line: its name, its type, and the sentence the Column Manager shows
 (the verb and the one required value), then every option the panel shows as a mark, in words, in
@@ -904,6 +909,7 @@ parentheses. The action's own options come first, then the Condition and the Fre
 
 ```
 Moves the task to Executing (with a message; only if the review is clean; at most 3 times for each task)
+Moves the task to Testing (only if the last line reads "Verdict: Ready")
 ```
 
 A waiting Send message reads "waits for the current turn to end", on enter and exit only: at a turn
@@ -924,8 +930,8 @@ change applied. Pass `[]` to remove them all.
 
 Each entry takes `name` (required, unique within the column ignoring case), `type`, an optional
 `on` (`enter` by default, or `turn_end` or `exit`), an optional `enabled` (true by default), an
-optional `condition` and `maxRuns` (both off by default), an optional `id`, and the type's own
-fields flat on the object:
+optional `condition` or `finalLine` and an optional `maxRuns` (all off by default), an optional
+`id`, and the type's own fields flat on the object:
 
 ```json
 {
@@ -938,7 +944,7 @@ fields flat on the object:
       "on": "turn_end",
       "targetColumn": "Executing",
       "message": "Back from {{column}}. What the review found:\n{{agentReply}}",
-      "condition": "The review found work the implementer can do",
+      "finalLine": "Verdict: Blocked",
       "maxRuns": 3
     },
     { "name": "Clean", "type": "move_to_column", "on": "turn_end", "condition": "The review is clean" },
@@ -957,8 +963,12 @@ A row the column cannot run as things stand is stored and warned about, not refu
 list before switching the column's agent on is a legitimate order of operations. Two things ARE
 refused, with the reason, so nothing is stored that could never be what the caller meant: an
 unknown `on`, and a type written under a trigger it does not run on (`move_to_column` runs on
-`turn_end` only). A `maxRuns` that is not a whole number of at least 1, or a `condition` that is
-not a string, is refused too.
+`turn_end` only). A `maxRuns` that is not a whole number of at least 1, or a `condition` or
+`finalLine` that is not a string, is refused too. So is a `finalLine` on an `enter` or `exit` row
+("finalLine works only with on: "turn_end"..."), a `finalLine` with no letter, number or `*`,
+which no last line can match, and a row that gives both a `condition` and a `finalLine` ("give a
+condition or a finalLine, not both"). A blank `finalLine` reads as none. Every refusal ends
+"Nothing was saved."
 
 ### kangentic_get_automation_runs
 
@@ -975,7 +985,9 @@ automations that column holds now). Newest first.
 Each run carries its status (`running`, `succeeded`, `failed`, `skipped`, `interrupted`), the
 `detail` (the failure reason, the skip reason, or a one-line success such as `HTTP 204` or
 `exit 0`), the attempt count, and its timestamps. A run whose row has a Condition also shows whether
-the Automation agent found it met or not met, and the agent's one-line reason. The log denormalizes the automation's name and
+the Automation agent found it met or not met, and the agent's one-line reason. A run whose row has a
+Text match shows `[text match met: ...]` or `[text match not met: ...]` with the line it read
+(`The final line reads "Verdict: Blocked".`), and no check line, since no agent was asked. The log denormalizes the automation's name and
 type and takes no foreign key to the automation, so renaming or deleting one does not empty its
 history.
 
@@ -1003,7 +1015,10 @@ or to test one you just wrote.
 
 Current state, not the state of the move that first ran it. A task can have moved twice since a
 failure, so `{{toColumn}}` resolves against where it is now, while `{{fromColumn}}` and
-`{{trigger}}` resolve empty because there is no move. It writes a fresh run row either way.
+`{{trigger}}` resolve empty because there is no move. It writes a fresh run row either way. A
+`turn_end` row whose Text match, Condition or `{{agentReply}}` reads the final message is judged
+against the newest one the task's session wrote, read before the run. A row that reads no message
+skips the read, and a message from a session a move has since replaced counts as none.
 
 It will not start an agent: a `send_message` automation against a task with no live session is
 recorded skipped rather than spawning one. It takes the task lock and is capped at five minutes, so

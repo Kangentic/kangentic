@@ -4,6 +4,8 @@ import { createTransitionEngine, resolveInjectionVerifier } from './agent-spawn'
 import { getProjectRepos } from './project-repos';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
 import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
+import { readSessionFinalReply } from '../../automations/turn-end/final-reply-reader';
+import { needsAgentReply } from '../../automations/row-guards';
 import { showDesktopNotification } from '../handlers/system';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -54,11 +56,28 @@ export async function runAutomationAgain(
     return { ok: false, error: `The column "${automation.swimlane_id.slice(0, 8)}" this automation belongs to no longer exists.` };
   }
 
+  // A turn-end row whose Text match, Condition or `{{agentReply}}` reads the
+  // agent's final message gets the newest one the task's session wrote. That
+  // is what a turn end reads, except that a re-run before the task's first
+  // turn in this column reads the message the last column's turn ended on.
+  // Read before the lock: it can take up to 15 s and holds nothing. A row that
+  // reads no message skips it.
+  const replyRead = automation.trigger === 'turn_end' && needsAgentReply(automation)
+    ? await readLatestReply(projectId, repos.tasks.getById(taskId)?.session_id ?? null)
+    : null;
+
   return withTaskLock(taskId, async () => {
     // Re-read INSIDE the lock: "current state" has to mean current as of the
     // run, and a move that was queued ahead of this one has now landed.
     const task = repos.tasks.getById(taskId);
     if (!task) return { ok: false, error: 'That task no longer exists.' };
+
+    // Undefined on enter and exit, which have no final message. Null when no
+    // message was read, or when it came from a session a queued move has since
+    // replaced, so another session's last line never decides this row.
+    const agentReply = automation.trigger !== 'turn_end'
+      ? undefined
+      : replyRead !== null && replyRead.sessionId === task.session_id ? replyRead.text : null;
 
     const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
     if (!projectPath) return { ok: false, error: 'That project is not open.' };
@@ -102,6 +121,7 @@ export async function runAutomationAgain(
         },
         showNotification: (notification) => showDesktopNotification(context, notification),
         onProgress: createProgressCallback(context.mainWindow, taskId),
+        agentReply,
       });
 
       const outcome = summary.outcomes[0];
@@ -129,4 +149,15 @@ export async function runAutomationAgain(
       clearSpawnProgress(context.mainWindow, taskId);
     }
   });
+}
+
+/**
+ * The session's latest final message with the session it came from, so the
+ * caller can tell whether it is still the task's. Null when the task has no
+ * session; a null `text` when the read found nothing or failed.
+ */
+async function readLatestReply(projectId: string, sessionId: string | null): Promise<{ sessionId: string; text: string | null } | null> {
+  if (!sessionId) return null;
+  const reply = await readSessionFinalReply({ sessionId }, new SessionRepository(getProjectDb(projectId)));
+  return { sessionId, text: reply?.text ?? null };
 }

@@ -83,7 +83,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `agent.idleTimeoutMinutes`
 - `developer.activityDebugOverlay`, `developer.persistConsoleLogs`, `developer.recordIpcTraffic`, `developer.previewInspectionServer`, `developer.previewEvalEnabled`, `developer.stallProfiler`
 - `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
-- `automation.agent`, `automation.model`, `automation.effort` (the Automation agent that answers automation Conditions and names tasks and Command Terminals, in the Workflows tab; see [Workflows](#workflows-workflow-agent-and-automation-agent))
+- `automation.agent`, `automation.model`, `automation.effort` (the Automation agent that answers Agent evaluations and names tasks and Command Terminals, in the Workflows tab; see [Workflows](#workflows-workflow-agent-and-automation-agent))
 - `workflows.agent`, `workflows.model`, `workflows.effort` (the Workflow agent every workflow's own agent runs on, in the Workflows tab; required before one starts)
 - `workflows.agentPrompt` (the workflow agent's first message, in the Workflows tab)
 - `workflows.agentPaneWidth` (the Workflows view's agent pane width; set by dragging the pane's edge, not in Settings)
@@ -556,7 +556,7 @@ same text is in `<project>/.kangentic/logs/<date>.log` as a
 Settings > Workflows, first in the Advanced tier. Global-only: it applies to every project and works
 with no project open. Its first card is the **Workflow agent**, which every workflow's own agent
 runs on, then that agent's first message, then the **Automation agent**, which answers every
-automation's Condition (and judges when a workflow step is done) and names tasks and Command
+Agent evaluation (and judges when a workflow step is done) and names tasks and Command
 Terminals. With no Automation agent, naming is off. The two agents are separate choices. A judge
 that answers yes or no, or writes a four-word title, runs well on a small model that a planner
 should not.
@@ -566,7 +566,7 @@ should not.
 | `workflows.agent` | `string \| null` | `null` | The agent every workflow's own agent runs as, an adapter name. Offered: every installed agent that reaches Kangentic's MCP server with a URL of its own (`kangenticMcp: 'per-session'`) and whose conversation can be resumed, by an id Kangentic chose, one the CLI creates before launch, or one captured after launch (`supportsWorkflowAgent`, from `canBeWorkflowAgent`). Read-only launch is not required: an adapter that declares `supportsReadOnlyLaunch` launches without edit or shell tools, and any other runs in its default mode, asked by the first message to leave files alone. No fallback to the project's default agent: while it is unset, no workflow agent starts, and the Workflows view's pane shows a setup state with Open Settings in place of the terminal. Checked with `workflowAgentSetupGap` (`src/shared/workflow-agent-choice.ts`), which the pane and main's start both read. A chosen agent that is not installed is no gap: the start detects the CLI next and the pane shows that reason. A conversation already recorded on a workflow keeps the agent it began on while it can be resumed there, and the terminal pastes images the way that agent takes them; with no id recorded, or on an agent that can no longer be one, the next start is a new conversation on this agent from the saved plan. |
 | `workflows.model` | `string \| null` | `null` | The model the workflow agent runs at, as that CLI's own id, passed to `--model` on every start, a Resume included, while its conversation is on the chosen agent. A conversation kept from an earlier agent runs at that CLI's own default. Required when the agent's CLI takes a model (`capabilities.supportsModelOverride`). Cleared whenever `workflows.agent` changes. |
 | `workflows.effort` | `string \| null` | `null` | The effort level it runs at, for a conversation on the chosen agent. Optional: unset runs at the CLI's own level. Read on every start, so a change reaches a paused agent on its next Resume. Cleared whenever `workflows.agent` changes, with the model. |
-| `automation.agent` | `string \| null` | `null` | The agent that answers Conditions and names tasks and Command Terminals, an adapter name (`claude`, `codex`). Its own choice, separate from the Knowledge Graph's and from the project's default agent, with no fallback to either: while it is unset, a row with a Condition is skipped ("Set up an Automation agent"), naming is off (no rename suggestion, no Name-from-prompt button, a terminal keeps its default title, checked with `namingAgentReady`), and nothing is spent. Resolved through `automationAgentChoice` and checked with `automationAgentReady` (`src/shared/answer-agent.ts`), which the Edit automation dialog and the engine both read. A check runs through the same headless, read-only answer path as Ask (`answerFromContext`, in the shared answer home), at most two at once, with the CLI's detection cached for five minutes. |
+| `automation.agent` | `string \| null` | `null` | The agent that answers Agent evaluations and names tasks and Command Terminals, an adapter name (`claude`, `codex`). Its own choice, separate from the Knowledge Graph's and from the project's default agent, with no fallback to either: while it is unset, a row with an Agent evaluation is skipped ("Set up an Automation agent"), naming is off (no rename suggestion, no Name-from-prompt button, a terminal keeps its default title, checked with `namingAgentReady`), and nothing is spent. Resolved through `automationAgentChoice` and checked with `automationAgentReady` (`src/shared/answer-agent.ts`), which the Edit automation dialog and the engine both read. A check runs through the same headless, read-only answer path as Ask (`answerFromContext`, in the shared answer home), at most two at once, with the CLI's detection cached for five minutes. |
 | `automation.model` | `string \| null` | `null` | The model the check runs at, as that CLI's own id. The Model row lists the agent's floating aliases first, under Latest, and a picked alias (Claude's `haiku`) is stored and passed to `--model` as is, so checks follow each new release. Required when the agent's answer run takes a model. Cleared whenever `automation.agent` changes. A small, fast model is usually enough: a check reads one reply and answers yes or no. |
 | `automation.effort` | `string \| null` | `null` | The effort level the check runs at. Optional: unset runs at the adapter's recommended level. Cleared with the model when the agent changes. Measured with `scripts/eval-condition-check.mjs` on this repo's own judged replies, Haiku 5.5 with the reason-first answer form: an exact-line Condition scored 114/114 at low, medium and high alike, with about 52, 60 and 177 output tokens per check, so low is the cheapest at the same accuracy (about $0.0005 a check). A Condition that asks for a judgment ("the reply lists findings it has not applied") scored 78 to 96% at every level. Effort does not fix that wording; an exact line the agent is told to write does. |
 | `workflows.agentPrompt` | `string \| null` | `null` | The whole first message a new workflow's agent gets, envelope included. Unset or blank sends the default (`DEFAULT_WORKFLOW_AGENT_PROMPT`, `src/shared/workflow-agent-prompt.ts`). Offers `{{projectName}}`, `{{projectPath}}`, `{{baseBranch}}`, `{{columns}}` and `{{brief_xml}}`. An edit applies to agents that start after it; a running conversation keeps what it was sent. |
@@ -669,12 +669,15 @@ once per visit, and only a row that actually runs counts: a row whose Condition 
 checked again at the next turn end. To Do and Done have no turn ends, nor does a column whose agent
 is off or does not report turn ends (agents whose only signal is terminal silence).
 
-**Condition and Frequency apply to every type.** A row's **Condition** is a sentence in plain words
-("the review found work the implementer can do"), answered yes or no by the **Automation agent**
-(Settings > Workflows) before the row runs, with a one-line reason the run log keeps. One headless,
-read-only call answers every pending Condition of a group at once; at a turn end it reads the
-task and the agent's final message, on enter or exit the task and the move. Until an Automation
-agent is set up, a row with a Condition is skipped (a Condition written earlier is kept). A row's
+**Condition and Frequency apply to every type.** A row's **Condition** is one of two kinds. An
+**Agent evaluation** is a sentence in plain words ("the review found work the implementer can do"),
+answered yes or no by the **Automation agent** (Settings > Workflows) before the row runs, with a
+one-line reason the run log keeps. One headless, read-only call answers every pending Agent
+evaluation of a group at once; at a turn end it reads the task and the agent's final message, on
+enter or exit the task and the move. Until an Automation agent is set up, a row with an Agent
+evaluation is skipped (a Condition written earlier is kept). A **Text match** (`finalLine`) is
+checked in code against the agent's last line at a turn end, needs no Automation agent and makes no
+call; see [Column automations](#column-automations). A row's
 **Frequency** is the most times it may run on one task, counted across every visit; a row past it
 is skipped. The count starts over when the task leaves Done, so a reopened task can loop and
 advance again. Both are off on every row unless set, so a board from before them runs as it did.
@@ -823,7 +826,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
             "type": "move_to_column",
             "targetColumn": "Executing",
             "message": "Back from {{column}}. What the review found:\n{{agentReply}}",
-            "condition": "The review found work the implementer can do",
+            "finalLine": "Verdict: Blocked",
             "maxRuns": 3
           },
           { "name": "Clean", "type": "move_to_column", "condition": "The review is clean" }
@@ -863,23 +866,33 @@ decided by the CLI on each machine: the provider and variables such as
 
 **Automations nest under the column that owns them, as three named arrays** (`onEnter`,
 `onTurnEnd`, `onExit`). Array order IS the run order within its group, an empty group is an absent
-key, and the type's own fields sit flat on the row beside `name`, `type`, `enabled`, `condition`
-and `maxRuns` rather than under a `with` object. Those five keys are reserved:
+key, and the type's own fields sit flat on the row beside `name`, `type`, `enabled`, `condition`,
+`finalLine` and `maxRuns` rather than under a `with` object. Those six keys are reserved:
 `automation-manifest-reserved-keys.test.ts` fails an adapter that declares a field colliding with
 one, which is what keeps the flat shape safe as the reserved set grows.
 
-`enabled` is omitted when true, so a switched-off row is the only one that carries it; `condition`
-and `maxRuns` are omitted when off. There is no `on` key, because the array a row sits in already
-says which trigger it runs on. A `move_to_column` row names its column by name, as `planExitTarget`
-does, and renaming that column rewrites the row.
+`enabled` is omitted when true, so a switched-off row is the only one that carries it; `condition`,
+`finalLine` and `maxRuns` are omitted when off. There is no `on` key, because the array a row sits
+in already says which trigger it runs on. A `move_to_column` row names its column by name, as
+`planExitTarget` does, and renaming that column rewrites the row.
+
+**A row's Condition is one of two kinds.** `condition` is plain words the Automation agent judges in
+a headless call. `finalLine` is a Text match, checked in code against the last line of the agent's final message that has a word in it (a
+closing code fence or rule is skipped), with no call: the pattern must cover the whole line, `*`
+matches any text, and case, punctuation (markdown marks included), invisible characters such as a
+zero-width space, and extra spaces are ignored, so `"Verdict: Ready"` matches
+`**Verdict: Ready.**`. A Text match needs a final message, so it works in `onTurnEnd` only. A row carries one of the two keys, never both.
 
 **Keys this build does not know are kept.** When the export rebuilds a column's `automations`, it
 carries over any automation list, row type, or row key it does not recognize from the file it last
 read (a row is matched by name and type). So a field or trigger that a NEWER build added survives a
 save by this one. The reverse cannot be fixed from here: a build from before On agent turn end
 ignores `onTurnEnd`, `condition` and `maxRuns`, drops those rows from its database, and its next
-export writes the file without them. **A team that shares `kangentic.json` should update
-Kangentic together.**
+export writes the file without them. A build from before Text match is worse for a row that uses
+one: it ignores `finalLine` and keeps the row, so a Move to column guarded by a Text match runs on
+that build as an unguarded move, at every turn end. **A team that shares `kangentic.json` should
+update Kangentic together, and restart every running copy onto the new build before applying a
+file that adds `finalLine`.**
 
 **The top-level `actions` and `transitions` arrays are gone, along with `columns[].autoCommand`
 and `columns[].autoCommandMode`.** All four are still READ, and converted on apply by the same
@@ -897,7 +910,12 @@ board:
 - A row filed under a trigger its type does not run on (a `move_to_column` row in `onEnter` or
   `onExit`) is skipped: it would run inside the move that fired it.
 - A `maxRuns` below 1 or not a number reads as off, and a fraction is rounded down. Each one warns,
-  since the MCP writer refuses all three. A blank `condition` reads as off with no warning.
+  since the MCP writer refuses all three. A blank `condition` or `finalLine` reads as off with no
+  warning.
+- A `finalLine` that is not text, or one on a row in `onEnter` or `onExit`, reads as off with a
+  warning; the row still runs. A row with both a `condition` and a `finalLine` keeps the
+  `finalLine`, with a warning. A `finalLine` with no letter, number or `*` is kept, with a
+  warning: no last line can match it, so the row never runs.
 - A second row with a name already used in the same column is renamed (`Notify 2`).
 - An `automations` value that is not an object, or an `onEnter` / `onTurnEnd` / `onExit` that is not a list
   (`{}`, or a single row written without brackets), keeps that column's current automations

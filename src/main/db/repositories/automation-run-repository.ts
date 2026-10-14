@@ -47,6 +47,8 @@ interface AutomationRunRow {
   finished_at: string | null;
   condition_met: number | null;
   condition_reason: string | null;
+  final_line_met: number | null;
+  final_line_reason: string | null;
 }
 
 /** The Automation agent's answer for a run's Condition, recorded on the run row. */
@@ -63,6 +65,8 @@ export interface StartRunInput {
   taskId: string;
   /** Set when the row has a Condition and the Automation agent answered it. */
   condition?: RunConditionAnswer;
+  /** Set when the row has a Text match: what it decided and the line it read. */
+  finalLine?: { met: boolean; reason: string };
   /**
    * The background call this run is tied to when it has no answer of its own:
    * a check the caller stopped waiting for still ran, and was still paid for.
@@ -129,8 +133,8 @@ export class AutomationRunRepository {
       .prepare(`
         INSERT INTO automation_runs
           (id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status, detail, attempts,
-           started_at, finished_at, condition_met, condition_reason, background_call_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'running', NULL, 0, ?, NULL, ?, ?, ?)
+           started_at, finished_at, condition_met, condition_reason, background_call_id, final_line_met, final_line_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'running', NULL, 0, ?, NULL, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -147,6 +151,8 @@ export class AutomationRunRepository {
         input.condition ? (input.condition.met ? 1 : 0) : null,
         input.condition?.reason ?? null,
         input.condition?.callId ?? input.backgroundCallId ?? null,
+        input.finalLine ? (input.finalLine.met ? 1 : 0) : null,
+        input.finalLine?.reason ?? null,
       );
   }
 
@@ -398,6 +404,8 @@ function mapRows(rows: AutomationRunWithCheckRow[]): AutomationRun[] {
       finished_at: row.finished_at,
       condition_met: row.condition_met === null ? null : row.condition_met === 1,
       condition_reason: row.condition_reason,
+      final_line_met: row.final_line_met === null ? null : row.final_line_met === 1,
+      final_line_reason: row.final_line_reason,
       check: checkOf(row),
     });
   }

@@ -61,6 +61,7 @@ const hoisted = vi.hoisted(() => ({
   column: {} as Record<string, unknown>,
   executeTransition: vi.fn(),
   checkConditions: vi.fn(),
+  conditionCheckInput: vi.fn(),
   conditionCheckCall: vi.fn(),
   waitForTurnCompletion: vi.fn(),
   runWorkflowStep: vi.fn(),
@@ -81,7 +82,7 @@ vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({
   createTransitionEngine: vi.fn(() => ({
     executeTransition: hoisted.executeTransition,
     resolveGroupTemplateVars: vi.fn(() => ({})),
-    conditionCheckInput: vi.fn(() => ({})),
+    conditionCheckInput: hoisted.conditionCheckInput,
     conditionCheckCall: hoisted.conditionCheckCall,
     checkConditions: hoisted.checkConditions,
   })),
@@ -189,6 +190,7 @@ describe('a turn end and the rows it may run', () => {
     // A workflow task, so a pass always reaches its `finally` unless the visit gate stops it.
     hoisted.workflowStepApplies.mockImplementation(() => true);
     hoisted.checkConditions.mockImplementation(async () => ({ ok: true, answers: new Map() }));
+    hoisted.conditionCheckInput.mockImplementation(() => ({}));
     checkCall = { projectId: PROJECT_ID, taskId, swimlaneId: laneId, job: 'condition_check' };
     hoisted.conditionCheckCall.mockImplementation(() => checkCall);
     // The runner's own bookkeeping for the rows it is handed: a run for a row
@@ -236,6 +238,7 @@ describe('a turn end and the rows it may run', () => {
       enabled: true,
       config: { targetColumn: 'Testing' },
       condition: null,
+      final_line: null,
       max_runs: null,
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
@@ -366,6 +369,42 @@ describe('a turn end and the rows it may run', () => {
 
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
       expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+    });
+  });
+
+  describe('Text match rows', () => {
+    function replyEndingOn(line: string): void {
+      hoisted.findSession.mockImplementation(() => ({ session_type: 'claude_agent', agent_session_id: 'agent-session-1', cwd: '/mock/worktree' }));
+      hoisted.retrievalCall.mockImplementation(async () => ({ text: `The review is done.\n\n${line}`, uuid: 'reply-1', ts: Date.now() }));
+    }
+
+    it('reads the reply for a Text match row and makes no Automation agent call', async () => {
+      hoisted.rows = [row({ final_line: 'Verdict: Ready' })];
+      replyEndingOn('Verdict: Ready');
+      enterColumnAt(secondsAgo(60));
+
+      await endTurn();
+
+      expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      const [, , , options] = hoisted.executeTransition.mock.calls[0] as [unknown, unknown, string, { agentReply: string | null }];
+      expect(options.agentReply).toBe('The review is done.\n\nVerdict: Ready');
+    });
+
+    it('asks the Automation agent about the Agent evaluation rows only, never a Text match row', async () => {
+      hoisted.rows = [
+        row({ id: 'row-back', name: 'Back for revisions', final_line: 'Verdict: Blocked' }),
+        row({ id: 'row-prose', name: 'Ask the agent', position: 1, condition: 'The review is clean' }),
+      ];
+      replyEndingOn('Verdict: Ready');
+      enterColumnAt(secondsAgo(60));
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      const [, , , conditional] = hoisted.conditionCheckInput.mock.calls[0] as [unknown, unknown, string, ColumnAutomation[]];
+      expect(conditional.map((candidate) => candidate.id)).toEqual(['row-prose']);
     });
   });
 

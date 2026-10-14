@@ -16,6 +16,7 @@ import {
   describeAutomationChanges,
   describeDraft,
   dirtyColumnIds,
+  draftConditionKinds,
   draftsByColumn,
   findEmptyName,
   findNameConflict,
@@ -40,6 +41,7 @@ import {
   splitTemplateSegments,
   detectTemplateVariableTrigger,
   takenNamesFor,
+  toDraft,
   toWriteInput,
   type AutomationDraft,
 } from '../../src/renderer/components/dialogs/board-manager/automation-drafts';
@@ -365,6 +367,46 @@ describe('saving', () => {
     const remapped = remapDraftIds(drafts, 'new:1', 'lane-real');
     expect(Object.keys(remapped)).toEqual(['lane-real']);
     expect(remapDraftIds(drafts, 'missing', 'lane-real')).toBe(drafts);
+  });
+
+  // The dialog keeps a Text match line while the Trigger is off a turn end, so
+  // switching back restores it. What a Save sends holds the two rules instead.
+  describe('the Condition kinds a Save sends', () => {
+    it('sends a turn-end Text match trimmed, and drops the prose a row held before it', () => {
+      const row = draft({ trigger: 'turn_end', condition: 'The review is clean', final_line: '  Verdict: Ready  ' });
+      expect(draftConditionKinds(row)).toEqual({ condition: null, final_line: 'Verdict: Ready' });
+      expect(toWriteInput(row)).toMatchObject({ condition: null, final_line: 'Verdict: Ready' });
+    });
+
+    it('drops a Text match off a turn end and keeps the Agent evaluation (S1)', () => {
+      for (const trigger of ['enter', 'exit'] as const) {
+        const row = draft({ trigger, condition: 'Tests pass', final_line: 'Verdict: Ready' });
+        expect(toWriteInput(row)).toMatchObject({ condition: 'Tests pass', final_line: null });
+        expect(draftConditionKinds({ trigger, condition: null, final_line: 'Verdict: Ready' })).toEqual({ condition: null, final_line: null });
+      }
+    });
+
+    it('reads a blank Text match as none, so the prose stands', () => {
+      expect(draftConditionKinds({ trigger: 'turn_end', condition: 'Tests pass', final_line: '   ' }))
+        .toEqual({ condition: 'Tests pass', final_line: null });
+    });
+
+    it('sees a Text match change as dirty, and a Text match parked off a turn end as no change', () => {
+      const before = [draft({ trigger: 'turn_end', final_line: 'Verdict: Ready' })];
+      expect(isColumnDirty(before, [draft({ trigger: 'turn_end', final_line: 'Verdict: *' })])).toBe(true);
+      const onEnter = [draft({ trigger: 'enter', final_line: null })];
+      expect(isColumnDirty(onEnter, [draft({ trigger: 'enter', final_line: 'Verdict: Ready' })])).toBe(false);
+    });
+
+    it('reads a row with no final_line field, as an older main process sends it, as no Text match', () => {
+      const fromOlderMain = automation({ trigger: 'turn_end', condition: 'The review is clean' });
+      delete (fromOlderMain as Partial<ColumnAutomation>).final_line;
+      expect(toDraft(fromOlderMain).final_line).toBeNull();
+    });
+
+    it('carries a Text match into a copy', () => {
+      expect(copyAutomation(draft({ trigger: 'turn_end', final_line: 'Verdict: Ready' }), 'turn_end', []).final_line).toBe('Verdict: Ready');
+    });
   });
 });
 

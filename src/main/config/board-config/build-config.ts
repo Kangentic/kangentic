@@ -178,7 +178,10 @@ function serializeGroup(
       // Only `false` is written: an absent key means enabled, which keeps the
       // common row to two keys plus its fields.
       if (!automation.enabled) row.enabled = false;
-      if (automation.condition) row.condition = automation.condition;
+      // One Condition kind per row: a Text match is written as `finalLine`, an
+      // Agent evaluation as `condition`, and the other key is left out.
+      if (automation.final_line) row.finalLine = automation.final_line;
+      else if (automation.condition) row.condition = automation.condition;
       if (automation.max_runs !== null) row.maxRuns = automation.max_runs;
 
       const fields = isAutomationType(automation.type) ? AUTOMATION_MANIFEST[automation.type].fields : [];

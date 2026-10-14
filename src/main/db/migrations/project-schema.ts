@@ -1878,6 +1878,26 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE automation_runs ADD COLUMN background_call_id TEXT DEFAULT NULL');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_automation_runs_background_call ON automation_runs(background_call_id)');
+
+  // Migration: Text match, the Condition kind checked in code against the
+  // agent's last line. The row's pattern, and what a run's check decided. The
+  // run's answer has columns of its own rather than `condition_met`: no agent
+  // was asked, and the task report lists `condition_met` rows as paid calls.
+  const automationColumnsWithFinalLine = new Set(
+    (db.pragma('table_info(column_automations)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!automationColumnsWithFinalLine.has('final_line')) {
+    db.exec('ALTER TABLE column_automations ADD COLUMN final_line TEXT DEFAULT NULL');
+  }
+  const runColumnsWithFinalLine = new Set(
+    (db.pragma('table_info(automation_runs)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!runColumnsWithFinalLine.has('final_line_met')) {
+    db.exec('ALTER TABLE automation_runs ADD COLUMN final_line_met INTEGER DEFAULT NULL');
+  }
+  if (!runColumnsWithFinalLine.has('final_line_reason')) {
+    db.exec('ALTER TABLE automation_runs ADD COLUMN final_line_reason TEXT DEFAULT NULL');
+  }
 }
 
 /**

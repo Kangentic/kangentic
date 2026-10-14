@@ -71,7 +71,7 @@ export function setColumnMessage(
   const name = uniqueName(DEFAULT_MESSAGE_NAME, rows.map((row) => row.name));
   automations.replaceForColumn(swimlaneId, [
     ...rows.map(toWriteInput),
-    { name, type: 'send_message', trigger: 'enter', enabled: true, config: { message: trimmed, mode: mode ?? 'immediate' } },
+    { name, type: 'send_message', trigger: 'enter', enabled: true, config: { message: trimmed, mode: mode ?? 'immediate' }, final_line: null },
   ]);
   return { action: 'created', name };
 }
@@ -136,6 +136,7 @@ function toWriteInput(row: ColumnAutomation): AutomationWriteInput {
     // Carried, not defaulted: `replaceForColumn` rewrites every row, so a row
     // passed back without its guards would lose them.
     condition: row.condition,
+    final_line: row.final_line,
     max_runs: row.max_runs,
   };
 }

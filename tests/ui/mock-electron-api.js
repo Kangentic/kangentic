@@ -754,11 +754,17 @@
     automationsHydrated = true;
     if (!Array.isArray(window.__mockAutomations)) return;
     window.__mockAutomations.forEach(function (row, index) {
-      automations.push(Object.assign(
-        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, condition: null, max_runs: null, created_at: now(), updated_at: now() },
+      var seeded = Object.assign(
+        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, condition: null, final_line: null, max_runs: null, created_at: now(), updated_at: now() },
         row,
         { config: Object.assign({}, row.config) },
-      ));
+      );
+      // As the repository's read hands a row over: a Text match on a turn end
+      // only, so a seeded enter row never shows one the app would drop.
+      seeded.final_line = seeded.trigger === 'turn_end' && typeof seeded.final_line === 'string' && seeded.final_line.trim() !== ''
+        ? seeded.final_line.trim()
+        : null;
+      automations.push(seeded);
     });
   }
 
@@ -2147,6 +2153,11 @@
           // A trigger the repository would not know is stored as 'enter', the
           // column's original and default group; the other two are kept as sent.
           var trigger = AUTOMATION_TRIGGER_ORDER.indexOf(row.trigger) >= 0 ? row.trigger : 'enter';
+          // One Condition kind per row, a Text match on a turn end only: the
+          // repository's backstop, mirrored so a spec reads back what the app would.
+          var finalLine = trigger === 'turn_end' && typeof row.final_line === 'string' && row.final_line.trim() !== ''
+            ? row.final_line.trim()
+            : null;
           automations.push({
             id: row.id || uuid(),
             swimlane_id: swimlaneId,
@@ -2160,9 +2171,10 @@
             // the same thing to a consumer: the row draws its Frequency mark (Repeat
             // with a count) for any `max_runs` that is not null, so an undefined one
             // would show a Repeat with no count and the tooltip "Frequency: at most
-            // undefined times for each task." The Condition mark (the funnel) reads
-            // a blank condition as none either way.
-            condition: typeof row.condition === 'string' && row.condition.trim() !== '' ? row.condition.trim() : null,
+            // undefined times for each task." The Condition marks read a blank
+            // condition or text match as none either way.
+            condition: finalLine === null && typeof row.condition === 'string' && row.condition.trim() !== '' ? row.condition.trim() : null,
+            final_line: finalLine,
             max_runs: Number.isFinite(row.max_runs) && Math.floor(row.max_runs) >= 1 ? Math.floor(row.max_runs) : null,
             created_at: now(),
             updated_at: now(),

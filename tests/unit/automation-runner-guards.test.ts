@@ -1,8 +1,11 @@
 /**
- * The runner's two guards and the group-ending row (#732, the Code Review loop).
+ * The runner's guards and the group-ending row (#732, the Code Review loop).
  *
  * - **Frequency:** a row that has run its limit on the task is skipped, and a
  *   skip never counts toward the limit.
+ * - **Text match:** the Condition kind checked in code against the agent's last
+ *   line. A miss is a skip with the line it read, never a run, and never asks
+ *   the Automation agent anything.
  * - **Condition:** the Automation agent's answer decides. A no is recorded as a
  *   skip with the reason, not a run, so the next trigger checks again; a yes
  *   rides the run row. A row whose Condition could not be checked is skipped
@@ -16,9 +19,11 @@ import {
   runAutomations,
   frequencyLimitReason,
   CONDITION_CHECK_WAIT_MS,
+  TEXT_MATCH_NO_TURN_REASON,
   type ConditionCheckResult,
 } from '../../src/main/automations/automation-runner';
-import { hasCondition } from '../../src/main/automations/row-guards';
+import { hasCondition, hasFinalLine, hasGuard } from '../../src/main/automations/row-guards';
+import { TEXT_MATCH_NO_REPLY_REASON } from '../../src/shared/final-line-match';
 import { AutomationRegistry } from '../../src/main/automations/automation-registry';
 import type { ConditionCheckLimits } from '../../src/main/automations/condition-check/condition-check';
 import { AUTOMATION_MANIFEST, EXIT_GROUP_BUDGET_MS } from '../../src/shared/automation-manifest';
@@ -45,6 +50,7 @@ function automation(overrides: Partial<ColumnAutomation> = {}): ColumnAutomation
     enabled: true,
     config: {},
     condition: null,
+    final_line: null,
     max_runs: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
@@ -58,21 +64,37 @@ interface RecordedRun {
   status: AutomationRunStatus;
   detail: string | null;
   condition: RunConditionAnswer | null;
+  finalLine: { met: boolean; reason: string } | null;
+}
+
+interface StartedRun {
+  id: string;
+  automation: { id: string };
+  condition?: RunConditionAnswer;
+  finalLine?: { met: boolean; reason: string };
 }
 
 /** A run log that also answers `countRuns`, from runs seeded per automation. */
 function fakeRuns(priorRuns: Record<string, number> = {}) {
   const rows: RecordedRun[] = [];
+  const recorded = (input: StartedRun, status: AutomationRunStatus, detail: string | null): RecordedRun => ({
+    id: input.id,
+    automationId: input.automation.id,
+    status,
+    detail,
+    condition: input.condition ?? null,
+    finalLine: input.finalLine ?? null,
+  });
   const repository = {
-    start: (input: { id: string; automation: { id: string }; condition?: RunConditionAnswer }) => {
-      rows.push({ id: input.id, automationId: input.automation.id, status: 'running', detail: null, condition: input.condition ?? null });
+    start: (input: StartedRun) => {
+      rows.push(recorded(input, 'running', null));
     },
     finish: (id: string, status: AutomationRunStatus, detail: string | null) => {
       const row = rows.find((candidate) => candidate.id === id);
       if (row) Object.assign(row, { status, detail });
     },
-    recordSkipped: (input: { id: string; automation: { id: string }; condition?: RunConditionAnswer }, reason: string) => {
-      rows.push({ id: input.id, automationId: input.automation.id, status: 'skipped', detail: reason, condition: input.condition ?? null });
+    recordSkipped: (input: StartedRun, reason: string) => {
+      rows.push(recorded(input, 'skipped', reason));
     },
     recordDeliveredByCaller: () => {},
     countRuns: (automationId: string) => (priorRuns[automationId] ?? 0)
@@ -240,6 +262,129 @@ describe('Condition', () => {
     expect(hasCondition({ condition: '   ' })).toBe(false);
     expect(hasCondition({} as { condition: string | null })).toBe(false);
     expect(hasCondition({ condition: 'Tests pass' })).toBe(true);
+  });
+});
+
+describe('Text match', () => {
+  const REPLY_READY = 'Typecheck and lint are clean.\n\n### Decisions made (0)\n\nNone.\n\n**Verdict: Ready**\n';
+
+  it('runs a row whose last line matches, records what it read, and asks no agent', async () => {
+    const executed = vi.fn(async () => ({ detail: 'Moved to Testing.' }));
+    const checkConditions = vi.fn();
+    const { rows, repository } = fakeRuns();
+    await runAutomations({
+      automations: [automation({ final_line: 'Verdict: Ready' })],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(adapter('webhook', executed)),
+      agentReply: REPLY_READY,
+      checkConditions,
+    });
+    expect(executed).toHaveBeenCalledTimes(1);
+    expect(checkConditions).not.toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({
+      status: 'succeeded',
+      finalLine: { met: true, reason: 'The final line reads "**Verdict: Ready**".' },
+      condition: null,
+    });
+  });
+
+  it('skips a row whose last line does not match, with the line it read, and it is not a run', async () => {
+    const executed = vi.fn(async () => ({ detail: 'ok' }));
+    const checkConditions = vi.fn();
+    const { rows, repository } = fakeRuns();
+    await runAutomations({
+      automations: [automation({ final_line: 'Verdict: Blocked', max_runs: 1 })],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(adapter('webhook', executed)),
+      agentReply: REPLY_READY,
+      checkConditions,
+    });
+    expect(executed).not.toHaveBeenCalled();
+    expect(checkConditions).not.toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({
+      status: 'skipped',
+      detail: 'Text match not met: The final line reads "**Verdict: Ready**".',
+      finalLine: { met: false },
+    });
+    expect(repository.countRuns('a1', 'task-1')).toBe(0);
+  });
+
+  it('reads a reply that could not be read as not met, with why', async () => {
+    const { rows, repository } = fakeRuns();
+    await runAutomations({
+      automations: [automation({ final_line: 'Verdict: Ready' })],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(adapter('webhook', async () => ({ detail: 'ok' }))),
+      agentReply: null,
+    });
+    expect(rows[0]).toMatchObject({ status: 'skipped', detail: `Text match not met: ${TEXT_MATCH_NO_REPLY_REASON}` });
+  });
+
+  it('skips a Text match row when the caller has no final message to give it', async () => {
+    const executed = vi.fn(async () => ({ detail: 'ok' }));
+    const { rows, repository } = fakeRuns();
+    await runAutomations({
+      automations: [automation({ final_line: 'Verdict: Ready' })],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(adapter('webhook', executed)),
+    });
+    expect(executed).not.toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({ status: 'skipped', detail: TEXT_MATCH_NO_TURN_REASON, finalLine: null });
+  });
+
+  it('checks Frequency first: a spent row is skipped for its limit and nothing is matched', async () => {
+    const { rows, repository } = fakeRuns({ a1: 1 });
+    await runAutomations({
+      automations: [automation({ final_line: 'Verdict: Ready', max_runs: 1 })],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(adapter('webhook', async () => ({ detail: 'ok' }))),
+      agentReply: REPLY_READY,
+    });
+    expect(rows[0]).toMatchObject({ status: 'skipped', detail: 'Already ran once on this task, its limit.', finalLine: null });
+  });
+
+  it('a Text match row never joins the group Condition check, and a prose row still does', async () => {
+    const checkConditions = vi.fn(async (rows: ColumnAutomation[]) => ({
+      ok: true as const,
+      answers: new Map(rows.map((row) => [row.id, { met: true, reason: null }])),
+    }));
+    const { repository } = fakeRuns();
+    await runAutomations({
+      automations: [automation({ id: 'text', final_line: 'Verdict: Ready' }), automation({ id: 'prose', condition: 'Tests pass' })],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(adapter('webhook', async () => ({ detail: 'ok' }))),
+      agentReply: REPLY_READY,
+      checkConditions,
+    });
+    expect(checkConditions).toHaveBeenCalledTimes(1);
+    expect(checkConditions.mock.calls[0][0].map((row) => row.id)).toEqual(['prose']);
+  });
+
+  it('has a Text match only on a turn end, and with a word in it', () => {
+    expect(hasFinalLine({ final_line: 'Verdict: Ready', trigger: 'turn_end' })).toBe(true);
+    expect(hasFinalLine({ final_line: 'Verdict: Ready', trigger: 'enter' })).toBe(false);
+    expect(hasFinalLine({ final_line: '   ', trigger: 'turn_end' })).toBe(false);
+    expect(hasFinalLine({ final_line: null, trigger: 'turn_end' })).toBe(false);
+    expect(hasGuard({ condition: null, final_line: 'Verdict: Ready', trigger: 'turn_end', max_runs: null })).toBe(true);
+    expect(hasGuard({ condition: null, final_line: null, trigger: 'turn_end', max_runs: null })).toBe(false);
   });
 });
 

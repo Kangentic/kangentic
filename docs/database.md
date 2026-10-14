@@ -390,6 +390,7 @@ one column.
 | max_runs | INTEGER | | NULL |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
+| final_line | TEXT | | NULL |
 
 Valid types: `send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus legacy
 `spawn_agent` on boards that already had one. `trigger` is `enter`, `turn_end` (each time the
@@ -398,9 +399,15 @@ trigger was a new value rather than a migration. A row read with a trigger this 
 is skipped with a warning, never read as `enter`.
 
 `condition` is the row's Condition in plain words, judged by the Automation agent before the row
-runs; NULL (or blank) means the row always runs. `max_runs` is its Frequency, the most times it may
-run on one task across every visit since the task last left Done; NULL means no limit. Both are nullable so a build from before
-them still inserts into a database that has them.
+runs; NULL (or blank) means the row always runs. `final_line` is the other kind of Condition, a
+Text match: a pattern the agent's last line must match, checked in code with no agent call
+(`src/shared/final-line-match.ts`). A row holds one kind. `AutomationRepository.replaceForColumn`
+stores `final_line` only on a `turn_end` row and, when it is set, stores `condition` as NULL, so a
+writer that slips past the editor, the file reader and the MCP refusals still cannot leave a row
+with two checks or a Text match on a trigger with no final message. `max_runs` is its Frequency,
+the most times it may run on one task across every visit since the task last left Done; NULL means
+no limit. All three are nullable so a build from before them still inserts into a database that has
+them.
 
 `position` is assigned PER TRIGGER, so each group numbers from 0 independently and the three can
 never interleave.
@@ -443,11 +450,17 @@ the durable record; the failure toast is the rationed interruption, following
 | condition_met | INTEGER | | NULL |
 | condition_reason | TEXT | | NULL |
 | background_call_id | TEXT | | NULL |
+| final_line_met | INTEGER | | NULL |
+| final_line_reason | TEXT | | NULL |
 
 `status` is `running`, `succeeded`, `failed`, `skipped`, or `interrupted`. `detail` carries the skip
 reason, the error, or a one-line success (`HTTP 204`, `exit 0`). `condition_met` and
 `condition_reason` hold the Automation agent's answer for a row with a Condition (1 or 0, and its
-one-line reason), NULL for a row without one. `background_call_id` names the `background_calls` row
+one-line reason), NULL for a row without one. `final_line_met` and `final_line_reason` hold a Text
+match's result the same way, the reason quoting the line it read (`The final line reads "..."`).
+They are separate columns, not `condition_met`, because the task report's Background calls rows
+(`task-report-assemble.ts`) read `condition_met` as an Automation agent answer, and a Text match
+makes no call. `background_call_id` names the `background_calls` row
 of the check that answered it, or of a check that ran without answering (a timeout), so the run log
 can show the check's model and tokens. One batched check answers several rows, so several runs
 share an id. No foreign key: the call record outlives the run's 200-row prune, and a run from before
@@ -455,8 +468,8 @@ calls were recorded has none.
 
 **What counts as a run.** A row "has run" (for a turn-end row's once-per-visit rule and for
 Frequency) when it has a row here with status `running`, `succeeded`, `failed` or `interrupted`. A
-`skipped` row, including a Condition that answered no, is not a run, so the next trigger checks it
-again. Frequency counts only the runs since the task last left Done: its newest `task_moves` row
+`skipped` row, including a Condition that answered no or a Text match that missed, is not a run, so
+the next trigger checks it again. Frequency counts only the runs since the task last left Done: its newest `task_moves` row
 whose `from_swimlane_id` is a `done` column and whose origin is not `rollback`. A reopened task
 starts its limits over. The project-open prune keeps every counted run of an automation that has a
 Frequency limit, on a task that is not archived, so pruning can never reset a limit.
@@ -1235,6 +1248,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 81. **`paused_at` on workflows** - `TEXT DEFAULT NULL`, when a paused workflow was paused (see the `workflows` table above), for the picker's paused row. A guarded `ALTER TABLE` on the same `table_info` read, at the end of `runWorkflowsMigration`.
 82. **`background_calls`** - creates the ledger of headless agent calls (see the table above), with `idx_background_calls_started` and `idx_background_calls_task`. No backfill: calls before it were never recorded. Idempotent `CREATE ... IF NOT EXISTS`, after `runWorkflowsMigration`. The retrieval worker opens a project's database with migrations off, so its read returns empty for a project main has not opened since.
 83. **`background_call_id` on automation_runs** - `TEXT DEFAULT NULL`, the check that answered a run (see the `automation_runs` table above), with `idx_automation_runs_background_call`. A guarded `ALTER TABLE`; the table is pruned to about 200 rows, so its index is built here rather than by the worker.
+84. **`final_line` on column_automations, and `final_line_met` / `final_line_reason` on automation_runs** - the Text match kind of Condition and its result on each run (see both tables above). All `DEFAULT NULL`, so every existing row reads as having no Text match and a build from before them still inserts. Guarded `ALTER TABLE`s, one `table_info` read per table.
 
 ### Key Migrations (Global DB)
 

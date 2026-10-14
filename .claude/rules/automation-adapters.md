@@ -37,11 +37,13 @@ registry, one folder per type, and a manifest the renderer reads.
   before this: `withTaskLock` is a `PQueue` with no `timeout` and the move's Phase 3 holds it
   across the whole list, so one hung row wedged every later operation on that task until a restart.
 - **A field key is never a reserved `kangentic.json` row key** (`name`, `type`, `enabled`,
-  `condition`, `maxRuns`). The file writes a row flat, which reads better in a committed file, and
-  the reserved set grows: every row's Condition and Frequency are row keys, not fields.
-- **Condition and Frequency are the runner's, never an adapter's.** The runner skips a row whose
-  Frequency is spent or whose Condition the Automation agent answered no, records the answer on
-  the run, and treats a skip as no run. An adapter never reads either.
+  `condition`, `finalLine`, `maxRuns`). The file writes a row flat, which reads better in a
+  committed file, and the reserved set grows: every row's Condition (either kind) and Frequency
+  are row keys, not fields.
+- **Condition, Text match and Frequency are the runner's, never an adapter's.** The runner skips a
+  row whose Frequency is spent, whose Text match missed the agent's last line (checked in code,
+  `src/shared/final-line-match.ts`), or whose Condition the Automation agent answered no, records
+  the answer on the run, and treats a skip as no run. An adapter never reads any of them.
 - **`describe(config)` must not throw on any input**, including `{}` and a config full of
   unsubstituted `{{variables}}`. A half-built draft renders through it: the picker adds an
   automation before it has a name or a value.

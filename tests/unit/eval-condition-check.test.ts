@@ -16,6 +16,8 @@
  * 6. pendingRows keeps the rows a case judged, and summarize turns a run's records into the
  *    per-arm table, so a wrong median, a missed stall or a swallowed failure shows up here.
  * 7. assertCliStarts stops a run before any call is queued when the CLI cannot start.
+ * 8. A Text match row is judged with the shipped matcher, not an agent: its design reports as the
+ *    code arm at no cost, and the run lists where the matcher and the strict lastLineIs disagree.
  */
 import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'node:fs';
@@ -32,19 +34,27 @@ vi.mock('../../src/main/agent/shared/cli-answer', async (importOriginal) => {
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import {
   ANSWER_SETTINGS,
+  CODE_ARM,
   assertCliStarts,
+  assertDesignRows,
   conditionCheckArgs,
   conditionCheckEnv,
   groupTurnEnds,
+  isGuarded,
   lastLineIs,
+  lineDisagreements,
+  matchRowsInCode,
   outcomeOf,
   outcomePasses,
   parseArgs,
   pendingRows,
+  productionAnswerOf,
+  productionOutcomeOf,
   readJsonResult,
   summarize,
   truthOf,
 } from '../../scripts/eval-condition-check.mjs';
+import { matchFinalLine } from '../../src/shared/final-line-match';
 
 describe('the call the harness makes is the call the app makes', () => {
   it.each(['low', 'high'])('matches the Claude adapter\'s Condition-check flags, settings and thinking pin at %s', async (effort) => {
@@ -303,7 +313,9 @@ describe('summarize', () => {
       design: 'plain',
       arm: 'haiku:low',
       calls: 4,
+      agentCalls: 4,
       correct: 2,
+      matchesProduction: 0,
       stalls: 1,
       unansweredRows: 1,
       failedCalls: 0,
@@ -322,7 +334,9 @@ describe('summarize', () => {
       design: 'plain',
       arm: 'haiku:high',
       calls: 3,
+      agentCalls: 3,
       correct: 1,
+      matchesProduction: 0,
       stalls: 2,
       unansweredRows: 3,
       failedCalls: 2,
@@ -344,7 +358,9 @@ describe('summarize', () => {
       design: 'split',
       arm: 'haiku:low',
       calls: 1,
+      agentCalls: 1,
       correct: 1,
+      matchesProduction: 0,
       stalls: 0,
       unansweredRows: 0,
       failedCalls: 0,
@@ -355,6 +371,82 @@ describe('summarize', () => {
       cacheWriteCalls: 0,
       wrongCases: [],
     });
+  });
+
+  it('reports a Text match design as the code arm: no agent calls, no cost, and how often it routed as production did', () => {
+    const codeRecords = [
+      { ...call({ caseId: 'c1', design: 'text-match' }), model: 'code', effort: 'none', agentCall: false, matchesProduction: true, costUsd: 0, durationMs: 0, tokens: null },
+      { ...call({ caseId: 'c2', design: 'text-match', correct: false, outcome: 'apply' }), model: 'code', effort: 'none', agentCall: false, matchesProduction: false, costUsd: 0, durationMs: 0, tokens: null },
+    ];
+
+    const [row] = summarize(codeRecords);
+
+    expect(row).toMatchObject({
+      design: 'text-match', arm: 'code', calls: 2, agentCalls: 0, correct: 1, matchesProduction: 1,
+      failedCalls: 0, totalCostUsd: 0, medianCostUsd: 0, cacheWriteCalls: 0, wrongCases: ['c2'],
+    });
+  });
+});
+
+describe('Text match rows', () => {
+  const move = { key: 'move', name: 'On to Code Review', finalLine: 'Findings: applied', endsGroup: true };
+  const apply = { key: 'apply', name: 'Apply findings', condition: null };
+
+  it('counts a Text match row as guarded, and an unconditional row as not', () => {
+    expect([isGuarded(move), isGuarded(apply), isGuarded({ key: 'judged', condition: 'is done' })]).toEqual([true, false, true]);
+  });
+
+  it('judges a Text match row with the shipped matcher, so the move runs on the line and Apply findings runs otherwise', () => {
+    const signedOff = matchRowsInCode([move, apply], 'All three fixed.\n\n**Findings: applied.**', matchFinalLine);
+    expect(signedOff).toEqual(new Map([['move', true]]));
+    expect(outcomeOf([move, apply], signedOff)).toBe('move');
+
+    const unfinished = matchRowsInCode([move, apply], 'Findings: applied once the tests pass.\n\nWant me to run them?', matchFinalLine);
+    expect(outcomeOf([move, apply], unfinished)).toBe('apply');
+  });
+
+  it('refuses a design row that carries both kinds', () => {
+    expect(() => assertDesignRows({ name: 'both', rows: [{ ...move, condition: 'is done' }] }))
+      .toThrow('both: the row On to Code Review has both a condition and a finalLine; a row holds one kind');
+    expect(() => assertDesignRows({ name: 'one-kind', rows: [move, apply] })).not.toThrow();
+  });
+
+  it('gives the outcome production\'s own answers lead to under the design, an unanswered row read as no', () => {
+    const rows = [move, apply];
+    expect(productionOutcomeOf(rows, { production: { 'On to Code Review': { met: true } } })).toBe('move');
+    expect(productionOutcomeOf(rows, { production: { 'On to Code Review': { met: null } } })).toBe('apply');
+    expect(productionOutcomeOf(rows, {})).toBe('apply');
+  });
+
+  it("reads a Text match run's answer from its own columns, since it leaves condition_met null", () => {
+    expect(productionAnswerOf({
+      condition_met: null, condition_reason: null, final_line_met: 1, final_line_reason: 'The final line reads "Verdict: Ready".',
+    })).toEqual({ met: true, reason: 'The final line reads "Verdict: Ready".' });
+    expect(productionAnswerOf({ condition_met: null, condition_reason: null, final_line_met: 0, final_line_reason: 'x' }).met).toBe(false);
+    expect(productionAnswerOf({ condition_met: 1, condition_reason: 'Clean.', final_line_met: null, final_line_reason: null }))
+      .toEqual({ met: true, reason: 'Clean.' });
+    // A database from before Text match has no such columns at all.
+    expect(productionAnswerOf({ condition_met: 0, condition_reason: 'Work left.' })).toEqual({ met: false, reason: 'Work left.' });
+  });
+
+  it('lists the cases where the matcher and the strict lastLineIs disagree, skipping wildcard lines and missing replies', () => {
+    const cases = [
+      { id: 'exact', reply: 'Done.\n\nFindings: applied' },
+      { id: 'period', reply: 'Done.\n\nFindings: applied.' },
+      { id: 'bullet', reply: 'Done.\n\n- Findings: applied' },
+      { id: 'none', reply: null },
+    ];
+
+    expect(lineDisagreements(cases, ['Findings: applied', 'Findings: *'], matchFinalLine)).toEqual([
+      { caseId: 'period', line: 'Findings: applied', code: true, strict: false },
+      { caseId: 'bullet', line: 'Findings: applied', code: true, strict: false },
+    ]);
+  });
+
+  it('names the code arm apart from any model, so parseArgs never has to accept it', () => {
+    expect(CODE_ARM).toEqual({ model: 'code', effort: 'none' });
+    expect(() => parseArgs(['run', '--arms', 'code:none'])).toThrow(/--arms/);
+    expect(parseArgs(['run', '--cases', 'c.json']).arms).toEqual([]);
   });
 });
 

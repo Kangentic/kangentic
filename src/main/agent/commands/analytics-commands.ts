@@ -685,6 +685,7 @@ export const handleGetColumnDetail: CommandHandler = (
     for (const row of group) {
       const guards = [
         row.condition ? `only if: ${row.condition}` : null,
+        row.final_line ? `only if the last line reads: ${row.final_line}` : null,
         row.max_runs !== null ? `at most ${row.max_runs} per task` : null,
       ].filter((guard): guard is string => guard !== null);
       lines.push(

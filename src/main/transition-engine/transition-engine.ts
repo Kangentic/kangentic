@@ -245,6 +245,12 @@ export class TransitionEngine {
       groupBudgetMs?: number;
       /** A re-run of a Move to column row moves the task through this. */
       moveTask?: AutomationContext['moveTask'];
+      /**
+       * A re-run of a turn-end row: the session's latest final message, so its
+       * Text match and its Condition judge the text a turn end would. Omitted
+       * for an enter or exit row, which has none.
+       */
+      agentReply?: string | null;
     },
   ): Promise<AutomationRunSummary> {
     const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
@@ -370,6 +376,9 @@ export class TransitionEngine {
       conditionAnswers: options.conditionAnswers,
       conditionUnavailableReason: options.conditionUnavailableReason,
       conditionUnavailableCallId: options.conditionUnavailableCallId,
+      // A Text match reads it in code. Left undefined, not null, on enter and
+      // exit: there is no final message there, rather than one that failed to read.
+      agentReply: options.agentReply,
       // Enter and exit check their Conditions here, once for the group. The
       // turn-end group checked before it ran anything and passes its answers.
       // Each answer names the call that gave it, so the run rows link to it.

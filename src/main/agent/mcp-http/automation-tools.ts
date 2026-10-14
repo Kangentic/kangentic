@@ -38,7 +38,8 @@ const AUTOMATION_ROW_SCHEMA = z.object({
   type: z.enum(AUTOMATION_TYPE_VALUES).describe('What this automation does. send_message types a message at the column\'s agent; run_script runs a shell script in the task\'s worktree; webhook calls a URL; notify raises a desktop notification; move_to_column (on "turn_end" only) moves the task to another column with a message for the agent there, and ends the list.'),
   on: z.enum(AUTOMATION_TRIGGERS).optional().describe('When it runs: "enter" as a task ENTERS this column, "turn_end" each time the column\'s agent FINISHES A TURN there, "exit" as the task LEAVES. Defaults to "enter". To Do and Done can only run exit automations.'),
   enabled: z.boolean().optional().describe('Defaults to true. A switched-off automation stays in the list and is skipped.'),
-  condition: z.string().max(2000).nullable().optional().describe('Condition, in plain words, judged by the Automation agent before the row runs (e.g. "the review found work the implementer can do"). A no is not a run: the row is checked again next time. Omit or null to always run. Needs an Automation agent set up in Settings > Workflows.'),
+  condition: z.string().max(2000).nullable().optional().describe('Condition, in plain words, judged by the Automation agent before the row runs (e.g. "the review found work the implementer can do"). A no is not a run: the row is checked again next time. Omit or null to always run. Needs an Automation agent set up in Settings > Workflows. Give this or finalLine, not both.'),
+  finalLine: z.string().max(500).nullable().optional().describe('Text match, the Condition kind checked in code with no agent call: the row runs only when the last line of the agent\'s final message matches this, ignoring case, punctuation and markdown, with * as a wildcard (e.g. "Verdict: Ready", "PR: *"). "turn_end" rows only. A miss is not a run, like a condition\'s no. Give this or condition, not both. Omit or null for none.'),
   maxRuns: z.number().int().min(1).nullable().optional().describe('Frequency: the most times this row may run on one task, counted across every visit to the column since the task last left Done (a review loop\'s round-trip limit). Omit or null for no limit.'),
 
   // The per-type fields. Every type's keys live on one object because the row
@@ -81,7 +82,7 @@ export function registerAutomationTools(server: McpServer, resolver: RequestReso
   server.registerTool(
     'kangentic_list_automations',
     {
-      description: 'Read what happens when a task enters a column, each time its agent finishes a turn there, and when it leaves: the ordered On task enter, On agent turn end and On task exit automations, their types, settings, Conditions and Frequency limits, and whether each one can actually run. Omit `column` to read the whole board, which is the right first call for "what does this board do". Pair with kangentic_set_automations to change them.',
+      description: 'Read what happens when a task enters a column, each time its agent finishes a turn there, and when it leaves: the ordered On task enter, On agent turn end and On task exit automations, their types, settings, Conditions (an agent\'s judgment, or a Text match on the agent\'s final line) and Frequency limits, and whether each one can actually run. Omit `column` to read the whole board, which is the right first call for "what does this board do". Pair with kangentic_set_automations to change them.',
       inputSchema: z.object({
         column: z.string().optional().describe('Column name (case-insensitive, e.g. "Code Review"). Omit to read every column.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),

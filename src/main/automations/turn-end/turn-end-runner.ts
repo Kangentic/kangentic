@@ -3,7 +3,6 @@ import { canColumnRun } from '../../../shared/automation-manifest';
 import type { ColumnAutomation, Swimlane, Task } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { SessionResumedPayload, TurnEndedPayload } from '../../pty/session-manager';
-import type { AgentReply } from '../../agent/shared/agent-reply';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
@@ -13,16 +12,14 @@ import { showDesktopNotification } from '../../ipc/handlers/system';
 import { handleTaskMove } from '../../ipc/handlers/task-move';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
-import { retrievalClient } from '../../retrieval/retrieval-client';
-import { collectRemoteTargets } from '../../retrieval/remote-targets';
-import { agentRegistry } from '../../agent/agent-registry';
 import { frequencyLimitReason } from '../automation-runner';
-import { hasCondition } from '../row-guards';
+import { hasCondition, needsAgentReply } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget, routeOf } from '../move-target';
 import { runWorkflowStep, workflowStepApplies } from '../../workflows/workflow-step';
 import type { RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import { deliverMessageAfterMove, deliverMessageToSession } from './deliver-message';
+import { readSessionFinalReply } from './final-reply-reader';
 import { trackTurnEndGroup } from './turn-end-passes';
 
 /**
@@ -89,9 +86,6 @@ interface TaskPassState {
 }
 
 const passes = new Map<string, TaskPassState>();
-
-/** How long a final-reply read may take before `{{agentReply}}` resolves empty. */
-const AGENT_REPLY_TIMEOUT_MS = 15_000;
 
 export function registerTurnEndAutomations(context: IpcContext): void {
   context.sessionManager.on('turn-ended', (payload: TurnEndedPayload) => {
@@ -278,7 +272,7 @@ async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promi
     if (!subject) return;
     const { task, column } = subject;
 
-    const reply = await readFinalReply(payload, new SessionRepository(getProjectDb(payload.projectId)));
+    const reply = await readSessionFinalReply(payload, new SessionRepository(getProjectDb(payload.projectId)));
     if (!reply || controller.signal.aborted) return;
     // A reply from before the task entered this column was the last column's.
     // This gates on the reply, not the turn, so a plan approval needs no
@@ -319,10 +313,12 @@ async function runRows(
     payload.projectId, projectPath,
   );
 
-  const needsReply = pending.some((row) => hasCondition(row) || mentionsAgentReply(row));
+  const needsReply = pending.some(needsAgentReply);
   const agentReply = needsReply ? await input.readReply() : null;
 
-  // Conditions: one check for every pending row that has one.
+  // Conditions: one paid check for every pending row whose Condition an agent
+  // evaluates. A Text match row never joins it: the runner matches it in code
+  // against `agentReply`, so a column of Text match rows makes no call at all.
   const conditional = pending.filter((row) => hasCondition(row));
   const answers = new Map<string, RunConditionAnswer>();
   let conditionUnavailableReason: string | undefined;
@@ -423,34 +419,9 @@ function turnSettled(context: IpcContext, payload: TurnEndedPayload, settled: Tu
   return idle;
 }
 
-function mentionsAgentReply(row: ColumnAutomation): boolean {
-  return JSON.stringify(row.config).includes('{{agentReply}}');
-}
-
 /** The session's final reply, read in the retrieval worker. Empty on any failure. */
 async function readAgentReply(payload: TurnEndedPayload, sessionRepo: SessionRepository): Promise<string | null> {
-  return (await readFinalReply(payload, sessionRepo))?.text ?? null;
-}
-
-/** The session's final reply with when it was written, or null on any failure. */
-async function readFinalReply(payload: TurnEndedPayload, sessionRepo: SessionRepository): Promise<AgentReply | null> {
-  try {
-    const record = sessionRepo.findByAnyId(payload.sessionId);
-    const agentSessionId = record?.agent_session_id ?? payload.agentSessionId;
-    if (!record || !agentSessionId) return null;
-    const reply = await retrievalClient.call(
-      'transcript.finalReply',
-      {
-        facts: { sessionType: record.session_type, agentSessionId, cwd: record.cwd },
-        remoteTargets: collectRemoteTargets(agentRegistry),
-      },
-      { timeoutMs: AGENT_REPLY_TIMEOUT_MS },
-    );
-    return reply ?? null;
-  } catch (error) {
-    console.warn(`[turn-end] Could not read the agent's reply for ${payload.sessionId.slice(0, 8)}:`, error);
-    return null;
-  }
+  return (await readSessionFinalReply(payload, sessionRepo))?.text ?? null;
 }
 
 /**

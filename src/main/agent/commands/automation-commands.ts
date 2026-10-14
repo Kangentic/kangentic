@@ -34,6 +34,7 @@ import {
   stableAutomationTypes,
 } from '../../../shared/automation-manifest';
 import { describeAutomation, describeAutomationMarksInWords } from '../../../shared/automation-describe';
+import { TEXT_MATCH_UNAVAILABLE_REASON, textMatchCanMatch } from '../../../shared/final-line-match';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
 import { resolveTask } from './task-resolver';
 import { agentRegistry } from '../agent-registry';
@@ -217,13 +218,41 @@ export const handleSetAutomations: CommandHandler = (
       };
     }
 
-    // Condition and Frequency, on every type. A blank condition is none.
+    // Condition (either kind) and Frequency, on every type. A blank one is none.
     if (entry.condition !== undefined && entry.condition !== null && typeof entry.condition !== 'string') {
       return { success: false, error: `${where}: condition must be text (or null to always run). Nothing was saved.` };
     }
     if (entry.maxRuns !== undefined && entry.maxRuns !== null
       && (typeof entry.maxRuns !== 'number' || !isWholeMaxRuns(entry.maxRuns))) {
       return { success: false, error: `${where}: maxRuns must be a whole number of at least 1 (or null for no limit). Nothing was saved.` };
+    }
+    // Text match, the Condition kind checked in code. Refused rather than
+    // dropped when it cannot apply, so an agent learns why its guard is missing.
+    if (entry.finalLine !== undefined && entry.finalLine !== null && typeof entry.finalLine !== 'string') {
+      return { success: false, error: `${where}: finalLine must be text (or null for no text match). Nothing was saved.` };
+    }
+    // Trimmed before the trigger is checked, so a blank finalLine on any
+    // trigger is none rather than a refusal.
+    const requestedFinalLine = typeof entry.finalLine === 'string' ? entry.finalLine.trim() : '';
+    const finalLine = requestedFinalLine === '' ? null : requestedFinalLine;
+    const condition = normalizeCondition(typeof entry.condition === 'string' ? entry.condition : null);
+    if (finalLine !== null && trigger !== 'turn_end') {
+      return {
+        success: false,
+        error: `${where}: finalLine works only with on: "turn_end", not ${trigger}. ${TEXT_MATCH_UNAVAILABLE_REASON} Nothing was saved.`,
+      };
+    }
+    if (finalLine !== null && !textMatchCanMatch(finalLine)) {
+      return {
+        success: false,
+        error: `${where}: finalLine ${JSON.stringify(finalLine)} has no letter, number or *, so no last line can match it. Nothing was saved.`,
+      };
+    }
+    if (finalLine !== null && condition !== null) {
+      return {
+        success: false,
+        error: `${where}: give a condition or a finalLine, not both. A row holds one kind of condition. Nothing was saved.`,
+      };
     }
 
     const runnable = canColumnRun(type as AutomationType, { autoSpawn: swimlane.auto_spawn, role: swimlane.role }, trigger);
@@ -250,7 +279,8 @@ export const handleSetAutomations: CommandHandler = (
       trigger,
       enabled: entry.enabled !== false,
       config: readConfig(entry, type as AutomationType),
-      condition: normalizeCondition(typeof entry.condition === 'string' ? entry.condition : null),
+      condition,
+      final_line: finalLine,
       max_runs: normalizeMaxRuns(typeof entry.maxRuns === 'number' ? entry.maxRuns : null),
     });
   }
@@ -400,6 +430,7 @@ function renderRuns(runs: ReturnType<AutomationRunRepository['listForTask']>, su
     + (run.attempts > 1 ? ` after ${run.attempts} attempts` : '')
     + (run.detail ? ` - ${run.detail}` : '')
     + (run.condition_met === null ? '' : ` [condition ${run.condition_met ? 'met' : 'not met'}${run.condition_reason ? `: ${run.condition_reason}` : ''}]`)
+    + (run.final_line_met === null ? '' : ` [text match ${run.final_line_met ? 'met' : 'not met'}${run.final_line_reason ? `: ${run.final_line_reason}` : ''}]`)
     + (run.check ? `\n${formatCheckLine(run.check)}` : ''));
   return {
     success: true,
@@ -433,6 +464,7 @@ function serializeRow(row: ColumnAutomation, columnName: string): Record<string,
     position: row.position,
     enabled: row.enabled,
     condition: row.condition,
+    finalLine: row.final_line,
     maxRuns: row.max_runs,
     ...row.config,
   };

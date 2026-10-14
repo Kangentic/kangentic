@@ -190,7 +190,7 @@ export interface AutomationManifestEntry {
  * (`{ name, type, enabled, ...fields }`) safe as reserved keys grow, and it is
  * checked by `tests/unit/automation-manifest-reserved-keys.test.ts`.
  */
-export const RESERVED_AUTOMATION_KEYS = ['name', 'type', 'enabled', 'condition', 'maxRuns'] as const;
+export const RESERVED_AUTOMATION_KEYS = ['name', 'type', 'enabled', 'condition', 'finalLine', 'maxRuns'] as const;
 
 /**
  * Action types that existed before automations and are dropped outright, rows

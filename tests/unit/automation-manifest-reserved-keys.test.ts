@@ -23,6 +23,10 @@ import type { AutomationType } from '../../src/shared/types';
  * flat shape safe to keep.
  */
 describe('automation field keys', () => {
+  it('reserves every key the row shape owns, both Condition kinds included', () => {
+    expect([...RESERVED_AUTOMATION_KEYS].sort()).toEqual(['condition', 'enabled', 'finalLine', 'maxRuns', 'name', 'type']);
+  });
+
   it('never collides with a reserved row key', () => {
     for (const [type, entry] of Object.entries(AUTOMATION_MANIFEST)) {
       for (const field of entry.fields) {
