@@ -33,6 +33,34 @@ interface TerminalWithScrollRegion {
 }
 
 /**
+ * One line of xterm's internal `Buffer`, as much of it as the alt-buffer trim in
+ * `trimAltBufferLines` uses. The public `IBufferLine` is read-only and has no
+ * `resize`. The cell is `unknown` because it only passes from `getNullCell` back
+ * into xterm.
+ */
+interface InternalBufferLine {
+  readonly length: number;
+  resize(cols: number, fillCell: unknown): boolean;
+  getWidth(column: number): number;
+  setCell(column: number, cell: unknown): void;
+}
+
+/**
+ * The alt buffer's line store, reached through the same private `_core` door
+ * as `TerminalWithScrollRegion` and narrowly typed for the same reason.
+ */
+interface TerminalWithAltBuffer {
+  _core?: {
+    buffers?: {
+      alt?: {
+        lines?: { readonly length: number; get(index: number): InternalBufferLine | undefined };
+        getNullCell?: () => unknown;
+      };
+    };
+  };
+}
+
+/**
  * A per-session HEADLESS xterm parser kept in the MAIN process, fed the same
  * PTY output as the raw scrollback ring. Its serialized frame is a snapshot of
  * the PARSED grid - every currently-visible cell whatever its draw age - which
@@ -69,9 +97,57 @@ export class HeadlessFrameBuffer {
     this.terminal.write(data);
   }
 
-  /** Resize the parsed grid to match a PTY resize so serialized frames reflow to the new geometry. */
+  /**
+   * Resize the parsed grid to match a PTY resize, so serialized frames reflow to
+   * the new geometry and no alt-screen row carries cells past the new width.
+   */
   resize(cols: number, rows: number): void {
     this.terminal.resize(Math.max(1, Math.floor(cols)), Math.max(1, Math.floor(rows)));
+    this.trimAltBufferLines();
+  }
+
+  /**
+   * Cut every alt-screen line back to the grid width after a column shrink.
+   *
+   * xterm trims lines on a shrink only inside `Buffer.resize`'s reflow branch,
+   * gated on `_hasScrollback && !windowsMode`. The alt buffer has no scrollback,
+   * so a shrink while the alt screen is up leaves its lines at the old width for
+   * the rest of the session. The agent's frames and EL touch only the first
+   * `cols` cells, so the cells past them keep whatever the wider frame drew. The
+   * serialize addon walks `line.length`, not `terminal.cols`, so it emits those
+   * off-grid cells. Where a row ends in null cells above a wrapped row it also
+   * emits its `-` wrap separator, and every replay showed text rows interleaved
+   * with dashed rows until the session ended. `lineAt` read the same stale cells
+   * into the Agent Monitor peek.
+   *
+   * The normal buffer needs none of this. It reflows, because this parser sets
+   * neither `windowsMode` nor `windowsPty`, and xterm trims it after the reflow.
+   * While the normal buffer is active the loop finds nothing to trim, because
+   * `activateNormalBuffer` clears the alt lines and `fillViewportRows` rebuilds
+   * them at the current width on the next switch.
+   *
+   * `line.resize` is the call xterm's own reflow branch makes. If an xterm
+   * upgrade renames these internals, the early return turns the trim into a
+   * silent no-op; the 'alt-screen column shrink' tests in
+   * `tests/unit/headless-frame.test.ts` are the tripwire for that.
+   */
+  private trimAltBufferLines(): void {
+    const altBuffer = (this.terminal as unknown as TerminalWithAltBuffer)._core?.buffers?.alt;
+    const lines = altBuffer?.lines;
+    if (!altBuffer || !lines || typeof altBuffer.getNullCell !== 'function') return;
+    // Read back rather than reuse the requested width, so xterm's own clamp applies.
+    const cols = this.terminal.cols;
+    const nullCell = altBuffer.getNullCell();
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines.get(index);
+      if (!line || line.length <= cols) continue;
+      line.resize(cols, nullCell);
+      // A wide glyph that straddled the new edge keeps only its left half on the
+      // last column. Serialized there, it cannot fit, so the replay autowraps it
+      // and every row below shifts down. Reflow moves such a glyph to the next
+      // row; with no reflow, blank it and let the agent's repaint redraw it.
+      if (line.getWidth(cols - 1) > 1) line.setCell(cols - 1, nullCell);
+    }
   }
 
   /**
