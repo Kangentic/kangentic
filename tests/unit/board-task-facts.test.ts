@@ -1,6 +1,6 @@
 /**
  * Real-DB test for BOARD_TASK_FACTS_SQL, the query the Ask answer table and the
- * eval harness (`scripts/eval-ask.mjs`) both read. Cost, duration and tokens
+ * on-demand Ask eval harness under scripts/ both read. Cost, duration and tokens
  * roll up per conversation lineage, the way the task summary does, so the
  * answer table and the summary cannot disagree on what a task cost.
  */
