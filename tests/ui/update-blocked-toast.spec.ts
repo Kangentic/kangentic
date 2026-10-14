@@ -71,6 +71,11 @@ test.describe('Update-blocked toast', () => {
   });
 
   test('persists past the default toast lifetime instead of auto-dismissing', async () => {
+    // The launch and project creation in beforeEach plus the 8s hold below
+    // ran past the 15s UI budget on a loaded shard, on both tries, so the
+    // browser was closed mid-wait. The slow budget (45s) is what other long
+    // UI specs use.
+    test.slow();
     await fireUpdateBlocked(page, READ_ONLY_VOLUME_MESSAGE);
 
     const toast = page.getByTestId('toast');
