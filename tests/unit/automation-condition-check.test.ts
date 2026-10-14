@@ -226,6 +226,16 @@ describe('parseConditionReply', () => {
     expect(answers.has(0)).toBe(false);
     expect(answers.get(1)?.met).toBe(false);
   });
+
+  it('drops a reason-first label written twice, whether the second line is reason-first or verdict-first', () => {
+    const reasonFirstTwice = parseConditionReply('C1: looks wrong -> no\nC1: on a second look it holds → yes\nC2: fine -> yes', 2);
+    expect(reasonFirstTwice.has(0)).toBe(false);
+    expect(reasonFirstTwice.get(1)).toEqual({ met: true, reason: 'fine' });
+
+    const mixedForms = parseConditionReply('C1: looks wrong -> no\nC1: yes - it holds\nC2: fine -> yes', 2);
+    expect(mixedForms.has(0)).toBe(false);
+    expect(mixedForms.get(1)).toEqual({ met: true, reason: 'fine' });
+  });
 });
 
 describe('describeAutomationGuards', () => {
