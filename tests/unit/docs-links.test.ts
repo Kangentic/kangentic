@@ -118,7 +118,6 @@ describe('DOCS_BASE_URL', () => {
       relay: 'https://kangentic.com/relay/',
       mcpServer: 'https://kangentic.com/mcp-server/',
       workflows: 'https://kangentic.com/features/workflows/',
-      columnsAndAutomations: 'https://kangentic.com/features/columns-and-automations/',
     });
   });
 
