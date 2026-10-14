@@ -38,6 +38,7 @@
  */
 
 import type { Terminal } from '@xterm/xterm';
+import { readViewportLines } from './terminal-capture-registry';
 
 /** Which surface hosts a terminal. Derived from the DOM rather than threaded
  *  through props: every host portals to a known body-level root, so the mount
@@ -207,16 +208,11 @@ function readScrollRegion(terminal: Terminal): { top: number | null; bottom: num
   };
 }
 
-/** Viewport rows top to bottom, trailing whitespace trimmed, so a blank row is
- *  an empty string and a contiguous run of them is directly visible. */
+/** Viewport rows top to bottom, cut to the grid (see `readViewportLines`) and
+ *  trailing whitespace trimmed, so a blank row is an empty string and a
+ *  contiguous run of them is directly visible. */
 function collectViewportRows(terminal: Terminal): string[] {
-  const buffer = terminal.buffer.active;
-  const rows: string[] = [];
-  for (let offset = 0; offset < terminal.rows; offset++) {
-    const line = buffer.getLine(buffer.viewportY + offset);
-    rows.push(line ? line.translateToString(true).replace(/\s+$/, '') : '');
-  }
-  return rows;
+  return readViewportLines(terminal).map((row) => row.replace(/\s+$/, ''));
 }
 
 /** One session's viewport rows, or null when no terminal is mounted for it (or
@@ -273,7 +269,9 @@ export function readTerminalGrids(): TerminalGridReport[] {
         const line = buffer.getLine(index);
         if (!line) continue;
         if (line.isWrapped) wrappedLines += 1;
-        if (line.translateToString(true).trim().length > 0) nonEmptyLines += 1;
+        // Cut to the grid. An alt line can hold stale cells past `cols` after a
+        // column shrink (see `readViewportLines`), and they are not on screen.
+        if (line.translateToString(true, 0, entry.terminal.cols).trim().length > 0) nonEmptyLines += 1;
       }
       altScreen = buffer.type === 'alternate';
       scrollRegion = readScrollRegion(entry.terminal);

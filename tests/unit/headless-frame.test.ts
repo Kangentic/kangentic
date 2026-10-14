@@ -43,9 +43,10 @@ function readScrollRegion(terminal: Terminal): { top: number; bottom: number } {
  * and is not observable through those higher-level callers: serialize()
  * REJECTS (rather than throwing into xterm's own write/parse loop as an
  * uncaught main-process exception) when the serializer itself throws
- * mid-callback; the DECSTBM/origin-mode suffix round trip; and the Unicode 11
+ * mid-callback; the DECSTBM/origin-mode suffix round trip; the Unicode 11
  * width table that keeps the parsed grid aligned with what the producing TUI
- * drew (see the 'Unicode 11 width parity' block).
+ * drew (see the 'Unicode 11 width parity' block); and the alt-buffer line trim
+ * after a column shrink (see the 'alt-screen column shrink' block).
  *
  * Real timers throughout: serialize() awaits xterm's own macrotask flush
  * barrier (a zero-length terminal.write callback), matching the real-timer
@@ -350,6 +351,89 @@ describe('HeadlessFrameBuffer', () => {
       expect(replayedRow(2)).toBe('C');
       expect([replayedRow(0), replayedRow(1), replayedRow(2)])
         .toEqual([sourceRow(0), sourceRow(1), sourceRow(2)]);
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+  });
+
+  /**
+   * xterm trims lines on a column shrink only inside its reflow branch, and the
+   * alt buffer never reflows (it has no scrollback), so a shrink while the alt
+   * screen is up left every alt line at the old width. The serialize addon walks
+   * `line.length`, not `terminal.cols`, so it emitted the stale off-grid cells,
+   * and where a row ended in null cells above a wrapped row it also emitted its
+   * `-` wrap separator. Every reopen replayed text rows interleaved with dashed
+   * rows. HeadlessFrameBuffer.resize trims the alt lines back to the grid.
+   *
+   * The assertions compare whole rows, not "no hyphen rows". With space-padded
+   * wide rows the broken frame shifts rows without a single hyphen.
+   */
+  describe('alt-screen column shrink', () => {
+    const trimmedRow = (text: string): string => text.replace(/\s+$/u, '');
+
+    /** Rows 0..3 of a terminal's active buffer, trailing whitespace trimmed. */
+    function replayedRows(terminal: Terminal): string[] {
+      const activeBuffer = terminal.buffer.active;
+      return [0, 1, 2, 3].map((row) =>
+        trimmedRow(activeBuffer.getLine(activeBuffer.viewportY + row)?.translateToString(true) ?? ''));
+    }
+
+    /** Rows 0..3 of the source grid, read as the Agent Monitor peek reads them, with no cut.
+     *  The trim in `HeadlessFrameBuffer.resize` is what keeps off-grid cells out of `lineAt`,
+     *  so slicing here would hide a missing trim. `lineAt` has no flush barrier, so call this
+     *  only after an awaited `serialize()`. The alt buffer has no scrollback, so absolute
+     *  row N is viewport row N. */
+    function sourceRows(buffer: HeadlessFrameBuffer): string[] {
+      return [0, 1, 2, 3].map((row) => trimmedRow(buffer.lineAt(row)));
+    }
+
+    /**
+     * Draw `wideRows` into the alt screen at 20x4, shrink to 10x4, and write
+     * `narrowFrame`. The serialize between the wide write and the resize is the
+     * flush barrier. Without it the resize lands before the parse, the alt screen
+     * is entered at 10 columns, and the test passes against the broken code.
+     */
+    async function shrinkInsideAltScreen(wideRows: string[], narrowFrame: string): Promise<HeadlessFrameBuffer> {
+      const buffer = new HeadlessFrameBuffer(20, 4);
+      buffer.write('\x1b[?1049h' + wideRows.map((text, row) => `\x1b[${row + 1};1H${text}`).join(''));
+      await buffer.serialize();
+      buffer.resize(10, 4);
+      buffer.write(narrowFrame);
+      return buffer;
+    }
+
+    it('replays each row as the source grid holds it, with no cells past the new width', async () => {
+      // Each wide row stops short of column 20, so its old last cells stay null.
+      // The narrow frame pads rows to the full 10 columns and reaches rows 1 and
+      // 3 by autowrap, as Claude Code draws.
+      const buffer = await shrinkInsideAltScreen(
+        ['wide row zero', 'wide row one', 'wide row two', 'wide row three'],
+        '\x1b[H' + 'row0 text ' + 'row1\x1b[K\r\n' + 'row2 more ' + 'row3\x1b[K',
+      );
+
+      const replayed = await replayIntoFreshTerminal(await buffer.serialize(), 10, 4);
+
+      expect(replayedRows(replayed)).toEqual(['row0 text', 'row1', 'row2 more', 'row3']);
+      expect(sourceRows(buffer)).toEqual(['row0 text', 'row1', 'row2 more', 'row3']);
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+
+    it('drops a wide glyph whose right half the shrink cut off', async () => {
+      // `中` covers columns 9 and 10, so a 10-column trim keeps only its left
+      // half. Left in place, the replay prints it at the last column, xterm
+      // autowraps it onto the next row, and every row below shifts down.
+      const buffer = await shrinkInsideAltScreen(
+        ['row0 text中tail', 'second', 'third', 'fourth'],
+        '',
+      );
+
+      const replayed = await replayIntoFreshTerminal(await buffer.serialize(), 10, 4);
+
+      expect(replayedRows(replayed)).toEqual(['row0 text', 'second', 'third', 'fourth']);
+      expect(sourceRows(buffer)).toEqual(['row0 text', 'second', 'third', 'fourth']);
 
       buffer.dispose();
       replayed.dispose();

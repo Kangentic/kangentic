@@ -24,6 +24,44 @@ export interface TerminalScrollbackCapture {
 
 export type TerminalCaptureReader = () => TerminalScrollbackCapture;
 
+/** What `readViewportLines` reads. Structural, so an `@xterm/headless`
+ *  terminal satisfies it as well as the renderer's `@xterm/xterm` one. */
+export interface ViewportReadableTerminal {
+  readonly cols: number;
+  readonly rows: number;
+  readonly buffer: {
+    readonly active: {
+      readonly viewportY: number;
+      getLine(row: number): { translateToString(trimRight?: boolean, startColumn?: number, endColumn?: number): string } | undefined;
+    };
+  };
+}
+
+/**
+ * The text of each viewport row, top to bottom, cut to the grid's `cols`.
+ *
+ * A line can be longer than the grid. xterm trims lines on a column shrink only
+ * inside its reflow branch, and the alt buffer has no scrollback, so it never
+ * reflows. After a shrink while a fullscreen TUI is up, each alt line keeps its
+ * old width, and the cells past `cols` hold whatever the wider frame drew. The
+ * renderer draws only `cols` cells, so they never show, but
+ * `translateToString(true)` reads to `line.length` and returns them. Main trims its
+ * own parser's alt lines (`HeadlessFrameBuffer.resize`); a renderer terminal is
+ * read through this cut instead.
+ *
+ * Trailing never-written cells are trimmed and written spaces are kept, as
+ * `translateToString(true)` does.
+ */
+export function readViewportLines(terminal: ViewportReadableTerminal): string[] {
+  const buffer = terminal.buffer.active;
+  const lines: string[] = [];
+  for (let row = 0; row < terminal.rows; row += 1) {
+    const line = buffer.getLine(buffer.viewportY + row);
+    lines.push(line ? line.translateToString(true, 0, terminal.cols) : '');
+  }
+  return lines;
+}
+
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const readers: Map<string, TerminalCaptureReader> = import.meta.hot?.data?.terminalCaptureReaders ?? new Map();
 

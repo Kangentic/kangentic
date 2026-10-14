@@ -11,7 +11,7 @@ import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incom
 import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { onTerminalRefocus } from '../utils/focused-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
-import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
+import { readViewportLines, registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
 import {
   readSessionScrollRegion,
   readSessionViewportRows,
@@ -1939,12 +1939,7 @@ export function useTerminal(options: UseTerminalOptions) {
       const terminal = xtermRef.current;
       if (!terminal) return { visibleLines: [], atBottom: true };
       const buffer = terminal.buffer.active;
-      const visibleLines: string[] = [];
-      for (let row = 0; row < terminal.rows; row += 1) {
-        const line = buffer.getLine(buffer.viewportY + row);
-        visibleLines.push(line ? line.translateToString(true) : '');
-      }
-      return { visibleLines, atBottom: buffer.viewportY >= buffer.baseY };
+      return { visibleLines: readViewportLines(terminal), atBottom: buffer.viewportY >= buffer.baseY };
     };
     registerTerminalCapture(captureSessionId, reader);
     return () => {
