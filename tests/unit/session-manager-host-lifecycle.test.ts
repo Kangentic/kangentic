@@ -21,6 +21,8 @@
  *    the alt-screen mirror that `remove()` just cleared, for a session that is gone.
  *  - A suspend asks the host for the raw scrollback (its last-resort agent
  *    session id scan) only while the id is unknown, and then waits at most 2 s.
+ *  - A 'trace' host event is recorded into main's ring as the pty host's own
+ *    entry (`'pty-host'`), with the timestamp the host stamped.
  *
  * Tier: Unit. Node-pty is mocked, the host core runs in this process.
  */
@@ -52,8 +54,19 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+// `recordTerminalTrace` is gated on `__KANGENTIC_DEV__`, which vitest.config.ts
+// pins to `false`, so the real implementation is a no-op here and a relayed
+// trace leaves nothing to read. Wrap it (not replace it) so the arguments the
+// relay passes are observable while every other test's behavior stays
+// byte-identical.
+vi.mock('../../src/main/pty/terminal-trace', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/pty/terminal-trace')>();
+  return { ...actual, recordTerminalTrace: vi.fn(actual.recordTerminalTrace) };
+});
+
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import { recordTerminalTrace } from '../../src/main/pty/terminal-trace';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import {
   InProcessPtyHostTransport,
@@ -371,5 +384,52 @@ describe('SessionManager: suspend and the last-resort scrollback scan', () => {
     expect(rawScrollbackRequests(transport)).toEqual([]);
     expect(registryRow(manager, session.id)?.status).toBe('suspended');
     expect(registryRow(manager, session.id)?.agentSessionId).toBe('agent-session-402');
+  });
+});
+
+describe("SessionManager: a relayed host 'trace' event", () => {
+  // The host has no ring of its own to read: its entries reach main's ring
+  // through this relay, where `source` alone reads `main` for both sides. The
+  // `process` field is what lets the devtools route tell a resize the host
+  // applied from one main applied.
+  //
+  // Red-green: drop `, 'pty-host'` from the `case 'trace'` call in
+  // session-manager.ts and the fifth argument is `undefined` (the ring would
+  // then stamp the entry `main`); replace `event.ts` with `Date.now()` and the
+  // relayed timestamp no longer matches.
+
+  it("records the entry as the pty host's, with the timestamp the host stamped", () => {
+    const { transport } = makeManager();
+    // Distinct from `Date.now()` under any clock, so a re-stamp cannot match.
+    const hostTimestamp = 1_700_000_000_123;
+    vi.mocked(recordTerminalTrace).mockClear();
+
+    transport.emitHostEvent({
+      type: 'trace',
+      sessionId: 'session-traced',
+      event: 'resize-applied',
+      detail: { cols: 132, rows: 40 },
+      ts: hostTimestamp,
+    });
+
+    expect(recordTerminalTrace).toHaveBeenCalledTimes(1);
+    expect(recordTerminalTrace).toHaveBeenCalledWith(
+      'session-traced',
+      'resize-applied',
+      { cols: 132, rows: 40 },
+      hostTimestamp,
+      'pty-host',
+    );
+  });
+
+  it('relays an entry with no detail the same way', () => {
+    const { transport } = makeManager();
+    const hostTimestamp = 1_700_000_000_456;
+    vi.mocked(recordTerminalTrace).mockClear();
+
+    transport.emitHostEvent({ type: 'trace', sessionId: 'session-bare', event: 'settle', ts: hostTimestamp });
+
+    expect(recordTerminalTrace).toHaveBeenCalledTimes(1);
+    expect(recordTerminalTrace).toHaveBeenCalledWith('session-bare', 'settle', undefined, hostTimestamp, 'pty-host');
   });
 });
