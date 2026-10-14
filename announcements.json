@@ -33,14 +33,14 @@
           "heading": "Workflows",
           "body": "A workflow is a set of linked tasks. Its agent plans the tasks from your brief. Each task starts when the tasks it waits for reach Done, and moves to its next column when the work there is done.\n\nOpen **Workflows** next to Board and Backlog. Settings > Workflows holds the two agents it runs on: the **Workflow agent**, which plans, and the **Automation agent**, which decides when a column's work is done.",
           "links": [
-            { "label": "Workflows docs", "url": "https://github.com/Kangentic/kangentic/blob/main/docs/user-guide.md#workflows" }
+            { "label": "Workflows docs", "url": "https://kangentic.com/features/workflows/" }
           ]
         },
         {
           "heading": "Column automations",
           "body": "Automations can now run when the column's agent finishes a turn. The new **Move to column** row sends the task on to another column. Any row can check a **Condition** with the Automation agent first, or cap its runs with **Frequency**. Send message to agent, Run script, Call webhook and Notify me work as before.\n\nClick a column header to open the Column Manager. Automations are on the right.",
           "links": [
-            { "label": "Automations docs", "url": "https://kangentic.com/features/workflows/" }
+            { "label": "Automations docs", "url": "https://kangentic.com/features/columns-and-automations/" }
           ]
         }
       ],
