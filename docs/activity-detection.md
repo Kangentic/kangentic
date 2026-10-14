@@ -250,10 +250,12 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   idles, a permission prompt, every watchdog and silence timer, and a resume's idle seed.
 - **`turnStartedAt`** is stamped on every idle-to-thinking commit, and at spawn when the session is
   seeded thinking. A permission prompt resolving back to thinking keeps it, since that is the same
-  turn. The turn-end runner uses it to ignore a turn that began before the task entered its column,
-  except when a plan approval moved it there: the approval answers the agent's plan prompt without
-  ending the turn, so the agent implements in the turn that planned, and that turn counts in the new
-  column.
+  turn, with one exception: a plan approval (the `AgentTool.ExitPlanMode` `tool_end` that resolves
+  the prompt) stamps it again. The agent implements in the turn that planned, so the approval is
+  where the implementation begins. A rejected plan sends no `tool_end` and keeps the stamp. The
+  turn-end runner uses it to ignore a turn that began before the task entered its column. A task
+  dragged into Executing mid-plan and approved after the drag therefore counts there, while one
+  dragged in mid-turn with no approval after the drag is still dropped.
 - **`workSerial`** is the turn's identity. It counts the turn-initiating events (`TURN_INITIATING_EVENTS`)
   `processEvent` has handled, and rides the turn end beside `turnStartedAt`.
   `SessionManager.isLatestTurn(sessionId, workSerial)` is true only while the agent has reported no

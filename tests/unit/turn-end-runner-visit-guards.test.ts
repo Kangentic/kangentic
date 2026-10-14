@@ -294,13 +294,30 @@ describe('a turn end and the rows it may run', () => {
       },
     );
 
+    it('runs the row for a turn whose start falls inside the visit, as after a plan approved following a drag in', async () => {
+      // The runner's half of the plan-approval case. Dragged in while the agent
+      // was still planning, the engine starts the turn again at the approval
+      // (activity-engine-turn-ended.test.ts pins that), so the start the turn
+      // end carries falls inside the visit. This pins only that the guard
+      // trusts the stamp the payload carries, whichever event wrote it.
+      hoisted.rows = [row()];
+      const draggedAt = secondsAgo(40 * 60);
+      enterColumnAt(draggedAt, 'renderer');
+
+      await endTurn(Date.parse(draggedAt) + 39 * 60_000);
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+    });
+
     it('runs the row for the turn a plan approval moved into the column', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
       hoisted.rows = [row()];
       const approvedAt = secondsAgo(10);
       enterColumnAt(approvedAt, 'auto-move');
 
-      // The turn began with the planning prompt and went on implementing after the approval.
+      // The turn's start falls before the move: the planning prompt's, or the
+      // approval's own stamp when a busy task lock wrote the move after it.
       await endTurn(Date.parse(approvedAt) - 60_000);
 
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
@@ -618,9 +635,11 @@ describe('a turn end and the rows it may run', () => {
     });
   });
 
-  // A turn whose session never settles (idle with a quiet terminal) before the
-  // wait runs out runs no row and writes no run record, so the warning is the
-  // only trace that the turn end arrived at all.
+  // A turn whose terminal never stays quiet before the wait runs out. The CLI
+  // paints a status line for its own background work (the repaint rate is in
+  // docs/transition-engine.md), and its own agents can run for minutes after
+  // the Stop. The session is idle throughout, so the turn is over and the rows
+  // go on; the warning records the give-up.
   describe('a turn that never settles', () => {
     beforeEach(() => {
       hoisted.rows = [row({ condition: 'The review is clean' })];
@@ -631,9 +650,29 @@ describe('a turn end and the rows it may run', () => {
       .map((call) => String(call[0]))
       .filter((line) => line.startsWith('[turn-end]'));
 
-    it('runs nothing and warns once, naming the task, the column and the activity', async () => {
+    it('goes on to the rows when the session is idle at the give-up, and warns once, naming the task, the column and the activity', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      // The row has a run record now, whatever the Condition answered.
+      expect(runs.listForTask(taskId)).toHaveLength(1);
+      const lines = turnEndWarnings(warnSpy);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(`task ${taskId.slice(0, 8)}'s turn to settle in Code Review`);
+      // Idle at the give-up: the terminal never went quiet, not the session never idle.
+      expect(lines[0]).toContain('activity idle');
+      expect(lines[0]).toContain('the pass goes on without a quiet terminal');
+      warnSpy.mockRestore();
+    });
+
+    it('runs nothing when the session is not idle at the give-up, since the turn is not over', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+      sessionManager.getActivityCache = () => ({ [SESSION_ID]: 'thinking' });
 
       await endTurn();
 
@@ -642,10 +681,8 @@ describe('a turn end and the rows it may run', () => {
       expect(runs.listForTask(taskId)).toEqual([]);
       const lines = turnEndWarnings(warnSpy);
       expect(lines).toHaveLength(1);
-      expect(lines[0]).toContain(`task ${taskId.slice(0, 8)}'s turn to settle in Code Review`);
-      // Idle at the give-up: the terminal never went quiet, not the session never idle.
-      expect(lines[0]).toContain('activity idle');
-      expect(lines[0]).toContain('no turn-end automation ran');
+      expect(lines[0]).toContain('activity thinking');
+      expect(lines[0]).toContain('nothing ran');
       warnSpy.mockRestore();
     });
 

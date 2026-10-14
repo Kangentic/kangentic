@@ -113,7 +113,8 @@ export async function runWorkflowStep(
         met,
         reason: answer.reason,
         detail,
-        backgroundCallId: outcome.callId,
+        // The call that gave this answer: a retry's, when the first reply skipped it.
+        backgroundCallId: answer.callId ?? outcome.callId,
       });
     } catch (error) {
       console.warn('[WORKFLOW] Could not record the step check:', error);

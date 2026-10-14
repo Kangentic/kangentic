@@ -40,6 +40,11 @@ const RUNNER = 'eval-ask';
  * is held to the same rule, and it imports the runner for its grader, which no other script may.
  */
 const SIBLING = 'eval-answer-models';
+/**
+ * The Condition-check replay (`scripts/eval-condition-check.mjs`), which picks a column's Condition
+ * wording, model and effort. Every judged reply is an agent call, so it is held to the same rule.
+ */
+const CONDITION_HARNESS = 'eval-condition-check';
 /** Where a test, a helper or a fixture can live, whatever its folder depth. */
 const TEST_EXTENSIONS = ['.ts', '.js', '.mjs'] as const;
 const SCRIPT_EXTENSIONS = ['.js', '.mjs'] as const;
@@ -59,10 +64,14 @@ const THIS_TEST = toPosix(path.relative(ROOT, __filename));
 const IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-ask-rollup.test.ts']);
 /** The same for the replay harness: its own test, which imports its pure halves. */
 const SIBLING_IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-answer-models.test.ts']);
+/** The same for the Condition-check replay. */
+const CONDITION_HARNESS_IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-condition-check.test.ts']);
 
 /** The importing tests that may name `name`, and nothing else. */
 function importingTestsFor(name: string): ReadonlySet<string> {
-  return name === SIBLING ? SIBLING_IMPORTING_TESTS : IMPORTING_TESTS;
+  if (name === SIBLING) return SIBLING_IMPORTING_TESTS;
+  if (name === CONDITION_HARNESS) return CONDITION_HARNESS_IMPORTING_TESTS;
+  return IMPORTING_TESTS;
 }
 
 /** Every file under `directory`, at any depth, as '/'-separated paths relative to it. */
@@ -162,7 +171,7 @@ function testScan(name: string = RUNNER): Scan {
   return scanFiles(tests, 'tests', files, (text) => mentionsRunner(text, name));
 }
 
-describe.each([RUNNER, SIBLING])('the %s harness runs on demand only', (harness) => {
+describe.each([RUNNER, SIBLING, CONDITION_HARNESS])('the %s harness runs on demand only', (harness) => {
   it('is referenced by no npm script, workflow, or test runner config, nor by a script that is not the harness', () => {
     const scans = automatedScans(harness);
     const offenders = scans.flatMap((scan) => scan.offenders);
@@ -228,6 +237,25 @@ describe('the replay harness beside the Ask harness', () => {
     // exit through the usage message if it ran with no arguments.
     const before = process.exitCode;
     await import('../../scripts/eval-answer-models.mjs');
+    expect(process.exitCode).toBe(before);
+  });
+});
+
+describe('the Condition-check replay', () => {
+  it('refuses to judge when a CI environment variable is set, before it reads or spawns anything', () => {
+    const result = spawnSync(process.execPath, [
+      path.join(ROOT, 'scripts', 'eval-condition-check.mjs'),
+      'run', '--cases', 'no-such-cases', '--expect', 'no-such-expect', '--designs', 'no-such-designs',
+      '--arms', 'haiku:low', '--out', 'no-such-output',
+    ], { env: { ...process.env, CI: 'true' }, encoding: 'utf-8', timeout: 30_000 });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/Refusing to run/);
+  });
+
+  it('does not run when it is only imported', async () => {
+    const before = process.exitCode;
+    await import('../../scripts/eval-condition-check.mjs');
     expect(process.exitCode).toBe(before);
   });
 });

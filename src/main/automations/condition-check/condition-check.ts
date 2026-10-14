@@ -134,11 +134,16 @@ function resolveCheckAgent(deps: ConditionCheckDeps): Promise<ResolvedAutomation
 
 /**
  * Answer every Condition in `input.rows` with one call. A Condition the reply
- * did not answer comes back not met, with the reason saying so, never as a
- * guess. A check that could not run at all returns `ok: false` with why, and
- * the caller skips those rows (a skip is not a run, so the next trigger checks
+ * did not answer (skipped, or written twice) is asked once more, alone with
+ * any others the reply missed; left unanswered again, it comes back not met
+ * with the reason saying so, never as a guess. Each answer names the call
+ * that gave it, so a retried row links to the retry.
+ *
+ * A check that could not run at all returns `ok: false` with why, and the
+ * caller skips those rows (a skip is not a run, so the next trigger checks
  * them again). So does one the caller stopped waiting for (`limits`); its CLI
- * run finishes in the background and frees its slot then.
+ * run finishes in the background and frees its slot then. A retry the caller
+ * stopped waiting for keeps the first call's answers instead.
  */
 export async function checkAutomationConditions(
   deps: ConditionCheckDeps,
@@ -171,91 +176,129 @@ export async function checkAutomationConditions(
     if (!resolved.ok) return resolved;
     if (stop.signal.aborted) return { ok: false, reason: stoppedReason() };
 
-    const prompt = buildConditionPrompt(input);
-    if (!(await acquireCheckSlot(stop.signal))) return { ok: false, reason: stoppedReason() };
-    // Recorded when the CLI settles, not when this returns: a caller that
-    // stops waiting leaves the run going, and it is still paid for.
-    const recorded = startRecordedCall(deps.recordCall, {
-      projectId: callContext.projectId,
-      job: callContext.job,
-      taskId: callContext.taskId,
-      swimlaneId: callContext.swimlaneId,
-      agent: resolved.agentName,
-      requestedModel: resolved.model,
-      effort: resolved.effort,
-    }, async (onUsage) => {
+    /** One call on the agent, inside the caller's bound, with a slot of its own. */
+    const ask = async (prompt: string): Promise<AskResult> => {
+      if (!(await acquireCheckSlot(stop.signal))) return { kind: 'stopped', callId: null };
+      // Recorded when the CLI settles, not when this returns: a caller that
+      // stops waiting leaves the run going, and it is still paid for.
+      const recorded = startRecordedCall(deps.recordCall, {
+        projectId: callContext.projectId,
+        job: callContext.job,
+        taskId: callContext.taskId,
+        swimlaneId: callContext.swimlaneId,
+        agent: resolved.agentName,
+        requestedModel: resolved.model,
+        effort: resolved.effort,
+      }, async (onUsage) => {
+        try {
+          const answerHome = await ensureAnswerHomeDirectory();
+          return await withAnswerRunDirectory((runDirectory) => resolved.adapter.answerFromContext!(
+            prompt,
+            resolved.cliPath,
+            answerHome,
+            resolved.model,
+            { effort: resolved.effort, runDirectory, onUsage },
+          ));
+        } finally {
+          releaseCheckSlot();
+        }
+      });
+      const answering = recorded.done;
+      // A caller that stopped waiting leaves this run to finish on its own.
+      answering.catch(() => undefined);
       try {
-        const answerHome = await ensureAnswerHomeDirectory();
-        return await withAnswerRunDirectory((runDirectory) => resolved.adapter.answerFromContext!(
-          prompt,
-          resolved.cliPath,
-          answerHome,
-          resolved.model,
-          { effort: resolved.effort, runDirectory, onUsage },
-        ));
-      } finally {
-        releaseCheckSlot();
+        const settled = await untilAborted(answering, stop.signal);
+        return settled ? { kind: 'reply', reply: settled.value, callId: recorded.callId } : { kind: 'stopped', callId: recorded.callId };
+      } catch (error) {
+        return { kind: 'failed', detail: error instanceof Error ? error.message : String(error), callId: recorded.callId };
       }
-    });
-    const answering = recorded.done;
-    // A caller that stopped waiting leaves this run to finish on its own.
-    answering.catch(() => undefined);
+    };
 
-    let reply: string;
-    try {
-      const settled = await untilAborted(answering, stop.signal);
-      if (!settled) return { ok: false, reason: stoppedReason(), callId: recorded.callId };
-      reply = settled.value;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return { ok: false, reason: `The Automation agent could not check the condition: ${detail}`, callId: recorded.callId };
+    const first = await ask(buildConditionPrompt(input));
+    if (first.kind === 'stopped') {
+      return first.callId === null ? { ok: false, reason: stoppedReason() } : { ok: false, reason: stoppedReason(), callId: first.callId };
     }
-    return { ok: true, answers: answersFrom(reply, input, recorded.callId), agentName: resolved.agentName, callId: recorded.callId };
+    if (first.kind === 'failed') {
+      return { ok: false, reason: `The Automation agent could not check the condition: ${first.detail}`, callId: first.callId };
+    }
+    const { answers, unanswered } = answersFrom(first.reply, input.rows, first.callId);
+    if (unanswered.length === 0) return { ok: true, answers, agentName: resolved.agentName, callId: first.callId };
+
+    // Ask once more for just the rows the reply left unanswered, before any
+    // counts as not met. A retry that is stopped or fails keeps the first
+    // answers, which is the outcome a check had before it retried.
+    warnUnanswered(unanswered.map(labelOf), first.callId, first.reply, 'so it is asked once more');
+    const retryRows = unanswered.map((position) => input.rows[position]);
+    const retry = await ask(buildConditionPrompt({ ...input, rows: retryRows }, { retry: true }));
+    if (retry.kind === 'reply') {
+      const retried = answersFrom(retry.reply, retryRows, retry.callId);
+      for (const [automationId, answer] of retried.answers) answers.set(automationId, answer);
+      if (retried.unanswered.length > 0) {
+        // The retry numbered its rows from C1, so a position in it maps back
+        // through `unanswered` to the first prompt's label.
+        const stillUnanswered = retried.unanswered.map((positionInRetry) => labelOf(unanswered[positionInRetry]));
+        warnUnanswered(stillUnanswered, retry.callId, retry.reply, 'again, so it counts as not met');
+      }
+    }
+    return { ok: true, answers, agentName: resolved.agentName, callId: first.callId };
   } finally {
     if (timer) clearTimeout(timer);
     limits.signal?.removeEventListener('abort', onCallerAbort);
   }
 }
 
+/** One call on the agent: its reply, or why there is none. `callId` is null
+ *  only when no CLI ran. */
+type AskResult =
+  | { kind: 'reply'; reply: string; callId: string }
+  | { kind: 'stopped'; callId: string | null }
+  | { kind: 'failed'; detail: string; callId: string };
+
 /** How many characters of a trimmed reply the warning keeps. A well-formed reply
  *  is one short line per condition, so this is plenty to see how a malformed one
  *  went wrong. */
 const UNANSWERED_REPLY_LOG_CHARS = 1_000;
 
+const UNANSWERED_REASON = 'The Automation agent did not answer this condition.';
+
+/** A row's label in the first prompt, which the warnings use for every ask. */
+function labelOf(position: number): string {
+  return `C${position + 1}`;
+}
+
 /**
  * One warning for a reply that left conditions unanswered: which labels, the
- * call (`background_calls.id`), and the trimmed reply cut to
- * `UNANSWERED_REPLY_LOG_CHARS`. A warning because only warnings and errors
+ * call (`background_calls.id`), what happens next, and the trimmed reply cut
+ * to `UNANSWERED_REPLY_LOG_CHARS`. A warning because only warnings and errors
  * reach the log file without Persist Console Logs. `[automations]` is not a
  * Sentry breadcrumb tag (`shared/sentry-breadcrumbs.ts`), so the reply's text,
  * written from the task's own, stays in the local log.
  */
-function warnUnanswered(labels: ReadonlyArray<string>, callId: string, reply: string): void {
+function warnUnanswered(labels: ReadonlyArray<string>, callId: string, reply: string, consequence: string): void {
   const trimmed = reply.trim();
   const clipped = trimmed.slice(0, UNANSWERED_REPLY_LOG_CHARS);
   const leftOut = trimmed.length - clipped.length;
   const more = leftOut > 0 ? ` (${leftOut} more characters)` : '';
-  console.warn(`[automations] The Automation agent left ${labels.join(', ')} unanswered (call ${callId}). Its reply: ${JSON.stringify(clipped)}${more}`);
+  console.warn(`[automations] The Automation agent left ${labels.join(', ')} unanswered ${consequence} (call ${callId}). Its reply: ${JSON.stringify(clipped)}${more}`);
 }
 
-/** Every row's answer from the reply, each naming the call that gave it; a row
- *  the reply skipped is not met, and says so. A reply that skipped a row is
- *  logged (`warnUnanswered`), so why it did can be read afterwards. */
-function answersFrom(reply: string, input: ConditionPromptInput, callId: string): Map<string, ConditionAnswer> {
-  const parsed = parseConditionReply(reply, input.rows.length);
+/** Every row's answer from the reply, each naming the call that gave it, and
+ *  the positions of the rows the reply skipped. A skipped row is not met, and
+ *  says so. */
+function answersFrom(
+  reply: string,
+  rows: ConditionPromptInput['rows'],
+  callId: string,
+): { answers: Map<string, ConditionAnswer>; unanswered: number[] } {
+  const parsed = parseConditionReply(reply, rows.length);
   const answers = new Map<string, ConditionAnswer>();
-  const unansweredLabels: string[] = [];
-  input.rows.forEach((row, index) => {
+  const unanswered: number[] = [];
+  rows.forEach((row, index) => {
     const parsedAnswer = parsed.get(index);
-    if (!parsedAnswer) unansweredLabels.push(`C${index + 1}`);
-    const answer = parsedAnswer ?? {
-      met: false,
-      reason: 'The Automation agent did not answer this condition.',
-    };
-    answers.set(row.automationId, { ...answer, callId });
+    if (!parsedAnswer) unanswered.push(index);
+    answers.set(row.automationId, { ...(parsedAnswer ?? { met: false, reason: UNANSWERED_REASON }), callId });
   });
-  if (unansweredLabels.length > 0) warnUnanswered(unansweredLabels, callId, reply);
-  return answers;
+  return { answers, unanswered };
 }
 
 /** For tests: forget cached CLI detections. */
