@@ -562,6 +562,25 @@ test.describe('Completed task view', () => {
     }
   });
 
+  // The local model has no Intel macOS build, so a summary there is never written. The card reads
+  // Unavailable, never "Summary pending" or a prerequisite no click can meet, even with the config
+  // carrying everything a supported machine would need (copied from another one).
+  test('on an Intel Mac a pending summary reads Unavailable, over a config that would otherwise be ready', async () => {
+    const intelMac = "window.__mockPlatform = 'darwin'; window.__mockArch = 'x64';";
+    const { browser, page } = await launchWithState(`${intelMac}\n${makePreConfig({
+      withSummary: true,
+      knowledgeGraph: { enabled: true, agent: 'claude', model: 'opus' },
+    })}`);
+    try {
+      await openCompletedTask(page);
+      const line = page.locator('[data-testid="completed-summary-state-pending"]');
+      await expect(line).toContainText('Unavailable');
+      await expect(line).not.toContainText('Summary pending');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a failed report read says the record could not be read and shows no header strip', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
     try {

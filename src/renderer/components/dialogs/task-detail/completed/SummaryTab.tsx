@@ -3,6 +3,7 @@ import { Clock, Settings } from 'lucide-react';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { openKnowledgeGraphSettings } from '../../../knowledge-graph/open-knowledge-graph-settings';
 import { sourceRequirements } from '../../../settings/tabs/index-sources';
+import { knowledgeGraphOn, knowledgeGraphSupported } from '../../../../lib/knowledge-graph-support';
 import { useConfigStore } from '../../../../stores/config-store';
 import { agentJobChoice, answerSetupGap } from '../../../../../shared/answer-agent';
 import { formatSpan, formatSpanCompact } from '../../../../utils/format-session';
@@ -44,7 +45,8 @@ function useSummaryRequirement(): string | undefined {
   return useMemo(() => {
     const choice = agentJobChoice(knowledgeGraphConfig, 'summary');
     return sourceRequirements({
-      semanticEnabled: knowledgeGraphConfig?.enabled === true,
+      knowledgeGraphSupported: knowledgeGraphSupported(),
+      semanticEnabled: knowledgeGraphOn(knowledgeGraphConfig),
       answerCapableAgents: agentList.filter((agent) => agent.found && agent.supportsAnswerFromContext).length,
       agentSetup: answerSetupGap({ agents: agentList, configured: choice.agent, configuredModel: choice.model, requireFound: true }),
       agentChosen: Boolean(choice.agent),
