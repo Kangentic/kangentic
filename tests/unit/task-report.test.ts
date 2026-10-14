@@ -15,7 +15,8 @@
  *   - the `finally { clearTimeout }` removed: the lingering-timer test fails.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { AppConfig, SessionRecord, TaskReport } from '../../src/shared/types';
+import type { AppConfig, TaskReport } from '../../src/shared/types';
+import type { LatestAgentSessionRecord, TaskReportSessionRecord } from '../../src/main/db/repositories/session-repository';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { TaskKnowledge } from '../../src/main/retrieval/task-knowledge';
 import type { TaskModelUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
@@ -24,7 +25,8 @@ const hoisted = vi.hoisted(() => ({
   retrievalCall: vi.fn<(method: string, params: unknown, options?: unknown) => Promise<unknown>>(),
   getProjectDb: vi.fn<(projectId: string) => unknown>(),
   getProjectRepos: vi.fn<() => unknown>(),
-  listForTaskNewestFirst: vi.fn<(taskId: string) => unknown[]>(),
+  listTaskReportRecords: vi.fn<(taskId: string) => unknown[]>(),
+  getLatestAgentSessionForTask: vi.fn<(taskId: string) => unknown>(),
   getSummaryForTask: vi.fn<(taskId: string) => unknown>(),
   collectRemoteTargets: vi.fn<() => unknown>(),
   loadConfig: vi.fn<() => unknown>(),
@@ -39,7 +41,8 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: ho
 vi.mock('../../src/main/db/repositories/session-repository', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/db/repositories/session-repository')>()),
   SessionRepository: class {
-    listForTaskNewestFirst = hoisted.listForTaskNewestFirst;
+    listTaskReportRecords = hoisted.listTaskReportRecords;
+    getLatestAgentSessionForTask = hoisted.getLatestAgentSessionForTask;
     getSummaryForTask = hoisted.getSummaryForTask;
   },
 }));
@@ -112,8 +115,9 @@ function methodsCalled(): string[] {
   return hoisted.retrievalCall.mock.calls.map((call) => call[0]);
 }
 
-function sessionRecord(fields: { id: string; session_type: string; agent_session_id: string | null; cwd: string }): SessionRecord {
-  return fields as unknown as SessionRecord;
+/** What `getLatestAgentSessionForTask` answers: the newest record of the task that names a conversation. */
+function latestAgentSession(fields: { session_type: string; agent_session_id: string; cwd: string }): LatestAgentSessionRecord {
+  return fields;
 }
 
 beforeEach(() => {
@@ -126,7 +130,8 @@ beforeEach(() => {
     automations: { listAll: () => [] },
     backgroundCalls: { listForTask: () => [] },
   });
-  hoisted.listForTaskNewestFirst.mockReturnValue([]);
+  hoisted.listTaskReportRecords.mockReturnValue([]);
+  hoisted.getLatestAgentSessionForTask.mockReturnValue(undefined);
   hoisted.getSummaryForTask.mockReturnValue(null);
   hoisted.collectRemoteTargets.mockReturnValue(REMOTE_TARGETS_SENTINEL);
   useKnowledgeGraph({ indexingEnabled: true, enabled: true });
@@ -203,6 +208,27 @@ describe('readTaskReport summary state', () => {
     // Indexing reading as on is what makes the three index reads happen.
     expect(methodsCalled().sort()).toEqual(['summary.forTask', 'task.knowledge', 'usage.taskModels']);
     expect(report.models).toEqual([expect.objectContaining({ turns: 4 })]);
+  });
+});
+
+describe('readTaskReport session records', () => {
+  it('builds the runs from the task\'s projected records', async () => {
+    const record: TaskReportSessionRecord = {
+      id: 'record-1', session_type: 'claude', isolated_swimlane_id: null, agent_session_id: 'conversation-a', permission_mode: 'plan',
+      started_at: '2026-10-13T03:00:00.000Z', suspended_at: '2026-10-13T03:10:00.000Z', exited_at: null, exit_code: null,
+      total_cost_usd: 0.5, total_input_tokens: 100, total_output_tokens: 10, total_duration_ms: 600_000,
+      model_id: 'claude-opus-5-5', model_display_name: 'Opus 5.5', applied_effort: 'high',
+      tool_call_count: 7, compaction_count: 0, tool_breakdown: null,
+    };
+    hoisted.listTaskReportRecords.mockReturnValue([record]);
+
+    const report = await readTaskReport(fakeContext(), PROJECT_ID, TASK_ID);
+
+    expect(hoisted.listTaskReportRecords).toHaveBeenCalledWith(TASK_ID);
+    expect(report.conversations).toEqual([expect.objectContaining({
+      conversationId: 'conversation-a',
+      runs: [expect.objectContaining({ recordId: 'record-1', costUsd: 0.5, runtimeMs: 600_000, toolCallCount: 7 })],
+    })]);
   });
 });
 
@@ -339,35 +365,31 @@ describe('readTaskLastMessage', () => {
     expect(hoisted.retrievalCall).not.toHaveBeenCalled();
   });
 
-  it('returns null when the task has no session at all, without calling the worker', async () => {
-    hoisted.listForTaskNewestFirst.mockReturnValue([]);
+  it('returns null when no record of the task names a conversation, without calling the worker', async () => {
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(undefined);
+    const message = await readTaskLastMessage(PROJECT_ID, TASK_ID);
+    expect(message).toBeNull();
+    expect(hoisted.getLatestAgentSessionForTask).toHaveBeenCalledWith(TASK_ID);
+    expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+  });
+
+  it('returns null for a record whose conversation id is empty, without calling the worker', async () => {
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(latestAgentSession({ session_type: 'claude', agent_session_id: '', cwd: '/mock/project' }));
     const message = await readTaskLastMessage(PROJECT_ID, TASK_ID);
     expect(message).toBeNull();
     expect(hoisted.retrievalCall).not.toHaveBeenCalled();
   });
 
-  it('returns null when no session record carries an agent_session_id, without calling the worker', async () => {
-    hoisted.listForTaskNewestFirst.mockReturnValue([
-      sessionRecord({ id: 'record-2', session_type: 'claude', agent_session_id: null, cwd: '/mock/project' }),
-      sessionRecord({ id: 'record-1', session_type: 'claude', agent_session_id: null, cwd: '/mock/project' }),
-    ]);
-    const message = await readTaskLastMessage(PROJECT_ID, TASK_ID);
-    expect(message).toBeNull();
-    expect(hoisted.retrievalCall).not.toHaveBeenCalled();
-  });
-
-  it('reads the newest record that has an agent_session_id, skipping a newer one without', async () => {
-    hoisted.listForTaskNewestFirst.mockReturnValue([
-      sessionRecord({ id: 'record-3', session_type: 'claude', agent_session_id: null, cwd: '/mock/newest' }),
-      sessionRecord({ id: 'record-2', session_type: 'codex', agent_session_id: 'conversation-b', cwd: '/mock/second' }),
-      sessionRecord({ id: 'record-1', session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/oldest' }),
-    ]);
+  // Which record is newest (a newer one with no conversation id passed over) is the
+  // repository's query, pinned on a real database in session-repository-task-report-reads.test.ts.
+  it('reads the transcript of the record the repository names', async () => {
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(latestAgentSession({ session_type: 'codex', agent_session_id: 'conversation-b', cwd: '/mock/second' }));
     hoisted.retrievalCall.mockResolvedValue({ text: 'Done.', uuid: 'reply-1', ts: Date.parse('2026-10-13T03:00:00.000Z') });
 
     await readTaskLastMessage(PROJECT_ID, TASK_ID);
 
     expect(hoisted.getProjectDb).toHaveBeenCalledWith(PROJECT_ID);
-    expect(hoisted.listForTaskNewestFirst).toHaveBeenCalledWith(TASK_ID);
+    expect(hoisted.getLatestAgentSessionForTask).toHaveBeenCalledWith(TASK_ID);
     expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
     expect(hoisted.retrievalCall).toHaveBeenCalledWith(
       'transcript.finalReply',
@@ -380,17 +402,13 @@ describe('readTaskLastMessage', () => {
   });
 
   it('returns null for a null reply', async () => {
-    hoisted.listForTaskNewestFirst.mockReturnValue([
-      sessionRecord({ id: 'record-1', session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/project' }),
-    ]);
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(latestAgentSession({ session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/project' }));
     hoisted.retrievalCall.mockResolvedValue(null);
     expect(await readTaskLastMessage(PROJECT_ID, TASK_ID)).toBeNull();
   });
 
   it('returns the reply text with its time as an ISO string', async () => {
-    hoisted.listForTaskNewestFirst.mockReturnValue([
-      sessionRecord({ id: 'record-1', session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/project' }),
-    ]);
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(latestAgentSession({ session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/project' }));
     hoisted.retrievalCall.mockResolvedValue({ text: 'All set.', uuid: 'reply-1', ts: Date.parse('2026-10-13T03:00:00.000Z') });
     expect(await readTaskLastMessage(PROJECT_ID, TASK_ID)).toEqual({
       text: 'All set.',
@@ -399,17 +417,13 @@ describe('readTaskLastMessage', () => {
   });
 
   it('returns the text with writtenAt null when the reply time is NaN', async () => {
-    hoisted.listForTaskNewestFirst.mockReturnValue([
-      sessionRecord({ id: 'record-1', session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/project' }),
-    ]);
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(latestAgentSession({ session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/project' }));
     hoisted.retrievalCall.mockResolvedValue({ text: 'All set.', uuid: 'reply-1', ts: Number.NaN });
     expect(await readTaskLastMessage(PROJECT_ID, TASK_ID)).toEqual({ text: 'All set.', writtenAt: null });
   });
 
   it('returns null when the worker call rejects', async () => {
-    hoisted.listForTaskNewestFirst.mockReturnValue([
-      sessionRecord({ id: 'record-1', session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/project' }),
-    ]);
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(latestAgentSession({ session_type: 'claude', agent_session_id: 'conversation-a', cwd: '/mock/project' }));
     hoisted.retrievalCall.mockRejectedValue(new Error('worker restarting'));
     await expect(readTaskLastMessage(PROJECT_ID, TASK_ID)).resolves.toBeNull();
   });

@@ -77,6 +77,22 @@ export type EarlierRunRecord = Pick<SessionRecord,
 >;
 
 /**
+ * The columns of a session record the completed task view's report reads
+ * (`assembleTaskReport`). The report reads every record of the task, so the
+ * large text columns (`prompt`, `command`) are not selected.
+ */
+export type TaskReportSessionRecord = Pick<SessionRecord,
+  | 'id' | 'session_type' | 'isolated_swimlane_id' | 'agent_session_id' | 'permission_mode'
+  | 'started_at' | 'suspended_at' | 'exited_at' | 'exit_code'
+  | 'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'total_duration_ms'
+  | 'model_id' | 'model_display_name' | 'applied_effort'
+  | 'tool_call_count' | 'compaction_count' | 'tool_breakdown'
+>;
+
+/** What reading a conversation's transcript needs: the newest record of the task that names one. */
+export type LatestAgentSessionRecord = Pick<SessionRecord, 'session_type' | 'cwd'> & { agent_session_id: string };
+
+/**
  * Sum the stored tool columns of several records: the count from
  * `tool_call_count`, the rows merged by tool name. Each record holds one run.
  */
@@ -332,6 +348,31 @@ export class SessionRepository {
     return this.db.prepare(
       `SELECT * FROM sessions WHERE task_id = ? ORDER BY started_at DESC`
     ).all(taskId) as SessionRecord[];
+  }
+
+  /** Every record of a task, newest first, with only the columns the completed task report reads. */
+  listTaskReportRecords(taskId: string): TaskReportSessionRecord[] {
+    return this.db.prepare(
+      `SELECT id, session_type, isolated_swimlane_id, agent_session_id, permission_mode,
+              started_at, suspended_at, exited_at, exit_code,
+              total_cost_usd, total_input_tokens, total_output_tokens, total_duration_ms,
+              model_id, model_display_name, applied_effort,
+              tool_call_count, compaction_count, tool_breakdown
+       FROM sessions WHERE task_id = ? ORDER BY started_at DESC, id DESC`
+    ).all(taskId) as TaskReportSessionRecord[];
+  }
+
+  /**
+   * The newest record of a task that names an agent conversation, with only
+   * what reading that conversation's transcript needs. A newer record with no
+   * `agent_session_id` (a spawn that never reported one) is passed over.
+   */
+  getLatestAgentSessionForTask(taskId: string): LatestAgentSessionRecord | undefined {
+    return this.db.prepare(
+      `SELECT session_type, agent_session_id, cwd FROM sessions
+       WHERE task_id = ? AND agent_session_id IS NOT NULL
+       ORDER BY started_at DESC, id DESC LIMIT 1`
+    ).get(taskId) as LatestAgentSessionRecord | undefined;
   }
 
   /**
@@ -694,9 +735,12 @@ export class SessionRepository {
    *   - cost and duration take the lineage's MAX, its final cumulative. That
    *     equals the SUM of `usage_history`'s per-leg deltas for the lineage, and
    *     needs no join, so an older install with no usage rows still reads right;
-   *   - tokens take the lineage's latest row, the transcript-derived cumulative
-   *     `refineTranscriptTokens` writes (the statusLine counts are a
-   *     current-context snapshot, not cumulative);
+   *   - tokens take the lineage's latest row that reported tokens, the
+   *     transcript-derived cumulative `refineTranscriptTokens` writes (the
+   *     statusLine counts are a current-context snapshot, not cumulative). A
+   *     row with no tokens is no reading, so it never zeroes the lineage, and a
+   *     task with no reading at all reads zero (`BOARD_TASK_FACTS_SQL`, which
+   *     takes the same rows, reads null there);
    *   - tool calls and compactions are per-process counters and SUM across rows;
    *   - git churn is stored on one row per task (`setTaskGitStats` zeroes the
    *     others), so it is read from EVERY row, costed or not: lines SUM and
@@ -772,6 +816,8 @@ export class SessionRepository {
                     ORDER BY started_at DESC, id DESC
                   ) AS rn
            FROM costed
+           -- A row with no tokens is no reading, not zero: the lineage keeps its last real one.
+           WHERE total_input_tokens IS NOT NULL OR total_output_tokens IS NOT NULL
          )
          WHERE rn = 1
          GROUP BY task_id
@@ -794,15 +840,15 @@ export class SessionRepository {
          COALESCE(churn.max_files_changed, 0) AS max_files_changed,
          counters.earliest_started_at,
          counters.latest_ended_at,
-         lineage_tokens.total_input_tokens,
-         lineage_tokens.total_output_tokens,
+         COALESCE(lineage_tokens.total_input_tokens, 0) AS total_input_tokens,
+         COALESCE(lineage_tokens.total_output_tokens, 0) AS total_output_tokens,
          latest.agent_session_id,
          latest.record_id,
          latest.model_display_name,
          latest.exit_code
        FROM counters
        JOIN lineage_totals ON lineage_totals.task_id = counters.task_id
-       JOIN lineage_tokens ON lineage_tokens.task_id = counters.task_id
+       LEFT JOIN lineage_tokens ON lineage_tokens.task_id = counters.task_id
        JOIN latest ON latest.task_id = counters.task_id AND latest.rn = 1
        JOIN tasks t ON t.id = counters.task_id
        LEFT JOIN churn ON churn.task_id = counters.task_id`

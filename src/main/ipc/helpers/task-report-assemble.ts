@@ -9,33 +9,36 @@
 import type {
   AutomationRun,
   BackgroundCallJob,
-  SessionRecord,
   SessionSummary,
   Swimlane,
   TaskMoveRecord,
   TaskReport,
   TaskReportBackgroundCall,
+  TaskReportBackgroundCallsTotal,
   TaskReportCallOutcome,
   TaskReportColumn,
   TaskReportConversation,
   TaskReportKnowledge,
   TaskReportModelFallback,
+  TaskReportModelsTotal,
   TaskReportModelUsage,
   TaskReportRouteColumn,
   TaskReportRun,
+  TaskReportRunsTotal,
   TaskReportSummaryState,
+  TaskReportTotals,
 } from '../../../shared/types';
 import { legDeltas } from '../../../shared/leg-deltas';
 import { baseModelLabel, parseModelId } from '../../../shared/model-id';
 import { isBackgroundCallJob } from '../../../shared/background-call-jobs';
-import { parseToolBreakdown } from '../../db/repositories/session-repository';
+import { parseToolBreakdown, type TaskReportSessionRecord } from '../../db/repositories/session-repository';
 import type { TaskBackgroundCallRow } from '../../db/repositories/background-call-repository';
 import type { TaskModelUsageRow } from '../../retrieval/conversation/conversation-usage-store';
 import type { TaskKnowledge } from '../../retrieval/task-knowledge';
 
 export interface TaskReportInput {
   /** Every session row of the task, in any order. */
-  sessions: ReadonlyArray<SessionRecord>;
+  sessions: ReadonlyArray<TaskReportSessionRecord>;
   swimlanes: ReadonlyArray<Swimlane>;
   /** The task's column moves, oldest first. */
   moves: ReadonlyArray<TaskMoveRecord>;
@@ -66,7 +69,7 @@ function isWorkingColumn(column: TaskReportColumn): boolean {
   return column.role !== 'todo' && column.role !== 'done';
 }
 
-function endOf(record: SessionRecord): string | null {
+function endOf(record: TaskReportSessionRecord): string | null {
   return record.suspended_at ?? record.exited_at;
 }
 
@@ -101,7 +104,7 @@ function routeOf(intervals: ReadonlyArray<Interval>, swimlanes: ReadonlyArray<Sw
 }
 
 /** The base model's label for a session row, or null when it reported none. */
-function modelLabelOf(record: SessionRecord): string | null {
+function modelLabelOf(record: TaskReportSessionRecord): string | null {
   if (!record.model_id && !record.model_display_name) return null;
   return baseModelLabel(record.model_display_name, parseModelId(record.model_id ?? '').baseId);
 }
@@ -120,7 +123,7 @@ const RUN_COLUMN_MIN_OVERLAP_MS = 10_000;
  * it overlapped for `RUN_COLUMN_MIN_OVERLAP_MS` or more. A run shorter than
  * that is named for the stay it overlapped most.
  */
-function columnsOfRun(record: SessionRecord, intervals: ReadonlyArray<Interval>, columnsById: ReadonlyMap<string, TaskReportColumn>, nowMs: number): TaskReportColumn[] {
+function columnsOfRun(record: TaskReportSessionRecord, intervals: ReadonlyArray<Interval>, columnsById: ReadonlyMap<string, TaskReportColumn>, nowMs: number): TaskReportColumn[] {
   if (record.isolated_swimlane_id) {
     const isolated = columnsById.get(record.isolated_swimlane_id);
     return isolated ? [isolated] : [];
@@ -188,7 +191,7 @@ function conversationsOf(input: TaskReportInput, intervals: ReadonlyArray<Interv
 }
 
 /** The label a ledger model id reads as: the task's own sessions' display name for it, when one ran it. */
-function ledgerLabels(sessions: ReadonlyArray<SessionRecord>): (modelId: string | null) => string {
+function ledgerLabels(sessions: ReadonlyArray<TaskReportSessionRecord>): (modelId: string | null) => string {
   const displayByBase = new Map<string, string>();
   for (const record of sessions) {
     if (record.model_id && record.model_display_name) displayByBase.set(parseModelId(record.model_id).baseId, record.model_display_name);
@@ -201,7 +204,7 @@ function ledgerLabels(sessions: ReadonlyArray<SessionRecord>): (modelId: string 
 }
 
 /** The ledger's rows merged by label, so `opus-4-8` and `opus-4-8[1m]` are one row. */
-function modelsOf(ledger: ReadonlyArray<TaskModelUsageRow>, sessions: ReadonlyArray<SessionRecord>): TaskReportModelUsage[] {
+function modelsOf(ledger: ReadonlyArray<TaskModelUsageRow>, sessions: ReadonlyArray<TaskReportSessionRecord>): TaskReportModelUsage[] {
   const labelOf = ledgerLabels(sessions);
   const merged = new Map<string, TaskReportModelUsage>();
   for (const row of ledger) {
@@ -223,14 +226,17 @@ function modelsOf(ledger: ReadonlyArray<TaskModelUsageRow>, sessions: ReadonlyAr
  * Tokens by model from the session rows: each conversation's latest reading, as
  * the summary takes it, so over the records that reported usage (a cost) only.
  */
-function modelFallbackOf(sessions: ReadonlyArray<SessionRecord>): TaskReportModelFallback[] {
-  const latestByConversation = new Map<string, SessionRecord>();
+function modelFallbackOf(sessions: ReadonlyArray<TaskReportSessionRecord>): TaskReportModelFallback[] {
+  const latestByConversation = new Map<string, TaskReportSessionRecord>();
   for (const record of sessions) {
     if (record.total_cost_usd === null) continue;
     if (record.total_input_tokens === null && record.total_output_tokens === null) continue;
     const conversationId = record.agent_session_id ?? record.id;
     const latest = latestByConversation.get(conversationId);
-    if (!latest || record.started_at > latest.started_at) latestByConversation.set(conversationId, record);
+    // Equal start times break on the id, as the summary's `ORDER BY started_at DESC, id DESC` does.
+    const isNewer = !latest || record.started_at > latest.started_at
+      || (record.started_at === latest.started_at && record.id > latest.id);
+    if (isNewer) latestByConversation.set(conversationId, record);
   }
   const byModel = new Map<string, TaskReportModelFallback>();
   for (const record of latestByConversation.values()) {
@@ -287,11 +293,11 @@ function reasonOf(run: AutomationRun, outcome: TaskReportCallOutcome): string | 
 /**
  * The task's background calls, oldest first: one row per automation a
  * Condition check was asked about, whatever became of it (it ran, was skipped,
- * or ended in error), and each call of another job made for the task (a title). One check answers every automation of its
- * group, so rows can share a call; the Background calls card counts each call
- * once in its Total. A check no run names (a failed check repeated in the same
- * visit records no run) has no row. The job comes from the call's own record,
- * never from the automation's type.
+ * or ended in error), and each call of another job made for the task (a
+ * title). One check answers every automation of its group, so rows can share a
+ * call; `backgroundCallsTotalOf` counts each call once. A check no run names (a
+ * failed check repeated in the same visit records no run) has no row. The job
+ * comes from the call's own record, never from the automation's type.
  */
 function backgroundCallsOf(input: TaskReportInput, columnsById: ReadonlyMap<string, TaskReportColumn>): TaskReportBackgroundCall[] {
   const callsById = new Map(input.backgroundCalls.map((call) => [call.id, call]));
@@ -352,6 +358,62 @@ function backgroundCallsOf(input: TaskReportInput, columnsById: ReadonlyMap<stri
   return rows.sort((first, second) => first.startedAt.localeCompare(second.startedAt));
 }
 
+/** Adds a reported value to a total that stays null until some value is reported. */
+function addReported(total: number | null, value: number | null): number | null {
+  return value === null ? total : (total ?? 0) + value;
+}
+
+/**
+ * The Runs table's Total, over every run of every conversation. A figure no
+ * run reported totals to null, never a measured zero, and a run that did not
+ * report one leaves the others' sum as it is.
+ */
+function runsTotalOf(conversations: ReadonlyArray<TaskReportConversation>): TaskReportRunsTotal {
+  const total: TaskReportRunsTotal = { runCount: 0, runtimeMs: null, costUsd: null, toolCallCount: 0, compactionCount: 0 };
+  for (const run of conversations.flatMap((conversation) => conversation.runs)) {
+    total.runCount += 1;
+    total.runtimeMs = addReported(total.runtimeMs, run.runtimeMs);
+    total.costUsd = addReported(total.costUsd, run.costUsd);
+    total.toolCallCount += run.toolCallCount;
+    total.compactionCount += run.compactionCount;
+  }
+  return total;
+}
+
+/** The Models and tokens card's Total: the merged ledger rows added up. */
+function modelsTotalOf(models: ReadonlyArray<TaskReportModelUsage>): TaskReportModelsTotal {
+  const total: TaskReportModelsTotal = { turns: 0, freshInputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0 };
+  for (const row of models) {
+    total.turns += row.turns;
+    total.freshInputTokens += row.freshInputTokens;
+    total.cacheWriteTokens += row.cacheWriteTokens;
+    total.cacheReadTokens += row.cacheReadTokens;
+    total.outputTokens += row.outputTokens;
+  }
+  return total;
+}
+
+/**
+ * The Background calls card's Total. One check answers every automation of
+ * its group, so a call counts once, however many rows it answered. A row whose
+ * call is not on record (from before the call ledger) counts on its own and
+ * carries no figures, so a field no row reported totals to null.
+ */
+function backgroundCallsTotalOf(calls: ReadonlyArray<TaskReportBackgroundCall>): TaskReportBackgroundCallsTotal {
+  const total: TaskReportBackgroundCallsTotal = { durationMs: null, costUsd: null, tokens: null };
+  const counted = new Set<string>();
+  for (const call of calls) {
+    if (call.callId !== null) {
+      if (counted.has(call.callId)) continue;
+      counted.add(call.callId);
+    }
+    total.durationMs = addReported(total.durationMs, call.durationMs);
+    total.costUsd = addReported(total.costUsd, call.costUsd);
+    total.tokens = addReported(total.tokens, call.tokens);
+  }
+  return total;
+}
+
 function knowledgeOf(knowledge: TaskKnowledge | null): TaskReportKnowledge | null {
   if (!knowledge) return null;
   return {
@@ -391,15 +453,24 @@ export function assembleTaskReport(input: TaskReportInput): TaskReport {
   const columnsById = new Map(input.swimlanes.map((swimlane) => [swimlane.id, toColumn(swimlane)]));
   const intervals = stays(input.moves, columnsById, input.nowMs);
   const span = spanOf(input, columnsById);
+  const conversations = conversationsOf(input, intervals, columnsById);
+  const models = input.ledger === null ? null : modelsOf(input.ledger, input.sessions);
+  const backgroundCalls = backgroundCallsOf(input, columnsById);
+  const totals: TaskReportTotals = {
+    runs: runsTotalOf(conversations),
+    models: models === null ? null : modelsTotalOf(models),
+    backgroundCalls: backgroundCallsTotalOf(backgroundCalls),
+  };
   return {
     summary: input.summary,
     startedAt: span.startedAt,
     endedAt: span.endedAt,
     route: routeOf(intervals, input.swimlanes),
-    conversations: conversationsOf(input, intervals, columnsById),
-    models: input.ledger === null ? null : modelsOf(input.ledger, input.sessions),
+    conversations,
+    models,
     modelFallback: modelFallbackOf(input.sessions),
-    backgroundCalls: backgroundCallsOf(input, columnsById),
+    backgroundCalls,
+    totals,
     knowledge: knowledgeOf(input.knowledge),
     summaryState: input.summaryState,
   };

@@ -22,9 +22,11 @@ import type { BoardTaskFacts } from './answer-tasks';
  * once, cost and duration by their final (MAX) reading and tokens by the
  * lineage's latest reading, and the lineages add up. A flat SUM billed a
  * resumed conversation once per leg. Like the summary, only rows that reported
- * usage (a cost, zero when the agent has none) are readings. One difference is
- * kept on purpose: a lineage's latest row with no tokens is skipped here, so
- * the facts say null rather than zero, where the summary counts it as zero.
+ * usage (a cost, zero when the agent has none) are readings, and a row with no
+ * tokens is no token reading, so a lineage's tokens come from its latest row
+ * that has them. The one difference is the empty case: a task with no token
+ * reading at all reads null here and zero in the summary, whose
+ * `SessionSummary` field is a number.
  * The model is the newest session's, not the alphabetically last.
  *
  * Git churn is branch-cumulative and written to ONE session record per task,

@@ -73,26 +73,37 @@
     var facts = taskRunFacts[taskId] || {};
     var conversations = [];
     var modelFallback = [];
+    // The totals main computes (assembleTaskReport), here over the one run: none
+    // without a summary, and no ledger or background call to total.
+    var runsTotal = { runCount: 0, runtimeMs: null, costUsd: null, toolCallCount: 0, compactionCount: 0 };
     if (summary) {
+      var run = {
+        recordId: summary.sessionId,
+        agent: facts.agent || 'claude',
+        startedAt: summary.startedAt,
+        exitCode: summary.exitCode === undefined ? null : summary.exitCode,
+        model: summary.modelDisplayName || null,
+        effort: facts.effort || null,
+        permissionMode: facts.permissionMode || null,
+        costUsd: summary.totalCostUsd,
+        runtimeMs: summary.durationMs,
+        toolCallCount: summary.toolCallCount,
+        compactionCount: summary.compactionCount || 0,
+        toolBreakdown: summary.toolBreakdown || [],
+        columns: [],
+      };
       conversations.push({
         conversationId: summary.sessionId,
         isolatedColumn: null,
-        runs: [{
-          recordId: summary.sessionId,
-          agent: facts.agent || 'claude',
-          startedAt: summary.startedAt,
-          exitCode: summary.exitCode === undefined ? null : summary.exitCode,
-          model: summary.modelDisplayName || null,
-          effort: facts.effort || null,
-          permissionMode: facts.permissionMode || null,
-          costUsd: summary.totalCostUsd,
-          runtimeMs: summary.durationMs,
-          toolCallCount: summary.toolCallCount,
-          compactionCount: summary.compactionCount || 0,
-          toolBreakdown: summary.toolBreakdown || [],
-          columns: [],
-        }],
+        runs: [run],
       });
+      runsTotal = {
+        runCount: 1,
+        runtimeMs: run.runtimeMs,
+        costUsd: run.costUsd,
+        toolCallCount: run.toolCallCount,
+        compactionCount: run.compactionCount,
+      };
       modelFallback.push({
         model: summary.modelDisplayName || 'Unknown model',
         inputWithCacheTokens: summary.totalInputTokens,
@@ -108,6 +119,11 @@
       models: null,
       modelFallback: modelFallback,
       backgroundCalls: [],
+      totals: {
+        runs: runsTotal,
+        models: null,
+        backgroundCalls: { durationMs: null, costUsd: null, tokens: null },
+      },
       knowledge: null,
       summaryState: mockSummaryState(taskId),
     };

@@ -471,6 +471,20 @@ describe('assembleTaskReport models', () => {
 
     expect(report.modelFallback).toEqual([{ model: 'Opus 5.5', inputWithCacheTokens: 1_000, outputTokens: 100 }]);
   });
+
+  it('breaks a tie between a conversation\'s records that started together on the greater id, whatever order the records come in', () => {
+    // The summary reads the newest record by `ORDER BY started_at DESC, id DESC`, and the
+    // report's sessions arrive in any order, so the pick cannot depend on which comes first.
+    const lesserId = session({ id: 'run-a', agent_session_id: 'main', started_at: at(0), total_cost_usd: 1, total_duration_ms: MINUTE, total_input_tokens: 1_000, total_output_tokens: 100 });
+    const greaterId = session({ id: 'run-b', agent_session_id: 'main', started_at: at(0), total_cost_usd: 2, total_duration_ms: MINUTE, total_input_tokens: 2_000, total_output_tokens: 200 });
+
+    const lesserFirst = assembleTaskReport(baseInput({ sessions: [lesserId, greaterId] }));
+    const greaterFirst = assembleTaskReport(baseInput({ sessions: [greaterId, lesserId] }));
+
+    const expected = [{ model: 'Opus 5.5', inputWithCacheTokens: 2_000, outputTokens: 200 }];
+    expect(lesserFirst.modelFallback).toEqual(expected);
+    expect(greaterFirst.modelFallback).toEqual(expected);
+  });
 });
 
 describe('assembleTaskReport runs', () => {
@@ -501,5 +515,93 @@ describe('assembleTaskReport runs', () => {
 
     expect(main.runs[0].columns).toHaveLength(3);
     expect(main.runs[0].columns.map((column) => column.name)).toEqual(['Executing', 'Code Review', 'Executing']);
+  });
+});
+
+describe('assembleTaskReport totals', () => {
+  it('totals every run of every conversation: runtime, cost, tool calls and compactions', () => {
+    const report = assembleTaskReport(baseInput({ sessions: SESSIONS_797 }));
+
+    // Each conversation's final reading, added up: main's leg-3 plus the review run.
+    expect(report.totals.runs.runCount).toBe(4);
+    expect(report.totals.runs.costUsd).toBeCloseTo(30.84 + 16.74, 10);
+    expect(report.totals.runs.runtimeMs).toBe(93 * MINUTE + 24 * MINUTE);
+    expect(report.totals.runs.toolCallCount).toBe(23 + 241 + 274 + 92);
+    expect(report.totals.runs.compactionCount).toBe(1);
+  });
+
+  it('totals a runtime no run reported to null, and a run with none leaves the others\' sum', () => {
+    const noRuntime = [
+      session({ id: 'leg-1', agent_session_id: 'main', started_at: at(0), total_cost_usd: 1, total_duration_ms: null }),
+      session({ id: 'leg-2', agent_session_id: 'other', started_at: at(10), total_cost_usd: 2, total_duration_ms: null }),
+    ];
+    expect(assembleTaskReport(baseInput({ sessions: noRuntime })).totals.runs.runtimeMs).toBeNull();
+
+    const oneRuntime = [
+      session({ id: 'leg-1', agent_session_id: 'main', started_at: at(0), total_cost_usd: 1.85, total_duration_ms: 722_000 }),
+      session({ id: 'leg-2', agent_session_id: 'other', started_at: at(10), total_cost_usd: 2, total_duration_ms: null }),
+    ];
+    const total = assembleTaskReport(baseInput({ sessions: oneRuntime })).totals.runs;
+    expect(total.runtimeMs).toBe(722_000);
+    expect(total.costUsd).toBeCloseTo(3.85, 10);
+  });
+
+  it('totals no runs to null runtime and cost, and leaves a row with no cost out of the count', () => {
+    const sessions = [session({ id: 'never-reported', agent_session_id: 'main', started_at: at(0), total_duration_ms: 60_000, tool_call_count: 5 })];
+    const total = assembleTaskReport(baseInput({ sessions })).totals.runs;
+
+    expect(total).toEqual({ runCount: 0, runtimeMs: null, costUsd: null, toolCallCount: 0, compactionCount: 0 });
+  });
+
+  it('adds up the merged ledger rows, and has no models total when the ledger cannot be read', () => {
+    const ledger = [
+      { modelId: 'claude-opus-5-5', subagentType: null, turns: 200, freshInputTokens: 400, cacheWriteTokens: 900, cacheReadTokens: 70_000, outputTokens: 200 },
+      { modelId: 'claude-opus-5-5[1m]', subagentType: null, turns: 37, freshInputTokens: 98, cacheWriteTokens: 84, cacheReadTokens: 6_600, outputTokens: 33 },
+      { modelId: 'claude-haiku-5-5-20260101', subagentType: 'doc-auditor', turns: 11, freshInputTokens: 26, cacheWriteTokens: 203, cacheReadTokens: 1_640, outputTokens: 34 },
+    ];
+    expect(assembleTaskReport(baseInput({ sessions: SESSIONS_797, ledger })).totals.models).toEqual({
+      turns: 248, freshInputTokens: 524, cacheWriteTokens: 1_187, cacheReadTokens: 78_240, outputTokens: 267,
+    });
+    expect(assembleTaskReport(baseInput({ ledger: [] })).totals.models).toEqual({
+      turns: 0, freshInputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0,
+    });
+    expect(assembleTaskReport(baseInput({ ledger: null })).totals.models).toBeNull();
+  });
+
+  it('counts a check that answered two automations once, and adds a title call', () => {
+    const report = assembleTaskReport(baseInput({
+      automationRuns: [
+        automationRun('r1', 'Apply findings', 70, true, 'call-1'),
+        automationRun('r2', 'On to Code Review', 70, false, 'call-1'),
+      ],
+      backgroundCalls: [
+        backgroundCall({ id: 'call-1', job: 'condition_check', startedAt: at(70) }),
+        backgroundCall({ id: 'call-title', job: 'task_title', tokens: 2_100, costUsd: 0.001, durationMs: 2_400, startedAt: at(-1) }),
+      ],
+    }));
+
+    expect(report.backgroundCalls).toHaveLength(3);
+    const total = report.totals.backgroundCalls;
+    // The check's figures come from its run (4,800 ms, $0.004, 14,060 tokens), counted once.
+    expect(total.durationMs).toBe(4_800 + 2_400);
+    expect(total.costUsd).toBeCloseTo(0.004 + 0.001, 10);
+    expect(total.tokens).toBe(14_060 + 2_100);
+  });
+
+  it('counts each automation from before the call ledger on its own, and totals figures none reported to null', () => {
+    const legacyOnly = assembleTaskReport(baseInput({
+      automationRuns: [
+        automationRun('legacy-1', 'Apply findings', 5, true, null),
+        automationRun('legacy-2', 'On to Code Review', 5, true, null),
+      ],
+    }));
+    expect(legacyOnly.backgroundCalls).toHaveLength(2);
+    expect(legacyOnly.totals.backgroundCalls).toEqual({ durationMs: null, costUsd: null, tokens: null });
+
+    const withTitle = assembleTaskReport(baseInput({
+      automationRuns: [automationRun('legacy-1', 'Apply findings', 5, true, null)],
+      backgroundCalls: [backgroundCall({ id: 'call-title', job: 'task_title', tokens: 2_100, costUsd: 0.001, durationMs: 2_400 })],
+    }));
+    expect(withTitle.totals.backgroundCalls).toEqual({ durationMs: 2_400, costUsd: 0.001, tokens: 2_100 });
   });
 });
