@@ -1358,7 +1358,7 @@ Operates on a per-project DB.
 |--------|-------------|
 | `record(call)` | Write one finished background call: job, task and column, agent, requested and reported model, effort, the four token counts and cost (NULL when the agent reports none), duration, outcome |
 | `listGroups(since, until, groupMs)` | Calls grouped to fixed UTC buckets by job, agent and model (reported, else requested), with call, failure and reported counts and the summed tokens and cost. Empty when the table does not exist yet. The usage dashboard's Background read (`ProjectUsageReader.listBackgroundCallGroups`). |
-| `listForTask(taskId)` | Every call made for one task, oldest first, with its job, column, model, effort, summed tokens, cost and duration. Empty when the table does not exist yet. The completed task view's Background calls card reads it for the calls no automation run names (a title). |
+| `listForTask(taskId)` | Every call made for one task, oldest first, with its job, column, model, effort, summed tokens, cost and duration. Empty when the table does not exist yet. The completed task view's Background calls card reads it for the calls no automation run names, except unnamed condition checks and workflow steps, which the card drops (a title, a task summary, or a terminal name). |
 
 ### TaskMoveRepository
 

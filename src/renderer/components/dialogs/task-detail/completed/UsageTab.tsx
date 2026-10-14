@@ -14,6 +14,7 @@ import type {
   PermissionMode,
   TaskReport,
   TaskReportBackgroundCall,
+  TaskReportCallOutcome,
   TaskReportConversation,
   TaskReportModelFallback,
   TaskReportModelUsage,
@@ -351,9 +352,11 @@ const JOB_CALLS: Record<BackgroundCallJob, { label: string; icon: ReactElement }
 };
 
 /**
- * The background calls that led somewhere: each automation a check fired, and
- * each call with no automation behind it (a title). The Total counts a call
- * once, however many automations it fired.
+ * One row per automation a Condition check was asked about, with its Outcome
+ * (ran, skipped or error), and each call with no automation behind it (a
+ * title). One check answers every automation of its group, so the Total counts
+ * a call once, however many rows it answered. A check no run names, such as a
+ * failed check repeated later in the same visit, has no row.
  */
 function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
   const [showAll, setShowAll] = useState(false);
@@ -393,6 +396,7 @@ function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
             <tr>
               <th className={cellClass('header', 'left', true)}>Column</th>
               <th className={`${cellClass('header', 'left')} w-full`}>Call</th>
+              <th className={cellClass('header', 'left')}>Outcome</th>
               <th className={cellClass('header', 'left')}>Started</th>
               <th className={cellClass('header', 'left')}>Model</th>
               <th className={cellClass('header', 'left')}>Effort</th>
@@ -406,6 +410,7 @@ function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
               <tr key={`${call.callId ?? 'call'}-${call.automationName ?? call.job}-${index}`} data-testid="completed-background-call-row">
                 <td className={`${cellClass('body', 'left', true)} overflow-hidden`}>{call.column ? <ColumnLabel column={call.column} /> : <Dash />}</td>
                 <td className={`${cellClass('body', 'left')} overflow-hidden`}><CallLabel call={call} /></td>
+                <td className={cellClass('body', 'left')}><OutcomePill call={call} /></td>
                 <td className={cellClass('body', 'left')} title={formatDateTime(call.startedAt)}>{formatMonthDayTime(call.startedAt)}</td>
                 <td className={cellClass('body', 'left')}>{call.model ? <ValuePill>{call.model}</ValuePill> : <Dash />}</td>
                 <td className={cellClass('body', 'left')}>{call.effort ? <ValuePill>{call.effort}</ValuePill> : <Dash />}</td>
@@ -415,7 +420,7 @@ function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
               </tr>
             ))}
             <tr data-testid="completed-background-calls-total">
-              <td colSpan={5} className={cellClass('total', 'left', true)}>Total</td>
+              <td colSpan={6} className={cellClass('total', 'left', true)}>Total</td>
               <td className={cellClass('total', 'right')}>{totalDurationMs === null ? <Dash /> : formatCallDuration(totalDurationMs)}</td>
               <td className={cellClass('total', 'right')}>{totalCostUsd === null ? <Dash /> : formatCost(totalCostUsd)}</td>
               <td className={cellClass('total', 'right')}>{totalTokens === null ? <Dash /> : formatTokenCount(totalTokens)}</td>
@@ -427,11 +432,41 @@ function BackgroundCallsCard({ calls }: { calls: TaskReportBackgroundCall[] }) {
   );
 }
 
-/** The automation the call fired, with its type's icon and its Condition as the title; else the call's job. */
+/**
+ * What became of the automation, as a word: ran, skipped (the Condition was not
+ * met, or a later gate stopped it), or error (it failed, or the check never
+ * answered). The reason shows on hover.
+ */
+const OUTCOME_PILLS: Record<TaskReportCallOutcome, { label: string; className: string }> = {
+  ran: { label: 'Ran', className: 'border-green-400/30 bg-green-400/10 text-green-400' },
+  skipped: { label: 'Skipped', className: 'border-edge bg-surface-raised text-fg-muted' },
+  error: { label: 'Error', className: 'border-red-400/40 bg-red-400/10 text-red-400' },
+};
+
+/** A call's outcome pill, the same size as the Model and Effort pills; a dash for a call with no automation. */
+function OutcomePill({ call }: { call: TaskReportBackgroundCall }) {
+  if (call.outcome === null) return <Dash />;
+  const pill = OUTCOME_PILLS[call.outcome];
+  return (
+    <span
+      title={call.reason ? `${pill.label}: ${call.reason}` : pill.label}
+      className={`inline-flex h-[22px] items-center rounded border px-2 text-xs font-medium ${pill.className}`}
+      data-testid="completed-call-outcome"
+      data-outcome={call.outcome}
+    >
+      {pill.label}
+    </span>
+  );
+}
+
+/** The automation with its type's icon and its Condition as the title; else the call's job. */
 function CallLabel({ call }: { call: TaskReportBackgroundCall }) {
   const automationIconName = call.automationType ? AUTOMATION_MANIFEST[call.automationType]?.icon ?? '' : '';
   return (
-    <span className="inline-flex max-w-full items-center gap-1.5 text-fg-secondary" title={call.condition ? `Condition: ${call.condition}` : undefined}>
+    <span
+      className="inline-flex max-w-full items-center gap-1.5 text-fg-secondary"
+      title={call.condition ? `Condition: ${call.condition}` : undefined}
+    >
       {call.automationName !== null
         ? <AutomationIcon name={automationIconName} size={14} className="flex-shrink-0 text-fg-muted" />
         : JOB_CALLS[call.job].icon}
