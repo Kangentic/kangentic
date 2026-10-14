@@ -76,7 +76,7 @@ function baseInput(overrides: Partial<TaskReportInput> = {}): TaskReportInput {
 }
 
 /** One automation run; `callId` names the condition check behind it, or null for a run from before the call ledger. */
-function automationRun(id: string, name: string, minutes: number, met: boolean | null, callId: string | null): AutomationRun {
+function automationRun(id: string, name: string, minutes: number, met: boolean | null, callId: string | null, overrides: Partial<AutomationRun> = {}): AutomationRun {
   return {
     id,
     automation_id: `automation-${name}`,
@@ -97,6 +97,7 @@ function automationRun(id: string, name: string, minutes: number, met: boolean |
       inputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 14_000, outputTokens: 50,
       costUsd: 0.004, durationMs: 4_800, outcome: 'succeeded', rowsAnswered: 2,
     },
+    ...overrides,
   } as unknown as AutomationRun;
 }
 
@@ -247,13 +248,13 @@ describe('assembleTaskReport', () => {
     expect(report.conversations[0].runs.map((run) => run.recordId)).toEqual(['leg-1', 'leg-2', 'leg-3']);
   });
 
-  it('lists only the automations a check fired, plus a title call, oldest first', () => {
+  it('lists every automation a check was asked about, with its outcome and the agent\'s reason, plus a title call, oldest first', () => {
     const report = assembleTaskReport(baseInput({
       automationRuns: [
-        automationRun('r1', 'Apply findings', 70, true, 'call-1'),
-        automationRun('r2', 'On to Code Review', 70, false, 'call-1'),
+        automationRun('r1', 'Apply findings', 70, true, 'call-1', { condition_reason: 'The reply lists two findings.' }),
+        // The same check answered this one too: one call, two rows.
+        automationRun('r2', 'On to Code Review', 70, false, 'call-1', { condition_reason: 'The reply does not end with "Findings: applied".' }),
         automationRun('r3', 'On to Code Review', 79, true, 'call-2'),
-        // A check that met nothing fired nothing.
         automationRun('r4', 'On to Code Review', 75, false, 'call-3'),
       ],
       conditionsByAutomationId: new Map([['automation-Apply findings', 'The final message lists findings.']]),
@@ -263,18 +264,25 @@ describe('assembleTaskReport', () => {
       ],
     }));
 
-    expect(report.backgroundCalls.map((call) => [call.job, call.automationName])).toEqual([
-      ['task_title', null],
-      ['condition_check', 'Apply findings'],
-      ['condition_check', 'On to Code Review'],
+    expect(report.backgroundCalls.map((call) => [call.automationName, call.outcome])).toEqual([
+      [null, null],
+      ['Apply findings', 'ran'],
+      ['On to Code Review', 'skipped'],
+      ['On to Code Review', 'skipped'],
+      ['On to Code Review', 'ran'],
     ]);
-    const [title, applyFindings] = report.backgroundCalls;
+    const [title, applyFindings, notMet] = report.backgroundCalls;
+    expect(title.job).toBe('task_title');
     expect(title.column).toBeNull();
     expect(title.model).toBe('Haiku 5.5');
+    expect(title.reason).toBeNull();
     expect(applyFindings.column?.name).toBe('Executing');
     expect(applyFindings.condition).toBe('The final message lists findings.');
+    expect(applyFindings.reason).toBe('The reply lists two findings.');
     expect(applyFindings.tokens).toBe(14_060);
     expect(applyFindings.callId).toBe('call-1');
+    expect(notMet.callId).toBe('call-1');
+    expect(notMet.reason).toBe('The reply does not end with "Findings: applied".');
   });
 
   it('merges the ledger by model label, the main thread apart from each subagent type', () => {
@@ -339,21 +347,81 @@ describe('assembleTaskReport background calls', () => {
     });
   });
 
-  it('lists no row for an automation whose Condition was never evaluated, as for one that was not met', () => {
+  it('reads a check that gave no answer as an error, with the skip the runner recorded as its reason', () => {
     const report = assembleTaskReport(baseInput({
       automationRuns: [
-        automationRun('r-fired', 'Fired', 10, true, 'call-fired'),
-        automationRun('r-unmet', 'Not met', 11, false, 'call-unmet'),
-        automationRun('r-unknown', 'Never evaluated', 12, null, 'call-unknown'),
+        // The runner writes a detail on every run: a success line for a fired one, "Condition not met." for a skipped one with no reason.
+        automationRun('r-fired', 'Fired', 10, true, 'call-fired', { detail: 'Sent.' }),
+        automationRun('r-unmet', 'Not met', 11, false, 'call-unmet', { detail: 'Condition not met.' }),
+        // The runner keeps the call of a check that failed, and records the row as skipped with no answer.
+        automationRun('r-failed', 'Check failed', 12, null, 'call-failed', { detail: 'The Automation agent could not check the condition: timed out' }),
       ],
       backgroundCalls: [
         backgroundCall({ id: 'call-fired', job: 'condition_check', startedAt: at(10) }),
         backgroundCall({ id: 'call-unmet', job: 'condition_check', startedAt: at(11) }),
-        backgroundCall({ id: 'call-unknown', job: 'condition_check', startedAt: at(12) }),
+        backgroundCall({ id: 'call-failed', job: 'condition_check', startedAt: at(12) }),
       ],
     }));
 
-    expect(report.backgroundCalls.map((call) => call.automationName)).toEqual(['Fired']);
+    expect(report.backgroundCalls.map((call) => [call.automationName, call.outcome])).toEqual([
+      ['Fired', 'ran'],
+      ['Not met', 'skipped'],
+      ['Check failed', 'error'],
+    ]);
+    expect(report.backgroundCalls[2].reason).toBe('The Automation agent could not check the condition: timed out');
+    // With no reason from the agent, an answered row reads the runner's own outcome line.
+    expect(report.backgroundCalls[0].reason).toBe('Sent.');
+    expect(report.backgroundCalls[1].reason).toBe('Condition not met.');
+  });
+
+  it('reads an error from the run detail first, and the answered reason only when there is no detail', () => {
+    const report = assembleTaskReport(baseInput({
+      automationRuns: [
+        automationRun('r-detail', 'With detail', 10, null, 'call-a', { condition_reason: 'x reason', detail: 'y detail' }),
+        automationRun('r-none', 'No detail', 11, null, 'call-b', { condition_reason: 'x reason', detail: null }),
+      ],
+      backgroundCalls: [
+        backgroundCall({ id: 'call-a', job: 'condition_check', startedAt: at(10) }),
+        backgroundCall({ id: 'call-b', job: 'condition_check', startedAt: at(11) }),
+      ],
+    }));
+
+    expect(report.backgroundCalls.map((call) => [call.outcome, call.reason])).toEqual([
+      ['error', 'y detail'],
+      ['error', 'x reason'],
+    ]);
+  });
+
+  it('reads the run status for an automation whose Condition was met: ran, skipped by a later gate, failed, or interrupted', () => {
+    const report = assembleTaskReport(baseInput({
+      automationRuns: [
+        automationRun('r-ran', 'Ran', 10, true, 'call-1', { condition_reason: 'It applies.', detail: 'exit 0' }),
+        // A met Condition a later gate stopped: the reason is the gate's, not the answer's.
+        automationRun('r-gate', 'Gated', 11, true, 'call-2', { status: 'skipped', condition_reason: 'It applies.', detail: 'Already ran this visit.' }),
+        automationRun('r-failed', 'Failed', 12, true, 'call-3', { status: 'failed', condition_reason: 'It applies.', detail: 'exit 1' }),
+        automationRun('r-interrupted', 'Interrupted', 13, true, 'call-4', { status: 'interrupted', condition_reason: 'It applies.', detail: null }),
+      ],
+      backgroundCalls: ['call-1', 'call-2', 'call-3', 'call-4'].map((id, index) => backgroundCall({ id, job: 'condition_check', startedAt: at(10 + index) })),
+    }));
+
+    expect(report.backgroundCalls.map((call) => [call.automationName, call.outcome, call.reason])).toEqual([
+      ['Ran', 'ran', 'It applies.'],
+      ['Gated', 'skipped', 'Already ran this visit.'],
+      ['Failed', 'error', 'exit 1'],
+      ['Interrupted', 'error', 'It applies.'],
+    ]);
+  });
+
+  it('lists no row for an automation that was never asked (no answer and no check), as for one with no Condition', () => {
+    const report = assembleTaskReport(baseInput({
+      automationRuns: [
+        automationRun('r-asked', 'Asked', 10, false, 'call-asked'),
+        // A spent Frequency or a column that cannot run it: skipped before any check.
+        automationRun('r-never', 'Never asked', 11, null, null, { detail: 'This automation has run its limit on this task.' }),
+      ],
+    }));
+
+    expect(report.backgroundCalls.map((call) => call.automationName)).toEqual(['Asked']);
   });
 });
 

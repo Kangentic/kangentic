@@ -1099,9 +1099,11 @@ export interface AutomationRun {
   started_at: string;
   finished_at: string | null;
   /**
-   * What the Automation agent answered for the row's Condition: true (it ran),
-   * false (a skipped run, checked again next time), null when the row has no
-   * Condition or it was never asked.
+   * What the Automation agent answered for the row's Condition: true (met,
+   * though a later gate can still skip the run), false (a skipped run, checked
+   * again next time), null when the row has no Condition, it was never asked,
+   * or the check gave no answer. A check with no answer keeps its call in
+   * `check` and its failure in `detail`.
    */
   condition_met: boolean | null;
   /** The Automation agent's one-line reason for its answer, or null. */
@@ -1549,20 +1551,32 @@ export interface TaskReportModelFallback {
 }
 
 /**
- * A background call the task paid for that led somewhere: one per automation
- * whose Condition the call met, plus each title call. A check that met no
- * Condition fired nothing and is left out.
+ * What happened to an automation a Condition check was asked about: it ran, it
+ * was skipped (the Condition was not met, or a later gate stopped it), or
+ * something broke (the automation failed, or the check never answered).
+ */
+export type TaskReportCallOutcome = 'ran' | 'skipped' | 'error';
+
+/**
+ * A background call the task paid for: one row per automation a Condition
+ * check answered, met or not, plus each call of another job, such as a title.
+ * A check or workflow step no automation run names has no row. One check can
+ * answer several automations, so rows can share a call.
  */
 export interface TaskReportBackgroundCall {
   /** The `background_calls` row, or null when the run's call is not on record. */
   callId: string | null;
   job: BackgroundCallJob;
   column: TaskReportColumn | null;
-  /** The automation the call fired, with its type; null for a call with no automation. */
+  /** The automation the check answered, with its type; null for a call with no automation. */
   automationName: string | null;
   automationType: AutomationType | null;
   /** The automation's Condition text, for the row's title. */
   condition: string | null;
+  /** What happened to the automation; null for a call with no automation (a title). */
+  outcome: TaskReportCallOutcome | null;
+  /** Why: the Automation agent's reason for its answer, the skip reason, or the error. */
+  reason: string | null;
   startedAt: string;
   model: string | null;
   effort: string | null;

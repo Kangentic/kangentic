@@ -15,6 +15,7 @@ import type {
   TaskMoveRecord,
   TaskReport,
   TaskReportBackgroundCall,
+  TaskReportCallOutcome,
   TaskReportColumn,
   TaskReportConversation,
   TaskReportKnowledge,
@@ -243,11 +244,54 @@ function modelFallbackOf(sessions: ReadonlyArray<SessionRecord>): TaskReportMode
 }
 
 /**
- * The background calls that led somewhere, oldest first: one row per
- * automation a check fired (its Condition met), and each call made for the task
- * with no automation behind it (a title). A check that met no Condition fired
- * nothing and has no row. The job comes from the call's own record, never from
- * the automation's type.
+ * What happened to an automation a Condition check was asked about, or null
+ * for a run no check was asked about (no Condition, a spent Frequency, a column
+ * that cannot run it): it is not a check at all.
+ *
+ * A run with no answer but a check on record is a check that failed (the
+ * runner keeps the call and records the row as skipped), so it reads as an
+ * error, not a skip. Otherwise the run's own status decides: it succeeded, it
+ * was skipped (the Condition was not met, or a later gate stopped it), or it
+ * failed. An interrupted run did not complete, and a run still running has
+ * started, so each reads as the nearer of error and ran.
+ */
+function outcomeOf(run: AutomationRun): TaskReportCallOutcome | null {
+  if (run.condition_met === null && !run.check) return null;
+  if (run.condition_met === null) return 'error';
+  switch (run.status) {
+    case 'succeeded':
+    case 'running':
+      return 'ran';
+    case 'skipped':
+      return 'skipped';
+    case 'failed':
+    case 'interrupted':
+      return 'error';
+  }
+}
+
+/**
+ * Why the automation ended as it did. A met or not-met answer carries the
+ * agent's reason. A run that did not follow its answer (a later gate skipped
+ * it, or it failed) carries the recorded detail, and an error always does: a
+ * met answer's reason would say why it should have run, not why it did not.
+ */
+function reasonOf(run: AutomationRun, outcome: TaskReportCallOutcome): string | null {
+  const answeredReason = run.condition_reason ?? null;
+  const detail = run.detail ?? null;
+  if (outcome === 'error') return detail ?? answeredReason;
+  if (outcome === 'skipped' && run.condition_met === true) return detail ?? answeredReason;
+  return answeredReason ?? detail;
+}
+
+/**
+ * The task's background calls, oldest first: one row per automation a
+ * Condition check was asked about, whatever became of it (it ran, was skipped,
+ * or ended in error), and each call of another job made for the task (a title). One check answers every automation of its
+ * group, so rows can share a call; the Background calls card counts each call
+ * once in its Total. A check no run names (a failed check repeated in the same
+ * visit records no run) has no row. The job comes from the call's own record,
+ * never from the automation's type.
  */
 function backgroundCallsOf(input: TaskReportInput, columnsById: ReadonlyMap<string, TaskReportColumn>): TaskReportBackgroundCall[] {
   const callsById = new Map(input.backgroundCalls.map((call) => [call.id, call]));
@@ -258,7 +302,8 @@ function backgroundCallsOf(input: TaskReportInput, columnsById: ReadonlyMap<stri
 
   const rows: TaskReportBackgroundCall[] = [];
   for (const run of input.automationRuns) {
-    if (run.condition_met !== true) continue;
+    const outcome = outcomeOf(run);
+    if (outcome === null) continue;
     const check = run.check ?? null;
     const call = check ? callsById.get(check.callId) : undefined;
     const job: BackgroundCallJob = call && isBackgroundCallJob(call.job) ? call.job : 'condition_check';
@@ -271,6 +316,8 @@ function backgroundCallsOf(input: TaskReportInput, columnsById: ReadonlyMap<stri
       automationName: run.automation_name,
       automationType: run.type,
       condition: input.conditionsByAutomationId.get(run.automation_id) ?? null,
+      outcome,
+      reason: reasonOf(run, outcome),
       startedAt: run.started_at,
       model: check?.model ? baseModelLabel(null, parseModelId(check.model).baseId) : null,
       effort: check?.effort ?? null,
@@ -291,6 +338,8 @@ function backgroundCallsOf(input: TaskReportInput, columnsById: ReadonlyMap<stri
       automationName: null,
       automationType: null,
       condition: null,
+      outcome: null,
+      reason: null,
       startedAt: call.startedAt,
       model: call.modelId ? baseModelLabel(null, parseModelId(call.modelId).baseId) : null,
       effort: call.effort,

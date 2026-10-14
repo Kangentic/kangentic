@@ -297,10 +297,11 @@ function fullReport(overrides: Record<string, unknown> = {}) {
     ],
     modelFallback: [],
     backgroundCalls: [
-      { callId: 'call-title', job: 'task_title', column: null, automationName: null, automationType: null, condition: null, startedAt: '2026-10-13T03:03:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 2_400, costUsd: 0.001, tokens: 2_100 },
-      { callId: 'call-1', job: 'condition_check', column: EXECUTING, automationName: 'Apply findings', automationType: 'send_message', condition: 'The final message lists findings.', startedAt: '2026-10-13T04:10:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 5_100, costUsd: 0.004, tokens: 14_800 },
-      // The same check fired a second automation: its call counts once in the Total.
-      { callId: 'call-1', job: 'condition_check', column: EXECUTING, automationName: 'On to Code Review', automationType: 'move_to_column', condition: 'The work is finished.', startedAt: '2026-10-13T04:10:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 5_100, costUsd: 0.004, tokens: 14_800 },
+      { callId: 'call-title', job: 'task_title', column: null, automationName: null, automationType: null, condition: null, outcome: null, reason: null, startedAt: '2026-10-13T03:03:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 2_400, costUsd: 0.001, tokens: 2_100 },
+      { callId: 'call-1', job: 'condition_check', column: EXECUTING, automationName: 'Apply findings', automationType: 'send_message', condition: 'The final message lists findings.', outcome: 'ran', reason: 'The reply lists two findings.', startedAt: '2026-10-13T04:10:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 5_100, costUsd: 0.004, tokens: 14_800 },
+      // The same check answered a second automation, not met: its call counts once in the Total.
+      { callId: 'call-1', job: 'condition_check', column: EXECUTING, automationName: 'On to Code Review', automationType: 'move_to_column', condition: 'The work is finished.', outcome: 'skipped', reason: 'The reply still lists findings to apply.', startedAt: '2026-10-13T04:10:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 5_100, costUsd: 0.004, tokens: 14_800 },
+      { callId: 'call-2', job: 'condition_check', column: REVIEW, automationName: 'On to Testing', automationType: 'move_to_column', condition: 'The verdict reads Ready.', outcome: 'error', reason: 'The Automation agent could not check the condition: timed out', startedAt: '2026-10-13T04:37:00.000Z', model: 'Haiku 5.5', effort: 'low', durationMs: 30_000, costUsd: 0.002, tokens: 9_000 },
     ],
     knowledge: {
       commits: [{ sha: 'f9a8d40aabbccdd', subject: 'fix(terminal): drop the blank bottom strip', committedAt: '2026-10-13T05:03:00.000Z' }],
@@ -713,6 +714,7 @@ test.describe('Completed task view', () => {
   test('Background calls recorded before the call ledger total to dashes, not zeros', async () => {
     const unrecorded = (name: string) => ({
       callId: null, job: 'condition_check', column: EXECUTING, automationName: name, automationType: 'move_to_column', condition: null,
+      outcome: 'ran', reason: null,
       startedAt: '2026-10-13T04:10:00.000Z', model: null, effort: null, durationMs: null, costUsd: null, tokens: null,
     });
     const report = fullReport({ backgroundCalls: [unrecorded('Apply findings'), unrecorded('On to Code Review')] });
@@ -919,19 +921,33 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('Background calls lists each fired automation and the title call, and counts a shared call once', async () => {
+  test('Background calls lists every check with its outcome and reason, and counts a shared call once', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
     try {
       await openCompletedTask(page);
       await openUsageTab(page);
       const card = page.locator('[data-testid="completed-background-calls"]');
+      await expect(card.locator('thead')).toContainText('Outcome');
       const rows = card.locator('[data-testid="completed-background-call-row"]');
-      await expect(rows).toHaveCount(3);
+      await expect(rows).toHaveCount(4);
       await expect(rows.nth(0)).toContainText('Generate title');
+      // A title call has no automation, so its Outcome cell is a dash and carries no pill.
+      await expect(rows.nth(0).locator('[data-testid="completed-call-outcome"]')).toHaveCount(0);
       await expect(rows.nth(1)).toContainText('Apply findings');
       await expect(rows.nth(1).locator('span[title="Condition: The final message lists findings."]')).toHaveCount(1);
-      // 2.1k + 14.8k, the shared call once.
-      await expect(card.locator('[data-testid="completed-background-calls-total"]')).toContainText('16.9k');
+      const outcomes = card.locator('[data-testid="completed-call-outcome"]');
+      await expect(outcomes).toHaveCount(3);
+      await expect(outcomes.nth(0)).toHaveText('Ran');
+      await expect(outcomes.nth(0)).toHaveAttribute('data-outcome', 'ran');
+      await expect(outcomes.nth(0)).toHaveAttribute('title', 'Ran: The reply lists two findings.');
+      await expect(outcomes.nth(1)).toHaveText('Skipped');
+      await expect(outcomes.nth(1)).toHaveAttribute('data-outcome', 'skipped');
+      await expect(outcomes.nth(1)).toHaveAttribute('title', 'Skipped: The reply still lists findings to apply.');
+      await expect(outcomes.nth(2)).toHaveText('Error');
+      await expect(outcomes.nth(2)).toHaveAttribute('data-outcome', 'error');
+      await expect(outcomes.nth(2)).toHaveAttribute('title', 'Error: The Automation agent could not check the condition: timed out');
+      // 2.1k + 14.8k + 9k, the shared call once.
+      await expect(card.locator('[data-testid="completed-background-calls-total"]')).toContainText('25.9k');
       await expect(card.locator('[data-testid="completed-background-calls-toggle"]')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -941,7 +957,7 @@ test.describe('Completed task view', () => {
   test('Background calls shows ten rows, then Show all', async () => {
     const call = (index: number) => ({
       callId: `call-${index}`, job: 'condition_check', column: null, automationName: `Automation ${index}`,
-      automationType: 'notify', condition: null, startedAt: `2026-10-13T04:${String(10 + index).padStart(2, '0')}:00.000Z`,
+      automationType: 'notify', condition: null, outcome: 'skipped', reason: null, startedAt: `2026-10-13T04:${String(10 + index).padStart(2, '0')}:00.000Z`,
       model: 'Haiku 5.5', effort: 'low', durationMs: 4_000, costUsd: 0.003, tokens: 13_000,
     });
     const report = fullReport({ backgroundCalls: Array.from({ length: 12 }, (_, index) => call(index)) });
@@ -951,6 +967,8 @@ test.describe('Completed task view', () => {
       await openUsageTab(page);
       const rows = page.locator('[data-testid="completed-background-call-row"]');
       await expect(rows).toHaveCount(10);
+      // A pill with no reason names its outcome alone, with no trailing colon.
+      await expect(rows.nth(0).locator('[data-testid="completed-call-outcome"]')).toHaveAttribute('title', 'Skipped');
       await page.locator('[data-testid="completed-background-calls-toggle"]').click();
       await expect(rows).toHaveCount(12);
     } finally {
