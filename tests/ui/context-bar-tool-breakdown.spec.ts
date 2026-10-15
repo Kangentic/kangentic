@@ -386,6 +386,16 @@ test.describe('ContextBar tool-call breakdown popover', () => {
     await expect(popover).toBeVisible();
   });
 
+  test('the tool-calls trigger reads its count in its accessible name', async () => {
+    // The aria-label replaces the button's content as its name, so the count shown on the
+    // pill has to be in the label or a screen reader hears no number.
+    await seedUsage(page, 42);
+
+    const trigger = page.locator('[data-testid="context-bar-tool-calls-trigger"]');
+    await expect(trigger).toBeVisible({ timeout: 5000 });
+    await expect(trigger).toHaveAccessibleName('Tool calls: 42');
+  });
+
   test('empty state: mock returns [] and popover shows "No tool calls yet"', async () => {
     // Default mock stub returns []. The popover empty-state branch renders
     // "No tool calls yet" and the ByToolTable is NOT rendered.

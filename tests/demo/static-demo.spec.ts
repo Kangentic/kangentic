@@ -2232,7 +2232,9 @@ test('pausing and resuming a working agent brings back the same session and view
   await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
   await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAccessibleName('Pause session');
+  // The name reads Pause once the session row is active, which can land while the resume is
+  // still in flight. The state attribute reads active only once the toggle has settled.
+  await expect(toggle).toHaveAttribute('data-session-state', 'active');
 
   const readRows = () => page.evaluate(async (taskId) => {
     const sessions = await (window as unknown as { electronAPI: { sessions: { list: () => Promise<Array<{ id: string; taskId: string; status: string; resuming: boolean }>> } } }).electronAPI.sessions.list();
@@ -2275,7 +2277,7 @@ test('resuming a session paused at its recording\'s end replays the recorded res
   await card.click();
   await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAccessibleName('Pause session');
+  await expect(toggle).toHaveAttribute('data-session-state', 'active');
 
   await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/resume-sess-cw-websocket-')), { timeout: 10_000 }).toBe(true);
   const resumedId = await sessionIdsForTask(page, TASK_WEBSOCKET);
@@ -2310,7 +2312,7 @@ test('a second Pause then Resume on that same session replays the recorded resum
   await card.click();
   await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAccessibleName('Pause session');
+  await expect(toggle).toHaveAttribute('data-session-state', 'active');
   await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/resume-sess-cw-websocket-')), { timeout: 10_000 }).toBe(true);
   const firstResumedIds = await sessionIdsForTask(page, TASK_WEBSOCKET);
   expect(firstResumedIds).toHaveLength(1);
@@ -2330,7 +2332,7 @@ test('a second Pause then Resume on that same session replays the recorded resum
   // resume took the boot-replay branch rather than silently falling back to a frozen frame.
   const pendingStreamedSessionId = firstStreamedSession(page, 8000);
   await toggle.click();
-  await expect(toggle).toHaveAccessibleName('Pause session');
+  await expect(toggle).toHaveAttribute('data-session-state', 'active');
 
   const secondResumedIds = await sessionIdsForTask(page, TASK_WEBSOCKET);
   expect(secondResumedIds).toHaveLength(1);
@@ -2377,7 +2379,7 @@ test('a second Pause then Resume on a working agent frozen mid-recording opens o
   await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
   await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAccessibleName('Pause session');
+  await expect(toggle).toHaveAttribute('data-session-state', 'active');
 
   const firstResumedIds = await sessionIdsForTask(page, TASK_MIDDLEWARE);
   expect(firstResumedIds).toHaveLength(1);
@@ -2396,7 +2398,7 @@ test('a second Pause then Resume on a working agent frozen mid-recording opens o
   await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
   await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAccessibleName('Pause session');
+  await expect(toggle).toHaveAttribute('data-session-state', 'active');
 
   const secondResumedIds = await sessionIdsForTask(page, TASK_MIDDLEWARE);
   expect(secondResumedIds).toHaveLength(1);

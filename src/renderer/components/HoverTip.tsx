@@ -42,7 +42,8 @@
  *    `aria-describedby`, but it puts no node in the page: a hidden description node in `<body>`
  *    would also answer every page-level text lookup that matches its words. A label that only
  *    repeats the trigger's name is not read twice. A trigger's own `aria-describedby` outranks
- *    `aria-description`, so a trigger that already has one does not hear the tip.
+ *    `aria-description`, so a trigger that already has one does not hear the tip. A trigger's own
+ *    `aria-description` is kept when the tip adds nothing to read.
  *
  * A body portal is the only placement that escapes both ways an in-flow tip fails: an
  * `overflow-hidden` ancestor clips it, and a `backdrop-filter` ancestor turns `position: fixed`
@@ -391,7 +392,7 @@ export function HoverTip(props: HoverTipProps): ReactElement {
           childProps.onBlur?.(event);
           handleBlur(event);
         }}
-        aria-description={description === '' ? undefined : description}
+        aria-description={description === '' ? childProps['aria-description'] : description}
       />
       <TipLayer
         handleRef={layerRef}
