@@ -758,6 +758,54 @@ test('Escape in the bottom panel terminal posts even with a task window open', a
   await expect(detail, 'the app keeps the window open, as the desktop does').toBeVisible();
 });
 
+test('an open tip takes the first Escape, in a task window and in the bare app, and the next one goes on', async ({ page }) => {
+  // A HoverTip closes on the first Escape through a window capture listener it adds when it opens,
+  // which is AFTER boot.js added its own. boot.js therefore reads the key first, with the tip
+  // still in the DOM, and has to treat it as the app's (isOverlayOpen counts `[data-hover-tip]`).
+  const readMessages = await hostFrame(page, 'task');
+  const frame = page.frameLocator('#demo');
+  const detail = frame.locator('[data-testid="task-detail-titlebar"]');
+  const tip = frame.locator('[data-hover-tip]');
+  await expect(detail).toBeVisible();
+  // The window's terminal takes keyboard focus once, when its replay arrives (the arrival-focus
+  // arbiter). Wait for that first, so nothing moves focus back after the focus change below.
+  const windowTextarea = frame.locator('[data-testid^="window-frame-"] .xterm-helper-textarea').first();
+  await expect
+    .poll(() => windowTextarea.evaluate((element) => document.activeElement === element), { timeout: READY_TIMEOUT_MS })
+    .toBe(true);
+
+  // In the task window. Focus sits on a control with no tip of its own, not in the terminal: a
+  // focused terminal keeps Escape for the agent, so the tip would close and the window would too.
+  const maximize = frame.locator('[data-testid="task-detail-maximize"]');
+  await focusAcrossFrame(maximize);
+  await frame.locator('[data-testid="changes-toggle"]').hover();
+  await expect(tip).toBeVisible();
+  expect(await maximize.evaluate((element) => document.activeElement === element), 'focus is still off the terminal').toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(tip).toHaveCount(0);
+  await expect(detail, 'the tip took the first Escape, not the window').toBeVisible();
+  expect(hasEscape(await readMessages()), 'the app owned that Escape').toBe(false);
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeHidden();
+  expect(hasEscape(await readMessages()), 'the window took the second Escape').toBe(false);
+
+  // With no window open. This is the half boot.js's `[data-hover-tip]` check decides: nothing else
+  // in the frame claims the key, and a focused terminal outside every window keeps no Escape of
+  // its own, so without the check the first press would post to the host as well as closing the tip.
+  const panelTextarea = frame.locator('[data-testid="terminal-session-pane"] .xterm-helper-textarea').first();
+  await focusAcrossFrame(panelTextarea);
+  await frame.locator('[data-testid="status-bar-version-pill"]').hover();
+  await expect(tip).toBeVisible();
+  expect(await panelTextarea.evaluate((element) => document.activeElement === element), 'focus is in the panel terminal').toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(tip).toHaveCount(0);
+  expect(hasEscape(await readMessages()), 'an open tip owns the first Escape').toBe(false);
+
+  // The same press with the tip gone is the host's.
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+});
+
 test('a parked task window does not hold Escape once it is closed', async ({ page }) => {
   // Closing a task window whose Browser pane has a live guest PARKS it: the frame stays mounted,
   // invisible and inert, so the guest survives a reopen. A parked frame has nothing left to close,

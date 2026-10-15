@@ -81,8 +81,24 @@ export function tipDescription(parts: { label: string; readLabel: boolean; combo
   return [first, parts.detail ?? ''].filter((part) => part !== '').join('\n');
 }
 
+/** Whether a control shows why it is off: it is disabled and has a reason. An empty reason is none. */
+export function showsDisabledReason(disabled: boolean | undefined, disabledReason: string | null | undefined): boolean {
+  return disabled === true && disabledReason !== undefined && disabledReason !== null && disabledReason !== '';
+}
+
+/**
+ * The text a control's tip shows: the reason it is off while that applies, otherwise its own tip.
+ * '' when there is neither, which holds the tip shut.
+ */
+export function tipLabel(parts: { disabled?: boolean; disabledReason?: string | null; tip?: string }): string {
+  if (showsDisabledReason(parts.disabled, parts.disabledReason)) return parts.disabledReason ?? '';
+  return parts.tip ?? '';
+}
+
 // hmr-safe: the close function of the tip on screen, so the next one can replace it (one tip at
-// a time). A Fast Refresh at worst forgets a tip that closes on its own at pointer leave.
+// a time). A Fast Refresh forgets it, so a tip still showing is not replaced by the next one: a
+// hover tip closes at pointer leave, and a keyboard-focus tip stays beside the next until blur.
+// Dev-only and cosmetic.
 let shownTipClose: (() => void) | null = null;
 // hmr-safe: a 300ms warm window; a Fast Refresh at worst makes the next tip wait out its dwell once.
 let lastWarmCloseAt = Number.NEGATIVE_INFINITY;

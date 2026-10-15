@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import { Pill } from './Pill';
 import { HoverTip } from './HoverTip';
+import { showsDisabledReason, tipLabel } from '../utils/hover-tip';
 
 interface HeaderActionButtonProps {
   /** Icon component rendered at the shared header size. Accepts Lucide icons and
@@ -12,6 +13,8 @@ interface HeaderActionButtonProps {
   tip: string;
   /** A KEYBINDINGS id. Its live combo shows in the tip as chips. */
   keys?: string;
+  /** A muted second line under the tip, for a fact the action's name does not say. */
+  detail?: string;
   /** Why a disabled button does nothing. It replaces the tip while disabled, and it is read as
    *  the button's description. */
   disabledReason?: string;
@@ -64,6 +67,7 @@ export function HeaderActionButton({
   onClick,
   tip,
   keys,
+  detail,
   disabledReason,
   ariaLabel,
   label,
@@ -86,10 +90,16 @@ export function HeaderActionButton({
   // default, which is what text wants.
   const squareUpIconOnly = label ? '' : size === 'small' ? '!px-[5px]' : '!min-w-0 !px-[9px]';
 
-  const showReason = disabled === true && disabledReason !== undefined;
+  // The reason replaces the whole tip, shortcut and detail included: a disabled button's combo
+  // does nothing.
+  const showReason = showsDisabledReason(disabled, disabledReason);
 
   return (
-    <HoverTip label={showReason ? disabledReason : tip} keys={showReason ? undefined : keys}>
+    <HoverTip
+      label={tipLabel({ disabled, disabledReason, tip })}
+      keys={showReason ? undefined : keys}
+      detail={showReason ? undefined : detail}
+    >
       <Pill
         shape="square"
         size={size === 'small' ? 'xs' : 'md'}

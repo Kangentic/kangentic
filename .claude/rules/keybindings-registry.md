@@ -54,7 +54,12 @@ the same array.
     click-only with no keyboard path into them. Without this, `SettingsPanelShell` and
     `BaseDialog`, which both dismiss on a bubble-phase `document` Escape, close the panel or
     dialog under the menu on the same keystroke. `tests/ui/combobox-escape-layering.spec.ts`
-    pins it. Escape is registered display-only as
+    pins it. An OPEN TIP is the same shape at the outermost layer: `HoverTip` adds a capture-phase
+    `window` keydown listener only while a tip shows, closes the tip on Escape and calls
+    `stopPropagation`, so one press undoes one thing. A `window` capture listener runs before
+    every `document` listener, so it beats the menus and dialogs alike. It yields the key, still
+    closing the tip, when focus is in a `.xterm` (Escape is the agent interrupt) or a hotkey
+    rebind is capturing. `tests/ui/hover-tip.spec.ts` pins it. Escape is registered display-only as
     `dialog.dismiss` and is not rebindable; none of the three shapes adds an entry, since a
     second entry for the same physical key would only invent a phantom conflict.
   - The description editor's text-formatting combos (`description.bold` / `.italic` / `.link` /

@@ -154,8 +154,11 @@ test.describe('AgentTab - Launch Option fields', () => {
 
     const toggle = page.getByRole('switch', { name: LAUNCH_OPTION_LABEL, exact: true });
     await expect(toggle).toBeVisible();
-    // The description sits behind the row's info icon, which names it.
-    await expect(page.getByRole('button', { name: `About ${LAUNCH_OPTION_LABEL}: ${LAUNCH_OPTION_DESCRIPTION}` })).toBeVisible();
+    // The description sits behind the row's info icon: the icon is named for the
+    // option, and the description is what it describes.
+    const info = page.getByRole('button', { name: `About ${LAUNCH_OPTION_LABEL}`, exact: true });
+    await expect(info).toBeVisible();
+    await expect(info).toHaveAccessibleDescription(LAUNCH_OPTION_DESCRIPTION);
 
     await closeSettings(page);
   });
@@ -165,7 +168,7 @@ test.describe('AgentTab - Launch Option fields', () => {
     await openAgentSettingsTabAs(page, 'claude');
 
     await expect(page.getByRole('switch', { name: LAUNCH_OPTION_LABEL, exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: `About ${LAUNCH_OPTION_LABEL}: ${LAUNCH_OPTION_DESCRIPTION}` })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: `About ${LAUNCH_OPTION_LABEL}`, exact: true })).toHaveCount(0);
 
     await closeSettings(page);
   });

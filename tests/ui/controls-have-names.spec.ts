@@ -39,7 +39,16 @@ async function stripTitles(page: Page): Promise<void> {
 }
 
 async function launchWithoutTitles() {
-  return launchPage({ beforeLoad: stripTitles });
+  const launched = await launchPage({ beforeLoad: stripTitles });
+  // Both write paths are dead, or a nameless control would borrow its title and pass.
+  const probe = await launched.page.evaluate(() => {
+    const button = document.createElement('button');
+    button.setAttribute('title', 'by attribute');
+    button.title = 'by property';
+    return [button.hasAttribute('title'), button.title];
+  });
+  expect(probe).toEqual([false, '']);
+  return launched;
 }
 
 /** Rendered controls with no accessible name, described for the failure message. */
@@ -79,6 +88,9 @@ async function namelessControls(page: Page): Promise<string[]> {
 }
 
 async function expectAllControlsNamed(page: Page, surface: string): Promise<void> {
+  // The surface renders native titles (see the native-title BASELINE), so none surviving is
+  // what shows the strip reached React's own writes.
+  expect(await page.locator('[title]').count(), `${surface}: a native title survived the strip`).toBe(0);
   const offenders = await namelessControls(page);
   expect(offenders, `${surface}: controls with no accessible name once title is gone`).toEqual([]);
 }

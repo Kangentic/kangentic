@@ -201,6 +201,9 @@ test('keyboard focus opens a tip at once, and a mouse click does not', async () 
     expect(delayBeforeOpen(await readTipLog(page), 'focus')).toBeLessThan(150);
     await trigger.blur();
     await expect(tip).toHaveCount(0);
+    // The blur started the warm window, in which the click's own pointer move would open a tip
+    // at once. Outside it, only the focus the click gives could open one, and it must not.
+    await waitPageMs(page, HOVER_TIP_WARM_MS + 50);
 
     const other = infoTips.nth(1);
     await clearTipLog(page);
@@ -382,6 +385,9 @@ test('a trigger that appears under a resting pointer opens nothing, so Escape re
     // Rest the pointer there with the window gone, then bring the window back under it.
     await page.mouse.move(closeBox.x + closeBox.width / 2, closeBox.y + closeBox.height / 2);
     await openTaskDetail(page);
+    // The pointer really rests on the close button, or the negative wait below proves nothing.
+    const close = page.getByTestId('task-detail-close');
+    await expect.poll(() => close.evaluate((element) => element.matches(':hover'))).toBe(true);
     await clearTipLog(page);
     await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
     expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);

@@ -159,6 +159,9 @@ export function hasJsxOptOutMarker(lines: string[], lineIndex: number, markerNam
     // indistinguishable from our own opening tag and the marker leaks down to
     // the next element.
     if (trimmed.startsWith('<') && trimmed.endsWith('/>')) return false;
+    // So is an element opened and closed on one line (`<span title={a}>{a}</span>`). Our own
+    // opening tag is still open on any line above the matched one, so it never closes there.
+    if (trimmed.startsWith('<') && /<\/[A-Za-z][\w.:-]*>$/.test(trimmed)) return false;
     if (passedOpeningTag) return false;
     // The opening tag itself. Above it, only a comment block still counts.
     if (trimmed.startsWith('<')) {

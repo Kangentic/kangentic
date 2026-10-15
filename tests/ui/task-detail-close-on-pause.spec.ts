@@ -184,7 +184,9 @@ async function openDetailWindow(page: Page) {
 
   const dialog = page.locator('[data-testid="task-detail-dialog"]');
   await expect(dialog).toBeVisible({ timeout: 10000 });
-  await expect(dialog.locator('button[aria-label="Pause session"]')).toBeVisible({ timeout: 10000 });
+  // A running session, settled: not queued and not mid-toggle. The button's name
+  // alone also reads "Pause session" while queued or toggling.
+  await expect(dialog.locator('[data-testid="header-toggle-session-btn"][data-session-state="active"]')).toBeVisible({ timeout: 10000 });
   return dialog;
 }
 

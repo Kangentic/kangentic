@@ -183,6 +183,16 @@ describe('hasJsxOptOutMarker', () => {
     expect(hasJsxOptOutMarker(lines, 2, MARKER)).toBe(false);
   });
 
+  it('does not carry a marker past a sibling opened and closed on one line', () => {
+    const lines = [
+      '  {/* example-ok: meant for the first one. */}',
+      '  <span title={first}>{first}</span>',
+      '  <span title={second}>{second}</span>',
+    ];
+    expect(hasJsxOptOutMarker(lines, 1, MARKER)).toBe(true);
+    expect(hasJsxOptOutMarker(lines, 2, MARKER)).toBe(false);
+  });
+
   it('still leaks past a MULTI-line self-closing sibling, which is the known hole', () => {
     // Pinned so the limitation is visible rather than discovered. The sibling's
     // `/>` tail reads like our own attribute list, and telling them apart needs

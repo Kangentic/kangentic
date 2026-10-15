@@ -274,6 +274,7 @@ export function TaskDetailHeader({
           onClick={onToggle}
           disabled={toggling}
           data-testid="header-toggle-session-btn"
+          data-session-state={toggling ? 'toggling' : isQueued ? 'queued' : isSessionActive ? 'active' : 'suspended'}
           className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
             toggling
               ? 'text-fg-muted'
@@ -385,6 +386,8 @@ export function TaskDetailHeader({
                 active={browserOpen}
                 tip={browserOpen ? 'Hide browser' : 'Show browser'}
                 keys="taskDetail.toggleBrowser"
+                // Hiding is not closing: the page stays loaded, which the name does not say.
+                detail={browserOpen ? 'Kept alive until you close it' : browserAlive ? 'Page kept' : undefined}
                 ariaLabel="Toggle browser"
                 testId="browser-toggle"
               />
@@ -509,7 +512,7 @@ export function TaskDetailHeader({
         {/* Divider + Pop out (tiled only) + Maximize + Close */}
         <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
         {onUndock && (
-          <HoverTip label="Pop out">
+          <HoverTip label="Pop out of tiling">
             <button
               onClick={onUndock}
               data-testid="task-detail-undock"
