@@ -11,5 +11,5 @@
  *
  * Shared agent-resolution + buildCommand logic lives in `./prepare-spawn`.
  */
-export { resumeSuspendedSessions } from './resume-suspended';
+export { resumeSuspendedSessions, type ResumeSuspendedOptions } from './resume-suspended';
 export { autoSpawnTasks } from './auto-spawn';

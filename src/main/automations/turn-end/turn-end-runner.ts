@@ -21,6 +21,9 @@ import type { RunConditionAnswer } from '../../db/repositories/automation-run-re
 import { deliverMessageAfterMove, deliverMessageToSession } from './deliver-message';
 import { readSessionFinalReply } from './final-reply-reader';
 import { trackTurnEndGroup } from './turn-end-passes';
+import { forgetRecapSession, isRecapTurn, noteRecapSessionIdle } from './recap-turns';
+import { dispositionOf } from '../../../shared/activity-state';
+import type { ActivityState } from '../../../shared/types';
 
 /**
  * A column's On agent turn end automations: what runs when the agent working a
@@ -83,6 +86,9 @@ import { trackTurnEndGroup } from './turn-end-passes';
  *   end, so a reply whose step check a Pause abandoned, or a quit cut short,
  *   would sit unjudged until the user typed. The resume judges that reply once
  *   (`catchUpAfterResume`). The rows stay with real turn ends.
+ * - **The turn that answers an expired conversation's recap runs nothing.**
+ *   The recap asks the agent to summarize and wait (`recap-turns.ts`), so its
+ *   reply is a report for the user, not the column's work.
  */
 
 interface PassRequest {
@@ -113,6 +119,11 @@ export function registerTurnEndAutomations(context: IpcContext): void {
       void catchUpAfterResume(context, resumed);
     });
   });
+  // Where a recap's turn ends (`recap-turns.ts`): a map lookup for any other session.
+  context.sessionManager.on('activity', (sessionId: string, activity: ActivityState) => {
+    if (dispositionOf(activity) === 'idle') noteRecapSessionIdle(sessionId, Date.now());
+  });
+  context.sessionManager.on('session-removed', (sessionId: string) => forgetRecapSession(sessionId));
 }
 
 /** Judge the reply a resumed session's step check never judged. Exported for its test. */
@@ -180,6 +191,15 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
   const rows = repos.automations.getForTrigger(column.id, 'turn_end');
   const stepApplies = workflowStepApplies(task, payload.projectId);
   if (rows.length === 0 && !stepApplies) return;
+
+  if (isRecapTurn(payload.sessionId, payload.turnStartedAt)) {
+    // Logged because it leaves no run record.
+    console.log(
+      `[turn-end] Skipped the recap turn for task ${task.id.slice(0, 8)} in ${column.name}: `
+      + 'it answered an expired conversation\'s recap, which asks the agent to wait for the user.',
+    );
+    return;
+  }
 
   const visit = repos.taskMoves.currentVisit(task.id, column.id);
   const visitStartedAt = visit?.at ?? null;

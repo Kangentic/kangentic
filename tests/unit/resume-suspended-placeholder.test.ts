@@ -680,7 +680,7 @@ describe('resumeSuspendedSessions scoped to the sessions a pty host crash took d
       null,
       null,
       [],
-      new Set(['lost']),
+      { onlySessionIds: new Set(['lost']) },
     );
 
     expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
