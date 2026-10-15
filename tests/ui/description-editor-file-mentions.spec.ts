@@ -463,7 +463,12 @@ test.describe('DescriptionEditor file mentions', () => {
     // Focus moved off the textarea via Tab (not a click), so Escape (rather
     // than the Cancel button, which the textarea's own click helpers assume
     // is reachable the same way) closes this one; the description is
-    // non-empty, so this is the dirty-form discard path.
+    // non-empty, so this is the dirty-form discard path. Tab landed on the
+    // Preview button, whose tip opens at once and takes the first Escape.
+    const tip = page.locator('[data-tooltip]');
+    await expect(tip).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(tip).toHaveCount(0);
     await page.keyboard.press('Escape');
     await page.locator('button:has-text("Discard")').click();
   });
