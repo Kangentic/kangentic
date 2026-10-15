@@ -392,7 +392,8 @@ that wait once.
   never the default) the old conversation says the column's pass is old, not the task, so it starts
   a normal fresh pass with the recap prepended as context, and its turn end runs the column's rows.
   When the column sends its task template, the template is the pass's prompt and the column's
-  message goes out after the spawn, as on any fresh spawn.
+  message goes out after the spawn, as on any fresh spawn. A column prompt too long to leave room
+  for the recap's header and pointer gets no recap, and the pass runs on its own prompt.
 
 Once the new session exists, main pushes `task:conversationExpired` and the renderer shows an info
 toast naming the task and the old conversation's date, and whether its message was sent. Startup

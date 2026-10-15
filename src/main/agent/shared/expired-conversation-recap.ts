@@ -85,8 +85,11 @@ export interface ExpiredConversationRecapInput {
  *
  * It rides the command line, so it is measured as cmd.exe receives it
  * (`commandLineLength`) against `INLINE_PROMPT_BUDGET` less the caller's
- * `reservedChars`. The fixed parts always fit; the summary and the branch go in
- * while they fit, and the old conversation's tail gets whatever is left.
+ * `reservedChars`. In `whole-prompt` mode the fixed parts always fit. In
+ * `context` mode a caller's text that leaves no room for them gets an empty
+ * recap, and the column's pass runs on its own prompt. The summary and the
+ * branch go in while they fit, and the old conversation's tail gets whatever is
+ * left.
  */
 export async function buildExpiredConversationRecap(
   input: ExpiredConversationRecapInput,
@@ -104,9 +107,10 @@ export async function buildExpiredConversationRecap(
       : 'Below is what Kangentic still holds about the task, for context.',
   ].join(' ');
   let descriptionCap = DESCRIPTION_MAX_CHARS;
-  const title = truncateEnd(input.task.title, TITLE_MAX_CHARS);
+  const title = truncateEnd(withoutControlCharacters(input.task.title), TITLE_MAX_CHARS);
+  const description = withoutControlCharacters(input.task.description ?? '');
   const buildTaskBlock = (): string | null => (input.mode === 'whole-prompt'
-    ? buildTaskXml({ title, description: truncateEnd(input.task.description ?? '', descriptionCap) })
+    ? buildTaskXml({ title, description: truncateEnd(description, descriptionCap) })
     : null);
   // By the old conversation's id: a call by task id reads the task's NEWEST
   // session, which is this new one. No quotes around the id: a double-quoted
@@ -135,6 +139,10 @@ export async function buildExpiredConversationRecap(
     descriptionCap = Math.max(0, descriptionCap - (lengthOf() - budget) - ESCAPE_SLACK);
     blocks.taskBlock = buildTaskBlock();
   }
+  // Beside a column prompt that leaves no room for even the header and the
+  // pointer, the recap would push the command line past the budget. The
+  // column's pass runs on its own prompt, and the notice still tells the user.
+  if (input.mode === 'context' && lengthOf() > budget) return '';
 
   // All three reads at once: the tail is asked for the most room it could get
   // and cut to what the summary and the branch leave, so one slow source costs
@@ -210,7 +218,8 @@ function buildGitBlock(state: RecapGitState | null, baseBranch: string, prUrl: s
   const kept: string[] = [];
   let used = 0;
   for (const line of lines) {
-    const escaped = escapeXml(line);
+    // A commit subject is anyone's text, and git keeps a tab or an escape in it.
+    const escaped = escapeXml(withoutControlCharacters(line));
     if (used + escaped.length + 1 > GIT_BLOCK_MAX_CHARS) break;
     kept.push(escaped);
     used += escaped.length + 1;
@@ -221,10 +230,11 @@ function buildGitBlock(state: RecapGitState | null, baseBranch: string, prUrl: s
 }
 
 /**
- * Conversation and summary text as it may be typed into the spawning shell:
- * line breaks kept, a tab as a space (a tab completes in bash, zsh and fish,
- * even inside quotes), and every other control character dropped (an escape
- * from a pasted terminal log, a Ctrl+C, a bare carriage return, which is Enter).
+ * Text the recap did not write (the task, its summary, the conversation, git's
+ * output) as it may be typed into the spawning shell: line breaks kept, a tab
+ * as a space (a tab completes in bash, zsh and fish, even inside quotes), and
+ * every other control character dropped (an escape from a pasted terminal log,
+ * a Ctrl+C, a bare carriage return, which is Enter).
  * Never longer than the input, so a tail cut to its room still fits.
  */
 function withoutControlCharacters(text: string): string {

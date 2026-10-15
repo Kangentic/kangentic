@@ -188,8 +188,10 @@ describe('a whole-file walk that finds no entries', () => {
     expect(await archive.archiveSession('project-1', 'session-1')).toBe('unchanged');
     expect(counter.calls).toBe(0);
 
-    // Nothing new was archived, and what was archived is still readable.
+    // Nothing new was archived, and what was archived is still readable. The
+    // cache would answer for an unchanged revision, so this read goes to the rows.
     expect(stateOf(database).revision).toBe(revisionBefore);
+    resetArchiveReadCacheForTests();
     expect(await archivedEntries(database)).toEqual(archivedBefore);
   });
 });
@@ -445,6 +447,8 @@ describe('a purge of a conversation with more rows than one delete batch', () =>
     expect(rowsOf(database, 'agent-rows-only')).toBe(0);
     expect(rowsOf(database, 'agent-1')).toBe(namedRows);
     expect(statesOf(database, 'agent-1')).toBe(1);
+    // From the rows, not the cache, which the purge leaves alone for agent-1.
+    resetArchiveReadCacheForTests();
     expect(await archivedEntries(database)).toEqual(namedEntries);
   });
 });

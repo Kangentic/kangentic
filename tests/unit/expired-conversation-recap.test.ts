@@ -130,7 +130,7 @@ describe('the branch block', () => {
   });
 });
 
-describe('control characters in the conversation tail and the task summary', () => {
+describe('control characters in the text the recap did not write', () => {
   // Typed into the spawning shell, so an escape from a pasted terminal log, a
   // Ctrl+C, a bare carriage return (which is Enter) and a tab (which completes,
   // even inside quotes) must not reach it. Line breaks stay.
@@ -165,6 +165,73 @@ describe('control characters in the conversation tail and the task summary', () 
     // other controls gone with their neighbours joined, text above 0x9F kept.
     expect(recap.includes(`<task_summary>\nSummary ${CLEAN_TEXT}\n</task_summary>`)).toBe(true);
     expect(recap.includes(`<previous_conversation_tail>\nUser: ${CLEAN_TEXT}\n</previous_conversation_tail>`)).toBe(true);
+    expect(recap.endsWith(CLOSING)).toBe(true);
+  });
+
+  // The git state and the task are text the recap did not write either: a
+  // commit subject is anyone's, git keeps a tab or an escape in it, and the
+  // task may be imported from a tracker. Each piece is pinned by its own test
+  // so that a filter dropped from one place fails only that place's test.
+  // The dirt carries a tab, a bare carriage return (Enter), an escape sequence
+  // and a Ctrl+C, and no CRLF, so the only line breaks in a block are the ones
+  // that separate its lines.
+  const DIRT = '\tone two\rthree \x1b[31mfour\x1b[0m\x03five';
+  /** `DIRT` read as the rule says: the tab a space, the other controls gone, their neighbours joined. */
+  const CLEAN_DIRT = ' one twothree [31mfour[0mfive';
+
+  it('drops the control characters from every git line and keeps the line breaks between them', async () => {
+    const recap = await buildExpiredConversationRecap(input({
+      task: { id: 'task-1', title: 'Fix login', description: '', pr_url: `https://example.test/pr/12${DIRT}` },
+    }), {
+      readGitState: async () => ({
+        branch: 'fix-login',
+        commits: [`abc1234 Fix redirect${DIRT}`, 'def5678 Add test'],
+        changes: [` M src/auth.ts${DIRT}`, '?? notes.md'],
+      }),
+    });
+
+    // The whole block, so the lines and the breaks between them are pinned together.
+    const branchState = /<branch_state>\n[\s\S]*?\n<\/branch_state>/.exec(recap)?.[0];
+    expect(branchState).toBe([
+      '<branch_state>',
+      'Branch: fix-login, based on main',
+      `Pull request: https://example.test/pr/12${CLEAN_DIRT}`,
+      'Commits on this branch:',
+      `abc1234 Fix redirect${CLEAN_DIRT}`,
+      'def5678 Add test',
+      'Uncommitted changes:',
+      ` M src/auth.ts${CLEAN_DIRT}`,
+      '?? notes.md',
+      '</branch_state>',
+    ].join('\n'));
+    expect(controlCodesIn(recap)).toEqual([0x0a]);
+    expect(recap.endsWith(CLOSING)).toBe(true);
+  });
+
+  it('drops the control characters from the task title and keeps its words', async () => {
+    const recap = await buildExpiredConversationRecap(input({
+      task: { id: 'task-1', title: 'Fix\tlogin \rredirect \x1b[31mnow\x1b[0m\x03!', description: '', pr_url: null },
+    }));
+
+    expect(recap.includes('<title>Fix login redirect [31mnow[0m!</title>')).toBe(true);
+    expect(controlCodesIn(recap)).toEqual([0x0a]);
+    expect(recap.endsWith(CLOSING)).toBe(true);
+  });
+
+  it('drops the control characters from the task description, keeps its words, and keeps its line break', async () => {
+    const recap = await buildExpiredConversationRecap(input({
+      task: {
+        id: 'task-1',
+        title: 'Fix login',
+        description: 'Users\tland on /home.\rThen\x03 redirect \x1b[31mloops\x1b[0m.\nSecond\tline.',
+        pr_url: null,
+      },
+    }));
+
+    expect(recap.includes(
+      '<description>\nUsers land on /home.Then redirect [31mloops[0m.\nSecond line.\n  </description>',
+    )).toBe(true);
+    expect(controlCodesIn(recap)).toEqual([0x0a]);
     expect(recap.endsWith(CLOSING)).toBe(true);
   });
 });
