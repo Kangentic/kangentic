@@ -114,6 +114,13 @@ function fixture(options: { fileBackedDatabase?: boolean } = {}): Fixture {
   const directory = temporaryDirectory();
   const database = openTestDatabase(options.fileBackedDatabase ? path.join(directory, 'project.db') : ':memory:');
   openDatabases.push(database);
+  // A file database fsyncs every statement of the whole migration set, which
+  // timed out the two-database test at 5 s on a loaded CI disk. The test needs
+  // distinct database files, not durable ones.
+  if (options.fileBackedDatabase) {
+    database.pragma('journal_mode = MEMORY');
+    database.pragma('synchronous = OFF');
+  }
   runProjectMigrations(database);
   database.exec('PRAGMA foreign_keys = OFF');
   database.prepare(
