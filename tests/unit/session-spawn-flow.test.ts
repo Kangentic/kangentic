@@ -1337,6 +1337,34 @@ describe('performSpawn - cols/rows precedence', () => {
       await performSpawn(makeInput(), promotion);
       expect(promotion.forgetSessionGrid).not.toHaveBeenCalled();
     });
+
+    it('case (l): forgets the transcript anchors kept for the row a respawn replaces, never a promotion\'s own', async () => {
+      // The replaced row ends no more turns under its id, so the idle copy and
+      // the turn entry the session manager holds for it would otherwise
+      // outlive it.
+      const respawn = contextWithPredecessor();
+      respawn.forgetTranscriptAnchors = vi.fn();
+      await performSpawn(makeInput(), respawn);
+      expect(respawn.forgetTranscriptAnchors).toHaveBeenCalledTimes(1);
+      expect(respawn.forgetTranscriptAnchors).toHaveBeenCalledWith('predecessor-id');
+
+      // A queue promotion keeps its id: the placeholder it drains is the
+      // session being born, and its anchors are the new session's own.
+      ptySpawnMock.mockClear();
+      const promotion = makeContext();
+      promotion.registry.set('input-session-id-0000-000000000000', {
+        id: 'input-session-id-0000-000000000000',
+        taskId: 'task-001',
+        projectId: 'project-001',
+        pty: null,
+        status: 'queued',
+      } as never);
+      promotion.forgetTranscriptAnchors = vi.fn();
+      await performSpawn(makeInput(), promotion);
+      // The drain did visit the placeholder, so the id check is what spares it.
+      expect(promotion.telemetry.removeSession).toHaveBeenCalledWith('input-session-id-0000-000000000000');
+      expect(promotion.forgetTranscriptAnchors).not.toHaveBeenCalled();
+    });
   });
 
   it('case (d): takePendingResize is consumed exactly once, unconditionally, keyed on the resolved session id', async () => {
