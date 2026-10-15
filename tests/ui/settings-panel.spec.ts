@@ -1718,7 +1718,7 @@ test.describe('Shared Settings Tooltip', () => {
   test('Behavior tab has tooltip "Applies to all projects"', async () => {
     await openSettings();
     const behaviorTab = page.getByRole('button', { name: 'Behavior' });
-    await expect(behaviorTab).toHaveAttribute('title', 'Applies to all projects');
+    await expect(behaviorTab).toHaveAccessibleDescription('Applies to all projects');
     await closeSettings();
   });
 });

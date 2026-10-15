@@ -155,7 +155,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
             testId: 'view-toggle-board',
             // Columns-against-list is the least self-evident glyph pair on this
             // row, and at the last step it is all that is left of the switcher.
-            title: 'Board',
+            tip: 'Board',
             // The icon is the label's replacement, not an addition, so it carries
             // the inverse of the label's container query. Its `h-5` restores the
             // 20px content height the label's line box had, so the option keeps
@@ -167,7 +167,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
             value: 'backlog' as const,
             label: 'Backlog',
             testId: 'view-toggle-backlog',
-            title: 'Backlog',
+            tip: 'Backlog',
             // The option's accessible name is set from `ariaLabel`, so the badge
             // below contributes nothing to it. Spell the count out here or it is
             // lost to a screen reader at every width, not just the collapsed one.
@@ -183,7 +183,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
             value: 'workflows' as const,
             label: 'Workflows',
             testId: 'view-toggle-workflows',
-            title: 'Workflows',
+            tip: 'Workflows',
             ariaLabel: workflowRunning ? 'Workflows, running' : 'Workflows',
             icon: <span className={collapse.viewSwitcherIcon}><WorkflowIcon size={16} /></span>,
             // The picker's Running ring, at the sidebar's 16px. A paused, a

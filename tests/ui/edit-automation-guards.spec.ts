@@ -468,7 +468,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
       await expect(blocked).toBeDisabled();
       // The reason rides the option as its hover tip, so a disabled option
       // says why instead of just refusing. One short line (board 15c).
-      await expect(blocked).toHaveAttribute('title', 'Move to column runs only at a turn end.');
+      await expect(blocked).toHaveAccessibleDescription('Move to column runs only at a turn end.');
     }
 
     // A click on a blocked option changes nothing.
@@ -803,7 +803,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(options[1]).toHaveAttribute('aria-checked', 'true');
     for (const option of options) {
       await expect(option).toBeDisabled();
-      await expect(option).toHaveAttribute('title', reason);
+      await expect(option).toHaveAccessibleDescription(reason);
     }
     await options[0].click({ force: true });
     await expect(options[1]).toHaveAttribute('aria-checked', 'true');
@@ -812,7 +812,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await editDialog().locator('[data-testid="edit-automation-trigger-enter"]').click();
     for (const option of options) {
       await expect(option).toBeEnabled();
-      await expect(option).not.toHaveAttribute('title', reason);
+      await expect(option).not.toHaveAccessibleDescription(reason);
     }
     // And back to turn end, where Done keeps the stored value untouched. The
     // rename is a real edit, so Save has something to write.
@@ -935,13 +935,13 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     for (const trigger of ['enter', 'exit'] as const) {
       await editDialog().locator(`[data-testid="edit-automation-trigger-${trigger}"]`).click();
       await expect(conditionKind('text')).toBeDisabled();
-      await expect(conditionKind('text')).toHaveAttribute('title', TEXT_MATCH_UNAVAILABLE);
+      await expect(conditionKind('text')).toHaveAccessibleDescription(TEXT_MATCH_UNAVAILABLE);
       await expect(conditionKind('agent')).toBeEnabled();
     }
 
     await editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]').click();
     await expect(conditionKind('text')).toBeEnabled();
-    await expect(conditionKind('text')).not.toHaveAttribute('title', TEXT_MATCH_UNAVAILABLE);
+    await expect(conditionKind('text')).not.toHaveAccessibleDescription(TEXT_MATCH_UNAVAILABLE);
   });
 
   test('with no Automation agent a new turn-end Condition starts on Text match, which needs no setup', async () => {

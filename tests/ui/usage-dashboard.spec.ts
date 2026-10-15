@@ -1324,7 +1324,7 @@ test.describe('usage dashboard', () => {
 
       const popOutButton = page.locator('[data-testid="pop-out-button-stats"]');
       await expect(popOutButton).toBeVisible();
-      await expect(popOutButton).toHaveAttribute('title', 'Open in new window');
+      await expect(popOutButton).toHaveAccessibleName('Open in new window');
       await popOutButton.click();
 
       await expect

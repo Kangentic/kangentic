@@ -226,11 +226,7 @@ describe('WorktreePlacementControl', () => {
     expect(props.value).toBe('project');
     const [worktreeOption, projectOption] = props.options;
     expect(worktreeOption.disabled).toBe(true);
-    expect(worktreeOption.title).toBe('Not a git repository');
+    expect(worktreeOption.disabledReason).toBe('Not a git repository');
     expect(projectOption.disabled).not.toBe(true);
-
-    // The reason also sits on a wrapper: a disabled button does not fire the
-    // mouse events a tooltip needs.
-    expect(isElementLike(output) && output.props.title).toBe('Not a git repository');
   });
 });

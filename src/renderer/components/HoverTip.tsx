@@ -27,9 +27,15 @@
  *    `data-dismissable-layer`, which WalkthroughLayer, the pop-out Escape guard and
  *    useClickOutsideToClose would read as an open overlay.
  *  - Adds no element around its trigger. The one child renders as itself with the tip's handlers
- *    chained after its own, so its own layout classes (`flex-1`, `last:`, a `<th>` cell) are untouched. A disabled control works
- *    the same way, because the tip listens to POINTER events, which Chromium and React both
- *    deliver to a disabled button (React suppresses only its mouse events and click).
+ *    chained after its own, so its own layout classes (`flex-1`, `last:`, a `<th>` cell) are
+ *    untouched. A disabled control works the same way, because the tip listens to POINTER
+ *    events, which Chromium and React both deliver to a disabled button (React suppresses only
+ *    its mouse events and click). A click handler is chained only onto a DOM element or a child
+ *    that already takes one, because a component can render differently once it has one (Pill
+ *    becomes a `<button>`).
+ *  - An empty label holds the tip shut, as `enabled={false}` does, so a control passes an
+ *    optional tip straight through. A tip held shut never claims an event, so the trigger
+ *    around it still shows its own tip.
  *  - The trigger keeps its own accessible name. What the tip adds (a reason, an explanation, the
  *    shortcut) is the trigger's accessible description, set as `aria-description` on the trigger
  *    itself, so it is there without hovering. Chromium exposes it exactly as it does
@@ -44,6 +50,7 @@
  */
 
 import {
+  Fragment,
   isValidElement,
   useCallback,
   useEffect,
@@ -79,7 +86,10 @@ export interface HoverTipHeader {
 }
 
 export interface HoverTipProps {
-  /** Plain text: the label tip itself, and what a screen reader reads for a rich tip. "\n" breaks a line. */
+  /**
+   * Plain text: the label tip itself, and what a screen reader reads for a rich tip. "\n" breaks
+   * a line. An empty label with no rich part holds the tip shut.
+   */
   label: string;
   /** A muted second part under the label (a commit's author under its subject). Label shape only. */
   detail?: string;
@@ -134,6 +144,20 @@ const LABEL_TIP_CLASS = 'w-max max-w-[min(280px,calc(100vw-16px))] bg-fg px-2 py
 const RICH_TIP_CLASS = 'w-max max-w-[calc(100vw-16px)] overflow-hidden border border-fg-muted bg-surface-raised text-fg';
 const KEY_CHIP_CLASS = 'inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-tip-chip-edge bg-tip-chip px-1 font-sans text-[11px] font-medium leading-none text-surface';
 
+/**
+ * Events an inner trigger already answered. A trigger can sit inside another (a PR state badge
+ * inside the PR link pill), and pointer and focus events bubble, so without this both tips
+ * would arm on one move. The innermost trigger takes the event and the outer one stands down.
+ */
+const answeredEvents = new WeakSet<Event>();
+
+/** True the first time a trigger sees `event`; false for every trigger it bubbles to after. */
+function answerFirst(event: Event): boolean {
+  if (answeredEvents.has(event)) return false;
+  answeredEvents.add(event);
+  return true;
+}
+
 function isUsablePointer(event: ReactPointerEvent<Element>): boolean {
   // Touch never hovers: a tap is a press. A held button is a drag crossing the control.
   return event.pointerType !== 'touch' && event.buttons === 0;
@@ -154,9 +178,13 @@ function warnAboutTrigger(element: Element): void {
 }
 
 export function HoverTip(props: HoverTipProps): ReactElement {
-  const { label, detail, keys, describe, enabled = true, children } = props;
+  const { label, detail, keys, icon, content, header, footer, describe, enabled = true, testId, children } = props;
   const child = isValidElement(children) ? (children as ReactElement<TriggerProps>) : null;
   const childProps: TriggerProps = child?.props ?? {};
+  const rich = content !== undefined || header !== undefined || footer !== undefined;
+  // Whether the tip may open at all. An empty label has nothing to show.
+  const active = enabled && (label !== '' || rich);
+  const childIsFragment = child?.type === Fragment;
 
   // The trigger element, taken from the event that opens a tip rather than through a ref, so the
   // child's own ref passes through untouched and nothing has to be merged.
@@ -167,7 +195,7 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   const hoverBlockedRef = useRef(false);
   const pressFocusRef = useRef(false);
   const focusOpenedRef = useRef(false);
-  const enabledRef = useRef(enabled);
+  const enabledRef = useRef(active);
   const dwellTimerRef = useRef<number | null>(null);
   const checkedRef = useRef(false);
 
@@ -187,13 +215,28 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   const handlePointerEnter = useCallback((event: ReactPointerEvent<Element>): void => {
     if (!isUsablePointer(event)) return;
     hoveredRef.current = true;
+    // A fresh enter is a new hover. A keyboard click made while the pointer was elsewhere must
+    // not keep this one shut; a press made inside is cleared by the leave that ends it.
+    hoverBlockedRef.current = false;
     takeTrigger(event.currentTarget);
   }, [takeTrigger]);
 
   const handlePointerMove = useCallback((event: ReactPointerEvent<Element>): void => {
     if (!isUsablePointer(event)) return;
     hoveredRef.current = true;
-    if (armedRef.current || hoverBlockedRef.current || !enabledRef.current) return;
+    // A tip held shut lets the move pass to the trigger around it, so a badge with nothing to say
+    // does not silence the pill it sits in.
+    if (!enabledRef.current) return;
+    if (!answerFirst(event.nativeEvent)) {
+      // An inner trigger owns this move, so this one stands down until the pointer is back on
+      // its own area.
+      if (!armedRef.current) return;
+      armedRef.current = false;
+      clearDwell();
+      layerRef.current?.hide(true);
+      return;
+    }
+    if (armedRef.current || hoverBlockedRef.current) return;
     takeTrigger(event.currentTarget);
     armedRef.current = true;
     if (isTipWarm(performance.now())) {
@@ -204,7 +247,7 @@ export function HoverTip(props: HoverTipProps): ReactElement {
       dwellTimerRef.current = null;
       if (hoveredRef.current && !hoverBlockedRef.current && enabledRef.current) layerRef.current?.show('cold');
     }, HOVER_TIP_DWELL_MS);
-  }, [takeTrigger]);
+  }, [clearDwell, takeTrigger]);
 
   const handlePointerLeave = useCallback((): void => {
     hoveredRef.current = false;
@@ -239,7 +282,9 @@ export function HoverTip(props: HoverTipProps): ReactElement {
 
   const handleFocus = useCallback((event: FocusEvent<Element>): void => {
     const target = event.target;
-    if (pressFocusRef.current || !enabledRef.current) return;
+    if (!enabledRef.current) return;
+    if (!answerFirst(event.nativeEvent)) return;
+    if (pressFocusRef.current) return;
     if (!(target instanceof Element) || !target.matches(':focus-visible')) return;
     takeTrigger(event.currentTarget);
     focusOpenedRef.current = true;
@@ -258,13 +303,23 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   }, []);
 
   useLayoutEffect(() => {
-    enabledRef.current = enabled;
-    if (enabled) return;
+    enabledRef.current = active;
+    if (active) return;
+    // Disarmed as well as hidden, so the tip arms again on the next move once it is enabled,
+    // even with the pointer still resting on the trigger.
+    armedRef.current = false;
+    focusOpenedRef.current = false;
     clearDwell();
     layerRef.current?.hide(false);
-  }, [enabled, clearDwell]);
+  }, [active, clearDwell]);
 
   useEffect(() => clearDwell, [clearDwell]);
+
+  useEffect(() => {
+    if (__KANGENTIC_DEV__ && childIsFragment) {
+      console.error('HoverTip: the trigger is a Fragment, which takes no handlers, so its tip never opens. Pass one element.');
+    }
+  }, [childIsFragment]);
 
   // Every tip reads the store, but its selector returns nothing unless it has keys, so a tip
   // re-renders only when its own shortcut is rebound.
@@ -272,12 +327,16 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   const triggerName = childProps['aria-label']
     ?? (typeof childProps.children === 'string' ? childProps.children : undefined);
   const readLabel = describe ?? !repeatsTriggerName(label, triggerName);
-  const description = tipDescription({
-    label,
-    readLabel,
-    combo: combo === '' ? '' : formatCombo(combo),
-    detail: describe === false ? undefined : detail,
-  });
+  // A tip held shut describes nothing either: its detail or shortcut alone would be read for a
+  // tip no one can open.
+  const description = active
+    ? tipDescription({
+        label,
+        readLabel,
+        combo: combo === '' ? '' : formatCombo(combo),
+        detail: describe === false ? undefined : detail,
+      })
+    : '';
 
   if (child === null) return <>{children}</>;
 
@@ -285,10 +344,23 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   // the child's own type rather than cloneElement: React 19 keeps `ref` in props, so the spread
   // carries the child's ref through.
   const Trigger = child.type as ElementType;
+  // A component with no click of its own gets none: Pill renders a <button> once it has an
+  // `onClick`. The press handler already closes the tip; only a keyboard Enter or Space, which
+  // such a child does not answer, goes without the close.
+  const chainClick = typeof child.type === 'string' || childProps.onClick !== undefined;
+  const clickProps = chainClick
+    ? {
+        onClick: (event: ReactMouseEvent<Element>) => {
+          childProps.onClick?.(event);
+          handleClick();
+        },
+      }
+    : {};
   return (
     <>
       <Trigger
         {...child.props}
+        {...clickProps}
         onPointerEnter={(event: ReactPointerEvent<Element>) => {
           childProps.onPointerEnter?.(event);
           handlePointerEnter(event);
@@ -304,10 +376,6 @@ export function HoverTip(props: HoverTipProps): ReactElement {
         onPointerDown={(event: ReactPointerEvent<Element>) => {
           childProps.onPointerDown?.(event);
           handlePointerDown();
-        }}
-        onClick={(event: ReactMouseEvent<Element>) => {
-          childProps.onClick?.(event);
-          handleClick();
         }}
         onFocus={(event: FocusEvent<Element>) => {
           childProps.onFocus?.(event);
@@ -325,11 +393,11 @@ export function HoverTip(props: HoverTipProps): ReactElement {
         label={label}
         detail={detail}
         combo={combo}
-        icon={props.icon}
-        content={props.content}
-        header={props.header}
-        footer={props.footer}
-        testId={props.testId}
+        icon={icon}
+        content={content}
+        header={header}
+        footer={footer}
+        testId={testId}
       />
     </>
   );
@@ -364,7 +432,7 @@ interface TipLayerProps {
  * opening a tip re-renders this layer and never the trigger's subtree.
  */
 function TipLayer(props: TipLayerProps): ReactElement | null {
-  const { handleRef, triggerRef } = props;
+  const { handleRef, triggerRef, label, detail, combo, icon, content, header, footer, testId } = props;
   const [shown, setShown] = useState<'cold' | 'warm' | null>(null);
   const shownRef = useRef<'cold' | 'warm' | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
@@ -461,45 +529,45 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
   }, [shown, hide, position, triggerRef]);
 
   if (shown === null) return null;
-  const rich = props.content !== undefined || props.header !== undefined || props.footer !== undefined;
+  const rich = content !== undefined || header !== undefined || footer !== undefined;
   return createPortal(
     <div
       ref={tipRef}
       role="tooltip"
       data-hover-tip=""
       data-shape={rich ? 'rich' : 'label'}
-      data-testid={props.testId}
+      data-testid={testId}
       className={`${TIP_BASE_CLASS} ${rich ? RICH_TIP_CLASS : LABEL_TIP_CLASS}${shown === 'cold' ? ' overlay-popover-in' : ''}`}
     >
       {rich ? (
         <>
-          {props.header !== undefined && (
+          {header !== undefined && (
             <div data-hover-tip-part="header" className="flex items-center gap-2 border-b border-edge bg-surface-hover/40 px-3 py-2">
-              {props.header.icon !== undefined && (
-                <span aria-hidden="true" className="flex shrink-0 text-fg-muted [&>svg]:size-[13px]">{props.header.icon}</span>
+              {header.icon !== undefined && (
+                <span aria-hidden="true" className="flex shrink-0 text-fg-muted [&>svg]:size-[13px]">{header.icon}</span>
               )}
-              <span className="font-semibold">{props.header.title}</span>
+              <span className="font-semibold">{header.title}</span>
             </div>
           )}
-          {props.content !== undefined && (
-            <div data-hover-tip-part="body" className="px-3 py-2.5">{props.content}</div>
+          {content !== undefined && (
+            <div data-hover-tip-part="body" className="px-3 py-2.5">{content}</div>
           )}
-          {props.footer !== undefined && (
-            <div data-hover-tip-part="footer" className="border-t border-edge px-3 py-1.5 text-fg-muted">{props.footer}</div>
+          {footer !== undefined && (
+            <div data-hover-tip-part="footer" className="border-t border-edge px-3 py-1.5 text-fg-muted">{footer}</div>
           )}
         </>
       ) : (
         <span className="flex items-start gap-1.5">
-          {props.icon !== undefined && (
-            <span aria-hidden="true" className="mt-0.5 flex size-3 shrink-0 items-center justify-center [&>svg]:size-3">{props.icon}</span>
+          {icon !== undefined && (
+            <span aria-hidden="true" className="mt-0.5 flex size-3 shrink-0 items-center justify-center [&>svg]:size-3">{icon}</span>
           )}
           <span className="min-w-0 whitespace-pre-line break-words">
-            {props.label}
-            {props.detail !== undefined && props.detail !== '' && (
-              <span className="block text-tip-muted">{props.detail}</span>
+            {label}
+            {detail !== undefined && detail !== '' && (
+              <span className="block text-tip-muted">{detail}</span>
             )}
           </span>
-          {props.combo !== '' && <TipKeys combo={props.combo} />}
+          {combo !== '' && <TipKeys combo={combo} />}
         </span>
       )}
     </div>,

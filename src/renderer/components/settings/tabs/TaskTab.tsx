@@ -45,9 +45,9 @@ export function TaskTab({ globalConfig }: { globalConfig: AppConfig }) {
         <CardChoiceRow<AppConfig['cardPreview']>
           {...settingProps('cardPreview')}
           options={[
-            { value: 'agent-latest-message', label: 'Latest', title: "The agent's newest message" },
-            { value: 'agent-messages', label: 'Recent', title: "The agent's recent messages, one line each" },
-            { value: 'description', label: 'Description', title: "The task's description" },
+            { value: 'agent-latest-message', label: 'Latest', tip: "The agent's newest message" },
+            { value: 'agent-messages', label: 'Recent', tip: "The agent's recent messages, one line each" },
+            { value: 'description', label: 'Description', tip: "The task's description" },
           ]}
           value={globalConfig.cardPreview}
           onChange={(value) => updateGlobal({ cardPreview: value })}

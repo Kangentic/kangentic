@@ -1046,7 +1046,7 @@ function BrowserPaneActive({
         {!window.electronAPI.popOut?.descriptor && projectId && (
           <>
             <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
-            <PopOutButton kind="browser" params={{ taskId, projectId }} title="Open in new window" />
+            <PopOutButton kind="browser" params={{ taskId, projectId }} label="Open in new window" />
           </>
         )}
       </form>

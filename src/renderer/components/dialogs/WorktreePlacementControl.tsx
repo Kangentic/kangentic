@@ -10,14 +10,14 @@ interface WorktreePlacementControlProps {
   /**
    * Why the project cannot have a worktree at all (not a git repo, itself a
    * worktree, no commits, remote agent). Disables the Worktree option with the
-   * reason as its tooltip and shows Project selected, so the control never
+   * reason as its tip and shows Project selected, so the control never
    * offers a worktree the manager will silently skip.
    */
   blockedReason?: string | null;
 }
 
-const WORKTREE_TITLE = 'Run in a new worktree';
-const PROJECT_TITLE = 'Run in the project folder';
+const WORKTREE_TIP = 'Run in a new worktree';
+const PROJECT_TIP = 'Run in the project folder';
 
 /**
  * Module scope, like the Board Manager's timing options: `SegmentedControl`
@@ -25,8 +25,8 @@ const PROJECT_TITLE = 'Run in the project folder';
  * would re-measure the thumb on every keystroke in the dialog.
  */
 const OPEN_OPTIONS: readonly SegmentedControlOption<WorktreePlacement>[] = [
-  { value: 'worktree', label: 'Worktree', icon: <FolderGit2 size={14} />, title: WORKTREE_TITLE, testId: 'worktree-option-worktree' },
-  { value: 'project', label: 'Project', icon: <FolderGit size={14} />, title: PROJECT_TITLE, testId: 'worktree-option-project' },
+  { value: 'worktree', label: 'Worktree', icon: <FolderGit2 size={14} />, tip: WORKTREE_TIP, testId: 'worktree-option-worktree' },
+  { value: 'project', label: 'Project', icon: <FolderGit size={14} />, tip: PROJECT_TIP, testId: 'worktree-option-project' },
 ];
 
 /**
@@ -47,7 +47,7 @@ function blockedOptionsFor(reason: string): readonly SegmentedControlOption<Work
   const cached = blockedOptionsByReason.get(reason);
   if (cached) return cached;
   const built: readonly SegmentedControlOption<WorktreePlacement>[] = [
-    { ...OPEN_OPTIONS[0], title: reason, disabled: true },
+    { ...OPEN_OPTIONS[0], disabledReason: reason, disabled: true },
     OPEN_OPTIONS[1],
   ];
   blockedOptionsByReason.set(reason, built);
@@ -79,7 +79,7 @@ export function WorktreePlacementControl({ value, onChange, blockedReason = null
     ? blockedOptionsFor(blockedReason)
     : OPEN_OPTIONS;
 
-  const control = (
+  return (
     <SegmentedControl
       ariaLabel="Where the agent runs"
       testId="worktree-placement"
@@ -92,11 +92,4 @@ export function WorktreePlacementControl({ value, onChange, blockedReason = null
       options={options}
     />
   );
-
-  // `title` on a WRAPPER as well as the option: a disabled button does not fire
-  // the mouse events a tooltip needs, so the reason would otherwise be unreachable
-  // by hover (the Board Manager's timing control does the same).
-  return blocked
-    ? <span title={blockedReason} data-testid="worktree-placement-blocked">{control}</span>
-    : control;
 }

@@ -6,6 +6,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useUpdaterStore } from '../../stores/updater-store';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { Pill } from '../Pill';
+import { HoverTip } from '../HoverTip';
 import { bakedReleaseNotes } from '../../lib/baked-release-notes';
 
 /**
@@ -77,17 +78,20 @@ export function StatusBar() {
           // `undefined` when the build has no notes leaves it a plain <span>: a
           // clickable pill that opens an empty dialog is worse than a static one -
           // and a static one correctly reads as dead space that dismisses.
-          <Pill
-            size="sm"
-            onClick={bakedReleaseNotes ? openWhatsNew : undefined}
-            title={bakedReleaseNotes ? `What's new in v${appVersion}` : undefined}
-            data-testid="status-bar-version-pill"
-            className={`border border-edge text-fg-muted${
-              bakedReleaseNotes ? ' hover:text-fg-secondary hover:border-fg-faint transition-colors' : ''
-            }`}
-          >
-            v{appVersion}
-          </Pill>
+          // HoverTip adds no click to a child without one, so the span survives
+          // the wrap, and its empty label shows nothing.
+          <HoverTip label={bakedReleaseNotes ? `What's new in v${appVersion}` : ''}>
+            <Pill
+              size="sm"
+              onClick={bakedReleaseNotes ? openWhatsNew : undefined}
+              data-testid="status-bar-version-pill"
+              className={`border border-edge text-fg-muted${
+                bakedReleaseNotes ? ' hover:text-fg-secondary hover:border-fg-faint transition-colors' : ''
+              }`}
+            >
+              v{appVersion}
+            </Pill>
+          </HoverTip>
         )}
       </div>
     </div>

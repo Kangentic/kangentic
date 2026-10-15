@@ -4,6 +4,7 @@ import { ChevronDown, Wrench } from 'lucide-react';
 import { ColumnGlyph } from '../../../../utils/swimlane-icons';
 import { prefersDarkText, readableTextOn } from '../../../../utils/readable-text';
 import { ToolBreakdownPopover } from '../../../terminal/ToolBreakdownPopover';
+import { HoverTip } from '../../../HoverTip';
 import type { PerToolStat, TaskReportColumn } from '../../../../../shared/types';
 
 /** One card on a completed task's tab: lifted one step above the window, never recessed. */
@@ -94,26 +95,27 @@ export function ColumnLabel({ column }: { column: TaskReportColumn }) {
  * A column's pill on the route: filled with the column's color, its glyph on a
  * lighter disc, the text black or white by contrast.
  */
-export function ColumnPill({ column, label, title }: { column: TaskReportColumn; label: string; title: string }) {
+export function ColumnPill({ column, label, tip }: { column: TaskReportColumn; label: string; tip: string }) {
   const darkText = prefersDarkText(column.color);
   const textColor = readableTextOn(column.color);
   return (
-    <div
-      className="flex h-[30px] items-center gap-[7px] whitespace-nowrap rounded-md pl-[5px] pr-2.5 text-xs tabular-nums"
-      style={{ backgroundColor: column.color, color: textColor }}
-      title={title}
-      data-testid="route-column-pill"
-      data-swimlane-name={column.name}
-    >
-      <span
-        className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full"
-        style={{ backgroundColor: darkText ? 'rgba(255, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.2)' }}
+    <HoverTip label={tip}>
+      <div
+        className="flex h-[30px] items-center gap-[7px] whitespace-nowrap rounded-md pl-[5px] pr-2.5 text-xs tabular-nums"
+        style={{ backgroundColor: column.color, color: textColor }}
+        data-testid="route-column-pill"
+        data-swimlane-name={column.name}
       >
-        <ColumnGlyph column={column} size={12} color={textColor} />
-      </span>
-      <span className="font-medium">{column.name}</span>
-      <span className="ml-auto pl-3.5 font-semibold">{label}</span>
-    </div>
+        <span
+          className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full"
+          style={{ backgroundColor: darkText ? 'rgba(255, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.2)' }}
+        >
+          <ColumnGlyph column={column} size={12} color={textColor} />
+        </span>
+        <span className="font-medium">{column.name}</span>
+        <span className="ml-auto pl-3.5 font-semibold">{label}</span>
+      </div>
+    </HoverTip>
   );
 }
 

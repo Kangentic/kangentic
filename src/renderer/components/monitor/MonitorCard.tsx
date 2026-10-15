@@ -4,6 +4,7 @@ import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { LabelPills, Pill } from '../Pill';
+import { HoverTip } from '../HoverTip';
 import { PrLink } from '../PrLink';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { ContextUsageFooter } from '../board/ContextUsageFooter';
@@ -332,16 +333,18 @@ function MonitorFullCard({
           </>
         )}
         {activityLine && (
-          <Pill
-            size="xs"
-            className={`ml-auto shrink-0 max-w-[22ch] ${needsUser(row)
-              ? 'bg-attention/10 text-attention'
-              : 'bg-surface-hover/60 text-fg-muted'}`}
-            title={activityLine}
-            data-testid="monitor-card-activity"
-          >
-            <span className="truncate select-text">{activityLine}</span>
-          </Pill>
+          // The whole line on hover: the pill cuts it at 22 characters.
+          <HoverTip label={activityLine} describe={false}>
+            <Pill
+              size="xs"
+              className={`ml-auto shrink-0 max-w-[22ch] ${needsUser(row)
+                ? 'bg-attention/10 text-attention'
+                : 'bg-surface-hover/60 text-fg-muted'}`}
+              data-testid="monitor-card-activity"
+            >
+              <span className="truncate select-text">{activityLine}</span>
+            </Pill>
+          </HoverTip>
         )}
       </div>
 

@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { MoreHorizontal, Check } from 'lucide-react';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
 import { OverlayPopover } from './OverlayPopover';
+import { HoverTip } from './HoverTip';
+import { tipLabel } from '../utils/hover-tip';
 
 interface KebabMenuProps {
   /** Render menu items. Call `close` to dismiss the menu after an action. */
@@ -10,8 +12,8 @@ interface KebabMenuProps {
    *  when the menu is a named affordance rather than a generic action list
    *  (e.g. the diff toolbar's "view options" sliders). */
   icon?: ReactNode;
-  /** Trigger tooltip. Defaults to 'Actions'. */
-  title?: string;
+  /** The trigger's name and its tip. Defaults to 'Actions'. */
+  label?: string;
   /** Override the trigger's classes so the button can match a host toolbar's
    *  own button styling instead of the default header treatment. */
   triggerClassName?: string;
@@ -28,7 +30,7 @@ const DEFAULT_TRIGGER_CLASS = 'p-1.5 text-fg-faint hover:text-fg-tertiary hover:
  * smart popover positioning. Used by TaskDetailHeader, CommandBarOverlay, and
  * the Changes diff toolbar's view-options menu.
  */
-export function KebabMenu({ children, icon, title = 'Actions', triggerClassName, triggerTestId, menuTestId }: KebabMenuProps) {
+export function KebabMenu({ children, icon, label = 'Actions', triggerClassName, triggerTestId, menuTestId }: KebabMenuProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -76,16 +78,18 @@ export function KebabMenu({ children, icon, title = 'Actions', triggerClassName,
 
   return (
     <div className="relative flex-shrink-0" ref={containerRef}>
-      <button
-        onClick={() => setOpen(!open)}
-        className={triggerClassName ?? DEFAULT_TRIGGER_CLASS}
-        title={title}
-        aria-label={title}
-        aria-expanded={open}
-        data-testid={triggerTestId}
-      >
-        {icon ?? <MoreHorizontal size={16} />}
-      </button>
+      {/* No tip while the menu it names is open. */}
+      <HoverTip label={label} enabled={!open}>
+        <button
+          onClick={() => setOpen(!open)}
+          className={triggerClassName ?? DEFAULT_TRIGGER_CLASS}
+          aria-label={label}
+          aria-expanded={open}
+          data-testid={triggerTestId}
+        >
+          {icon ?? <MoreHorizontal size={16} />}
+        </button>
+      </HoverTip>
       <OverlayPopover
         open={open}
         popoverRef={popoverRef}
@@ -140,8 +144,8 @@ interface MenuCheckItemProps {
   checked: boolean;
   onChange: () => void;
   disabled?: boolean;
-  /** Shown as the item's tooltip - use it to explain a disabled state. */
-  title?: string;
+  /** Why a disabled item does nothing, as its tip and its description. */
+  disabledReason?: string;
   'data-testid'?: string;
 }
 
@@ -152,21 +156,22 @@ interface MenuCheckItemProps {
  * Code's diff `...` menu and GitHub's diff settings both use). The checkmark
  * column is always reserved so labels align whether or not they are checked.
  */
-export function KebabMenuCheckItem({ label, checked, onChange, disabled, title, ...rest }: MenuCheckItemProps) {
+export function KebabMenuCheckItem({ label, checked, onChange, disabled, disabledReason, ...rest }: MenuCheckItemProps) {
   return (
-    <button
-      role="menuitemcheckbox"
-      aria-checked={checked}
-      onClick={onChange}
-      disabled={disabled}
-      title={title}
-      className={`${ITEM_CLASS}${disabled ? ' opacity-50 cursor-default hover:bg-transparent hover:text-fg-tertiary' : ''}`}
-      {...rest}
-    >
-      <span className="flex w-3.5 flex-shrink-0 items-center justify-center">
-        {checked && <Check size={12} className="text-accent" />}
-      </span>
-      {label}
-    </button>
+    <HoverTip label={tipLabel({ disabled, disabledReason })}>
+      <button
+        role="menuitemcheckbox"
+        aria-checked={checked}
+        onClick={onChange}
+        disabled={disabled}
+        className={`${ITEM_CLASS}${disabled ? ' opacity-50 cursor-default hover:bg-transparent hover:text-fg-tertiary' : ''}`}
+        {...rest}
+      >
+        <span className="flex w-3.5 flex-shrink-0 items-center justify-center">
+          {checked && <Check size={12} className="text-accent" />}
+        </span>
+        {label}
+      </button>
+    </HoverTip>
   );
 }

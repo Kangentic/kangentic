@@ -130,9 +130,9 @@ export type KnowledgeGraphOutcome = KnowledgeGraphTaskOutcome;
 
 /** The time filter's segments, the full window as each one's name and tooltip. */
 const TIME_OPTIONS: ReadonlyArray<SegmentedControlOption<KnowledgeGraphTimeWindow>> = [
-  { value: 'any', label: 'Any', ariaLabel: 'Any time', title: 'Any time', testId: 'knowledge-graph-filter-since-any' },
-  { value: '30d', label: '30 days', ariaLabel: 'Last 30 days', title: 'Last 30 days', testId: 'knowledge-graph-filter-since-30d' },
-  { value: '90d', label: '90 days', ariaLabel: 'Last 90 days', title: 'Last 90 days', testId: 'knowledge-graph-filter-since-90d' },
+  { value: 'any', label: 'Any', ariaLabel: 'Any time', tip: 'Any time', testId: 'knowledge-graph-filter-since-any' },
+  { value: '30d', label: '30 days', ariaLabel: 'Last 30 days', tip: 'Last 30 days', testId: 'knowledge-graph-filter-since-30d' },
+  { value: '90d', label: '90 days', ariaLabel: 'Last 90 days', tip: 'Last 90 days', testId: 'knowledge-graph-filter-since-90d' },
 ];
 
 /** Display order, independent of whatever order the corpus happened to yield. */
@@ -141,7 +141,7 @@ export const OUTCOME_ORDER: ReadonlyArray<KnowledgeGraphOutcome> = ['done', 'act
 export const NO_FACETS_AVAILABLE: FacetAvailability = { since: false, outcomes: [], presentOutcomes: [] };
 
 /** A time window's tooltip when nothing on the map is older than the narrowest one. */
-const NO_OLDER_WORK_TITLE = `Nothing on this map is older than ${NARROWEST_WINDOW_DAYS} days`;
+const NO_OLDER_WORK_REASON = `Nothing on this map is older than ${NARROWEST_WINDOW_DAYS} days`;
 
 /**
  * Every colour mode, in display order. What is OFFERED is filtered from this by
@@ -181,15 +181,15 @@ const COLOR_OPTIONS: ReadonlyArray<{ value: KnowledgeGraphColorMode; label: stri
  *  can actually express while the copy stays in one place. */
 const GRANULARITY_OPTIONS: Record<
   KnowledgeGraphGranularity,
-  { value: KnowledgeGraphGranularity; label: string; title: string }
+  { value: KnowledgeGraphGranularity; label: string; tip: string }
 > = {
-  coarse: { value: 'coarse', label: 'Coarse', title: 'Fewer, broader regions' },
+  coarse: { value: 'coarse', label: 'Coarse', tip: 'Fewer, broader regions' },
   balanced: {
     value: 'balanced',
     label: 'Balanced',
-    title: 'The default: regions of roughly 10 to 26 conversations',
+    tip: 'The default: regions of roughly 10 to 26 conversations',
   },
-  fine: { value: 'fine', label: 'Fine', title: 'More, narrower regions' },
+  fine: { value: 'fine', label: 'Fine', tip: 'More, narrower regions' },
 };
 
 /**
@@ -408,7 +408,7 @@ export function KnowledgeGraphControls({
                 options={TIME_OPTIONS.map((option) => (
                   option.value === 'any' || facetAvailability.since
                     ? option
-                    : { ...option, title: NO_OLDER_WORK_TITLE, disabled: true }
+                    : { ...option, disabledReason: NO_OLDER_WORK_REASON, disabled: true }
                 ))}
                 value={facets.since}
                 onChange={(since) => onFacetsChange({ ...facets, since })}
@@ -421,19 +421,19 @@ export function KnowledgeGraphControls({
 
               <SegmentedControl
                 options={[
-                  { value: 'any' as const, label: 'Any', ariaLabel: 'Any status', title: 'Any status', testId: 'knowledge-graph-filter-outcome-any' },
+                  { value: 'any' as const, label: 'Any', ariaLabel: 'Any status', testId: 'knowledge-graph-filter-outcome-any' },
                   ...OUTCOME_ORDER.map((outcome) => {
                     const selectable = facetAvailability.outcomes.includes(outcome);
                     const present = facetAvailability.presentOutcomes.includes(outcome);
                     const label = TASK_OUTCOME_LABELS[outcome];
-                    let title = label;
-                    if (!present) title = `No ${label.toLowerCase()} tasks on this map`;
-                    else if (!selectable) title = `Every task on this map is ${label.toLowerCase()}`;
+                    let disabledReason: string | undefined;
+                    if (!present) disabledReason = `No ${label.toLowerCase()} tasks on this map`;
+                    else if (!selectable) disabledReason = `Every task on this map is ${label.toLowerCase()}`;
                     return {
                       value: outcome,
                       label,
                       ariaLabel: label,
-                      title,
+                      disabledReason,
                       disabled: !selectable,
                       testId: `knowledge-graph-filter-outcome-${outcome}`,
                     };

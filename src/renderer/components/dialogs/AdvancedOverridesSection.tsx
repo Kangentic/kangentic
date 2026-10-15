@@ -12,6 +12,7 @@ import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
 import { Field, FIELD_SELECT_CLASS } from '../Field';
 import { Select } from '../settings/shared';
+import { HoverTip } from '../HoverTip';
 
 interface AdvancedOverridesSectionProps {
   /** Destination/current swimlane ID. Used to resolve the fallback agent (column.agent_override > project default) for capability lookup. */
@@ -63,8 +64,8 @@ const OTHER_BOARD_PROFILES_EDIT = 'Open that board to edit its profiles';
 
 interface EditPencilButtonProps {
   onClick: () => void;
-  /** Used as both the hover tooltip and the accessible name. */
-  title: string;
+  /** Both the button's tip and its accessible name. */
+  label: string;
   testId: string;
   disabled?: boolean;
 }
@@ -81,19 +82,20 @@ interface EditPencilButtonProps {
  * dialog's 34px control height (see FIELD_CONTROL_CLASS), and the previous
  * `p-1.5` left it 28px - visibly short against its own neighbour.
  */
-function EditPencilButton({ onClick, title, testId, disabled = false }: EditPencilButtonProps) {
+function EditPencilButton({ onClick, label, testId, disabled = false }: EditPencilButtonProps) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={title}
-      className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded border border-edge-input text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
-      data-testid={testId}
-    >
-      <Pencil size={14} />
-    </button>
+    <HoverTip label={label}>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded border border-edge-input text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+        data-testid={testId}
+      >
+        <Pencil size={14} />
+      </button>
+    </HoverTip>
   );
 }
 
@@ -422,24 +424,28 @@ export function AdvancedOverridesSection({
                 semantics.
                 With only Default it renders DISABLED rather than hidden: it shows
                 the concept exists and that Default is what this task will use. */}
-            <Select
-              value={profileId ?? ''}
-              disabled={!hasProfiles}
-              aria-label="Profile"
-              title={hasProfiles
+            {/* Select spreads its props onto the native select, so the tip lands there. */}
+            <HoverTip
+              label={hasProfiles
                 ? 'An alternate set of per-column agent, model, and effort settings'
                 : 'No profiles yet - create one in Edit Columns'}
-              onChange={(event) => setProfileId(event.target.value || null)}
-              className={FIELD_SELECT_CLASS}
-              wrapperClassName="relative flex-1 min-w-0"
-              data-testid="task-profile-select"
             >
-              <option value="">Default</option>
-              {boardProfiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>{profile.name}</option>
-              ))}
-              {unlistedProfile && <option value={profileId ?? ''}>Removed profile</option>}
-            </Select>
+              <Select
+                value={profileId ?? ''}
+                disabled={!hasProfiles}
+                aria-label="Profile"
+                onChange={(event) => setProfileId(event.target.value || null)}
+                className={FIELD_SELECT_CLASS}
+                wrapperClassName="relative flex-1 min-w-0"
+                data-testid="task-profile-select"
+              >
+                <option value="">Default</option>
+                {boardProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>{profile.name}</option>
+                ))}
+                {unlistedProfile && <option value={profileId ?? ''}>Removed profile</option>}
+              </Select>
+            </HoverTip>
             {/* An affordance where a line of instructions used to be. It is the
                 only route to authoring from here, so it stays visible whether or
                 not profiles exist - "create the first one" and "retune an
@@ -447,7 +453,7 @@ export function AdvancedOverridesSection({
                 edit-column button. */}
             <EditPencilButton
               onClick={() => openBoardManager()}
-              title={profilesEditableHere ? 'Edit profiles in Edit Columns' : OTHER_BOARD_PROFILES_EDIT}
+              label={profilesEditableHere ? 'Edit profiles in Edit Columns' : OTHER_BOARD_PROFILES_EDIT}
               testId="task-profile-edit"
               disabled={!profilesEditableHere}
             />
@@ -499,7 +505,7 @@ export function AdvancedOverridesSection({
                       click would do nothing. */}
                   <EditPencilButton
                     onClick={() => currentProject && openProjectSettings(currentProject.path, currentProject.name, 'agent')}
-                    title="Edit agent defaults in Settings"
+                    label="Edit agent defaults in Settings"
                     testId="task-agent-edit"
                     disabled={!currentProject}
                   />

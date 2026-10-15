@@ -628,7 +628,7 @@ test.describe('Workflows inspector', () => {
       await card(page, 't414').click();
       // #414 is in Executing: Planning and Executing are reached, the rest can change.
       await expect(byTestId(page, 'workflow-route-switch-lane-1')).toBeDisabled();
-      await expect(byTestId(page, 'workflow-route-switch-lane-1')).toHaveAttribute('title', '#414 has reached Executing. Only the columns after it can change.');
+      await expect(byTestId(page, 'workflow-route-switch-lane-1')).toHaveAccessibleDescription('#414 has reached Executing. Only the columns after it can change.');
       await expect(byTestId(page, 'workflow-route-switch-lane-3')).toBeEnabled();
       await expect(byTestId(page, 'workflow-add-blocker')).toBeDisabled();
       await expect(byTestId(page, 'workflow-add-blocker')).toHaveAttribute('title', '#414 has started. Only a task in To Do can wait for another.');

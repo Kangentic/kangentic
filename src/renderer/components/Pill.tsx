@@ -14,10 +14,13 @@ type PillOwnProps = {
   children?: React.ReactNode;
 };
 
-/** Native attributes for each element type. */
-type ButtonAttrs = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, keyof PillOwnProps>;
-type SpanAttrs = Omit<React.HTMLAttributes<HTMLSpanElement>, keyof PillOwnProps>;
-type DivAttrs = Omit<React.HTMLAttributes<HTMLDivElement>, keyof PillOwnProps>;
+/**
+ * Native attributes for each element type, less `title`: hover text is HoverTip, which wraps
+ * the pill (`.claude/rules/one-tooltip.md`).
+ */
+type ButtonAttrs = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, keyof PillOwnProps | 'title'>;
+type SpanAttrs = Omit<React.HTMLAttributes<HTMLSpanElement>, keyof PillOwnProps | 'title'>;
+type DivAttrs = Omit<React.HTMLAttributes<HTMLDivElement>, keyof PillOwnProps | 'title'>;
 
 type PillProps = PillOwnProps & (ButtonAttrs | SpanAttrs | DivAttrs);
 

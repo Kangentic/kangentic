@@ -788,7 +788,7 @@ test.describe('Structural worktree blockers', () => {
       const worktreeOption = ownPage.locator('[data-testid="worktree-option-worktree"]');
       await expect(worktreeOption).toBeDisabled();
       await expect(worktreeOption).toHaveAttribute('aria-checked', 'false');
-      await expect(worktreeOption).toHaveAttribute('title', /itself a git worktree/);
+      await expect(worktreeOption).toHaveAccessibleDescription(/itself a git worktree/);
       await expect(ownPage.locator('[data-testid="worktree-option-project"]')).toHaveAttribute('aria-checked', 'true');
 
       const hint = ownPage.locator('[data-testid="task-branch-row"] ~ [data-testid="field-hint"]');

@@ -6,6 +6,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_LABELS, canTriggerRun } from '../../../../shared/automation-manifest';
 import { describeAutomationMarks, describeAutomationSentence } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
+import { HoverTip } from '../../HoverTip';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
@@ -540,7 +541,7 @@ function AutomationRow({
         <ToggleSwitch
           testId="column-automation-enabled"
           ariaLabel={`${draft.name} enabled`}
-          title={runnable.ok ? undefined : runnable.reason}
+          disabledReason={runnable.ok ? undefined : runnable.reason}
           checked={switchedOn}
           disabled={readOnly || !runnable.ok}
           onChange={(next) => onToggle(draft, next)}
@@ -557,18 +558,19 @@ function RowButton({ testId, label, onClick, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      aria-label={label}
-      title={label}
-      // Stops the row's own click, which would otherwise fire the editor on top
-      // of this button's action - harmless on the pencil, and a delete that
-      // ALSO opens a dialog for the row it just removed on the trash.
-      onClick={(event) => { event.stopPropagation(); onClick(); }}
-      className="cursor-pointer rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
-    >
-      {children}
-    </button>
+    <HoverTip label={label}>
+      <button
+        type="button"
+        data-testid={testId}
+        aria-label={label}
+        // Stops the row's own click, which would otherwise fire the editor on top
+        // of this button's action - harmless on the pencil, and a delete that
+        // ALSO opens a dialog for the row it just removed on the trash.
+        onClick={(event) => { event.stopPropagation(); onClick(); }}
+        className="cursor-pointer rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
+      >
+        {children}
+      </button>
+    </HoverTip>
   );
 }

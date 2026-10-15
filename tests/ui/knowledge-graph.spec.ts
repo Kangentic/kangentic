@@ -2304,10 +2304,10 @@ test.describe('knowledge graph', () => {
       await expect(page.locator('[data-testid="knowledge-graph-filter-outcome-any"]')).toBeEnabled();
       const done = page.locator('[data-testid="knowledge-graph-filter-outcome-done"]');
       await expect(done).toBeDisabled();
-      await expect(done).toHaveAttribute('title', 'Every task on this map is done');
+      await expect(done).toHaveAccessibleDescription('Every task on this map is done');
       const open = page.locator('[data-testid="knowledge-graph-filter-outcome-active"]');
       await expect(open).toBeDisabled();
-      await expect(open).toHaveAttribute('title', 'No open tasks on this map');
+      await expect(open).toHaveAccessibleDescription('No open tasks on this map');
 
       // Time stays live: the fixture's timestamps are years old, so the
       // windows still select different sets.
@@ -2334,7 +2334,7 @@ test.describe('knowledge graph', () => {
       for (const timeWindow of ['30d', '90d']) {
         const option = page.locator(`[data-testid="knowledge-graph-filter-since-${timeWindow}"]`);
         await expect(option).toBeDisabled();
-        await expect(option).toHaveAttribute('title', 'Nothing on this map is older than 30 days');
+        await expect(option).toHaveAccessibleDescription('Nothing on this map is older than 30 days');
       }
     } finally {
       await browser.close();

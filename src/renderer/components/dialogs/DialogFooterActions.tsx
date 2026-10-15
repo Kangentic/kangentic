@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { HoverTip } from '../HoverTip';
+import { tipLabel } from '../../utils/hover-tip';
 
 interface DialogFooterActionsProps {
   onCancel: () => void;
@@ -12,8 +14,8 @@ interface DialogFooterActionsProps {
   busy?: boolean;
   disabled?: boolean;
   /**
-   * Why the submit is disabled, as its tooltip: a workflow task's Save while
-   * the workflow agent works ("Available when the workflow agent finishes").
+   * Why the submit is disabled, as its tip: a workflow task's Save while the
+   * workflow agent works ("Available when the workflow agent finishes").
    */
   disabledReason?: string | null;
   /**
@@ -62,16 +64,17 @@ export function DialogFooterActions({
         >
           Cancel
         </button>
-        <button
-          type={onSubmit ? 'button' : 'submit'}
-          onClick={onSubmit}
-          disabled={disabled || busy}
-          title={disabled && disabledReason ? disabledReason : undefined}
-          className="rounded bg-accent-emphasis px-4 py-1.5 text-xs text-accent-on transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-          data-testid={submitTestId}
-        >
-          {submitLabel}
-        </button>
+        <HoverTip label={tipLabel({ disabled, disabledReason })}>
+          <button
+            type={onSubmit ? 'button' : 'submit'}
+            onClick={onSubmit}
+            disabled={disabled || busy}
+            className="rounded bg-accent-emphasis px-4 py-1.5 text-xs text-accent-on transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid={submitTestId}
+          >
+            {submitLabel}
+          </button>
+        </HoverTip>
       </div>
     </div>
   );
