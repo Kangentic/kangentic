@@ -31,7 +31,7 @@ interface SummaryTileProps {
   icon: ReactNode;
   value: number;
   sub?: string;
-  /** What the count counts, as the tile's hover tip. */
+  /** What the count counts, as the tile's tooltip. */
   tip: string;
   testId: string;
   /** Applied to the numeral and the icon chip only while `value > 0`. */
@@ -104,7 +104,7 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
         sub={oldestNeedsYouSince === null ? undefined : `longest since ${formatRelativeTime(oldestNeedsYouSince)}`}
         tone="attention"
         testId="monitor-summary-needs-you"
-        tip=" on a response from you, across every project in view"
+        tip="Agents waiting on a response from you, across every project in view"
       />
       <SummaryTile
         label="Active"
@@ -147,7 +147,7 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
           : lastActiveAt === null ? undefined : `last active ${formatRelativeTime(lastActiveAt)}`}
         tone="active"
         testId="monitor-summary-working"
-        tip=" running right now, across every project in view"
+        tip="Agents actively running right now, across every project in view"
       />
       {/* "Paused or waiting to start", not "suspended or queued": the user-facing
           control is Pause/Resume, and "suspended" is internal status vocabulary
@@ -158,7 +158,7 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
         value={counts.idle}
         sub={counts.idle > 0 ? 'paused or waiting to start' : undefined}
         testId="monitor-summary-idle"
-        tip=", plus any queued waiting for a free slot"
+        tip="Sessions you paused, plus any queued waiting for a free slot"
       />
       <SummaryTile
         label="Projects"
@@ -166,7 +166,7 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
         value={projectCount}
         sub={counts.finished > 0 ? `${counts.finished} recently finished` : 'with a live session'}
         testId="monitor-summary-projects"
-        tip=" with at least one live session"
+        tip="Projects in view with at least one live session"
       />
     </div>
   );

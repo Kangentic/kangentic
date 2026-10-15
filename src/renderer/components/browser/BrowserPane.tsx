@@ -1022,6 +1022,7 @@ function BrowserPaneActive({
           <Tooltip
             label={tipLabel({ disabled: atMinZoom, disabledReason: 'Already at the smallest zoom', tip: 'Zoom out' })}
             keys={atMinZoom ? undefined : 'browser.zoomOut'}
+            detail={atMinZoom ? undefined : 'Or Ctrl+scroll wheel'}
           >
             <button
               type="button"
@@ -1048,6 +1049,7 @@ function BrowserPaneActive({
           <Tooltip
             label={tipLabel({ disabled: atMaxZoom, disabledReason: 'Already at the largest zoom', tip: 'Zoom in' })}
             keys={atMaxZoom ? undefined : 'browser.zoomIn'}
+            detail={atMaxZoom ? undefined : 'Or Ctrl+scroll wheel'}
           >
             <button
               type="button"

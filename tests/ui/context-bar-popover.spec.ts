@@ -654,7 +654,7 @@ test.describe('ContextBar model popover - grouped suffixed models', () => {
       // The "Use column default" footer humanizes the column's model the same
       // way the rows above do. It used to print the raw CLI id, which read as
       // noise next to "Opus 4.8" / "Haiku 4.5" one row up. The exact id stays
-      // in the row's hover tip (its accessible description), matching the option rows.
+      // in the row's tooltip (its accessible description), matching the option rows.
       await expect(popover).toHaveCount(0);
       await page.evaluate((taskId) => {
         const stores = (window as unknown as {

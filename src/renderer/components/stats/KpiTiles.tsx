@@ -84,7 +84,7 @@ interface HeroTileProps {
   /** Muted unit/suffix rendered after the value (e.g. '/hr'). */
   valueSuffix?: string;
   sub?: string;
-  /** What the tile measures, as its hover tip. */
+  /** What the tile measures, as its tooltip. */
   tip?: string;
   delta: number | null;
   deltaBaseline: string;

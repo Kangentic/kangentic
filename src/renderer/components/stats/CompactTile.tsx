@@ -35,7 +35,7 @@ export interface CompactTileProps {
    *  drives the change pulse and the testid's text). */
   valueNode?: ReactNode;
   sub?: string;
-  /** What the tile measures, as its hover tip. */
+  /** What the tile measures, as its tooltip. */
   tip?: string;
   delta?: number | null;
   deltaBaseline?: string;

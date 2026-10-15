@@ -159,7 +159,6 @@ async function expectNoTipOpened(page: Page): Promise<void> {
   expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
 }
 
-/** Park the pointer on dead space, away from every trigger. */
 /**
  * Focus `trigger` the way a keyboard user does, which is the only focus that opens a tip: step
  * off with Shift+Tab and back with Tab, so the last move is Tab's own. A script `focus()` opens
@@ -177,6 +176,7 @@ async function focusByTab(page: Page, trigger: Locator): Promise<void> {
   await waitPageMs(page, TOOLTIP_WARM_MS + 50);
 }
 
+/** Park the pointer on dead space, away from every trigger. */
 async function parkPointer(page: Page): Promise<void> {
   const viewport = page.viewportSize();
   if (!viewport) throw new Error('no viewport');

@@ -218,7 +218,7 @@ export function CommitGraphPanel({
               const isSelected = commit.hash === selectedCommit;
               const isBase = commit.hash === baseHash;
               const isPr = prHash !== null && commit.hash === prHash && task.pr_number != null;
-              // Compact rows put the full metadata in the hover tip, since the
+              // Compact rows put the full metadata in the tooltip, since the
               // base / PR refs render as bare dots there: the subject as the
               // label, the author and refs under it.
               const compactTipLabel = compact ? `${commit.shortHash} ${commit.subject}` : '';

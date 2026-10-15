@@ -15,10 +15,16 @@
  * reach the trigger. A handler cannot be read from markup, so the two checks that need one
  * (a click chained only onto a child that has its own, an empty label arming no dwell timer) record
  * what a probe child receives and call it with a stubbed `window`.
+ *
+ * The same harness pins what an event aimed at the trigger does. No tip layer mounts in a static
+ * render, so `show` and `hide` are silent no-ops there. What a handler leaves behind is read
+ * through the two calls it can still make on the stubbed `window`: `setTimeout` when a pointer move
+ * arms the dwell, and `clearTimeout` when something cancels a dwell that is pending.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createElement } from 'react';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { installTabFocusTracker } from '../../src/renderer/utils/tab-focus';
 import {
   TOOLTIP_WARM_MS,
   TIP_OFFSET,
@@ -445,6 +451,200 @@ describe('Tooltip with an empty label', () => {
 
   it('arms no dwell with enabled={false}, the same hold an empty label gives', () => {
     expect(dwellTimersArmedByOneMove({ label: 'Has text', enabled: false })).toBe(0);
+  });
+});
+
+describe('Tooltip handlers on its trigger', () => {
+  type Handler = (event: unknown) => void;
+
+  /** The trigger element. It contains only itself, so an event aimed anywhere else came through a portal. */
+  const trigger: { contains: (node: unknown) => boolean } = { contains: (node) => node === trigger };
+
+  /** A node inside a menu the trigger renders into `document.body`: React bubbles its events to the trigger. */
+  const nodeInsidePortal = (): object => ({});
+
+  // A fresh `nativeEvent` per event: Tooltip remembers the native events it has answered, so a reused
+  // one would make the second trigger stand down.
+  const pointerEvent = (target: unknown) => ({ pointerType: 'mouse', buttons: 0, nativeEvent: {}, target, currentTarget: trigger });
+  const focusEvent = (target: unknown) => ({ nativeEvent: {}, target, currentTarget: trigger });
+  const keyEvent = (key: string, target: unknown) => ({ key, target, currentTarget: trigger });
+
+  /** A stubbed `window` whose timers only record, so nothing fires and the ids are 1, 2, 3 in call order. */
+  function stubWindow() {
+    let nextTimerId = 0;
+    const setTimeoutStub = vi.fn(() => ++nextTimerId);
+    const clearTimeoutStub = vi.fn();
+    vi.stubGlobal('window', { setTimeout: setTimeoutStub, clearTimeout: clearTimeoutStub });
+    return { setTimeoutStub, clearTimeoutStub };
+  }
+
+  /**
+   * The props Tooltip puts on a trigger of ANY type, read out of the element it returns. A probe
+   * component cannot be an intrinsic `button`, so this calls Tooltip as a function inside a host's
+   * render, which gives its hooks a dispatcher, and reads the first child of the fragment it returns.
+   */
+  function renderedTriggerProps(tipProps: Omit<TooltipProps, 'children'>, child: ReactElement): Record<string, unknown> {
+    let rendered: Record<string, unknown> = {};
+    function Host() {
+      const tree = Tooltip({ ...tipProps, children: child }) as ReactElement<{ children: ReactElement<Record<string, unknown>>[] }>;
+      rendered = tree.props.children[0].props;
+      return null;
+    }
+    renderToStaticMarkup(createElement(Host));
+    return rendered;
+  }
+
+  // The real tab-focus module, the same instance Tooltip reads. It installs once per file and keeps
+  // its listener, so the keydown listener is captured here and fed Tab through `pressKey`.
+  let tabKeyDownListener: Handler | null = null;
+  beforeAll(() => {
+    const listeners = new Map<string, Handler>();
+    vi.stubGlobal('window', {
+      addEventListener: (type: string, listener: Handler) => {
+        listeners.set(type, listener);
+      },
+    });
+    installTabFocusTracker();
+    vi.unstubAllGlobals();
+    tabKeyDownListener = listeners.get('keydown') ?? null;
+    expect(tabKeyDownListener).not.toBeNull();
+  });
+
+  function pressKey(key: string): void {
+    (tabKeyDownListener as Handler)({ key });
+  }
+
+  beforeEach(() => resetTipStateForTests());
+  afterEach(() => {
+    // Any non-Tab key clears the Tab flag, so a test that pressed Tab cannot leak it into the next.
+    pressKey('Escape');
+    vi.unstubAllGlobals();
+    resetTipStateForTests();
+  });
+
+  describe('pointer enter', () => {
+    // A press holds the tip shut until the pointer enters afresh (the comment in handlePointerEnter).
+    // A chained click is the way to start that hold here, and a move that arms nothing shows it holds.
+    function dwellsArmedByMoveAfterEnter(enterTarget?: object): number {
+      const { setTimeoutStub } = stubWindow();
+      const captured = captureTriggerProps({ label: 'Has text' }, { onClick: noop });
+      (captured.onClick as Handler)({});
+      if (enterTarget !== undefined) (captured.onPointerEnter as Handler)(pointerEvent(enterTarget));
+      (captured.onPointerMove as Handler)(pointerEvent(trigger));
+      return setTimeoutStub.mock.calls.length;
+    }
+
+    it('holds the tip shut after a click until the pointer enters again', () => {
+      expect(dwellsArmedByMoveAfterEnter()).toBe(0);
+    });
+
+    it('ends that hold when the pointer enters the trigger itself', () => {
+      expect(dwellsArmedByMoveAfterEnter(trigger)).toBe(1);
+    });
+
+    it('keeps that hold when the enter came through a portal from outside the trigger', () => {
+      expect(dwellsArmedByMoveAfterEnter(nodeInsidePortal())).toBe(0);
+    });
+  });
+
+  describe('focus', () => {
+    /** The `clearTimeout` calls made when a focus event lands, with a Tab just pressed and a dwell pending (id 1). */
+    function clearCallsFromFocusAfterTab(focusTarget: unknown): unknown[][] {
+      const { setTimeoutStub, clearTimeoutStub } = stubWindow();
+      const captured = captureTriggerProps({ label: 'Has text' }, {});
+      (captured.onPointerMove as Handler)(pointerEvent(trigger));
+      expect(setTimeoutStub).toHaveBeenCalledTimes(1);
+      pressKey('Tab');
+      (captured.onFocus as Handler)(focusEvent(focusTarget));
+      return clearTimeoutStub.mock.calls;
+    }
+
+    // Opening on focus cancels the pending hover dwell (handleFocus calls clearDwell right before it shows).
+
+    it('opens on a Tab focus of the trigger itself', () => {
+      expect(clearCallsFromFocusAfterTab(trigger)).toEqual([[1]]);
+    });
+
+    it('ignores a Tab focus that came through a portal from outside the trigger', () => {
+      expect(clearCallsFromFocusAfterTab(nodeInsidePortal())).toEqual([]);
+    });
+  });
+
+  describe('keydown', () => {
+    it('hands a component child an onKeyDown only when it already has one', () => {
+      expect(captureTriggerProps({ label: 'Tip' }, {}).onKeyDown).toBeUndefined();
+      expect(typeof captureTriggerProps({ label: 'Tip' }, { onKeyDown: noop }).onKeyDown).toBe('function');
+    });
+
+    it('runs a component child\'s own onKeyDown before it closes the tip', () => {
+      const { clearTimeoutStub } = stubWindow();
+      const order: string[] = [];
+      clearTimeoutStub.mockImplementation(() => order.push('tip closes the pending dwell'));
+      const captured = captureTriggerProps({ label: 'Has text' }, { onKeyDown: () => order.push('own') });
+      (captured.onPointerMove as Handler)(pointerEvent(trigger));
+      (captured.onKeyDown as Handler)(keyEvent('Enter', trigger));
+      expect(order).toEqual(['own', 'tip closes the pending dwell']);
+    });
+
+    it('always hands an intrinsic child an onKeyDown, and still runs its own', () => {
+      const { clearTimeoutStub } = stubWindow();
+      const plain = renderedTriggerProps({ label: 'Has text' }, createElement('button', { 'aria-label': 'Action' }));
+      expect(typeof plain.onKeyDown).toBe('function');
+      (plain.onPointerMove as Handler)(pointerEvent(trigger));
+      (plain.onKeyDown as Handler)(keyEvent('Enter', trigger));
+      expect(clearTimeoutStub).toHaveBeenCalledTimes(1);
+
+      const own: string[] = [];
+      const withOwn = renderedTriggerProps(
+        { label: 'Has text' },
+        createElement('button', { 'aria-label': 'Action', onKeyDown: () => own.push('own') }),
+      );
+      expect(typeof withOwn.onKeyDown).toBe('function');
+      (withOwn.onKeyDown as Handler)(keyEvent('a', trigger));
+      expect(own).toEqual(['own']);
+    });
+
+    // handleKeyDown: Enter or Space on the trigger itself is a press, so it closes the pending tip
+    // and holds it shut, the way handleClick does for a mouse click.
+
+    /** The `clearTimeout` calls a key makes against a dwell that the pointer had armed (id 1). */
+    function clearCallsFromKey(key: string, keyTarget: unknown): unknown[][] {
+      const { clearTimeoutStub } = stubWindow();
+      const captured = captureTriggerProps({ label: 'Has text' }, { onKeyDown: noop });
+      (captured.onPointerMove as Handler)(pointerEvent(trigger));
+      (captured.onKeyDown as Handler)(keyEvent(key, keyTarget));
+      return clearTimeoutStub.mock.calls;
+    }
+
+    /**
+     * How many dwell timers a move arms after the key. Sent first, on a trigger with nothing armed:
+     * once a dwell is armed the move is refused anyway, so the hold could not be told from that.
+     */
+    function dwellsArmedByMoveAfterKey(key: string, keyTarget: unknown): number {
+      const { setTimeoutStub } = stubWindow();
+      const captured = captureTriggerProps({ label: 'Has text' }, { onKeyDown: noop });
+      (captured.onKeyDown as Handler)(keyEvent(key, keyTarget));
+      (captured.onPointerMove as Handler)(pointerEvent(trigger));
+      return setTimeoutStub.mock.calls.length;
+    }
+
+    it.each(['Enter', ' '])('closes the pending tip on %j pressed on the trigger itself', (key) => {
+      expect(clearCallsFromKey(key, trigger)).toEqual([[1]]);
+    });
+
+    it.each(['Enter', ' '])('keeps the tip shut after %j pressed on the trigger itself', (key) => {
+      expect(dwellsArmedByMoveAfterKey(key, trigger)).toBe(0);
+    });
+
+    it.each(['a', 'ArrowDown', 'Tab'])('leaves the tip alone on %j', (key) => {
+      expect(clearCallsFromKey(key, trigger)).toEqual([]);
+      expect(dwellsArmedByMoveAfterKey(key, trigger)).toBe(1);
+    });
+
+    it.each(['Enter', ' '])('ignores %j pressed inside something the trigger holds, such as a portaled menu', (key) => {
+      expect(clearCallsFromKey(key, nodeInsidePortal())).toEqual([]);
+      expect(dwellsArmedByMoveAfterKey(key, nodeInsidePortal())).toBe(1);
+    });
   });
 });
 

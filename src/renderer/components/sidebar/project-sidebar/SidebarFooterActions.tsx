@@ -109,22 +109,20 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
         data-testid="sidebar-footer-menu"
         className="fixed z-[2147483646] min-w-[170px] bg-surface-raised border border-edge-input rounded-md shadow-xl py-1"
       >
-        <Tooltip label="New group">
-          <button
-            type="button"
-            role="menuitem"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              setMenuOpen(false);
-              onNewGroup();
-            }}
-            className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
-            data-testid="sidebar-new-group-button"
-          >
-            <FolderTree size={14} className="text-fg-faint" />
-            New group
-          </button>
-        </Tooltip>
+        <button
+          type="button"
+          role="menuitem"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            setMenuOpen(false);
+            onNewGroup();
+          }}
+          className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
+          data-testid="sidebar-new-group-button"
+        >
+          <FolderTree size={14} className="text-fg-faint" />
+          New group
+        </button>
       </OverlayPopover>
     </div>
   );

@@ -7,8 +7,8 @@ paths:
 Hover text in the renderer used to be a native `title` almost everywhere. A native tip is slow and
 unstyled, a keyboard user never sees it, it cannot draw a shortcut's key chips, and a test can read
 it only as an attribute. `Tooltip` (`components/Tooltip.tsx`) replaces it: a body-portal tip that
-opens on hover and on keyboard focus, draws live key chips, and gives its text to the trigger as an
-`aria-description`.
+opens on hover and when Tab moves focus to its trigger, draws live key chips, and gives its text to
+the trigger as an `aria-description`.
 
 ## The rule
 
