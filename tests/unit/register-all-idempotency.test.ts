@@ -320,8 +320,11 @@ describe('registerAllIpc idempotency', () => {
     // The counts are DIFFERENT and that asymmetry is the point:
     //   activity: desktopNotifier (1) + activityIntervalRecorder (1)
     //             + the workflow agent (1: its idle edge dates its last
-    //             reply and restarts it for new read access)           = 3
-    //   exit:     those three, plus registerMonitorHandlers (1), plus the
+    //             reply and restarts it for new read access)
+    //             + the turn-end runner (1: an idle edge marks where an
+    //             expired conversation's recap turn ends)              = 4
+    //   exit:     the notifier, the recorder and the workflow agent, plus
+    //             registerMonitorHandlers (1), plus the
     //             workflow engine (1: a session ending frees an agent slot,
     //             so a waiting workflow task may start)                  = 5
     //
@@ -335,7 +338,7 @@ describe('registerAllIpc idempotency', () => {
     // If this ever needs to change, re-attribute the count explicitly rather
     // than just bumping the number.
     expect(getOptionalIpcContext()?.desktopNotifier).toBeDefined();
-    expect(getSessionManager().listenerCount('activity')).toBe(3);
+    expect(getSessionManager().listenerCount('activity')).toBe(4);
     expect(getSessionManager().listenerCount('exit')).toBe(5);
   }, 30000);
 
@@ -412,9 +415,10 @@ describe('registerAllIpc idempotency', () => {
     // stops being reused across a second registerAllIpc call.
     //
     // Counts as attributed in the first test: activity is the notifier, the
-    // recorder and the workflow agent; exit is those three plus
+    // recorder, the workflow agent and the turn-end runner; exit is the
+    // notifier, the recorder and the workflow agent plus
     // registerMonitorHandlers and the workflow engine.
-    expect(getSessionManager().listenerCount('activity')).toBe(3);
+    expect(getSessionManager().listenerCount('activity')).toBe(4);
     expect(getSessionManager().listenerCount('exit')).toBe(5);
   }, 30000);
 
