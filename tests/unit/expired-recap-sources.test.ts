@@ -154,7 +154,7 @@ function gitCalls(): string[][] {
 const isBranchRead = (args: readonly string[]) => args[0] === 'rev-parse' && args[1] === '--abbrev-ref';
 const isVerify = (args: readonly string[]) => args[0] === 'rev-parse' && args[1] === '--verify';
 const isLog = (args: readonly string[]) => args[0] === 'log';
-const isStatus = (args: readonly string[]) => args[0] === 'status';
+const isStatus = (args: readonly string[]) => args.includes('status');
 
 describe('git state', () => {
   it('reads the branch, its commits past origin/<base>, and its uncommitted changes, in the task\'s checkout', async () => {
@@ -184,6 +184,9 @@ describe('git state', () => {
     expect(log).toContain('-n20');
     // It never fetches.
     expect(gitCalls().some((args) => args[0] === 'fetch' || args[0] === 'pull')).toBe(false);
+    // The status takes no optional locks, so a read the wait gave up on cannot
+    // hold index.lock under the agent's own git.
+    expect(gitCalls().find(isStatus)).toEqual(['--no-optional-locks', 'status', '--short']);
   });
 
   // Red-green: the order of `[`origin/${baseBranch}`, baseBranch]` in

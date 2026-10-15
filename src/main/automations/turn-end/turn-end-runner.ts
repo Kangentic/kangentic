@@ -21,9 +21,10 @@ import type { RunConditionAnswer } from '../../db/repositories/automation-run-re
 import { deliverMessageAfterMove, deliverMessageToSession } from './deliver-message';
 import { readSessionFinalReply } from './final-reply-reader';
 import { trackTurnEndGroup } from './turn-end-passes';
-import { forgetRecapSession, isRecapTurn, noteRecapSessionIdle } from './recap-turns';
+import { forgetRecapSession, isRecapTurn, noteRecapSessionIdle, noteRecapSessionPrompt } from './recap-turns';
 import { dispositionOf } from '../../../shared/activity-state';
-import type { ActivityState } from '../../../shared/types';
+import { EventType, PromptReason } from '../../../shared/types';
+import type { ActivityState, SessionEvent } from '../../../shared/types';
 
 /**
  * A column's On agent turn end automations: what runs when the agent working a
@@ -123,6 +124,11 @@ export function registerTurnEndAutomations(context: IpcContext): void {
   context.sessionManager.on('activity', (sessionId: string, activity: ActivityState) => {
     if (dispositionOf(activity) === 'idle') noteRecapSessionIdle(sessionId, Date.now());
   });
+  // A prompt the agent received, not PTY output standing in for one: after the
+  // first idle it starts the turn that follows the recap's.
+  context.sessionManager.on('event', (sessionId: string, event: SessionEvent) => {
+    if (event.type === EventType.Prompt && event.detail !== PromptReason.PtyActivity) noteRecapSessionPrompt(sessionId);
+  });
   context.sessionManager.on('session-removed', (sessionId: string) => forgetRecapSession(sessionId));
 }
 
@@ -182,6 +188,9 @@ function resolveSubject(
 }
 
 async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<void> {
+  // Judged before any early return, so the mark ends with the one turn it was for.
+  const recapTurn = isRecapTurn(payload.sessionId, payload.turnStartedAt);
+  if (recapTurn) forgetRecapSession(payload.sessionId);
   const subject = resolveSubject(context, payload);
   if (!subject) return;
   const { task, column, repos } = subject;
@@ -192,7 +201,7 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
   const stepApplies = workflowStepApplies(task, payload.projectId);
   if (rows.length === 0 && !stepApplies) return;
 
-  if (isRecapTurn(payload.sessionId, payload.turnStartedAt)) {
+  if (recapTurn) {
     // Logged because it leaves no run record.
     console.log(
       `[turn-end] Skipped the recap turn for task ${task.id.slice(0, 8)} in ${column.name}: `

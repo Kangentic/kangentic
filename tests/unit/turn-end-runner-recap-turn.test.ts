@@ -6,11 +6,19 @@
  * whole prompt is a recap that asks the agent to summarize and wait. The reply
  * is a report for the user, not the column's work, so its turn end runs no On
  * agent turn end row and no workflow step. Only that turn: a Ctrl+C ends a turn
- * with no turn end, so after an interrupted recap the user's next turn starts
- * after the session first went idle and runs its rows as usual.
+ * with no turn end, so after an interrupted recap the user's next turn begins
+ * with a prompt the agent received after the session first went idle, and runs
+ * its rows as usual.
+ *
+ * The first idle alone does not end the recap's turn. An idle no Stop caused
+ * (the stale-thinking watchdog) can land mid-turn, and the engine re-stamps the
+ * turn's start when thinking resumes, so a start after the first idle with no
+ * prompt behind it is still the recap's turn. A prompt that is PTY output
+ * standing in for one (`PromptReason.PtyActivity`) is not a prompt the agent
+ * received.
  *
  * Driven through `registerTurnEndAutomations`, the session manager's
- * 'activity', 'turn-ended' and 'session-removed' events, and the real
+ * 'activity', 'event', 'turn-ended' and 'session-removed' events, and the real
  * `recap-turns` module, the way the app drives them. The run log is the REAL
  * repository on a real SQLite database, and the transition engine is a fake that
  * writes a run for each row it is handed, so "no run record" means the pass
@@ -24,7 +32,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type DatabaseType from 'better-sqlite3';
-import type { ColumnAutomation } from '../../src/shared/types';
+import { EventType, PromptReason } from '../../src/shared/types';
+import type { ColumnAutomation, SessionEvent } from '../../src/shared/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
@@ -219,6 +228,11 @@ describe('the turn that answers an expired conversation\'s recap', () => {
     sessionManager.emit('activity', SESSION_ID, activity, { kind: 'idle' });
   }
 
+  /** The session manager re-emits each event the agent's hooks write. */
+  function emitSessionEvent(event: Omit<SessionEvent, 'ts'>): void {
+    sessionManager.emit('event', SESSION_ID, { ts: Date.now(), ...event });
+  }
+
   /** Emit a turn end that began at `turnStartedAt`, then wait for its pass to finish (see the file header). */
   async function endTurn(turnStartedAt: number | null): Promise<void> {
     emitTurnEnd(turnStartedAt);
@@ -271,8 +285,10 @@ describe('the turn that answers an expired conversation\'s recap', () => {
       await endTurn(SPAWNED_AT);
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
 
-      // The user answers the summary: a new turn begins after the first idle.
+      // The user answers the summary: a prompt reaches the agent and a new turn
+      // begins after the first idle.
       advanceClock(60_000);
+      emitSessionEvent({ type: EventType.Prompt });
       const userTurnStartedAt = Date.now();
       advanceClock(30_000);
       reportActivity('idle');
@@ -285,18 +301,138 @@ describe('the turn that answers an expired conversation\'s recap', () => {
       expect(runs.countRuns(ROW_ID, taskId)).toBe(1);
     });
 
-    it('runs the row for the turn after an interrupted recap, which ended with no turn end', async () => {
+    // A task session's hook-written prompt carries no detail (prompt text stays out of
+    // its events file); a Command Terminal's carries the prompt text. Neither is PTY output.
+    it.each([
+      ['no detail (a task session)', undefined],
+      ['the prompt text as its detail (a Command Terminal)', 'now summarize the failing test'],
+    ])('runs the row for the turn after an interrupted recap, which ended with no turn end: a hook prompt with %s', async (_label, detail) => {
       // Ctrl+C on the recap: the session goes idle, and no turn end follows.
       advanceClock(5_000);
       reportActivity('idle');
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
 
-      // The user's next turn starts after that idle and ends normally.
+      // The user's next turn starts with a prompt after that idle and ends normally.
       advanceClock(60_000);
+      emitSessionEvent({ type: EventType.Prompt, detail });
       const userTurnStartedAt = Date.now();
       advanceClock(30_000);
       reportActivity('idle');
       await endTurn(userTurnStartedAt);
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns(ROW_ID, taskId)).toBe(1);
+    });
+
+    it('still skips the recap turn when an idle no Stop caused landed mid-turn and the start was re-stamped', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      // The stale-thinking watchdog goes idle while the recap's turn is still running...
+      advanceClock(20_000);
+      reportActivity('idle');
+      // ...the agent resumes, the engine re-stamps the turn's start, and the turn ends. No prompt arrived.
+      advanceClock(5_000);
+      const restampedStartedAt = Date.now();
+      advanceClock(10_000);
+      reportActivity('idle');
+
+      await endTurn(restampedStartedAt);
+
+      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(recapSkipLines(logSpy)).toHaveLength(1);
+    });
+
+    it('does not take a PTY-activity prompt after the idle for the user\'s prompt', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      advanceClock(20_000);
+      reportActivity('idle');
+      // Output on the terminal stands in for a prompt: the agent received none.
+      advanceClock(5_000);
+      emitSessionEvent({ type: EventType.Prompt, detail: PromptReason.PtyActivity });
+      const restampedStartedAt = Date.now();
+      advanceClock(10_000);
+      reportActivity('idle');
+
+      await endTurn(restampedStartedAt);
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(recapSkipLines(logSpy)).toHaveLength(1);
+    });
+
+    it('does not take an event that is not a prompt after the idle for the user\'s prompt', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      advanceClock(20_000);
+      reportActivity('idle');
+      advanceClock(5_000);
+      emitSessionEvent({ type: EventType.ToolStart, tool: 'Read' });
+      const restampedStartedAt = Date.now();
+      advanceClock(10_000);
+      reportActivity('idle');
+
+      await endTurn(restampedStartedAt);
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(recapSkipLines(logSpy)).toHaveLength(1);
+    });
+
+    it('does not take the recap\'s own opening prompt, which arrives before any idle, for the user\'s', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      // The recap reaches the agent as a prompt, so a Prompt event lands before the first idle.
+      emitSessionEvent({ type: EventType.Prompt });
+      advanceClock(20_000);
+      reportActivity('idle');
+      advanceClock(5_000);
+      const restampedStartedAt = Date.now();
+      advanceClock(10_000);
+      reportActivity('idle');
+
+      await endTurn(restampedStartedAt);
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(recapSkipLines(logSpy)).toHaveLength(1);
+    });
+
+    it('forgets the mark once the recap turn end is skipped, so a later turn end runs the row with no prompt behind it', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      advanceClock(20_000);
+      reportActivity('idle');
+      await endTurn(SPAWNED_AT);
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(recapSkipLines(logSpy)).toHaveLength(1);
+      expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(false);
+
+      // Without the forget this start, after the idle and with no prompt, would read as a re-stamped recap turn.
+      advanceClock(5_000);
+      const laterStartedAt = Date.now();
+      advanceClock(10_000);
+      reportActivity('idle');
+      await endTurn(laterStartedAt);
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns(ROW_ID, taskId)).toBe(1);
+    });
+
+    it('forgets the mark even when the column has nothing to skip, so a row added later runs on the next turn end', async () => {
+      // The fast path returns before the skip is logged, but the mark still ends with the recap's turn.
+      hoisted.rows = [];
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      advanceClock(20_000);
+      reportActivity('idle');
+      await endTurn(SPAWNED_AT);
+      expect(recapSkipLines(logSpy)).toEqual([]);
+      expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(false);
+
+      hoisted.rows = [row()];
+      advanceClock(5_000);
+      const laterStartedAt = Date.now();
+      advanceClock(10_000);
+      reportActivity('idle');
+      await endTurn(laterStartedAt);
 
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
       expect(runs.countRuns(ROW_ID, taskId)).toBe(1);

@@ -57,13 +57,31 @@ export async function proveClaudeConversationGone(params: {
     return false;
   }
 
-  const candidates = folders
-    .filter((folder) => folder.isDirectory() || folder.isSymbolicLink())
-    .map((folder) => path.join(projectsRoot, folder.name, fileName));
+  const candidates: string[] = [];
+  for (const folder of folders) {
+    const folderPath = path.join(projectsRoot, folder.name);
+    if (folder.isDirectory() || (folder.isSymbolicLink() && await mayBeFolder(folderPath))) {
+      candidates.push(path.join(folderPath, fileName));
+    }
+  }
   for (let start = 0; start < candidates.length; start += SCAN_BATCH) {
     const batch = candidates.slice(start, start + SCAN_BATCH);
     const missing = await Promise.all(batch.map(isConfirmedMissing));
     if (missing.includes(false)) return false;
   }
   return true;
+}
+
+/**
+ * False only for a link whose target is a file, which can hold no transcript;
+ * looking inside it would fail ENOTDIR, which is not proof, and so would keep
+ * every conversation of the profile from ever counting as gone. A link to a
+ * folder, a dangling link and an unreadable one stay in the scan.
+ */
+async function mayBeFolder(linkPath: string): Promise<boolean> {
+  try {
+    return (await fs.promises.stat(linkPath)).isDirectory();
+  } catch {
+    return true;
+  }
 }

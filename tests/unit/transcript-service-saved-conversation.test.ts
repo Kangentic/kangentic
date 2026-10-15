@@ -9,6 +9,10 @@
  * stat-only fast path. The viewer's banner reads it because `source` describes
  * only the latest session.
  *
+ * An archived read is shown like a live one: bounded to the newest
+ * `parseWindowBytes()` of source with a leading `truncated` notice when older
+ * rows were left out, and with each span clamped to `MAX_SPAN_CHARS`.
+ *
  * Real pieces: Claude-format JSONL, the real window parser, Brotli and a
  * migrated better-sqlite3 database. The registry is mocked so each test says
  * what the agent's live parse finds (nothing: the file is gone).
@@ -27,16 +31,20 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import {
   TranscriptArchive,
+  readArchivedConversation,
   resetArchiveReadCacheForTests,
   type ArchiveAdapter,
 } from '../../src/main/retrieval/archive/transcript-archive';
 import {
   readSavedConversation,
+  resolveSessionTranscript,
   resolveTaskTranscript,
   resetForTests as resetTranscriptServiceForTests,
   setIndexedChunkReaderForTests,
   type IndexedChunk,
 } from '../../src/main/agent/transcript-service';
+import { MAX_SPAN_CHARS } from '../../src/main/agent/transcript-cache';
+import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 import { parseClaudeTranscript, parseClaudeTranscriptWindow } from '../../src/main/agent/adapters/claude/transcript-parser';
 import { openTestDatabase } from './helpers/test-database';
 import type { AgentAdapter, ParsedTranscript } from '../../src/main/agent/agent-adapter';
@@ -61,6 +69,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setParseWindowBytesForTests();
   for (const database of openDatabases.splice(0)) database.close();
   for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
@@ -95,11 +104,14 @@ interface SessionSeed {
 interface Fixture {
   database: DatabaseType.Database;
   directory: string;
-  /** Writes `<agentSessionId>.jsonl` and archives it through the real archive. */
-  archiveConversation(sessionId: string, agentSessionId: string, label: string): Promise<string>;
+  /**
+   * Writes `<agentSessionId>.jsonl` (three turns, or `lines`) and archives it
+   * through the real archive, then moves the file away. Returns the moved copy.
+   */
+  archiveConversation(sessionId: string, agentSessionId: string, label: string, lines?: string[]): Promise<string>;
 }
 
-function fixture(sessions: SessionSeed[] = []): Fixture {
+function fixture(sessions: SessionSeed[] = [], options: { windowBytes?: number } = {}): Fixture {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-saved-conversation-'));
   temporaryDirectories.push(directory);
   const database = openTestDatabase();
@@ -121,13 +133,15 @@ function fixture(sessions: SessionSeed[] = []): Fixture {
       return { ...window, sourcePath: pathFor(agentSessionId) };
     },
   };
-  const archive = new TranscriptArchive({ getDb: () => database, getAdapter: () => archiveAdapter, windowBytes: WINDOW_BYTES });
+  const archive = new TranscriptArchive({
+    getDb: () => database, getAdapter: () => archiveAdapter, windowBytes: options.windowBytes ?? WINDOW_BYTES,
+  });
 
   return {
     database,
     directory,
-    archiveConversation: async (sessionId, agentSessionId, label) => {
-      fs.writeFileSync(pathFor(agentSessionId), `${transcriptLines(3, label).join('\n')}\n`);
+    archiveConversation: async (sessionId, agentSessionId, label, lines = transcriptLines(3, label)) => {
+      fs.writeFileSync(pathFor(agentSessionId), `${lines.join('\n')}\n`);
       expect(await archive.archiveSession(PROJECT_ID, sessionId)).toBe('archived');
       // The agent then deletes its own file.
       const archivedFrom = pathFor(agentSessionId);
@@ -289,5 +303,116 @@ describe('resolveTaskTranscript archivedAgentName', () => {
     expect(first?.source).toBe('live');
     expect(first?.archivedAgentName).toBeNull();
     expect(second?.archivedAgentName).toBeNull();
+  });
+});
+
+/** A user line and an assistant text line each longer than a span may be, then a short user line. */
+function longSpanLines(extraChars: number): string[] {
+  const timestamp = new Date(Date.UTC(2026, 8, 30, 12, 0, 0)).toISOString();
+  const usage = { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 100 };
+  return [
+    JSON.stringify({
+      type: 'user', uuid: 'long-user', timestamp,
+      message: { role: 'user', content: 'q'.repeat(MAX_SPAN_CHARS + extraChars) },
+    }),
+    JSON.stringify({
+      type: 'assistant', uuid: 'long-assistant', timestamp,
+      message: { id: 'long-message', model: 'claude-test', content: [{ type: 'text', text: 'a'.repeat(MAX_SPAN_CHARS + extraChars) }], usage },
+    }),
+    JSON.stringify({
+      type: 'user', uuid: 'short-user', timestamp,
+      message: { role: 'user', content: 'a short question' },
+    }),
+  ];
+}
+
+describe('resolveSessionTranscript on an archived conversation', () => {
+  const ARCHIVED_SESSION: SessionSeed = {
+    id: 'session-archived', agentSessionId: 'agent-archived', sessionType: 'archived_agent', startedAt: '2026-09-30T12:00:00.000Z',
+  };
+  const ALL = Number.MAX_SAFE_INTEGER;
+
+  // Red-green: the `prependTruncationMarker(...)` wrapper in `entriesFromArchive`.
+  // Drop it (return `truncateEntries(archived.entries)` alone) and the first
+  // entry is the conversation's own first line, not the notice.
+  it('opens with the truncated notice when the archive holds more than the parse window', async () => {
+    const { database, archiveConversation } = fixture([ARCHIVED_SESSION]);
+    // Sixteen turns are about four rows at the archive's 2000-byte window.
+    const original = await archiveConversation('session-archived', 'agent-archived', 'archived', transcriptLines(16, 'archived'));
+    useAgents();
+    const whole = await parseClaudeTranscript(original);
+    setParseWindowBytesForTests(WINDOW_BYTES);
+
+    const resolved = await resolveSessionTranscript(database, 'session-archived');
+
+    expect(resolved?.source).toBe('archive');
+    expect(resolved?.degraded).toBe(false);
+    const [notice, ...shown] = resolved!.entries;
+    expect(notice).toMatchObject({ kind: 'system', subtype: 'truncated' });
+    // Only the newest rows are shown: a proper tail of the whole conversation.
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThan(whole.length);
+    expect(uuids(shown)).toEqual(uuids(whole.slice(whole.length - shown.length)));
+    // The notice sorts with the first entry that survives, not ahead of everything.
+    expect(notice.ts).toBe(shown[0].ts);
+
+    // A repeat read at the same archive revision is the same array, with one notice.
+    const again = await resolveSessionTranscript(database, 'session-archived');
+    expect(again?.entries).toBe(resolved?.entries);
+    expect(again!.entries.filter((entry) => entry.kind === 'system' && entry.subtype === 'truncated')).toHaveLength(1);
+    // And the notice went onto a copy: the archive's own read holds none.
+    const archived = await readArchivedConversation(database, 'agent-archived', WINDOW_BYTES);
+    expect(archived!.omittedBytes).toBeGreaterThan(0);
+    expect(archived!.entries.some((entry) => entry.kind === 'system' && entry.subtype === 'truncated')).toBe(false);
+  });
+
+  it('opens with no notice when the whole archive fits the parse window', async () => {
+    const { database, archiveConversation } = fixture([ARCHIVED_SESSION]);
+    const original = await archiveConversation('session-archived', 'agent-archived', 'archived', transcriptLines(16, 'archived'));
+    useAgents();
+
+    const resolved = await resolveSessionTranscript(database, 'session-archived');
+
+    expect(resolved?.source).toBe('archive');
+    expect(uuids(resolved!.entries)).toEqual(uuids(await parseClaudeTranscript(original)));
+    expect(resolved!.entries.some((entry) => entry.kind === 'system' && entry.subtype === 'truncated')).toBe(false);
+  });
+
+  // Red-green: the `truncateEntries(...)` inside `entriesFromArchive`. Pass
+  // `archived.entries.slice()` to the notice instead and both long spans reach
+  // the viewer whole.
+  it('clamps a span over the per-span limit and says how much was cut', async () => {
+    const extraChars = 5000;
+    // One window large enough for the long lines, as the archive's own big-line test does.
+    const { database, archiveConversation } = fixture([ARCHIVED_SESSION], { windowBytes: 1024 * 1024 });
+    await archiveConversation('session-archived', 'agent-archived', 'archived', longSpanLines(extraChars));
+    useAgents();
+    // The control: the archive holds the spans whole, so the clamp is the read's.
+    const stored = (await readArchivedConversation(database, 'agent-archived', ALL))!.entries;
+    const storedUser = stored.find((entry) => entry.uuid === 'long-user');
+    expect(storedUser?.kind === 'user' && storedUser.text.length).toBe(MAX_SPAN_CHARS + extraChars);
+
+    const resolved = await resolveSessionTranscript(database, 'session-archived');
+
+    expect(resolved?.source).toBe('archive');
+    const user = resolved!.entries.find((entry) => entry.uuid === 'long-user');
+    expect(user?.kind).toBe('user');
+    const userText = user?.kind === 'user' ? user.text : '';
+    // Only the tail is compared, so a failure prints a line and not the span.
+    expect(userText.length).toBeLessThan(MAX_SPAN_CHARS + extraChars);
+    expect(userText.startsWith('q'.repeat(MAX_SPAN_CHARS))).toBe(true);
+    expect(userText.slice(-60)).toContain(`[truncated ${extraChars} chars]`);
+
+    const assistant = resolved!.entries.find((entry) => entry.uuid === 'long-assistant');
+    expect(assistant?.kind).toBe('assistant');
+    const block = assistant?.kind === 'assistant' ? assistant.blocks[0] : undefined;
+    const assistantText = block?.type === 'text' ? block.text : '';
+    expect(assistantText.length).toBeLessThan(MAX_SPAN_CHARS + extraChars);
+    expect(assistantText.startsWith('a'.repeat(MAX_SPAN_CHARS))).toBe(true);
+    expect(assistantText.slice(-60)).toContain(`[truncated ${extraChars} chars]`);
+
+    // A short span is left as it was.
+    const short = resolved!.entries.find((entry) => entry.uuid === 'short-user');
+    expect(short).toMatchObject({ kind: 'user', text: 'a short question' });
   });
 });

@@ -342,7 +342,7 @@ Reading the table by class:
 > both chokepoints, when it can prove the conversation never started or that the agent deleted it.
 > It is deliberately narrower than the guard rejected here, and that narrowness is what makes it
 > safe. It never derives a transcript path: the AGENT must have reported one (its status file, the
-> SessionStart hook payload, or the copy on the session row). A deleted conversation additionally
+> SessionStart hook payload, or the copy on the session row). A deleted conversation also
 > needs the adapter's own proof (`AgentAdapter.proveConversationGone`): for Claude, the reported
 > file and the locator's both ENOENT, the projects folder above readable, and no project folder
 > holding the file. Absence of evidence is never evidence, so a missing report leaves today's

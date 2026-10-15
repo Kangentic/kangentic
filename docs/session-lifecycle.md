@@ -340,18 +340,25 @@ status line only runs once the TUI is up, so a CLI killed in its first second le
 
 - **`never-started`** needs no turns anywhere in the lineage, the agent's own report (status or
   hook, never the row alone) saying so, and the path it names failing with ENOENT. The spawn is
-  re-resolved `forceFresh` exactly as before: the task's own prompt, no recap, no notice.
+  re-resolved `forceFresh` exactly as before: the task's own prompt, no recap, no notice. A column
+  message the resume carried goes out after the spawn, as on any fresh spawn
+  (`SpawnOutcome.resumePromptUnsent`), since the task template took its place in the prompt.
 - **`expired`** needs turns and the adapter's proof that the file is gone
   (`AgentAdapter.proveConversationGone`). Claude's (`adapters/claude/conversation-gone.ts`) wants an
   absolute reported path named `<id>.jsonl`; that path and the locator's both failing with ENOENT (a
   permission or lock error is not proof, `agent/shared/confirmed-missing.ts`); the projects folder
   two levels above the reported path readable (a WSL session's Linux path stops here); and no
   project folder under it, a symlinked or junctioned one included, holding `<id>.jsonl` (measured at
-  16 to 22 ms over 617 folders), so a file Claude might find elsewhere always resumes. Claude's own retention sweep does not race it: in Claude Code 2.1.300 it is
-  background housekeeping, first run 5 s after launch and at most once a day, while `--resume`
-  resolves its file at launch.
+  16 to 22 ms over 617 folders), so a file Claude might find elsewhere always resumes.
+  Claude's own retention sweep does not race it: in Claude Code 2.1.300 it is background
+  housekeeping, first run 5 s after launch and at most once a day, while `--resume` resolves its
+  file at launch.
 - **`unknown`** is everything else, and resumes exactly as before. Mocked CLIs write no status and
   no row path, so they land here structurally, which is what keeps the E2E resume specs passing.
+
+This is deliberately narrower than the `canResumeSession` transcript-presence guard reverted in
+#255 (see docs/adapter-session-history.md), whose computed paths and false misses silently lost
+real conversations. A wrong `expired` costs a new conversation in place of the resume, never data.
 
 On `expired` the same spawn starts fresh. The old record is retired and kept, nothing is deleted,
 and the new session's prompt is a recap (`buildExpiredConversationRecap`,
@@ -370,25 +377,30 @@ that wait once.
   of where the work stands, then wait". The message the resume carried (a column's message, a
   plan-exit continuation) and the column's task template are not sent: a conversation old enough to
   expire belongs to a stale task. The automation runner records every message row of that move as
-  skipped, "Not sent" (`AgentStartReport.withholdMessages`). A cross-agent handoff that resumes the
-  target agent's own deleted conversation sends no column message either. The turn that answers the recap runs
-  no On agent turn end rows and no workflow step (`automations/turn-end/recap-turns.ts`). That turn
-  began at the spawn, before the session first went idle; a turn the user starts after an
-  interrupted recap begins after that idle and runs its rows. Startup recovery's recap is the whole
-  prompt on every session, so its first turn is skipped the same way.
+  skipped, "Not sent" (`AgentStartReport.withholdMessages`), and so does a move whose legacy Start
+  agent row opened the session. A cross-agent handoff that resumes the target agent's own deleted
+  conversation sends no column message either. The turn that answers the recap runs no On agent
+  turn end rows and no workflow step (`automations/turn-end/recap-turns.ts`). That turn began at the
+  spawn, before the session first went idle, and it lasts until the agent receives a prompt after
+  that idle: an idle no Stop caused (the stale-thinking watchdog) can land mid-turn, and the engine
+  re-stamps the turn's start when thinking resumes. A turn the user starts with a prompt after an
+  interrupted recap runs its rows. Startup recovery's recap is the whole prompt on every session,
+  so its first turn is skipped the same way. That pass therefore starts each expired task working:
+  one summary turn per task, paid in model tokens with nobody watching, which is the price of the
+  task saying where it stands when the user next opens it.
 - **On an isolated column set to keep its own conversation** (isolated plus `create_or_resume`,
   never the default) the old conversation says the column's pass is old, not the task, so it starts
   a normal fresh pass with the recap prepended as context, and its turn end runs the column's rows.
+  When the column sends its task template, the template is the pass's prompt and the column's
+  message goes out after the spawn, as on any fresh spawn.
 
 Once the new session exists, main pushes `task:conversationExpired` and the renderer shows an info
 toast naming the task and the old conversation's date, and whether its message was sent. Startup
-recovery does the same, since a task it resumes in the background would otherwise start over with
-nobody told. One gap is open: the auto-opened project's recovery starts while the window is still
-loading, and the renderer drops a notice that lands before App.tsx subscribes or before the
-project store holds the opened project, so that one toast can be lost. This is deliberately narrower than the `canResumeSession` transcript-presence guard
-reverted in #255 (see docs/adapter-session-history.md), whose computed paths and false misses
-silently lost real conversations. A wrong `expired` costs a new conversation in place of the
-resume, never data.
+recovery pushes it too. The toast shows only for the project on screen, as a blocked spawn's does,
+so a task recovered in a background project starts over with no toast. One gap is open: the
+auto-opened project's recovery starts while the window is still loading, and the renderer drops a
+notice that lands before App.tsx subscribes or before the project store holds the opened project,
+so that one toast can be lost.
 
 ### A session whose agent exited under a surviving shell
 

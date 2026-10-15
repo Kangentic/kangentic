@@ -258,6 +258,40 @@ export class TranscriptArchive {
         offset = parsedWindow.nextByteOffset;
         if (offset >= parsedWindow.totalBytes) break;
       }
+
+      // A whole-file walk that found nothing keeps what the archive holds, and
+      // records the file as seen, or every turn end would walk it again.
+      if (!replaced && resumeOffset === 0 && state) {
+        writeTransaction(db, () => {
+          db.prepare(
+            'UPDATE transcript_archive_state SET source_path = ?, source_size = ?, source_mtime_ms = ?, updated_at = ? WHERE agent_session_id = ?',
+          ).run(sourcePath, stat.size, stat.mtimeMs, new Date().toISOString(), target.agentSessionId);
+        })();
+        return 'unchanged';
+      }
+      // Inside the guard: the agent can delete the file between the walk and
+      // this read, after the rows were already replaced.
+      const checkHash = await hashBefore(sourcePath, lastRowStart);
+      writeTransaction(db, () => {
+        db.prepare(`
+          INSERT INTO transcript_archive_state
+            (agent_session_id, session_id, source_path, resume_offset, check_hash, carry, source_size, source_mtime_ms, revision, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+          ON CONFLICT(agent_session_id) DO UPDATE SET
+            session_id = excluded.session_id,
+            source_path = excluded.source_path,
+            resume_offset = excluded.resume_offset,
+            check_hash = excluded.check_hash,
+            carry = excluded.carry,
+            source_size = excluded.source_size,
+            source_mtime_ms = excluded.source_mtime_ms,
+            revision = transcript_archive_state.revision + 1,
+            updated_at = excluded.updated_at
+        `).run(
+          target.agentSessionId, target.sessionId, sourcePath, lastRowStart, checkHash,
+          JSON.stringify(lastRowCarry), stat.size, stat.mtimeMs, new Date().toISOString(),
+        );
+      })();
     } catch (error) {
       // The rows from the resume point on may be gone or half rewritten, while
       // the state still describes the last walk, which the next walk repeats.
@@ -269,38 +303,6 @@ export class TranscriptArchive {
       }
       throw error;
     }
-
-    // A whole-file walk that found nothing keeps what the archive holds, and
-    // records the file as seen, or every turn end would walk it again.
-    if (!replaced && resumeOffset === 0 && state) {
-      writeTransaction(db, () => {
-        db.prepare(
-          'UPDATE transcript_archive_state SET source_path = ?, source_size = ?, source_mtime_ms = ?, updated_at = ? WHERE agent_session_id = ?',
-        ).run(sourcePath, stat.size, stat.mtimeMs, new Date().toISOString(), target.agentSessionId);
-      })();
-      return 'unchanged';
-    }
-    const checkHash = await hashBefore(sourcePath, lastRowStart);
-    writeTransaction(db, () => {
-      db.prepare(`
-        INSERT INTO transcript_archive_state
-          (agent_session_id, session_id, source_path, resume_offset, check_hash, carry, source_size, source_mtime_ms, revision, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-        ON CONFLICT(agent_session_id) DO UPDATE SET
-          session_id = excluded.session_id,
-          source_path = excluded.source_path,
-          resume_offset = excluded.resume_offset,
-          check_hash = excluded.check_hash,
-          carry = excluded.carry,
-          source_size = excluded.source_size,
-          source_mtime_ms = excluded.source_mtime_ms,
-          revision = transcript_archive_state.revision + 1,
-          updated_at = excluded.updated_at
-      `).run(
-        target.agentSessionId, target.sessionId, sourcePath, lastRowStart, checkHash,
-        JSON.stringify(lastRowCarry), stat.size, stat.mtimeMs, new Date().toISOString(),
-      );
-    })();
     return replaced ? 'archived' : 'unchanged';
   }
 

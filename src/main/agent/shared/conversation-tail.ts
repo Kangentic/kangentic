@@ -19,8 +19,9 @@ export function formatConversationTail(entries: ReadonlyArray<TranscriptEntry>, 
     if (!turn) continue;
     const cost = turn.length + (turns.length > 0 ? 2 : 0);
     if (used + cost > maxChars) {
-      // The newest turn alone is longer than the room: keep its end.
-      if (turns.length === 0) turns.push(`...${turn.slice(turn.length - Math.max(0, maxChars - 3))}`);
+      // The newest turn alone is longer than the room: keep its end, when the
+      // room holds more than the marker.
+      if (turns.length === 0 && maxChars > 3) turns.push(`...${turn.slice(turn.length - (maxChars - 3))}`);
       break;
     }
     turns.push(turn);

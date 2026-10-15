@@ -22,7 +22,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AppConfig, Swimlane, Task } from '../../src/shared/types';
+import type { AppConfig, SessionRecord, Swimlane, Task } from '../../src/shared/types';
+import type { ExpiredConversationRecapSources } from '../../src/main/agent/shared/expired-conversation-recap';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
 
@@ -124,14 +125,41 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
   } as Swimlane;
 }
 
-function makeEffectiveConfig(): AppConfig {
+function makeEffectiveConfig(git?: { defaultBaseBranch: string }): AppConfig {
   return {
     agent: {
       permissionMode: 'acceptEdits',
       cliPaths: {},
     },
     mcpServer: { enabled: false },
+    ...(git ? { git } : {}),
   } as unknown as AppConfig;
+}
+
+/** A session row as the repository lists it: no turns and no reported transcript until a test says so. */
+function makeSessionRecord(overrides: Partial<SessionRecord>): SessionRecord {
+  return {
+    id: 'record-unset',
+    task_id: TASK_ID,
+    session_type: 'claude_agent',
+    isolated_swimlane_id: null,
+    agent_session_id: STORED_ID,
+    command: 'claude',
+    cwd: '/mock/cwd',
+    permission_mode: 'default',
+    prompt: null,
+    status: 'suspended',
+    exit_code: null,
+    started_at: '2026-06-01T08:00:00.000Z',
+    suspended_at: null,
+    exited_at: null,
+    suspended_by: 'system',
+    total_cost_usd: null,
+    total_input_tokens: null,
+    total_output_tokens: null,
+    transcript_path: null,
+    ...overrides,
+  } as SessionRecord;
 }
 
 describe('prepareAgentSpawn downgrades a resume to fresh when the conversation was never persisted (startup chokepoint)', () => {
@@ -197,16 +225,32 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     fs.rmSync(projectPath, { recursive: true, force: true });
   });
 
-  async function runPrepare() {
-    const sessionRepo = { updateAgentSessionId: vi.fn() };
+  async function runPrepare(options: {
+    /**
+     * The task's records, newest first, as the repository's
+     * `listForTaskNewestFirst` answers. Left out, the repository has no such
+     * method, so the retiring record is read by its session folder alone.
+     */
+    taskRecords?: ReadonlyArray<SessionRecord>;
+    recapSources?: ExpiredConversationRecapSources;
+    boardDefaultBaseBranch?: string | null;
+    taskOverrides?: Partial<Task>;
+    configGit?: { defaultBaseBranch: string };
+  } = {}) {
+    const taskRecords = options.taskRecords;
+    const listForTaskNewestFirst = vi.fn((_taskId: string) => taskRecords ?? []);
+    const sessionRepo = {
+      updateAgentSessionId: vi.fn(),
+      ...(taskRecords ? { listForTaskNewestFirst } : {}),
+    };
     const tasksUpdate = vi.fn();
     const result = await prepareAgentSpawn({
-      task: makeTask(),
+      task: makeTask(options.taskOverrides),
       swimlane: makeSwimlane(),
       cwd: projectPath,
       projectId: 'proj-123',
       projectPath,
-      effectiveConfig: makeEffectiveConfig(),
+      effectiveConfig: makeEffectiveConfig(options.configGit),
       projectDefaultAgent: 'claude',
       projectDefaultModel: null,
       projectDefaultEffort: null,
@@ -214,10 +258,12 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
       mcpServerHandle: null,
       resume: { agentSessionId: STORED_ID, recordId: RECORD_ID },
       sessionRepo,
+      recapSources: options.recapSources,
+      boardDefaultBaseBranch: options.boardDefaultBaseBranch,
       hasSessionRecord: true,
       tasks: { update: tasksUpdate },
     });
-    return { result, sessionRepo };
+    return { result, sessionRepo, listForTaskNewestFirst };
   }
 
   it('downgrades to fresh: a new agent session id, resume=false on the built command, and no id swap', async () => {
@@ -303,5 +349,193 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     } finally {
       delete adapterWithProof.proveConversationGone;
     }
+  });
+
+  describe('an expired start-over, as startup wires it', () => {
+    // The adapter proves a conversation gone, as Claude's does, against a
+    // projects folder that exists but holds no transcript for STORED_ID.
+    const adapterWithProof = adapter as typeof adapter & { proveConversationGone?: typeof proveClaudeConversationGone };
+
+    /** Where the agent said the transcript was: a folder that exists, under a root that exists, with nothing in it. */
+    function deletedTranscriptPath(): string {
+      const projectsRoot = path.join(projectPath, 'claude-projects');
+      fs.mkdirSync(projectsRoot, { recursive: true });
+      return path.join(projectsRoot, '-gone-project', `${STORED_ID}.jsonl`);
+    }
+
+    /** The retiring record's own status report: a conversation that had turns, at a transcript that is gone. */
+    function writeStatusFileWithTurns(recordId: string, transcriptPath: string): void {
+      const sessionDir = path.join(projectPath, '.kangentic', 'sessions', recordId);
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(path.join(sessionDir, 'status.json'), JSON.stringify({
+        session_id: STORED_ID,
+        transcript_path: transcriptPath,
+        model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+        cost: { total_cost_usd: 0.9, total_duration_ms: 60000, total_api_duration_ms: 40000 },
+        context_window: { total_input_tokens: 30000, total_output_tokens: 900, context_window_size: 200000, current_usage: null, used_percentage: null },
+      }));
+    }
+
+    /** The retiring record's own row when it carries no turns and no reported path: its CLI died before reporting. */
+    function silentRetiringRow(overrides: Partial<SessionRecord> = {}): SessionRecord {
+      return makeSessionRecord({ id: RECORD_ID, ...overrides });
+    }
+
+    /** An older record of the same conversation, whose row proves turns and names the deleted transcript. */
+    function olderRowWithTurns(transcriptPath: string, overrides: Partial<SessionRecord> = {}): SessionRecord {
+      return makeSessionRecord({
+        id: 'startup-older-record',
+        started_at: '2026-05-01T08:00:00.000Z',
+        total_input_tokens: 30000,
+        total_output_tokens: 900,
+        total_cost_usd: 0.9,
+        transcript_path: transcriptPath,
+        ...overrides,
+      });
+    }
+
+    beforeEach(() => {
+      adapterWithProof.proveConversationGone = proveClaudeConversationGone;
+    });
+
+    afterEach(() => {
+      delete adapterWithProof.proveConversationGone;
+    });
+
+    describe('the lineage comes from the task\'s records', () => {
+      it('starts over when only an OLDER record of the same conversation shows turns, and the retiring record shows none', async () => {
+        const transcriptPath = deletedTranscriptPath();
+        const retiringRow = silentRetiringRow();
+        const olderRow = olderRowWithTurns(transcriptPath);
+
+        const { result, listForTaskNewestFirst } = await runPrepare({ taskRecords: [retiringRow, olderRow] });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        // Red: reading no records (`?? []` alone) leaves the retiring record with
+        // neither turns nor a reported path, which resumes as before.
+        expect(result.data.startOver).toBe('expired');
+        expect(result.data.resumed).toBe(false);
+        expect(result.data.agentSessionId).not.toBe(STORED_ID);
+        expect(result.data.prompt).toContain('deleted it after its retention period');
+        expect(buildCommandMock.mock.calls[0][0]).toMatchObject({ resume: false });
+        // The task's own records, not another task's or the whole table.
+        expect(listForTaskNewestFirst).toHaveBeenCalledTimes(1);
+        expect(listForTaskNewestFirst).toHaveBeenCalledWith(TASK_ID);
+      });
+
+      it('resumes the same conversation when the repository can list no records and nothing on disk shows turns (the control)', async () => {
+        deletedTranscriptPath();
+
+        // No `taskRecords`: the repository has no `listForTaskNewestFirst`, and
+        // the retiring record has no session folder, so there is no evidence.
+        const { result } = await runPrepare();
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.startOver).toBeNull();
+        expect(result.data.resumed).toBe(true);
+        expect(result.data.agentSessionId).toBe(STORED_ID);
+        expect(result.data.prompt).toBeNull();
+        expect(buildCommandMock.mock.calls[0][0]).toMatchObject({ resume: true, sessionId: STORED_ID });
+      });
+
+      it('ignores an older record that ran a different conversation', async () => {
+        const transcriptPath = deletedTranscriptPath();
+        const retiringRow = silentRetiringRow();
+        // Turns, but of a conversation from before a /clear fork: not this one's evidence.
+        const otherConversationRow = olderRowWithTurns(transcriptPath, { agent_session_id: 'a-different-conversation' });
+
+        const { result } = await runPrepare({ taskRecords: [retiringRow, otherConversationRow] });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.startOver).toBeNull();
+        expect(result.data.resumed).toBe(true);
+      });
+    });
+
+    describe('when the deleted conversation last ran', () => {
+      const LAST_RAN_AT = '2026-07-01T09:30:00.000Z';
+
+      it('returns the retiring record\'s suspend time, and the recap says which day the conversation was last active', async () => {
+        const transcriptPath = deletedTranscriptPath();
+        const retiringRow = silentRetiringRow({
+          suspended_at: LAST_RAN_AT,
+          total_input_tokens: 30000,
+          total_output_tokens: 900,
+          transcript_path: transcriptPath,
+        });
+
+        const { result } = await runPrepare({ taskRecords: [retiringRow] });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.startOver).toBe('expired');
+        // Red: leaving `expiredLastActiveAt` unassigned returns null here.
+        expect(result.data.expiredLastActiveAt).toBe(LAST_RAN_AT);
+        // Red: not handing the date to the recap builder drops this sentence.
+        expect(result.data.prompt).toContain('was last active on 2026-07-01.');
+        expect(result.data.prompt).not.toContain('You had a previous conversation on this task.');
+      });
+
+      it('is unknown, with a recap that gives no date, when the task\'s records do not hold the retiring record', async () => {
+        const transcriptPath = deletedTranscriptPath();
+        // The conversation is proven gone from an older record, but the record
+        // being retired is not in the list, so nothing says when IT last ran.
+        const { result } = await runPrepare({ taskRecords: [olderRowWithTurns(transcriptPath, { suspended_at: LAST_RAN_AT })] });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.startOver).toBe('expired');
+        expect(result.data.expiredLastActiveAt).toBeNull();
+        expect(result.data.prompt).toContain('You had a previous conversation on this task.');
+        expect(result.data.prompt).not.toContain('last active on');
+      });
+
+      it('is null for a resume that started over because the conversation never began', async () => {
+        writeEmptyStatusFile(RECORD_ID);
+
+        const { result } = await runPrepare({ taskRecords: [silentRetiringRow({ suspended_at: LAST_RAN_AT })] });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.startOver).toBe('never-started');
+        expect(result.data.expiredLastActiveAt).toBeNull();
+      });
+    });
+
+    describe('the base branch the recap reads the branch state against', () => {
+      const cases = [
+        { label: 'only the board default is set', taskBase: null, boardDefault: 'develop', configDefault: undefined, expected: 'develop' },
+        { label: 'the task sets its own, which beats the board and config defaults', taskBase: 'feature/base', boardDefault: 'develop', configDefault: 'trunk', expected: 'feature/base' },
+        { label: 'the board default beats the config default', taskBase: null, boardDefault: 'develop', configDefault: 'trunk', expected: 'develop' },
+        { label: 'only the config default is set', taskBase: null, boardDefault: null, configDefault: 'trunk', expected: 'trunk' },
+        { label: 'nothing is set', taskBase: null, boardDefault: null, configDefault: undefined, expected: 'main' },
+      ] as const;
+
+      it.each(cases)('$label: reads against $expected', async ({ taskBase, boardDefault, configDefault, expected }) => {
+        writeStatusFileWithTurns(RECORD_ID, deletedTranscriptPath());
+        const readGitState = vi.fn(async (_cwd: string, _baseBranch: string) => (
+          { branch: 'feature/recovered', commits: [], changes: [] }
+        ));
+
+        const { result } = await runPrepare({
+          recapSources: { readGitState },
+          boardDefaultBaseBranch: boardDefault,
+          taskOverrides: { base_branch: taskBase },
+          configGit: configDefault ? { defaultBaseBranch: configDefault } : undefined,
+        });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.startOver).toBe('expired');
+        // The recap's git source is asked about the spawn's own directory, against the resolved base.
+        expect(readGitState).toHaveBeenCalledTimes(1);
+        expect(readGitState).toHaveBeenCalledWith(projectPath, expected);
+        // And the same base is the one the agent is told.
+        expect(result.data.prompt).toContain(`Branch: feature/recovered, based on ${expected}`);
+      });
+    });
   });
 });

@@ -27,7 +27,7 @@ function input(overrides: Partial<ExpiredConversationRecapInput> = {}): ExpiredC
   };
 }
 
-const CLOSING = 'Reply with a short summary of where the work stands, then wait for the user\'s next instruction.';
+const CLOSING = 'Reply with a short summary of where the work stands, then wait for the next instruction from the user.';
 
 describe('buildExpiredConversationRecap', () => {
   it('says what happened, carries the task, points at the old conversation, and ends on summarize-then-wait', async () => {
@@ -105,6 +105,100 @@ describe('buildExpiredConversationRecap', () => {
   });
 });
 
+describe('the branch block', () => {
+  it('is left out entirely when even its first line is longer than the 1,400 characters the block holds', async () => {
+    // A branch name of 1,500 characters makes the first line (`Branch: ...`)
+    // alone too long. A block with no lines would cost room and say nothing, so
+    // there is no block at all, not an empty `<branch_state>` pair.
+    const longBranch = 'q'.repeat(1_500);
+    const recap = await buildExpiredConversationRecap(input(), {
+      readGitState: async () => ({ branch: longBranch, commits: ['abc1234 Move redirect'], changes: [' M src/auth.ts'] }),
+    });
+
+    expect(recap.includes('<branch_state>')).toBe(false);
+    expect(recap.includes('</branch_state>')).toBe(false);
+    // None of the branch's characters leaked in some other shape.
+    expect(recap.includes('qqqqqqqqqq')).toBe(false);
+    expect(recap.endsWith(CLOSING)).toBe(true);
+
+    // Control: a branch name that leaves the first line inside the cap gives the
+    // block, so the absence above comes from the cap and not from the source.
+    const shortEnough = await buildExpiredConversationRecap(input(), {
+      readGitState: async () => ({ branch: 'q'.repeat(1_300), commits: [], changes: [] }),
+    });
+    expect(shortEnough.includes('<branch_state>\nBranch: qqqq')).toBe(true);
+  });
+});
+
+describe('control characters in the conversation tail and the task summary', () => {
+  // Typed into the spawning shell, so an escape from a pasted terminal log, a
+  // Ctrl+C, a bare carriage return (which is Enter) and a tab (which completes,
+  // even inside quotes) must not reach it. Line breaks stay.
+  const DIRTY_TEXT = 'a\tb \x1b[31mred\x1b[0m c\x03d e\rf g\x7fh i\u009bj k\r\nl café \u{1F642}';
+  const CLEAN_TEXT = 'a b [31mred[0m cd ef gh ij k\nl café \u{1F642}';
+
+  /** The distinct control characters in `text`: C0, DEL and C1 (0x80 to 0x9F). */
+  function controlCodesIn(text: string): number[] {
+    const codes = new Set<number>();
+    for (const character of text) {
+      const code = character.charCodeAt(0);
+      if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) codes.add(code);
+    }
+    return [...codes];
+  }
+
+  it('drops every control character but the line break, turns a tab into a space, and keeps the words around them', async () => {
+    const recap = await buildExpiredConversationRecap(input(), {
+      readTaskSummary: async () => `Summary ${DIRTY_TEXT}`,
+      readConversationTail: async () => `User: ${DIRTY_TEXT}`,
+    });
+
+    // Both blocks went in, so the scan below covers them.
+    expect(recap.includes('<task_summary>')).toBe(true);
+    expect(recap.includes('<previous_conversation_tail>')).toBe(true);
+    // The only control character anywhere in the recap is the line break.
+    expect(controlCodesIn(recap)).toEqual([0x0a]);
+    for (const dropped of ['\t', '\x1b', '\x03', '\r', '\x7f', '\u009b']) {
+      expect(recap.includes(dropped)).toBe(false);
+    }
+    // Each piece reads as its clean form: tab to a space, CRLF to a line break,
+    // other controls gone with their neighbours joined, text above 0x9F kept.
+    expect(recap.includes(`<task_summary>\nSummary ${CLEAN_TEXT}\n</task_summary>`)).toBe(true);
+    expect(recap.includes(`<previous_conversation_tail>\nUser: ${CLEAN_TEXT}\n</previous_conversation_tail>`)).toBe(true);
+    expect(recap.endsWith(CLOSING)).toBe(true);
+  });
+});
+
+describe('an apostrophe in the recap', () => {
+  // A unix-like host quotes the prompt in single quotes, and nushell has no
+  // escape for an apostrophe inside them, so the fixed text carries none.
+  it.each(['whole-prompt', 'context'] as const)('is absent from a %s recap built from apostrophe-free text', async (mode) => {
+    const recap = await buildExpiredConversationRecap(input({
+      mode,
+      task: { id: 'task-1', title: 'Fix login', description: 'Users land on /home after login.', pr_url: 'https://example.test/pr/12' },
+    }), {
+      readTaskSummary: async () => 'Moved the redirect into AuthGate.',
+      readConversationTail: async () => 'User: does it work?\n\nAgent: Yes, tests pass.',
+      readGitState: async () => ({ branch: 'fix-login', commits: ['abc1234 Move redirect'], changes: [' M src/auth.ts'] }),
+    });
+
+    // Every optional block went in, so the claim covers the whole recap.
+    expect(recap.includes('<task_summary>')).toBe(true);
+    expect(recap.includes('<previous_conversation_tail>')).toBe(true);
+    expect(recap.includes('<branch_state>')).toBe(true);
+    expect(recap.includes("'")).toBe(false);
+  });
+
+  it('becomes &apos; when it comes from the content, so the recap still carries none', async () => {
+    const recap = await buildExpiredConversationRecap(input(), {
+      readTaskSummary: async () => "It doesn't redirect yet.",
+    });
+
+    expect(recap.includes('It doesn&apos;t redirect yet.')).toBe(true);
+    expect(recap.includes("'")).toBe(false);
+  });
+});
+
 describe('formatConversationTail', () => {
   const entries: TranscriptEntry[] = [
     { kind: 'user', uuid: 'u1', ts: 1, text: 'First ask' },
@@ -134,5 +228,35 @@ describe('formatConversationTail', () => {
   it('answers null when there is nothing to say', () => {
     expect(formatConversationTail([], 1_000)).toBeNull();
     expect(formatConversationTail(entries, 0)).toBeNull();
+  });
+
+  describe('when the newest turn alone is longer than the room', () => {
+    // The turn reads `User: aaa...az`, 506 characters, ending in `z` so the
+    // end that is kept can be told from the start.
+    const longTurn: TranscriptEntry[] = [{ kind: 'user', uuid: 'u', ts: 1, text: `${'a'.repeat(499)}z` }];
+
+    it.each([1, 2, 3, 4, 50])('is never longer than a room of %i characters', (maxChars) => {
+      const tail = formatConversationTail(longTurn, maxChars);
+      expect(tail?.length ?? 0).toBeLessThanOrEqual(maxChars);
+    });
+
+    it.each([1, 2, 3])('answers null at a room of %i, which cannot hold the marker and a character of the turn', (maxChars) => {
+      expect(formatConversationTail(longTurn, maxChars)).toBeNull();
+    });
+
+    it('keeps the marker and the turn\'s last character at a room of 4', () => {
+      expect(formatConversationTail(longTurn, 4)).toBe('...z');
+    });
+
+    it('keeps the marker and the turn\'s end, filling a room of 50', () => {
+      expect(formatConversationTail(longTurn, 50)).toBe(`...${'a'.repeat(46)}z`);
+    });
+
+    it('is never longer than the room over every room from 1 to 80, one turn or several', () => {
+      for (let maxChars = 1; maxChars <= 80; maxChars += 1) {
+        expect(formatConversationTail(longTurn, maxChars)?.length ?? 0).toBeLessThanOrEqual(maxChars);
+        expect(formatConversationTail(entries, maxChars)?.length ?? 0).toBeLessThanOrEqual(maxChars);
+      }
+    });
   });
 });

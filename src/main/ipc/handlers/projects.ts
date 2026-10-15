@@ -466,17 +466,6 @@ async function pruneOrphanedTasksAndNotify(
 }
 
 /**
- * Tell the renderer that a quit left automation runs mid-flight.
- *
- * ONE notice for the whole project open, never one per row: the shutdown path
- * is synchronous by rule, so this is the expected state after any quit during a
- * move, and a per-row storm would turn an honest signal into noise. The run
- * rows themselves already say `interrupted`, which is the durable half.
- *
- * Built as a callback per call site rather than read off a return value because
- * the sweep runs inside a fire-and-forget tail; there is nothing to await.
- */
-/**
  * What every recovery pass passes `resumeSuspendedSessions` beyond its
  * positional inputs: the expired-conversation notice, and the project's own
  * team-shared default base branch for the recap (read by path, since a pass
@@ -494,6 +483,17 @@ function recoveryOptions(
   };
 }
 
+/**
+ * Tell the renderer that a quit left automation runs mid-flight.
+ *
+ * ONE notice for the whole project open, never one per row: the shutdown path
+ * is synchronous by rule, so this is the expected state after any quit during a
+ * move, and a per-row storm would turn an honest signal into noise. The run
+ * rows themselves already say `interrupted`, which is the durable half.
+ *
+ * Built as a callback per call site rather than read off a return value because
+ * the sweep runs inside a fire-and-forget tail; there is nothing to await.
+ */
 function notifyRunsInterrupted(context: IpcContext, projectId: string): (count: number) => void {
   return (count) => {
     if (!context.mainWindow || context.mainWindow.isDestroyed()) return;

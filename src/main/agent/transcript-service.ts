@@ -245,15 +245,10 @@ export async function resolveSessionTranscript(
       return { ...base, source: 'live', sourcePath, entries, degraded: false };
     }
     // Native file gone or empty: Kangentic's archived copy keeps the structure,
-    // so it is not degraded.
-    const archived = await entriesFromArchive(db, agentSessionId);
-    if (archived.length > 0) {
-      return { ...base, source: 'archive', sourcePath, entries: archived, degraded: false };
-    }
-    // Neither: the index's chunks, which keep the text only.
-    const indexed = await entriesFromIndex(db, record.agent_session_id ?? record.id);
-    if (indexed.length > 0) {
-      return { ...base, source: 'index', sourcePath, entries: indexed, degraded: true };
+    // so it is not degraded; the index's chunks keep the text only.
+    const saved = await readSavedConversation(db, agentSessionId);
+    if (saved) {
+      return { ...base, source: saved.source, sourcePath, entries: saved.entries, degraded: saved.source === 'index' };
     }
     return {
       ...base,
@@ -267,15 +262,9 @@ export async function resolveSessionTranscript(
 
   // No structured parser, or no agent_session_id yet: archive, then index
   // fallback, else none.
-  if (record.agent_session_id) {
-    const archived = await entriesFromArchive(db, record.agent_session_id);
-    if (archived.length > 0) {
-      return { ...base, source: 'archive', sourcePath: null, entries: archived, degraded: false };
-    }
-  }
-  const indexed = await entriesFromIndex(db, record.agent_session_id ?? record.id);
-  if (indexed.length > 0) {
-    return { ...base, source: 'index', sourcePath: null, entries: indexed, degraded: true };
+  const saved = await readSavedConversation(db, record.agent_session_id ?? record.id);
+  if (saved) {
+    return { ...base, source: saved.source, sourcePath: null, entries: saved.entries, degraded: saved.source === 'index' };
   }
   return {
     ...base,
