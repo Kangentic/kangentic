@@ -1,5 +1,14 @@
 import { Terminal } from '@xterm/xterm';
-import { escapeForDoubleQuotedShell, isBareShellToken, isCmdShell, isUnixLikeShell } from '../../shared/shell-quote';
+import {
+  escapeForDoubleQuotedShell,
+  isBareShellToken,
+  isCmdShell,
+  isFishShell,
+  isNushellShell,
+  isUnixLikeShell,
+  quoteForFish,
+  quoteForNushell,
+} from '../../shared/shell-quote';
 import type { PastedImageCapability } from '../../shared/types';
 import { useAgentDriveStore } from '../stores/agent-drive-store';
 
@@ -120,11 +129,13 @@ export function copySelectionToClipboard(terminal: Terminal): void {
  * - WSL shells:        C:\Users\dev → /mnt/c/Users/dev
  * - Git Bash and other Unix-like: C:\Users\dev → /c/Users/dev
  * - cmd / PowerShell:  no conversion (native paths work)
+ * - nushell:           no conversion (nushell on Windows reads native paths,
+ *                      and `adaptCommandForShell` leaves its command head alone)
  * - Non-Windows:       no conversion
  */
 export function convertPathForShell(filePath: string, shellName: string): string {
   if (window.electronAPI.platform !== 'win32') return filePath;
-  if (!isUnixLikeShell(shellName)) return filePath;
+  if (!isUnixLikeShell(shellName) || isNushellShell(shellName)) return filePath;
 
   const lower = shellName.toLowerCase();
   const prefix = lower.startsWith('wsl') ? '/mnt/' : '/';
@@ -139,7 +150,8 @@ export function convertPathForShell(filePath: string, shellName: string): string
 /**
  * Quote a file path for insertion into a terminal PTY.
  *
- * - Unix-like shells: single-quotes (no variable expansion)
+ * - POSIX shells: single-quotes (no variable expansion)
+ * - nushell and fish: `quoteForNushell` / `quoteForFish`
  * - cmd / PowerShell: double-quotes, escaped by `escapeForDoubleQuotedShell`
  * - No shell provided: simple space-only double-quoting (fallback)
  *
@@ -157,6 +169,11 @@ export function quoteForShell(filePath: string, shellName?: string): string {
     // Fallback: quote if spaces present (best-effort without shell context)
     return filePath.includes(' ') ? `"${filePath}"` : filePath;
   }
+
+  // nushell and fish are unix-like but do not quote like POSIX sh; see the
+  // two escapers in `src/shared/shell-quote.ts`.
+  if (isNushellShell(shellName)) return quoteForNushell(filePath);
+  if (isFishShell(shellName)) return quoteForFish(filePath);
 
   if (isUnixLikeShell(shellName)) {
     // Single-quotes, escape embedded single-quotes: ' → '\''

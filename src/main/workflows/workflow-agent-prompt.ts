@@ -7,7 +7,7 @@ import { TaskMoveRepository } from '../db/repositories/task-move-repository';
 import { AutomationRepository } from '../db/repositories/automation-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { buildBriefXml, escapeXml } from '../agent/shared/prompt-xml';
-import { INLINE_PROMPT_BUDGET } from '../agent/shared/prompt-budget';
+import { INLINE_PROMPT_BUDGET, commandLineLength } from '../agent/shared/prompt-budget';
 import { interpolateTaskTemplate } from '../agent/shared/template-utils';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { resolveProjectRoot } from '../../shared/git-utils';
@@ -168,20 +168,7 @@ export async function buildWorkflowAgentContinueMessage(
   }
   const firstMessage = buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, template);
   const toBuildOn = 'Build on it instead of planning again: saving replaces the whole plan, so keep every task you are not changing. Reply in one line that you have the plan, and ask what the user wants to change.';
-  // The message rides the command line, 8,191 characters under a cmd.exe
-  // shell, and a long plan would leave the start that recovers a lost
-  // conversation unable to start. The first message counts too: a board with
-  // many columns or a long custom template fills much of that line by itself.
-  // Past the budget the agent reads the plan itself; `kangentic_get_workflow`
-  // answers with its own workflow's.
-  if (firstMessage.length + savedPlan.length > INLINE_PROMPT_BUDGET) {
-    return [
-      firstMessage,
-      '',
-      `This workflow already has a saved plan, from an earlier conversation that could not be resumed. Read it first with kangentic_get_workflow. ${toBuildOn}`,
-    ].join('\n');
-  }
-  return [
+  const inlineMessage = [
     firstMessage,
     '',
     '<saved_plan>',
@@ -189,4 +176,19 @@ export async function buildWorkflowAgentContinueMessage(
     '</saved_plan>',
     `This workflow already has the plan in <saved_plan>, from an earlier conversation that could not be resumed. ${toBuildOn}`,
   ].join('\n');
+  // The message rides the command line, 8,191 characters under a cmd.exe
+  // shell, and a long plan would leave the start that recovers a lost
+  // conversation unable to start. The first message counts too: a board with
+  // many columns or a long custom template fills much of that line by itself.
+  // Measured as the command line carries it, where a cmd host writes each `%`
+  // as four characters. Past the budget the agent reads the plan itself;
+  // `kangentic_get_workflow` answers with its own workflow's.
+  if (commandLineLength(inlineMessage) > INLINE_PROMPT_BUDGET) {
+    return [
+      firstMessage,
+      '',
+      `This workflow already has a saved plan, from an earlier conversation that could not be resumed. Read it first with kangentic_get_workflow. ${toBuildOn}`,
+    ].join('\n');
+  }
+  return inlineMessage;
 }

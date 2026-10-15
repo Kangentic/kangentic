@@ -397,13 +397,25 @@ that wait once.
   message goes out after the spawn, as on any fresh spawn. A column prompt too long to leave room
   for the recap's header and pointer gets no recap, and the pass runs on its own prompt.
 
-Once the new session exists, main pushes `task:conversationExpired` and the renderer shows an info
-toast naming the task and the old conversation's date, and whether its message was sent. Startup
-recovery pushes it too. The toast shows only for the project on screen, as a blocked spawn's does,
-so a task recovered in a background project starts over with no toast. One gap is open: the
-auto-opened project's recovery starts while the window is still loading, and the renderer drops a
-notice that lands before App.tsx subscribes or before the project store holds the opened project,
-so that one toast can be lost.
+Once the new session exists, main queues a notice for the task's project
+(`src/main/ipc/helpers/pending-conversation-expired.ts`) and pushes `task:conversationExpired`.
+Startup recovery does the same. The renderer never toasts the push's payload. It takes the
+project's queue (`task:takeConversationExpired`), and it does so on the push when the push names
+the project on screen and whenever a project becomes current (`useProjectSwitchEffect`). The take
+is a synchronous handler that removes what it returns, so a notice shows at most once however the
+two takes race. It can show not at all: a renderer reload between the take and the toast loses
+it, and a take that resolves after the user switched to another project is dropped rather than
+toasted over that board. One notice gives a toast naming the task, the old conversation's date, and whether
+its message was sent. Several give one toast with counts, which is the usual shape after a long
+absence, since every suspended task expires on the same launch.
+
+The queue is what keeps the startup notice. The auto-opened project's recovery starts while the
+window is still loading, before App.tsx subscribes and before the project store holds the opened
+project, and `notifyConversationExpired` runs with no window at all during it. A push alone was
+dropped there. A task recovered in a background project now gets its toast when the user opens
+that project, rather than none. The queue keeps the latest notice per task and is cleared when the
+project is deleted. The take drops a notice whose task was deleted or archived while it waited,
+so a toast never names a task that is gone.
 
 ### A session whose agent exited under a surviving shell
 

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
-import { isUncPath, isCmdShell, isPowerShellShell } from '../../../shared/paths';
+import { isUncPath, isCmdShell, isFishShell, isNushellShell, isPowerShellShell } from '../../../shared/paths';
 import { escapeForPowerShellSingleQuoted, escapePercentForCmd } from '../../../shared/shell-quote';
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
@@ -37,12 +37,15 @@ export function resolveShellArgs(shell: string): ShellInvocation {
     const executable = parts[0].toLowerCase().endsWith('.exe') ? parts[0] : `${parts[0]}.exe`;
     return { exe: executable, args: parts.slice(1) };
   }
+  // By program name, and ahead of the substring gates below:
+  // `includes('nu')` also matched a bash under /opt/menu/, which then started
+  // without --login and skipped its rc files.
+  if (isFishShell(shellName) || isNushellShell(shellName)) {
+    return { exe: shell, args: [] };
+  }
   if (shellName.includes('cmd')) return { exe: shell, args: [] };
   if (isPowerShellShell(shellName)) {
     return { exe: shell, args: ['-NoLogo'] };
-  }
-  if (shellName.includes('fish') || shellName.includes('nu')) {
-    return { exe: shell, args: [] };
   }
   return { exe: shell, args: ['--login'] };
 }

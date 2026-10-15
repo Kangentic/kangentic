@@ -110,6 +110,11 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   `windows-latest` when the escapes or their tests change. The Linux unit tier skips those blocks,
   and string pins alone stayed green for a `%%` escape cmd never honored. Path-filtered and not a
   required check, like `task-reap-real-processes.yml`.
+- **nushell and fish quoting:** `.github/workflows/shell-quoting-posix.yml` installs both on
+  `ubuntu-latest` and runs the live round trip in `command-builder.test.ts` that types the Claude
+  builder's output into each. Neither quotes like POSIX sh, so `quoteArg` has a branch for each,
+  and the unit tier, which has neither shell, checks only their string pins. Path-filtered and not
+  a required check.
 - **Review for code:** the `platform-guard` agent audits `src/main/pty`, `src/main/agent`,
   `src/main/git`, and any `path` / `fs.rm` / `child_process` usage for the code rules above
   (hardcoded `C:\\Users\\`, missing platform guards, missing `{ force: true }`, em-dashes and

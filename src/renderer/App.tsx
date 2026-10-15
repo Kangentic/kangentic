@@ -13,7 +13,7 @@ import { useWorkflowStore } from './stores/workflow-store';
 import { useToastStore } from './stores/toast-store';
 import { useLeftoverProcessesStore } from './stores/leftover-processes-store';
 import { describeLeftoverReport } from './lib/leftover-processes';
-import { describeConversationExpired } from './lib/conversation-expired';
+import { showConversationExpiredNotices } from './lib/conversation-expired-toast';
 import { useUpdaterStore } from './stores/updater-store';
 import { useHostMemoryStore } from './stores/host-memory-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
@@ -909,19 +909,17 @@ export function App() {
     }
 
     // A resume found the agent had deleted the conversation, so the task
-    // started a new one from a recap of the task. Info, not a warning: nothing
-    // failed, and the agent is already summarizing where the work stands.
-    // Current project only, as onSpawnBlocked: the toast names a task from
-    // that project's board.
+    // started a new one from a recap of the task. The push is a signal: main
+    // queued the notice first, and this takes the queue rather than toasting
+    // the payload, so the project-switch take (useProjectSwitchEffect) and
+    // this one never show the same notice twice. Current project only, as
+    // onSpawnBlocked: the toast names a task from that project's board, and a
+    // notice for another project waits in main until it becomes current.
     if (tasks?.onConversationExpired) {
       cleanups.push(tasks.onConversationExpired((notice) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
-        if (notice.projectId && notice.projectId !== activeProjectId) return;
-        useToastStore.getState().addToast({
-          message: describeConversationExpired(notice),
-          variant: 'info',
-          duration: 12000,
-        });
+        if (!activeProjectId || notice.projectId !== activeProjectId) return;
+        void showConversationExpiredNotices(activeProjectId);
       }));
     }
 

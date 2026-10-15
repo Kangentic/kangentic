@@ -13,6 +13,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { DEFAULT_AGENT, type ConversationExpiredNotice, type Task, type WorktreeSkipReason } from '../../../shared/types';
 import { sendToRenderer } from '../send-to-renderer';
+import { queueConversationExpired } from './pending-conversation-expired';
 import { getProjectRepos } from './project-repos';
 import { resolveProjectDefaultBaseBranch } from './default-base-branch';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
@@ -283,12 +284,17 @@ export function notifySpawnBlocked(
 /**
  * Tell the user a task started a new conversation because the agent deleted
  * the one it would have resumed (`ConversationExpiredNotice`). The renderer
- * words the toast and formats the date. One push per start-over: the spawn
+ * words the toast and formats the date. One notice per start-over: the spawn
  * that started fresh is the only one that knows, and it calls this once its
  * session exists.
+ *
+ * Queued before the push, and queued with no window at all, because startup
+ * recovery runs before the renderer can take a push. The renderer shows what
+ * it takes from the queue, not the push's payload (`pending-conversation-expired.ts`).
  */
 export function notifyConversationExpired(context: IpcContext, notice: ConversationExpiredNotice): void {
   if (isShuttingDown()) return;
+  queueConversationExpired(notice);
   if (!context.mainWindow) return;
   sendToRenderer(context.mainWindow, IPC.TASK_CONVERSATION_EXPIRED, notice);
 }

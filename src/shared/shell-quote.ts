@@ -31,22 +31,92 @@ export function isCmdShell(shellName: string): boolean {
  * this is the exact test `isUnixLikeShell` negates, and the two must agree
  * on every input or a spec could be neither unix-like nor PowerShell. Keep
  * them in step if one ever tightens.
+ *
+ * nushell and fish are decided by program name first, in both predicates, so
+ * a nu under a directory named pwsh-tools is never PowerShell. Without that,
+ * `buildSpawnClearPrelude` typed `Clear-Host;` into nushell.
  */
 export function isPowerShellShell(shellName: string): boolean {
+  if (isNushellShell(shellName) || isFishShell(shellName)) return false;
   const lower = shellName.toLowerCase();
   return lower.includes('powershell') || lower.includes('pwsh');
 }
 
 /**
  * True when the shell is Unix-like (bash, zsh, fish, nu, wsl) and
- * expects POSIX-style paths.
+ * expects POSIX-style paths. It does not mean the shell quotes like POSIX
+ * sh. fish and nushell each have their own rules (`isFishShell`,
+ * `isNushellShell`).
  *
  * False for cmd.exe (Windows native); PowerShell is handled separately
  * because it needs the `& ` call operator rather than path conversion.
+ * nushell and fish are unix-like by program name, so a fish under a directory
+ * named cmd is not read as a double-quoted shell.
  */
 export function isUnixLikeShell(shellName: string): boolean {
+  if (isNushellShell(shellName) || isFishShell(shellName)) return true;
   const lower = shellName.toLowerCase();
   return !lower.includes('cmd') && !isPowerShellShell(lower);
+}
+
+/**
+ * A shell spec's program name: its basename, lower-cased, without `.exe`. The
+ * whole spec is the path (`pty-spawn.ts` splits arguments off a WSL spec only),
+ * so a directory with a space in it stays part of the path.
+ */
+function shellProgramName(shellName: string): string {
+  const basename = shellName.trim().toLowerCase().split(/[\\/]/).pop() ?? '';
+  return basename.replace(/\.exe$/, '');
+}
+
+/**
+ * True for nushell (`nu`), by basename like `isCmdShell`, so a path that only
+ * contains the letters (`/opt/menu/bin/bash`) does not match.
+ *
+ * nushell is unix-like for paths, but its strings are not POSIX: a
+ * single-quoted string has no escapes at all, so it cannot hold the `'\''`
+ * POSIX shells use for an apostrophe. `quoteForNushell` is its quoting.
+ */
+export function isNushellShell(shellName: string): boolean {
+  return shellProgramName(shellName) === 'nu';
+}
+
+/**
+ * True for fish, by basename. fish reads `\\` and `\'` as escapes INSIDE single
+ * quotes, unlike POSIX shells, so it needs `quoteForFish`.
+ */
+export function isFishShell(shellName: string): boolean {
+  return shellProgramName(shellName) === 'fish';
+}
+
+/**
+ * Quote text as one nushell argument: a double-quoted string, where `\` and `"`
+ * are the only characters that need an escape. A plain `"..."` does not
+ * interpolate (only `$"..."` does), and nushell rejects an unknown escape such
+ * as `\q` as a parse error, so nothing else is escaped. A newline, carriage
+ * return or tab is written as its escape, which keeps the command on one
+ * physical line, as the PowerShell branch of `quoteArg` does. Rules from the
+ * nushell book's "Working with strings"; the live round trip in
+ * command-builder.test.ts runs them through a real `nu`.
+ */
+export function quoteForNushell(text: string): string {
+  const escaped = text
+    .replace(/[\\"]/g, '\\$&')
+    .replace(/\r\n|\n|\r/g, '\\n')
+    .replace(/\t/g, '\\t');
+  return `"${escaped}"`;
+}
+
+/**
+ * Quote text as one fish argument: single quotes, inside which fish reads `\'`
+ * and `\\` as escapes and every other backslash literally (fish language
+ * reference, "Quotes"). The POSIX `'\''` already worked for an apostrophe, but
+ * a POSIX single-quoted `a\\b` reached the program as `a\b`, and a trailing
+ * backslash escaped the closing quote and left the line open. Escaping every
+ * backslash and quote covers both.
+ */
+export function quoteForFish(text: string): string {
+  return `'${text.replace(/[\\']/g, '\\$&')}'`;
 }
 
 /**

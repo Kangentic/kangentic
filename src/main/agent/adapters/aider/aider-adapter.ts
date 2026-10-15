@@ -25,11 +25,10 @@ const LIVE_IN_DOUBLE_QUOTES = /["$`]/;
  *
  * A path that is a bare shell token needs no inner quotes. Any other path is
  * quoted for the inner shell in a form the outer shell can carry:
- *  - A unix-like outer shell carries `"` inside its single quotes. An inner
- *    `'` is not used there: nushell's single-quoted strings have no escapes,
- *    so it cannot read the `'\''` quoteArg writes for one. A path holding `"`,
- *    `$` or a backtick sends no command, since /bin/sh would expand or end on
- *    it inside `"`.
+ *  - A unix-like outer shell carries `"`: literally inside POSIX and fish
+ *    single quotes, and as `\"` inside the double-quoted string quoteArg
+ *    writes for nushell. A path holding `"`, `$` or a backtick sends no
+ *    command, since /bin/sh would expand or end on it inside `"`.
  *  - PowerShell off Windows carries `'` inside its double quotes, and /bin/sh
  *    reads everything inside `'` literally.
  *  - On Windows, PowerShell and cmd cannot carry the `"` that cmd needs: a

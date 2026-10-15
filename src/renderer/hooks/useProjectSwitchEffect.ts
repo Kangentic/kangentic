@@ -36,6 +36,7 @@ import {
 import { restoreWorkspaceForProject } from '../window-manager/persistence/restore-workspace';
 import { captureRetainedTasks, pruneRetainedTasks, planWindowRetention } from '../window-manager/bridge/retained-task-snapshots';
 import { useWindowStore } from '../window-manager/store/window-store';
+import { showConversationExpiredNotices } from '../lib/conversation-expired-toast';
 
 export function useProjectSwitchEffect(currentProject: Project | null): void {
   // Tracks the project we last rendered so we can snapshot its store
@@ -160,6 +161,12 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       // which is the order a launch restore and an open by folder path take.
       useBoardStore.getState().setConfigWarnings([]);
       void useBoardStore.getState().fetchOpenConfigWarnings(currentProject.id);
+
+      // Expired-conversation notices main held for this project: a launch
+      // restore's recovery reports before the project is current here, and a
+      // background project's whenever it ran. Main hands each out once, so a
+      // switch back never repeats one (lib/conversation-expired-toast.ts).
+      void showConversationExpiredNotices(currentProject.id);
 
       // Arm the bottom terminal panel to render collapsed from the first frame if this project
       // will restore detail windows. `dialogSessionIds` is cleared synchronously just below and

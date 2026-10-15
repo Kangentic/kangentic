@@ -17,8 +17,12 @@ import {
   escapePercentForCmd,
   isBareShellToken,
   isCmdShell,
+  isFishShell,
+  isNushellShell,
   isPowerShellShell,
   isUnixLikeShell,
+  quoteForFish,
+  quoteForNushell,
   sanitizeForPty,
 } from './shell-quote';
 
@@ -31,6 +35,8 @@ import {
 // add a second name for it.
 export {
   isCmdShell,
+  isFishShell,
+  isNushellShell,
   isPowerShellShell,
   isUnixLikeShell,
   sanitizeForPty,
@@ -175,6 +181,7 @@ export function buildSpawnClearPrelude(shellName: string): string {
  * target shell.
  *
  *  - PowerShell: prefix with `& ` call operator, on every platform
+ *  - nushell:    prefix a QUOTED head with `^`, on every platform
  *  - Git Bash:   C:\path → /c/path (Windows only)
  *  - WSL:        C:\path → /mnt/c/path (Windows only)
  *  - cmd:        no conversion
@@ -183,6 +190,10 @@ export function buildSpawnClearPrelude(shellName: string): string {
  * shell `getDefaultShell` returns. Its parser reads a quoted head followed by
  * flags as a string expression and fails ("Unexpected token"), and quoteArg
  * quotes any head outside the bare token set (a Homebrew `node@22` path).
+ *
+ * nushell runs a string as an external command only behind its `^` sigil (the
+ * nushell book, "Strings as external commands"), so the same quoted head needs
+ * it there. Only a quoted head gets it: a bare head is already a command.
  *
  * `platform` is injectable for tests (cross-platform parity); production
  * callers omit it.
@@ -193,6 +204,11 @@ export function adaptCommandForShell(
   platform: NodeJS.Platform = process.platform,
 ): string {
   const lower = shellName.toLowerCase();
+
+  // By program name, ahead of the PowerShell substring gate, as in quoteArg.
+  if (isNushellShell(lower)) {
+    return cmd.startsWith('"') || cmd.startsWith("'") ? '^' + cmd : cmd;
+  }
 
   if (isPowerShellShell(lower)) {
     return '& ' + cmd;
@@ -220,7 +236,12 @@ export function adaptCommandForShell(
  * in Unix-like shells (Git Bash, WSL).
  *
  * When `shell` is provided, quoting style is chosen by shell type:
- *  - Unix-like shells (bash, zsh, fish, WSL): single-quotes (no expansion)
+ *  - POSIX shells (bash, zsh, sh, WSL): single-quotes (no expansion), an
+ *    apostrophe written `'\''`
+ *  - fish: single-quotes with every `\` and `'` backslash-escaped, since fish
+ *    reads `\\` and `\'` inside them (`quoteForFish`)
+ *  - nushell: double-quotes escaping `\` and `"`, since its single quotes have
+ *    no escapes and cannot hold an apostrophe (`quoteForNushell`)
  *  - PowerShell: double-quotes, backtick escaping, backslash left alone
  *  - cmd.exe: double-quotes, a trailing backslash run doubled for the C runtime,
  *    backtick left alone, and each `%` broken out of the quotes so cmd cannot
@@ -241,8 +262,9 @@ export function adaptCommandForShell(
  *
  * Per-shell multi-line strategy (each preserves newlines as a single physical
  * input line so the PTY never has to handle continuation):
- *  - Unix-like shells (bash, zsh, fish, WSL): literal newlines inside `'...'`
- *    are taken as content. POSIX single-quoted strings handle this natively.
+ *  - POSIX shells and fish: literal newlines inside `'...'` are taken as
+ *    content. Single-quoted strings handle this natively.
+ *  - nushell: `\n` / `\t` escapes inside `"..."`, one physical line.
  *  - PowerShell/pwsh: convert `\n`/`\t` to `` `n ``/`` `t `` escape sequences
  *    inside `"..."`. PowerShell continuation via PTY is unreliable (PSReadLine
  *    behaves differently from interactive typing), so we pin everything to one
@@ -273,6 +295,14 @@ export function quoteArg(
   }
   if (isBareShellToken(arg)) {
     return arg;
+  }
+  // Unix-like for paths, but not POSIX for quotes: nushell's single quotes
+  // cannot hold an apostrophe at all, and fish reads `\\` and `\'` inside them.
+  // Decided by program name ahead of the substring gates below, so a fish under
+  // a directory named cmd is still fish.
+  if (shell && (isNushellShell(shell) || isFishShell(shell))) {
+    const source = options?.multiline === true ? arg : sanitizeForPty(arg);
+    return isNushellShell(shell) ? quoteForNushell(source) : quoteForFish(source);
   }
   const useDoubleQuotes = shell
     ? !isUnixLikeShell(shell)

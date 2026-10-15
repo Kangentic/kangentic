@@ -1,27 +1,32 @@
 /**
  * `notifyConversationExpired` (src/main/ipc/helpers/task-git.ts) tells the
  * renderer a task started a new conversation because the agent deleted the one
- * it would have resumed. It has two early returns and one send, and no other
- * test reaches any of them: the spawn paths stub the function as a bare
- * `vi.fn()` and only assert it was called.
+ * it would have resumed. The spawn paths stub the function as a bare `vi.fn()`
+ * and only assert it was called, so its own behavior is pinned here.
  *
- * - While the app is quitting it sends nothing: a quit that closes the DB or
- *   kills a spawn mid-step must not toast on the way out.
- * - With no main window it sends nothing, rather than reading `.isDestroyed()`
- *   off null.
- * - Otherwise it sends `IPC.TASK_CONVERSATION_EXPIRED` with the notice,
- *   unchanged, through `sendToRenderer`.
+ * The notice is QUEUED in main (`pending-conversation-expired.ts`) before the
+ * push, and the renderer drains the queue with `TASK_TAKE_CONVERSATION_EXPIRED`
+ * both when the push names the current project and when a project becomes
+ * current. That is what keeps a startup notice: recovery of the auto-opened
+ * project runs before the renderer has subscribed or knows which project is
+ * current, so a push alone was dropped.
+ *
+ * - While the app is quitting it queues and sends nothing: a quit that closes
+ *   the DB or kills a spawn mid-step must not toast on the way out.
+ * - With no main window it queues the notice and sends nothing. The window is
+ *   unset while startup recovery runs, which used to lose the notice outright.
+ * - Otherwise it queues the notice, then sends `IPC.TASK_CONVERSATION_EXPIRED`
+ *   with it, unchanged, through `sendToRenderer`.
  *
  * `sendToRenderer` is mocked rather than left real. The real one reads
  * `mainWindow.isDestroyed()` first, so with a null window a dropped null check
  * would throw instead of recording a call, and the "no main window" test could
- * not tell a present guard from a missing one by the call record alone. Asserting
- * on the mock isolates this function's own guards.
+ * not tell a present guard from a missing one by the call record alone.
  *
  * Red-green: delete the `isShuttingDown()` line and the shutdown test fails;
- * delete the `!context.mainWindow` line and the no-window test fails (the mocked
- * send is called with a null window); change the channel or the payload and the
- * send test fails.
+ * move the queue below the window guard and the no-window test fails; move it
+ * below the send and the ordering test fails; change the channel or the payload
+ * and the send test fails.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -56,6 +61,12 @@ vi.mock('../../src/main/ipc/send-to-renderer', () => ({
 }));
 
 import { notifyConversationExpired } from '../../src/main/ipc/helpers/task-git';
+import {
+  __resetPendingConversationExpiredForTest,
+  clearConversationExpired,
+  queueConversationExpired,
+  takeConversationExpired,
+} from '../../src/main/ipc/helpers/pending-conversation-expired';
 import { isShuttingDown } from '../../src/main/shutdown-state';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -74,7 +85,8 @@ function makeContext(mainWindow: object | null): IpcContext {
 }
 
 beforeEach(() => {
-  mockSendToRenderer.mockClear();
+  __resetPendingConversationExpiredForTest();
+  mockSendToRenderer.mockReset();
   vi.mocked(isShuttingDown).mockReset();
   vi.mocked(isShuttingDown).mockReturnValue(false);
 });
@@ -89,17 +101,66 @@ describe('notifyConversationExpired', () => {
     expect(mockSendToRenderer).toHaveBeenCalledWith(mainWindow, IPC.TASK_CONVERSATION_EXPIRED, NOTICE);
   });
 
-  it('sends nothing while the app is shutting down', () => {
+  it('queues the notice before the push, so a renderer that takes on the push finds it', () => {
+    let queuedAtPush: ConversationExpiredNotice[] = [];
+    mockSendToRenderer.mockImplementation(() => {
+      queuedAtPush = takeConversationExpired(NOTICE.projectId);
+    });
+
+    notifyConversationExpired(makeContext({ isDestroyed: () => false }), NOTICE);
+
+    expect(queuedAtPush).toEqual([NOTICE]);
+  });
+
+  it('queues the notice when there is no main window yet, and sends nothing', () => {
+    notifyConversationExpired(makeContext(null), NOTICE);
+
+    expect(mockSendToRenderer).not.toHaveBeenCalled();
+    expect(takeConversationExpired(NOTICE.projectId)).toEqual([NOTICE]);
+  });
+
+  it('queues and sends nothing while the app is shutting down', () => {
     vi.mocked(isShuttingDown).mockReturnValue(true);
 
     notifyConversationExpired(makeContext({ isDestroyed: () => false }), NOTICE);
 
     expect(mockSendToRenderer).not.toHaveBeenCalled();
+    expect(takeConversationExpired(NOTICE.projectId)).toEqual([]);
+  });
+});
+
+describe('the pending conversation-expired queue', () => {
+  it('hands each notice out once', () => {
+    queueConversationExpired(NOTICE);
+
+    expect(takeConversationExpired(NOTICE.projectId)).toEqual([NOTICE]);
+    expect(takeConversationExpired(NOTICE.projectId)).toEqual([]);
   });
 
-  it('sends nothing when there is no main window', () => {
-    notifyConversationExpired(makeContext(null), NOTICE);
+  it('keeps each project apart', () => {
+    const otherProjectNotice = { ...NOTICE, projectId: 'project-2', taskId: 'task-9' };
+    queueConversationExpired(NOTICE);
+    queueConversationExpired(otherProjectNotice);
 
-    expect(mockSendToRenderer).not.toHaveBeenCalled();
+    expect(takeConversationExpired('project-2')).toEqual([otherProjectNotice]);
+    expect(takeConversationExpired(NOTICE.projectId)).toEqual([NOTICE]);
+  });
+
+  it('keeps only the latest notice for a task that started over twice', () => {
+    const later = { ...NOTICE, lastActiveAt: '2026-08-01T09:30:00.000Z', messageDropped: false };
+    const otherTask = { ...NOTICE, taskId: 'task-2', taskTitle: 'Another' };
+    queueConversationExpired(NOTICE);
+    queueConversationExpired(otherTask);
+    queueConversationExpired(later);
+
+    expect(takeConversationExpired(NOTICE.projectId)).toEqual([otherTask, later]);
+  });
+
+  it('drops a deleted project\'s notices', () => {
+    queueConversationExpired(NOTICE);
+
+    clearConversationExpired(NOTICE.projectId);
+
+    expect(takeConversationExpired(NOTICE.projectId)).toEqual([]);
   });
 });

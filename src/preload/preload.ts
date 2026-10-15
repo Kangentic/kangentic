@@ -142,6 +142,7 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.TASK_CONVERSATION_EXPIRED, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_CONVERSATION_EXPIRED, handler);
     },
+    takeConversationExpired: (projectId: string) => ipcRenderer.invoke(IPC.TASK_TAKE_CONVERSATION_EXPIRED, projectId),
     onCreatedByAgent: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, taskTitle: string, columnName: string, projectId?: string) =>
         callback(taskId, taskTitle, columnName, projectId);

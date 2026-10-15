@@ -33,6 +33,7 @@ vi.mock('../../src/main/db/database', () => ({
 }));
 
 const { buildWorkflowAgentContinueMessage } = await import('../../src/main/workflows/workflow-agent-prompt');
+const { commandLineLength } = await import('../../src/main/agent/shared/prompt-budget');
 
 const workflow = { id: 'wf-1', title: 'Usage budgets', state: 'draft', revision: 3, brief: null, source_task_id: null } as unknown as Workflow;
 const context = { projectRepo: { getById: () => undefined } } as unknown as IpcContext;
@@ -96,31 +97,30 @@ describe('buildWorkflowAgentContinueMessage', () => {
   });
 
   // The inline budget (INLINE_PROMPT_BUDGET, agent/shared/prompt-budget.ts) counts the
-  // first message and the saved plan together, because both ride the same command
-  // line. A board with many columns or a long custom template fills much of that
-  // line before the plan is added, so a short plan can still push the whole
-  // message past it. The template here has no variables and no whitespace, so the
-  // first message is exactly the template.
-  describe('inline budget (first message plus saved plan)', () => {
+  // whole message as the command line carries it: the first message, the saved
+  // plan, and the lines around the plan. A board with many columns or a long
+  // custom template fills much of that line before the plan is added, so a short
+  // plan can still push the whole message past it. The template here has no
+  // variables and no whitespace, so the first message is exactly the template.
+  describe('inline budget (the whole message, as the command line carries it)', () => {
     const INLINE_BUDGET = 7_000;
     /** cmd.exe's command line limit; the message is only part of the command. */
     const COMMAND_LINE_LIMIT = 8_191;
 
-    /** How long the saved plan is, as the message carries it, for the file's two-task plan. */
-    async function measureSavedPlanLength(): Promise<number> {
+    /** How much the inline message adds to its first message, for the file's two-task plan. */
+    async function measureInlineWrapperLength(): Promise<number> {
       const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'x');
-      const savedPlan = message!.match(/<saved_plan>\n([\s\S]*)\n<\/saved_plan>/)?.[1];
-      expect(savedPlan).toBeDefined();
-      return savedPlan!.length;
+      expect(message).toContain('<saved_plan>');
+      return message!.length - 'x'.length;
     }
 
     it('points the agent at its saved plan when a long template and a short plan together pass the budget', async () => {
-      const planLength = await measureSavedPlanLength();
-      const template = 'x'.repeat(INLINE_BUDGET - planLength + 1);
+      const wrapperLength = await measureInlineWrapperLength();
+      const template = 'x'.repeat(INLINE_BUDGET - wrapperLength + 1);
       // Neither part is over the budget alone, so only counting both can send
       // this to the pointer. Red: a check on the plan by itself keeps it inline.
       expect(template.length).toBeLessThan(INLINE_BUDGET);
-      expect(planLength).toBeLessThan(INLINE_BUDGET);
+      expect(wrapperLength).toBeLessThan(INLINE_BUDGET);
 
       const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template);
 
@@ -130,17 +130,37 @@ describe('buildWorkflowAgentContinueMessage', () => {
       expect(message!.length).toBeLessThan(COMMAND_LINE_LIMIT);
     });
 
-    it('still sends the plan inline when the first message and the plan exactly fill the budget', async () => {
-      const planLength = await measureSavedPlanLength();
-      const template = 'x'.repeat(INLINE_BUDGET - planLength);
+    it('still sends the plan inline when the whole message exactly fills the budget', async () => {
+      const wrapperLength = await measureInlineWrapperLength();
+      const template = 'x'.repeat(INLINE_BUDGET - wrapperLength);
 
       const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template);
 
+      expect(message!.length).toBe(INLINE_BUDGET);
       expect(message!.startsWith(template)).toBe(true);
       expect(message).toContain('<saved_plan>');
       expect(message).toContain('Token table');
       expect(message).not.toContain('kangentic_get_workflow');
-      expect(message!.length).toBeLessThan(COMMAND_LINE_LIMIT);
+    });
+
+    // A cmd host writes each `%` as `"^%"` (escapePercentForCmd), four
+    // characters, so the raw length undercounts what the command line holds.
+    it('measures by command line length, so a message full of % goes to the pointer', async () => {
+      const wrapperLength = await measureInlineWrapperLength();
+      // Small enough that the pointer form fits, large enough that the inline
+      // form does not once each `%` counts four.
+      const percentCount = Math.floor((INLINE_BUDGET - wrapperLength) / 4) + 1;
+      const template = '%'.repeat(percentCount);
+      // Red: by raw length the inline form fits with room to spare.
+      expect(template.length + wrapperLength).toBeLessThan(INLINE_BUDGET);
+      expect(commandLineLength(template) + wrapperLength).toBeGreaterThan(INLINE_BUDGET);
+
+      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template);
+
+      expect(message!.startsWith(template)).toBe(true);
+      expect(message).not.toContain('<saved_plan>');
+      expect(message).toContain('kangentic_get_workflow');
+      expect(commandLineLength(message!)).toBeLessThanOrEqual(INLINE_BUDGET);
     });
   });
 });

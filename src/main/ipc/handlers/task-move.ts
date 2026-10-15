@@ -39,6 +39,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
+import { keepNoticesForLiveTasks, takeConversationExpired } from '../helpers/pending-conversation-expired';
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveReportedEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
@@ -1676,6 +1677,17 @@ export function registerTaskMoveHandlers(context: IpcContext): void {
   // syncSessions() reconciles its spawnProgress map against this so an HMR
   // reload during the brief "Starting agent..." window cannot strand a card.
   ipcMain.handle(IPC.TASK_GET_SPAWN_PROGRESS, () => getInFlightSpawnProgress());
+
+  // Drain a project's queued expired-conversation notices, minus any whose task
+  // was deleted or archived while it waited. Synchronous, so two takes that
+  // race (the push's and a project switch's) split the queue and never both get
+  // the same notice. See pending-conversation-expired.ts.
+  ipcMain.handle(IPC.TASK_TAKE_CONVERSATION_EXPIRED, (_event, projectId: unknown) => {
+    if (typeof projectId !== 'string') return [];
+    const notices = takeConversationExpired(projectId);
+    if (notices.length === 0) return notices;
+    return keepNoticesForLiveTasks(notices, () => getProjectRepos(context, projectId).tasks);
+  });
 
   // Cancel an in-flight spawn (e.g. from the "still preparing" stall toast).
   // Fire-and-forget abort, OUTSIDE any lock - the move's holder observes the
