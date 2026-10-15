@@ -38,7 +38,7 @@ const SESSION_A_ID = 'rail-sess-a';
  */
 async function collapseSidebar(page: Page): Promise<void> {
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-  await page.locator('button[title^="Hide sidebar"]').click();
+  await page.locator('button[aria-label="Hide sidebar"]').click();
   await page.locator('[data-testid="sidebar-expand-button"]').waitFor({ state: 'attached', timeout: 5000 });
 }
 

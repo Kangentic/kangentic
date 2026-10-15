@@ -560,7 +560,7 @@ test.describe('Task Detail move-column hotkeys', () => {
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
     // The dialog opens focused; give it a beat before asserting a negative
     // rather than racing the mount.
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     await resetMoveCount(page);
 
@@ -596,7 +596,7 @@ test.describe('Task Detail move-column hotkeys', () => {
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     // Scoped to the portaled kebab menu (role="menu") with an EXACT match: an
     // unscoped/substring "text=Edit" also matches the board's per-column
     // "Edit <column> column" buttons, which sit earlier in the DOM and win
@@ -642,7 +642,7 @@ test.describe('Task Detail move-column hotkeys', () => {
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     // isTextFieldTarget is DOM-generic (tagName / isContentEditable), so an
     // injected plain <input> is a valid probe for the `when` guard: view mode
@@ -723,7 +723,7 @@ test.describe('Task Detail move-column hotkeys', () => {
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     await resetMoveCount(page);
 
@@ -776,7 +776,7 @@ test.describe('Task Detail move-column hotkeys', () => {
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     const errorMessage = 'boom: simulated spawn failure';
     await page.evaluate((msg) => {
@@ -831,7 +831,7 @@ test.describe('Task Detail move-column hotkeys', () => {
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     await resetMoveCount(page);
     await page.evaluate(() => {
@@ -875,7 +875,7 @@ test.describe('Task Detail move-column hotkeys', () => {
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     await page.evaluate(() => {
       (window as unknown as { __mockPendingChangesResult?: unknown }).__mockPendingChangesResult = {
@@ -935,7 +935,7 @@ test.describe('Task Detail move-column hotkeys', () => {
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
 
     const menu = page.locator('[role="menu"]');
     const moveToTrigger = menu.locator('button', { hasText: 'Move to' });

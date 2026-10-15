@@ -254,6 +254,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
           <button
             onClick={onToggleCollapse}
             className="flex items-center justify-center px-2 py-1.5 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
+            aria-label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`}
             title={`${collapsed ? 'Expand' : 'Collapse'} terminal panel (${terminalPanelCombo})`}
           >
             {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}

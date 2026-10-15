@@ -38,6 +38,7 @@ export function RowActions({
         type="button"
         onClick={() => onViewDetail(taskId)}
         className="p-2 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
+        aria-label="View details"
         title="View details"
         data-testid="view-task-btn"
       >
@@ -49,6 +50,7 @@ export function RowActions({
           type="button"
           onClick={() => onToggleRestore(taskId)}
           className="p-2 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
+          aria-label="Restore to board"
           title="Restore to board"
           data-testid="restore-task-btn"
         >
@@ -67,6 +69,7 @@ export function RowActions({
         type="button"
         onClick={() => onDelete(taskId)}
         className="p-2 text-fg-disabled hover:text-red-400 hover:bg-surface-hover/40 rounded transition-colors"
+        aria-label="Delete task"
         title="Delete task"
         data-testid="delete-task-btn"
       >

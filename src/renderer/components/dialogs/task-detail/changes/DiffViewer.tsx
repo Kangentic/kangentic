@@ -856,6 +856,9 @@ export function DiffViewer({
             <button
               onClick={() => setShowPreview((value) => !value)}
               className={toolbarButtonClass(previewActive)}
+              aria-label={isMarkdown
+                ? (previewActive ? 'Show diff' : 'Preview rendered markdown')
+                : (previewActive ? 'Show text diff' : 'Preview image')}
               title={isMarkdown
                 ? (previewActive ? 'Show diff' : 'Preview rendered markdown')
                 : (previewActive ? 'Show text diff' : 'Preview image')}
@@ -874,6 +877,7 @@ export function DiffViewer({
               <button
                 onClick={() => onViewModeChange('split')}
                 className={toolbarButtonClass(viewMode === 'split')}
+                aria-label="Side by side"
                 title="Side by side"
                 data-testid="diff-view-split"
               >
@@ -882,6 +886,7 @@ export function DiffViewer({
               <button
                 onClick={() => onViewModeChange('inline')}
                 className={toolbarButtonClass(viewMode === 'inline')}
+                aria-label="Stacked"
                 title="Stacked"
                 data-testid="diff-view-inline"
               >
@@ -900,6 +905,7 @@ export function DiffViewer({
               <button
                 onClick={() => navigateChange('prev')}
                 className={toolbarButtonClass(false)}
+                aria-label="Previous change"
                 title={prevChangeCombo ? `Previous change (${prevChangeCombo})` : 'Previous change'}
                 data-testid="diff-prev-change"
               >
@@ -908,6 +914,7 @@ export function DiffViewer({
               <button
                 onClick={() => navigateChange('next')}
                 className={toolbarButtonClass(false)}
+                aria-label="Next change"
                 title={nextChangeCombo ? `Next change (${nextChangeCombo})` : 'Next change'}
                 data-testid="diff-next-change"
               >
@@ -929,6 +936,7 @@ export function DiffViewer({
                   onViewModeChange('split');
                 }}
                 className={toolbarButtonClass(viewMode === 'split')}
+                aria-label="Side by side"
                 title={inlineWhenNarrow ? 'Side by side (a narrow pane renders inline)' : 'Side by side'}
                 data-testid="diff-view-split"
               >
@@ -937,6 +945,7 @@ export function DiffViewer({
               <button
                 onClick={() => onViewModeChange('inline')}
                 className={toolbarButtonClass(viewMode === 'inline')}
+                aria-label="Inline"
                 title="Inline"
                 data-testid="diff-view-inline"
               >

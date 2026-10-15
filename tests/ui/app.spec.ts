@@ -59,9 +59,9 @@ test.describe('App Launch', () => {
   });
 
   test('window control buttons are visible', async () => {
-    await expect(page.locator('button[title="Minimize"]')).toBeVisible();
-    await expect(page.locator('button[title="Maximize"]')).toBeVisible();
-    await expect(page.locator('button[title="Close"]')).toBeVisible();
+    await expect(page.locator('button[aria-label="Minimize"]')).toBeVisible();
+    await expect(page.locator('button[aria-label="Maximize"]')).toBeVisible();
+    await expect(page.locator('button[aria-label="Close"]')).toBeVisible();
   });
 
   test('minimize button calls electronAPI', async () => {
@@ -69,7 +69,7 @@ test.describe('App Launch', () => {
       (window as any).__minimizeCalled = false;
       window.electronAPI.window.minimize = () => { (window as any).__minimizeCalled = true; };
     });
-    await page.locator('button[title="Minimize"]').click();
+    await page.locator('button[aria-label="Minimize"]').click();
     const called = await page.evaluate(() => (window as any).__minimizeCalled);
     expect(called).toBe(true);
   });
@@ -79,7 +79,7 @@ test.describe('App Launch', () => {
       (window as any).__maximizeCalled = false;
       window.electronAPI.window.maximize = () => { (window as any).__maximizeCalled = true; };
     });
-    await page.locator('button[title="Maximize"]').click();
+    await page.locator('button[aria-label="Maximize"]').click();
     const called = await page.evaluate(() => (window as any).__maximizeCalled);
     expect(called).toBe(true);
   });
@@ -89,7 +89,7 @@ test.describe('App Launch', () => {
       (window as any).__closeCalled = false;
       window.electronAPI.window.close = () => { (window as any).__closeCalled = true; };
     });
-    await page.locator('button[title="Close"]').click();
+    await page.locator('button[aria-label="Close"]').click();
     const called = await page.evaluate(() => (window as any).__closeCalled);
     expect(called).toBe(true);
   });
@@ -418,7 +418,7 @@ test.describe('Worktree Title Bar', () => {
     if (await welcomeButton.isVisible()) {
       await welcomeButton.click();
     } else {
-      await page.locator('button[title="Open folder as project"]').click();
+      await page.locator('[data-testid="sidebar-new-project-button"]').click();
     }
     await dismissOnboardingChecklist(page);
     await waitForBoard(page);

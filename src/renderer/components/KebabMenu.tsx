@@ -80,6 +80,7 @@ export function KebabMenu({ children, icon, title = 'Actions', triggerClassName,
         onClick={() => setOpen(!open)}
         className={triggerClassName ?? DEFAULT_TRIGGER_CLASS}
         title={title}
+        aria-label={title}
         aria-expanded={open}
         data-testid={triggerTestId}
       >

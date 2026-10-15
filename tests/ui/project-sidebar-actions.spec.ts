@@ -27,9 +27,9 @@ test.describe('Project Sidebar Actions', () => {
 
     // The "Quiet" redesign removed all per-row hover icons. All actions live
     // on the right-click context menu only.
-    await expect(sidebar.locator('button[title="Open in file explorer"]')).toHaveCount(0);
-    await expect(sidebar.locator('button[title="Project settings"]')).toHaveCount(0);
-    await expect(sidebar.locator('button[title="Delete project"]')).toHaveCount(0);
+    await expect(sidebar.locator('button[aria-label="Open in file explorer"]')).toHaveCount(0);
+    await expect(sidebar.locator('button[aria-label="Project settings"]')).toHaveCount(0);
+    await expect(sidebar.locator('button[aria-label="Delete project"]')).toHaveCount(0);
   });
 
   test('context menu shows core actions without groups', async () => {

@@ -215,7 +215,7 @@ async function openDetailWindow(page: Page, taskId: string): Promise<string> {
 /** The kebab popover is portaled to document.body, so its items are located on
  *  the page, not inside the window frame. */
 async function openKebab(page: Page, windowId: string): Promise<void> {
-  await page.locator(`[data-testid="window-frame-${windowId}"] button[title="Actions"]`).click();
+  await page.locator(`[data-testid="window-frame-${windowId}"] button[aria-label="Actions"]`).click();
   // The menu really opened: an item that is rendered unconditionally, so an
   // absent "Update from base" item below cannot just be a menu that never
   // appeared.
@@ -223,7 +223,7 @@ async function openKebab(page: Page, windowId: string): Promise<void> {
 }
 
 async function closeKebab(page: Page, windowId: string): Promise<void> {
-  await page.locator(`[data-testid="window-frame-${windowId}"] button[title="Actions"]`).click();
+  await page.locator(`[data-testid="window-frame-${windowId}"] button[aria-label="Actions"]`).click();
   await expect(page.locator('[data-testid="view-conversation-btn"]')).toHaveCount(0);
 }
 

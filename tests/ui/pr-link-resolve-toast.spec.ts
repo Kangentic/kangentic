@@ -228,7 +228,7 @@ test.afterAll(async () => {
 /** Open the task detail dialog's kebab menu and click the "Link PR" entry. */
 async function clickLinkPr(): Promise<void> {
   const dialog = page.locator('[data-testid="task-detail-dialog"]');
-  await dialog.locator('[title="Actions"]').click();
+  await dialog.locator('[aria-label="Actions"]').click();
   // exact: true is load-bearing: the task's own description text ("...the
   // Link PR degrade-toast test") makes the board card's aggregated
   // accessible name a SUBSTRING match for a non-exact "Link PR" query too.
@@ -497,7 +497,7 @@ test.describe('Link/Refresh PR kebab item: pushed_branch and pr_number anchors',
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     const linkPrItem = page.getByRole('button', { name: 'Link PR', exact: true });
     await expect(linkPrItem).toBeVisible();
 
@@ -526,7 +526,7 @@ test.describe('Link/Refresh PR kebab item: pushed_branch and pr_number anchors',
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     const linkPrItem = page.getByRole('button', { name: 'Link PR', exact: true });
     await expect(linkPrItem).toBeVisible();
 
@@ -544,7 +544,7 @@ test.describe('Link/Refresh PR kebab item: pushed_branch and pr_number anchors',
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     // Positive anchor first: "View conversation" always renders in this menu
     // (only its disabled state varies), so this proves the kebab actually
     // opened before the absence check below is trusted. Without it, a broken

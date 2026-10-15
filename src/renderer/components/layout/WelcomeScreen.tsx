@@ -84,6 +84,7 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
                     <button
                       className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
                       onClick={handleCopy}
+                      aria-label={`Copy "${loginCommand}" to clipboard`}
                       title={`Copy "${loginCommand}" to clipboard`}
                       data-testid={testId ? `${testId}-copy-login` : undefined}
                     >

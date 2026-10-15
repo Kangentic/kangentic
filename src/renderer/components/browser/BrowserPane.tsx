@@ -846,6 +846,7 @@ function BrowserPaneActive({
           onClick={() => webviewRef.current?.goBack()}
           disabled={!canGoBack}
           className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
+          aria-label="Back"
           title={canGoBack ? 'Back' : 'No earlier page'}
         >
           <ArrowLeft size={14} />
@@ -855,6 +856,7 @@ function BrowserPaneActive({
           onClick={() => webviewRef.current?.goForward()}
           disabled={!canGoForward}
           className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
+          aria-label="Forward"
           title={canGoForward ? 'Forward' : 'No forward page'}
         >
           <ArrowRight size={14} />
@@ -863,6 +865,7 @@ function BrowserPaneActive({
           type="button"
           onClick={() => webviewRef.current?.reload()}
           className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors"
+          aria-label="Reload"
           title="Reload (F5 / Ctrl+R)"
         >
           <RotateCcw size={14} />

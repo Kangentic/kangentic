@@ -237,7 +237,7 @@ test.describe('Close browser', () => {
     await expect.poll(() => visibilityReports(sharedPage, MOCK_WEB_CONTENTS_ID), { timeout: 5000 }).toEqual(['showing', 'hidden']);
 
     // The pane's own control is unreachable now; the kebab is the reach.
-    await sharedPage.locator('[data-testid="task-detail-dialog"] button[title="Actions"]').first().click();
+    await sharedPage.locator('[data-testid="task-detail-dialog"] button[aria-label="Actions"]').first().click();
     await sharedPage.locator('[data-testid="kebab-close-browser"]').click();
 
     await expect.poll(async () => (await callsOfType(sharedPage, 'user-close', MOCK_WEB_CONTENTS_ID)).length, { timeout: 5000 }).toBe(1);

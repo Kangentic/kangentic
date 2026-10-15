@@ -120,6 +120,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     panelMode === 'split' && onExpand ? (
       <button
         onClick={onExpand}
+        aria-label="Expand changes"
         title="Expand changes"
         className="p-1.5 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
         data-testid="changes-expand"
@@ -129,6 +130,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     ) : panelMode === 'expanded' && onCollapse ? (
       <button
         onClick={onCollapse}
+        aria-label="Collapse to split view"
         title="Collapse to split view"
         className="p-1.5 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
         data-testid="changes-collapse"
@@ -939,6 +941,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         <button
           type="button"
           onClick={handleSelectUncommitted}
+          aria-label="Back to Uncommitted changes"
           title="Back to Uncommitted changes"
           className="p-1 -ml-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors flex-shrink-0"
           data-testid="commit-detail-back"

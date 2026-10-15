@@ -207,7 +207,7 @@ test.describe('PR link: state badge and clickable affordance', () => {
       };
     });
 
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     const viewPrItem = page.getByRole('button', { name: 'View PR #287' });
     await expect(viewPrItem).toBeVisible();
     await viewPrItem.click();
@@ -299,7 +299,7 @@ test.describe('PR merge readiness folds into the state chip', () => {
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.getByRole('button', { name: 'Refresh PR', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'View PR #301', exact: true })).toBeVisible();
 

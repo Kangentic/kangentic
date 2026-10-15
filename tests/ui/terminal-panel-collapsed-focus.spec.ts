@@ -121,7 +121,7 @@ test('a collapsed terminal panel drops its session from the focused set', async 
     await expect.poll(() => latestFocusedSet(page), { timeout: 10000 }).toContain(SESSION_ID);
 
     // Collapse via the real chevron, the way a user does.
-    await page.locator('button[title^="Collapse terminal panel"]').click();
+    await page.locator('button[aria-label="Collapse terminal panel"]').click();
     // The panel unmounts its terminal ~200ms after the collapse starts (the height
     // animation), and the focused set is republished off that.
     await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'hidden', timeout: 10000 });
@@ -129,7 +129,7 @@ test('a collapsed terminal panel drops its session from the focused set', async 
     await expect.poll(() => latestFocusedSet(page), { timeout: 10000 }).not.toContain(SESSION_ID);
 
     // Expanding brings it back, or the terminal would stay silent after reopening.
-    await page.locator('button[title^="Expand terminal panel"]').click();
+    await page.locator('button[aria-label="Expand terminal panel"]').click();
     await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'visible', timeout: 10000 });
     await expect.poll(() => latestFocusedSet(page), { timeout: 10000 }).toContain(SESSION_ID);
   } finally {

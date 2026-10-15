@@ -92,6 +92,7 @@ export function HotkeyRow({
           <button
             onClick={onReset}
             disabled={!isCustom}
+            aria-label="Reset to default"
             title={isCustom ? 'Reset to default' : 'Already default'}
             data-testid={`hotkey-reset-${definition.id}`}
             className="w-7 h-7 flex items-center justify-center rounded text-fg-faint hover:text-fg-secondary hover:bg-surface-hover disabled:opacity-30 disabled:cursor-default transition-colors"

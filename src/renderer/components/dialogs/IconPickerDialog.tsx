@@ -75,6 +75,7 @@ export function IconPickerDialog({
                   ? 'border-white bg-surface-hover'
                   : 'border-transparent text-fg-muted hover:text-fg-secondary hover:bg-surface-raised'
               }`}
+              aria-label="None"
               title="None"
             >
               <div
@@ -101,6 +102,7 @@ export function IconPickerDialog({
                       ? 'border-white bg-surface-hover'
                       : 'border-transparent text-fg-muted hover:text-fg-secondary hover:bg-surface-raised'
                 }`}
+                aria-label={entry.label}
                 title={entry.label}
               >
                 <entry.component

@@ -456,7 +456,7 @@ test('re-expanding the bottom panel focuses its terminal while a detail window i
     // Collapsing UNMOUNTS the panel's TerminalTab (`showContent`), so expanding
     // mounts a fresh one - an arrival, competing with a detail window that still
     // holds window-layer focus.
-    await page.locator('button[title^="Collapse terminal panel"]').click({ timeout: STEP_TIMEOUT_MS });
+    await page.locator('button[aria-label="Collapse terminal panel"]').click({ timeout: STEP_TIMEOUT_MS });
     // DETACHED, not `hidden`. The panel's 200ms height transition clips this
     // pane to zero size, which satisfies `hidden`, before useTerminalResize's
     // separate 200ms `hide-after-collapse` timer unmounts it. An Expand clicked
@@ -466,7 +466,7 @@ test('re-expanding the bottom panel focuses its terminal while a detail window i
     // reproduced by clicking Collapse and Expand back to back.
     await fallbackPane.waitFor({ state: 'detached', timeout: STEP_TIMEOUT_MS });
 
-    await page.locator('button[title^="Expand terminal panel"]').click({ timeout: STEP_TIMEOUT_MS });
+    await page.locator('button[aria-label="Expand terminal panel"]').click({ timeout: STEP_TIMEOUT_MS });
 
     // The pane does not exist until the 200ms collapse/expand height
     // transition ends and `showContent` flips true (`resolveContentAction`'s

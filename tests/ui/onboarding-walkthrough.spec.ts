@@ -40,7 +40,7 @@ async function createProjectKeepingChecklist(page: Page, name: string): Promise<
   }, name);
 
   const welcomeButton = page.locator('[data-testid="welcome-open-project"]');
-  const sidebarButton = page.locator('button[title="Open folder as project"]');
+  const sidebarButton = page.locator('[data-testid="sidebar-new-project-button"]');
   if (await welcomeButton.isVisible()) await welcomeButton.click();
   else await sidebarButton.click();
 

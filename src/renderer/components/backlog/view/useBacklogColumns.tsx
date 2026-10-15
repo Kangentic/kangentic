@@ -92,6 +92,7 @@ export function useBacklogColumns(input: {
                   event.stopPropagation();
                   window.electronAPI.shell.openExternal(item.external_url!);
                 }}
+                aria-label={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}
                 title={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}
               >
                 {item.external_source?.startsWith('github') ? <GitHubIcon size={13} /> : <ExternalLink size={13} />}

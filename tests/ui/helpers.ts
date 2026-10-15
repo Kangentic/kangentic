@@ -501,8 +501,13 @@ export async function computedColor(page: Page, cssColor: string, property: 'col
 /**
  * Launch a headless Chromium page with the electronAPI mock injected.
  * The Vite dev server must be running (started by playwright webServer config).
+ *
+ * `beforeLoad` runs after the mock is injected and before the app loads, for a
+ * spec that needs its own init script in place before React renders.
  */
-export async function launchPage(): Promise<{ browser: Browser; page: Page }> {
+export async function launchPage(
+  options: { beforeLoad?: (page: Page) => Promise<void> } = {},
+): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -513,6 +518,7 @@ export async function launchPage(): Promise<{ browser: Browser; page: Page }> {
 
   // Inject the mock before any page scripts run
   await page.addInitScript({ path: MOCK_SCRIPT });
+  if (options.beforeLoad) await options.beforeLoad(page);
 
   await gotoVite(page);
   await page.waitForLoadState('load');
@@ -548,7 +554,7 @@ export async function createProject(
   // When no projects exist the sidebar is hidden and the welcome screen
   // provides the "Open a Project" button. Otherwise use the sidebar button.
   const welcomeButton = page.locator('[data-testid="welcome-open-project"]');
-  const sidebarButton = page.locator('button[title="Open folder as project"]');
+  const sidebarButton = page.locator('[data-testid="sidebar-new-project-button"]');
 
   if (await welcomeButton.isVisible()) {
     await welcomeButton.click();

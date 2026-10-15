@@ -166,6 +166,7 @@ function SortableActionItem({
         <button
           onClick={(event) => { event.stopPropagation(); onRemove(); }}
           className="p-1 text-fg-disabled hover:text-red-400 transition-colors"
+          aria-label="Remove"
           title="Remove"
         >
           <Trash2 size={14} />

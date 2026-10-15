@@ -603,7 +603,7 @@ test('Workflows folds the project sidebar, and leaving restores it at the width 
 
     // A sidebar the user had closed stays closed in and out.
     await page.locator('[data-testid="view-toggle-board"]').click();
-    await page.locator('button[title^="Hide sidebar"]').click();
+    await page.locator('button[aria-label="Hide sidebar"]').click();
     await expect(sidebar).toHaveAttribute('data-open', 'false');
     await page.locator('[data-testid="view-toggle-workflows"]').click();
     await page.locator('[data-testid="view-toggle-board"]').click();

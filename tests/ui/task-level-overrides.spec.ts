@@ -285,7 +285,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     // Close via the chevron toggle. Escape would do the same now (an open menu
     // consumes it; see combobox-escape-layering.spec.ts), but the chevron is
     // scoped to this one combobox's state, which is the thing under test.
-    await effortRow.locator('button[title="Close dropdown"]').click();
+    await effortRow.locator('button[aria-label="Close dropdown"]').click();
     await expect(effortOptions.first()).not.toBeVisible();
 
     // Model: free-text combobox seeded by `useKnownModels` (capabilities.models
@@ -303,7 +303,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     await expect(modelOptions.first()).toBeVisible();
     const modelOptionTexts = await modelOptions.allTextContents();
     expect(modelOptionTexts).toEqual(expect.arrayContaining(['opus', 'sonnet', 'haiku']));
-    await modelRow.locator('button[title="Close dropdown"]').click();
+    await modelRow.locator('button[aria-label="Close dropdown"]').click();
 
     await discardDialog(page);
   });
@@ -320,7 +320,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     // Edits", shown bare (no "Inherit (...)" framing): the muted weight plus
     // the absent clear-X are the inherited-not-pinned signals.
     await expect(permissionInput).toHaveAttribute('placeholder', 'Accept Edits');
-    await expect(permissionRow.locator('button[title="Clear"]')).toHaveCount(0);
+    await expect(permissionRow.locator('button[aria-label="Clear"]')).toHaveCount(0);
 
     await permissionInput.click();
     const permissionOptions = page.locator('[data-combobox-option]');
@@ -329,7 +329,7 @@ test.describe('NewTaskDialog Advanced section', () => {
 
     // A concrete pick shows the bare value at full weight with a visible clear button.
     await expect(permissionInput).toHaveValue('Plan (Read-Only)');
-    await expect(permissionRow.locator('button[title="Clear"]')).toBeVisible();
+    await expect(permissionRow.locator('button[aria-label="Clear"]')).toBeVisible();
 
     // The form is now dirty (a real override was committed): Escape opens the discard confirm.
     await page.keyboard.press('Escape');
@@ -559,7 +559,7 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
     await expect(page.locator('input[data-testid="task-model-override"]')).toHaveValue('haiku');
 
-    await page.locator('button[title="Clear"]').click();
+    await page.locator('button[aria-label="Clear"]').click();
     await expect(page.locator('input[data-testid="task-model-override"]')).toHaveValue('');
 
     await page.locator('button:has-text("Save")').click();
@@ -1174,11 +1174,11 @@ test.describe('NewTaskDialog Advanced - Model dropdown open triggers a rescan', 
     // Effort/Permission/Agent are the same Combobox widget and render an
     // identically-titled toggle button.
     const modelRow = rescanPage.locator('div:has(> input[data-testid="task-model-override"])');
-    const chevronToggle = modelRow.locator('button[title="Close dropdown"]');
+    const chevronToggle = modelRow.locator('button[aria-label="Close dropdown"]');
     await chevronToggle.click();
     await expect(modelOptions.first()).not.toBeVisible();
 
-    const reopenToggle = modelRow.locator('button[title="Open dropdown"]');
+    const reopenToggle = modelRow.locator('button[aria-label="Open dropdown"]');
     await reopenToggle.click();
     await expect(modelOptions.first()).toBeVisible();
 
@@ -1637,10 +1637,10 @@ test.describe('placeholderVariant: muted vs resolved', () => {
     // signal that actually separates "not pinned" from "pinned", since the
     // muted placeholder alone is no longer visible once a value is set.
     const effortRow = variantPage.locator('div:has(> input[data-testid="task-effort-override"])');
-    await expect(effortRow.locator('button[title="Clear"]')).toHaveCount(0);
+    await expect(effortRow.locator('button[aria-label="Clear"]')).toHaveCount(0);
     await selectCombobox(variantPage, 'task-effort-override', 'high');
     await expect(taskEffortInput).toHaveValue('high');
-    await expect(effortRow.locator('button[title="Clear"]')).toBeVisible();
+    await expect(effortRow.locator('button[aria-label="Clear"]')).toBeVisible();
 
     // A real override was committed, so the form is dirty: Escape opens the
     // discard confirm instead of closing directly.
@@ -1975,7 +1975,7 @@ test.describe('NewTaskDialog run-mode choice (profiles fixture)', () => {
     const editMenuItem = profilePage
       .locator('button:has-text("Edit")')
       .filter({ has: profilePage.locator('.lucide-pencil') });
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(editMenuItem).toBeVisible({ timeout: 5000 });
     await editMenuItem.click();
     await expect(dialog.locator('[data-testid="task-run-mode"]')).toBeVisible({ timeout: 5000 });
@@ -2368,7 +2368,7 @@ test.describe('TaskDetailEditForm save gate: run_mode + pins omitted while a ses
     const dialog = gatedPage.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     const editMenuItem = gatedPage
       .locator('button:has-text("Edit")')
       .filter({ has: gatedPage.locator('.lucide-pencil') });

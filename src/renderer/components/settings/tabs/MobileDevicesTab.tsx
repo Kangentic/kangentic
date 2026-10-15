@@ -675,6 +675,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                         <button
                           type="button"
                           className="shrink-0 rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
+                          aria-label="Save name"
                           title="Save name"
                           onClick={() => void commitRename(device.deviceId)}
                         >
@@ -683,6 +684,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                         <button
                           type="button"
                           className="shrink-0 rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
+                          aria-label="Cancel"
                           title="Cancel"
                           onClick={() => setRenamingDeviceId(null)}
                         >
@@ -701,6 +703,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                           <button
                             type="button"
                             className="rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
+                            aria-label="Rename"
                             title="Rename"
                             data-testid="mobile-device-rename"
                             onClick={() => startRename(device)}
@@ -710,6 +713,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                           <button
                             type="button"
                             className="rounded p-1.5 text-fg-faint hover:text-danger hover:bg-danger/10 transition-colors"
+                            aria-label="Revoke"
                             title="Revoke"
                             data-testid="mobile-device-revoke"
                             onClick={() => setRevokeTarget({ deviceId: device.deviceId, displayName: device.displayName })}

@@ -32,6 +32,7 @@ export function BacklogRowActions({
           type="button"
           onClick={() => setShowPicker(!showPicker)}
           className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
+          aria-label="Move to board"
           title="Move to board"
           data-testid="move-to-board-btn"
         >
@@ -53,6 +54,7 @@ export function BacklogRowActions({
         type="button"
         onClick={() => onEdit(itemId)}
         className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
+        aria-label="Edit item"
         title="Edit item"
         data-testid="edit-item-btn"
       >
@@ -62,6 +64,7 @@ export function BacklogRowActions({
         type="button"
         onClick={() => onDelete(itemId)}
         className="p-1.5 text-fg-disabled hover:text-red-400 hover:bg-surface-hover/40 rounded transition-colors"
+        aria-label="Delete item"
         title="Delete item"
         data-testid="delete-item-btn"
       >

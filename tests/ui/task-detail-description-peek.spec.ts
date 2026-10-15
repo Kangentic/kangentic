@@ -355,12 +355,12 @@ test.describe('Task Detail description peek', () => {
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible();
 
     // Open kebab and click "Show description"
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await page.locator('text=Show description').click();
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
 
     // Open kebab again -> item now reads "Hide description"
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Hide description')).toBeVisible({ timeout: 5000 });
     await page.locator('text=Hide description').click();
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible({ timeout: 8000 });
@@ -386,10 +386,10 @@ test.describe('Task Detail description peek', () => {
 
     // Give the header time to render before asserting a negative (no element
     // ever appears rather than "hasn't appeared yet").
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     // No "Show description" item in the kebab menu.
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Show description')).toHaveCount(0);
 
     // Close the dialog
@@ -444,10 +444,10 @@ test.describe('Task Detail description peek', () => {
 
     // Give the header time to render before asserting a negative (no element
     // ever appears rather than "hasn't appeared yet").
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     // No "Show description" item in the kebab menu, despite the task having a description.
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Show description')).toHaveCount(0);
 
     // Close the dialog
@@ -473,10 +473,10 @@ test.describe('Task Detail description peek', () => {
 
     // Give the header time to render before asserting a negative (no element
     // ever appears rather than "hasn't appeared yet").
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
 
     // No "Show description" item in the kebab menu, despite the task having a description.
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Show description')).toHaveCount(0);
 
     // Close the dialog
@@ -525,13 +525,13 @@ test.describe('Task Detail description peek', () => {
 
     // Open the peek via the kebab menu item - description appears, probed
     // node must still be the same one.
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await page.locator('text=Show description').click();
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
     await expect(probedTextarea).toHaveCount(1);
 
     // Close the peek via the kebab menu item - description hides, probed node still unchanged.
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await page.locator('text=Hide description').click();
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible({ timeout: 8000 });
     await expect(probedTextarea).toHaveCount(1);
@@ -590,7 +590,7 @@ test.describe('Task Detail description peek', () => {
     // 'none'/'exited'), which INCLUDES 'preparing'. A regression that gated
     // canShowDescription on a live session?.id (like canShowBrowser does)
     // would hide this item and fail this assertion.
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Show description')).toBeVisible({ timeout: 5000 });
     await page.locator('text=Show description').click();
 
@@ -607,7 +607,7 @@ test.describe('Task Detail description peek', () => {
     await expect(overlaySpinner).toBeVisible();
 
     // Toggle back off via the kebab.
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Hide description')).toBeVisible({ timeout: 5000 });
     await page.locator('text=Hide description').click();
     await expect(descriptionPanel).not.toBeVisible({ timeout: 8000 });
@@ -637,7 +637,7 @@ test.describe('Task Detail description peek', () => {
     const runningDialog = page.locator('[data-testid="task-detail-dialog"]');
     await runningDialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await runningDialog.locator('[title="Actions"]').click();
+    await runningDialog.locator('[aria-label="Actions"]').click();
     await page.locator('text=Show description').click();
 
     // During an active session the peek is a right-hand side panel (parity
@@ -715,19 +715,19 @@ test.describe('Task Detail description peek', () => {
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
-    await dialog.locator('[title="Actions"]').click();
+    await expect(dialog.locator('[aria-label="Actions"]')).toBeVisible({ timeout: 8000 });
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Show description')).toBeVisible({ timeout: 5000 });
 
     // Toggle it open: the panel renders the priority badge ("High"), not any
     // description text, since task.description is empty. The task-detail
     // TITLE BAR also always shows a PriorityBadge (unconditionally, not
-    // gated on the peek), so a bare `[title="High"]` locator resolves to two
+    // gated on the peek), so a bare "High" text locator resolves to two
     // elements - scope to the description-peek side panel specifically to
     // target only the panel's copy.
     const descriptionContainer = dialog.locator('[data-testid="task-detail-description-panel"]');
     await page.locator('text=Show description').click();
-    await expect(descriptionContainer.locator('[title="High"]')).toBeVisible({ timeout: 8000 });
+    await expect(descriptionContainer.getByText('High', { exact: true })).toBeVisible({ timeout: 8000 });
 
     // Close the dialog (active session -> Control+Shift+W, not Escape).
     await page.keyboard.press('Control+Shift+W');
@@ -760,7 +760,7 @@ test.describe('Task Detail description peek', () => {
     await expect(dialog.locator('[data-testid="task-detail-split-divider"]')).toBeVisible();
 
     // Open the description peek via the kebab - this must close Changes.
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Show description')).toBeVisible({ timeout: 5000 });
     await page.locator('text=Show description').click();
 

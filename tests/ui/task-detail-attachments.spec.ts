@@ -101,7 +101,7 @@ test.describe('Task detail attachment chips', () => {
     await expect(dialog.locator('[data-testid="attachment-chip"]')).toBeVisible({ timeout: 5000 });
 
     // Enter edit mode via the kebab menu's "Edit" item (TaskDetailHeader).
-    await dialog.locator('[title="Actions"]').click();
+    await dialog.locator('[aria-label="Actions"]').click();
     await page.getByRole('button', { name: 'Edit', exact: true }).click();
 
     const editChip = dialog.locator('[data-testid="attachment-chip"]');

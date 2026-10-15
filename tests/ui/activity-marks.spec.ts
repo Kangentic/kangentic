@@ -297,7 +297,7 @@ test.describe('Activity marks', () => {
       await page.locator('text=Mark Test Task').first().click();
       const dialog = page.locator('[data-testid="task-detail-dialog"]');
       await dialog.waitFor({ state: 'visible', timeout: 5000 });
-      const pauseButton = dialog.locator('button[title="Pause session"]');
+      const pauseButton = dialog.locator('button[aria-label="Pause session"]');
       const ring = pauseButton.locator('[data-mark="control-pause-working"]');
       await expect(ring).toBeVisible({ timeout: 10000 });
 

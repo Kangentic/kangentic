@@ -788,9 +788,9 @@ test('Command Terminal: in a short window the command palette caps itself to the
     const maximizeButton = commandWindow.getByTestId('command-bar-maximize');
     await maximizeButton.click();
     await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
-    const kebabButton = commandWindow.locator('button[title="Actions"]');
+    const kebabButton = commandWindow.locator('button[aria-label="Actions"]');
     // The palette anchors to the wrapper around the kebab button, not the button.
-    const kebabAnchor = commandWindow.locator('div:has(> div > button[title="Actions"])');
+    const kebabAnchor = commandWindow.locator('div:has(> div > button[aria-label="Actions"])');
     await expect(kebabButton).toBeVisible({ timeout: 3000 });
     await shortenWindowUnder(page, kebabAnchor, PALETTE_ROOM_BELOW_TRIGGER_PX);
 
@@ -803,7 +803,7 @@ test('Command Terminal: in a short window the command palette caps itself to the
     await waitForMenuEntrance(palette);
 
     const geometry = await readMenuGeometry(page, {
-      trigger: '[data-testid="command-terminal-window"] div:has(> div > button[title="Actions"])',
+      trigger: '[data-testid="command-terminal-window"] div:has(> div > button[aria-label="Actions"])',
       menu: '[data-testid="command-palette-popover"]',
       scroller: '.overflow-y-auto',
     });

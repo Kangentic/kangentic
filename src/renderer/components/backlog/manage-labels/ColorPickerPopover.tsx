@@ -112,6 +112,7 @@ export function ColorPickerPopover({
                 : 'border-edge-input hover:border-fg-muted bg-surface-raised'
           }`}
           style={isCustomColor ? { backgroundColor: color } : undefined}
+          aria-label="Custom color"
           title="Custom color"
         >
           <Palette size={10} className={isCustomColor ? 'text-white' : 'text-fg-muted'} />
