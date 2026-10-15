@@ -51,5 +51,6 @@ export function workflowAgentSessionRecord(input: {
     last_pty_cols: null,
     last_pty_rows: null,
     result_tokens_read_at: null,
+    transcript_path: null,
   };
 }

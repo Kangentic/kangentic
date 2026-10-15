@@ -71,6 +71,9 @@ export const IPC = {
   // could not be freshened (network/credential fetch failure).
   TASK_SPAWN_WARNING: 'task:spawnWarning',
   TASK_AUTO_COMMAND_RESULT: 'task:autoCommandResult',
+  // A resume found the agent had deleted the conversation, so the task started
+  // a new one with a recap (`ConversationExpiredNotice`).
+  TASK_CONVERSATION_EXPIRED: 'task:conversationExpired',
   TASK_SPAWN_PROGRESS: 'task:spawnProgress',
   TASK_GET_SPAWN_PROGRESS: 'task:getSpawnProgress',
   TASK_UPDATE_FROM_BASE: 'task:updateFromBase',

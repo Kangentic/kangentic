@@ -29,6 +29,9 @@ import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
 import { sanitizeForPty } from '../../src/shared/paths';
 import { migrateResumeCwdIfRenamed } from '../../src/main/transition-engine/resume-cwd-migration';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
+import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
+import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+import type { ConversationExpiredNotice } from '../../src/shared/types';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
 import { AgentCliNotFoundError, agentCliNotFoundMessage } from '../../src/main/agent/shared/agent-cli-not-found';
@@ -81,7 +84,7 @@ function makeSessionRepo() {
     // below). Every other test's mockAdapter has no runtime, so the reconcile
     // returns before ever calling this.
     updateAgentSessionId: vi.fn(),
-    // The conversation lineage isResumeConversationAbsent walks on a resume:
+    // The conversation lineage assessResumeConversation walks on a resume:
     // every record sharing the resumed agent_session_id, newest first. Empty
     // here, so the guard falls back to the retiring record alone and finds no
     // report, which is its "unknown, resume as before" path.
@@ -194,6 +197,9 @@ const mockAdapter = {
   // undefined in its afterEach so it never leaks into other describes.
   runtime: undefined as { statusFile?: { parseStatus: (raw: string) => SessionUsage | null } } | undefined,
   locateSessionHistoryFile: vi.fn(async (_agentSessionId: string, _cwd: string): Promise<string | null> => null),
+  // Undefined by default, so no resume is ever proven expired; the
+  // expired-conversation describe below sets Claude's real proof and resets it.
+  proveConversationGone: undefined as AgentAdapter['proveConversationGone'],
 };
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -288,6 +294,8 @@ function makeEngine(options: {
    * overrides this to a real mkdtemp dir so reconcileResumeAgentSessionId's
    * unmocked fs.readFileSync can read a real status.json. */
   projectPath?: string;
+  /** The engine's injected services (the expired-conversation describe passes a notice sink). */
+  services?: ConstructorParameters<typeof TransitionEngine>[8];
 }) {
   const sessionManager = options.sessionManager ?? makeSessionManager();
   const sessionRepo = options.sessionRepo ?? makeSessionRepo();
@@ -325,6 +333,9 @@ function makeEngine(options: {
     getConfig as unknown as EngineArgs[3],
     sessionRepo as unknown as EngineArgs[4],
     attachmentRepo as unknown as EngineArgs[5],
+    undefined,
+    undefined,
+    options.services,
   );
 
   /**
@@ -1185,8 +1196,8 @@ describe('TransitionEngine - MCP caller-session URL stamping (executeSpawnAgent 
 describe('TransitionEngine - resume downgraded to fresh when the conversation was never persisted (executeSpawnAgent chokepoint)', () => {
   // Coverage hole (review): executeSpawnAgent's downgrade path RE-RESOLVES the
   // spawn intent (`resolveSpawnIntent({ ...spawnIntentOptions, forceFresh: true })`)
-  // when isResumeConversationAbsent proves a resumable match never persisted a
-  // conversation, rather than flipping a `canResume` boolean on the
+  // when assessResumeConversation answers `never-started` for a resumable
+  // match, rather than flipping a `canResume` boolean on the
   // already-resolved resume intent. resolveSpawnIntent's own forceFresh
   // contract is unit-pinned in spawn-intent.test.ts; what is untested here is
   // the WIRING - that a real resumable record whose status.json proves a
@@ -1198,7 +1209,7 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
   // the zero-turn conversation the guard exists to prevent.
   //
   // Uses a REAL mkdtemp projectPath (like the reconcile-wiring describe above)
-  // because isResumeConversationAbsent reads a real status.json from disk; this
+  // because assessResumeConversation reads a real status.json from disk; this
   // file's node:fs mock stubs mkdirSync only, so fs.promises.mkdir +
   // fs.writeFileSync below reach the real filesystem.
   const RECORD_ID = 'poisoned-record-1';
@@ -1209,8 +1220,8 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
   /** The exact reported state a session that ended before its first turn
    * leaves behind: a named transcript_path that was never written, and zero
    * cost/token usage. Mirrors resume-conversation-guard.test.ts's identical
-   * fixture, which pins that this shape makes isResumeConversationAbsent
-   * resolve true. Takes the record id so the lineage-walk test below can
+   * fixture, which pins that this shape makes assessResumeConversation
+   * resolve `never-started`. Takes the record id so the lineage-walk test below can
    * write it under an OLDER record than the one being retired. */
   async function writeEmptyStatusFile(recordId: string): Promise<void> {
     const sessionDir = path.join(projectPath, '.kangentic', 'sessions', recordId);
@@ -1349,6 +1360,185 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
     // forever.
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.prompt).toContain('Fix login flow');
+  });
+});
+
+describe('TransitionEngine - a resume whose conversation the agent deleted starts fresh from a recap (executeSpawnAgent chokepoint)', () => {
+  // Claude Code deletes transcripts older than `cleanupPeriodDays`. A resume of
+  // one printed "No conversation found" and left a bare shell. Now the check
+  // proves the file gone before the spawn, and the same spawn starts fresh.
+  // Uses a REAL mkdtemp root: the check reads a real status.json, and Claude's
+  // proof stats and lists a real projects folder (this file mocks only
+  // fs.mkdirSync, so fs.promises reaches the disk).
+  const RECORD_ID = 'expired-record-1';
+  const AGENT_SESSION_ID = 'aaaaaaaa-1111-4222-8333-444444444444';
+  const LAST_ACTIVE_AT = '2026-08-16T14:00:00.000Z';
+
+  let projectPath: string;
+  let projectsRoot: string;
+  let capturedOptions: { resume?: boolean; sessionId?: string; prompt?: string } | undefined;
+
+  async function writeStatusWithTurns(): Promise<void> {
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+    await fs.promises.mkdir(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'status.json'), JSON.stringify({
+      session_id: AGENT_SESSION_ID,
+      transcript_path: path.join(projectsRoot, '-gone-project', `${AGENT_SESSION_ID}.jsonl`),
+      model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+      cost: { total_cost_usd: 1.25, total_duration_ms: 90000, total_api_duration_ms: 60000 },
+      context_window: {
+        total_input_tokens: 52000,
+        total_output_tokens: 3100,
+        context_window_size: 200000,
+        current_usage: { input_tokens: 52000, output_tokens: 3100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        used_percentage: 27,
+      },
+    }));
+  }
+
+  function resumableRepo(isolatedSwimlaneId: string | null = null) {
+    const sessionRepo = makeSessionRepo();
+    const record = {
+      id: RECORD_ID,
+      agent_session_id: AGENT_SESSION_ID,
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: projectPath,
+      isolated_swimlane_id: isolatedSwimlaneId,
+      started_at: '2026-08-16T13:00:00.000Z',
+      suspended_at: LAST_ACTIVE_AT,
+      exited_at: null,
+    };
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue(record as never);
+    sessionRepo.listForTaskNewestFirst.mockReturnValue([record] as never);
+    return sessionRepo;
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    capturedOptions = undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { resume?: boolean; sessionId?: string; prompt?: string }) => {
+      capturedOptions = options;
+      return `claude ${options.prompt ?? ''}`;
+    });
+    projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-te-expired-'));
+    projectsRoot = path.join(projectPath, 'claude-projects');
+    await fs.promises.mkdir(projectsRoot, { recursive: true });
+    mockAdapter.runtime = { statusFile: { parseStatus: ClaudeStatusParser.parseStatus } };
+    mockAdapter.proveConversationGone = proveClaudeConversationGone;
+    await writeStatusWithTurns();
+  });
+
+  afterEach(() => {
+    fs.rmSync(projectPath, { recursive: true, force: true });
+    mockAdapter.runtime = undefined;
+    mockAdapter.proveConversationGone = undefined;
+  });
+
+  it('main session: the recap is the whole prompt, the carried message is dropped, and the notice fires once the session exists', async () => {
+    const sessionRepo = resumableRepo();
+    const notices: ConversationExpiredNotice[] = [];
+    const { engine, sessionManager } = makeEngine({
+      sessionRepo, projectPath, services: { onConversationExpired: (notice) => notices.push(notice) },
+    });
+    const task = makeTask({ worktree_path: null });
+
+    const outcome = await engine.resumeSuspendedSession(
+      task as Parameters<typeof engine.resumeSuspendedSession>[0], null, false, '/code-review', undefined, 'claude',
+    );
+
+    expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: true });
+    expect(capturedOptions?.resume).toBe(false);
+    expect(capturedOptions?.sessionId).not.toBe(AGENT_SESSION_ID);
+    expect(capturedOptions?.prompt).toContain('deleted it after its retention period');
+    expect(capturedOptions?.prompt).toContain('Fix login flow');
+    expect(capturedOptions?.prompt).toContain('then wait');
+    expect(capturedOptions?.prompt).not.toContain('/code-review');
+    expect(sessionManager.spawnedSessions).toHaveLength(1);
+    // The old record is retired and kept, never deleted.
+    expect(sessionRepo.compareAndUpdateStatus).toHaveBeenCalledWith(
+      RECORD_ID, ['suspended', 'orphaned'], 'exited', expect.objectContaining({ exited_at: expect.any(String) }),
+    );
+    const inserted = sessionRepo.insertedRecords[0] as { prompt?: string | null };
+    expect(inserted.prompt).toContain('deleted it after its retention period');
+    expect(notices).toEqual([{
+      projectId: 'proj-1',
+      taskId: 'task-abc-1',
+      taskTitle: 'Fix login flow',
+      lastActiveAt: LAST_ACTIVE_AT,
+      messageDropped: true,
+    }]);
+  });
+
+  it('main session with no task template: the carried command still never becomes the prompt', async () => {
+    // A fresh intent with no template falls back to `resumePrompt` as its
+    // prompt (spawn-intent.ts). The recap replaces it outright.
+    const { engine } = makeEngine({ sessionRepo: resumableRepo(), projectPath });
+    const task = makeTask({ worktree_path: null });
+
+    await engine.resumeSuspendedSession(
+      task as Parameters<typeof engine.resumeSuspendedSession>[0], null, true, '/code-review', undefined, 'claude',
+    );
+
+    expect(capturedOptions?.prompt).toContain('deleted it after its retention period');
+    expect(capturedOptions?.prompt).not.toContain('/code-review');
+  });
+
+  it('isolated track: a normal fresh pass, with the recap as context and the column message kept', async () => {
+    const notices: ConversationExpiredNotice[] = [];
+    const { engine } = makeEngine({
+      sessionRepo: resumableRepo('lane-review'), projectPath, services: { onConversationExpired: (notice) => notices.push(notice) },
+    });
+    const task = makeTask({ worktree_path: null });
+
+    const outcome = await engine.resumeSuspendedSession(
+      task as Parameters<typeof engine.resumeSuspendedSession>[0], null, true, '/code-review', undefined, 'claude',
+      undefined, { isolatedSwimlaneId: 'lane-review' },
+    );
+
+    expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false });
+    expect(capturedOptions?.resume).toBe(false);
+    expect(capturedOptions?.prompt).toContain('for context');
+    expect(capturedOptions?.prompt).not.toContain('then wait');
+    expect(capturedOptions?.prompt?.endsWith('/code-review')).toBe(true);
+    expect(notices).toHaveLength(1);
+    expect(notices[0].messageDropped).toBe(false);
+  });
+
+  it('sends no notice when the spawn itself fails', async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockRejectedValueOnce(new Error('pty host down'));
+    const notices: ConversationExpiredNotice[] = [];
+    const { engine } = makeEngine({
+      sessionManager, sessionRepo: resumableRepo(), projectPath, services: { onConversationExpired: (notice) => notices.push(notice) },
+    });
+    const task = makeTask({ worktree_path: null });
+
+    await expect(engine.resumeSuspendedSession(
+      task as Parameters<typeof engine.resumeSuspendedSession>[0], null, false, undefined, undefined, 'claude',
+    )).rejects.toThrow('pty host down');
+    expect(notices).toEqual([]);
+  });
+
+  it('resumes as before when another project folder still holds the file', async () => {
+    const elsewhere = path.join(projectsRoot, '-renamed-project', `${AGENT_SESSION_ID}.jsonl`);
+    await fs.promises.mkdir(path.dirname(elsewhere), { recursive: true });
+    fs.writeFileSync(elsewhere, '{"type":"user"}\n');
+    const notices: ConversationExpiredNotice[] = [];
+    const { engine } = makeEngine({
+      sessionRepo: resumableRepo(), projectPath, services: { onConversationExpired: (notice) => notices.push(notice) },
+    });
+    const task = makeTask({ worktree_path: null });
+
+    const outcome = await engine.resumeSuspendedSession(
+      task as Parameters<typeof engine.resumeSuspendedSession>[0], null, false, '/code-review', undefined, 'claude',
+    );
+
+    expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false });
+    expect(capturedOptions?.resume).toBe(true);
+    expect(capturedOptions?.sessionId).toBe(AGENT_SESSION_ID);
+    expect(capturedOptions?.prompt).toBe('/code-review');
+    expect(notices).toEqual([]);
   });
 });
 

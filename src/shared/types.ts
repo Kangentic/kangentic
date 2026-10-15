@@ -879,6 +879,22 @@ export interface AutoCommandResultNotice {
   escalated: boolean;
 }
 
+/**
+ * Payload of the `task:conversationExpired` push event: a resume found that the
+ * agent had deleted the conversation (Claude Code removes transcripts older
+ * than its `cleanupPeriodDays`), so the spawn started a new one with a recap of
+ * the task instead.
+ */
+export interface ConversationExpiredNotice {
+  projectId: string;
+  taskId: string;
+  taskTitle: string;
+  /** When the deleted conversation last ran, as a UTC ISO timestamp; null when unknown. */
+  lastActiveAt: string | null;
+  /** True when the message the resume carried (a column's message, a plan-exit continuation) was not sent. */
+  messageDropped: boolean;
+}
+
 export type ActionType =
   | 'create_worktree'
   | 'spawn_agent'
@@ -1351,6 +1367,13 @@ export interface SessionRecord {
    * launch. NULL until such a read; a read that wrote estimates leaves it NULL.
    */
   result_tokens_read_at: string | null;
+  /**
+   * The transcript path the agent reported for this session (Claude's status
+   * line), written when it changes. The resume check reads it to prove a
+   * conversation's file is gone after the session's own folder was deleted.
+   * NULL when the agent never reported one.
+   */
+  transcript_path: string | null;
 }
 
 /**
@@ -6951,6 +6974,13 @@ export interface ElectronAPI {
      * lands there and toasting it would be constant noise that means nothing.
      */
     onAutoCommandResult: (callback: (result: AutoCommandResultNotice) => void) => () => void;
+    /**
+     * A resume found the agent had deleted the task's conversation (Claude Code
+     * removes transcripts older than its `cleanupPeriodDays`), so the task
+     * started a new conversation with a recap instead. Also fires for a task
+     * startup recovery resumed with nobody watching.
+     */
+    onConversationExpired: (callback: (notice: ConversationExpiredNotice) => void) => () => void;
     onCreatedByAgent: (callback: (taskId: string, taskTitle: string, columnName: string, projectId?: string) => void) => () => void;
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onDeletedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
@@ -8819,7 +8849,12 @@ export interface TranscriptGetRequest {
  *  native history nor an index fallback was available. For a stitched
  *  multi-session view this describes the LATEST session (the one live-polling
  *  cares about); earlier sessions may individually be 'index' or 'none'. */
-export type TranscriptSource = 'live' | 'index' | 'none';
+/**
+ * Where a session's transcript was read from: the agent's own file (`live`),
+ * Kangentic's structured copy of it once the agent deleted the file
+ * (`archive`), the index's text-only chunks (`index`), or nowhere (`none`).
+ */
+export type TranscriptSource = 'live' | 'archive' | 'index' | 'none';
 
 export type TranscriptUnavailableReason =
   | 'unsupported_agent'
@@ -8859,6 +8894,10 @@ export interface TranscriptGetResponse {
    *  request's `knownRevision` to get a `TranscriptUnchangedResponse` on an
    *  idle poll instead of the full payload. */
   revision: number;
+  /** The agent of the newest session read from Kangentic's archive because its
+   *  own file is gone, or null when none was. Drives the viewer's archive banner;
+   *  `source` describes only the latest session. Absent from older responses. */
+  archivedAgentName?: string | null;
 }
 
 /** Returned by `transcripts.get` instead of a full `TranscriptGetResponse`

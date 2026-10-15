@@ -5,7 +5,7 @@ import { IPC, PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../.
 import { relocateProject } from './project-relocate';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { resumeSuspendedSessions, autoSpawnTasks } from '../../transition-engine/session-startup';
+import { resumeSuspendedSessions, autoSpawnTasks, type ResumeSuspendedOptions } from '../../transition-engine/session-startup';
 import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
@@ -22,6 +22,7 @@ import { ensureGitignore, leftoverSweepOptions, reapTaskLeftovers } from '../hel
 import { endWorkflowAgentsOfProject } from '../../workflows/workflow-agent';
 import { detachProjectFromWorkflows } from '../../workflows/workflow-project-delete';
 import { searchProjectEntries } from '../helpers/project-entry-search';
+import { notifyConversationExpired } from '../helpers/task-git';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone, bucketTaskCount } from '../../analytics/usage';
 import { DEFAULT_SWIMLANES } from '../../db/migrations/default-data';
@@ -475,6 +476,24 @@ async function pruneOrphanedTasksAndNotify(
  * Built as a callback per call site rather than read off a return value because
  * the sweep runs inside a fire-and-forget tail; there is nothing to await.
  */
+/**
+ * What every recovery pass passes `resumeSuspendedSessions` beyond its
+ * positional inputs: the expired-conversation notice, and the project's own
+ * team-shared default base branch for the recap (read by path, since a pass
+ * also runs for projects not on screen).
+ */
+function recoveryOptions(
+  context: IpcContext,
+  projectPath: string,
+  onlySessionIds?: ReadonlySet<string>,
+): ResumeSuspendedOptions {
+  return {
+    onlySessionIds,
+    onConversationExpired: (notice) => notifyConversationExpired(context, notice),
+    boardDefaultBaseBranch: context.boardConfigManager.getDefaultBaseBranchForPath(projectPath) ?? null,
+  };
+}
+
 function notifyRunsInterrupted(context: IpcContext, projectId: string): (count: number) => void {
   return (count) => {
     if (!context.mainWindow || context.mainWindow.isDestroyed()) return;
@@ -631,7 +650,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
         .then(() => {
           cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id), leftoverSweepOptions(context, openedProject.path))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
-          return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path));
+          return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), recoveryOptions(context, openedProject.path));
         })
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
         .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path)))
@@ -771,7 +790,7 @@ export async function recoverSessionsAfterPtyHostLoss(
           project.default_model,
           project.default_effort,
           boardProfiles,
-          lostSessionIds,
+          recoveryOptions(context, project.path, lostSessionIds),
         );
         await autoSpawnTasks(
           project.id,
@@ -852,7 +871,7 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
-      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path));
+      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path));
       await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path));
       // Deliberately AFTER the chain (unlike the open paths, which mark up
       // front to guard rapid double-opens): a failed background activation
@@ -1001,7 +1020,7 @@ export function registerProjectHandlers(context: IpcContext): void {
           cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
 
-          await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))
+          await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path))
             .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));
           await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))
             .catch((error) => console.error('[PROJECT_OPEN] Session reconciliation failed:', error));

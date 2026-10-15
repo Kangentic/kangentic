@@ -11,9 +11,10 @@ import type {
   AutomationTrigger,
   AutoCommandMode,
   ColumnAutomation,
+  ConversationExpiredNotice,
   NotificationInput,
 } from '../../shared/types';
-import { runAutomations, type AutomationRunSummary } from '../automations/automation-runner';
+import { runAutomations, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
 import type { AutomationContext } from '../automations/shared/automation-adapter';
 import type { ConditionCheckCall, ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput } from '../automations/condition-check/condition-prompt';
@@ -38,7 +39,13 @@ import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
-import { isResumeConversationAbsent } from './resume-conversation-guard';
+import { assessResumeConversation, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
+import { commandLineLength } from '../agent/shared/prompt-budget';
+import { markRecapSession } from '../automations/turn-end/recap-turns';
+import {
+  buildExpiredConversationRecap,
+  type ExpiredConversationRecapSources,
+} from '../agent/shared/expired-conversation-recap';
 import { sessionOutputPaths } from './session-paths';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { SessionRepository } from '../db/repositories/session-repository';
@@ -103,12 +110,41 @@ export interface TransitionEngineServices {
     limits?: ConditionCheckLimits,
     call?: ConditionCheckCall,
   ) => Promise<ConditionCheckOutcome>;
+  /**
+   * Where the recap of an expired conversation reads the task's summary, the
+   * old conversation's last turns and the branch. Absent, the recap carries the
+   * task alone.
+   */
+  recapSources?: ExpiredConversationRecapSources;
+  /** Told once a session has started fresh because the agent deleted its conversation. */
+  onConversationExpired?: (notice: ConversationExpiredNotice) => void;
+}
+
+/**
+ * What a spawn did with the resume it was asked for. A caller that put a
+ * column's message in the resume's prompt slot reads it to record that message
+ * as not sent.
+ */
+export interface SpawnOutcome {
+  /**
+   * Why a resume became a fresh spawn: the conversation never had a turn, or
+   * the agent deleted it. Null when the spawn ran as resolved.
+   */
+  startOver: StartOverReason | null;
+  /**
+   * True when the new session's only prompt is the recap (an expired main
+   * session): it asks the agent to summarize and wait, so nothing else is sent
+   * to it on this move.
+   */
+  recapOnly: boolean;
+  /** True when the message the resume carried was not sent. */
+  messageDropped: boolean;
 }
 
 /** Options shared by every way into an automation group. */
 interface AutomationGroupOptions {
   signal: AbortSignal;
-  startAgent?: (pendingPrompt?: string) => Promise<void>;
+  startAgent?: (pendingPrompt?: string) => Promise<AgentStartReport | void>;
   // `signal` is the automation run's own, so a caller that WAITS for
   // delivery (the exit hook does; see `deliverExitMessage`) is bounded by
   // the same budget that bounds every other row. A caller that only
@@ -153,7 +189,7 @@ export class TransitionEngine {
    * Resume a suspended session for a task. Used when moving out of
    * Backlog/Done into a non-agent column (no spawn_agent transition fires).
    */
-  async resumeSuspendedSession(task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<void> {
+  async resumeSuspendedSession(task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
     signal?.throwIfAborted();
     const attachmentPaths = this.attachmentRepo?.getPathsForTask(task.id) ?? [];
     // {{task_xml}} wraps title/description in a <task> envelope (Anthropic +
@@ -175,7 +211,7 @@ export class TransitionEngine {
       // A workflow task's <workflow> block; null for every other task.
       workflow: readWorkflowPromptFacts(task, this.getConfig().projectId),
     });
-    await this.executeSpawnAgent({
+    return this.executeSpawnAgent({
       promptTemplate: skipPromptTemplate ? undefined : DEFAULT_SPAWN_PROMPT_TEMPLATE,
     }, task, templateVars, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides);
   }
@@ -446,7 +482,7 @@ export class TransitionEngine {
     await this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal, agentOverride, undefined, spawnOverrides);
   }
 
-  private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<void> {
+  private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
     const appConfig = this.getConfig();
 
     // Resolve which agent adapter to use.
@@ -499,33 +535,68 @@ export class TransitionEngine {
     };
     let intent = resolveSpawnIntent(spawnIntentOptions);
 
-    // A resume whose conversation the agent never persisted (a session that
-    // ended before its first turn - see resume-conversation-guard.ts) would
-    // spawn `--resume <id>`, get "No conversation found", and leave the user on
-    // a bare shell. Downgrade it to a fresh spawn instead. The probe only fires
-    // on positive evidence of an empty conversation and returns false on every
-    // uncertainty, so a real conversation is never discarded.
+    // The id a resume would hand the CLI: the captured/specified ID from the DB
+    // record, reconciled against the retiring record's own status.json (a
+    // /clear-style fork in the final seconds before suspend can leave the DB
+    // one id behind - see resume-id-reconcile.ts). Runs BEFORE the cwd
+    // migration so the migration keys on the id actually being resumed, and
+    // both run before the conversation check below, which needs that id and
+    // the migrated file.
+    const resumedAgentSessionId = intent.mode === 'resume'
+      ? await reconcileResumeAgentSessionId({
+          adapter,
+          recordId: intent.retireRecordId,
+          storedAgentSessionId: intent.agentSessionId,
+          cwd: intent.resumeFromCwd,
+          projectPath: appConfig.projectPath || cwd,
+          sessionRepo: this.sessionRepo,
+        })
+      : null;
+
+    // If the task's worktree was renamed since the session last ran, its history
+    // lives under the OLD cwd's slug and `--resume` would look under the new cwd
+    // and find nothing. Migrate it to the new cwd before the check and the
+    // command. Best-effort; on failure the resume proceeds unchanged.
     if (intent.mode === 'resume') {
-      // Every record that ran this conversation, newest first: a record whose CLI
-      // died on a failed resume wrote no status file, so the proof of emptiness
-      // can only be on an older one (see the guard's `recordIds` doc). Built
-      // BEFORE the re-resolve below, which clears both fields it reads.
-      const conversationRecordIds = [
-        intent.retireRecordId,
-        ...(this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [])
-          .filter((record) => record.agent_session_id === intent.agentSessionId)
-          .map((record) => record.id),
-      ];
-      if (await isResumeConversationAbsent({
+      await migrateResumeCwdIfRenamed({
         adapter,
-        recordIds: conversationRecordIds,
+        agentSessionId: resumedAgentSessionId,
+        canResume: true,
+        oldCwd: intent.resumeFromCwd,
+        newCwd: cwd,
+        projectPath: appConfig.projectPath,
+      });
+    }
+
+    // A resume the CLI cannot serve would spawn `--resume <id>`, get "No
+    // conversation found", and leave the user on a bare shell. Two cases are
+    // decided here (resume-conversation-guard.ts); anything the check cannot
+    // prove resumes as before.
+    let startOver: SpawnOutcome['startOver'] = null;
+    let recapOnly = false;
+    let messageDropped = false;
+    let expiredNotice: ConversationExpiredNotice | null = null;
+    if (intent.mode === 'resume' && resumedAgentSessionId) {
+      const { lineage, lastActiveAt } = resolveResumeLineage({
+        taskRecords: this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [],
+        retiringRecordId: intent.retireRecordId,
+        resumedAgentSessionId,
+      });
+      const verdict = await assessResumeConversation({
+        adapter,
+        agentSessionId: resumedAgentSessionId,
+        records: lineage,
+        cwd,
         projectPath: appConfig.projectPath || cwd,
-      })) {
+      });
+
+      if (verdict === 'never-started') {
         console.log(
           `[spawnAgent] Resume downgraded to fresh for task ${task.id.slice(0, 8)}:`
-          + ` agent session ${intent.agentSessionId?.slice(0, 8)} never wrote a conversation`
+          + ` agent session ${resumedAgentSessionId.slice(0, 8)} never wrote a conversation`
           + ` (session ended before its first turn)`,
         );
+        startOver = 'never-started';
         // Re-RESOLVE, rather than just clearing a boolean. The two branches of
         // resolveSpawnIntent do not carry the same prompt: resume takes
         // `resumePrompt` (undefined for an ordinary task spawn) while fresh
@@ -537,27 +608,63 @@ export class TransitionEngine {
         // interpolated prompt, a null agentSessionId, and the same poisoned
         // record still retired.
         intent = resolveSpawnIntent({ ...spawnIntentOptions, forceFresh: true });
+      } else if (verdict === 'expired') {
+        startOver = 'expired';
+        // The task's main session starts from the recap alone: a conversation
+        // old enough for the agent to delete belongs to a stale task, so the
+        // carried message (a column's message, a plan-exit continuation) and
+        // the column's task template are not sent, and the agent summarizes
+        // where the work stands and waits. An isolated column set to keep its
+        // own conversation runs its normal fresh pass, with the recap as
+        // context: its conversation being old says nothing about the task.
+        const onMainSession = isolatedSwimlaneId === null;
+        console.log(
+          `[spawnAgent] Resume replaced by a fresh session for task ${task.id.slice(0, 8)}:`
+          + ` agent session ${resumedAgentSessionId.slice(0, 8)} was deleted by ${adapter.displayName}`
+          + ` (last active ${lastActiveAt ?? 'unknown'})`,
+        );
+        // `forceFresh` retires the old record (kept, marked exited) and
+        // resolves a fresh intent; only the prompt differs between the cases.
+        const freshIntent = resolveSpawnIntent({ ...spawnIntentOptions, forceFresh: true });
+        // The recap shares the command line with the column's own prompt (an
+        // isolated column) and a handoff pointer, so it fits in what they leave.
+        const besideRecap = [onMainSession ? null : freshIntent.prompt, handoffPromptPrefix]
+          .filter((text): text is string => Boolean(text));
+        const recap = await buildExpiredConversationRecap({
+          task,
+          agentDisplayName: adapter.displayName,
+          previousAgentSessionId: resumedAgentSessionId,
+          lastActiveAt,
+          cwd,
+          baseBranch: vars.baseBranch || 'main',
+          mode: onMainSession ? 'whole-prompt' : 'context',
+          // Each joins the recap with a blank line.
+          reservedChars: besideRecap.reduce((total, text) => total + commandLineLength(text) + 2, 0),
+        }, this.services.recapSources);
+        if (onMainSession) {
+          recapOnly = true;
+          messageDropped = Boolean(resumePrompt?.trim());
+          intent = { ...freshIntent, prompt: recap };
+        } else {
+          intent = { ...freshIntent, prompt: freshIntent.prompt ? `${recap}\n\n${freshIntent.prompt}` : recap };
+        }
+        expiredNotice = {
+          projectId: appConfig.projectId,
+          taskId: task.id,
+          taskTitle: task.title,
+          lastActiveAt,
+          messageDropped,
+        };
       }
     }
     const canResume = intent.mode === 'resume';
 
     // agent_session_id: the agent CLI's real session ID for --resume/--session-id.
-    // - Resume: use the captured/specified ID from the DB record, reconciled
-    //   against the retiring record's own status.json (a /clear-style fork in
-    //   the final seconds before suspend can leave the DB one id behind - see
-    //   resume-id-reconcile.ts). Runs BEFORE migrateResumeCwdIfRenamed below so
-    //   the cwd migration keys on the id actually being resumed.
+    // - Resume: the reconciled id above.
     // - Fresh + Claude (supportsCallerSessionId): generate UUID, pass via --session-id
     // - Fresh + Codex/Gemini: null (CLI generates its own ID, captured later via hooks)
     const agentSessionId = canResume
-      ? await reconcileResumeAgentSessionId({
-          adapter,
-          recordId: intent.retireRecordId,
-          storedAgentSessionId: intent.agentSessionId,
-          cwd: intent.resumeFromCwd,
-          projectPath: appConfig.projectPath || cwd,
-          sessionRepo: this.sessionRepo,
-        })
+      ? resumedAgentSessionId
       : (adapter.supportsCallerSessionId ? randomUUID() : null);
 
     let prompt = intent.prompt;
@@ -568,25 +675,13 @@ export class TransitionEngine {
 
     console.log(
       // Reports the mode actually spawned, not the resolver's proposal: a
-      // never-persisted conversation is downgraded to fresh above.
+      // conversation that never started or was deleted becomes fresh above.
       `[spawnAgent] task=${task.id.slice(0, 8)} intent=${canResume ? 'resume' : 'fresh'} session=${isolatedSwimlaneId ?? 'main'}`
       + ` agent=${agentName} ptySessionId=${ptySessionId.slice(0, 8)}`
       + (agentSessionId ? ` agentSessionId=${agentSessionId.slice(0, 8)}` : '')
-      + (intent.retireRecordId ? ` retiring=${intent.retireRecordId.slice(0, 8)}` : ''),
+      + (intent.retireRecordId ? ` retiring=${intent.retireRecordId.slice(0, 8)}` : '')
+      + (startOver ? ` startOver=${startOver}` : ''),
     );
-
-    // If the task's worktree was renamed since the session last ran, its history
-    // lives under the OLD cwd's slug and `--resume` would look under the new cwd
-    // and find nothing. Migrate it to the new cwd before building the command.
-    // Best-effort; on failure the resume proceeds unchanged.
-    await migrateResumeCwdIfRenamed({
-      adapter,
-      agentSessionId,
-      canResume,
-      oldCwd: intent.resumeFromCwd,
-      newCwd: cwd,
-      projectPath: appConfig.projectPath,
-    });
 
     // Session history reference overlay (separate from the resume/fresh decision).
     // Prepends a pointer to the source agent's native session file.
@@ -729,6 +824,13 @@ export class TransitionEngine {
         effort: spawnOverrides?.effort ?? null,
       });
     }
+
+    // Told only once the new session exists: a spawn that failed or was
+    // cancelled above started nothing to announce. A recap-only session's
+    // first turn is a summary for the user, so it runs no turn-end rows.
+    if (recapOnly) markRecapSession(session.id);
+    if (expiredNotice) this.services.onConversationExpired?.(expiredNotice);
+    return { startOver, recapOnly, messageDropped };
   }
 
 }

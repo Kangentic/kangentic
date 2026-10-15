@@ -23,7 +23,10 @@ import {
   isCachedFileUnchanged,
   peekCachedFileSignature,
   resetForTests as resetTranscriptCacheForTests,
+  truncateEntries,
 } from './transcript-cache';
+import { readArchivedConversation, type ArchivedConversation } from '../retrieval/archive/transcript-archive';
+import { parseWindowBytes, prependTruncationMarker } from './shared/transcript-truncation';
 import type {
   ConversationSessionMeta,
   SessionRecord,
@@ -61,6 +64,12 @@ export interface ResolvedTaskTranscript {
   unavailableReason?: TranscriptUnavailableReason;
   sessions: ConversationSessionMeta[];
   revision: number;
+  /**
+   * The agent of the newest session read from Kangentic's archive because its
+   * own file is gone, or null when no session was. `source` describes only the
+   * latest session, so the viewer's banner reads this instead.
+   */
+  archivedAgentName: string | null;
 }
 
 /** A conversation's indexed chunks, in order: the fields the fallback reads. */
@@ -83,6 +92,34 @@ export function setIndexedChunkReaderForTests(reader: typeof readIndexedChunks):
   readIndexedChunks = reader;
 }
 
+/** The clamped, marked entries made from one archived read, so a poll at the
+ *  same archive revision hands the stitch the SAME array (its token is by
+ *  reference) and nothing is re-stitched. */
+const displayEntriesByArchivedRead = new WeakMap<ArchivedConversation, TranscriptEntry[]>();
+
+/**
+ * A conversation's entries from Kangentic's archive (`transcript-archive.ts`),
+ * for when the agent's own file is gone: structured like a live read, bounded
+ * to the same newest `parseWindowBytes()` of source, with the same notice when
+ * older rows were left out and the same per-span clamp. Empty when the archive
+ * does not hold it.
+ */
+async function entriesFromArchive(db: Database.Database, agentSessionId: string): Promise<TranscriptEntry[]> {
+  let archived: ArchivedConversation | null;
+  try {
+    archived = await readArchivedConversation(db, agentSessionId, parseWindowBytes());
+  } catch (error) {
+    console.warn(`transcript archive read failed for ${agentSessionId}:`, error);
+    return [];
+  }
+  if (!archived || archived.entries.length === 0) return [];
+  const known = displayEntriesByArchivedRead.get(archived);
+  if (known) return known;
+  const display = prependTruncationMarker(truncateEntries(archived.entries), archived.omittedBytes, archived.totalBytes);
+  displayEntriesByArchivedRead.set(archived, display);
+  return display;
+}
+
 /** Reconstruct lossy display entries from indexed chunks when the native
  *  history file is gone. Block structure is not recoverable, so each chunk maps
  *  to a single-block entry of its recorded role. */
@@ -102,6 +139,24 @@ async function entriesFromIndex(db: Database.Database, docId: string): Promise<T
     // assistant + mixed render as assistant text.
     return { kind: 'assistant', uuid, ts, blocks: [{ type: 'text', text }] };
   });
+}
+
+/**
+ * What Kangentic kept of a conversation whose file the agent deleted, and
+ * where from: the structured archive, else the index's text-only chunks. Null
+ * when neither holds it. `kangentic_get_transcript` says which it read, and the
+ * recap of a session started in its place reads its tail from it
+ * (`transcript.recapTail`).
+ */
+export async function readSavedConversation(
+  db: Database.Database,
+  agentSessionId: string,
+): Promise<{ entries: TranscriptEntry[]; source: 'archive' | 'index' } | null> {
+  const archived = await entriesFromArchive(db, agentSessionId);
+  if (archived.length > 0) return { entries: archived, source: 'archive' };
+  const indexed = await entriesFromIndex(db, agentSessionId);
+  if (indexed.length > 0) return { entries: indexed, source: 'index' };
+  return null;
 }
 
 /**
@@ -189,7 +244,13 @@ export async function resolveSessionTranscript(
       // Already truncated inside the cache.
       return { ...base, source: 'live', sourcePath, entries, degraded: false };
     }
-    // Native file located but empty/pruned: try the index fallback.
+    // Native file gone or empty: Kangentic's archived copy keeps the structure,
+    // so it is not degraded.
+    const archived = await entriesFromArchive(db, agentSessionId);
+    if (archived.length > 0) {
+      return { ...base, source: 'archive', sourcePath, entries: archived, degraded: false };
+    }
+    // Neither: the index's chunks, which keep the text only.
     const indexed = await entriesFromIndex(db, record.agent_session_id ?? record.id);
     if (indexed.length > 0) {
       return { ...base, source: 'index', sourcePath, entries: indexed, degraded: true };
@@ -204,7 +265,14 @@ export async function resolveSessionTranscript(
     };
   }
 
-  // No structured parser, or no agent_session_id yet: index fallback, else none.
+  // No structured parser, or no agent_session_id yet: archive, then index
+  // fallback, else none.
+  if (record.agent_session_id) {
+    const archived = await entriesFromArchive(db, record.agent_session_id);
+    if (archived.length > 0) {
+      return { ...base, source: 'archive', sourcePath: null, entries: archived, degraded: false };
+    }
+  }
   const indexed = await entriesFromIndex(db, record.agent_session_id ?? record.id);
   if (indexed.length > 0) {
     return { ...base, source: 'index', sourcePath: null, entries: indexed, degraded: true };
@@ -264,6 +332,7 @@ interface StitchMemoRecord {
     degraded: boolean;
     unavailableReason: TranscriptUnavailableReason | undefined;
     agentName: string;
+    archivedAgentName: string | null;
   };
 }
 
@@ -511,6 +580,7 @@ export async function resolveTaskTranscript(
               toSessionMeta(session, agentRegistry.getBySessionType(session.session_type)?.displayName ?? session.session_type),
             ),
             revision: memo.revision,
+            archivedAgentName: memo.fileDerived.archivedAgentName,
           };
         }
       }
@@ -521,6 +591,7 @@ export async function resolveTaskTranscript(
   const depsParts: string[] = [];
   const resolvedBySession: Array<{ session: SessionRecord; resolved: ResolvedTranscript }> = [];
   let anyDegraded = false;
+  let archivedAgentName: string | null = null;
   let latest: ResolvedTranscript | null = null;
 
   for (const session of sessions) {
@@ -528,6 +599,7 @@ export async function resolveTaskTranscript(
     if (!resolved) continue;
     latest = resolved;
     anyDegraded = anyDegraded || resolved.degraded;
+    if (resolved.source === 'archive') archivedAgentName = resolved.agentName;
     sessionMetas.push(toSessionMeta(session, resolved.agentName));
     resolvedBySession.push({ session, resolved });
     depsParts.push(`${session.id}:${tokenForEntries(resolved.entries)}`);
@@ -559,6 +631,7 @@ export async function resolveTaskTranscript(
         unavailableReason: latest.unavailableReason,
         sessions: sessionMetas,
         revision: memo.revision,
+        archivedAgentName,
       };
     }
   }
@@ -650,6 +723,7 @@ export async function resolveTaskTranscript(
         degraded: anyDegraded,
         unavailableReason: latest.unavailableReason,
         agentName: latest.agentName,
+        archivedAgentName,
       },
     });
     recordRevision(taskId, revision, entries);
@@ -666,5 +740,6 @@ export async function resolveTaskTranscript(
     unavailableReason: latest.unavailableReason,
     sessions: sessionMetas,
     revision,
+    archivedAgentName,
   };
 }

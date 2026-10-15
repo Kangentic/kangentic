@@ -112,7 +112,7 @@ interface AdapterLike {
  * indexed regardless of how this is tuned. Sharing one constant would couple a
  * product decision to a memory-profiling one.
  */
-const INDEX_WINDOW_BYTES = 8 * 1024 * 1024;
+export const INDEX_WINDOW_BYTES = 8 * 1024 * 1024;
 
 /**
  * Where the next walk of a growing transcript can start instead of byte 0,

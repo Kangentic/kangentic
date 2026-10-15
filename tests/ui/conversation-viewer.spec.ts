@@ -103,6 +103,21 @@ function preConfig(): string {
         sessions: [{ sessionId: 'sess-degraded', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
       };
 
+      // Read from Kangentic's archive after the agent deleted its file:
+      // structured and not degraded, so the calm banner, not the amber one.
+      var transcriptArchived = {
+        sessionId: 'sess-archived', taskId: null, taskTitle: 'Expired session',
+        agentName: 'Claude Code', startedAt: ts, source: 'archive', sourcePath: null,
+        entries: [
+          { kind: 'user', uuid: 'turn-arch-user', ts: nowMs, text: 'ARCHIVED_QUESTION' },
+          { kind: 'assistant', uuid: 'turn-arch-asst', ts: nowMs + 1, model: 'claude-opus-4-8',
+            blocks: [{ type: 'tool_use', id: 'tool-arch-1', name: 'Read', input: { file_path: 'auth.ts' } }] },
+        ],
+        degraded: false,
+        archivedAgentName: 'Claude Code',
+        sessions: [{ sessionId: 'sess-archived', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
+      };
+
       function emptyResp(sid, reason) {
         return {
           sessionId: sid, taskId: null, taskTitle: '', agentName: '', startedAt: ts,
@@ -242,6 +257,7 @@ function preConfig(): string {
       transcriptSeeds['sess-conv-liveswitch-old'] = transcriptLiveSwitchInitial;
       transcriptSeeds['sess-conv-consecutive'] = transcriptConsecutive;
       transcriptSeeds['sess-degraded'] = transcriptDegraded;
+      transcriptSeeds['sess-archived'] = transcriptArchived;
       transcriptSeeds['sess-empty-unsupported'] = emptyResp('sess-empty-unsupported', 'unsupported_agent');
       transcriptSeeds['sess-empty-nosession'] = emptyResp('sess-empty-nosession', 'no_agent_session_id');
       transcriptSeeds['sess-empty-missing'] = emptyResp('sess-empty-missing', 'file_missing');
@@ -414,6 +430,23 @@ test.describe('Conversation Viewer', () => {
       await openConversation(page, 'sess-degraded');
       await expect(page.getByTestId('conversation-degraded-banner')).toBeVisible();
       await expect(page.getByText('DEGRADED_TEXT')).toBeVisible();
+      await expect(page.getByTestId('conversation-archive-banner')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a calm banner, not the amber one, names the agent when the conversation is read from the archive', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, 'sess-archived');
+      const banner = page.getByTestId('conversation-archive-banner');
+      await expect(banner).toBeVisible();
+      await expect(banner).toHaveText('Claude Code deleted the original file. Showing Kangentic\'s saved copy.');
+      await expect(page.getByTestId('conversation-degraded-banner')).toHaveCount(0);
+      // Structured: the tool call renders as a tool card, not as prose.
+      await expect(page.getByText('ARCHIVED_QUESTION')).toBeVisible();
+      await expect(page.getByTestId('conversation-tool-toggle').first()).toBeVisible();
     } finally {
       await browser.close();
     }

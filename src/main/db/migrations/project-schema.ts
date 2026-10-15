@@ -1898,6 +1898,53 @@ export function runProjectMigrations(db: Database.Database): void {
   if (!runColumnsWithFinalLine.has('final_line_reason')) {
     db.exec('ALTER TABLE automation_runs ADD COLUMN final_line_reason TEXT DEFAULT NULL');
   }
+
+  // Migration: the transcript path the agent reported for a session (Claude's
+  // status line). The resume check reads it to prove a conversation's file is
+  // gone, and the session's own folder cannot hold that proof: a quit or a
+  // removal deletes the folder. NULL = never reported.
+  const sessionColumnsWithTranscript = new Set(
+    (db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!sessionColumnsWithTranscript.has('transcript_path')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN transcript_path TEXT DEFAULT NULL');
+  }
+
+  // Migration: the structured transcript archive. The parsed conversation of
+  // each session, Brotli-compressed, so it stays readable after the agent CLI
+  // deletes its own file. Read and written only by the retrieval worker. Kept
+  // apart from memory_index_state so a Rebuild or a corpus purge never resets
+  // it. A row is the entries of one walked window of the source file, from
+  // byte `row_start` to `source_end`; its payload is split into pieces so each
+  // write fits the worker's per-transaction budget. The state row says where
+  // the next walk resumes (the newest row's start, re-read each time) and what
+  // the source looked like then.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS transcript_archive_state (
+      agent_session_id TEXT PRIMARY KEY,
+      session_id TEXT,
+      source_path TEXT,
+      resume_offset INTEGER NOT NULL DEFAULT 0,
+      check_hash TEXT,
+      carry TEXT,
+      source_size INTEGER,
+      source_mtime_ms REAL,
+      revision INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS transcript_archive_rows (
+      agent_session_id TEXT NOT NULL,
+      row_start INTEGER NOT NULL,
+      piece INTEGER NOT NULL,
+      piece_count INTEGER NOT NULL,
+      source_end INTEGER NOT NULL,
+      entry_count INTEGER NOT NULL,
+      payload BLOB NOT NULL,
+      PRIMARY KEY (agent_session_id, row_start, piece)
+    )
+  `);
 }
 
 /**

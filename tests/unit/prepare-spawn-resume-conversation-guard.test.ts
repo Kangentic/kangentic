@@ -1,35 +1,22 @@
 /**
- * Tests for the resume-conversation-absent downgrade WIRING inside
- * prepareAgentSpawn (src/main/transition-engine/session-startup/prepare-spawn.ts),
- * the STARTUP spawn chokepoint (crash recovery / auto-spawn reconcile).
+ * Tests for the resume check's WIRING inside prepareAgentSpawn
+ * (src/main/transition-engine/session-startup/prepare-spawn.ts), the STARTUP
+ * spawn chokepoint (crash recovery / auto-spawn reconcile).
  *
- * isResumeConversationAbsent itself is fully unit-tested in
- * tests/unit/resume-conversation-guard.test.ts. The board-move chokepoint's own
- * wiring (executeSpawnAgent in transition-engine.ts) is covered by the
- * "resume downgraded to fresh..." describe block added to
- * transition-engine.test.ts in the same change. But transition-engine.ts and
- * prepare-spawn.ts are two INDEPENDENT implementations of the same guard - the
- * board path re-resolves via resolveSpawnIntent (a different prompt on the
- * fresh branch), while the startup path (this file) has no spawn-intent
- * resolver at all and just flips a local `canResume` boolean, since a startup
- * recovery spawn carries no prompt to begin with (skipPromptTemplate is
- * implicit: `commandOptions.prompt` is always `undefined` here). Per
+ * assessResumeConversation itself is fully unit-tested in
+ * tests/unit/resume-conversation-guard.test.ts, and the board-move chokepoint's
+ * wiring (executeSpawnAgent) in transition-engine.test.ts. But
+ * transition-engine.ts and prepare-spawn.ts are two INDEPENDENT callers of the
+ * same check - the board path re-resolves via resolveSpawnIntent, while the
+ * startup path has no spawn-intent resolver and decides `canResume` and the
+ * prompt locally. A startup recovery spawn carries no prompt, except the recap
+ * of a conversation the agent deleted. Per
  * .claude/rules/spawn-entry-point-parity.md, both chokepoints have to apply the
- * same guard - and before this file, only ONE of the two had any test
- * exercising the downgrade actually firing (verified by grep: no
- * resume-suspended / session-auto-resume test configures
- * `adapter.runtime.statusFile`, so the block was structurally unreachable in
- * every existing test for this chokepoint).
- *
- * Deliberately does NOT test the conversation-lineage walk (multiple
- * recordIds): prepare-spawn.ts's own comment says startup recovery holds only
- * the record it is recovering and has no repository handle to walk the
- * lineage, so it always passes a single-element `recordIds` array. Asserting a
- * lineage walk here would be pinning a contract this call site does not
- * implement.
+ * same check.
  *
  * Uses a REAL mkdtemp projectPath (matches prepare-spawn-resume-reconcile.test.ts)
- * because isResumeConversationAbsent reads a real status.json from disk.
+ * because assessResumeConversation reads a real status.json from disk, and
+ * Claude's proof stats and lists a real projects folder.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -37,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AppConfig, Swimlane, Task } from '../../src/shared/types';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
+import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
 
 const buildCommandMock = vi.fn((options: { sessionId?: string; resume?: boolean }) =>
   `claude ${options.resume ? `--resume ${options.sessionId ?? ''}` : `--session-id ${options.sessionId ?? ''}`}`);
@@ -51,7 +39,7 @@ const adapter = {
   ensureTrust: vi.fn(async () => {}),
   buildCommand: buildCommandMock,
   locateSessionHistoryFile: locateSessionHistoryFileMock,
-  // The REAL Claude status parser, not a stub - isResumeConversationAbsent's
+  // The REAL Claude status parser, not a stub - assessResumeConversation's
   // decision depends on the actual hadTurns / transcriptPath derivation
   // (contextWindow + cost fields), which a `{ sessionId }`-only stub (as used
   // in prepare-spawn-resume-reconcile.test.ts, which never exercises this
@@ -153,7 +141,7 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
    * leaves behind: a named transcript_path that was never written, and zero
    * cost/token usage. Mirrors resume-conversation-guard.test.ts's and
    * transition-engine.test.ts's identical fixture, which pins that this shape
-   * makes isResumeConversationAbsent resolve true. */
+   * makes assessResumeConversation resolve `never-started`. */
   function writeEmptyStatusFile(recordId: string): void {
     const sessionDir = path.join(projectPath, '.kangentic', 'sessions', recordId);
     fs.mkdirSync(sessionDir, { recursive: true });
@@ -232,7 +220,7 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     return { result, sessionRepo };
   }
 
-  it('downgrades to fresh: a new agent session id, resume=false on the built command, and no id-reconcile attempt', async () => {
+  it('downgrades to fresh: a new agent session id, resume=false on the built command, and no id swap', async () => {
     writeEmptyStatusFile(RECORD_ID);
 
     const { result, sessionRepo } = await runPrepare();
@@ -252,11 +240,13 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     expect(commandOptions.resume).toBe(false);
     expect(commandOptions.sessionId).not.toBe(STORED_ID);
 
-    // The reconcile branch (reconcileResumeAgentSessionId) is only reached
-    // when canResume stays true - the downgrade must skip it entirely, not
-    // just discard its result.
-    expect(locateSessionHistoryFileMock).not.toHaveBeenCalled();
+    // The reconcile runs before the check now (the check needs the id being
+    // resumed), but the status report names the stored id, so nothing swaps.
     expect(sessionRepo.updateAgentSessionId).not.toHaveBeenCalled();
+    // A never-started downgrade carries no prompt and stays a quiet resume-style spawn.
+    expect(result.data.prompt).toBeNull();
+    expect(result.data.startOver).toBe('never-started');
+    expect(result.data.resumed).toBe(false);
   });
 
   it('does NOT downgrade a resume whose conversation actually has turns, even though the same record id is probed', async () => {
@@ -278,5 +268,40 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     expect(commandOptions.resume).toBe(true);
     expect(commandOptions.sessionId).toBe(STORED_ID);
     expect(sessionRepo.updateAgentSessionId).not.toHaveBeenCalled();
+    expect(result.data.startOver).toBeNull();
+    expect(result.data.prompt).toBeNull();
+  });
+
+  it('starts fresh from the recap when the agent deleted a conversation that had turns', async () => {
+    // Claude deletes transcripts older than cleanupPeriodDays. Startup carries
+    // no message and no template, so the recap is the whole prompt.
+    const projectsRoot = path.join(projectPath, 'claude-projects');
+    fs.mkdirSync(projectsRoot, { recursive: true });
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'status.json'), JSON.stringify({
+      session_id: STORED_ID,
+      transcript_path: path.join(projectsRoot, '-gone-project', `${STORED_ID}.jsonl`),
+      model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+      cost: { total_cost_usd: 0.9, total_duration_ms: 60000, total_api_duration_ms: 40000 },
+      context_window: { total_input_tokens: 30000, total_output_tokens: 900, context_window_size: 200000, current_usage: null, used_percentage: null },
+    }));
+    const adapterWithProof = adapter as typeof adapter & { proveConversationGone?: typeof proveClaudeConversationGone };
+    adapterWithProof.proveConversationGone = proveClaudeConversationGone;
+    try {
+      const { result } = await runPrepare();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.startOver).toBe('expired');
+      expect(result.data.resumed).toBe(false);
+      expect(result.data.agentSessionId).not.toBe(STORED_ID);
+      expect(result.data.prompt).toContain('deleted it after its retention period');
+      expect(result.data.prompt).toContain('Startup recovery task');
+      const commandOptions = buildCommandMock.mock.calls[0][0] as { resume?: boolean; prompt?: string };
+      expect(commandOptions.resume).toBe(false);
+      expect(commandOptions.prompt).toBe(result.data.prompt);
+    } finally {
+      delete adapterWithProof.proveConversationGone;
+    }
   });
 });

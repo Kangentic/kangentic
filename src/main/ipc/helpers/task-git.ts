@@ -11,7 +11,8 @@ import { runGitWithTimeout } from '../../git/git-spawn';
 import { setSpawnStaleNote, beginSpawnStaleProbe, touchSpawnStaleProbe } from '../../transition-engine/spawn-progress';
 import { isShuttingDown } from '../../shutdown-state';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
-import { DEFAULT_AGENT, type Task, type WorktreeSkipReason } from '../../../shared/types';
+import { DEFAULT_AGENT, type ConversationExpiredNotice, type Task, type WorktreeSkipReason } from '../../../shared/types';
+import { sendToRenderer } from '../send-to-renderer';
 import { getProjectRepos } from './project-repos';
 import { resolveProjectDefaultBaseBranch } from './default-base-branch';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
@@ -277,6 +278,19 @@ export function notifySpawnBlocked(
     describeSpawnFailure(step, error),
     projectId ?? context.currentProjectId ?? undefined,
   );
+}
+
+/**
+ * Tell the user a task started a new conversation because the agent deleted
+ * the one it would have resumed (`ConversationExpiredNotice`). The renderer
+ * words the toast and formats the date. One push per start-over: the spawn
+ * that started fresh is the only one that knows, and it calls this once its
+ * session exists.
+ */
+export function notifyConversationExpired(context: IpcContext, notice: ConversationExpiredNotice): void {
+  if (isShuttingDown()) return;
+  if (!context.mainWindow) return;
+  sendToRenderer(context.mainWindow, IPC.TASK_CONVERSATION_EXPIRED, notice);
 }
 
 /**

@@ -96,6 +96,8 @@ const pendingTimers = new Set<NodeJS.Timeout>();
 const liveIndexTimers = new Map<string, NodeJS.Timeout>();
 /** Per-session trailing-debounce timers for finalize (suspend / exit) indexing. */
 const finalizeIndexTimers = new Map<string, NodeJS.Timeout>();
+/** Per-session trailing-debounce timers for the transcript archive. */
+const archiveTimers = new Map<string, NodeJS.Timeout>();
 /** Per-project trailing-debounce timers for task-record re-reads. */
 const taskRecordTimers = new Map<string, NodeJS.Timeout>();
 /** Per-project timers for a whole-branch commit read put off past startup. */
@@ -330,6 +332,71 @@ function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
   }, LIVE_INDEX_DEBOUNCE_MS);
   timer.unref();
   liveIndexTimers.set(sessionId, timer);
+}
+
+/**
+ * Archive a session's conversation (`archive.session`, the worker's
+ * `transcript-archive.ts`) once a turn has settled, or it was suspended or
+ * exited. NOT gated on the indexing switch: the archive keeps a conversation
+ * readable after the agent CLI deletes its file, which is not search, and it
+ * needs no model. A per-session trailing debounce, like the index's: the later
+ * read sees more of the agent's flush, and a burst of reports is one walk.
+ *
+ * The project is read when it is scheduled, since an exited session can leave
+ * the registry before the timer fires.
+ */
+function scheduleArchive(context: IpcContext, sessionId: string, delayMs: number): void {
+  if (disposed) return;
+  const session = context.sessionManager.getSession(sessionId);
+  // A Command Terminal and a workflow's own agent have no session record.
+  if (session?.transient || session?.workflowId) return;
+  const projectId = context.sessionManager.getSessionProjectId(sessionId);
+  if (!projectId) return;
+  const existing = archiveTimers.get(sessionId);
+  if (existing) {
+    clearTimeout(existing);
+    pendingTimers.delete(existing);
+  }
+  const timer = setTimeout(() => {
+    pendingTimers.delete(timer);
+    archiveTimers.delete(sessionId);
+    if (disposed) return;
+    chain(() => retrievalClient.call(
+      'archive.session',
+      { projectId, sessionId, remoteTargets: collectRemoteTargets(agentRegistry) },
+      { timeoutMs: null },
+    ));
+  }, delayMs);
+  timer.unref();
+  pendingTimers.add(timer);
+  archiveTimers.set(sessionId, timer);
+}
+
+/**
+ * The project-open archive pass (`archive.sweep`): purge archives no session
+ * names, then archive every conversation whose file changed, oldest first. On
+ * the job chain, so it never runs beside the index sweep, and cancellable by a
+ * project switch like it. Whatever the indexing switch says.
+ */
+function scheduleArchiveSweep(context: IpcContext, projectId: string): void {
+  chain(async () => {
+    if (disposed || context.currentProjectId !== projectId || activeSweepProjectId !== projectId) return;
+    sweepJobCounter += 1;
+    const jobId = `archive-${sweepJobCounter}`;
+    activeSweepJobId = jobId;
+    try {
+      const result = await retrievalClient.call(
+        'archive.sweep',
+        { projectId, jobId, remoteTargets: collectRemoteTargets(agentRegistry) },
+        { timeoutMs: null },
+      );
+      if (result.archived > 0 || result.purged > 0) {
+        console.log(`[retrieval] archived ${result.archived} conversations, purged ${result.purged}`);
+      }
+    } finally {
+      if (activeSweepJobId === jobId) activeSweepJobId = null;
+    }
+  });
 }
 
 /** False once a project is deleted. A context that cannot say counts it as
@@ -935,16 +1002,24 @@ export const retrievalService = {
     });
     context.sessionManager.on('exit', (sessionId: string) => {
       scheduleFinalizeIndex(context, sessionId);
+      scheduleArchive(context, sessionId, FINALIZE_DEBOUNCE_MS);
     });
     context.sessionManager.on('session-changed', (sessionId: string, session: { status: string }) => {
       // Suspend flushes the agent's native history just like a clean exit.
-      if (session.status === 'suspended') scheduleFinalizeIndex(context, sessionId);
+      if (session.status === 'suspended') {
+        scheduleFinalizeIndex(context, sessionId);
+        scheduleArchive(context, sessionId, FINALIZE_DEBOUNCE_MS);
+      }
     });
     context.sessionManager.on('activity', (sessionId: string, activity: ActivityState) => {
       // A turn just completed: the agent produced a message and is now idle
       // (waiting for the user) or paused for permission. Live-index that session
-      // so the ongoing conversation is searchable without waiting for it to end.
-      if (requiresUserInteraction(activity)) scheduleLiveIndex(context, sessionId);
+      // so the ongoing conversation is searchable without waiting for it to end,
+      // and archive the turn.
+      if (requiresUserInteraction(activity)) {
+        scheduleLiveIndex(context, sessionId);
+        scheduleArchive(context, sessionId, LIVE_INDEX_DEBOUNCE_MS);
+      }
     });
     // Task records follow the board. The bus hears agent and MCP edits and
     // every move; a plain desktop edit of a task's text is caught by the
@@ -969,9 +1044,11 @@ export const retrievalService = {
     setImmediate(() => {
       if (disposed) return;
       if (context.currentProjectId !== project.id) return;
-      // Storage upkeep (transcripts, vectors, the index's own indexes), not
-      // indexing: it runs whatever the indexing switch says.
+      // Storage upkeep (transcripts, vectors, the index's own indexes) and the
+      // transcript archive are not indexing: they run whatever the indexing
+      // switch says.
       if (!isIndexingEnabled(context)) {
+        scheduleArchiveSweep(context, project.id);
         upgradeProjectStorage(context, project.id);
         return;
       }
@@ -1008,6 +1085,9 @@ export const retrievalService = {
         // Summaries read the changes just indexed; the first open backfills.
         summaryScheduler.request(context, project.id);
       });
+      // After the index sweep on the same chain: its first run after an
+      // upgrade parses every conversation still on disk once.
+      scheduleArchiveSweep(context, project.id);
     });
   },
 
@@ -1274,6 +1354,8 @@ export const retrievalService = {
     liveIndexTimers.clear();
     for (const timer of finalizeIndexTimers.values()) clearTimeout(timer);
     finalizeIndexTimers.clear();
+    for (const timer of archiveTimers.values()) clearTimeout(timer);
+    archiveTimers.clear();
     for (const timer of taskRecordTimers.values()) clearTimeout(timer);
     taskRecordTimers.clear();
     deferredBranchTimers.clear();

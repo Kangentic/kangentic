@@ -39,6 +39,7 @@ import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-ses
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { describeClaudeStartupFailure } from './startup-failure';
+import { proveClaudeConversationGone } from './conversation-gone';
 import { configuredModelFromClaudeCommand, buildModelCapabilityFields, humanizeClaudeModelId, toClaudeModelArgument } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
@@ -495,6 +496,14 @@ export class ClaudeAdapter implements AgentAdapter {
     } catch {
       return null;
     }
+  }
+
+  proveConversationGone(params: {
+    agentSessionId: string;
+    reportedPaths: ReadonlyArray<string>;
+    cwd: string;
+  }): Promise<boolean> {
+    return proveClaudeConversationGone(params);
   }
 
   async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {

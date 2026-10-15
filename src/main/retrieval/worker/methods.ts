@@ -45,6 +45,7 @@ import { awaitWriteTurn } from '../write-budget';
 import { prepareAnswer, type AnswerPrepareParams, type PreparedAnswer } from './answer-prepare';
 import { indexHandlers, type IndexMethods } from './index-methods';
 import { transcriptHandlers, type TranscriptMethods } from './transcript-methods';
+import { archiveHandlers, type ArchiveMethods } from './archive-methods';
 import { devIndexHandlers, type DevIndexMethods } from '../../../devtools/worker/dev-index-methods';
 import { localEmbedStoreAccess, type EmbeddingRow } from '../embedder/embed-store-access';
 import { localSummaryPassStore, type SummaryRow } from '../summary/summary-pass-store';
@@ -124,7 +125,7 @@ export interface ProjectIndexSummaryRow {
   lastIndexedAt: string | null;
 }
 
-export interface RetrievalMethods extends IndexMethods, TranscriptMethods, DevIndexMethods {
+export interface RetrievalMethods extends IndexMethods, TranscriptMethods, ArchiveMethods, DevIndexMethods {
   /** The embedding drain's read: the next chunks without a vector from this
    *  model, the vec tables put at its width first. Null: no vectors here. */
   'embed.nextBatch': {
@@ -363,6 +364,7 @@ export const retrievalHandlers: RetrievalHandlers = {
   ...(__KANGENTIC_DEV__ ? devIndexHandlers : {}),
   ...indexHandlers,
   ...transcriptHandlers,
+  ...archiveHandlers,
   'embed.nextBatch': ({ projectId, dimensions, modelTag, limit }, context) => (
     embedStoreFor(context).nextBatch(projectId, { dimensions, modelTag }, limit)
   ),

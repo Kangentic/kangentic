@@ -408,6 +408,38 @@ describe('the agent', () => {
     expect(summary.outcomes[0].detail).toMatch(/claude CLI not found/);
     expect(summary.outcomes[1].status).toBe('succeeded');
   });
+
+  it('records every message row as not sent when the start withholds messages, and runs the rest', async () => {
+    // A resume whose conversation the agent deleted starts over from a recap
+    // that asks the agent to summarize and wait. The row whose message took
+    // the prompt slot was not sent either, so it must not read "Sent".
+    const sendExecute = vi.fn(async () => ({ detail: 'Sent' }));
+    const { rows, repository } = fakeRuns();
+    const registry = registryOf(
+      testAdapter('send_message', sendExecute),
+      testAdapter('notify', async () => ({ detail: 'Shown' })),
+    );
+    const withheld = 'Not sent. The agent\'s conversation had expired.';
+
+    const summary = await runAutomations({
+      automations: [
+        automation({ id: 'a1', type: 'send_message', name: 'Review' }),
+        automation({ id: 'a2', type: 'notify', name: 'Tell me', position: 1 }),
+        automation({ id: 'a3', type: 'send_message', name: 'Follow up', position: 2 }),
+      ],
+      column: COLUMN,
+      context: context({ task: task({ session_id: null }) }),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry,
+      startAgent: async () => ({ withholdMessages: withheld }),
+    });
+
+    expect(summary.startedAgent).toBe(true);
+    expect(summary.outcomes.map((outcome) => outcome.status)).toEqual(['skipped', 'succeeded', 'skipped']);
+    expect(rows.filter((row) => row.status === 'skipped').map((row) => row.detail)).toEqual([withheld, withheld]);
+    expect(sendExecute).not.toHaveBeenCalled();
+  });
 });
 
 describe('rows the column cannot run', () => {

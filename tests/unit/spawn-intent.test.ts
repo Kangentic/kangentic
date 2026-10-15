@@ -348,7 +348,7 @@ describe('resolveSpawnIntent', () => {
   it('re-resolving forceFresh after a resume match takes the fresh branch whole, not a partial flip of the resume intent', () => {
     // Mirrors the downgrade wiring in transition-engine.ts's executeSpawnAgent:
     // on a resumable match whose conversation was never persisted
-    // (isResumeConversationAbsent), the engine RE-RESOLVES the same options with
+    // (assessResumeConversation), the engine RE-RESOLVES the same options with
     // forceFresh: true rather than flipping a `canResume` boolean on the
     // already-resolved (resume-mode) intent. This pins the two branches'
     // incompatible `prompt` fields: a boolean flip would leave `prompt` on the

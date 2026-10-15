@@ -100,7 +100,9 @@ export class TranscriptSync {
     this.lastRevision = resolved.revision;
 
     const entries = resolved.entries;
-    const unstableSource = resolved.degraded || resolved.source !== 'live';
+    // An archive read carries the file's own uuids and only changes when the
+    // archive does, so it diffs like a live one. Index chunks do not.
+    const unstableSource = resolved.degraded || (resolved.source !== 'live' && resolved.source !== 'archive');
     const previous = this.sent;
 
     // Structural breaks the phone cannot patch over: unstable uuids, a

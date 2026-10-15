@@ -14,10 +14,12 @@ import { agentRegistry } from '../../agent/agent-registry';
 import {
   entriesAtRevision,
   entryJson,
+  readSavedConversation,
   resolveTaskTranscript,
   sameEntry,
   type ResolvedTaskTranscript,
 } from '../../agent/transcript-service';
+import { formatConversationTail } from '../../agent/shared/conversation-tail';
 import { renderStructuredTranscript, type StructuredTranscriptRequest } from '../../agent/commands/structured-transcript';
 import { readFinalReply, readTrail } from '../../agent/message-trail-read';
 import type { AgentReply } from '../../agent/shared/agent-reply';
@@ -69,9 +71,13 @@ export interface TranscriptMethods {
     params: { syncId: string };
     result: void;
   };
-  /** `kangentic_get_transcript`'s structured format, rendered. */
+  /**
+   * `kangentic_get_transcript`'s structured format, rendered. With
+   * `projectId`, a conversation whose file the agent deleted is read from the
+   * project's archive, else its index.
+   */
   'transcript.structured': {
-    params: { request: StructuredTranscriptRequest; remoteTargets: RemoteTargets };
+    params: { request: StructuredTranscriptRequest; projectId?: string; remoteTargets: RemoteTargets };
     result: CommandResponse;
   };
   /** One message-trail read: the newest assistant previews since `cursor`. */
@@ -87,6 +93,16 @@ export interface TranscriptMethods {
   'transcript.finalReply': {
     params: { facts: MessageTrailReadFacts; since?: TranscriptAnchor | null; remoteTargets: RemoteTargets };
     result: AgentReply | null;
+  };
+  /**
+   * The newest turns of a conversation whose file the agent deleted, as plain
+   * text, for the recap of the session started in its place
+   * (`buildExpiredConversationRecap`). At most `maxChars`, newest kept. Null
+   * when nothing holds the conversation.
+   */
+  'transcript.recapTail': {
+    params: { projectId: string; agentSessionId: string; maxChars: number };
+    result: string | null;
   };
   /** Lifetime tokens from a finished run's transcript (`transcriptUsage`). */
   'transcript.usage': {
@@ -128,6 +144,25 @@ const releasedMidRead = new Set<string>();
 /** A delta is sent only while it is smaller than this share of the whole. */
 const DELTA_MAX_SHARE = 0.5;
 
+/**
+ * What the project kept of a conversation whose file is gone, or null. A
+ * project whose database cannot be opened (closed for deletion) holds nothing,
+ * so `kangentic_get_transcript` answers "not found" instead of failing.
+ */
+async function readSavedConversationOf(
+  context: WorkerContext,
+  projectId: string,
+  agentSessionId: string,
+): ReturnType<typeof readSavedConversation> {
+  let db: ReturnType<WorkerContext['getDb']>;
+  try {
+    db = context.getDb(projectId);
+  } catch {
+    return null;
+  }
+  return readSavedConversation(db, agentSessionId);
+}
+
 /** The response fields other than the entries, as JSON members. */
 function metaJson(resolved: ResolvedTaskTranscript): string {
   const meta = {
@@ -143,6 +178,7 @@ function metaJson(resolved: ResolvedTaskTranscript): string {
     ...(resolved.unavailableReason ? { unavailableReason: resolved.unavailableReason } : {}),
     sessions: resolved.sessions,
     revision: resolved.revision,
+    archivedAgentName: resolved.archivedAgentName,
   };
   // Without its braces, to be joined with the entries.
   return JSON.stringify(meta).slice(1, -1);
@@ -252,9 +288,12 @@ export const transcriptHandlers: TranscriptHandlers = {
     if (mobileReadsInFlight.has(syncId)) releasedMidRead.add(syncId);
   },
 
-  'transcript.structured': ({ request, remoteTargets }) => {
+  'transcript.structured': ({ request, projectId, remoteTargets }, context) => {
     adoptRemoteTargets(agentRegistry, remoteTargets);
-    return renderStructuredTranscript(request);
+    return renderStructuredTranscript(
+      request,
+      projectId ? (agentSessionId) => readSavedConversationOf(context, projectId, agentSessionId) : undefined,
+    );
   },
 
   'transcript.trailRead': async ({ facts, cursor, remoteTargets }) => {
@@ -269,6 +308,11 @@ export const transcriptHandlers: TranscriptHandlers = {
     const adapter = agentRegistry.getBySessionType(facts.sessionType);
     if (!adapter) return null;
     return readFinalReply(adapter, facts, since ?? null);
+  },
+
+  'transcript.recapTail': async ({ projectId, agentSessionId, maxChars }, context) => {
+    const saved = await readSavedConversationOf(context, projectId, agentSessionId);
+    return formatConversationTail(saved?.entries ?? [], maxChars);
   },
 
   'transcript.usage': async ({ agentName, transcriptPath, agentSessionId, cwd }) => {

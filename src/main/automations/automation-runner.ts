@@ -53,6 +53,19 @@ export interface AutomationRunSummary {
   endedGroup?: boolean;
 }
 
+/** What starting the agent reports back to the run. */
+export interface AgentStartReport {
+  /**
+   * Set when the agent started but this run must not message it: a resume
+   * whose conversation the agent deleted started a new one from a recap of the
+   * task, which asks the agent to summarize where the work stands and wait. A
+   * column's command would act on a task nobody has looked at since. Every
+   * row that messages the agent, the one whose message took the spawn's prompt
+   * slot included, records this as its skip reason.
+   */
+  withholdMessages?: string;
+}
+
 export interface RunAutomationsOptions {
   automations: ColumnAutomation[];
   column: Swimlane;
@@ -70,7 +83,7 @@ export interface RunAutomationsOptions {
    * The caller decides whether the slot is free and reports back, so the row is
    * not then delivered a second time by keystroke.
    */
-  startAgent?: (pendingPrompt?: string) => Promise<void>;
+  startAgent?: (pendingPrompt?: string) => Promise<AgentStartReport | void>;
   /** Overrides the per-adapter budgets. Exit groups pass the short-lock cap. */
   groupBudgetMs?: number;
   /**
@@ -196,6 +209,8 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
    */
   let agentState: 'untouched' | 'started' | 'failed' = 'untouched';
   let agentFailure = '';
+  /** Why this run sends the agent nothing, once its start said so (`AgentStartReport`). */
+  let agentMessagesWithheld: string | null = null;
 
   // The group's Conditions, answered once for every row that could run. A row
   // the column cannot run, or whose Frequency is spent, is never asked about:
@@ -354,9 +369,10 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
         // the agent arrives as its opening prompt rather than as keystrokes
         // typed at a CLI that has not spoken yet.
         const config = interpolateAutomationConfig(automation.config, adapter.manifest.fields, context.templateVars);
-        await options.startAgent(adapter.pendingPrompt?.(config));
+        const startReport = await options.startAgent(adapter.pendingPrompt?.(config));
         agentState = 'started';
         summary.startedAgent = true;
+        if (startReport && startReport.withholdMessages) agentMessagesWithheld = startReport.withholdMessages;
       } catch (error) {
         agentState = 'failed';
         agentFailure = `The agent could not be started: ${messageOf(error)}`;
@@ -364,6 +380,14 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
         record('skipped', agentFailure);
         continue;
       }
+    }
+
+    // The start said not to message the agent: the row that started it (whose
+    // message the spawn did not send) and every message row after it.
+    if (agentMessagesWithheld && adapter.manifest.needs.includes('agent')) {
+      runs.recordSkipped(started, agentMessagesWithheld);
+      record('skipped', agentMessagesWithheld);
+      continue;
     }
 
     const budgetMs = remainingBudget(adapter.manifest.timeoutMs, groupBudgetMs, groupStartedAt);

@@ -13,6 +13,7 @@ import { useWorkflowStore } from './stores/workflow-store';
 import { useToastStore } from './stores/toast-store';
 import { useLeftoverProcessesStore } from './stores/leftover-processes-store';
 import { describeLeftoverReport } from './lib/leftover-processes';
+import { describeConversationExpired } from './lib/conversation-expired';
 import { useUpdaterStore } from './stores/updater-store';
 import { useHostMemoryStore } from './stores/host-memory-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
@@ -902,6 +903,23 @@ export function App() {
           // on three of the four paths.
           message: `"${taskTitle}" did not start its agent. ${message}`,
           variant: 'warning',
+          duration: 12000,
+        });
+      }));
+    }
+
+    // A resume found the agent had deleted the conversation, so the task
+    // started a new one from a recap of the task. Info, not a warning: nothing
+    // failed, and the agent is already summarizing where the work stands.
+    // Current project only, as onSpawnBlocked: the toast names a task from
+    // that project's board.
+    if (tasks?.onConversationExpired) {
+      cleanups.push(tasks.onConversationExpired((notice) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (notice.projectId && notice.projectId !== activeProjectId) return;
+        useToastStore.getState().addToast({
+          message: describeConversationExpired(notice),
+          variant: 'info',
           duration: 12000,
         });
       }));

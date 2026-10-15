@@ -305,53 +305,90 @@ chokepoint, so the refusal never applies to it. The main-process guard is the co
 detail hides the control so it is never offered. Pausing a session that is genuinely live is NOT
 refused in any of those states, so a stray agent can still be stopped from the window showing it.
 
-### A resume with no conversation behind it is downgraded to fresh
+### A resume the CLI cannot serve starts fresh instead
 
-Kangentic pre-specifies `--session-id` for Claude and persists it on the session record AT SPAWN
-TIME, before the agent has done anything, while the agent CLI writes its transcript on the first
-turn. A session that ends before that turn therefore leaves a resumable-looking record pointing at
-a conversation that does not exist.
+Two cases spawn `--resume <id>` for a conversation the CLI cannot find. It answers "No conversation
+found with session ID" and exits, and the user is left on a bare shell with the record still
+reading `running` (the shell PTY outlives the CLI).
 
-That is reachable in seconds of ordinary use: the recovery move out of Done spawns command-free,
-so the agent comes up idle with nothing to do, and moving the task back to Done before typing
-suspends it with its id intact. Every later entry into an auto-spawn column then issued
-`--resume <id>`, the CLI answered "No conversation found with session ID", and the user was left on
-a bare shell with the record still reading `running` (the shell PTY outlives the CLI).
+- **The conversation never started.** Kangentic pre-specifies `--session-id` for Claude and
+  persists it on the session record AT SPAWN TIME, while the CLI writes its transcript on the first
+  turn. The recovery move out of Done spawns command-free, and moving the task back before typing
+  suspends a record with nothing behind it. Reachable in seconds of ordinary use.
+- **The agent deleted it.** Claude Code deletes transcripts older than its `cleanupPeriodDays` (30
+  by default), so any task idle that long hits this on its next resume.
 
-`isResumeConversationAbsent` (`src/main/transition-engine/resume-conversation-guard.ts`) now
-downgrades that spawn to fresh at both chokepoints (`executeSpawnAgent` and `prepareAgentSpawn`).
-It fires only on positive evidence of an empty conversation. Two things must hold together:
+`assessResumeConversation` (`src/main/transition-engine/resume-conversation-guard.ts`) decides
+before the spawn, at both chokepoints (`executeSpawnAgent` and `prepareAgentSpawn`), and answers
+`never-started`, `expired`, or `unknown`. It runs AFTER the resume-time id reconcile, so it checks
+the id actually being resumed, and on the board path after the cwd migration too, so it finds a
+migrated file where it now is (startup recovery migrates nothing). Both chokepoints build the
+lineage below with one helper, `resolveResumeLineage`.
 
-- the transcript path was reported by the AGENT itself, never derived by Kangentic;
-- the same report independently shows the conversation never took a turn;
+The evidence is per record of the conversation's lineage (the retiring record, then every record
+sharing the reconciled `agent_session_id`, newest first), from three agent-written sources:
 
-and then the file that report names must be absent.
-
-The evidence comes from either of two agent-written files in Kangentic's own session directory,
-which differ in how each answers the turn question:
-
-| Source | Transcript path | "Never took a turn" means |
+| Source | Transcript path | Turns |
 |---|---|---|
-| `status.json` (preferred) | the status line's `transcript_path` | no tokens and no cost |
-| `events.jsonl` (fallback) | `transcript_path` inside the SessionStart hook payload | no event beyond `session_start` / `session_end` |
+| the session row | `sessions.transcript_path`, written from the status line when it changes | token or cost totals above zero prove turns; zero proves nothing |
+| `status.json` | the status line's `transcript_path` | tokens or cost |
+| `events.jsonl` | `transcript_path` inside the SessionStart hook payload | any event beyond `session_start` / `session_end` |
 
-The fallback exists because the status line only runs once the TUI is up, so a CLI killed in its
-first second leaves none. The SessionStart hook fires far earlier. A missing status file therefore
-does NOT end the check: it falls through to the hook, and only a record that yields neither report
-is skipped.
+The row exists because a quit or a removal deletes the session folder (`detachAndDelete`), which
+left most old conversations with no evidence at all. The SessionStart hook exists because the
+status line only runs once the TUI is up, so a CLI killed in its first second leaves no status.
 
-The guard returns false - resuming exactly as before - when the adapter has no status pipeline,
-when the project path is unknown, or when no record yields a usable report at all. Absence of
-evidence is never evidence, so a conversation that had turns is never discarded. Mocked CLIs land
-on that path structurally, which is what kept the E2E resume specs passing. This is deliberately
-narrower than the `canResumeSession` transcript-presence guard reverted in #255 (see
-docs/adapter-session-history.md), whose false misses silently lost real conversations.
+- **`never-started`** needs no turns anywhere in the lineage, the agent's own report (status or
+  hook, never the row alone) saying so, and the path it names failing with ENOENT. The spawn is
+  re-resolved `forceFresh` exactly as before: the task's own prompt, no recap, no notice.
+- **`expired`** needs turns and the adapter's proof that the file is gone
+  (`AgentAdapter.proveConversationGone`). Claude's (`adapters/claude/conversation-gone.ts`) wants an
+  absolute reported path named `<id>.jsonl`; that path and the locator's both failing with ENOENT (a
+  permission or lock error is not proof, `agent/shared/confirmed-missing.ts`); the projects folder
+  two levels above the reported path readable (a WSL session's Linux path stops here); and no
+  project folder under it, a symlinked or junctioned one included, holding `<id>.jsonl` (measured at
+  16 to 22 ms over 617 folders), so a file Claude might find elsewhere always resumes. Claude's own retention sweep does not race it: in Claude Code 2.1.300 it is
+  background housekeeping, first run 5 s after launch and at most once a day, while `--resume`
+  resolves its file at launch.
+- **`unknown`** is everything else, and resumes exactly as before. Mocked CLIs write no status and
+  no row path, so they land here structurally, which is what keeps the E2E resume specs passing.
 
-The board chokepoint walks every record sharing the conversation's `agent_session_id`, newest
-first, because a failed resume writes no report of its own and an already-poisoned task would
-otherwise stay broken forever. Startup recovery passes only the record it is recovering: it holds
-no repository handle to walk the lineage, and a record recovered there ran until the crash, so it
-normally has its own status report.
+On `expired` the same spawn starts fresh. The old record is retired and kept, nothing is deleted,
+and the new session's prompt is a recap (`buildExpiredConversationRecap`,
+`src/main/agent/shared/expired-conversation-recap.ts`): what happened and when, the task, its
+summary, the old conversation's last turns (from the transcript archive, else the index), the
+branch's commits and uncommitted changes, and a pointer to `kangentic_get_transcript`. It rides the
+command line, so it is measured as cmd.exe receives it (`commandLineLength` in
+`agent/shared/prompt-budget.ts`, where each `%` is the 4 characters `quoteArg` writes for it)
+against the 7,000-character inline budget, less what the caller's own text beside it takes (an
+isolated column's prompt, a handoff pointer). The three sources are read at once, each with its own
+wait (1.5 s for the retrieval worker, 3 s for git). Once one worker read in a set runs out of its
+wait, the set's later worker reads answer at once, so a startup pass over many expired tasks pays
+that wait once.
+
+- **On the task's main session the recap is the whole prompt** and ends "reply with a short summary
+  of where the work stands, then wait". The message the resume carried (a column's message, a
+  plan-exit continuation) and the column's task template are not sent: a conversation old enough to
+  expire belongs to a stale task. The automation runner records every message row of that move as
+  skipped, "Not sent" (`AgentStartReport.withholdMessages`). A cross-agent handoff that resumes the
+  target agent's own deleted conversation sends no column message either. The turn that answers the recap runs
+  no On agent turn end rows and no workflow step (`automations/turn-end/recap-turns.ts`). That turn
+  began at the spawn, before the session first went idle; a turn the user starts after an
+  interrupted recap begins after that idle and runs its rows. Startup recovery's recap is the whole
+  prompt on every session, so its first turn is skipped the same way.
+- **On an isolated column set to keep its own conversation** (isolated plus `create_or_resume`,
+  never the default) the old conversation says the column's pass is old, not the task, so it starts
+  a normal fresh pass with the recap prepended as context, and its turn end runs the column's rows.
+
+Once the new session exists, main pushes `task:conversationExpired` and the renderer shows an info
+toast naming the task and the old conversation's date, and whether its message was sent. Startup
+recovery does the same, since a task it resumes in the background would otherwise start over with
+nobody told. One gap is open: the auto-opened project's recovery starts while the window is still
+loading, and the renderer drops a notice that lands before App.tsx subscribes or before the
+project store holds the opened project, so that one toast can be lost. This is deliberately narrower than the `canResumeSession` transcript-presence guard
+reverted in #255 (see docs/adapter-session-history.md), whose computed paths and false misses
+silently lost real conversations. A wrong `expired` costs a new conversation in place of the
+resume, never data.
 
 ### A session whose agent exited under a surviving shell
 
@@ -363,7 +400,7 @@ survives, the PTY never fires `onExit`, and nothing marks the session finished. 
 reads active, and the bottom panel keeps a tab (its tab set is `status === 'running'`,
 `derivePanelSessions`).
 
-`isResumeConversationAbsent` (above) removed one trigger. The general case is closed by an
+`assessResumeConversation` (above) removed the two common triggers. The general case is closed by an
 **agent-absence sweep**, a third tier of the bg-shell watcher
 (`src/main/activity-engine/background-shell/watcher.ts`). The watcher is already registered for
 every spawned session, already holds each session's root PID, and already takes one shared process
@@ -539,9 +576,10 @@ the absence before the kill, while the ring still holds the CLI's last words; `h
 asks the session's adapter to read them (`AgentAdapter.describeStartupFailure`, implemented by
 Claude) and raises `notifySpawnBlocked`'s "Agent did not start" notice when they name a failure. The
 rare direct PTY exit (the CLI was the root, or its shell ended with it) takes the same read from the
-exit listener when the exit is not intentional. A notice after the fact, deliberately not a
-pre-spawn guard: see the `isResumeConversationAbsent` section above for why a computed-path
-downgrade was reverted in #255.
+exit listener when the exit is not intentional. Most resumes of a deleted conversation never get
+here: `assessResumeConversation` (above) starts them fresh before the spawn. This notice covers what
+that check cannot prove (a conversation whose evidence is gone, a WSL path), and it stays a notice
+rather than a restart.
 
 **It must also emit `session-changed`, and that emit is load-bearing.** Measured in a live preview:
 with `kill()` alone, main and the DB were both correct (`exited`, code 0) while the board kept

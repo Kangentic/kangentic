@@ -25,6 +25,7 @@ import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessi
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { persistPtyGrid } from './session-grid-persistence';
+import { forgetTranscriptPath, persistTranscriptPath } from './session-transcript-path';
 import { abortInFlightResume } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
 import { pauseTaskSession } from './session-pause';
@@ -350,6 +351,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   });
 
   context.sessionManager.on('usage', (sessionId: string, data: unknown) => {
+    // Before the window check: the record needs the path whether or not a
+    // window is there to show the usage.
+    persistTranscriptPath(context, sessionId, data);
     if (context.mainWindow.isDestroyed()) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (isFocusedSession(sessionId)) {
@@ -538,6 +542,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     // legitimate as far as the renderer can tell. Purging at the source also
     // covers every other consumer of the channel, not just the board store.
     bufferedUsage.delete(sessionId);
+    forgetTranscriptPath(sessionId);
     for (let eventIndex = bufferedEvents.length - 1; eventIndex >= 0; eventIndex--) {
       if (bufferedEvents[eventIndex].sessionId === sessionId) bufferedEvents.splice(eventIndex, 1);
     }
