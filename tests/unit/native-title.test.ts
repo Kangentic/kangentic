@@ -62,9 +62,37 @@ function isIntrinsic(tagName: string): boolean {
   return /^[a-z][\w-]*$/.test(tagName);
 }
 
-/** The reason text of the nearest marker at or above `lineIndex`, no higher than `floor`. */
+/** A property's key as written, unquoted, so `'title'` and `title` are the same key. */
+function propertyKey(member: ts.ObjectLiteralElementLike, sourceFile: ts.SourceFile): string | undefined {
+  const name = member.name;
+  if (name === undefined) return undefined;
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  return name.getText(sourceFile);
+}
+
+/**
+ * The object literals a spread can place on an element: the literal itself, or the object side
+ * of `condition && { ... }` and either branch of `condition ? { ... } : { ... }`.
+ */
+function spreadObjectLiterals(expression: ts.Expression): ts.ObjectLiteralExpression[] {
+  if (ts.isParenthesizedExpression(expression)) return spreadObjectLiterals(expression.expression);
+  if (ts.isObjectLiteralExpression(expression)) return [expression];
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+    return spreadObjectLiterals(expression.right);
+  }
+  if (ts.isConditionalExpression(expression)) {
+    return [...spreadObjectLiterals(expression.whenTrue), ...spreadObjectLiterals(expression.whenFalse)];
+  }
+  return [];
+}
+
+/**
+ * The reason text of the nearest marker at or above `lineIndex`, no higher than `floor`. The name
+ * has to open a comment, as the shared reader requires, so prose that quotes the marker between
+ * the real one and the site is not read as its reason.
+ */
 function markerReason(lines: string[], lineIndex: number, floor: number): string {
-  const pattern = new RegExp(`${MARKER}:[^\\S\\r\\n]*(.*?)\\s*(?:\\*\\/\\s*\\}?)?$`);
+  const pattern = new RegExp(`(?:^|\\s)(?://|\\{/\\*+|/\\*+|\\*+)[^\\S\\r\\n]*${MARKER}:[^\\S\\r\\n]*(.*?)\\s*(?:\\*\\/\\s*\\}?)?$`);
   for (let scan = lineIndex; scan >= Math.max(0, floor); scan--) {
     const match = pattern.exec(lines[scan] ?? '');
     if (match) return match[1].trim();
@@ -106,8 +134,8 @@ function scanSource(fileLabel: string, source: string): NativeTitleSite[] {
             record(property, 'attribute', tagName);
           } else if (
             ts.isJsxSpreadAttribute(property)
-            && ts.isObjectLiteralExpression(property.expression)
-            && property.expression.properties.some((member) => member.name?.getText(sourceFile) === 'title')
+            && spreadObjectLiterals(property.expression).some((literal) =>
+              literal.properties.some((member) => propertyKey(member, sourceFile) === 'title'))
           ) {
             record(property, 'spread', tagName);
           }
@@ -374,6 +402,40 @@ describe('the native title detector itself', () => {
       ');',
     ].join('\n'));
     expect(found.map((site) => site.kind)).toEqual(['spread']);
+  });
+
+  it('reports a spread whose title key is quoted, shorthand, or behind a condition', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = () => (',
+      '  <div>',
+      "    <span {...{ 'title': 'Why' }} />",
+      '    <span {...{ title }} />',
+      '    <span {...(open && { title: why })} />',
+      '    <span {...(open ? { title: why } : {})} />',
+      '  </div>',
+      ');',
+    ].join('\n'));
+    expect(found.map((site) => [site.line, site.kind])).toEqual([[3, 'spread'], [4, 'spread'], [5, 'spread'], [6, 'spread']]);
+  });
+
+  it('does not report a conditional spread with no title in it', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = () => (',
+      "  <span {...(open ? { role: 'note' } : {})} />",
+      ');',
+    ].join('\n'));
+    expect(found).toEqual([]);
+  });
+
+  it('reads the reason from the marker, not from prose below it that quotes the marker', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = () => (',
+      '  // native-title-ok: full value of the truncated path',
+      '  // A reader that took `native-title-ok: anything` from this line would misread it.',
+      '  <span className="truncate" title={path}>{path}</span>',
+      ');',
+    ].join('\n'));
+    expect(found.map((site) => [site.marked, site.reason])).toEqual([[true, 'full value of the truncated path']]);
   });
 
   it('ignores a component prop named title and title in plain object data', () => {

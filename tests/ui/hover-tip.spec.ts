@@ -14,7 +14,7 @@
 import { test, expect, chromium, type Browser, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite, launchPage, createProject } from './helpers';
-import { HOVER_TIP_DWELL_MS, HOVER_TIP_WARM_MS, VIEWPORT_PADDING } from '../../src/renderer/utils/hover-tip';
+import { HOVER_TIP_DWELL_MS, HOVER_TIP_WARM_MS, TIP_OFFSET, VIEWPORT_PADDING } from '../../src/renderer/utils/hover-tip';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -272,7 +272,7 @@ test('a tip at the window edge is clamped inside it, and its keys follow the use
     if (!viewport || !tipBox || !closeBox) throw new Error('no geometry');
     // The close button sits at the right edge, so a centred tip would cross it.
     expect(Math.abs(tipBox.x + tipBox.width - (viewport.width - VIEWPORT_PADDING))).toBeLessThanOrEqual(1);
-    const roomAbove = closeBox.y - 8 - tipBox.height >= VIEWPORT_PADDING;
+    const roomAbove = closeBox.y - TIP_OFFSET - tipBox.height >= VIEWPORT_PADDING;
     await expect(tip).toHaveAttribute('data-side', roomAbove ? 'above' : 'below');
 
     const chips = await tip.locator('kbd').allTextContents();
@@ -341,16 +341,30 @@ test('the next tip opens at once while one shows, and waits its dwell again afte
 test('a press closes the tip and keeps it shut until the pointer leaves', async () => {
   const { browser, page, infoTips } = await launchOnSettingsInfoTips();
   try {
-    await infoTips.first().hover();
+    const trigger = infoTips.first();
+    await trigger.hover();
     const tip = page.locator(TIP);
     await expect(tip).toBeVisible();
 
     await page.mouse.down();
     await expect(tip).toHaveCount(0);
     await page.mouse.up();
+    // A move over the trigger is what arms the dwell, so the pointer moves on the trigger after
+    // the press and the dwell is given its full time to open the tip.
+    const box = await trigger.boundingBox();
+    if (!box) throw new Error('no trigger geometry');
+    const centerX = box.x + box.width / 2;
+    const centerY = box.y + box.height / 2;
     await clearTipLog(page);
+    await page.mouse.move(centerX + 1, centerY);
+    await page.mouse.move(centerX - 1, centerY);
     await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
     expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
+
+    // Leaving ends the press, so the next hover opens the tip again.
+    await parkPointer(page);
+    await trigger.hover();
+    await expect(tip).toBeVisible();
   } finally {
     await browser.close();
   }

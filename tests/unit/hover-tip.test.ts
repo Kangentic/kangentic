@@ -364,6 +364,29 @@ describe('HoverTip description wiring', () => {
     expect(rootDescription(shutByEmptyLabel)).toBeNull();
     expect(rootDescription(shutByEnabled)).toBeNull();
   });
+
+  it("keeps the trigger's own aria-description when the tip adds nothing to read", () => {
+    const ownDescription = { 'aria-label': 'Close', 'aria-description': 'Closes the window' };
+    const repeatsName = renderToStaticMarkup(
+      createElement(HoverTip, { label: 'Close' }, createElement('button', ownDescription)),
+    );
+    const heldShut = renderToStaticMarkup(
+      createElement(HoverTip, { label: '' }, createElement('button', ownDescription)),
+    );
+    expect(rootDescription(repeatsName)).toBe('Closes the window');
+    expect(rootDescription(heldShut)).toBe('Closes the window');
+  });
+
+  it("reads the tip over the trigger's own aria-description when the tip has something to say", () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        HoverTip,
+        { label: 'Close this window' },
+        createElement('button', { 'aria-label': 'Close', 'aria-description': 'Closes the window' }),
+      ),
+    );
+    expect(rootDescription(markup)).toBe('Close this window');
+  });
 });
 
 describe('HoverTip with an empty label', () => {
