@@ -16,6 +16,8 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FIXTURES_DIR = path.join(REPO_ROOT, 'tests', 'captures', 'fixtures', 'demo');
 const DATASET_FILES = [
   path.join(REPO_ROOT, 'tests', 'captures', 'helpers', 'demo-dataset.ts'),
+  // The completed-task scenes' report: read off one recorded run's transcript and clone.
+  path.join(REPO_ROOT, 'tests', 'captures', 'helpers', 'demo-task-report.ts'),
   path.join(REPO_ROOT, 'tests', 'captures', 'scenes.ts'),
 ];
 

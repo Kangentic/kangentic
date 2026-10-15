@@ -262,7 +262,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `activity-overlay` | state | `config.developer.activityDebugOverlay`; the snapshot each panel draws is derived from that session's own seeded events by `activityStatsFor` (Activity stats below) |
 | `notification-toast` | state | `__mockInitialExit`, fired once when `sessions.onExit` registers, so App.tsx raises the toast itself; `notifications.toasts.durationSeconds` holds it up |
 | `board-config-change` | state | `__mockBoardConfigChanged`, fired once when `boardConfig.onChanged` registers, which App.tsx turns into its own reconciliation dialog |
-| `edit-columns`, `column-automation`, `column-automation-turn-end`, `column-handoff` | boot | the column's edit button (and, for `column-handoff`, the All columns tab), plus one shared `__mockSwimlanePatches` ladder (`COLUMN_LADDER` in `scenes.ts`) so the four describe one board: Claude Code plans on Opus 5 at xhigh and builds on Sonnet 5, Codex CLI reviews in an isolated session, Claude tests, and GitHub Copilot CLI merges, with handoff on at each change of agent. `column-automation`, `column-automation-turn-end` and `column-handoff` add the Code Review automation through `__mockAutomations`; `edit-columns` keeps the enter and exit slots empty. Never the dataset: an automation draws a glyph in the BOARD column header, so seeding one there would change every figure already placed. The forms show Model and Effort because the sample install reports each agent's capabilities (`DEMO_AGENT_OVERRIDES`), and Codex has no Effort field because it takes none from Kangentic. Codex also reports no turn end, which the dataset's agent list carries from its adapter, so Code Review's On agent turn end reads blocked as it does on the desktop. That is why `column-automation-turn-end` puts the review loop on Testing, where the ladder hands the review on to Claude. It holds two Move to column rows the runner reads in order, the shape of Code Review's pair in this repo's own `kangentic.json`: back to Executing with a Condition, a Frequency of three, and a Message carrying `{{agentReply}}`, then on to Merge, once. A move ends the group, so when the first row fires the second never runs |
+| `edit-columns`, `column-automation`, `column-automation-turn-end`, `column-handoff` | boot | the column's edit button (and, for `column-handoff`, the All columns tab), plus one shared `__mockSwimlanePatches` ladder (`COLUMN_LADDER` in `scenes.ts`) so the four describe one board: Claude Code plans on Opus 5 at xhigh and builds on Sonnet 5, Codex CLI reviews in an isolated session, Claude tests, and GitHub Copilot CLI merges, with handoff on at each change of agent. `column-automation`, `column-automation-turn-end` and `column-handoff` add the Code Review automation through `__mockAutomations`; `edit-columns` keeps the enter and exit slots empty. Never the dataset: an automation draws a glyph in the BOARD column header, so seeding one there would change every figure already placed. The forms show Model and Effort because the sample install reports each agent's capabilities (`DEMO_AGENT_OVERRIDES`), and Codex has no Effort field because it takes none from Kangentic. Codex also reports no turn end, which the dataset's agent list carries from its adapter, so Code Review's On agent turn end reads blocked as it does on the desktop. That is why `column-automation-turn-end` puts the review loop on Testing, where the ladder hands the review on to Claude. It holds two Move to column rows the runner reads in order, one of each Condition kind so both row marks show: back to Executing on an Agent evaluation (the robot mark) with a Frequency of three and a Message carrying `{{agentReply}}`, then on to Merge, once, on a Text match (the text search mark) of the line `PR: ready to merge`, the gate this repo's own `kangentic.json` puts on Testing. A move ends the group, so when the first row fires the second never runs |
 | `workflows` | boot | `__mockWorkflows` and `__mockWorkflowLinks` plus `tasks` patches that join six existing contoso cards to one running workflow (Workflows below); the Workflows toggle, the agent pane's collapse, Board, Workflows again, then a click on empty canvas |
 | `board-workflow` | state | the same seed, on the board: each member card's strip and step track, the To Do cards' waiting line, and the toggle's running mark |
 | `workflow-draft` | boot | a second `__mockWorkflows` seed, a workflow planned but not started (its tasks live in the draft, so nothing reaches the board); the same round trip as `workflows`, then a click that selects the middle planned task, so the inspector shows its route switches, what it waits for and what waits for it |
@@ -279,6 +279,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `command-terminal` | boot | the title-bar toggle; the window's rect is the global `commandTerminalWorkspace` blob the scene seeds, sized to the terminal session's recording like the task window |
 | `command-terminal-tiled` | boot | the toggle, then New terminal, which docks a second window beside the first and boots the project's default agent from the boot recorded at the tiled width; the first switches to its own tiled recording as it narrows |
 | `usage`, `backlog`, `quick-find`, `new-task`, `completed-tasks` | boot | one click each; `usage` also sets `usageStatsScope` and `usageStatsPeriod` |
+| `completed-task`, `completed-task-usage` | boot | the Completed header, View details on the Set up CI/CD pipeline row, and the window's maximize toggle (floating, the window cuts each tab off after its first cards); `completed-task-usage` then clicks Usage. Both seed `__mockTaskReports` with that task's whole report (One whole report below), so `ready` names a card only that report draws: the Route on Summary, the ledger's Models and tokens on Usage |
 | `knowledge-graph` | boot | the title-bar button, then the Projects picker, All, and the picker again to close its menu (the open flag and the scope are store state); the map is the one main's pipeline built over the recorded conversations, and the rig waits for it to `settle` (Knowledge Graph below) |
 | `knowledge-graph-<project>` | boot | one per sample project, generated from the dataset: the title-bar button alone for the open project (contoso-web), and for the others the picker, that project's row, the open project's row to untick it, and the picker again. A single map frames close enough for each conversation's title to show |
 | `quick-find-results` | boot | the palette, then `type` a query; the seed answers with a keyword match over its own rows (Quick Find below) |
@@ -785,6 +786,40 @@ The runs' transcripts stay on the recording machine, where the Knowledge Graph i
 does on the desktop. So contoso-web's dialog lists its own archive, the history included, and not
 every project's. The history runs are on Sonnet 5.5, so their rows name it, beside the board's
 seven Opus 5 runs.
+
+### One whole report
+
+An archived task's window is the completed task view, and the report the mock derives for it is
+everything one headless run can say: one run, no route, no ledger, no calls, no commits, and a
+summary pending (no agent is chosen to write one). The `completed-task` scenes need the rest, so
+one task carries a whole record: Set up CI/CD pipeline, the biggest of contoso's board runs and a
+top row of the Completed Tasks dialog. It is a scene seed (`__mockTaskReports`), not the dataset.
+The dataset holds what the recordings hold, and this report is partly authored.
+
+`tests/captures/helpers/demo-task-report.ts` builds it from rows with main's own
+`assembleTaskReport`, so the route, each run's columns, each run's share of its conversation's
+cumulative readings, the call outcomes and every total are main's arithmetic. What it takes from
+the recorded run:
+
+- The header strip is the Completed Tasks row's own summary. The mock hands the report that
+  object when it serves it, so the strip's cost and agent runtime are the row's by construction.
+- The four runs are the one run cut at the three points its transcript changes phase: validating
+  the workflow it wrote, applying what that found, and its final review pass. Runtimes are the
+  spans between those timestamps, tool calls are the calls each phase made, and tokens are each
+  phase's turns. Each cost is a literal worked out when the run was split, which shared the run's
+  $2.12 by each phase's tokens at Opus's relative prices and rounded it to the cent. They add back
+  to the row, which `tests/unit/demo-archived-summaries.test.ts` holds them to.
+- Models and tokens is main's ledger over the transcript. Every turn ran on one model, so there
+  is one row.
+- Files changed is the run clone's git status, most-changed first.
+
+What is authored, because no recording holds it: which column each phase ran in, the second
+conversation (one headless run is one conversation), the time between runs, the moves, the two
+commits (the run committed nothing), the three background calls (Code Review's Agent evaluation
+met once and not met once, then the summary call), and the summary's wording, which says what the
+run's own closing message says. The mock moves every time so the Done move lands on the row's
+`archived_at`, and `knowledgeGraph.taskSummary` answers with the same written summary, so a map
+opened in the same frame agrees with the view.
 
 ### Terminal recordings
 

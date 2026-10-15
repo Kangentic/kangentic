@@ -786,11 +786,58 @@
     });
   }
 
+  /** The `window.__mockTaskReports` entry for a task, or null; read when asked, for the load-order reason above. */
+  function seededTaskReportSource(taskId) {
+    var seeds = window.__mockTaskReports;
+    if (!seeds || typeof seeds !== 'object' || !Object.prototype.hasOwnProperty.call(seeds, taskId)) return null;
+    return seeds[taskId];
+  }
+
+  /**
+   * A task's report from `window.__mockTaskReports` ({ taskId: TaskReport }), the whole record a
+   * demo scene shows for one archived task, once, into taskReportCache. The seed is built against a
+   * fixed instant, so every time in it moves by one offset that puts its Done move (`endedAt`) on
+   * the archived row's own `archived_at`, the way every dataset time is an offset from boot. Its
+   * summary is the row's own summary object (summaryCache), so the header strip and the Completed
+   * Tasks row read the same figures. Until the archived row exists there is nothing to anchor on,
+   * so the task gets the derived report and nothing is cached. A later read then still lands the
+   * Done move on `archived_at`.
+   */
+  function hydrateSeededTaskReport(taskId) {
+    var source = seededTaskReportSource(taskId);
+    if (!source) return null;
+    var row = archivedTasks.find(function (task) { return task.id === taskId; });
+    if (!row || !row.archived_at) return null;
+    var report = JSON.parse(JSON.stringify(source));
+    var offsetMs = report.endedAt ? Date.parse(row.archived_at) - Date.parse(report.endedAt) : 0;
+    function shift(value) {
+      return typeof value === 'string' ? new Date(Date.parse(value) + offsetMs).toISOString() : value;
+    }
+    report.startedAt = shift(report.startedAt);
+    report.endedAt = shift(report.endedAt);
+    report.route.forEach(function (column) {
+      column.visits.forEach(function (visit) { visit.startedAt = shift(visit.startedAt); });
+    });
+    report.conversations.forEach(function (conversation) {
+      conversation.runs.forEach(function (run) { run.startedAt = shift(run.startedAt); });
+    });
+    report.backgroundCalls.forEach(function (call) { call.startedAt = shift(call.startedAt); });
+    if (report.knowledge) {
+      report.knowledge.commits.forEach(function (commit) { commit.committedAt = shift(commit.committedAt); });
+    }
+    report.summary = summaryCache[taskId] || null;
+    taskReportCache[taskId] = report;
+    return report;
+  }
+
   // Test override conventions consumed below (set via addInitScript before this mock loads):
   //   - window.__mockBoardProfiles: pre-seeded BoardProfile[] for boardConfig.getBoardProfiles()
   //   - window.__mockAgentListOverrides: per-agent override of agents.list() entries
   //   - window.__mockAutomations: pre-seeded automation rows, hydrated on first automations.list()
   //   - window.__mockSwimlanePatches: per-column field overrides, applied on first swimlanes.list()
+  //   - window.__mockTaskReports: a whole completed task report by task id, served by
+  //     sessions.getTaskReport (re-anchored onto the archived row, with its summary) and, when
+  //     its summary is written, by knowledgeGraph.taskSummary
   //   - window.__mockInitialExit: one session-exit push fired when sessions.onExit registers
   //   - window.__mockBoardConfigChanged: a projectId pushed when boardConfig.onChanged registers
   //   - window.__mockFolderPath: path returned by dialog.selectFolder() (consume-once)
@@ -2618,7 +2665,7 @@
       },
       getTaskReport: async function (_projectId, taskId) {
         if (Object.prototype.hasOwnProperty.call(taskReportCache, taskId)) return taskReportCache[taskId];
-        return buildMockTaskReport(taskId);
+        return hydrateSeededTaskReport(taskId) || buildMockTaskReport(taskId);
       },
       getTaskLastMessage: async function (_projectId, taskId) {
         return Object.prototype.hasOwnProperty.call(taskLastMessages, taskId) ? taskLastMessages[taskId] : null;
@@ -6001,13 +6048,18 @@
         return this.rebuildPlan();
       },
       taskSummary: function (projectId, taskId) {
-        // Seeded per task id via __mockPreConfigure's memoryTaskSummaries; null
-        // otherwise, which is what main answers with summaries switched off.
+        // Seeded per task id via __mockPreConfigure's memoryTaskSummaries, or
+        // the written summary of a __mockTaskReports report, so the graph and
+        // the completed task view read one summary; null otherwise, which is
+        // what main answers with summaries switched off.
         if (typeof window !== 'undefined') {
           if (!window.__mockTaskSummaryCalls) window.__mockTaskSummaryCalls = [];
           window.__mockTaskSummaryCalls.push({ projectId: projectId, taskId: taskId });
         }
-        return Promise.resolve(Object.prototype.hasOwnProperty.call(memoryTaskSummaries, taskId) ? memoryTaskSummaries[taskId] : null);
+        if (Object.prototype.hasOwnProperty.call(memoryTaskSummaries, taskId)) return Promise.resolve(memoryTaskSummaries[taskId]);
+        var seededReport = seededTaskReportSource(taskId);
+        var seededState = seededReport && seededReport.summaryState;
+        return Promise.resolve(seededState && seededState.kind === 'written' ? seededState.text : null);
       },
       graphSnapshot: function (projectId) {
         if (typeof window !== 'undefined') {

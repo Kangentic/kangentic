@@ -152,6 +152,14 @@ three things staying in step, and each is enforced rather than remembered.
   when a frame first opens the graph. An archived task's Completed Tasks row is its own recorded
   run (`archived/runs.json`). A scene whose subject keeps moving after `ready` names what to wait
   on in `settle`, and the rig refuses a poster of the no-GPU card.
+- **One completed task report is partly authored, and says which parts.** The completed task view
+  needs a route, several runs, a ledger, calls and commits that no single recorded run holds. The
+  `completed-task` scenes seed one whole report (`tests/captures/helpers/demo-task-report.ts`,
+  `__mockTaskReports`), assembled by main's `assembleTaskReport`. Its header strip is the row's own
+  summary, its runs, tokens and files are that task's recorded run cut at its transcript's own
+  phases, and the columns, the second conversation, the time between runs, the moves, the commits,
+  the calls and the summary's wording are authored and named as authored. It is a scene seed, never the dataset, and it is the
+  only authored report: any other archived task's window shows what the mock derives from its run.
 - **The `demo` Playwright tier stays green**, and it runs on the exact bytes a release deploys.
 
 ## Enforcement (self-maintaining)
@@ -183,7 +191,10 @@ three things staying in step, and each is enforced rather than remembered.
   leaves a recorded one neither drawn nor named with a reason, points an edge, neighbour or region
   out of range, leaves a region unnamed, or counts task records or commits other than the dataset's
   rows and the History pane's; `tests/unit/demo-archived-summaries.test.ts` holds each Completed
-  Tasks row to its task's recorded run, and `tests/unit/archived-run-metrics.test.ts` replays a real
+  Tasks row to its task's recorded run, and the completed-task scenes' report to main's assembly of
+  its rows and to that run (runs that add back to the row, runs and a ledger whose tokens add up to
+  the run's, as many changed files as the run changed), and
+  `tests/unit/archived-run-metrics.test.ts` replays a real
   headless result and a real advisor turn through the recorder's readers. Run via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-guest-pages.test.ts` reads every `guest_page`
   `DEMO_PROJECTS` names and fails when the file is missing, references anything off-origin, reads
@@ -217,7 +228,9 @@ three things staying in step, and each is enforced rather than remembered.
   seeds, when a config key is not an `AppConfig` key (the mock's `Object.assign` accepts any key
   and the renderer never reads it), when the settings scenes stop matching `SETTINGS_TABS` one to
   one or a `setting-row-<id>` marker names a row that is not on that tab, when a `fitToRecording`
-  names a session the recordings index does not carry, when `boot.js`'s
+  names a session the recordings index does not carry, when a `__mockTaskReports` key is not an
+  archived task of the open project or the scenes seed reports for more than one task, when
+  `boot.js`'s
   `STATE_KEYS` or `demo/vite.config.mts`'s `scenes.json` fields drift from the type, and when
   `boot.js` reads `settle` or a `settle` selector names a testid no renderer file stamps. Runs via
   `npm run test:unit`.

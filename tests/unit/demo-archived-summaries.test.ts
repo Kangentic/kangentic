@@ -23,8 +23,12 @@ import { webcrypto } from 'node:crypto';
 import { humanizeClaudeModelId } from '../../src/main/agent/adapters/claude/model-display-name';
 import {
   DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_ARCHIVED_TASKS, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_KNOWLEDGE_GRAPH_CONFIG, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS,
-  archivedRunPromptOf, archivedSessionIdOf, buildDemoPreConfig, taskSlugOf,
+  archivedRunPromptOf, archivedSessionIdOf, archivedToolBreakdown, buildDemoPreConfig, taskSlugOf,
 } from '../../tests/captures/helpers/demo-dataset';
+import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT, DEMO_COMPLETED_TASK_SUMMARY, demoCompletedTaskReportInput } from '../../tests/captures/helpers/demo-task-report';
+import { assembleTaskReport } from '../../src/main/ipc/helpers/task-report-assemble';
+import { mergeToolBreakdowns } from '../../src/shared/tool-call-totals';
+import type { TaskReport } from '../../src/shared/types';
 import { archivedClonePath, archivedCloneSegments, scratchClonePath, scratchRootFromArgv } from '../../scripts/lib/demo-archived-clone.mjs';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -238,6 +242,144 @@ describe('demo archived task reports', () => {
     expect(state.buildTaskReport(summary.taskId).summaryState.kind).toBe('indexing-off');
   });
 
+  describe('the completed-task scenes\' report', () => {
+    const run = DEMO_ARCHIVED_RUNS[DEMO_COMPLETED_TASK_ID];
+    const summary = DEMO_COMPLETED_TASK_SUMMARY;
+    const report = DEMO_COMPLETED_TASK_REPORT;
+    const runs = report.conversations.flatMap((conversation) => conversation.runs);
+
+    it('is what main assembles from its rows, and survives the JSON a scene seed travels as', () => {
+      expect(report).toEqual(assembleTaskReport(demoCompletedTaskReportInput()));
+      expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+      // The mock hands it the row's own summary; a summary here would be a second copy.
+      expect(report.summary).toBeNull();
+    });
+
+    it('splits the recorded run into runs that add back to the Completed Tasks row', () => {
+      // Vacuity guard: the view's point is several runs over more than one conversation.
+      expect(runs.length).toBeGreaterThanOrEqual(2);
+      expect(report.conversations.length).toBeGreaterThanOrEqual(2);
+      expect(runs.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0)).toBeCloseTo(summary.costUsd, 6);
+      expect(runs.reduce((sum, entry) => sum + (entry.runtimeMs ?? 0), 0)).toBe(summary.durationMs);
+      expect(report.totals.runs.costUsd ?? 0).toBeCloseTo(summary.costUsd, 6);
+      expect(report.totals.runs.runtimeMs).toBe(summary.durationMs);
+      // The Runs Total pill reads the summary's breakdown, so the runs' rows merge back into it.
+      expect(mergeToolBreakdowns(runs.map((entry) => entry.toolBreakdown))).toEqual(mergeToolBreakdowns([archivedToolBreakdown(summary.tools)]));
+      expect(report.totals.runs.toolCallCount).toBe(Object.values(summary.tools).reduce((sum, calls) => sum + calls, 0));
+      // The run's own conversation is one of them, so the copy button names a history that exists.
+      expect(report.conversations.map((conversation) => conversation.conversationId)).toContain(run.agentSessionId);
+    });
+
+    it('ends on a run in the row\'s own model and mode that exited cleanly', () => {
+      const latest = [...runs].sort((first, second) => first.startedAt.localeCompare(second.startedAt)).at(-1);
+      expect(latest?.exitCode).toBe(0);
+      for (const entry of runs) {
+        expect(entry.agent, entry.recordId).toBe(run.agent);
+        expect(entry.model, entry.recordId).toBe(report.models?.[0]?.model);
+        expect(entry.permissionMode, entry.recordId).toBe(run.permissionMode);
+        expect(entry.effort, entry.recordId).toBe(run.effort ?? null);
+      }
+    });
+
+    it('reads its tokens from the recorded run: the ledger adds up to the run\'s input and output', () => {
+      const models = report.models ?? [];
+      expect(models.length, 'no ledger, so the view shows the fallback card instead').toBeGreaterThan(0);
+      const input = models.reduce((sum, row) => sum + row.freshInputTokens + row.cacheWriteTokens + row.cacheReadTokens, 0);
+      expect(input).toBe(run.inputTokens);
+      expect(models.reduce((sum, row) => sum + row.outputTokens, 0)).toBe(run.outputTokens);
+      // A turn that reported usage is one of the run's turns, never more.
+      expect(models.reduce((sum, row) => sum + row.turns, 0)).toBeLessThanOrEqual(run.numTurns);
+      // The runs' own token readings add up to the run as well, and the Models card falls back to
+      // them when the ledger cannot be read.
+      expect(report.modelFallback.reduce((sum, row) => sum + row.inputWithCacheTokens, 0)).toBe(run.inputTokens);
+      expect(report.modelFallback.reduce((sum, row) => sum + row.outputTokens, 0)).toBe(run.outputTokens);
+      // The changed files are the run's own, as many as the row counts.
+      expect(report.knowledge?.changedFileCount).toBe(run.filesChanged);
+    });
+
+    it('repeats a column with every stay long enough to draw its visit card', () => {
+      // The Route card draws a column's visits only when it has two or more stays of a minute or more.
+      const repeated = report.route.filter((column) => column.visits.length >= 2);
+      expect(repeated.length).toBeGreaterThan(0);
+      for (const column of repeated) {
+        for (const visit of column.visits) expect(visit.durationMs, column.name).toBeGreaterThanOrEqual(60_000);
+      }
+    });
+
+    it('shows a condition met and a condition not met', () => {
+      const outcomes = report.backgroundCalls.map((call) => call.outcome);
+      expect(outcomes).toContain('ran');
+      expect(outcomes).toContain('skipped');
+      expect(report.summaryState.kind).toBe('written');
+    });
+
+    it('is served by the mock on the archived row: its summary by reference, its Done move on archived_at', async () => {
+      const windowObject = loadMockWindow();
+      const state = stateOf(windowObject) as MockState & { archivedTasks: Array<Record<string, unknown>> };
+      const archivedAt = '2026-10-12T09:30:00.000Z';
+      state.archivedTasks.push({ id: DEMO_COMPLETED_TASK_ID, archived_at: archivedAt });
+      const rowSummary = { sessionId: archivedSessionIdOf(DEMO_COMPLETED_TASK_ID), totalCostUsd: summary.costUsd, durationMs: summary.durationMs, toolBreakdown: [] };
+      state.summaryCache[DEMO_COMPLETED_TASK_ID] = rowSummary;
+      windowObject.__mockTaskReports = JSON.parse(JSON.stringify({ [DEMO_COMPLETED_TASK_ID]: report }));
+      const api = windowObject.electronAPI as {
+        sessions: { getTaskReport: (projectId: string, taskId: string) => Promise<TaskReport> };
+        knowledgeGraph: { taskSummary: (projectId: string, taskId: string) => Promise<string | null> };
+      };
+      const served = await api.sessions.getTaskReport('proj-contoso-web', DEMO_COMPLETED_TASK_ID);
+      expect(served.summary).toBe(rowSummary);
+      expect(served.endedAt).toBe(archivedAt);
+      // One offset moves every time, so each one keeps its distance from the Done move. Every
+      // timestamp in the report is compared, so a time field the report gains fails here until the
+      // mock moves it too.
+      const offsetMs = Date.parse(archivedAt) - Date.parse(report.endedAt ?? '');
+      const moved = (value: string): string => new Date(Date.parse(value) + offsetMs).toISOString();
+      const isoTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+      const unmoved: string[] = [];
+      let timestampCount = 0;
+      const compareTimes = (sourceValue: unknown, servedValue: unknown, keyPath: string): void => {
+        if (typeof sourceValue === 'string' && isoTimestamp.test(sourceValue)) {
+          timestampCount += 1;
+          if (servedValue !== moved(sourceValue)) unmoved.push(keyPath);
+        } else if (Array.isArray(sourceValue)) {
+          sourceValue.forEach((item, index) => compareTimes(item, Array.isArray(servedValue) ? servedValue[index] : undefined, `${keyPath}[${index}]`));
+        } else if (sourceValue !== null && typeof sourceValue === 'object') {
+          const servedRecord = (servedValue ?? {}) as Record<string, unknown>;
+          for (const [key, value] of Object.entries(sourceValue)) compareTimes(value, servedRecord[key], `${keyPath}.${key}`);
+        }
+      };
+      compareTimes({ ...report, summary: null }, { ...served, summary: null }, 'report');
+      expect(unmoved).toEqual([]);
+      // Vacuity guard: the start and end, every visit, run, call and commit.
+      expect(timestampCount).toBeGreaterThanOrEqual(10);
+      // Asked again, the same object: the window and a re-read agree.
+      expect(await api.sessions.getTaskReport('proj-contoso-web', DEMO_COMPLETED_TASK_ID)).toBe(served);
+      // The graph's summary panel reads the written summary the view shows.
+      expect(report.summaryState.kind).toBe('written');
+      if (report.summaryState.kind === 'written') {
+        expect(await api.knowledgeGraph.taskSummary('proj-contoso-web', DEMO_COMPLETED_TASK_ID)).toBe(report.summaryState.text);
+      }
+      // Sibling negative: another archived task keeps the report the mock derives from its row.
+      expect(await api.knowledgeGraph.taskSummary('proj-contoso-web', 'task-cw-done-schema')).toBeNull();
+      expect((await api.sessions.getTaskReport('proj-contoso-web', 'task-cw-done-schema')).route).toEqual([]);
+    });
+
+    it('serves the derived report until the archived row exists, and caches nothing before it', async () => {
+      const windowObject = loadMockWindow();
+      const state = stateOf(windowObject) as MockState & { archivedTasks: Array<Record<string, unknown>> };
+      windowObject.__mockTaskReports = JSON.parse(JSON.stringify({ [DEMO_COMPLETED_TASK_ID]: report }));
+      const api = windowObject.electronAPI as {
+        sessions: { getTaskReport: (projectId: string, taskId: string) => Promise<TaskReport> };
+      };
+      // No row to put the Done move on, so the seed is neither served nor pinned at its own anchor.
+      expect((await api.sessions.getTaskReport('proj-contoso-web', DEMO_COMPLETED_TASK_ID)).route).toEqual([]);
+      const archivedAt = '2026-10-12T09:30:00.000Z';
+      state.archivedTasks.push({ id: DEMO_COMPLETED_TASK_ID, archived_at: archivedAt });
+      const served = await api.sessions.getTaskReport('proj-contoso-web', DEMO_COMPLETED_TASK_ID);
+      expect(served.route).toHaveLength(report.route.length);
+      expect(served.endedAt).toBe(archivedAt);
+    });
+  });
+
   it('seeds each archived task\'s run facts from its recorded run', () => {
     const state = loadSeededMockState();
     // Vacuity guard: the sample install archives tasks, so the loop below checks something.
@@ -253,6 +395,10 @@ describe('demo archived task reports', () => {
       expect(state.taskRunFacts[summary.taskId], summary.taskId).toEqual({
         agent: task?.agent, effort: summary.effort, permissionMode: summary.permissionMode,
       });
+      // The row's per-tool table is archivedToolBreakdown's, the one the completed-task report's
+      // runs merge back into.
+      const seededRow = state.summaryCache[summary.taskId] as { toolBreakdown?: unknown } | undefined;
+      expect(seededRow?.toolBreakdown, summary.taskId).toEqual(archivedToolBreakdown(summary.tools));
     }
     // The history's runs ran at an effort, so at least one entry carries one rather than null.
     expect(DEMO_ARCHIVED_SUMMARIES.some((summary) => summary.effort !== null)).toBe(true);
