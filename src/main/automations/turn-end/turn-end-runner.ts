@@ -44,6 +44,17 @@ import { trackTurnEndGroup } from './turn-end-passes';
  *   a task dragged in before its plan was approved. Its own move
  *   (`auto-move`) is exempt as well, because under a busy task lock that move
  *   can be written after the approval's stamp.
+ * - **The reply is the turn's own.** It is read from where the turn began in
+ *   the transcript (`transcriptAnchor`, a byte offset the session manager
+ *   copies from the message trail when the session goes idle), so a turn that
+ *   wrote no text has no reply. The walk back to the last prompt cannot do
+ *   that alone: a turn a background job's `<task-notification>` opened, or an
+ *   `isMeta` peer hand-back or `/loop` wakeup, has no prompt it stops at, and
+ *   would hand on the message the last turn ended on, such as `Findings:
+ *   applied`. An offset, not the reply's time: the CLI stamps its transcript
+ *   with its own clock, which a WSL guest lets drift from the app's. With no
+ *   anchor (an agent with no window read, a fresh spawn) the read is the
+ *   newest reply, as before.
  * - **Rows run top to bottom, each at most once per visit, and only a row that
  *   executes counts.** A Condition that answers no has not run, so the next
  *   turn end checks it again. A Move to column row that runs ends the group:
@@ -106,7 +117,7 @@ export function registerTurnEndAutomations(context: IpcContext): void {
 
 /** Judge the reply a resumed session's step check never judged. Exported for its test. */
 export function catchUpAfterResume(context: IpcContext, resumed: SessionResumedPayload): Promise<void> {
-  return schedulePass(context, { payload: { ...resumed, turnStartedAt: null }, catchUp: true });
+  return schedulePass(context, { payload: { ...resumed, turnStartedAt: null, transcriptAnchor: null }, catchUp: true });
 }
 
 async function schedulePass(context: IpcContext, request: PassRequest): Promise<void> {
@@ -278,6 +289,12 @@ async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promi
     // This gates on the reply, not the turn, so a plan approval needs no
     // exception here: the implementation reply follows the move, and the plan
     // that precedes it stays out.
+    //
+    // Both checks below compare the CLI's transcript clock with the app's, the
+    // comparison the turn end avoids with its anchor. A resume begins no turn,
+    // so it has no anchor to read from. They stay for now: a search of the
+    // transcript locators under src/main/agent and src/main/retrieval found
+    // none that reads a WSL guest's home, where that drift would show.
     const visitStartedAt = subject.repos.taskMoves.visitStartedAt(task.id, column.id);
     if (visitStartedAt && reply.ts < Date.parse(visitStartedAt)) return;
     if (subject.repos.automationRuns.hasWorkflowStepSince(task.id, column.id, new Date(reply.ts).toISOString())) return;
@@ -419,7 +436,11 @@ function turnSettled(context: IpcContext, payload: TurnEndedPayload, settled: Tu
   return idle;
 }
 
-/** The session's final reply, read in the retrieval worker. Empty on any failure. */
+/**
+ * The final reply of the turn that ended, read in the retrieval worker from
+ * where the turn began (`payload.transcriptAnchor`) when that is known. Empty
+ * on any failure, and when the turn wrote no text of its own.
+ */
 async function readAgentReply(payload: TurnEndedPayload, sessionRepo: SessionRepository): Promise<string | null> {
   return (await readSessionFinalReply(payload, sessionRepo))?.text ?? null;
 }

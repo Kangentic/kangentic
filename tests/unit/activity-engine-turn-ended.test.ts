@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ActivityEngine } from '../../src/main/activity-engine/engine';
+import { ActivityEngine, type TurnStartCause } from '../../src/main/activity-engine/engine';
 import { EventType, IdleReason } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
@@ -28,6 +28,8 @@ interface Harness {
   turnStarts: Array<number | null>;
   /** The `workSerial` each turn end reported, in order: the turn's identity. */
   workSerials: number[];
+  /** Each `onTurnStarted`, in order: the stamp and what set it. */
+  startCalls: Array<{ turnStartedAt: number; cause: TurnStartCause }>;
   send: (type: EventType, extra?: Partial<SessionEvent>) => void;
 }
 
@@ -35,9 +37,13 @@ function createHarness(options: { stabilityMs?: number; seedThinking?: boolean }
   const turnEnds: number[] = [];
   const turnStarts: Array<number | null> = [];
   const workSerials: number[] = [];
+  const startCalls: Array<{ turnStartedAt: number; cause: TurnStartCause }> = [];
   const engine = new ActivityEngine(
     {
       onActivityChange() {},
+      onTurnStarted(_sessionId, turnStartedAt, cause) {
+        startCalls.push({ turnStartedAt, cause });
+      },
       onTurnEnded(_sessionId, turnStartedAt, workSerial) {
         turnEnds.push(Date.now());
         turnStarts.push(turnStartedAt);
@@ -54,7 +60,7 @@ function createHarness(options: { stabilityMs?: number; seedThinking?: boolean }
   const send = (type: EventType, extra: Partial<SessionEvent> = {}) => {
     engine.processEvent(SESSION_ID, { ts: Date.now(), type, ...extra });
   };
-  return { engine, turnEnds, turnStarts, workSerials, send };
+  return { engine, turnEnds, turnStarts, workSerials, startCalls, send };
 }
 
 function loadFixture(name: string): SessionEvent[] {
@@ -499,5 +505,70 @@ describe('onTurnEnded', () => {
       const { turnEnds, stopAt } = replay();
       expect(turnEnds).toEqual([stopAt]);
     });
+  });
+});
+
+/**
+ * `ActivityEngineCallbacks.onTurnStarted`: every stamp of `turnStartedAt`,
+ * with what set it. The session manager keys a turn's transcript anchor to the
+ * stamp, so a turn end's reply is read from where its own turn began. The stamp
+ * it reports must be the one the turn end reports back.
+ */
+describe('onTurnStarted', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('fires when the session goes from idle to thinking, with the stamp the turn end reports', () => {
+    const harness = createHarness();
+    vi.advanceTimersByTime(1_000);
+    harness.send(EventType.Prompt);
+    vi.advanceTimersByTime(5_000);
+    harness.send(EventType.Idle);
+    expect(harness.startCalls).toEqual([{ turnStartedAt: harness.turnStarts[0], cause: 'idle' }]);
+    harness.engine.dispose();
+  });
+
+  it('fires at the seed of a fresh spawn', () => {
+    const seededAt = Date.now();
+    const harness = createHarness({ seedThinking: true });
+    vi.advanceTimersByTime(5_000);
+    harness.send(EventType.Idle);
+    expect(harness.startCalls).toEqual([{ turnStartedAt: seededAt, cause: 'seed' }]);
+    expect(harness.turnStarts).toEqual([seededAt]);
+    harness.engine.dispose();
+  });
+
+  it('does not fire when a permission prompt resolves back to thinking, which is the same turn', () => {
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    vi.advanceTimersByTime(1_000);
+    harness.send(EventType.Idle, { detail: IdleReason.Permission });
+    vi.advanceTimersByTime(4_000);
+    harness.send(EventType.ToolStart, { tool: 'Bash', toolId: 'p' });
+    harness.send(EventType.ToolEnd, { tool: 'Bash', toolId: 'p' });
+    harness.send(EventType.Idle);
+    expect(harness.startCalls.map((call) => call.cause)).toEqual(['idle']);
+    harness.engine.dispose();
+  });
+
+  it('fires again at a plan approval, whose stamp is the one the turn end reports', () => {
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    harness.send(EventType.ToolStart, { tool: 'ExitPlanMode', toolId: 'plan' });
+    harness.send(EventType.Idle, { detail: IdleReason.Permission });
+    vi.advanceTimersByTime(60_000);
+    const approvedAt = Date.now();
+    harness.send(EventType.ToolEnd, { tool: 'ExitPlanMode', toolId: 'plan' });
+    harness.send(EventType.ToolStart, { tool: 'Edit', toolId: 'edit' });
+    harness.send(EventType.ToolEnd, { tool: 'Edit', toolId: 'edit' });
+    harness.send(EventType.Idle);
+    expect(harness.startCalls.map((call) => call.cause)).toEqual(['idle', 'plan-approval']);
+    expect(harness.startCalls[1].turnStartedAt).toBe(approvedAt);
+    expect(harness.turnStarts).toEqual([approvedAt]);
+    harness.engine.dispose();
   });
 });

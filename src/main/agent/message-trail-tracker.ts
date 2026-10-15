@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { EventType } from '../../shared/types';
 import type { AssistantMessageTrailEntry, Session, SessionEvent } from '../../shared/types';
+import type { TranscriptAnchor, TranscriptPositionSource } from './shared/transcript-anchor';
 
 /**
  * Keeps the agent message trail every board card shows: the newest few things
@@ -26,6 +27,11 @@ import type { AssistantMessageTrailEntry, Session, SessionEvent } from '../../sh
  * is retained between reads but that cursor and the trail. An adapter without
  * the window capability re-parses its whole bounded tail there, so its reads
  * are rate-limited harder.
+ *
+ * The cursor has a second consumer: it is where a turn begins in its
+ * transcript (`transcriptPosition`), so a turn end reads its reply from there
+ * and never judges an earlier turn's. So the cursor moves only when a read
+ * lands, and only within the file it was read from.
  *
  * Retention: a trail outlives its session until the session leaves the registry
  * or the map hits `MESSAGE_TRAIL_MAX_SESSIONS`.
@@ -115,6 +121,14 @@ export interface MessageTrailSessionSource {
   ): unknown;
   getSession(sessionId: string): Session | undefined;
   listSessions(): Session[];
+  /**
+   * Where the tracker hands itself over as the source of each turn's
+   * transcript anchor (`SessionManager.setTranscriptPositionSource`). Optional,
+   * so a test's plain EventEmitter needs nothing.
+   */
+  setTranscriptPositionSource?(source: TranscriptPositionSource): void;
+  /** Told after each read lands (`SessionManager.transcriptReadLanded`). Optional, as above. */
+  transcriptReadLanded?(sessionId: string): void;
 }
 
 export interface MessageTrailTrackerDeps {
@@ -146,13 +160,16 @@ interface TrailState {
   trailingTimer: ReturnType<typeof setTimeout> | null;
 }
 
-export class MessageTrailTracker extends EventEmitter {
+export class MessageTrailTracker extends EventEmitter implements TranscriptPositionSource {
   private readonly states = new Map<string, TrailState>();
   private readonly now: () => number;
 
   constructor(private readonly deps: MessageTrailTrackerDeps) {
     super();
     this.now = deps.now ?? Date.now;
+    // The cursor is also where each turn begins in its transcript, which a
+    // turn end reads its reply from (`TurnEndedPayload.transcriptAnchor`).
+    deps.sessionManager.setTranscriptPositionSource?.(this);
     deps.sessionManager.on('event', (sessionId, event) => {
       if (MESSAGE_TRAIL_SILENT_EVENT_TYPES.has(event.type)) return;
       this.schedule(sessionId);
@@ -192,6 +209,34 @@ export class MessageTrailTracker extends EventEmitter {
       if (state.trail.length > 0) result[sessionId] = state.trail;
     }
     return result;
+  }
+
+  /**
+   * How far into the session's history file the last finished read reached,
+   * as a window read resumes from it. Null on the cached-parse fallback, which
+   * has no offsets, before the first read has anchored, and after the agent
+   * session id changed until a read anchors in the new file.
+   *
+   * The session manager copies this when a session goes idle and hands it to
+   * the next turn as where that turn began (`TranscriptAnchor`), so a turn end
+   * never judges a reply from an earlier turn. That works because the cursor
+   * moves only when an awaited read lands, never inside a trigger, so a copy
+   * taken while the session sits idle can only cover what was on disk then.
+   * Keep it that way. The read a Stop starts can land after that copy, so the
+   * manager is told when each read lands (`transcriptReadLanded`) and asks
+   * `hasPendingRead` whether more of that burst is still to come.
+   */
+  transcriptPosition(sessionId: string): TranscriptAnchor | null {
+    const state = this.states.get(sessionId);
+    const agentSessionId = state?.facts?.agentSessionId;
+    if (!state || state.usesFallback || state.cursor === null || !agentSessionId) return null;
+    return { agentSessionId, byteOffset: state.cursor };
+  }
+
+  /** Whether a read of the session is running now or armed on its trailing timer. */
+  hasPendingRead(sessionId: string): boolean {
+    const state = this.states.get(sessionId);
+    return state !== undefined && (state.readInFlight || state.trailingTimer !== null);
   }
 
   /** Coalesced entry point for every trigger. Safe to call for any session id. */
@@ -289,6 +334,8 @@ export class MessageTrailTracker extends EventEmitter {
           this.armTrailingRead(sessionId, state, this.minIntervalFor(state));
         }
       }
+      // Last, so `hasPendingRead` already counts a re-armed trailing read.
+      if (this.states.get(sessionId) === state) this.deps.sessionManager.transcriptReadLanded?.(sessionId);
     }
   }
 
@@ -302,6 +349,10 @@ export class MessageTrailTracker extends EventEmitter {
     const agentSessionId = facts?.agentSessionId;
     if (!facts || !agentSessionId) return [];
     const read = await this.deps.readTrail({ ...facts, agentSessionId }, state.cursor);
+    // A read that started in a file the session has since left (a captured
+    // id, a /clear fork) ends at an offset in that file, which must not become
+    // the cursor into the new one.
+    if (state.facts?.agentSessionId !== agentSessionId) return read.previews;
     state.cursor = read.cursor;
     state.usesFallback = read.usedFallback;
     return read.previews;

@@ -24,6 +24,7 @@ export type {
   PendingTool,
   CompensationCounters,
   PtyChunkTick,
+  TurnStartCause,
 } from './shapes';
 
 export {

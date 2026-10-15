@@ -105,6 +105,7 @@ export class ActivityEngine {
       // A spawn seeded thinking is a turn beginning now: its prompt rides the
       // command line, so no idle-to-thinking commit will stamp it.
       state.turnStartedAt = nowMs;
+      this.callbacks.onTurnStarted?.(sessionId, nowMs, 'seed');
     } else {
       // Idle seed: stamp the idle clock so the idle-timeout sweep measures from
       // spawn. A seeded 'thinking' turn leaves idleTimestamp null, preserving
@@ -359,6 +360,7 @@ export class ActivityEngine {
       // a carried-in turn, as for a task dragged in mid-plan and approved after.
       if (event.type === EventType.ToolEnd && event.tool === AgentTool.ExitPlanMode) {
         state.turnStartedAt = this.now();
+        this.callbacks.onTurnStarted?.(sessionId, state.turnStartedAt, 'plan-approval');
       }
     }
 
@@ -1026,7 +1028,10 @@ export class ActivityEngine {
     // A turn begins on idle to thinking. Permission back to thinking is the
     // same turn resuming, so it keeps the turn's start, except after a plan
     // approval, which re-stamps it where the prompt resolves (`processEvent`).
-    if (newActivity === 'thinking' && fromActivity === 'idle') state.turnStartedAt = this.now();
+    if (newActivity === 'thinking' && fromActivity === 'idle') {
+      state.turnStartedAt = this.now();
+      this.callbacks.onTurnStarted?.(sessionId, state.turnStartedAt, 'idle');
+    }
     const reason = deriveReason(state);
     this.recordTransition(state, fromActivity, newActivity, reason.kind, trigger, counterDelta);
     state.lastPushedReason = reason;

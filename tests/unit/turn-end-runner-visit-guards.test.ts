@@ -36,6 +36,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type DatabaseType from 'better-sqlite3';
 import type { ColumnAutomation, TaskMoveRecordOrigin } from '../../src/shared/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -45,10 +48,16 @@ import { AutomationRunRepository } from '../../src/main/db/repositories/automati
 import { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { supersedeTurnEndWork } from '../../src/main/automations/turn-end/turn-end-passes';
+import { matchFinalLine, TEXT_MATCH_NO_REPLY_REASON } from '../../src/shared/final-line-match';
+import { readFinalReply, readTrail } from '../../src/main/agent/message-trail-read';
+import type { TranscriptAnchor } from '../../src/main/agent/shared/transcript-anchor';
+import type { TranscriptMethods } from '../../src/main/retrieval/worker/transcript-methods';
+import { claudeTranscriptLines, claudeWindowAdapter } from './helpers/claude-transcript-fixture';
 import { openTestDatabase } from './helpers/test-database';
 
 interface ExecuteOptions {
   onlyIds: ReadonlySet<string>;
+  agentReply?: string | null;
   conditionAnswers: ReadonlyMap<string, RunConditionAnswer>;
   conditionUnavailableReason?: string;
   conditionUnavailableCallId?: string | null;
@@ -199,6 +208,14 @@ describe('a turn end and the rows it may run', () => {
       for (const row of hoisted.rows as ColumnAutomation[]) {
         if (!options.onlyIds.has(row.id)) continue;
         const started = { id: randomUUID(), automation: row, taskId: task.id };
+        // A Text match is checked in code against the reply, as the runner does.
+        if (row.final_line) {
+          const match = matchFinalLine(row.final_line, options.agentReply);
+          if (!match.met) {
+            runs.recordSkipped(started, match.reason);
+            continue;
+          }
+        }
         if (row.condition) {
           const answer = options.conditionAnswers.get(row.id);
           if (!answer) {
@@ -254,7 +271,7 @@ describe('a turn end and the rows it may run', () => {
   }
 
   /** Fire a turn end and wait for its pass to finish (see the file header). */
-  async function endTurn(turnStartedAt: number | null = null): Promise<void> {
+  async function endTurn(turnStartedAt: number | null = null, transcriptAnchor: TranscriptAnchor | null = null): Promise<void> {
     sessionManager.emit('turn-ended', {
       sessionId: SESSION_ID,
       taskId,
@@ -263,6 +280,7 @@ describe('a turn end and the rows it may run', () => {
       isolatedSwimlaneId: null,
       turnStartedAt,
       workSerial: WORK_SERIAL,
+      transcriptAnchor,
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
@@ -405,6 +423,107 @@ describe('a turn end and the rows it may run', () => {
       expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
       const [, , , conditional] = hoisted.conditionCheckInput.mock.calls[0] as [unknown, unknown, string, ColumnAutomation[]];
       expect(conditional.map((candidate) => candidate.id)).toEqual(['row-prose']);
+    });
+  });
+
+  // The reply a turn end judges is read from where the turn began
+  // (`transcriptAnchor`), so a turn that wrote no text never hands on the line
+  // an earlier turn ended on.
+  describe('the turn\'s own reply', () => {
+    const AGENT_SESSION_ID = 'agent-session-1';
+    const FACTS = { sessionType: 'claude_agent', agentSessionId: AGENT_SESSION_ID, cwd: '/mock/worktree' };
+    const { humanPrompt, notification, assistantText, assistantTool, toolResult, turnEnd } = claudeTranscriptLines({
+      agentSessionId: AGENT_SESSION_ID,
+      cwd: FACTS.cwd,
+    });
+    let tmpDir: string;
+    let transcriptFile: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'turn-end-own-reply-'));
+      transcriptFile = path.join(tmpDir, `${AGENT_SESSION_ID}.jsonl`);
+      hoisted.findSession.mockImplementation(() => ({
+        session_type: FACTS.sessionType,
+        agent_session_id: AGENT_SESSION_ID,
+        cwd: FACTS.cwd,
+      }));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    /**
+     * The worker's read, run in-process over the temp transcript with the real
+     * Claude window parser, so the runner gets what production would hand it.
+     */
+    function readFromTranscript(): void {
+      const adapter = claudeWindowAdapter(transcriptFile);
+      hoisted.retrievalCall.mockImplementation(async (method: string, params: TranscriptMethods['transcript.finalReply']['params']) => {
+        expect(method).toBe('transcript.finalReply');
+        return readFinalReply(adapter, params.facts, params.since ?? null);
+      });
+    }
+
+    it('hands the turn\'s anchor to the reply read', async () => {
+      hoisted.rows = [row({ final_line: 'Verdict: Ready' })];
+      hoisted.retrievalCall.mockImplementation(async () => ({ text: 'Verdict: Ready', uuid: 'reply-1', ts: Date.now() }));
+      enterColumnAt(secondsAgo(60));
+      const anchor = { agentSessionId: AGENT_SESSION_ID, byteOffset: 4095 };
+
+      await endTurn(null, anchor);
+
+      expect(hoisted.retrievalCall).toHaveBeenCalledWith('transcript.finalReply', expect.objectContaining({ since: anchor }), expect.anything());
+    });
+
+    describe('back in Executing after a Code Review round trip, a turn a background job opened that wrote no text', () => {
+      // The previous visit ended on the line the move row matches. Back in the
+      // column, a notification opens a turn that only calls a tool.
+      const previousVisit = humanPrompt('p1', 'Apply the findings.')
+        + assistantText('a1', 'Applied all three.\n\nFindings: applied')
+        + turnEnd('t1');
+      const notificationTurn = notification('n1')
+        + assistantTool('a2', 'toolu_1', 'TaskOutput')
+        + toolResult('r1', 'toolu_1');
+
+      async function setUp(): Promise<TranscriptAnchor> {
+        hoisted.rows = [row({
+          id: 'row-on-to-review',
+          name: 'On to Code Review',
+          config: { targetColumn: 'Code Review' },
+          final_line: 'Findings: applied',
+        })];
+        fs.writeFileSync(transcriptFile, previousVisit);
+        // Where the trail had read to when the resumed session went idle.
+        const read = await readTrail(claudeWindowAdapter(transcriptFile), FACTS, null);
+        fs.appendFileSync(transcriptFile, notificationTurn);
+        readFromTranscript();
+        enterColumnAt(secondsAgo(60));
+        return { agentSessionId: AGENT_SESSION_ID, byteOffset: read.cursor ?? 0 };
+      }
+
+      /** The read does real file I/O, so the pass outlives one immediate: wait for its `finally`. */
+      async function endTurnAndWait(anchor: TranscriptAnchor | null): Promise<void> {
+        await endTurn(Date.now() - 5_000, anchor);
+        await vi.waitFor(() => expect(hoisted.clearSpawnProgress).toHaveBeenCalled());
+      }
+
+      it('without an anchor, judges the previous visit\'s line and moves the task again (the bug)', async () => {
+        await setUp();
+
+        await endTurnAndWait(null);
+
+        expect(runs.countRuns('row-on-to-review', taskId)).toBe(1);
+      });
+
+      it('with the anchor, finds no reply of the turn\'s own, so the move row does not run', async () => {
+        const anchor = await setUp();
+
+        await endTurnAndWait(anchor);
+
+        expect(runs.countRuns('row-on-to-review', taskId)).toBe(0);
+        expect(skippedRows().map((run) => run.detail)).toEqual([TEXT_MATCH_NO_REPLY_REASON]);
+      });
     });
   });
 

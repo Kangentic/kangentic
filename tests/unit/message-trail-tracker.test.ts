@@ -10,6 +10,7 @@ import {
   MESSAGE_TRAIL_MAX_SESSIONS,
   MESSAGE_TRAIL_TAIL_BYTES,
   MessageTrailTracker,
+  type TrailRead,
 } from '../../src/main/agent/message-trail-tracker';
 import { localTrailReader, type MessageTrailAdapter } from '../../src/main/agent/message-trail-read';
 import { MESSAGE_PREVIEW_MAX_CHARS } from '../../src/main/agent/shared/message-preview';
@@ -327,6 +328,189 @@ describe('MessageTrailTracker', () => {
     manager.emit('agent-session-id', 's1', 'task-s1', 'proj-1', 'agent-forked');
     await waitUntil(() => pushes.length === 2);
     expect(texts(pushes[1].entries)).toEqual(['from the first file', 'from the forked file']);
+  });
+
+  // The session manager copies `transcriptPosition` when a session goes idle,
+  // as where its next turn begins (`TurnEndedPayload.transcriptAnchor`).
+  describe('transcriptPosition', () => {
+    it('hands itself to the session manager as the source of each turn\'s anchor', () => {
+      const setTranscriptPositionSource = vi.fn();
+      Object.assign(manager, { setTranscriptPositionSource });
+      const trailTracker = startTracker(windowAdapter({ 'agent-s1': file }, calls));
+      expect(setTranscriptPositionSource).toHaveBeenCalledWith(trailTracker);
+    });
+
+    it('reports how far its finished reads reached, in the offset form a window read resumes from', async () => {
+      fs.writeFileSync(file, assistantLine('a1', 'first'));
+      const trailTracker = startTracker(windowAdapter({ 'agent-s1': file }, calls));
+      expect(trailTracker.transcriptPosition('s1')).toBeNull();
+
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => pushes.length === 1);
+      // On the newline that ends the last record read.
+      expect(trailTracker.transcriptPosition('s1')).toEqual({ agentSessionId: 'agent-s1', byteOffset: fs.statSync(file).size - 1 });
+      await settle(MIN_INTERVAL_MS * 3);
+
+      fs.appendFileSync(file, assistantLine('a2', 'second'));
+      manager.emit('event', 's1', { ts: 2, type: 'tool_start', tool: 'Bash' });
+      await waitUntil(() => pushes.length === 2);
+      expect(trailTracker.transcriptPosition('s1')).toEqual({ agentSessionId: 'agent-s1', byteOffset: fs.statSync(file).size - 1 });
+    });
+
+    it('reports none on the cached-parse fallback, which has no offsets', async () => {
+      const adapter: MessageTrailAdapter = {
+        parseTranscript: async () => ({ entries: [{ kind: 'assistant', uuid: 'a1', ts: 1, blocks: [{ type: 'text', text: 'alpha' }] }], sourcePath: null }),
+      };
+      const trailTracker = startTracker(adapter, `agent-fallback-position-${Date.now()}`);
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => pushes.length === 1);
+      expect(trailTracker.transcriptPosition('s1')).toBeNull();
+    });
+
+    it('never reports an offset from a file the session has left, even when that file\'s read lands after the switch', async () => {
+      const reads: Array<{ agentSessionId: string; resolve: (read: { previews: AssistantMessageTrailEntry[]; cursor: number | null; usedFallback: boolean }) => void }> = [];
+      const trailTracker = new MessageTrailTracker({
+        sessionManager: manager,
+        resolveSessionFacts: () => ({ sessionType: 'fake-agent', agentSessionId: 'agent-s1', cwd: '/mock/project' }),
+        readTrail: (facts) => new Promise((resolve) => {
+          reads.push({ agentSessionId: facts.agentSessionId, resolve });
+        }),
+        minIntervalMs: MIN_INTERVAL_MS,
+        fallbackMinIntervalMs: MIN_INTERVAL_MS,
+      });
+      tracker = trailTracker;
+
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => reads.length === 1);
+      // A /clear fork while the read of the old file is still out.
+      manager.emit('agent-session-id', 's1', 'task-s1', 'proj-1', 'agent-forked');
+      reads[0].resolve({ previews: [], cursor: 500, usedFallback: false });
+      await settle(5);
+      expect(trailTracker.transcriptPosition('s1')).toBeNull();
+
+      // The re-read that the switch asked for anchors in the new file.
+      await waitUntil(() => reads.length === 2);
+      expect(reads[1].agentSessionId).toBe('agent-forked');
+      reads[1].resolve({ previews: [], cursor: 40, usedFallback: false });
+      await waitUntil(() => trailTracker.transcriptPosition('s1') !== null);
+      expect(trailTracker.transcriptPosition('s1')).toEqual({ agentSessionId: 'agent-forked', byteOffset: 40 });
+    });
+
+    // The manager keeps the idle copy settling while a read pending at the
+    // commit is out, so it asks the tracker whether one is (`hasPendingRead`)
+    // and is told when each read lands (`transcriptReadLanded`).
+    interface HeldRead {
+      resolve: (cursor: number) => void;
+    }
+
+    /**
+     * A tracker whose reads resolve when the test says so, and a session
+     * manager that records whether a read was still pending at the moment the
+     * tracker announced a landing.
+     */
+    function startHeldTracker(): {
+      heldTracker: MessageTrailTracker;
+      reads: HeldRead[];
+      pendingAtLanding: boolean[];
+      transcriptReadLanded: ReturnType<typeof vi.fn>;
+    } {
+      const reads: HeldRead[] = [];
+      const pendingAtLanding: boolean[] = [];
+      const transcriptReadLanded = vi.fn((sessionId: string) => {
+        pendingAtLanding.push(heldTracker.hasPendingRead(sessionId));
+      });
+      Object.assign(manager, { transcriptReadLanded });
+      const heldTracker = new MessageTrailTracker({
+        sessionManager: manager,
+        resolveSessionFacts: () => ({ sessionType: 'fake-agent', agentSessionId: 'agent-s1', cwd: '/mock/project' }),
+        readTrail: () => new Promise<TrailRead>((resolve) => {
+          reads.push({ resolve: (cursor) => resolve({ previews: [], cursor, usedFallback: false }) });
+        }),
+        minIntervalMs: MIN_INTERVAL_MS,
+        fallbackMinIntervalMs: MIN_INTERVAL_MS,
+      });
+      tracker = heldTracker;
+      return { heldTracker, reads, pendingAtLanding, transcriptReadLanded };
+    }
+
+    it('has no pending read for a session it is not tracking', () => {
+      const { heldTracker } = startHeldTracker();
+      expect(heldTracker.hasPendingRead('s1')).toBe(false);
+      expect(heldTracker.hasPendingRead('never-seen')).toBe(false);
+    });
+
+    it('has a pending read while one is out, even after the trailing read it armed has fired, and none once both are done', async () => {
+      const { heldTracker, reads } = startHeldTracker();
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => reads.length === 1);
+      expect(heldTracker.hasPendingRead('s1')).toBe(true);
+
+      // Intentional fixed wait: the trailing timer has to fire while the first
+      // read is still out, which clears the timer and only asks for a re-read.
+      // From then on the read in flight is all that keeps this true. A slow
+      // machine only makes that more certain.
+      await settle(MIN_INTERVAL_MS * 3);
+      expect(reads).toHaveLength(1);
+      expect(heldTracker.hasPendingRead('s1')).toBe(true);
+
+      // The re-read the fired timer asked for starts once the first lands.
+      reads[0].resolve(100);
+      await waitUntil(() => reads.length === 2);
+      expect(heldTracker.hasPendingRead('s1')).toBe(true);
+      reads[1].resolve(100);
+      await waitUntil(() => !heldTracker.hasPendingRead('s1'));
+      expect(reads).toHaveLength(2);
+    });
+
+    it('has a pending read on the armed trailing read alone once the read that armed it has landed', async () => {
+      const { heldTracker, reads, pendingAtLanding, transcriptReadLanded } = startHeldTracker();
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => reads.length === 1);
+
+      reads[0].resolve(100);
+      await waitUntil(() => pendingAtLanding.length === 1);
+      // The announcement runs inside the read's own settle, where the in-flight
+      // flag is already clear: the trailing read is what is pending.
+      expect(pendingAtLanding).toEqual([true]);
+
+      // The trailing read is the last of the burst: nothing is pending after it.
+      await waitUntil(() => reads.length === 2);
+      reads[1].resolve(100);
+      await waitUntil(() => pendingAtLanding.length === 2);
+      expect(pendingAtLanding).toEqual([true, false]);
+      expect(heldTracker.hasPendingRead('s1')).toBe(false);
+      expect(transcriptReadLanded).toHaveBeenCalledTimes(2);
+      expect(transcriptReadLanded).toHaveBeenCalledWith('s1');
+    });
+
+    it('announces a landed read only after re-arming the trailing read an event during it asked for', async () => {
+      const { reads, pendingAtLanding } = startHeldTracker();
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => reads.length === 1);
+
+      // Intentional fixed wait: the trailing timer has to fire while the read is
+      // out, so it is gone from its slot when the read lands and only the
+      // re-arm in the read's settle can make a read pending at that moment.
+      await settle(MIN_INTERVAL_MS * 3);
+      reads[0].resolve(100);
+      await waitUntil(() => pendingAtLanding.length === 1);
+      expect(pendingAtLanding).toEqual([true]);
+    });
+
+    it('announces no landing for a session the registry dropped while its read was out', async () => {
+      const { heldTracker, reads, transcriptReadLanded } = startHeldTracker();
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => reads.length === 1);
+
+      manager.emit('session-removed', 's1', fakeSession('s1'));
+      expect(heldTracker.hasPendingRead('s1')).toBe(false);
+      reads[0].resolve(100);
+
+      // Intentional fixed wait: this asserts a NON-occurrence, which cannot be
+      // polled for. The read lands within a few microtasks of the resolve.
+      await settle(MIN_INTERVAL_MS * 3);
+      expect(transcriptReadLanded).not.toHaveBeenCalled();
+    });
   });
 
   describe('MESSAGE_TRAIL_MAX_SESSIONS eviction', () => {
