@@ -441,6 +441,47 @@ describe('SessionManager turn-end transcript anchor', () => {
       expect(anchors()).toEqual([at(100)]);
     });
 
+    it('keeps a turn\'s anchor when the read it follows is dropped before it lands', () => {
+      // The trail drops the session's state while the Stop's read runs (its
+      // session cap), so that read never lands. The next read to land comes
+      // from a fresh state, which starts at the file's end after the turn began.
+      position = at(100);
+      pending = true;
+      readInFlight = true;
+      getTelemetry(manager).initSession(sessionId);
+      send(EventType.Prompt);
+
+      position = null;
+      pending = false;
+      readInFlight = false;
+      manager.transcriptReadDropped(sessionId);
+
+      position = at(900);
+      manager.transcriptReadLanded(sessionId);
+
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(100)]);
+    });
+
+    it('leaves a settling idle copy for the next read to land when the read it waited on is dropped', () => {
+      position = at(100);
+      pending = true;
+      getTelemetry(manager).initSession(sessionId);
+
+      position = null;
+      pending = false;
+      manager.transcriptReadDropped(sessionId);
+      expect(getAnchorMaps(manager).idleTranscriptAnchors.get(sessionId)).toEqual({ anchor: at(100), settling: true });
+
+      // The fresh state's first read reaches the file's end, which is where the
+      // next turn begins while the session stays idle.
+      position = at(400);
+      manager.transcriptReadLanded(sessionId);
+      send(EventType.Prompt);
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(400)]);
+    });
+
     it('keeps a settling idle copy\'s position when the read that lands knows none, and fixes it', () => {
       // The same /clear fork, landing while the session still sits idle: the
       // copy keeps the position it had and stops settling, since none is pending.
