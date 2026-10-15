@@ -160,6 +160,19 @@ async function expectNoTipOpened(page: Page): Promise<void> {
 }
 
 /** Park the pointer on dead space, away from every trigger. */
+/**
+ * Focus `trigger` the way a keyboard user does, which is the only focus that opens a tip: step
+ * off with Shift+Tab and back with Tab, so the last move is Tab's own. A script `focus()` opens
+ * nothing, even right after a key.
+ */
+async function focusByTab(page: Page, trigger: Locator): Promise<void> {
+  await trigger.focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(trigger).not.toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(trigger).toBeFocused();
+}
+
 async function parkPointer(page: Page): Promise<void> {
   const viewport = page.viewportSize();
   if (!viewport) throw new Error('no viewport');
@@ -336,9 +349,8 @@ test('a keyboard click made with the pointer elsewhere does not keep the next ho
     const trigger = infoTips.first();
     const tip = page.locator(TIP);
 
-    // A key first, so the focus that follows is keyboard focus. Enter is the trigger's click.
-    await page.keyboard.press('Shift');
-    await trigger.focus();
+    // Tab focus opens the tip at once. Enter is the trigger's click.
+    await focusByTab(page, trigger);
     await expect(tip).toBeVisible();
     await page.keyboard.press('Enter');
     await expect(tip).toHaveCount(0);
@@ -364,9 +376,8 @@ test('a tip closed by Escape with focus still on the trigger does not keep the n
     // Text inside the panel that nothing listens to, so leaving the trigger lands on no tip.
     const deadSpace = page.locator(SETTINGS_PANEL).getByRole('heading').first();
 
-    // A key first, so the focus that follows is keyboard focus and opens the tip at once.
-    await page.keyboard.press('Shift');
-    await trigger.focus();
+    // Tab focus opens the tip at once.
+    await focusByTab(page, trigger);
     await expect(tip).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(tip).toHaveCount(0);
@@ -589,8 +600,7 @@ for (const closer of COLD_CLOSERS) {
       const first = infoTips.first();
       const tip = page.locator(TIP);
       if (closer.byFocus) {
-        await page.keyboard.press('Shift');
-        await first.focus();
+        await focusByTab(page, first);
       } else {
         await first.hover();
       }
