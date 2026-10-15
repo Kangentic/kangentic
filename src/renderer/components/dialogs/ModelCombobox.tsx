@@ -493,10 +493,10 @@ export function ModelCombobox({
   return (
     <div ref={containerRef} className={`relative ${className}`} onBlur={handleFieldBlur}>
       <div className="flex items-center gap-0 border border-edge-input rounded bg-surface-control">
-        {/* An empty label (a value that is not an alias) holds the tip shut. Shut while the
-            menu shows too: the chevron focuses the input as it opens the menu, and a tip
-            opened by that focus would take the Escape meant for the menu. */}
-        <Tooltip label={valueTitle ?? ''} enabled={!showSuggestions}>
+        {/* An empty label (a value that is not an alias) holds the tip shut. Not held while the
+            menu shows: the chevron focuses the input by script as it opens the menu, which opens
+            no tip (only Tab does), and the alias it names stays the field's description. */}
+        <Tooltip label={valueTitle ?? ''}>
           <input
             ref={inputRef}
             type="text"
