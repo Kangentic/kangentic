@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useValuePulse } from '../../hooks/useValuePulse';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * The shared small-metric tile, split out of KpiTiles so the chrome lives in one
@@ -19,11 +19,11 @@ import { HoverTip } from '../HoverTip';
 function CompactDelta({ delta, baseline }: { delta: number | null; baseline: string }) {
   if (delta === null || baseline === '') return null;
   return (
-    <HoverTip label={baseline}>
+    <Tooltip label={baseline}>
       <span className="text-[11px] text-fg-muted tabular-nums flex-shrink-0">
         {`${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}%`}
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -50,7 +50,7 @@ export interface CompactTileProps {
 export function CompactTile({ label, icon, value, valueNode, sub, tip, delta = null, deltaBaseline = '', resetKey, testId }: CompactTileProps) {
   const pulseRef = useValuePulse(value, { resetKey });
   return (
-    <HoverTip label={tip ?? ''}>
+    <Tooltip label={tip ?? ''}>
       <div className="bg-surface-raised border border-edge rounded-lg px-3 py-2.5 min-w-0 flex items-center gap-2.5" data-testid={testId}>
         <span className="flex-shrink-0 text-fg-muted" aria-hidden>{icon}</span>
         <div className="flex-1 min-w-0">
@@ -64,6 +64,6 @@ export function CompactTile({ label, icon, value, valueNode, sub, tip, delta = n
           {sub && <div className="text-[11px] text-fg-muted tabular-nums truncate">{sub}</div>}
         </div>
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }

@@ -743,7 +743,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(sentence).toHaveText(expected);
     // The tip is the same text, so it is not read as a description; hovering shows it whole.
     await sentence.hover();
-    await expect(page.locator('[data-hover-tip]')).toHaveText(expected);
+    await expect(page.locator('[data-tooltip]')).toHaveText(expected);
     // CSS ends it instead: the line overflows its box and draws an ellipsis.
     const overflow = await sentence.evaluate((node) => ({
       overflows: node.scrollWidth > node.clientWidth,

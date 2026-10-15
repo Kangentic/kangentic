@@ -15,7 +15,7 @@ type PillOwnProps = {
 };
 
 /**
- * Native attributes for each element type, less `title`: hover text is HoverTip, which wraps
+ * Native attributes for each element type, less `title`: hover text is Tooltip, which wraps
  * the pill (`.claude/rules/one-tooltip.md`).
  */
 type ButtonAttrs = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, keyof PillOwnProps | 'title'>;

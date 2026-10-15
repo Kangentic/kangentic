@@ -3,7 +3,7 @@ import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatDuration, formatCost } from '../../utils/format-session';
 import type { PerToolStat } from '../../../shared/types';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 // Tool durations are often sub-second (Read, Edit, Grep). The shared
 // `formatDuration` helper rounds to seconds, so it would render every
@@ -130,7 +130,7 @@ function SortableHeader({
       className={`${align === 'left' ? 'text-left' : 'text-right'} font-normal pt-2 pb-1 pr-3 last:pr-0`}
       aria-sort={ariaSort}
     >
-      <HoverTip label={tip ?? ''}>
+      <Tooltip label={tip ?? ''}>
         <button
           type="button"
           onClick={() => onSort(sortKey)}
@@ -140,7 +140,7 @@ function SortableHeader({
           {label}
           {active && (sort.direction === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
         </button>
-      </HoverTip>
+      </Tooltip>
     </th>
   );
 }
@@ -234,9 +234,9 @@ export function ByToolTable({ rows }: ByToolTableProps) {
             <tr key={row.toolName} className="border-t border-edge/40">
               <td className="py-1 pr-3 last:pr-0 text-fg-secondary font-mono max-w-[180px] truncate">
                 {/* Inline, so the cell still truncates the name as plain text did. */}
-                <HoverTip label={row.toolName}>
+                <Tooltip label={row.toolName}>
                   <span>{row.toolName}</span>
-                </HoverTip>
+                </Tooltip>
               </td>
               <td className={VALUE_CELL_CLASS}>{row.callCount}</td>
               {valueColumns.map((column) => (

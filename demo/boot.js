@@ -585,12 +585,12 @@
   /**
    * Whether an open dialog, context menu, popover, or tooltip is in the DOM. One owns any Escape
    * before a window does, so both paths below ask this one question rather than each keeping a
-   * copy. An open HoverTip closes on the first Escape, through a window capture listener added
+   * copy. An open Tooltip closes on the first Escape, through a window capture listener added
    * after this one, so it is checked here by its own marker: it deliberately carries no
    * `data-dismissable-layer`.
    */
   function isOverlayOpen() {
-    return !!document.querySelector('[data-dismissable-layer], [data-hover-tip]');
+    return !!document.querySelector('[data-dismissable-layer], [data-tooltip]');
   }
 
   /** The task window frame an element sits in, told apart by its X; null outside one. */

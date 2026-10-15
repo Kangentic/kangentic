@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 import { Pill } from './Pill';
-import { HoverTip } from './HoverTip';
-import { showsDisabledReason, tipLabel } from '../utils/hover-tip';
+import { Tooltip } from './Tooltip';
+import { showsDisabledReason, tipLabel } from '../utils/tooltip';
 
 interface HeaderActionButtonProps {
   /** Icon component rendered at the shared header size. Accepts Lucide icons and
@@ -95,7 +95,7 @@ export function HeaderActionButton({
   const showReason = showsDisabledReason(disabled, disabledReason);
 
   return (
-    <HoverTip
+    <Tooltip
       label={tipLabel({ disabled, disabledReason, tip })}
       keys={showReason ? undefined : keys}
       detail={showReason ? undefined : detail}
@@ -112,6 +112,6 @@ export function HeaderActionButton({
         <Icon size={size === 'small' ? ICON_SIZE_SMALL : ICON_SIZE_NORMAL} />
         {label}
       </Pill>
-    </HoverTip>
+    </Tooltip>
   );
 }

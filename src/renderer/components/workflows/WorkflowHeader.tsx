@@ -3,8 +3,8 @@ import { CirclePlay, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import type { WorkflowDetail, WorkflowSummary } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { ActivityMark } from '../ActivityMark';
-import { HoverTip } from '../HoverTip';
-import { tipLabel } from '../../utils/hover-tip';
+import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 import { WorkflowPicker } from './WorkflowPicker';
 
 /**
@@ -138,7 +138,7 @@ export function WorkflowHeader({
   let lifecycle: React.ReactNode;
   if (state === 'running') {
     lifecycle = (
-      <HoverTip label="Running. Pause workflow">
+      <Tooltip label="Running. Pause workflow">
         <button
           type="button"
           onClick={onPause}
@@ -149,22 +149,22 @@ export function WorkflowHeader({
           <ActivityMark mark="control-pause-working" size={16} />
           <span className={LADDER.lifecycleLabel}>Running</span>
         </button>
-      </HoverTip>
+      </Tooltip>
     );
   } else if (state === 'paused') {
     lifecycle = (
-      <HoverTip label="Resume workflow">
+      <Tooltip label="Resume workflow">
         <button type="button" onClick={onResume} aria-label="Resume workflow" className={`${BUTTON} ${PRIMARY} ${LADDER.lifecycleButton}`} data-testid="workflow-resume">
           <CirclePlay size={14} className="shrink-0" />
           <span className={LADDER.lifecycleLabel}>Resume</span>
         </button>
-      </HoverTip>
+      </Tooltip>
     );
   } else {
     const empty = (detail?.tasks.length ?? 0) === 0;
     const reason = !hasWorkflow ? 'No workflow to start' : planHeld ? WORKFLOW_REFUSALS.agentWorking : empty ? 'This workflow has no tasks yet.' : null;
     lifecycle = (
-      <HoverTip label={tipLabel({ disabled: reason !== null, disabledReason: reason, tip: 'Start this workflow' })}>
+      <Tooltip label={tipLabel({ disabled: reason !== null, disabledReason: reason, tip: 'Start this workflow' })}>
         <button
           type="button"
           onClick={onStart}
@@ -176,7 +176,7 @@ export function WorkflowHeader({
           <Play size={12} className="shrink-0" />
           <span className={LADDER.lifecycleLabel}>Start</span>
         </button>
-      </HoverTip>
+      </Tooltip>
     );
   }
 
@@ -196,16 +196,16 @@ export function WorkflowHeader({
               controlClassName={LADDER.picker}
               pillClassName={LADDER.pickerPill}
             />
-            <HoverTip label="Rename">
+            <Tooltip label="Rename">
               <button type="button" onClick={onRename} aria-label="Rename" className={`${BUTTON} ${NEUTRAL} ${LADDER.actionButton}`} data-testid="workflow-rename">
                 <Pencil size={13} className="shrink-0" />
                 <span className={LADDER.actionLabel}>Rename</span>
               </button>
-            </HoverTip>
+            </Tooltip>
             <Divider />
             {lifecycle}
             <Divider />
-            <HoverTip label="Delete">
+            <Tooltip label="Delete">
               <button
                 type="button"
                 onClick={onDelete}
@@ -216,14 +216,14 @@ export function WorkflowHeader({
                 <Trash2 size={13} className="shrink-0" />
                 <span className={LADDER.actionLabel}>Delete</span>
               </button>
-            </HoverTip>
+            </Tooltip>
             {started && selected && (
               <>
                 <Divider />
                 <span className={`shrink-0 text-[13px] text-fg-tertiary whitespace-nowrap tabular-nums ${LADDER.progressText}`} data-testid="workflow-progress">
                   {progress}
                 </span>
-                <HoverTip label={barTitle}>
+                <Tooltip label={barTitle}>
                   <span
                     className={`flex shrink-0 h-1.5 gap-0.5 rounded-full overflow-hidden bg-edge/60 ${LADDER.bar}`}
                     role="img"
@@ -239,7 +239,7 @@ export function WorkflowHeader({
                       />
                     ))}
                   </span>
-                </HoverTip>
+                </Tooltip>
                 {counts && (
                   <span className={`min-w-0 truncate text-xs text-fg-faint ${LADDER.counts}`} data-testid="workflow-counts">{counts}</span>
                 )}
@@ -248,12 +248,12 @@ export function WorkflowHeader({
           </>
         )}
         <span className="ml-auto" />
-        <HoverTip label="New workflow">
+        <Tooltip label="New workflow">
           <button type="button" onClick={onNew} aria-label="New workflow" className={`${BUTTON} ${NEUTRAL} ${LADDER.newButton}`} data-testid="workflow-new">
             <Plus size={13} className="shrink-0" />
             <span className={LADDER.actionLabel}>New workflow</span>
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import { Search, Filter, X } from 'lucide-react';
 import { CountBadge } from './CountBadge';
 import { FilterPopover } from './FilterPopover';
 import { OverlayPopover } from './OverlayPopover';
-import { HoverTip } from './HoverTip';
+import { Tooltip } from './Tooltip';
 import type { ToolbarControlCollapse } from './board/toolbar-collapse';
 
 interface ToolbarSearchFilterProps {
@@ -109,7 +109,7 @@ export function ToolbarSearchFilter({
       </div>
 
       <div className="relative shrink-0">
-        <HoverTip label="Filter" enabled={!showFilterPopover}>
+        <Tooltip label="Filter" enabled={!showFilterPopover}>
           <button
             ref={filterButtonRef}
             type="button"
@@ -132,7 +132,7 @@ export function ToolbarSearchFilter({
               />
             )}
           </button>
-        </HoverTip>
+        </Tooltip>
 
         <OverlayPopover
           open={showFilterPopover}

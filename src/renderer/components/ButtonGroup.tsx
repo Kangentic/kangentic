@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { HoverTip } from './HoverTip';
+import { Tooltip } from './Tooltip';
 
 interface ButtonGroupOption<T extends string> {
   value: T;
@@ -47,14 +47,14 @@ export function ButtonGroup<T extends string>({
       {icon && (
         <>
           {/* The group already carries the name, so the tip is for the eye only. */}
-          <HoverTip label={label ?? ''} describe={false}>
+          <Tooltip label={label ?? ''} describe={false}>
             <span
               className="pl-2 flex items-center text-fg-muted flex-shrink-0"
               aria-hidden
             >
               {icon}
             </span>
-          </HoverTip>
+          </Tooltip>
           <span className="mx-2 h-4 w-px bg-edge flex-shrink-0" aria-hidden />
         </>
       )}

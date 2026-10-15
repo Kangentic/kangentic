@@ -13,7 +13,7 @@ import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { INPUT_CLASS } from '../shared';
 import { SettingsCard, CardTile } from '../settings-card';
 import { Pill } from '../../Pill';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { SegmentedControl } from '../../SegmentedControl';
 import { OverlayPopover } from '../../OverlayPopover';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
@@ -142,14 +142,14 @@ function SortableActionItem({
         </div>
         <RegistryIcon name={action.icon ?? 'zap'} fallback={Zap} size={16} className="text-fg-muted flex-shrink-0" />
         <span className="text-sm text-fg font-medium truncate flex-1">{action.label}</span>
-        <HoverTip label={action.source === 'team' ? 'Shared with team via kangentic.json' : 'Personal shortcut in kangentic.local.json'}>
+        <Tooltip label={action.source === 'team' ? 'Shared with team via kangentic.json' : 'Personal shortcut in kangentic.local.json'}>
           <span
             className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${action.source === 'team' ? 'bg-accent/15 text-accent border border-accent/25' : 'bg-fg-disabled/15 text-fg-muted border border-fg-disabled/25'}`}
           >
             {action.source === 'team' ? 'Team' : 'Personal'}
           </span>
-        </HoverTip>
-        <HoverTip
+        </Tooltip>
+        <Tooltip
           label={
             !action.display || action.display === 'menu'
               ? 'Appears in the task detail kebab menu only'
@@ -167,8 +167,8 @@ function SortableActionItem({
           >
             {!action.display || action.display === 'menu' ? 'Menu' : action.display === 'both' ? 'Both' : 'Header'}
           </span>
-        </HoverTip>
-        <HoverTip label="Remove">
+        </Tooltip>
+        <Tooltip label="Remove">
           <button
             onClick={(event) => { event.stopPropagation(); onRemove(); }}
             className="p-1 text-fg-disabled hover:text-red-400 transition-colors"
@@ -176,7 +176,7 @@ function SortableActionItem({
           >
             <Trash2 size={14} />
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
 
       {/* Edit form */}

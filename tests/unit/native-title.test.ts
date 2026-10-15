@@ -3,12 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
 
-// Guards `.claude/rules/one-tooltip.md`: hover text in the renderer is HoverTip
-// (src/renderer/components/HoverTip.tsx), everywhere, with no exception. A native
-// `title` is slow, unstyled, square-cornered beside the rounded HoverTip, never
+// Guards `.claude/rules/one-tooltip.md`: hover text in the renderer is Tooltip
+// (src/renderer/components/Tooltip.tsx), everywhere, with no exception. A native
+// `title` is slow, unstyled, square-cornered beside the rounded Tooltip, never
 // shown to a keyboard user, cannot draw key chips, and is tested only as an
 // attribute. That holds for the full value of text the layout cuts short too: a
-// truncated path gets a HoverTip with the whole path, so every tooltip in the app
+// truncated path gets a Tooltip with the whole path, so every tooltip in the app
 // looks and behaves the same.
 //
 // What counts as a native tooltip:
@@ -129,12 +129,12 @@ const allSites = rendererTsxFiles.flatMap((filePath) => scanSource(relative(file
 const scannedSites = allSites.filter((site) => !site.file.startsWith(EXEMPT_DIRECTORY));
 
 describe('native titles in the renderer', () => {
-  it('has none: every tooltip is a HoverTip', () => {
+  it('has none: every tooltip is a Tooltip', () => {
     const listed = scannedSites.map((site) => `  ${site.file}:${site.line} <${site.tagName}> (${site.kind})`);
     expect(
       listed,
-      'Native tooltips found. Wrap the element in HoverTip (src/renderer/components/HoverTip.tsx) and\n'
-        + 'drop its `title`; the full value of cut-short text is a HoverTip too. See .claude/rules/one-tooltip.md.\n'
+      'Native tooltips found. Wrap the element in Tooltip (src/renderer/components/Tooltip.tsx) and\n'
+        + 'drop its `title`; the full value of cut-short text is a Tooltip too. See .claude/rules/one-tooltip.md.\n'
         + listed.join('\n'),
     ).toEqual([]);
   });
@@ -246,7 +246,7 @@ describe('the native title detector itself', () => {
   });
 
   // The keeper marker this scan once accepted is gone: a truncated value's full
-  // text is a HoverTip like every other tip, so a comment exempts nothing.
+  // text is a Tooltip like every other tip, so a comment exempts nothing.
   it('reports a title even under the retired native-title-ok marker', () => {
     const found = scanSource('probe.tsx', [
       'export const Probe = () => (',

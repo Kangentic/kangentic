@@ -7,7 +7,7 @@ import { PriorityLabelsRow } from '../dialogs/PriorityLabelsRow';
 import { DialogFooterActions } from '../dialogs/DialogFooterActions';
 import { PriorityBadge } from './PriorityBadge';
 import { GitHubIcon } from '../icons/GitHubIcon';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { NameFromPromptButton } from '../NameFromPromptButton';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -389,7 +389,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
             <span className="flex items-center gap-2 min-w-0">
               <span className="flex-shrink-0">{isEditMode ? 'Edit Backlog Task' : 'New Backlog Task'}</span>
               {editTask?.external_source && editTask.external_url && (
-                <HoverTip label={`Open in ${editTask.external_source.startsWith('github') ? 'GitHub' : editTask.external_source}`}>
+                <Tooltip label={`Open in ${editTask.external_source.startsWith('github') ? 'GitHub' : editTask.external_source}`}>
                   <button
                     type="button"
                     onClick={() => window.electronAPI.shell.openExternal(editTask.external_url!)}
@@ -401,7 +401,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
                       ? <GitHubIcon size={13} />
                       : <ExternalLink size={13} />}
                   </button>
-                </HoverTip>
+                </Tooltip>
               )}
               <PriorityBadge priority={priority} />
             </span>

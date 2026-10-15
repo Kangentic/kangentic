@@ -13,7 +13,7 @@ import { SettingsCard, CardTile, CardGroupTile } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { ExternalLinkButton } from '../../ExternalLinkButton';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 
 /** What turning the server on does, behind the card's info icon. */
 const HOW_IT_WORKS = 'Each agent session gets a local MCP server and discovers these tools on its own. '
@@ -85,7 +85,7 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
                 <ul className="grid grid-cols-3 gap-1">
                   {tools.map((tool) => (
                     <li key={tool.name} className="min-w-0">
-                      <HoverTip label={tool.label} detail={`${tool.blurb}. Opens the docs page.`}>
+                      <Tooltip label={tool.label} detail={`${tool.blurb}. Opens the docs page.`}>
                         <button
                           type="button"
                           data-testid="mcp-tool-cell"
@@ -94,7 +94,7 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
                         >
                           {tool.label}
                         </button>
-                      </HoverTip>
+                      </Tooltip>
                     </li>
                   ))}
                 </ul>

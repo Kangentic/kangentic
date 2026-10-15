@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { OverlayPopover } from './OverlayPopover';
-import { HoverTip } from './HoverTip';
+import { Tooltip } from './Tooltip';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
 import { templateVarsFor, type TaskTemplateContextName } from '../../shared/task-template-vars';
 
@@ -101,11 +101,11 @@ export function TemplateVariablePicker({ onInsert, context, testId = 'template-v
               <span className="font-mono text-xs text-fg">{templateVar.chip}</span>
               {/* Clamped: a couple of these descriptions are written for the docs
                   tables and run long. The full text stays available on hover. */}
-              <HoverTip label={templateVar.description}>
+              <Tooltip label={templateVar.description}>
                 <span className="line-clamp-1 text-[11px] text-fg-faint">
                   {templateVar.description}
                 </span>
-              </HoverTip>
+              </Tooltip>
               {/* Shown only where empty is the NORMAL state, not merely a
                   possible one, so it stays a warning rather than noise. */}
               {templateVar.availability && (

@@ -21,7 +21,7 @@ import { useLiveUsageAggregate } from '../../hooks/useLiveUsageAggregate';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { CompactTile } from './CompactTile';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { agentShortName } from '../../utils/agent-display-name';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
@@ -114,7 +114,7 @@ function HeroTile({
 }: HeroTileProps) {
   const pulseRef = useValuePulse(value, { resetKey });
   return (
-    <HoverTip label={tip ?? ''}>
+    <Tooltip label={tip ?? ''}>
       <div className="bg-surface-raised border border-edge rounded-lg px-4 pt-3 pb-2 flex flex-col" data-testid={testId}>
         <div className="flex items-center gap-1.5 text-fg-muted">
           <span className="flex-shrink-0" aria-hidden>{icon}</span>
@@ -129,7 +129,7 @@ function HeroTile({
           <KngSparkline points={spark} colorVar={sparkColorVar} className="h-full w-full" animate={animate} />
         </div>
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

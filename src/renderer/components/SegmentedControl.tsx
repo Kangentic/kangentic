@@ -1,6 +1,6 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { HoverTip } from './HoverTip';
-import { tipLabel } from '../utils/hover-tip';
+import { Tooltip } from './Tooltip';
+import { tipLabel } from '../utils/tooltip';
 
 export interface SegmentedControlOption<T extends string> {
   value: T;
@@ -350,7 +350,7 @@ export function SegmentedControl<T extends string>({
           return (
             // Every option is wrapped, tip or not, so an option that gains a reason
             // when it turns off is not remounted (and does not lose focus) for it.
-            <HoverTip
+            <Tooltip
               key={option.value}
               label={tipLabel({ disabled: optionDisabled, disabledReason: option.disabledReason, tip: option.tip })}
             >
@@ -389,7 +389,7 @@ export function SegmentedControl<T extends string>({
                 <span className={labelClassName}>{option.label}</span>
                 {option.trailing}
               </button>
-            </HoverTip>
+            </Tooltip>
           );
         })}
       </div>

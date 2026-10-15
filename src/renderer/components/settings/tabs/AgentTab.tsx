@@ -9,7 +9,7 @@ import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityR
 import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
@@ -203,7 +203,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 placeholder={agent.found ? (agent.path ?? undefined) : 'Enter path manually'}
                 className={`${INPUT_CLASS} pr-8 placeholder-fg-muted`}
               />
-              <HoverTip label={agent.found ? 'Re-detect agent' : `${agent.displayName} not found - click to re-detect`}>
+              <Tooltip label={agent.found ? 'Re-detect agent' : `${agent.displayName} not found - click to re-detect`}>
                 <button
                   type="button"
                   onClick={handleRefreshAgents}
@@ -213,12 +213,12 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 >
                   <RefreshCw size={16} className={`text-fg-faint hover:text-fg-muted ${refreshing ? 'animate-spin' : ''}`} />
                 </button>
-              </HoverTip>
+              </Tooltip>
             </div>
             {unauthenticated && loginCommand && (
               <div className="mt-1 text-xs text-amber-400/80 flex items-center gap-2">
                 <span>Run <code className="font-mono">{loginCommand}</code> in your terminal to authenticate.</span>
-                <HoverTip label={`Copy "${loginCommand}" to clipboard`}>
+                <Tooltip label={`Copy "${loginCommand}" to clipboard`}>
                   <button
                     type="button"
                     onClick={() => handleCopyLoginCommand(agent.name, loginCommand)}
@@ -228,7 +228,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
                   >
                     <Copy size={11} />{copiedAgent === agent.name ? 'Copied!' : 'Copy'}
                   </button>
-                </HoverTip>
+                </Tooltip>
               </div>
             )}
           </CardRow>

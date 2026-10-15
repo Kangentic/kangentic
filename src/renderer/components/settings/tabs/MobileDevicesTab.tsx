@@ -10,7 +10,7 @@ import { SettingsCard, CardTile } from '../settings-card';
 import { SegmentedControl } from '../../SegmentedControl';
 import type { SegmentedControlOption } from '../../SegmentedControl';
 import { Pill } from '../../Pill';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { settingProps } from '../settings-registry';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { QrImage } from '../../QrImage';
@@ -482,7 +482,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                     renders in hosted mode, where the field is read-only and there
                     is no typing position to click into. */}
                 {showHostedRelayShield && (
-                  <HoverTip label="Kangentic-operated relay">
+                  <Tooltip label="Kangentic-operated relay">
                     <span
                       aria-hidden="true"
                       className="absolute left-3 top-1/2 -translate-y-1/2 text-accent-fg"
@@ -490,7 +490,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                     >
                       <Shield size={14} />
                     </span>
-                  </HoverTip>
+                  </Tooltip>
                 )}
                 <input
                   type="text"
@@ -565,7 +565,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                     // state meaning, and active / attention are safe on a
                     // TRANSIENT verdict because they are theme-invariant and
                     // mean exactly "good" and "needs you".
-                    <HoverTip label={relayTestResult.version ? `Relay v${relayTestResult.version}` : ''}>
+                    <Tooltip label={relayTestResult.version ? `Relay v${relayTestResult.version}` : ''}>
                       <span
                         className={RELAY_VERDICT_CLASS}
                         data-testid="mobile-relay-test-result"
@@ -576,9 +576,9 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                         <Check size={13} className="text-active shrink-0" />
                         {relayTestResult.latencyMs == null ? 'Reachable' : `Reachable, ${relayTestResult.latencyMs} ms`}
                       </span>
-                    </HoverTip>
+                    </Tooltip>
                   ) : (
-                    <HoverTip label={relayTestResult.reason}>
+                    <Tooltip label={relayTestResult.reason}>
                       <span
                         className={RELAY_VERDICT_CLASS}
                         data-testid="mobile-relay-test-result"
@@ -587,7 +587,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                         <CircleAlert size={13} className="text-attention shrink-0" />
                         No response
                       </span>
-                    </HoverTip>
+                    </Tooltip>
                   )
                 )}
               </div>
@@ -676,7 +676,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                             if (event.key === 'Escape') setRenamingDeviceId(null);
                           }}
                         />
-                        <HoverTip label="Save name">
+                        <Tooltip label="Save name">
                           <button
                             type="button"
                             className="shrink-0 rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
@@ -685,8 +685,8 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                           >
                             <Check size={14} />
                           </button>
-                        </HoverTip>
-                        <HoverTip label="Cancel">
+                        </Tooltip>
+                        <Tooltip label="Cancel">
                           <button
                             type="button"
                             className="shrink-0 rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
@@ -695,7 +695,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                           >
                             <X size={14} />
                           </button>
-                        </HoverTip>
+                        </Tooltip>
                       </div>
                     ) : (
                       <>
@@ -706,7 +706,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                           </Pill>
                         </div>
                         <div className="shrink-0 flex items-center gap-1">
-                          <HoverTip label="Rename">
+                          <Tooltip label="Rename">
                             <button
                               type="button"
                               className="rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
@@ -716,8 +716,8 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                             >
                               <Pencil size={14} />
                             </button>
-                          </HoverTip>
-                          <HoverTip label="Revoke">
+                          </Tooltip>
+                          <Tooltip label="Revoke">
                             <button
                               type="button"
                               className="rounded p-1.5 text-fg-faint hover:text-danger hover:bg-danger/10 transition-colors"
@@ -727,7 +727,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                             >
                               <Trash2 size={14} />
                             </button>
-                          </HoverTip>
+                          </Tooltip>
                         </div>
                       </>
                     )}
@@ -745,11 +745,11 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                             only on a state push, so "5 minutes ago" would
                             go stale in place. */}
                         {device.connectionStateSince && (
-                          <HoverTip label={formatDateTime(device.connectionStateSince)}>
+                          <Tooltip label={formatDateTime(device.connectionStateSince)}>
                             <span data-testid="mobile-device-connection-since">
                               since {formatShortDateTime(device.connectionStateSince)}
                             </span>
-                          </HoverTip>
+                          </Tooltip>
                         )}
                         <span aria-hidden="true">|</span>
                       </>

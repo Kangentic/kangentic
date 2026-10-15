@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } fro
 import { GitBranch, Search, Loader2, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { Pill } from '../Pill';
 import { fetchGitBranches } from '../../utils/git-branches';
 
@@ -192,7 +192,7 @@ export function BranchPicker({
   // The tip names the field and the full branch the segment's width may cut
   // short. Shut while the menu is open, which already lists it.
   const segmentButton = (
-    <HoverTip label={`Base branch: ${displayBranch}`} enabled={!open}>
+    <Tooltip label={`Base branch: ${displayBranch}`} enabled={!open}>
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -214,7 +214,7 @@ export function BranchPicker({
           className={`shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 
   const inputButton = (

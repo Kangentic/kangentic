@@ -7,7 +7,7 @@ import {
   type CommandTerminalTone,
 } from '../../stores/session-store/transient-session-slice';
 import { useAddProject } from '../../hooks/useAddProject';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import type { Project } from '../../../shared/types';
 
 interface CollapsedRailProps {
@@ -73,7 +73,7 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
 
   return (
     <div className="h-full flex flex-col items-center pt-3 pb-2 px-1 bg-surface-raised">
-      <HoverTip label="Show sidebar" keys="view.toggleSidebar">
+      <Tooltip label="Show sidebar" keys="view.toggleSidebar">
         <button
           onClick={onExpandSidebar}
           className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors mb-2"
@@ -82,7 +82,7 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
         >
           <PanelLeft size={18} />
         </button>
-      </HoverTip>
+      </Tooltip>
 
       <div className="flex-1 flex flex-col items-center gap-1 overflow-y-auto w-full">
         {projects.map((project) => {
@@ -95,7 +95,7 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
             // terminal state rides on aria-label instead. aria-label REPLACES the
             // computed accessible name, so it has to restate the project name; when
             // there are no terminals it is omitted entirely and the name is unchanged.
-            <HoverTip key={project.id} label={project.name}>
+            <Tooltip key={project.id} label={project.name}>
               <button
                 onClick={() => openProject(project.id)}
                 aria-label={terminalTone ? `${project.name}, ${RAIL_TERMINAL_LABEL[terminalTone]}` : undefined}
@@ -121,12 +121,12 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
                   />
                 )}
               </button>
-            </HoverTip>
+            </Tooltip>
           );
         })}
       </div>
 
-      <HoverTip label="New project">
+      <Tooltip label="New project">
         <button
           onClick={startAddProject}
           className="p-1.5 mt-2 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
@@ -135,7 +135,7 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
         >
           <FolderPlus size={18} />
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 }

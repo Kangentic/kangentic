@@ -7,7 +7,7 @@
 import type React from 'react';
 import { ChevronDown, ChevronRight, Settings } from 'lucide-react';
 import { InfoHint } from './PanelRow';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /** A group's small caps label inside a card, its help behind an info hint. */
 export function GroupLabel({ children, hint }: { children: string; hint?: string }) {
@@ -26,7 +26,7 @@ export function GroupLabel({ children, hint }: { children: string; hint?: string
  */
 export function OpenSettingsButton({ onClick, testId }: { onClick: () => void; testId: string }) {
   return (
-    <HoverTip label="Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph">
+    <Tooltip label="Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph">
       <button
         type="button"
         onClick={onClick}
@@ -36,7 +36,7 @@ export function OpenSettingsButton({ onClick, testId }: { onClick: () => void; t
         <Settings size={13} aria-hidden />
         Open Settings
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

@@ -2,7 +2,7 @@ import '../../../../monacoConfig';
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, ArrowLeft, ArrowUp, ArrowDown, Check } from 'lucide-react';
 import { PrLink } from '../../../PrLink';
-import { HoverTip } from '../../../HoverTip';
+import { Tooltip } from '../../../Tooltip';
 import { DetachableSurfaceHeader } from '../../../../pop-out/DetachableSurfaceHeader';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
@@ -119,7 +119,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // collapse are mutually exclusive: only one is relevant per mode.
   const expandCollapseControl =
     panelMode === 'split' && onExpand ? (
-      <HoverTip label="Expand changes">
+      <Tooltip label="Expand changes">
         <button
           onClick={onExpand}
           aria-label="Expand changes"
@@ -128,9 +128,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         >
           <ChevronsLeftRight size={16} />
         </button>
-      </HoverTip>
+      </Tooltip>
     ) : panelMode === 'expanded' && onCollapse ? (
-      <HoverTip label="Collapse to split view">
+      <Tooltip label="Collapse to split view">
         <button
           onClick={onCollapse}
           aria-label="Collapse to split view"
@@ -139,7 +139,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         >
           <ChevronsRightLeft size={16} />
         </button>
-      </HoverTip>
+      </Tooltip>
     ) : null;
   const [files, setFiles] = useState<GitDiffFileEntry[]>([]);
   const [totalInsertions, setTotalInsertions] = useState(0);
@@ -854,7 +854,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     [files, viewedFiles],
   );
   const surfaceHeaderViewed = files.length > 0 && viewedCount > 0 ? (
-    <HoverTip label={`${viewedCount} of ${files.length} files marked viewed`}>
+    <Tooltip label={`${viewedCount} of ${files.length} files marked viewed`}>
       <span
         className="flex items-center gap-1 text-[11px] text-fg-muted tabular-nums flex-shrink-0"
         data-testid="changes-header-viewed"
@@ -862,21 +862,21 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         <Check size={12} className={viewedCount === files.length ? 'text-green-400' : 'text-fg-faint'} />
         {viewedCount}/{files.length}
       </span>
-    </HoverTip>
+    </Tooltip>
   ) : null;
   const surfaceHeader = popOutParams ? (
     <DetachableSurfaceHeader kind="changes" params={popOutParams} actions={<>{surfaceHeaderViewed}{expandCollapseControl}</>}>
       <GitBranch size={14} className="text-fg-muted flex-shrink-0" aria-hidden />
-      <HoverTip label={branchSummary?.currentBranch ?? ''}>
+      <Tooltip label={branchSummary?.currentBranch ?? ''}>
         <span
           className="text-xs font-medium text-fg-secondary truncate flex-shrink-0 max-w-[45%]"
           data-testid="changes-branch-name"
         >
           {branchSummary?.currentBranch ?? 'Changes'}
         </span>
-      </HoverTip>
+      </Tooltip>
       {baseLabel && (
-        <HoverTip label={isCustomBase ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}>
+        <Tooltip label={isCustomBase ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}>
           <span
             className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none ${
               isCustomBase ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
@@ -885,7 +885,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           >
             {baseLabel}
           </span>
-        </HoverTip>
+        </Tooltip>
       )}
       {task?.pr_url && (
         <PrLink
@@ -898,7 +898,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         />
       )}
       {(surfaceHeaderAhead > 0 || surfaceHeaderBehind > 0) && (
-        <HoverTip label={`${surfaceHeaderAhead} ahead, ${surfaceHeaderBehind} behind base branch`}>
+        <Tooltip label={`${surfaceHeaderAhead} ahead, ${surfaceHeaderBehind} behind base branch`}>
           <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0 text-[11px]">
             {surfaceHeaderAhead > 0 && (
               <span className="flex items-center gap-0.5 tabular-nums"><ArrowUp size={11} className="text-green-400" />{surfaceHeaderAhead}</span>
@@ -907,12 +907,12 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               <span className="flex items-center gap-0.5 tabular-nums"><ArrowDown size={11} className="text-red-400" />{surfaceHeaderBehind}</span>
             )}
           </span>
-        </HoverTip>
+        </Tooltip>
       )}
       {surfaceHeaderLastCommit && (
         <>
           <span className="h-3 w-px bg-edge/60 flex-shrink-0 mx-0.5" aria-hidden />
-          <HoverTip label={`${surfaceHeaderLastCommit.hash} ${surfaceHeaderLastCommit.subject}`}>
+          <Tooltip label={`${surfaceHeaderLastCommit.hash} ${surfaceHeaderLastCommit.subject}`}>
             <span
               className="text-[11px] text-fg-muted truncate min-w-0"
               data-testid="changes-last-commit"
@@ -923,7 +923,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
                 <span className="text-fg-faint"> {'·'} {formatRelativeTime(surfaceHeaderLastCommit.timestamp)}</span>
               )}
             </span>
-          </HoverTip>
+          </Tooltip>
         </>
       )}
     </DetachableSurfaceHeader>
@@ -947,7 +947,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       data-testid="commit-detail-header"
     >
       <div className="flex items-center gap-1.5 min-w-0">
-        <HoverTip label="Back to Uncommitted changes">
+        <Tooltip label="Back to Uncommitted changes">
           <button
             type="button"
             onClick={handleSelectUncommitted}
@@ -957,7 +957,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           >
             <ArrowLeft size={14} />
           </button>
-        </HoverTip>
+        </Tooltip>
         <span className="font-mono text-xs text-fg-secondary flex-shrink-0">
           {commitHeaderMeta?.shortHash ?? changesSelectedCommit.slice(0, 7)}
         </span>
@@ -966,7 +966,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         </span>
       </div>
       {commitHeaderMeta && (
-        <HoverTip
+        <Tooltip
           label={commitHeaderMeta.subject}
           detail={`${commitHeaderMeta.authorName}${commitHeaderMeta.authorTimestamp ? ` · ${formatRelativeTime(commitHeaderMeta.authorTimestamp)}` : ''}`}
         >
@@ -977,7 +977,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               {commitHeaderMeta.authorTimestamp && ` · ${formatRelativeTime(commitHeaderMeta.authorTimestamp)}`}
             </span>
           </div>
-        </HoverTip>
+        </Tooltip>
       )}
     </div>
   ) : null;
@@ -1048,7 +1048,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               resizable). 1px visual line, ~9px invisible hit zone; double-click
               resets to the default height (VS Code convention). */}
           {task && historyOpen && (
-            <HoverTip label="Drag to resize" detail="Double-click to reset">
+            <Tooltip label="Drag to resize" detail="Double-click to reset">
               <div
                 onMouseDown={handleHistoryResizeStart}
                 onDoubleClick={handleHistoryResizeReset}
@@ -1068,7 +1068,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               >
                 <span className="absolute inset-x-0 -inset-y-1" />
               </div>
-            </HoverTip>
+            </Tooltip>
           )}
 
           {/* History: the commit browser, collapsed to its header row by default.
@@ -1104,7 +1104,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         {/* Drag handle: widen the file tree to see long branch names / file
             paths. 1px visual line, ~9px invisible hit zone; double-click
             resets to the proportional default width (VS Code convention). */}
-        <HoverTip label="Drag to resize" detail="Double-click to reset">
+        <Tooltip label="Drag to resize" detail="Double-click to reset">
           <div
             onMouseDown={handleTreeResizeStart}
             onDoubleClick={handleTreeResizeReset}
@@ -1118,7 +1118,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           >
             <span className="absolute inset-y-0 -inset-x-1" />
           </div>
-        </HoverTip>
+        </Tooltip>
 
         {/* Diff viewer - right panel. min-w-0 lets it shrink to the divider's
             DIFF_PANE_DRAG_MIN instead of to its toolbar's full content width,

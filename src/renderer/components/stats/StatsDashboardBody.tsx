@@ -5,7 +5,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { ChartCard } from './ChartCard';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { KpiTiles } from './KpiTiles';
 import { BackgroundCard } from './BackgroundCard';
 import { BackgroundHistoryCard } from './BackgroundHistoryCard';
@@ -412,7 +412,7 @@ export function StatsDashboardBody() {
 
         {/* First-read caveats collapsed behind an info affordance (visual
             subtraction): the full explanation lives in the hover tooltip. */}
-        <HoverTip
+        <Tooltip
           label={
             'Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0.\n' +
             'Cost covers finalized sessions plus any currently running, refreshed live as they progress.\n' +
@@ -428,7 +428,7 @@ export function StatsDashboardBody() {
             <Info size={12} aria-hidden />
             About these numbers
           </p>
-        </HoverTip>
+        </Tooltip>
       </div>
     </>
   );

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Palette } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 
 export const PRESET_COLORS = [
   '#6b7280', '#ef4444', '#f43f5e', '#f97316',
@@ -102,7 +102,7 @@ export function ColorPickerPopover({
             style={{ backgroundColor: presetColor }}
           />
         ))}
-        <HoverTip label="Custom color">
+        <Tooltip label="Custom color">
           <button
             type="button"
             onClick={() => setShowCustomPicker(!showCustomPicker)}
@@ -118,7 +118,7 @@ export function ColorPickerPopover({
           >
             <Palette size={10} className={isCustomColor ? 'text-white' : 'text-fg-muted'} />
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
 
       {showCustomPicker && (

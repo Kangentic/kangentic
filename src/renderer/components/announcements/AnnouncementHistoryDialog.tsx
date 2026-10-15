@@ -1,6 +1,6 @@
 import { ChevronRight, Megaphone } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { useAnnouncementsStore } from '../../stores/announcements-store';
 import { formatRelativeTime } from '../../lib/datetime';
 import type { AnnouncementArchiveEntry } from '../../../shared/announcements';
@@ -29,13 +29,13 @@ function AnnouncementHistoryRow({ entry }: { entry: AnnouncementArchiveEntry }) 
         className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${unread ? 'bg-accent' : 'bg-transparent'}`}
         aria-hidden="true"
       />
-      <HoverTip label={entry.announcement.title}>
+      <Tooltip label={entry.announcement.title}>
         <span
           className={`flex-1 min-w-0 truncate text-xs ${unread ? 'text-fg font-medium' : 'text-fg-secondary'}`}
         >
           {entry.announcement.title}
         </span>
-      </HoverTip>
+      </Tooltip>
       {/* publishedAt is what the user thinks of as the announcement's date;
           firstSeenAt is the fallback for an entry the feed published without
           one. */}

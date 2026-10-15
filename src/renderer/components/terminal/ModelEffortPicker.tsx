@@ -9,7 +9,7 @@ import { aliasRowView, modelContextBadgeLabel, modelRowLabel } from '../../utils
 import { resolveEffortDisplay, resolveModelDisplay } from '../../utils/pill-provenance';
 import { ContextBarPopover } from './ContextBarPopover';
 import { pillForProvenance } from './context-bar-pill';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * Where a model/effort selection is applied:
@@ -260,7 +260,7 @@ export function ModelEffortPicker({
     <>
       {showModelTrigger ? (
         <span className="relative inline-flex">
-          <HoverTip
+          <Tooltip
             label={modelConfirmed ? 'Click to change model' : `${modelProvisionalTitle} Click to change.`}
             enabled={openPopover !== 'model'}
           >
@@ -281,7 +281,7 @@ export function ModelEffortPicker({
               {modelLabel}
               <ChevronDown size={11} className="text-fg-faint flex-shrink-0" />
             </button>
-          </HoverTip>
+          </Tooltip>
           {openPopover === 'model' && (
             <ContextBarPopover
               triggerRef={modelTriggerRef}
@@ -303,7 +303,7 @@ export function ModelEffortPicker({
         </span>
       ) : (
         liveModelName && (
-          <HoverTip
+          <Tooltip
             label={modelConfirmed
               ? 'This agent does not support changing the model from Kangentic'
               : `${modelProvisionalTitle} This agent does not support changing it from Kangentic.`}
@@ -315,12 +315,12 @@ export function ModelEffortPicker({
             >
               {liveModelName}
             </span>
-          </HoverTip>
+          </Tooltip>
         )
       )}
       {showEffortTrigger ? (
         <span className="relative inline-flex">
-          <HoverTip
+          <Tooltip
             label={effortConfirmed ? 'Click to change effort' : `${effortProvisionalTitle} Click to change.`}
             enabled={openPopover !== 'effort'}
           >
@@ -335,7 +335,7 @@ export function ModelEffortPicker({
               {effortLabel}
               <ChevronDown size={11} className="flex-shrink-0" />
             </button>
-          </HoverTip>
+          </Tooltip>
           {openPopover === 'effort' && (
             <ContextBarPopover
               triggerRef={effortTriggerRef}
@@ -351,7 +351,7 @@ export function ModelEffortPicker({
         </span>
       ) : (
         !agentReportsNoEffort && effectiveEffort && (
-          <HoverTip
+          <Tooltip
             label={effortConfirmed
               ? 'This agent does not support changing the effort level from Kangentic'
               : `${effortProvisionalTitle} This agent does not support changing it from Kangentic.`}
@@ -363,7 +363,7 @@ export function ModelEffortPicker({
             >
               {effectiveEffort}
             </span>
-          </HoverTip>
+          </Tooltip>
         )
       )}
     </>

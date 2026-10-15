@@ -1,16 +1,16 @@
 /**
- * Pins the pure half of HoverTip (src/renderer/utils/hover-tip.ts) and the one structural claim
- * a static render can prove: HoverTip adds no element around its trigger.
+ * Pins the pure half of Tooltip (src/renderer/utils/tooltip.ts) and the one structural claim
+ * a static render can prove: Tooltip adds no element around its trigger.
  *
  * The open state (hover dwell, focus, Escape, clamping on screen) needs a browser and lives in
- * tests/ui/hover-tip.spec.ts. What is here is the arithmetic that spec cannot isolate: where a
+ * tests/ui/tooltip.spec.ts. What is here is the arithmetic that spec cannot isolate: where a
  * tip sits at both window edges and when there is no room above, what a screen reader is told,
  * and the warm window with the clock injected.
  *
  * `react-dom/server`, no jsdom, the same pattern as data-table-colgroup.test.ts. The description
  * is an attribute on the trigger (`aria-description`), so a static render shows it.
  *
- * The same static render covers what the controls built on HoverTip hand it: the element a Pill
+ * The same static render covers what the controls built on Tooltip hand it: the element a Pill
  * stays, the description each `disabledReason` and `tip` produces, and how `describe` and `detail`
  * reach the trigger. A handler cannot be read from markup, so the two checks that need one
  * (a click chained only onto a child that has its own, an empty label arming no dwell timer) record
@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
-  HOVER_TIP_WARM_MS,
+  TOOLTIP_WARM_MS,
   TIP_OFFSET,
   VIEWPORT_PADDING,
   claimTip,
@@ -32,8 +32,8 @@ import {
   showsDisabledReason,
   tipDescription,
   tipLabel,
-} from '../../src/renderer/utils/hover-tip';
-import { HoverTip, type HoverTipProps } from '../../src/renderer/components/HoverTip';
+} from '../../src/renderer/utils/tooltip';
+import { Tooltip, type TooltipProps } from '../../src/renderer/components/Tooltip';
 import { Pill } from '../../src/renderer/components/Pill';
 import { HeaderActionButton } from '../../src/renderer/components/HeaderActionButton';
 import { KebabMenuCheckItem } from '../../src/renderer/components/KebabMenu';
@@ -112,14 +112,14 @@ describe('tipDescription', () => {
 describe('the warm window', () => {
   beforeEach(() => resetTipStateForTests());
 
-  it('is warm while a tip shows and for HOVER_TIP_WARM_MS after a warm close', () => {
+  it('is warm while a tip shows and for TOOLTIP_WARM_MS after a warm close', () => {
     const close = (): void => {};
     expect(isTipWarm(1000)).toBe(false);
     claimTip(close);
     expect(isTipWarm(1000)).toBe(true);
     releaseTip(close, true, 1000);
-    expect(isTipWarm(1000 + HOVER_TIP_WARM_MS - 1)).toBe(true);
-    expect(isTipWarm(1000 + HOVER_TIP_WARM_MS)).toBe(false);
+    expect(isTipWarm(1000 + TOOLTIP_WARM_MS - 1)).toBe(true);
+    expect(isTipWarm(1000 + TOOLTIP_WARM_MS)).toBe(false);
   });
 
   it('is cold right after a cold close (Escape, a press)', () => {
@@ -143,7 +143,7 @@ describe('the warm window', () => {
     // which counts only if the claim closed it while it still held the slot.
     releaseTip(closeSecond, false, 1000);
     expect(isTipWarm(1000)).toBe(true);
-    expect(isTipWarm(1000 + HOVER_TIP_WARM_MS)).toBe(false);
+    expect(isTipWarm(1000 + TOOLTIP_WARM_MS)).toBe(false);
   });
 
   it('ignores a release from a tip that no longer holds the slot', () => {
@@ -155,10 +155,10 @@ describe('the warm window', () => {
   });
 });
 
-describe('HoverTip markup', () => {
+describe('Tooltip markup', () => {
   it('adds no element around its trigger', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Close' }, createElement('button', { 'aria-label': 'Close', className: 'flex-1' })),
+      createElement(Tooltip, { label: 'Close' }, createElement('button', { 'aria-label': 'Close', className: 'flex-1' })),
     );
     expect(markup.startsWith('<button')).toBe(true);
     expect(markup).toContain('class="flex-1"');
@@ -167,7 +167,7 @@ describe('HoverTip markup', () => {
 
   it('describes a trigger whose tip says more than its name', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Why it is off' }, createElement('button', { 'aria-label': 'Action', disabled: true })),
+      createElement(Tooltip, { label: 'Why it is off' }, createElement('button', { 'aria-label': 'Action', disabled: true })),
     );
     expect(markup.startsWith('<button')).toBe(true);
     expect(markup).toContain('aria-description="Why it is off"');
@@ -175,7 +175,7 @@ describe('HoverTip markup', () => {
 
   it('keeps the trigger\'s own props beside the ones it adds', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'More' }, createElement('button', { 'aria-label': 'Action', 'data-testid': 'own' })),
+      createElement(Tooltip, { label: 'More' }, createElement('button', { 'aria-label': 'Action', 'data-testid': 'own' })),
     );
     expect(markup).toContain('data-testid="own"');
     expect(markup).toContain('aria-label="Action"');
@@ -206,7 +206,7 @@ function descriptionIn(openingTag: string): string | null {
   return match === null ? null : decodeEntities(match[1]);
 }
 
-/** The opening tag the markup starts with. HoverTip adds no wrapper, so that is the trigger. */
+/** The opening tag the markup starts with. Tooltip adds no wrapper, so that is the trigger. */
 function rootTag(markup: string): string {
   const match = /^<[a-z][^>]*>/.exec(markup);
   if (match === null) throw new Error(`Markup does not start with an element: ${markup}`);
@@ -226,16 +226,16 @@ function rootDescription(markup: string): string | null {
 }
 
 /**
- * The props a component child actually receives from HoverTip. A static render cannot show a
- * handler, so a probe child records what HoverTip passed it.
+ * The props a component child actually receives from Tooltip. A static render cannot show a
+ * handler, so a probe child records what Tooltip passed it.
  */
-function captureTriggerProps(tipProps: Omit<HoverTipProps, 'children'>, childProps: Record<string, unknown>): Record<string, unknown> {
+function captureTriggerProps(tipProps: Omit<TooltipProps, 'children'>, childProps: Record<string, unknown>): Record<string, unknown> {
   let captured: Record<string, unknown> = {};
   function Probe(received: Record<string, unknown>) {
     captured = received;
     return createElement('span');
   }
-  renderToStaticMarkup(createElement(HoverTip, tipProps, createElement(Probe, childProps)));
+  renderToStaticMarkup(createElement(Tooltip, tipProps, createElement(Probe, childProps)));
   return captured;
 }
 
@@ -243,13 +243,13 @@ function GlyphIcon() {
   return createElement('svg');
 }
 
-describe('HoverTip around a Pill', () => {
-  // Pill picks <button> when it has a non-null onClick, and a <span> otherwise. HoverTip used to
+describe('Tooltip around a Pill', () => {
+  // Pill picks <button> when it has a non-null onClick, and a <span> otherwise. Tooltip used to
   // inject an onClick into every child, which turned a plain label pill into a button.
   // The Pill's text lives in an inner span either way, so the root tag is what tells them apart.
   it('keeps a Pill with no onClick a span', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Why it is shown' }, createElement(Pill, { size: 'sm' }, 'Tag')),
+      createElement(Tooltip, { label: 'Why it is shown' }, createElement(Pill, { size: 'sm' }, 'Tag')),
     );
     expect(markup.startsWith('<span')).toBe(true);
     expect(markup).not.toContain('<button');
@@ -259,7 +259,7 @@ describe('HoverTip around a Pill', () => {
 
   it('keeps a Pill whose onClick is explicitly undefined a span', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Why it is shown' }, createElement(Pill, { size: 'sm', onClick: undefined }, 'Tag')),
+      createElement(Tooltip, { label: 'Why it is shown' }, createElement(Pill, { size: 'sm', onClick: undefined }, 'Tag')),
     );
     expect(markup.startsWith('<span')).toBe(true);
     expect(markup).not.toContain('<button');
@@ -267,7 +267,7 @@ describe('HoverTip around a Pill', () => {
 
   it('leaves a Pill that has an onClick a button', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Why it is shown' }, createElement(Pill, { size: 'sm', onClick: noop }, 'Tag')),
+      createElement(Tooltip, { label: 'Why it is shown' }, createElement(Pill, { size: 'sm', onClick: noop }, 'Tag')),
     );
     expect(markup.startsWith('<button')).toBe(true);
     expect(markup).toContain('cursor-pointer');
@@ -275,7 +275,7 @@ describe('HoverTip around a Pill', () => {
 
   it('leaves an intrinsic button child a button', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Why it is shown' }, createElement('button', { 'aria-label': 'Action' })),
+      createElement(Tooltip, { label: 'Why it is shown' }, createElement('button', { 'aria-label': 'Action' })),
     );
     expect(markup.startsWith('<button')).toBe(true);
   });
@@ -292,11 +292,11 @@ describe('HoverTip around a Pill', () => {
   });
 });
 
-describe('HoverTip description wiring', () => {
+describe('Tooltip description wiring', () => {
   it('reads nothing with describe={false}, even when the label differs from the trigger name', () => {
     const markup = renderToStaticMarkup(
       createElement(
-        HoverTip,
+        Tooltip,
         { label: 'More than the name says', detail: 'And a detail', describe: false },
         createElement('button', { 'aria-label': 'Action' }),
       ),
@@ -306,19 +306,19 @@ describe('HoverTip description wiring', () => {
 
   it('reads the label with describe={true}, even when it repeats the aria-label', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Close', describe: true }, createElement('button', { 'aria-label': 'Close' })),
+      createElement(Tooltip, { label: 'Close', describe: true }, createElement('button', { 'aria-label': 'Close' })),
     );
     expect(rootDescription(markup)).toBe('Close');
   });
 
   it('counts string children as the trigger name when there is no aria-label', () => {
     const sameAsChildren = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Save' }, createElement('button', null, 'Save')),
+      createElement(Tooltip, { label: 'Save' }, createElement('button', null, 'Save')),
     );
     expect(rootDescription(sameAsChildren)).toBeNull();
 
     const saysMore = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Save the draft' }, createElement('button', null, 'Save')),
+      createElement(Tooltip, { label: 'Save the draft' }, createElement('button', null, 'Save')),
     );
     expect(rootDescription(saysMore)).toBe('Save the draft');
   });
@@ -326,7 +326,7 @@ describe('HoverTip description wiring', () => {
   it('puts the detail on its own line after the label', () => {
     const markup = renderToStaticMarkup(
       createElement(
-        HoverTip,
+        Tooltip,
         { label: 'Show changes', detail: 'Uncommitted only' },
         createElement('button', { 'aria-label': 'Changes' }),
       ),
@@ -337,7 +337,7 @@ describe('HoverTip description wiring', () => {
   it('reads the detail alone when the label only repeats the trigger name', () => {
     const markup = renderToStaticMarkup(
       createElement(
-        HoverTip,
+        Tooltip,
         { label: 'Show changes', detail: 'Uncommitted only' },
         createElement('button', { 'aria-label': 'Show changes' }),
       ),
@@ -347,7 +347,7 @@ describe('HoverTip description wiring', () => {
 
   it('gives an empty label no description', () => {
     const markup = renderToStaticMarkup(
-      createElement(HoverTip, { label: '' }, createElement('button', { 'aria-label': 'Action' })),
+      createElement(Tooltip, { label: '' }, createElement('button', { 'aria-label': 'Action' })),
     );
     expect(markup.startsWith('<button')).toBe(true);
     expect(markup).not.toContain('aria-description');
@@ -356,10 +356,10 @@ describe('HoverTip description wiring', () => {
   it('gives a tip held shut no description, even with a detail or a shortcut', () => {
     // `settings.toggle` is a real KEYBINDINGS id, so `keys` resolves to a combo.
     const shutByEmptyLabel = renderToStaticMarkup(
-      createElement(HoverTip, { label: '', detail: 'A detail', keys: 'settings.toggle' }, createElement('button', { 'aria-label': 'Action' })),
+      createElement(Tooltip, { label: '', detail: 'A detail', keys: 'settings.toggle' }, createElement('button', { 'aria-label': 'Action' })),
     );
     const shutByEnabled = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Why', detail: 'A detail', keys: 'settings.toggle', enabled: false }, createElement('button', { 'aria-label': 'Action' })),
+      createElement(Tooltip, { label: 'Why', detail: 'A detail', keys: 'settings.toggle', enabled: false }, createElement('button', { 'aria-label': 'Action' })),
     );
     expect(rootDescription(shutByEmptyLabel)).toBeNull();
     expect(rootDescription(shutByEnabled)).toBeNull();
@@ -368,10 +368,10 @@ describe('HoverTip description wiring', () => {
   it("keeps the trigger's own aria-description when the tip adds nothing to read", () => {
     const ownDescription = { 'aria-label': 'Close', 'aria-description': 'Closes the window' };
     const repeatsName = renderToStaticMarkup(
-      createElement(HoverTip, { label: 'Close' }, createElement('button', ownDescription)),
+      createElement(Tooltip, { label: 'Close' }, createElement('button', ownDescription)),
     );
     const heldShut = renderToStaticMarkup(
-      createElement(HoverTip, { label: '' }, createElement('button', ownDescription)),
+      createElement(Tooltip, { label: '' }, createElement('button', ownDescription)),
     );
     expect(rootDescription(repeatsName)).toBe('Closes the window');
     expect(rootDescription(heldShut)).toBe('Closes the window');
@@ -380,7 +380,7 @@ describe('HoverTip description wiring', () => {
   it("reads the tip over the trigger's own aria-description when the tip has something to say", () => {
     const markup = renderToStaticMarkup(
       createElement(
-        HoverTip,
+        Tooltip,
         { label: 'Close this window' },
         createElement('button', { 'aria-label': 'Close', 'aria-description': 'Closes the window' }),
       ),
@@ -389,7 +389,7 @@ describe('HoverTip description wiring', () => {
   });
 });
 
-describe('HoverTip with an empty label', () => {
+describe('Tooltip with an empty label', () => {
   // The description above cannot tell a held-shut tip from an open one. What can is the dwell
   // timer: a pointer move over an enabled tip arms it, and a tip that is held shut must not. The
   // handler runs against a stubbed `window` because this tier has no DOM.
@@ -399,7 +399,7 @@ describe('HoverTip with an empty label', () => {
   });
 
   /** How many dwell timers one pointer move over the trigger arms. */
-  function dwellTimersArmedByOneMove(tipProps: Omit<HoverTipProps, 'children'>): number {
+  function dwellTimersArmedByOneMove(tipProps: Omit<TooltipProps, 'children'>): number {
     resetTipStateForTests();
     const captured = captureTriggerProps(tipProps, {});
     const startTimer = vi.fn(() => 1);
@@ -644,7 +644,7 @@ describe('IsolatedBadge tip', () => {
     expect(classes).toContain('extra-class');
   });
 
-  it('carries no native title, so only the HoverTip explains it', () => {
+  it('carries no native title, so only the Tooltip explains it', () => {
     // The badge takes the span's attributes (minus title) and spreads them, so the testid lands on the root.
     const passedProps = { 'data-testid': 'isolated-badge' };
     const markup = renderToStaticMarkup(createElement(IsolatedBadge, passedProps));

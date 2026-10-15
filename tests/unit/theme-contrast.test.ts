@@ -208,12 +208,12 @@ describe('theme contrast (all themes, not just the default)', () => {
     expect(failures).toEqual([]);
   });
 
-  it('keeps every HoverTip text readable on its own ground in every theme', () => {
+  it('keeps every Tooltip text readable on its own ground in every theme', () => {
     // The label tip is inverted (`bg-fg` under `text-surface`), and its key chips and muted
-    // second line are mixed from that same pair in index.css (`--color-tip-chip`,
-    // `--color-tip-muted`), so they follow each theme without a token of their own. The rich tip
+    // second line are mixed from that same pair in index.css (`--color-tooltip-chip`,
+    // `--color-tooltip-muted`), so they follow each theme without a token of their own. The rich tip
     // is the raised panel with `fg` body text, and its header icon, footer and secondary lines are
-    // `--color-tip-rich-muted`, because plain `fg-muted` fell short there in the moon and forest
+    // `--color-tooltip-rich-muted`, because plain `fg-muted` fell short there in the moon and forest
     // themes. The weights below are read from index.css, so a retune is checked as written.
     const mix = (first: string, second: string, weight: number): string => '#' + [1, 3, 5]
       .map((offset) => Math.round(
@@ -240,10 +240,10 @@ describe('theme contrast (all themes, not just the default)', () => {
       if (!fg || !surface || !raised) continue;
       const pairings: { what: string; foreground: string; background: string }[] = [
         { what: 'label text', foreground: surface, background: fg },
-        { what: 'key chip text', foreground: surface, background: resolve(theme, 'tip-chip') },
-        { what: 'label detail line', foreground: resolve(theme, 'tip-muted'), background: fg },
+        { what: 'key chip text', foreground: surface, background: resolve(theme, 'tooltip-chip') },
+        { what: 'label detail line', foreground: resolve(theme, 'tooltip-muted'), background: fg },
         { what: 'rich tip body', foreground: fg, background: raised },
-        { what: 'rich tip footer and secondary lines', foreground: resolve(theme, 'tip-rich-muted'), background: raised },
+        { what: 'rich tip footer and secondary lines', foreground: resolve(theme, 'tooltip-rich-muted'), background: raised },
       ];
       for (const pairing of pairings) {
         const ratio = contrastRatio(pairing.foreground, pairing.background);

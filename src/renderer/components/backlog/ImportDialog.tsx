@@ -6,7 +6,7 @@ import { BaseDialog } from '../dialogs/BaseDialog';
 import { Pill } from '../Pill';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
 import { ButtonGroup } from '../ButtonGroup';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
@@ -523,7 +523,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         )}
 
         {/* Hide imported toggle */}
-        <HoverTip label={hideImported ? 'Show imported items' : 'Hide imported items'}>
+        <Tooltip label={hideImported ? 'Show imported items' : 'Hide imported items'}>
           <button
             type="button"
             onClick={() => setHideImported(!hideImported)}
@@ -536,7 +536,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             {hideImported ? <EyeOff size={10} /> : <Eye size={10} />}
             Imported
           </button>
-        </HoverTip>
+        </Tooltip>
 
       </div>
 

@@ -15,7 +15,7 @@ import {
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { RegistryIcon, getSwimlaneIconName } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
@@ -108,7 +108,7 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
            window behind the dialog even though its cursor is not `pointer`.
            The tip is shut while the row is lifted: a Tab-placed focus opens it at once, and
            an open tip would take the Escape that cancels a keyboard drag. */
-        <HoverTip label="Drag to reorder" enabled={!isDragging}>
+        <Tooltip label="Drag to reorder" enabled={!isDragging}>
           <div
             {...attributes}
             {...listeners}
@@ -118,7 +118,7 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
           >
             <GripVertical size={13} />
           </div>
-        </HoverTip>
+        </Tooltip>
       ) : (
         <div className="w-[17px] flex-shrink-0" />
       )}
@@ -145,28 +145,28 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
         {/* `text-fg-muted`, one step up from the faint the hints used to share:
             at 12px on the row's own fill, faint was reported as hard to see. */}
         {row.agentOverrideLabel && (
-          <HoverTip label={`Agent: ${row.agentOverrideLabel}`}>
+          <Tooltip label={`Agent: ${row.agentOverrideLabel}`}>
             <span className="flex-shrink-0 text-fg-muted">
               <Bot size={12} strokeWidth={2} />
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
         {row.isolated && (
-          <HoverTip label="Isolated session">
+          <Tooltip label="Isolated session">
             <span className="flex-shrink-0 text-fg-muted">
               <Split size={12} strokeWidth={2} />
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
         {row.automationCount > 0 && (
-          <HoverTip label={row.automationCount === 1 ? '1 automation runs here' : `${row.automationCount} automations run here`}>
+          <Tooltip label={row.automationCount === 1 ? '1 automation runs here' : `${row.automationCount} automations run here`}>
             <span
               data-testid="board-manager-tab-automation"
               className="flex-shrink-0 text-fg-muted"
             >
               <Columns3Cog size={12} strokeWidth={2} />
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
         {row.dirty && (
           <span
@@ -255,7 +255,7 @@ export function ColumnRail({
           so it sits below the selector and above the list. */}
       <div className="flex-shrink-0 border-b border-edge/50 px-2 pt-3 pb-2">
         <div className="px-2 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint">Overview</div>
-        <HoverTip label="Compare every column's settings side by side">
+        <Tooltip label="Compare every column's settings side by side">
           <button
             type="button"
             role="tab"
@@ -271,7 +271,7 @@ export function ColumnRail({
             <LayoutGrid size={14} className="flex-shrink-0" />
             All columns
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
 
       <div className="pl-4 pr-2 pt-3 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint flex-shrink-0">

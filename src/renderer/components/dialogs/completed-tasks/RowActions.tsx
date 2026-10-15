@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { Eye, RotateCcw, Trash2 } from 'lucide-react';
 import type { Swimlane } from '../../../../shared/types';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { RestorePopover } from './RestorePopover';
 
 /**
@@ -35,7 +35,7 @@ export function RowActions({
 
   return (
     <div className="flex items-center justify-end gap-1.5 relative" onClick={(event) => event.stopPropagation()}>
-      <HoverTip label="View details">
+      <Tooltip label="View details">
         <button
           type="button"
           onClick={() => onViewDetail(taskId)}
@@ -45,10 +45,10 @@ export function RowActions({
         >
           <Eye size={16} />
         </button>
-      </HoverTip>
+      </Tooltip>
       <div className="relative">
         {/* Shut while its own column menu is open. */}
-        <HoverTip label="Restore to board" enabled={!isOpen}>
+        <Tooltip label="Restore to board" enabled={!isOpen}>
           <button
             ref={restoreButtonRef}
             type="button"
@@ -59,7 +59,7 @@ export function RowActions({
           >
             <RotateCcw size={16} />
           </button>
-        </HoverTip>
+        </Tooltip>
         {isOpen && (
           <RestorePopover
             triggerRef={restoreButtonRef}
@@ -69,7 +69,7 @@ export function RowActions({
           />
         )}
       </div>
-      <HoverTip label="Delete task">
+      <Tooltip label="Delete task">
         <button
           type="button"
           onClick={() => onDelete(taskId)}
@@ -79,7 +79,7 @@ export function RowActions({
         >
           <Trash2 size={16} />
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 }

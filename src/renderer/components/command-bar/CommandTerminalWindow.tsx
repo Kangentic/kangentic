@@ -25,7 +25,7 @@ import { IconSlot } from '../IconSlot';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
@@ -485,7 +485,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         <div ref={leadingRef} className="flex items-center flex-shrink-0">
           {/* StopButtonIcon's branches all render through IconSlot, so the node under the
               pointer survives an activity change mid-press (see IconSlot). */}
-          <HoverTip label={stopping ? 'Stopping terminal' : 'Stop terminal'}>
+          <Tooltip label={stopping ? 'Stopping terminal' : 'Stop terminal'}>
             <button
               onClick={handleTerminate}
               disabled={stopping}
@@ -500,7 +500,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             >
               <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
 
         {/* Title - the overflow calc reserves only a ~50ch floor (not the full
@@ -514,7 +514,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
           {/* Inline span so its scrollWidth measures the TEXT width (not the
               flex-grown div); useHeaderPillOverflow reserves up to a ~50ch floor
               of that width for the title and lets the pills reclaim the rest. */}
-          <HoverTip label={windowTitle}>
+          <Tooltip label={windowTitle}>
             <span
               ref={titleSpanRef}
               className="text-base font-semibold text-fg truncate"
@@ -522,7 +522,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             >
               {windowTitle}
             </span>
-          </HoverTip>
+          </Tooltip>
         </div>
 
         {/* Quick-access pills - each wrapped with `data-pill-id` so the overflow
@@ -667,7 +667,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
 
           {isTiled && (
-            <HoverTip label="Pop out terminal">
+            <Tooltip label="Pop out terminal">
               <button
                 onClick={handleUndock}
                 className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
@@ -676,10 +676,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
               >
                 <PictureInPicture2 size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           )}
 
-          <HoverTip label={isMaximized ? 'Restore terminal' : 'Maximize terminal'} keys="panel.maximize">
+          <Tooltip label={isMaximized ? 'Restore terminal' : 'Maximize terminal'} keys="panel.maximize">
             <button
               onClick={handleToggleMaximized}
               className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
@@ -688,7 +688,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             >
               {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
 
         {/* Commands palette: rendered once at the header root. Commands is kebab-only

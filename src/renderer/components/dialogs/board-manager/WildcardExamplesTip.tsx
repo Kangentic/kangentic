@@ -1,6 +1,6 @@
 import { Fragment, type ReactElement } from 'react';
 import { Info } from 'lucide-react';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { TEXT_MATCH_WILDCARD_EXAMPLES } from '../../../../shared/final-line-match';
 
 /**
@@ -14,12 +14,12 @@ import { TEXT_MATCH_WILDCARD_EXAMPLES } from '../../../../shared/final-line-matc
  * value someone would type into that field.
  *
  * The trigger is a real button, so a keyboard user opens the tip by focus, as
- * `HoverTip` does for a pointer, and a screen reader reads the plain-text
+ * `Tooltip` does for a pointer, and a screen reader reads the plain-text
  * version below as the button's description.
  */
 export function WildcardExamplesTip(): ReactElement {
   return (
-    <HoverTip
+    <Tooltip
       label={wildcardExamplesText()}
       header={{ icon: <Info />, title: 'Wildcard examples' }}
       content={<WildcardExamplesGrid />}
@@ -33,7 +33,7 @@ export function WildcardExamplesTip(): ReactElement {
       >
         <Info size={13} aria-hidden="true" />
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -48,7 +48,7 @@ function WildcardExamplesGrid(): ReactElement {
           </code>
           <span className="text-xs text-fg-tertiary">
             {example.rule}
-            {example.sample !== null && <span className="text-tip-rich-muted">, as in {example.sample}</span>}
+            {example.sample !== null && <span className="text-tooltip-rich-muted">, as in {example.sample}</span>}
           </span>
         </Fragment>
       ))}

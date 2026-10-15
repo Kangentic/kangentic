@@ -7,7 +7,7 @@ import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } fro
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { shownTheme, useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding } from '../../../../hooks/useKeybinding';
-import { HoverTip } from '../../../HoverTip';
+import { Tooltip } from '../../../Tooltip';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
 import {
@@ -854,7 +854,7 @@ export function DiffViewer({
               shown for those; while previewing, the diff-only controls below
               are hidden since they do not apply to a rendered view. */}
           {(isMarkdown || isPreviewableSvg) && (
-            <HoverTip label={previewToggleLabel}>
+            <Tooltip label={previewToggleLabel}>
               <button
                 onClick={() => setShowPreview((value) => !value)}
                 className={toolbarButtonClass(previewActive)}
@@ -864,7 +864,7 @@ export function DiffViewer({
               >
                 <Eye size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           )}
 
           {/* The image view keeps only the layout toggle, and only where it
@@ -872,7 +872,7 @@ export function DiffViewer({
           {showImageLayoutToggle && (
             <>
               {isPreviewableSvg && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
-              <HoverTip label="Side by side">
+              <Tooltip label="Side by side">
                 <button
                   onClick={() => onViewModeChange('split')}
                   className={toolbarButtonClass(viewMode === 'split')}
@@ -881,8 +881,8 @@ export function DiffViewer({
                 >
                   <Columns2 size={16} />
                 </button>
-              </HoverTip>
-              <HoverTip label="Stacked">
+              </Tooltip>
+              <Tooltip label="Stacked">
                 <button
                   onClick={() => onViewModeChange('inline')}
                   className={toolbarButtonClass(viewMode === 'inline')}
@@ -891,7 +891,7 @@ export function DiffViewer({
                 >
                   <Rows2 size={16} />
                 </button>
-              </HoverTip>
+              </Tooltip>
             </>
           )}
 
@@ -902,7 +902,7 @@ export function DiffViewer({
               {/* Next / previous change navigation. The tips draw the LIVE
                   combos as key chips (rebind-aware through `keys`), never
                   hardcoded strings. */}
-              <HoverTip label="Previous change" keys="changes.prevChange">
+              <Tooltip label="Previous change" keys="changes.prevChange">
                 <button
                   onClick={() => navigateChange('prev')}
                   className={toolbarButtonClass(false)}
@@ -911,8 +911,8 @@ export function DiffViewer({
                 >
                   <ChevronUp size={16} />
                 </button>
-              </HoverTip>
-              <HoverTip label="Next change" keys="changes.nextChange">
+              </Tooltip>
+              <Tooltip label="Next change" keys="changes.nextChange">
                 <button
                   onClick={() => navigateChange('next')}
                   className={toolbarButtonClass(false)}
@@ -921,7 +921,7 @@ export function DiffViewer({
                 >
                   <ChevronDown size={16} />
                 </button>
-              </HoverTip>
+              </Tooltip>
 
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
 
@@ -929,7 +929,7 @@ export function DiffViewer({
                   unified is the one diff control with a settled cross-tool
                   glyph (GitHub ships this exact toggle), and it is flipped
                   often enough to earn permanent space. */}
-              <HoverTip label="Side by side" detail={inlineWhenNarrow ? 'A narrow pane renders inline' : undefined}>
+              <Tooltip label="Side by side" detail={inlineWhenNarrow ? 'A narrow pane renders inline' : undefined}>
                 <button
                   onClick={() => {
                     // Already split but showing inline after a widening drag:
@@ -944,8 +944,8 @@ export function DiffViewer({
                 >
                   <Columns2 size={16} />
                 </button>
-              </HoverTip>
-              <HoverTip label="Inline">
+              </Tooltip>
+              <Tooltip label="Inline">
                 <button
                   onClick={() => onViewModeChange('inline')}
                   className={toolbarButtonClass(viewMode === 'inline')}
@@ -954,7 +954,7 @@ export function DiffViewer({
                 >
                   <Rows2 size={16} />
                 </button>
-              </HoverTip>
+              </Tooltip>
 
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
 

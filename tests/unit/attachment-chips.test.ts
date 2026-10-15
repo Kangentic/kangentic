@@ -133,7 +133,7 @@ describe('AttachmentChips', () => {
   it('exposes the full selector as the picked chip\'s description, not a native title', () => {
     const selector = 'main > section.hero > button.primary';
     const html = render(0, makePicked({ selector }));
-    // React HTML-escapes `>` to `&gt;` in attribute values. The chip's HoverTip shows the
+    // React HTML-escapes `>` to `&gt;` in attribute values. The chip's Tooltip shows the
     // whole value on hover and gives it to the chip as its accessible description.
     const escaped = selector.replace(/>/g, '&gt;');
     expect(html).toContain(`aria-description="${escaped}"`);

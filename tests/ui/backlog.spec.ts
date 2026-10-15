@@ -212,7 +212,7 @@ test.describe('Backlog View', () => {
       await expect(handle).toHaveCount(1);
       await expect(handle).toHaveAccessibleName('Drag to reorder');
       await handle.hover();
-      await expect(page.locator('[data-hover-tip]')).toHaveText('Drag to reorder');
+      await expect(page.locator('[data-tooltip]')).toHaveText('Drag to reorder');
     } finally {
       await browser.close();
     }

@@ -7,7 +7,7 @@
 
 import { X } from 'lucide-react';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
-import { HoverTip } from '../../components/HoverTip';
+import { Tooltip } from '../../components/Tooltip';
 import { useLayerStore } from '../context';
 
 interface WindowTitleBarProps {
@@ -49,7 +49,7 @@ export function WindowTitleBar({
           onToggle={() => toggleMaximizeWindow(windowId)}
           testId={`window-maximize-${windowId}`}
         />
-        <HoverTip label="Close window">
+        <Tooltip label="Close window">
           <button
             type="button"
             onClick={onRequestClose}
@@ -58,7 +58,7 @@ export function WindowTitleBar({
           >
             <X size={16} />
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
     </div>
   );

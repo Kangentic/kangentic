@@ -9,7 +9,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
 import { AutomationGlyph } from './AutomationGlyph';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
 export interface SwimlaneProps {
@@ -49,7 +49,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
 
   return (
     // A ghost column says why it is greyed out wherever the pointer rests on it.
-    <HoverTip label={isGhost ? 'Removed from team config. Move tasks to continue.' : ''}>
+    <Tooltip label={isGhost ? 'Removed from team config. Move tasks to continue.' : ''}>
       <div
         data-testid="swimlane"
         data-swimlane-name={swimlane.name}
@@ -73,7 +73,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
             load-bearing for its drag-handle child, whose `cursor-grab` would otherwise
             slip past that check and let a click light-dismiss a window. The column's
             description, when it has one, is the strip's tip. */}
-        <HoverTip label={swimlane.description ?? ''}>
+        <Tooltip label={swimlane.description ?? ''}>
           <div
             className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors cursor-pointer select-none"
             onClick={() => openBoardManager(swimlane.id)}
@@ -84,9 +84,9 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
               // `dragHandleProps` carries dnd-kit's attributes too (tabindex, role,
               // aria-*), so this is the column's one focus stop and the shared
               // keyboard sensor lifts the column from here. It draws no text, so it
-              // names itself. HoverTip chains its own pointer handlers after
+              // names itself. Tooltip chains its own pointer handlers after
               // dnd-kit's, so the press that starts a drag still reaches the sensor.
-              <HoverTip label="Drag to reorder">
+              <Tooltip label="Drag to reorder">
                 {/* select-none-ok: the handle draws a grip icon and no text, and it
                     inherits the header's `select-none` anyway. */}
                 <div
@@ -98,7 +98,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
                 >
                   <GripVertical size={14} />
                 </div>
-              </HoverTip>
+              </Tooltip>
             )}
 
             {/* Role icon or color dot */}
@@ -138,7 +138,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
               <Pencil size={12} />
             </button>
           </div>
-        </HoverTip>
+        </Tooltip>
 
         {/* Task list */}
         <div
@@ -180,6 +180,6 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
           />
         )}
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 });

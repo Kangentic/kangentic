@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../../OverlayPopover';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationType } from '../../../../shared/types';
@@ -123,7 +123,7 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
             const isSelected = type === value;
             return (
               // Only a retired type has a tip: the reason it cannot be chosen.
-              <HoverTip key={type} label={isLegacy ? 'This type is retired and cannot be chosen.' : ''}>
+              <Tooltip key={type} label={isLegacy ? 'This type is retired and cannot be chosen.' : ''}>
                 <button
                   type="button"
                   role="option"
@@ -140,7 +140,7 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
                   <span className="min-w-0 flex-1 truncate text-fg">{entry.label}</span>
                   {isSelected && <Check size={14} className="shrink-0 text-accent" />}
                 </button>
-              </HoverTip>
+              </Tooltip>
             );
           })}
         </div>

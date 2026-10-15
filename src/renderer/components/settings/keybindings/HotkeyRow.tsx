@@ -1,8 +1,8 @@
 import { AlertTriangle, Lock, RotateCcw } from 'lucide-react';
 import type { KeybindingDefinition } from '../../../../shared/keybindings';
 import { Pill } from '../../Pill';
-import { HoverTip } from '../../HoverTip';
-import { tipLabel } from '../../../utils/hover-tip';
+import { Tooltip } from '../../Tooltip';
+import { tipLabel } from '../../../utils/tooltip';
 import { CardTile, InfoTip } from '../settings-card';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { KeyCombo } from './KeyCombo';
@@ -77,7 +77,7 @@ export function HotkeyRow({
       </div>
 
       {readOnly ? (
-        <HoverTip label="This hotkey is fixed and cannot be rebound">
+        <Tooltip label="This hotkey is fixed and cannot be rebound">
           <div className="flex items-center gap-2 flex-shrink-0">
             <KeyCombo combo={effective} />
             {/* Spacer matching the Rebind button so the lock aligns with the reset column. */}
@@ -86,11 +86,11 @@ export function HotkeyRow({
               <Lock size={13} className="text-fg-disabled" />
             </span>
           </div>
-        </HoverTip>
+        </Tooltip>
       ) : (
         <div className="flex items-center gap-2 flex-shrink-0">
           <KeyCaptureInput combo={effective} onCommit={onCommit} />
-          <HoverTip label={tipLabel({ disabled: !isCustom, disabledReason: 'Already default', tip: 'Reset to default' })}>
+          <Tooltip label={tipLabel({ disabled: !isCustom, disabledReason: 'Already default', tip: 'Reset to default' })}>
             <button
               onClick={onReset}
               disabled={!isCustom}
@@ -100,7 +100,7 @@ export function HotkeyRow({
             >
               <RotateCcw size={14} />
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
       )}
     </CardTile>

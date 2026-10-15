@@ -2,8 +2,8 @@ import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Blend, ChevronsLeftRight, Columns2, ImageOff, Loader2, Rows2, ScanSearch, SquareSplitHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { formatBytes } from '../../../../lib/format-bytes';
-import { tipLabel } from '../../../../utils/hover-tip';
-import { HoverTip } from '../../../HoverTip';
+import { tipLabel } from '../../../../utils/tooltip';
+import { Tooltip } from '../../../Tooltip';
 import { IMAGE_PREVIEW_MAX_BYTES } from '../../../../../shared/image-preview';
 import { imageCompareState, type DecodedImageSide, type DiffImageContent, type DiffImageSide, type ImageCompareMode } from './diff-content';
 import { PIXEL_DIFF_COLOR_CSS, usePixelDiff, type PixelDiffState } from './pixel-diff-client';
@@ -21,7 +21,7 @@ import { PIXEL_DIFF_COLOR_CSS, usePixelDiff, type PixelDiffState } from './pixel
  *
  * The root is a named container (`image-diff`). Below 300px, the width a
  * dragged-narrow pane reaches before its 240px floor, the mode row drops to
- * icons (each keeps its name in `aria-label` and its HoverTip) and the tiles stack
+ * icons (each keeps its name in `aria-label` and its Tooltip) and the tiles stack
  * one per line, so no value clips.
  *
  * The file exports only the component, so it stays a Fast Refresh boundary:
@@ -182,7 +182,7 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
               const disabled = option.value !== 'side-by-side' && !comparable;
               const Icon = option.icon;
               return (
-                <HoverTip
+                <Tooltip
                   key={option.value}
                   label={tipLabel({ disabled, disabledReason: COMPARE_DISABLED_REASON, tip: option.label })}
                   detail={disabled ? undefined : option.detail}
@@ -204,7 +204,7 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
                     <Icon size={16} aria-hidden="true" />
                     <span className="hidden whitespace-nowrap @[300px]/image-diff:block">{option.label}</span>
                   </button>
-                </HoverTip>
+                </Tooltip>
               );
             })}
           </div>
@@ -425,7 +425,7 @@ function InfoTile({ side, label, sizeDelta = null, dimensionsChanged = false, te
   const summary = [label, dimensions, size ?? 'not readable'].filter((part) => part !== null).join(', ');
 
   return (
-    <HoverTip label={summary}>
+    <Tooltip label={summary}>
       <div className={TILE_CLASS} data-testid={testId}>
         {label && <span className="order-1 font-medium text-fg-tertiary">{label}</span>}
         <span className="order-2 flex min-w-0 gap-2 @[300px]/image-diff:order-3 @[300px]/image-diff:basis-full">
@@ -445,7 +445,7 @@ function InfoTile({ side, label, sizeDelta = null, dimensionsChanged = false, te
           </span>
         )}
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -464,11 +464,11 @@ function PixelDiffTile({ state }: { state: PixelDiffState }) {
   }
 
   return (
-    <HoverTip label={pixelCounts}>
+    <Tooltip label={pixelCounts}>
       <div className={TILE_CLASS} data-testid="diff-image-pixel-stat" data-status={state.status}>
         <span className="h-2 w-2 flex-shrink-0 rounded-sm" style={{ backgroundColor: PIXEL_DIFF_COLOR_CSS }} aria-hidden="true" />
         <span className="text-fg-secondary">{text}</span>
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }

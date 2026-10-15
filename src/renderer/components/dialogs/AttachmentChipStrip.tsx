@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { isImageMediaType, getFileTypeIcon } from './attachment-utils';
 
 /**
@@ -63,7 +63,7 @@ export function AttachmentChipStrip<TAttachment extends AttachmentChipItem>({
           >
             {/* The full filename the chip's width may cut short. Not read as a
                 description: the button's own text already names the file. */}
-            <HoverTip label={attachment.filename} describe={false}>
+            <Tooltip label={attachment.filename} describe={false}>
               <button
                 type="button"
                 onClick={() => onOpen(attachment)}
@@ -83,9 +83,9 @@ export function AttachmentChipStrip<TAttachment extends AttachmentChipItem>({
                 )}
                 <span className="truncate">{attachment.filename}</span>
               </button>
-            </HoverTip>
+            </Tooltip>
             {onRemove && (
-              <HoverTip label={`Remove ${attachment.filename}`}>
+              <Tooltip label={`Remove ${attachment.filename}`}>
                 <button
                   type="button"
                   onClick={() => onRemove(attachment.id)}
@@ -95,7 +95,7 @@ export function AttachmentChipStrip<TAttachment extends AttachmentChipItem>({
                 >
                   <X size={12} />
                 </button>
-              </HoverTip>
+              </Tooltip>
             )}
           </span>
         );

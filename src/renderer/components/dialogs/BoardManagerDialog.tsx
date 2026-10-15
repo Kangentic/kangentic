@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { useBoardStore } from '../../stores/board-store';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -461,7 +461,7 @@ function SettingField({ label, description, hint, children, className = '' }: {
 
 function ResetHint({ onClick, tip }: { onClick: () => void; tip: string }) {
   return (
-    <HoverTip label={tip}>
+    <Tooltip label={tip}>
       <button
         type="button"
         onClick={onClick}
@@ -470,7 +470,7 @@ function ResetHint({ onClick, tip }: { onClick: () => void; tip: string }) {
         <RotateCcw size={11} />
         Reset
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -573,9 +573,9 @@ function RemoveColumnTarget({ column, position, total }: {
       ) : (
         <span className="block w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: column.color }} />
       )}
-      <HoverTip label={name}>
+      <Tooltip label={name}>
         <span className="min-w-0 truncate" data-testid="board-manager-remove-target">{name}</span>
-      </HoverTip>
+      </Tooltip>
       <Pill size="sm" className="ml-auto bg-surface-control/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
     </div>
   );
@@ -1832,7 +1832,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           cancelTestId="board-manager-cancel"
           confirmTestId="board-manager-save"
           leading={!isOverview && draft && !isTodoOrDone && !activeProfileId ? (
-            <HoverTip label={`Remove column "${draft.name.trim() || 'Untitled'}"`}>
+            <Tooltip label={`Remove column "${draft.name.trim() || 'Untitled'}"`}>
               <button
                 type="button"
                 onClick={requestRemoveColumn}
@@ -1843,7 +1843,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                 <Trash2 size={14} />
                 Remove column
               </button>
-            </HoverTip>
+            </Tooltip>
           ) : undefined}
         />
       }
@@ -2007,7 +2007,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         />
                       );
                     })}
-                    <HoverTip label="Custom color">
+                    <Tooltip label="Custom color">
                       <button
                         type="button"
                         onClick={() => setShowCustomPicker((open) => !open)}
@@ -2023,7 +2023,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       >
                         <Palette size={12} className={!PRESET_COLORS.includes(draft.color.toLowerCase()) ? 'text-white' : 'text-fg-muted'} />
                       </button>
-                    </HoverTip>
+                    </Tooltip>
                   </div>
                   {showCustomPicker && (
                     <div className="mt-3 space-y-2">

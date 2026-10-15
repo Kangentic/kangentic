@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { CountBadge } from '../../CountBadge';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import type { ProjectGroup } from '../../../../shared/types';
 
 export interface GroupHeaderProps {
@@ -97,7 +97,7 @@ export function GroupHeader({
         <CountBadge count={projectCount} variant="muted" size="sm" className="flex-shrink-0" />
       </div>
 
-      <HoverTip label="Group options">
+      <Tooltip label="Group options">
         <button
           type="button"
           data-group-actions
@@ -112,7 +112,7 @@ export function GroupHeader({
         >
           <MoreHorizontal size={14} />
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 }

@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import type { LucideProps } from 'lucide-react';
 import type { AutomationRowMark, AutomationRowMarkKind } from '../../../../shared/automation-describe';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 
 /**
  * Resolve an automation type's kebab-case icon NAME to a lucide component.
@@ -86,7 +86,7 @@ export function AutomationMarks({ marks }: { marks: readonly AutomationRowMark[]
   return (
     <>
       {marks.map((mark) => (
-        <HoverTip key={mark.kind} label={mark.label}>
+        <Tooltip key={mark.kind} label={mark.label}>
           <span
             data-testid={`column-automation-${mark.kind}-mark`}
             role="img"
@@ -100,7 +100,7 @@ export function AutomationMarks({ marks }: { marks: readonly AutomationRowMark[]
               </span>
             )}
           </span>
-        </HoverTip>
+        </Tooltip>
       ))}
     </>
   );

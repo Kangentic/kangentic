@@ -34,7 +34,7 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { KebabMenu, KebabMenuItem } from '../../components/KebabMenu';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
-import { HoverTip } from '../../components/HoverTip';
+import { Tooltip } from '../../components/Tooltip';
 import { ConversationView, type InitialPosition } from '../../components/conversation/ConversationView';
 import { reconcileDisplayRows } from '../../components/conversation/display-rows';
 import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor';
@@ -471,7 +471,7 @@ export function ConversationWindow({
 
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
           {isTiled && (
-            <HoverTip label="Pop out">
+            <Tooltip label="Pop out">
               <button
                 type="button"
                 onClick={handleUndock}
@@ -481,14 +481,14 @@ export function ConversationWindow({
               >
                 <PictureInPicture2 size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           )}
           <MaximizeToggleButton
             isMaximized={isMaximized}
             onToggle={handleToggleMaximized}
             testId={`conversation-maximize-${managedWindow.id}`}
           />
-          <HoverTip label="Close window" keys="panel.close">
+          <Tooltip label="Close window" keys="panel.close">
             <button
               type="button"
               onClick={requestClose}
@@ -498,7 +498,7 @@ export function ConversationWindow({
             >
               <X size={16} />
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
       </div>
 

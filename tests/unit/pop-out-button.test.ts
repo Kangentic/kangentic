@@ -9,7 +9,7 @@
  * open set. The closed default is pinned in tests/ui/usage-dashboard.spec.ts; the open name and the
  * `label` override are pinned here.
  *
- * `react-dom/server`, no jsdom, like hover-tip.test.ts. A static render reads a zustand store's
+ * `react-dom/server`, no jsdom, like tooltip.test.ts. A static render reads a zustand store's
  * INITIAL state, so the pop-out store is replaced by a stand-in that reads a mutable record. The real
  * `usePopOut` and `popOutInstanceKey` still run, so the key the button looks up is the real one.
  */

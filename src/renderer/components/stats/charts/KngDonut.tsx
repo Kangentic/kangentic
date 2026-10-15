@@ -1,8 +1,8 @@
 import { memo } from 'react';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip, matchByDataKey } from 'recharts';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip, matchByDataKey } from 'recharts';
 import type { DonutSlice } from '../useStatsData';
 import { ChartTooltip } from './ChartTooltip';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 
 interface KngDonutProps {
   slices: DonutSlice[];
@@ -45,7 +45,7 @@ export const KngDonut = memo(function KngDonut({
     <div className="relative h-full w-full" role="img" aria-label={ariaLabel}>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-          <Tooltip
+          <RechartsTooltip
             isAnimationActive={false}
             // Above the absolutely-positioned center-total overlay; without
             // this the tooltip renders underneath it and mushes into the text.
@@ -92,9 +92,9 @@ export const KngDonut = memo(function KngDonut({
         {/* Bounded so a long entity name (model ids, "(default)") stays
             inside the donut hole. Its tip is the full name, so the name alone
             takes the pointer back from the overlay's `pointer-events-none`. */}
-        <HoverTip label={centerLabel}>
+        <Tooltip label={centerLabel}>
           <span className="text-fg-faint text-[11px] max-w-[70%] truncate pointer-events-auto">{centerLabel}</span>
-        </HoverTip>
+        </Tooltip>
       </div>
     </div>
   );

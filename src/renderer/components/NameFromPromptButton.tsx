@@ -4,8 +4,8 @@ import { namingAgentReady } from '../../shared/answer-agent';
 import { useConfigStore } from '../stores/config-store';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
-import { tipLabel } from '../utils/hover-tip';
-import { HoverTip } from './HoverTip';
+import { tipLabel } from '../utils/tooltip';
+import { Tooltip } from './Tooltip';
 
 interface NameFromPromptButtonProps {
   /** Description (or other prompt text) used as the source for summarization. */
@@ -94,7 +94,7 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
   if (!available) return null;
 
   return (
-    <HoverTip
+    <Tooltip
       label={tipLabel({
         disabled: isPending,
         disabledReason: 'Generating a title',
@@ -115,6 +115,6 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
       >
         {isPending ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }

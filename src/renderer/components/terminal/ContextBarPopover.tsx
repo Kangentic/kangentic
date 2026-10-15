@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { MODEL_ALIAS_GROUP_HEADING, modelVersionSectionLabel } from '../../utils/format-tokens';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * `oneMillionValue` carries the exact `<base>[1m]` model string for rows
@@ -176,7 +176,7 @@ export function ContextBarPopover({
       // highlight scoped to it visibly stopped partway across the row, leaving
       // the badge sitting on the unhighlighted background.
       <div key={option.value} className="flex items-center hover:bg-surface-hover/40">
-        <HoverTip label={option.value}>
+        <Tooltip label={option.value}>
           <button
             type="button"
             onClick={() => onSelect(option.value)}
@@ -194,19 +194,19 @@ export function ContextBarPopover({
             <span className="flex-1 truncate">{option.label}</span>
             {option.hint && <span className="text-fg-faint text-xs flex-shrink-0">{option.hint}</span>}
           </button>
-        </HoverTip>
+        </Tooltip>
         {oneMillionValue === null && option.contextLabel && (
-          <HoverTip label={`${option.contextLabel} context window`}>
+          <Tooltip label={`${option.contextLabel} context window`}>
             <span
               className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
               data-testid={testId ? `${testId}-option-context-${option.value}` : undefined}
             >
               {option.contextLabel}
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
         {oneMillionValue !== null && (
-          <HoverTip label={oneMillionValue}>
+          <Tooltip label={oneMillionValue}>
             <button
               type="button"
               onClick={() => onSelect(oneMillionValue)}
@@ -219,7 +219,7 @@ export function ContextBarPopover({
             >
               1M
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
     );
@@ -230,7 +230,7 @@ export function ContextBarPopover({
   // badge: an alias names a family, not a window.
   const renderAliasRow = (option: AliasPopoverOption) => (
     <div key={option.value} className="flex items-center hover:bg-surface-hover/40">
-      <HoverTip label={option.title ?? option.value}>
+      <Tooltip label={option.title ?? option.value}>
         <button
           type="button"
           onClick={() => onSelect(option.value)}
@@ -246,7 +246,7 @@ export function ContextBarPopover({
             </span>
           )}
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 
@@ -310,7 +310,7 @@ export function ContextBarPopover({
         // session - confusing UX. Users with a per-task pin can still pick
         // any specific value from the list above to "revert".
         <div className="border-t border-edge mt-1 pt-1">
-          <HoverTip label={swimlaneDefault}>
+          <Tooltip label={swimlaneDefault}>
             <button
               type="button"
               onClick={() => onSelect(null)}
@@ -320,7 +320,7 @@ export function ContextBarPopover({
               <Check size={12} className={`flex-shrink-0 ${currentValue === null ? 'text-fg-secondary' : 'text-transparent'}`} />
               <span className="flex-1 truncate">Use column default <span className="text-fg-disabled">({swimlaneDefaultLabel ?? swimlaneDefault})</span></span>
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
       )}
     </div>,

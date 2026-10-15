@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Pencil, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
-import { HoverTip } from '../../components/HoverTip';
+import { Tooltip } from '../../components/Tooltip';
 import { TaskWorkflowPanel } from '../../components/workflows/TaskWorkflowPanel';
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
 import { useSessionStore } from '../../stores/session-store';
@@ -803,7 +803,7 @@ export function TaskDetailWindow({
       <Pencil size={14} className="text-fg-muted flex-shrink-0" />
       <h3 className="text-sm font-semibold text-fg flex items-center gap-2 min-w-0">
         <span className="flex-shrink-0">Edit Task</span>
-        <HoverTip label="Copy task ID">
+        <Tooltip label="Copy task ID">
           <button
             type="button"
             className="flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors font-normal"
@@ -816,7 +816,7 @@ export function TaskDetailWindow({
             }
             #{task.display_id}
           </button>
-        </HoverTip>
+        </Tooltip>
         <PriorityBadge priority={task.priority ?? 0} />
       </h3>
       <div className="flex-1" />
@@ -841,7 +841,7 @@ export function TaskDetailWindow({
         onToggle={handleToggleMaximized}
         testId="task-detail-maximize"
       />
-      <HoverTip label="Close window" keys="panel.close">
+      <Tooltip label="Close window" keys="panel.close">
         <button
           type="button"
           onClick={closeWithGuard}
@@ -851,7 +851,7 @@ export function TaskDetailWindow({
         >
           <X size={16} />
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 

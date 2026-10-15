@@ -14,7 +14,7 @@ import {
   type CardSourceLineProps,
 } from '../settings-card';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { settingProps } from '../settings-registry';
 import { effectiveCombo } from '../../../../shared/keybindings';
 import { formatCombo } from '../../../utils/keybindings';
@@ -306,7 +306,7 @@ export function DictationTab({
                 <span className={SETTING_LABEL_CLASS}>Push-to-talk</span>
                 <InfoTip label="Push-to-talk" text={pushToTalkDescription} />
               </div>
-              <HoverTip label="Rebind in the Hotkeys settings">
+              <Tooltip label="Rebind in the Hotkeys settings">
                 <button
                   type="button"
                   onClick={onOpenHotkeys}
@@ -318,7 +318,7 @@ export function DictationTab({
                     <Pencil size={12} /> Rebind
                   </span>
                 </button>
-              </HoverTip>
+              </Tooltip>
             </CardTile>
             <CardRow {...settingProps('dictation.releaseBufferMs')}>
               <div className="flex items-center gap-3">

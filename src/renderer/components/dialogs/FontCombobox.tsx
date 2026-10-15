@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 interface FontComboboxProps {
@@ -203,7 +203,7 @@ export function FontCombobox({
           className="flex-1 bg-transparent px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none"
         />
         {fonts.length > 0 && (
-          <HoverTip label={isOpen ? 'Close dropdown' : 'Open dropdown'}>
+          <Tooltip label={isOpen ? 'Close dropdown' : 'Open dropdown'}>
             <button
               type="button"
               onClick={handleToggleDropdown}
@@ -215,7 +215,7 @@ export function FontCombobox({
                 className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
               />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
 
@@ -234,7 +234,7 @@ export function FontCombobox({
         {filteredFonts.length > 0 ? (
           filteredFonts.map((font) => (
             // The full name of a font the menu's width may cut short.
-            <HoverTip key={font} label={font}>
+            <Tooltip key={font} label={font}>
               <button
                 type="button"
                 data-font-option
@@ -248,7 +248,7 @@ export function FontCombobox({
               >
                 {font}
               </button>
-            </HoverTip>
+            </Tooltip>
           ))
         ) : (
           <div className="px-3 py-2 text-xs text-fg-faint text-center">No fonts match "{filterText}"</div>

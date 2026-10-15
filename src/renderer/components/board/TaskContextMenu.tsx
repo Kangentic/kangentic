@@ -3,7 +3,7 @@ import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowI
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
 import { placeContextMenu, type MenuPlacement } from './context-menu-placement';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * Inline context menu shown on right-click of a task card. Offers
@@ -171,7 +171,7 @@ export function TaskContextMenu({
           {moveTargets.map((lane) => {
             const refusal = moveRefusal?.(lane.id) ?? null;
             return (
-              <HoverTip key={lane.id} label={refusal ?? ''}>
+              <Tooltip key={lane.id} label={refusal ?? ''}>
                 <button
                   type="button"
                   onClick={() => { if (refusal) return; onMoveTo(lane.id); onClose(); }}
@@ -185,7 +185,7 @@ export function TaskContextMenu({
                   />
                   {lane.name}
                 </button>
-              </HoverTip>
+              </Tooltip>
             );
           })}
         </>
@@ -204,7 +204,7 @@ export function TaskContextMenu({
           New workflow
         </button>
       )}
-      <HoverTip label={sendAwayRefusal ?? ''}>
+      <Tooltip label={sendAwayRefusal ?? ''}>
         <button
           type="button"
           onClick={() => { if (sendAwayRefusal) return; onSendToBacklog(); }}
@@ -215,8 +215,8 @@ export function TaskContextMenu({
           <Inbox size={14} className="text-fg-faint" />
           Backlog
         </button>
-      </HoverTip>
-      <HoverTip label={sendAwayRefusal ?? ''}>
+      </Tooltip>
+      <Tooltip label={sendAwayRefusal ?? ''}>
         <button
           type="button"
           onClick={() => { if (sendAwayRefusal) return; onArchive(); onClose(); }}
@@ -227,7 +227,7 @@ export function TaskContextMenu({
           <Archive size={14} className="text-fg-faint" />
           Archive
         </button>
-      </HoverTip>
+      </Tooltip>
 
       <button
         type="button"

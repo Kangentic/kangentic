@@ -482,7 +482,7 @@ test.describe('Task Detail: pop out of tiling', () => {
       // The tip is the name, so it is not read a second time.
       await expect(undock).toHaveAccessibleDescription('');
       await undock.hover();
-      await expect(page.locator('[data-hover-tip]')).toHaveText('Pop out of tiling');
+      await expect(page.locator('[data-tooltip]')).toHaveText('Pop out of tiling');
 
       // The tip does not swallow the click: the pane floats and its control goes.
       await undock.click();

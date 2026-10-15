@@ -1,7 +1,7 @@
 import React from 'react';
 import { ChevronRight } from 'lucide-react';
 import { CountBadge } from '../../../CountBadge';
-import { HoverTip } from '../../../HoverTip';
+import { Tooltip } from '../../../Tooltip';
 
 /** Height (px) of the always-visible section header row. Shared with
  *  ChangesPanel's history resize math (the drag measures from the rail bottom,
@@ -42,7 +42,7 @@ interface ChangesHistorySectionProps {
 export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount, truncated, pinnedShortHash, animateHeight, children }: ChangesHistorySectionProps) {
   return (
     <div className="flex flex-col min-h-0 flex-shrink border-t border-edge" data-testid="changes-history-section">
-      <HoverTip label={open ? 'Collapse history' : 'Expand history'}>
+      <Tooltip label={open ? 'Collapse history' : 'Expand history'}>
         <button
           type="button"
           onClick={onToggle}
@@ -56,24 +56,24 @@ export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount,
           {commitCount !== null && (
             // xs widens into a pill past one digit, so the graph's 200-commit cap
             // renders without clipping (sm/md are fixed circles).
-            <HoverTip label={truncated ? `Showing the latest ${commitCount} commits` : `${commitCount} commits on this branch`}>
+            <Tooltip label={truncated ? `Showing the latest ${commitCount} commits` : `${commitCount} commits on this branch`}>
               <span className="inline-flex">
                 <CountBadge count={commitCount} variant="muted" size="xs" />
               </span>
-            </HoverTip>
+            </Tooltip>
           )}
           {!open && pinnedShortHash && (
-            <HoverTip label="Reviewing this commit" detail="Expand to see it in the list">
+            <Tooltip label="Reviewing this commit" detail="Expand to see it in the list">
               <span
                 className="ml-auto flex-shrink-0 rounded border border-edge-subtle px-1 py-px font-mono text-[11px] leading-none text-fg-muted"
                 data-testid="changes-history-pinned-chip"
               >
                 {pinnedShortHash}
               </span>
-            </HoverTip>
+            </Tooltip>
           )}
         </button>
-      </HoverTip>
+      </Tooltip>
       {/* Mounted while collapsed, clipped to height 0 (see the children prop
           doc). The height transition fires only on the open/close CHANGE, so a
           hydrated-open restore paints at its final height with no replay, and

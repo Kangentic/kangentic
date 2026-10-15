@@ -59,13 +59,13 @@ async function expectEscapeClosesOnlyTheMenu(page: Page, testId: string): Promis
 }
 
 /**
- * An option the arrow keys focus opens no tip: HoverTip opens on Tab focus only, so the menu's
+ * An option the arrow keys focus opens no tip: Tooltip opens on Tab focus only, so the menu's
  * own Escape is never taken by a tip. A focus-opened tip shows within a frame, so a short wait is
  * enough to tell; there is nothing to poll for when the thing under test is that nothing appears.
  */
 async function expectNoTipFromArrowFocus(page: Page, testId: string): Promise<void> {
   await page.waitForTimeout(150);
-  await expect(page.locator('[data-hover-tip]')).toHaveCount(0);
+  await expect(page.locator('[data-tooltip]')).toHaveCount(0);
   await expect(page.locator(`[data-testid="${testId}-menu"]`)).toBeVisible();
 }
 

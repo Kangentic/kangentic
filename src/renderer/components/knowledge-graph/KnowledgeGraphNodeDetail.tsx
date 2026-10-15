@@ -24,8 +24,8 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ChevronRight, Compass, MessageSquareText } from 'lucide-react';
 import { PanelRow } from './PanelRow';
-import { HoverTip } from '../HoverTip';
-import { tipLabel } from '../../utils/hover-tip';
+import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 import { humanizeModelId } from '../../../shared/model-id';
 import { useToastStore } from '../../stores/toast-store';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
@@ -199,7 +199,7 @@ export function KnowledgeGraphNodeDetail({
         </dl>
 
         <div className="mt-3 space-y-1.5">
-          <HoverTip
+          <Tooltip
             label={tipLabel({
               disabled: !node.sessionId,
               disabledReason: 'No session record for this conversation',
@@ -216,9 +216,9 @@ export function KnowledgeGraphNodeDetail({
               <MessageSquareText size={13} />
               Open conversation
             </button>
-          </HoverTip>
+          </Tooltip>
           {onExploreFrom ? (
-            <HoverTip
+            <Tooltip
               label={tipLabel({
                 disabled: neighbors.length === 0,
                 disabledReason: 'This conversation links to nothing else in the index',
@@ -235,7 +235,7 @@ export function KnowledgeGraphNodeDetail({
                 <Compass size={13} />
                 Explore from here
               </button>
-            </HoverTip>
+            </Tooltip>
           ) : null}
         </div>
       </div>
@@ -263,7 +263,7 @@ export function KnowledgeGraphNodeDetail({
                   {/* The tip holds the raw value, for anyone who wants it,
                       without putting a number on screen that reads the same
                       on every row. */}
-                  <HoverTip label={`Cosine similarity ${neighbor.similarity.toFixed(4)}`}>
+                  <Tooltip label={`Cosine similarity ${neighbor.similarity.toFixed(4)}`}>
                     <button
                       type="button"
                       onClick={() => onSelectNeighbor(neighbor.index)}
@@ -293,7 +293,7 @@ export function KnowledgeGraphNodeDetail({
                         className="flex-shrink-0 text-fg-faint group-hover:text-fg-muted"
                       />
                     </button>
-                  </HoverTip>
+                  </Tooltip>
                 </li>
               );
             })}

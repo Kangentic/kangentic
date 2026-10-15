@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { FolderPlus, FolderTree, ChevronUp } from 'lucide-react';
 import { OverlayPopover } from '../../OverlayPopover';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 
 export interface SidebarFooterActionsProps {
@@ -65,7 +65,7 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
         ref={containerRef}
         className="flex items-stretch rounded-md border border-edge/60 overflow-hidden focus-within:border-edge"
       >
-        <HoverTip label="Open folder as project">
+        <Tooltip label="Open folder as project">
           <button
             type="button"
             // Closes the caret menu too: this button is inside `containerRef`, so
@@ -81,8 +81,8 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
             <FolderPlus size={14} />
             Add project
           </button>
-        </HoverTip>
-        <HoverTip label="More project actions" enabled={!menuOpen}>
+        </Tooltip>
+        <Tooltip label="More project actions" enabled={!menuOpen}>
           <button
             ref={caretRef}
             type="button"
@@ -96,7 +96,7 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
           >
             <ChevronUp size={14} />
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
 
       <OverlayPopover
@@ -109,7 +109,7 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
         data-testid="sidebar-footer-menu"
         className="fixed z-[2147483646] min-w-[170px] bg-surface-raised border border-edge-input rounded-md shadow-xl py-1"
       >
-        <HoverTip label="New group">
+        <Tooltip label="New group">
           <button
             type="button"
             role="menuitem"
@@ -124,7 +124,7 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
             <FolderTree size={14} className="text-fg-faint" />
             New group
           </button>
-        </HoverTip>
+        </Tooltip>
       </OverlayPopover>
     </div>
   );

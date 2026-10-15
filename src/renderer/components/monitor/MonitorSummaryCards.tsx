@@ -2,7 +2,7 @@ import { memo, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { CirclePause, FolderGit2 } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { formatRelativeTime } from '../../lib/datetime';
@@ -46,7 +46,7 @@ function SummaryTile({ label, icon, value, sub, tip, testId, tone }: SummaryTile
   const lit = value > 0 && tone;
 
   return (
-    <HoverTip label={tip}>
+    <Tooltip label={tip}>
       <div
         className="w-[224px] flex-shrink-0 bg-surface-raised border border-edge rounded-lg px-4 pt-3 pb-3 flex flex-col"
         data-testid={testId}
@@ -79,7 +79,7 @@ function SummaryTile({ label, icon, value, sub, tip, testId, tone }: SummaryTile
             later does not grow taller than its neighbours mid-session. */}
         <span className="text-[11px] text-fg-muted truncate mt-1.5 min-h-[15px]">{sub ?? ''}</span>
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

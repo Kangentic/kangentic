@@ -1,6 +1,6 @@
 import { Bot, CircleArrowUp, Columns3Cog, MessageSquare } from 'lucide-react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../DataTable';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { Pill } from '../../Pill';
 import { ToggleSwitch } from '../../settings/shared';
 import { ICON_REGISTRY, ROLE_DEFAULTS } from '../../../utils/swimlane-icons';
@@ -96,16 +96,16 @@ function OverviewCell({ value }: { value: OverviewValue }) {
     // A dash, not an empty cell: an empty cell is indistinguishable from a value
     // that failed to load, and there would be nothing to hover for the reason.
     return (
-      <HoverTip label={value.reason ?? ''}>
+      <Tooltip label={value.reason ?? ''}>
         <span data-state="not-applicable" className="text-fg-disabled">
           -
         </span>
-      </HoverTip>
+      </Tooltip>
     );
   }
   if (value.changed) {
     return (
-      <HoverTip label={value.tip ?? value.label}>
+      <Tooltip label={value.tip ?? value.label}>
         <span
           data-state="changed"
           className="inline-flex h-[22px] max-w-full min-w-0 items-center whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg"
@@ -113,11 +113,11 @@ function OverviewCell({ value }: { value: OverviewValue }) {
           <span className="truncate">{value.label}</span>
           <NewerMark newer={value.newer} />
         </span>
-      </HoverTip>
+      </Tooltip>
     );
   }
   return (
-    <HoverTip label={value.tip ?? value.label}>
+    <Tooltip label={value.tip ?? value.label}>
       <span
         data-state="unchanged"
         className="inline-block max-w-full truncate align-middle text-fg-faint"
@@ -125,7 +125,7 @@ function OverviewCell({ value }: { value: OverviewValue }) {
         {value.label}
         <NewerMark newer={value.newer} />
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -137,7 +137,7 @@ function OverviewCell({ value }: { value: OverviewValue }) {
 function NewerMark({ newer }: { newer?: string }) {
   if (!newer) return null;
   return (
-    <HoverTip label={`${newer} available`}>
+    <Tooltip label={`${newer} available`}>
       <span
         data-overview-newer
         role="img"
@@ -146,7 +146,7 @@ function NewerMark({ newer }: { newer?: string }) {
       >
         <CircleArrowUp size={12} />
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -154,11 +154,11 @@ function NewerMark({ newer }: { newer?: string }) {
 function OverviewToggle({ flag }: { flag: OverviewFlag }) {
   if (!flag.applicable) {
     return (
-      <HoverTip label={flag.reason ?? ''}>
+      <Tooltip label={flag.reason ?? ''}>
         <span data-state="not-applicable" className="text-fg-disabled">
           -
         </span>
-      </HoverTip>
+      </Tooltip>
     );
   }
   return (

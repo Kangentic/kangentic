@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Clock, Settings } from 'lucide-react';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
-import { HoverTip } from '../../../HoverTip';
+import { Tooltip } from '../../../Tooltip';
 import { openKnowledgeGraphSettings } from '../../../knowledge-graph/open-knowledge-graph-settings';
 import { sourceRequirements } from '../../../settings/tabs/index-sources';
 import { knowledgeGraphOn, knowledgeGraphSupported } from '../../../../lib/knowledge-graph-support';
@@ -167,7 +167,7 @@ function RouteCard({ route, startedAt }: { route: TaskReportRouteColumn[]; start
                 tip={`${column.name}: ${formatSpan(column.totalMs)}`}
               />
               {stays.length >= 2 && stays.map((visit) => (
-                <HoverTip key={visit.startedAt} label={`${formatDateTime(visit.startedAt)}: ${formatSpan(visit.durationMs)}`}>
+                <Tooltip key={visit.startedAt} label={`${formatDateTime(visit.startedAt)}: ${formatSpan(visit.durationMs)}`}>
                   <div
                     className="flex h-[30px] items-center whitespace-nowrap rounded-md border px-2.5 text-xs tabular-nums"
                     style={{ borderColor: column.color }}
@@ -176,7 +176,7 @@ function RouteCard({ route, startedAt }: { route: TaskReportRouteColumn[]; start
                     <span className="text-fg-muted">{formatMonthDayTime(visit.startedAt)}</span>
                     <span className="ml-auto pl-3.5 font-medium text-fg-secondary">{formatSpanCompact(visit.durationMs)}</span>
                   </div>
-                </HoverTip>
+                </Tooltip>
               ))}
             </div>
           );
@@ -193,12 +193,12 @@ function CommitsCard({ knowledge }: { knowledge: TaskReportKnowledge }) {
       {knowledge.commits.map((commit) => (
         <div key={commit.sha} className="flex min-w-0 items-center gap-2 py-[3px] text-[13px] text-fg-secondary">
           <span className="flex-shrink-0 font-mono text-xs text-accent-fg">{commit.sha.slice(0, 7)}</span>
-          <HoverTip label={commit.subject}>
+          <Tooltip label={commit.subject}>
             <span className="min-w-0 truncate">{commit.subject}</span>
-          </HoverTip>
-          <HoverTip label={formatDateTime(commit.committedAt)}>
+          </Tooltip>
+          <Tooltip label={formatDateTime(commit.committedAt)}>
             <span className="ml-auto flex-shrink-0 pl-3 text-xs text-fg-faint">{formatTimeAgo(commit.committedAt)}</span>
-          </HoverTip>
+          </Tooltip>
         </div>
       ))}
     </ReportCard>
@@ -222,11 +222,11 @@ function FilesChangedCard({ knowledge }: { knowledge: TaskReportKnowledge }) {
     >
       <div className="grid grid-cols-2 gap-x-8">
         {files.map((file) => (
-          <HoverTip key={file} label={file}>
+          <Tooltip key={file} label={file}>
             <div className="min-w-0 truncate py-[3px] font-mono text-xs text-fg-secondary" data-testid="completed-changed-file">
               {file}
             </div>
-          </HoverTip>
+          </Tooltip>
         ))}
       </div>
     </ReportCard>

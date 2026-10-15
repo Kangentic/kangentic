@@ -4,7 +4,7 @@ import { ChevronDown, Wrench } from 'lucide-react';
 import { ColumnGlyph } from '../../../../utils/swimlane-icons';
 import { prefersDarkText, readableTextOn } from '../../../../utils/readable-text';
 import { ToolBreakdownPopover } from '../../../terminal/ToolBreakdownPopover';
-import { HoverTip } from '../../../HoverTip';
+import { Tooltip } from '../../../Tooltip';
 import type { PerToolStat, TaskReportColumn } from '../../../../../shared/types';
 
 /** One card on a completed task's tab: lifted one step above the window, never recessed. */
@@ -78,7 +78,7 @@ function ColumnDisc({ column }: { column: Pick<TaskReportColumn, 'color' | 'icon
  */
 export function ColumnLabel({ column }: { column: TaskReportColumn }) {
   return (
-    <HoverTip label={column.name}>
+    <Tooltip label={column.name}>
       <span
         className="inline-flex min-w-0 items-center gap-[7px] font-medium text-fg"
         role="img"
@@ -88,7 +88,7 @@ export function ColumnLabel({ column }: { column: TaskReportColumn }) {
         <ColumnDisc column={column} />
         <span className="hidden truncate @[860px]:inline" aria-hidden="true">{column.name}</span>
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -100,7 +100,7 @@ export function ColumnPill({ column, label, tip }: { column: TaskReportColumn; l
   const darkText = prefersDarkText(column.color);
   const textColor = readableTextOn(column.color);
   return (
-    <HoverTip label={tip}>
+    <Tooltip label={tip}>
       <div
         className="flex h-[30px] items-center gap-[7px] whitespace-nowrap rounded-md pl-[5px] pr-2.5 text-xs tabular-nums"
         style={{ backgroundColor: column.color, color: textColor }}
@@ -116,7 +116,7 @@ export function ColumnPill({ column, label, tip }: { column: TaskReportColumn; l
         <span className="font-medium">{column.name}</span>
         <span className="ml-auto pl-3.5 font-semibold">{label}</span>
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

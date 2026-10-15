@@ -1,7 +1,7 @@
 import type React from 'react';
 import { Info } from 'lucide-react';
 import { SettingText } from './SettingText';
-import { HoverTip } from './HoverTip';
+import { Tooltip } from './Tooltip';
 
 interface ToggleCardProps {
   label: string;
@@ -103,7 +103,7 @@ export function ToggleCard({ label, description, checked, onChange, icon, ariaLa
           // invalid); stopPropagation keeps a click on the icon from toggling.
           // The tip passes `describe={false}` because the switch already reads
           // `info` as its own description, and this span is aria-hidden.
-          <HoverTip label={info} describe={false}>
+          <Tooltip label={info} describe={false}>
             <span
               aria-hidden="true"
               onClick={(event) => event.stopPropagation()}
@@ -112,7 +112,7 @@ export function ToggleCard({ label, description, checked, onChange, icon, ariaLa
             >
               <Info size={13} />
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
       />
       <ToggleIndicator checked={checked} className="mt-0.5" />

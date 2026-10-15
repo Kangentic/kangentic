@@ -1,5 +1,5 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * Shared layout + toggle button for maximizable surfaces (#184).
@@ -62,7 +62,7 @@ interface MaximizeToggleButtonProps {
 export function MaximizeToggleButton({ isMaximized, onToggle, testId = 'dialog-maximize' }: MaximizeToggleButtonProps) {
   const label = isMaximized ? 'Restore dialog' : 'Maximize dialog';
   return (
-    <HoverTip label={label} keys="panel.maximize">
+    <Tooltip label={label} keys="panel.maximize">
       <button
         type="button"
         onClick={onToggle}
@@ -72,6 +72,6 @@ export function MaximizeToggleButton({ isMaximized, onToggle, testId = 'dialog-m
       >
         {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }

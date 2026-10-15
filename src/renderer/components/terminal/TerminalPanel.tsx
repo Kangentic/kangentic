@@ -8,7 +8,7 @@ import { TerminalTab } from './TerminalTab';
 import { ActivityLog } from './ActivityLog';
 import { ContextBar } from './ContextBar';
 import { IsolatedBadge } from '../IsolatedBadge';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { slugify } from '../../utils/slugify';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { derivePanelSessions } from '../../utils/panel-sessions';
@@ -206,7 +206,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             // separate, context-isolated session for that column.
             const isIsolated = session.isolatedSwimlaneId != null;
             return (
-              <HoverTip
+              <Tooltip
                 key={session.id}
                 label={`${label} (${shellDisplayName(session.shell)})`}
                 detail={isIsolated ? 'Isolated session' : undefined}
@@ -236,7 +236,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
                   {label}
                   {isIsolated && <IsolatedBadge data-testid="terminal-tab-isolated-badge" />}
                 </button>
-              </HoverTip>
+              </Tooltip>
             );
           })}
         </div>
@@ -253,7 +253,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
 
         {/* Collapse / expand toggle */}
         {onToggleCollapse && (
-          <HoverTip label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`} keys="view.toggleTerminalPanel">
+          <Tooltip label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`} keys="view.toggleTerminalPanel">
             <button
               onClick={onToggleCollapse}
               className="flex items-center justify-center px-2 py-1.5 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
@@ -261,7 +261,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             >
               {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
 

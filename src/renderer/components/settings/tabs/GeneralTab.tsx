@@ -1,7 +1,7 @@
 import { FolderInput, FolderOpen } from 'lucide-react';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectRelocation } from '../../../hooks/useProjectRelocation';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { INPUT_CLASS } from '../shared';
 import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
@@ -40,14 +40,14 @@ export function GeneralTab() {
                   it was the last control left on the pre-unification `bg-surface`
                   + `border-edge` pairing. Borrowing the shared class means it
                   cannot drift again. The focus utilities in it are inert on a div. */}
-              <HoverTip label={project.path}>
+              <Tooltip label={project.path}>
                 <div
                   className={`${INPUT_CLASS} flex-1 min-w-0 truncate`}
                   data-testid="project-location-path"
                 >
                   {project.path}
                 </div>
-              </HoverTip>
+              </Tooltip>
               <button
                 type="button"
                 onClick={() => requestMove(project)}

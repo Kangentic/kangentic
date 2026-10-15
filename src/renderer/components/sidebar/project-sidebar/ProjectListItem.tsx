@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { MoreHorizontal } from 'lucide-react';
 import { SidebarActivityCounts } from './SidebarActivityCounts';
 import { SidebarCommandTerminalIndicator } from './SidebarCommandTerminalIndicator';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { useSessionStore } from '../../../stores/session-store';
 import { selectCommandTerminalSummary } from '../../../stores/session-store/transient-session-slice';
 import { requiresUserInteraction } from '../../../../shared/activity-state';
@@ -111,7 +111,7 @@ function ProjectListItemImpl({
   ].filter(Boolean).join('\n');
 
   return (
-    <HoverTip label={rowTip}>
+    <Tooltip label={rowTip}>
       {/* select-none-ok: scoped to the project name span below, so it never reaches the rename input this row swaps in. */}
       <div
         ref={setNodeRef}
@@ -169,7 +169,7 @@ function ProjectListItemImpl({
             tone={terminalTone}
             onOpen={onOpenCommandTerminals}
           />
-          <HoverTip label="More options">
+          <Tooltip label="More options">
             <button
               type="button"
               onPointerDown={(e) => e.stopPropagation()}
@@ -187,10 +187,10 @@ function ProjectListItemImpl({
             >
               <MoreHorizontal size={14} />
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

@@ -186,7 +186,7 @@ export interface ActivityMarkProps extends React.SVGProps<SVGSVGElement> {
  * `dangerouslySetInnerHTML` form:
  *
  *  1. React forbids `children` alongside `dangerouslySetInnerHTML` on the same element. On a
- *     sibling `<g>`, children stay free, and the root takes the props a wrapping `HoverTip`
+ *     sibling `<g>`, children stay free, and the root takes the props a wrapping `Tooltip`
  *     chains onto it (`TaskCard`'s mark has one) like any other DOM element.
  *  2. The packaged files carry a hardcoded `width="24" height="24"`; a React-authored root
  *     overrides them directly instead of needing a `[&>svg]:h-full` neutralisation wrapper.
@@ -209,7 +209,7 @@ export interface ActivityMarkProps extends React.SVGProps<SVGSVGElement> {
  * covers the exact centre, which is where people click.
  *
  * Two shapes that look equivalent and are not. `pointer-events: none` must NOT move up to the
- * `<svg>` root, which has to stay hit-testable for the `HoverTip` around `TaskCard`'s mark; and the
+ * `<svg>` root, which has to stay hit-testable for the `Tooltip` around `TaskCard`'s mark; and the
  * `<g>` must NOT get `key={mark}`, which replaces the `<g>` itself (the same teardown one level
  * up) and discards the `anchorMarkMotionToTimeline` phase anchor. An inline style rather than a
  * Tailwind class because the packaged `activity.css` arrives unlayered and outranks utilities.

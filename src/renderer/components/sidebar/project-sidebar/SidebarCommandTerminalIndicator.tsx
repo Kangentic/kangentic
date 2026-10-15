@@ -1,6 +1,6 @@
 import React from 'react';
 import { CommandTerminalIcon } from '../../command-bar/CommandTerminalIcon';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import type { CommandTerminalTone } from '../../../stores/session-store/transient-session-slice';
 
 export interface SidebarCommandTerminalIndicatorProps {
@@ -64,7 +64,7 @@ export const SidebarCommandTerminalIndicator = React.memo(function SidebarComman
       : 'text-fg-muted';
 
   return (
-    <HoverTip label={label} detail="Click to open">
+    <Tooltip label={label} detail="Click to open">
       <button
         type="button"
         // The row is a dnd-kit sortable with a 5px pointer activation constraint and
@@ -89,6 +89,6 @@ export const SidebarCommandTerminalIndicator = React.memo(function SidebarComman
           {count}
         </span>
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 });

@@ -4,7 +4,7 @@ import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { LazyStatsDashboard } from './LazyStatsDashboard';
 
 /**
@@ -59,7 +59,7 @@ export function StatsPage() {
           params={{}}
           className="px-4 py-2.5"
           trailing={
-            <HoverTip label="Close usage stats" keys="dialog.dismiss">
+            <Tooltip label="Close usage stats" keys="dialog.dismiss">
               <button
                 type="button"
                 onClick={() => overlay.requestClose()}
@@ -69,7 +69,7 @@ export function StatsPage() {
               >
                 <X size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           }
         >
           <ChartColumn size={18} className="text-fg-muted flex-shrink-0" aria-hidden />

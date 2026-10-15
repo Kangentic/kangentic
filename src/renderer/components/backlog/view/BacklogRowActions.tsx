@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { SquareArrowRight, Trash2, Pencil } from 'lucide-react';
 import { PromotePopover } from '../PromotePopover';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import type { useBoardStore } from '../../../stores/board-store';
 
 /**
@@ -28,7 +28,7 @@ export function BacklogRowActions({
   return (
     <div className="flex items-center justify-end gap-1 relative" onClick={(event) => event.stopPropagation()}>
       <div className="relative">
-        <HoverTip label="Move to board" enabled={!showPicker}>
+        <Tooltip label="Move to board" enabled={!showPicker}>
           <button
             ref={moveButtonRef}
             type="button"
@@ -39,7 +39,7 @@ export function BacklogRowActions({
           >
             <SquareArrowRight size={15} />
           </button>
-        </HoverTip>
+        </Tooltip>
         {showPicker && (
           <PromotePopover
             triggerRef={moveButtonRef}
@@ -52,7 +52,7 @@ export function BacklogRowActions({
           />
         )}
       </div>
-      <HoverTip label="Edit item">
+      <Tooltip label="Edit item">
         <button
           type="button"
           onClick={() => onEdit(itemId)}
@@ -62,8 +62,8 @@ export function BacklogRowActions({
         >
           <Pencil size={14} />
         </button>
-      </HoverTip>
-      <HoverTip label="Delete item">
+      </Tooltip>
+      <Tooltip label="Delete item">
         <button
           type="button"
           onClick={() => onDelete(itemId)}
@@ -73,7 +73,7 @@ export function BacklogRowActions({
         >
           <Trash2 size={15} />
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 }

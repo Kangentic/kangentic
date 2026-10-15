@@ -1,6 +1,6 @@
 import { SquareArrowOutUpRight } from 'lucide-react';
 import { usePopOut } from './usePopOut';
-import { HoverTip } from '../components/HoverTip';
+import { Tooltip } from '../components/Tooltip';
 import type { PopOutKind, PopOutParamsByKind } from '../../shared/pop-out';
 
 /** Always-visible pop-out control for a surface's in-app header. Opens the surface's
@@ -14,7 +14,7 @@ export function PopOutButton<K extends PopOutKind>({ kind, params, label }: {
   const { isOpen, open, focus } = usePopOut(kind, params);
   const name = label ?? (isOpen ? 'Focus detached window' : 'Open in new window');
   return (
-    <HoverTip label={name}>
+    <Tooltip label={name}>
       <button
         type="button"
         onClick={() => (isOpen ? focus() : open())}
@@ -24,6 +24,6 @@ export function PopOutButton<K extends PopOutKind>({ kind, params, label }: {
       >
         <SquareArrowOutUpRight size={16} />
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }

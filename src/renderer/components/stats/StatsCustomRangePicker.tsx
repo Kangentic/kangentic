@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CalendarRange, X } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { Select } from '../settings/shared';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import type { UsageCustomWindow } from '../../../shared/types';
@@ -135,7 +135,7 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
     <div className="relative">
       {customWindow ? (
         <span className="flex items-center rounded-full border border-accent/60 bg-accent/10 text-xs text-fg">
-          <HoverTip label="Edit the custom range" enabled={!open}>
+          <Tooltip label="Edit the custom range" enabled={!open}>
             <button
               ref={triggerRef}
               type="button"
@@ -146,8 +146,8 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
               <CalendarRange size={14} className="text-fg-muted" />
               {customWindowLabel(customWindow)}
             </button>
-          </HoverTip>
-          <HoverTip label="Clear custom range">
+          </Tooltip>
+          <Tooltip label="Clear custom range">
             <button
               type="button"
               onClick={onClear}
@@ -157,10 +157,10 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
             >
               <X size={14} />
             </button>
-          </HoverTip>
+          </Tooltip>
         </span>
       ) : (
-        <HoverTip label="Pick a custom month range" enabled={!open}>
+        <Tooltip label="Pick a custom month range" enabled={!open}>
           <button
             ref={triggerRef}
             type="button"
@@ -171,7 +171,7 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
             <CalendarRange size={14} />
             Custom
           </button>
-        </HoverTip>
+        </Tooltip>
       )}
       <OverlayPopover
         open={open}

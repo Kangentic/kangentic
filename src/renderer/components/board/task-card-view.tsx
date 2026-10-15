@@ -15,7 +15,7 @@ import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type { ActivityReason, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, Task } from '../../../shared/types';
 import { activityReasonIcon, formatActivityReasonText } from './ActivityReasonTooltip';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * What a task card shows, shared by the board's `TaskCard` and the Workflows
@@ -50,11 +50,11 @@ export function CardStatusBar({
   return (
     <div className="mt-2 pt-2 border-t border-edge" data-testid={testId}>
       <div className="flex items-center justify-between mb-1.5">
-        <HoverTip label={tip ?? ''} describe={false}>
+        <Tooltip label={tip ?? ''} describe={false}>
           <span className="text-xs text-fg-faint flex items-center gap-1 min-w-0">
             {children}
           </span>
-        </HoverTip>
+        </Tooltip>
       </div>
       <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden" />
     </div>
@@ -275,14 +275,14 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
             led by the reason's own glyph. The tip repeats the name, so a screen reader
             hears it once. */}
         {(isIdle || isThinking) && (
-          <HoverTip label={reasonText} icon={activityReason ? activityReasonIcon(activityReason) : undefined}>
+          <Tooltip label={reasonText} icon={activityReason ? activityReasonIcon(activityReason) : undefined}>
             <ActivityMark
               mark={isThinking ? 'agent-working' : 'agent-idle'}
               size={16}
               className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
               aria-label={reasonText !== '' ? reasonText : isThinking ? 'Thinking' : 'Idle'}
             />
-          </HoverTip>
+          </Tooltip>
         )}
         <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
         <DisplayIdBadge task={task} view={view} hidden={hideDisplayId} />
@@ -306,11 +306,11 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
             target: the card's own click opens the task, where the kebab's
             "Close browser" is. */}
         {view.browserAlive && (
-          <HoverTip label="Browser running for the agent. Close it from the task menu to free memory.">
+          <Tooltip label="Browser running for the agent. Close it from the task menu to free memory.">
             <span className="text-active shrink-0 flex" data-testid="task-card-browser-alive">
               <Globe size={12} aria-label="Browser running" />
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
 

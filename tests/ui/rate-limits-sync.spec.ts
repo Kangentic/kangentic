@@ -322,7 +322,7 @@ test.describe('Rate limits cross-session sync', () => {
     const tip = page.locator('[data-testid="rate-limits-tip"]');
     await expect(tip).toBeVisible();
     await expect(tip).toHaveAttribute('data-shape', 'rich');
-    await expect(tip.locator('[data-hover-tip-part="header"]')).toHaveText('Rate limits');
+    await expect(tip.locator('[data-tooltip-part="header"]')).toHaveText('Rate limits');
 
     // The merged snapshot's numbers, the same ones the pill draws: never the stale 18/4.
     const windows = tip.locator('[data-testid="rate-limits-tip-window"]');

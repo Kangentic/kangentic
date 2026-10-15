@@ -16,8 +16,8 @@ import { selectCommandTerminalSummary } from '../../stores/session-store/transie
 import { CommandTerminalIcon } from '../command-bar/CommandTerminalIcon';
 import { isWorktreePath } from '../../../shared/git-utils';
 import { BrandMark } from '../BrandMark';
-import { HoverTip } from '../HoverTip';
-import { tipLabel } from '../../utils/hover-tip';
+import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
@@ -149,13 +149,13 @@ export function TitleBar({
           truthiness gates the render.
         */}
         {__KANGENTIC_DEV__ && window.electronAPI.dev?.previewTaskTitle && (
-          <HoverTip label={window.electronAPI.dev.previewTaskTitle}>
+          <Tooltip label={window.electronAPI.dev.previewTaskTitle}>
             <span
               className="ml-1 px-2.5 py-0.5 rounded-full bg-surface-raised border border-edge text-fg-secondary text-sm font-semibold whitespace-nowrap"
             >
               {window.electronAPI.dev.previewTaskTitle}
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
 
@@ -179,11 +179,11 @@ export function TitleBar({
       <div className="flex-1 min-w-0 flex items-center justify-center gap-2 px-3">
         {currentProject && (
           <div className="min-w-0 flex items-center gap-2" data-testid="titlebar-project-name">
-            <HoverTip label={currentProject.name}>
+            <Tooltip label={currentProject.name}>
               <span className="text-base font-semibold text-fg truncate">
                 {currentProject.name}
               </span>
-            </HoverTip>
+            </Tooltip>
             {isWorktree && (
               <span className="text-xs text-amber-500/70 flex-shrink-0">(worktree)</span>
             )}
@@ -206,7 +206,7 @@ export function TitleBar({
             Command Terminal" and not a generic add action. */}
         {currentProject && commandBarOpen && onSpawnAdditionalTerminal && (
           <>
-            <HoverTip
+            <Tooltip
               label={tipLabel({
                 disabled: !canSpawnMoreTerminals,
                 disabledReason: 'Command Terminal limit reached',
@@ -226,7 +226,7 @@ export function TitleBar({
                     the aggregate activity tone. */}
                 <CommandTerminalIcon tone="rest" showPlus testId="quick-session-new-terminal-icon" />
               </button>
-            </HoverTip>
+            </Tooltip>
             {/* Separates the transient "New terminal" action from the permanent
                 icon cluster to its right (mounts/unmounts together with the
                 button above, so it never leaves an orphan divider). */}
@@ -234,7 +234,7 @@ export function TitleBar({
           </>
         )}
         {currentProject && onQuickSession && (
-          <HoverTip
+          <Tooltip
             label={commandBarOpen ? 'Hide Command Terminal' : 'Command Terminal'}
             keys={commandBarOpen ? undefined : 'commandBar.toggle'}
           >
@@ -248,7 +248,7 @@ export function TitleBar({
                   activity), so there is no separate corner badge to clash or clutter. */}
               <CommandTerminalIcon tone={transientActivityTone} />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
         {/* Agent Monitor, deliberately ADJACENT to the Command Terminal toggle: both
             open a surface full of running agents, so they belong together.
@@ -264,7 +264,7 @@ export function TitleBar({
             Renders unconditionally (like the stats button) because the monitor is
             machine-global: it spans every registered project and is useful with no
             project open at all. */}
-        <HoverTip
+        <Tooltip
           label={monitorPopOut.isOpen ? 'Focus agent monitor window' : 'Agent Monitor'}
           keys={monitorPopOut.isOpen ? undefined : 'monitor.toggle'}
         >
@@ -278,12 +278,12 @@ export function TitleBar({
           >
             <SquareActivity size={20} />
           </button>
-        </HoverTip>
+        </Tooltip>
         {/* Placed INSIDE the monitor/stats cluster rather than after it. This
             row is right-anchored, so an element's distance from the window edge
             is fixed by whatever comes AFTER it: appending here instead would
             shift Quick Find, settings, and the OS window controls. */}
-        <HoverTip
+        <Tooltip
           label={knowledgeGraphPopOut.isOpen ? 'Focus Knowledge Graph window' : 'Knowledge Graph'}
           keys={knowledgeGraphPopOut.isOpen ? undefined : 'knowledgeGraph.toggle'}
         >
@@ -298,8 +298,8 @@ export function TitleBar({
           >
             <Brain size={20} />
           </button>
-        </HoverTip>
-        <HoverTip
+        </Tooltip>
+        <Tooltip
           label={statsPopOut.isOpen ? 'Focus usage stats window' : 'Usage Stats'}
           keys={statsPopOut.isOpen ? undefined : 'stats.toggle'}
         >
@@ -314,14 +314,14 @@ export function TitleBar({
           >
             <ChartColumn size={20} />
           </button>
-        </HoverTip>
+        </Tooltip>
         {/* Quick Find sits to the RIGHT of Usage Stats: it is the one control here
             that opens a transient overlay the user dismisses immediately, so it
             reads as the step out of the running-work cluster, while the monitor
             and stats buttons (both surfaces over running work) stay adjacent to
             each other. */}
         {onOpenSearch && (
-          <HoverTip label="Quick Find" keys="search.togglePalette">
+          <Tooltip label="Quick Find" keys="search.togglePalette">
             <button
               onClick={onOpenSearch}
               className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
@@ -331,7 +331,7 @@ export function TitleBar({
             >
               <Command size={20} />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
         {/* The two "news from upstream" controls, grouped at the right end just
             before Settings: announcements (what the team is saying) and an
@@ -350,7 +350,7 @@ export function TitleBar({
             itself with no badge, but neither of those has a COUNT to state: a
             tone can say "something is unread", it cannot say how many. Ship
             the badge and tone the glyph too, muted at zero. */}
-        <HoverTip
+        <Tooltip
           label="Announcements"
           detail={unreadAnnouncements > 0 ? `${unreadAnnouncements} unread` : undefined}
         >
@@ -384,7 +384,7 @@ export function TitleBar({
               </span>
             )}
           </button>
-        </HoverTip>
+        </Tooltip>
         {/* Deliberately NOT left-most, unlike every other conditional control in
             this row, because it belongs beside announcements. The row is
             right-anchored, so a conditional mount shifts everything BEFORE it
@@ -393,7 +393,7 @@ export function TitleBar({
             left by one slot. That is the accepted price of the grouping, and it
             is a once-per-release event. */}
         {pendingUpdate && (
-          <HoverTip label={`Version ${pendingUpdate.version} is ready to install`}>
+          <Tooltip label={`Version ${pendingUpdate.version} is ready to install`}>
             <button
               onClick={openUpdateModal}
               className="p-1.5 hover:bg-surface-hover rounded text-attention transition-colors"
@@ -402,9 +402,9 @@ export function TitleBar({
             >
               <CloudDownload size={20} />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
-        <HoverTip label="Settings" keys="settings.toggle">
+        <Tooltip label="Settings" keys="settings.toggle">
           <button
             onClick={handleGearClick}
             className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
@@ -415,13 +415,13 @@ export function TitleBar({
           >
             <Settings size={20} />
           </button>
-        </HoverTip>
+        </Tooltip>
         {!isMac && (
           // `contents` keeps the three buttons and their divider direct flex items of the row;
           // the wrapper exists only to give the cluster one selector.
           <div className="contents" data-testid="window-controls">
             <div className="w-px h-4 bg-edge mx-1" />
-            <HoverTip label="Minimize">
+            <Tooltip label="Minimize">
               <button
                 onClick={() => window.electronAPI.window.minimize()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
@@ -429,8 +429,8 @@ export function TitleBar({
               >
                 <Minus size={16} />
               </button>
-            </HoverTip>
-            <HoverTip label="Maximize">
+            </Tooltip>
+            <Tooltip label="Maximize">
               <button
                 onClick={() => window.electronAPI.window.maximize()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
@@ -438,8 +438,8 @@ export function TitleBar({
               >
                 <Square size={14} />
               </button>
-            </HoverTip>
-            <HoverTip label="Close">
+            </Tooltip>
+            <Tooltip label="Close">
               <button
                 onClick={() => window.electronAPI.window.close()}
                 className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
@@ -447,7 +447,7 @@ export function TitleBar({
               >
                 <X size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           </div>
         )}
       </div>

@@ -2,7 +2,7 @@ import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { Activity, Brain, ChartColumn, FileDiff, GitBranch, Globe, Minus, Square, X } from 'lucide-react';
 import { POP_OUT_SURFACES } from '../../shared/pop-out';
 import type { PopOutKind } from '../../shared/pop-out';
-import { HoverTip } from '../components/HoverTip';
+import { Tooltip } from '../components/Tooltip';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
@@ -88,13 +88,13 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <Icon size={16} className="text-fg-muted flex-shrink-0" aria-hidden />
-          <HoverTip label={displayTitle}>
+          <Tooltip label={displayTitle}>
             <span className="text-sm font-semibold text-fg-secondary truncate">{displayTitle}</span>
-          </HoverTip>
+          </Tooltip>
         </div>
         {!isMac && (
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
-            <HoverTip label="Minimize">
+            <Tooltip label="Minimize">
               <button
                 type="button"
                 onClick={() => window.electronAPI.window.minimize()}
@@ -103,8 +103,8 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
               >
                 <Minus size={16} />
               </button>
-            </HoverTip>
-            <HoverTip label="Maximize">
+            </Tooltip>
+            <Tooltip label="Maximize">
               <button
                 type="button"
                 onClick={() => window.electronAPI.window.maximize()}
@@ -113,8 +113,8 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
               >
                 <Square size={14} />
               </button>
-            </HoverTip>
-            <HoverTip label="Close">
+            </Tooltip>
+            <Tooltip label="Close">
               <button
                 type="button"
                 onClick={() => window.electronAPI.window.close()}
@@ -124,7 +124,7 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
               >
                 <X size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           </div>
         )}
       </div>

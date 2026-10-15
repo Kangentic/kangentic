@@ -7,7 +7,7 @@ import { isRebindCaptureActive } from '../utils/rebind-state';
 /**
  * The current effective combo for an action in canonical form (`Mod+Shift+W`):
  * the user override or the registry default, updating reactively when the user
- * rebinds. `HoverTip` draws its key chips from it. Returns '' for an unknown id,
+ * rebinds. `Tooltip` draws its key chips from it. Returns '' for an unknown id,
  * and for no id at all, so a caller with nothing to resolve can still call it.
  */
 export function useEffectiveCombo(actionId: string | undefined): string {

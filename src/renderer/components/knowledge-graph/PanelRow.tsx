@@ -14,7 +14,7 @@
  */
 
 import { Info } from 'lucide-react';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * A hint behind an icon rather than a paragraph in the layout. Prose in the
@@ -23,12 +23,12 @@ import { HoverTip } from '../HoverTip';
  *
  * The same info button as the settings cards' `InfoTip`: a real button, so a
  * keyboard user opens the hint by focus, named for what it is about, with the
- * hint as its tip and its description, read without hovering. HoverTip portals
+ * hint as its tip and its description, read without hovering. Tooltip portals
  * the tip to the body, so the panel cannot clip it.
  */
 export function InfoHint({ about, text }: { about: string; text: string }) {
   return (
-    <HoverTip label={text}>
+    <Tooltip label={text}>
       <button
         type="button"
         aria-label={`About ${about}`}
@@ -36,7 +36,7 @@ export function InfoHint({ about, text }: { about: string; text: string }) {
       >
         <Info size={11} aria-hidden="true" />
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
