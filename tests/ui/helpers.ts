@@ -86,6 +86,7 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
 }
 
 const VITE_GOTO_ATTEMPTS = 3;
+const VITE_UNREACHED_MARKERS = ['net::ERR_CONNECTION_REFUSED', 'chrome-error://chromewebdata/'];
 
 /**
  * `page.goto` against the Vite dev server, retrying only a navigation that never reached it.
@@ -103,8 +104,6 @@ const VITE_GOTO_ATTEMPTS = 3;
  * No assertion is ever retried: neither form means the app loaded. Any other navigation error, and
  * either form on the last attempt, is rethrown.
  */
-const VITE_UNREACHED_MARKERS = ['net::ERR_CONNECTION_REFUSED', 'chrome-error://chromewebdata/'];
-
 export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     try {
