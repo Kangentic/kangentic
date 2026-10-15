@@ -21,6 +21,7 @@ import {
 import { renderStructuredTranscript, type StructuredTranscriptRequest } from '../../agent/commands/structured-transcript';
 import { readFinalReply, readTrail } from '../../agent/message-trail-read';
 import type { AgentReply } from '../../agent/shared/agent-reply';
+import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
 import type { MessageTrailSessionFacts, TrailRead } from '../../agent/message-trail-tracker';
 import type { CommandResponse } from '../../agent/commands/types';
 import { lastAssistantPreview } from '../../agent/shared/message-preview';
@@ -80,10 +81,11 @@ export interface TranscriptMethods {
   };
   /**
    * A session's final reply for `{{agentReply}}`: the newest assistant message
-   * of its last turn, whole, with its line breaks (`finalAgentReply`).
+   * of its last turn, whole, with its line breaks (`finalAgentReply`). With
+   * `since`, never a reply from before the turn that began there.
    */
   'transcript.finalReply': {
-    params: { facts: MessageTrailSessionFacts & { agentSessionId: string }; remoteTargets: RemoteTargets };
+    params: { facts: MessageTrailSessionFacts & { agentSessionId: string }; since?: TranscriptAnchor | null; remoteTargets: RemoteTargets };
     result: AgentReply | null;
   };
   /** Lifetime tokens from a finished run's transcript (`transcriptUsage`). */
@@ -262,11 +264,11 @@ export const transcriptHandlers: TranscriptHandlers = {
     return readTrail(adapter, facts, cursor);
   },
 
-  'transcript.finalReply': async ({ facts, remoteTargets }) => {
+  'transcript.finalReply': async ({ facts, since, remoteTargets }) => {
     adoptRemoteTargets(agentRegistry, remoteTargets);
     const adapter = agentRegistry.getBySessionType(facts.sessionType);
     if (!adapter) return null;
-    return readFinalReply(adapter, facts);
+    return readFinalReply(adapter, facts, since ?? null);
   },
 
   'transcript.usage': async ({ agentName, transcriptPath, agentSessionId, cwd }) => {

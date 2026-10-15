@@ -264,6 +264,14 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   with no turn end of its own. It is not `turnStartedAt` because `forceThinking` re-stamps that: a
   PTY-tracked agent's trailing paint after its turn end (Kimi's tracker is never suppressed) would
   read as a new turn every time. Only an agent's own hook or wire events move the serial.
+- **`onTurnStarted(sessionId, turnStartedAt, cause)`** fires at each of the three stamps, with the
+  cause (`'seed'`, `'idle'` or `'plan-approval'`). `SessionManager` uses it to key the turn's
+  `transcriptAnchor`, the transcript byte offset the turn end's reply is read from. The anchor is
+  the message trail's cursor as copied when the session last committed to idle (`'idle'`, moved
+  only by a trail read already pending at that commit), as it stands at the approval
+  (`'plan-approval'`), or none (`'seed'`). It reaches the turn end only when
+  the stamp it was keyed to is the one the turn end reports. See
+  [Transition engine](transition-engine.md#on-agent-turn-end).
 - **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for the
   hook agents and Kimi (whose wire protocol emits `TurnEnd`); false for agents whose only signal is
   terminal silence, where a quiet compile and a finished turn look the same.

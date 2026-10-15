@@ -799,7 +799,26 @@ export interface ActivityEngineCallbacks {
    * turn's identity, still current until the agent reports new work.
    */
   onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
+  /**
+   * Fired each time the engine stamps `turnStartedAt`, with the stamp and what
+   * set it (`TurnStartCause`). A consumer that ties something to the turn
+   * (the transcript position a turn end reads its reply from) keys it on the
+   * stamp, which the matching `onTurnEnded` reports back.
+   *
+   * Fires inside the engine's commit, so a listener does no I/O and must not
+   * throw. Optional: only the production wiring consumes it.
+   */
+  onTurnStarted?(sessionId: string, turnStartedAt: number, cause: TurnStartCause): void;
 }
+
+/**
+ * What stamped a turn's start:
+ *
+ * - `'seed'`: a fresh spawn seeded thinking, its prompt on the command line.
+ * - `'idle'`: the session went from idle to thinking.
+ * - `'plan-approval'`: an approved plan, where the turn's work starts again.
+ */
+export type TurnStartCause = 'seed' | 'idle' | 'plan-approval';
 
 /**
  * Log-only events do NOT reset `lastSignalAt`, do NOT toggle

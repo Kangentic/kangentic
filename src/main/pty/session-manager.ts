@@ -56,7 +56,8 @@ import type {
   PtyResizeOrigin,
   SessionResizeResult,
 } from '../../shared/types';
-import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
+import type { ActivityEngineOptions, ActivityStatsSnapshot, TurnStartCause } from '../activity-engine/engine';
+import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared/transcript-anchor';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec } from './process-tag/task-process-tag';
@@ -187,6 +188,15 @@ export interface TurnEndedPayload {
    * later asks `SessionManager.isLatestTurn` with it.
    */
   workSerial: number;
+  /**
+   * Where the turn began in the session's transcript, or null when that is not
+   * known (an agent with no window read, a fresh spawn's first turn, a session
+   * whose trail had not been read). A consumer reads the turn's reply from it
+   * (`readSessionFinalReply`), so a turn that wrote no text never hands on the
+   * text an earlier turn ended on. A byte offset, not a time: the CLI stamps
+   * its transcript with its own clock.
+   */
+  transcriptAnchor: TranscriptAnchor | null;
 }
 
 /**
@@ -195,9 +205,10 @@ export interface TurnEndedPayload {
  * a pty host crash) is running. It comes back idle with no turn end, so a
  * listener that acts on turn ends learns of it here. `workSerial` is the
  * session's work serial as it came back: a turn the user starts after the
- * resume moves it (`SessionManager.isLatestTurn`).
+ * resume moves it (`SessionManager.isLatestTurn`). A resume begins no turn, so
+ * it has no turn start and no transcript anchor.
  */
-export type SessionResumedPayload = Omit<TurnEndedPayload, 'turnStartedAt'>;
+export type SessionResumedPayload = Omit<TurnEndedPayload, 'turnStartedAt' | 'transcriptAnchor'>;
 
 /** Per-session pipeline numbers for the dev terminal-pipeline route. */
 export interface SessionPipelineStats {
@@ -447,6 +458,19 @@ export class SessionManager extends EventEmitter {
   private mobileTerminalProbe: MobileTerminalProbe | null = null;
   /** See EarlierRunsSource; null until the IPC layer wires it (and in unit tests). */
   private earlierRunsSource: EarlierRunsSource | null = null;
+  /** See TranscriptPositionSource; null until the IPC layer wires it (and in unit tests). */
+  private transcriptPositionSource: TranscriptPositionSource | null = null;
+  /**
+   * Each session's transcript position as of its last commit to idle: where
+   * its next turn begins. Copied at idle rather than when the turn starts,
+   * because the engine can notice a turn after the turn has written text, and
+   * a copy taken then could already cover that text. A copy taken at idle
+   * predates any later turn. `settling` while a read pending at the commit
+   * has yet to land (see transcriptReadLanded).
+   */
+  private idleTranscriptAnchors = new Map<string, { anchor: TranscriptAnchor | null; settling: boolean }>();
+  /** The anchor of each session's current turn, keyed to the turn by its start stamp. */
+  private turnTranscriptAnchors = new Map<string, { turnStartedAt: number; anchor: TranscriptAnchor | null }>();
   /**
    * Pending resting-grid restores, keyed by session. See
    * scheduleRestingGridRestore.
@@ -555,6 +579,9 @@ export class SessionManager extends EventEmitter {
         // The host's redraw filter reads the current activity (a repaint
         // after a resize must not wake an idle session).
         this.host.post({ type: 'setActivity', sessionId, activity });
+        // activity-state-ok: granular, only a commit to idle ends a turn; a
+        // permission prompt is the same turn and must not move its anchor.
+        if (activity === 'idle') this.idleTranscriptAnchors.set(sessionId, this.sampleTranscriptPosition(sessionId));
         this.emit('activity', sessionId, activity, reason);
       },
       // A separate event, not 'activity', and that separation is load-bearing
@@ -584,6 +611,7 @@ export class SessionManager extends EventEmitter {
           isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
           turnStartedAt,
           workSerial,
+          transcriptAnchor: this.takeTurnAnchor(sessionId, turnStartedAt),
         };
         try {
           this.emit('turn-ended', payload);
@@ -591,6 +619,7 @@ export class SessionManager extends EventEmitter {
           console.error(`[SESSION] turn-ended listener threw for ${sessionId.slice(0, 8)}:`, error);
         }
       },
+      onTurnStarted: (sessionId, turnStartedAt, cause) => this.noteTurnStarted(sessionId, turnStartedAt, cause),
       onEvent: (sessionId, event) => {
         this.noteCommandTerminalAgentEvent(sessionId, event);
         this.emit('event', sessionId, event);
@@ -1269,6 +1298,79 @@ export class SessionManager extends EventEmitter {
     this.earlierRunsSource = source;
   }
 
+  /** See TranscriptPositionSource. Called once by the IPC layer at registration. */
+  setTranscriptPositionSource(source: TranscriptPositionSource): void {
+    this.transcriptPositionSource = source;
+  }
+
+  /**
+   * The session's transcript position now, and whether a read of it is still
+   * pending. Never throws: it runs inside the engine's commit.
+   */
+  private sampleTranscriptPosition(sessionId: string): { anchor: TranscriptAnchor | null; settling: boolean } {
+    const source = this.transcriptPositionSource;
+    if (!source) return { anchor: null, settling: false };
+    try {
+      return { anchor: source.transcriptPosition(sessionId), settling: source.hasPendingRead(sessionId) };
+    } catch (error) {
+      console.error(`[SESSION] transcript position read threw for ${sessionId.slice(0, 8)}:`, error);
+      return { anchor: null, settling: false };
+    }
+  }
+
+  /**
+   * A trail read of the session landed (`MessageTrailTracker`). The read a
+   * turn end's Stop starts can land after the commit to idle: the engine
+   * commits once its stability window has passed, and the retrieval worker can
+   * take longer. The idle copy then sits before the turn's final text, and the
+   * next turn, if it writes none, would hand that text on. So while a read
+   * pending at the commit is still out, each landing read moves the copy. Once
+   * none is pending the copy is fixed, and a read a later event starts never
+   * moves it. A copy that is still null takes any read: the turn start would
+   * read the position then anyway.
+   */
+  transcriptReadLanded(sessionId: string): void {
+    const copy = this.idleTranscriptAnchors.get(sessionId);
+    if (!copy || (!copy.settling && copy.anchor !== null)) return;
+    this.idleTranscriptAnchors.set(sessionId, this.sampleTranscriptPosition(sessionId));
+  }
+
+  /**
+   * Where the turn the engine just stamped began. After idle, the copy taken
+   * when the session went idle, or the position now when none was taken yet (a
+   * resumed session goes idle before its first trail read). At a plan
+   * approval, the position now, which covers the plan and nothing after it:
+   * the implementation needs a new model call. A fresh spawn has none: its
+   * prompt rides the command line, and the reply read stops there.
+   */
+  private noteTurnStarted(sessionId: string, turnStartedAt: number, cause: TurnStartCause): void {
+    let anchor: TranscriptAnchor | null = null;
+    if (cause === 'idle') {
+      anchor = this.idleTranscriptAnchors.get(sessionId)?.anchor ?? this.sampleTranscriptPosition(sessionId).anchor;
+      this.idleTranscriptAnchors.delete(sessionId);
+    } else if (cause === 'plan-approval') {
+      anchor = this.sampleTranscriptPosition(sessionId).anchor;
+    }
+    this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor });
+  }
+
+  /**
+   * The anchor of the turn that began at `turnStartedAt`, consumed. An entry
+   * stored under another stamp belongs to another turn, and reading from it
+   * would judge that turn's reply, so this turn end gets none.
+   */
+  private takeTurnAnchor(sessionId: string, turnStartedAt: number | null): TranscriptAnchor | null {
+    const stored = this.turnTranscriptAnchors.get(sessionId);
+    this.turnTranscriptAnchors.delete(sessionId);
+    return stored && stored.turnStartedAt === turnStartedAt ? stored.anchor : null;
+  }
+
+  /** Drop a session's transcript anchors: it ends no more turns under this id. */
+  private forgetTranscriptAnchors(sessionId: string): void {
+    this.idleTranscriptAnchors.delete(sessionId);
+    this.turnTranscriptAnchors.delete(sessionId);
+  }
+
   /**
    * Read the session's earlier runs and hand their tool-call count to
    * telemetry, which adds it to every stamped count (and re-emits the usage
@@ -1646,6 +1748,7 @@ export class SessionManager extends EventEmitter {
         this.lastDesktopDimensions.delete(sessionId);
         this.cancelRestingGridRestore(sessionId);
       },
+      forgetTranscriptAnchors: (sessionId) => this.forgetTranscriptAnchors(sessionId),
       discardPendingResize: (sessionId) => {
         this.pendingResizes.delete(sessionId);
       },
@@ -2104,6 +2207,7 @@ export class SessionManager extends EventEmitter {
     this.firstOutputTracker.removeSession(sessionId);
     this.inAltScreen.delete(sessionId);
     this.bufferCols.delete(sessionId);
+    this.forgetTranscriptAnchors(sessionId);
     this.cancelAgentEndSettle(sessionId);
   }
 
@@ -2720,6 +2824,7 @@ export class SessionManager extends EventEmitter {
     this.pendingResizes.delete(sessionId);
     this.lastDesktopDimensions.delete(sessionId);
     this.cancelRestingGridRestore(sessionId);
+    this.forgetTranscriptAnchors(sessionId);
     // Release backpressure BEFORE the kill so a paused session is resumed
     // (lets any buffered output flush) and its accounting entry is dropped
     // immediately, rather than waiting for the exit. Posted ahead of the kill,
@@ -2877,6 +2982,7 @@ export class SessionManager extends EventEmitter {
 
     // Clear subagent depth - session is no longer active
     this.telemetry.clearSessionTracking(sessionId);
+    this.forgetTranscriptAnchors(sessionId);
 
     // Mark suspended BEFORE killing so the async onExit handler preserves it
     session.status = 'suspended';

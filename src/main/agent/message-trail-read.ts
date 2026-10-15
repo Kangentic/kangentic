@@ -4,6 +4,7 @@ import type { AssistantMessageTrailEntry, TranscriptEntry } from '../../shared/t
 import { assistantMessagePreviews } from './shared/message-preview';
 import { getCachedTranscript } from './transcript-cache';
 import { finalAgentReply, type AgentReply } from './shared/agent-reply';
+import type { TranscriptAnchor } from './shared/transcript-anchor';
 import {
   MESSAGE_TRAIL_ENTRY_MAX_CHARS,
   MESSAGE_TRAIL_MAX_ENTRIES,
@@ -83,7 +84,8 @@ export function localTrailReader(
  * runs about 11k characters, but the tool results before it can be large, and
  * the read has to reach back to the turn's own prompt to know where the turn
  * began. One megabyte reaches it in the cases measured; past it the reply is
- * still found, since it is the newest thing in the file.
+ * still found, since it is the newest thing in the file. An anchored read
+ * starts no further back than this either (`anchoredStart`).
  */
 const FINAL_REPLY_TAIL_BYTES = 1024 * 1024;
 const FINAL_REPLY_MAX_WINDOWS = 8;
@@ -92,16 +94,26 @@ const FINAL_REPLY_MAX_WINDOWS = 8;
  * The session's final reply (`finalAgentReply`) from a bounded tail of its
  * transcript, for `{{agentReply}}`. Runs in the retrieval worker
  * (`transcript.finalReply`). Null for an agent with no transcript reader.
+ *
+ * `since` is where the turn being judged began (`TranscriptAnchor`). With a
+ * window read and the same history file, the read starts there, or at the
+ * tail when the turn is longer than the tail, so nothing the turn did not
+ * write can be its reply. Without one, or for an adapter with no window read,
+ * the reply is the newest one in the tail, as before.
  */
 export async function readFinalReply(
   adapter: MessageTrailAdapter,
   facts: MessageTrailSessionFacts & { agentSessionId: string },
+  since: TranscriptAnchor | null = null,
   fileSize: (filePath: string) => Promise<number> = statSize,
 ): Promise<AgentReply | null> {
   const parseWindow = adapter.parseTranscriptWindow;
   const locateFile = adapter.locateSessionHistoryFile;
   if (parseWindow && locateFile) {
-    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, null, fileSize, {
+    const start = since !== null && since.agentSessionId === facts.agentSessionId
+      ? await anchoredStart(adapter, locateFile, facts, since.byteOffset, fileSize)
+      : null;
+    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, start, fileSize, {
       tailBytes: FINAL_REPLY_TAIL_BYTES,
       maxWindows: FINAL_REPLY_MAX_WINDOWS,
     });
@@ -117,6 +129,33 @@ export async function readFinalReply(
     return finalAgentReply(cached.entries);
   }
   return null;
+}
+
+/**
+ * Where an anchored final-reply read starts: the anchor, or the tail when the
+ * turn began further back than the tail reaches (every entry in the tail is
+ * then the turn's). Null when the file is gone, or when the anchor lies past
+ * its end, which means the file was replaced since the turn began; the read
+ * then falls back to the plain tail, and says so once.
+ */
+async function anchoredStart(
+  adapter: MessageTrailAdapter,
+  locateFile: NonNullable<MessageTrailAdapter['locateSessionHistoryFile']>,
+  facts: MessageTrailSessionFacts & { agentSessionId: string },
+  byteOffset: number,
+  fileSize: (filePath: string) => Promise<number>,
+): Promise<number | null> {
+  const filePath = await locateFile.call(adapter, facts.agentSessionId, facts.cwd);
+  if (!filePath) return null;
+  const size = await fileSize(filePath);
+  if (byteOffset > size) {
+    console.warn(
+      `[final-reply] The turn's anchor (byte ${byteOffset}) is past the end of ${facts.agentSessionId.slice(0, 8)}'s `
+      + `transcript (${size} bytes), so the reply is read from the tail.`,
+    );
+    return null;
+  }
+  return Math.max(byteOffset, size - FINAL_REPLY_TAIL_BYTES);
 }
 
 function previewsOf(entries: TranscriptEntry[]): AssistantMessageTrailEntry[] {

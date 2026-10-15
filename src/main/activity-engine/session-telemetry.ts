@@ -1,7 +1,7 @@
 import { EventType, AgentTool, IdleReason, PromptReason, Activity } from '../../shared/types';
 import type { SessionUsage, ActivityState, ActivityReason, SessionEvent, AgentParser, PerToolStat } from '../../shared/types';
 import { PtyActivityTracker } from './pty-activity-tracker';
-import { ActivityEngine, ActivitySnapshotWriter, type ActivityEngineOptions, type ActivityStatsSnapshot } from './engine';
+import { ActivityEngine, ActivitySnapshotWriter, type ActivityEngineOptions, type ActivityStatsSnapshot, type TurnStartCause } from './engine';
 import { BgShellWatcher } from './background-shell/watcher';
 import {
   createProcessTreeProbe,
@@ -53,6 +53,12 @@ interface SessionTelemetryCallbacks {
    * wiring consumes it.
    */
   onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
+  /**
+   * The engine stamped a turn's start (see
+   * `ActivityEngineCallbacks.onTurnStarted`). Optional: only the production
+   * wiring consumes it.
+   */
+  onTurnStarted?(sessionId: string, turnStartedAt: number, cause: TurnStartCause): void;
   onEvent(sessionId: string, event: SessionEvent): void;
   onIdleTimeout(sessionId: string): void;
   onPlanExit(sessionId: string): void;
@@ -281,6 +287,7 @@ export class SessionTelemetry {
         this.pushEvent(sessionId, event);
       },
       onTurnEnded: (sessionId, turnStartedAt, workSerial) => this.callbacks.onTurnEnded?.(sessionId, turnStartedAt, workSerial),
+      onTurnStarted: (sessionId, turnStartedAt, cause) => this.callbacks.onTurnStarted?.(sessionId, turnStartedAt, cause),
     }, activityEngineOptions);
 
     this.ptyTracker = new PtyActivityTracker({
