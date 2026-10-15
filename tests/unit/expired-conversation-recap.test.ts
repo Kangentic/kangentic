@@ -237,8 +237,9 @@ describe('control characters in the text the recap did not write', () => {
 });
 
 describe('an apostrophe in the recap', () => {
-  // A unix-like host quotes the prompt in single quotes, and nushell has no
-  // escape for an apostrophe inside them, so the fixed text carries none.
+  // quoteArg double-quotes for nushell now, so no shell needs an
+  // apostrophe-free prompt. The fixed text keeps none anyway, and escapeXml
+  // writes an apostrophe from the content as &apos;. This block pins both.
   it.each(['whole-prompt', 'context'] as const)('is absent from a %s recap built from apostrophe-free text', async (mode) => {
     const recap = await buildExpiredConversationRecap(input({
       mode,
