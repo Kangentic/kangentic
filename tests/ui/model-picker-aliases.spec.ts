@@ -173,8 +173,18 @@ test.describe('Model combobox with floating aliases', () => {
     await page.locator('[data-testid="task-advanced-toggle"]').click();
   }
 
-  /** Close the (dirty) dialog: an open menu takes the first Escape, then the discard confirm. */
+  /**
+   * Close the (dirty) dialog. A tip that keyboard focus opened takes the first Escape, then an open
+   * menu takes one, then the discard confirm. Which control holds focus depends on the test (a
+   * Shift+Tab lands on the Agent field's edit button, whose tip opens at once), so the tip is
+   * dismissed only when it is up.
+   */
   async function discardDialog(): Promise<void> {
+    const tip = page.locator('[data-hover-tip]');
+    if (await tip.isVisible().catch(() => false)) {
+      await page.keyboard.press('Escape');
+      await expect(tip).toHaveCount(0);
+    }
     const openChevron = page.locator('button[aria-label="Close dropdown"]').first();
     if (await openChevron.isVisible().catch(() => false)) {
       await page.keyboard.press('Escape');
