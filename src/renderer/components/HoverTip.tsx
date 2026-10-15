@@ -1,143 +1,508 @@
 /**
- * A hover label that cannot be clipped by whatever it happens to sit inside.
+ * The one tooltip. Every explanatory hover text in the renderer is a HoverTip; a native `title`
+ * survives only for the full value of text the layout cuts short (`.claude/rules/one-tooltip.md`).
  *
- * The app's hover text has been native `title` almost everywhere, which is
- * unstyled and slow to appear. The one place that needed better - the Knowledge
- * Graph's camera legend - grew its own absolutely-positioned chip and
- * immediately hit both failure modes an in-flow tooltip has:
+ * Two shapes:
+ *  - A LABEL: a word or a sentence, inverted (`bg-fg` on `text-surface`) so it reads like the
+ *    platform tip it replaces. It can lead with a 12px icon in its own text colour and end with
+ *    the live key chips of a KEYBINDINGS action, and it wraps at 280px, keeping "\n" breaks.
+ *  - A RICH tip: the raised panel with a muted outline, an optional header band (icon and title
+ *    over a divider), a free-form body and an optional footer. Any of `content`, `header` or
+ *    `footer` selects it; `label` is then what a screen reader reads.
  *
- *  - **Clipping.** It lived under a `overflow-hidden` canvas wrapper, so a tip
- *    centred over a control near the left edge was cut in half.
- *  - **The containing-block trap.** Switching it to `position: fixed` in place
- *    would NOT have fixed that: its parent card carries `backdrop-blur`, and
- *    `backdrop-filter` establishes a containing block for fixed descendants, so
- *    "fixed" would still have been measured against the card. A body portal is
- *    the only thing that reliably escapes both.
+ * Behaviour (timing and placement live in `utils/hover-tip.ts`):
+ *  - Opens after HOVER_TIP_DWELL_MS of hover. The dwell arms on a pointer MOVE over the trigger,
+ *    not on the enter alone: a control that appears under a resting pointer (a button in a
+ *    dialog that just opened) only gets boundary events, so it shows nothing until the pointer
+ *    moves, and a stray tip cannot eat the Escape meant for that dialog.
+ *  - Opens at once on keyboard focus (`:focus-visible`, and not the focus a press gave it), and at
+ *    once while another tip shows or for HOVER_TIP_WARM_MS after one closed.
+ *  - Closes on pointer leave (a tip keyboard focus opened stays until blur), blur, a press or
+ *    click of the trigger, Escape, a scroll of anything holding the trigger, a window resize, and
+ *    the window losing focus. A press keeps it shut until the pointer leaves.
+ *  - Escape closes ONLY the tip. A `window` capture-phase listener, added only while the tip
+ *    shows, stops the key before any menu or dialog listener sees it, so one press undoes one
+ *    thing. Focus in a terminal (Escape is the agent interrupt) or a hotkey rebind keeps the key.
+ *  - Never takes focus or a click: a `pointer-events: none` body portal. It carries no
+ *    `data-dismissable-layer`, which WalkthroughLayer, the pop-out Escape guard and
+ *    useClickOutsideToClose would read as an open overlay.
+ *  - Adds no element around its trigger. The one child renders as itself with the tip's handlers
+ *    chained after its own, so its own layout classes (`flex-1`, `last:`, a `<th>` cell) are untouched. A disabled control works
+ *    the same way, because the tip listens to POINTER events, which Chromium and React both
+ *    deliver to a disabled button (React suppresses only its mouse events and click).
+ *  - The trigger keeps its own accessible name. What the tip adds (a reason, an explanation, the
+ *    shortcut) is the trigger's accessible description, set as `aria-description` on the trigger
+ *    itself, so it is there without hovering. Chromium exposes it exactly as it does
+ *    `aria-describedby`, but it puts no node in the page: a hidden description node in `<body>`
+ *    would also answer every page-level text lookup that matches its words. A label that only
+ *    repeats the trigger's name is not read twice. A trigger's own `aria-describedby` outranks
+ *    `aria-description`, so a trigger that already has one does not hear the tip.
  *
- * Positioning is centred-then-CLAMPED rather than edge-aligned the way
- * `usePopoverPosition` does it for menus. A menu anchored to a trigger's edge
- * reads as belonging to it; a tooltip reads as belonging to whatever it points
- * at, so it stays centred until the viewport forces it sideways, and only then
- * slides the minimum needed to fit.
- *
- * The label is ALSO rendered `sr-only` inside the trigger, always. A mapping
- * that exists only while a pointer is over it does not exist at all to someone
- * not using one, and the portal content is mounted only while open.
- *
- * `content` makes a rich tip: the node is drawn in place of the one-line label,
- * in a panel that wraps and lets the content lay itself out (the Text match
- * field's wildcard examples, a header band over a grid). `label` then stays the
- * plain-text version a screen reader reads.
+ * A body portal is the only placement that escapes both ways an in-flow tip fails: an
+ * `overflow-hidden` ancestor clips it, and a `backdrop-filter` ancestor turns `position: fixed`
+ * into "fixed to that ancestor".
  */
 
 import {
+  isValidElement,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
+  type ElementType,
+  type FocusEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactElement,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useEffectiveCombo } from '../hooks/useKeybinding';
+import { formatCombo, formatComboSegments } from '../utils/keybindings';
+import { isRebindCaptureActive } from '../utils/rebind-state';
+import {
+  HOVER_TIP_DWELL_MS,
+  claimTip,
+  isTipWarm,
+  placeTip,
+  releaseTip,
+  repeatsTriggerName,
+  tipDescription,
+} from '../utils/hover-tip';
 
-/** Gap between the trigger and the tip. */
-const TIP_OFFSET = 8;
-/** Minimum distance the tip keeps from the viewport edge. */
-const VIEWPORT_PADDING = 8;
-
-/** What every tip draws: the raised panel, above everything, never hit by the pointer. */
-const TIP_PANEL_CLASS = 'pointer-events-none z-[2147483646] border border-edge bg-surface-raised text-fg shadow-lg';
-/** A one-line label tip. */
-const LABEL_TIP_CLASS = 'whitespace-nowrap rounded px-2 py-1 text-[11px] leading-none';
-/** A rich tip: it wraps, and its content lays itself out. */
-const RICH_TIP_CLASS = 'block w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-md text-xs';
-
-function clamp(value: number, low: number, high: number): number {
-  // `high` can fall below `low` for a tip wider than the viewport; the low edge
-  // wins there, since a tip that starts off-screen is unreadable from the first
-  // character rather than the last.
-  return Math.max(low, Math.min(value, Math.max(low, high)));
+export interface HoverTipHeader {
+  icon?: ReactNode;
+  title: string;
 }
 
-export function HoverTip({
-  label,
-  content,
-  children,
-  className,
-  testId,
-}: {
+export interface HoverTipProps {
+  /** Plain text: the label tip itself, and what a screen reader reads for a rich tip. "\n" breaks a line. */
   label: string;
-  /** A rich tip drawn in place of `label`, which stays the screen-reader text. */
+  /** A muted second part under the label (a commit's author under its subject). Label shape only. */
+  detail?: string;
+  /** A KEYBINDINGS id. Its live combo (the user's override, or the default) is drawn as chips and read. */
+  keys?: string;
+  /** A leading 12px glyph, drawn in the label's own text colour: pass no colour class. Label shape only. */
+  icon?: ReactNode;
+  /** A rich tip's body. Any of `content`, `header` or `footer` selects the rich shape. */
   content?: ReactNode;
-  children: ReactNode;
-  /** Applied to the trigger wrapper, which is an inline-flex span. */
-  className?: string;
+  header?: HoverTipHeader;
+  footer?: ReactNode;
+  /**
+   * Whether the label and detail are read as the trigger's description. Default: yes, unless the
+   * label only repeats the trigger's own name. The shortcut is always read.
+   */
+  describe?: boolean;
+  /** False holds the tip shut, for example while the trigger's own menu is open. Default true. */
+  enabled?: boolean;
   testId?: string;
-}) {
-  const triggerRef = useRef<HTMLSpanElement | null>(null);
-  const tipRef = useRef<HTMLSpanElement | null>(null);
-  const [open, setOpen] = useState(false);
-  // Hidden rather than unpositioned for the first commit: the tip has to be in
-  // the DOM to be measured, and painting it at 0,0 first would flash it in the
-  // corner of the screen on every hover.
-  const [style, setStyle] = useState<CSSProperties>({ visibility: 'hidden' });
+  /**
+   * ONE element that passes the pointer, focus and click handlers and `aria-description` through
+   * to a DOM node. A plain DOM element does; a component must forward them.
+   */
+  children: ReactElement;
+}
+
+/** What HoverTip reads from its child and chains onto it. */
+interface TriggerProps {
+  onPointerEnter?: (event: ReactPointerEvent<Element>) => void;
+  onPointerMove?: (event: ReactPointerEvent<Element>) => void;
+  onPointerLeave?: (event: ReactPointerEvent<Element>) => void;
+  onPointerDown?: (event: ReactPointerEvent<Element>) => void;
+  onClick?: (event: ReactMouseEvent<Element>) => void;
+  onFocus?: (event: FocusEvent<Element>) => void;
+  onBlur?: (event: FocusEvent<Element>) => void;
+  'aria-description'?: string;
+  'aria-label'?: string;
+  children?: ReactNode;
+}
+
+interface TipLayerHandle {
+  show(mode: 'cold' | 'warm'): void;
+  /** `warm` starts the warm window (leave, blur); a cold close (Escape, a press) does not. */
+  hide(warm: boolean): void;
+}
+
+/** Every tip: fixed above everything, never hit by the pointer. Positioned imperatively. */
+const TIP_BASE_CLASS = 'pointer-events-none fixed left-0 top-0 z-[2147483646] rounded-md text-xs shadow-tip';
+/** The label shape: inverted, wrapping at 280px (or the window, if narrower). */
+const LABEL_TIP_CLASS = 'w-max max-w-[min(280px,calc(100vw-16px))] bg-fg px-2 py-1 leading-4 text-surface';
+/** The rich shape: the raised panel with a muted outline. */
+const RICH_TIP_CLASS = 'w-max max-w-[calc(100vw-16px)] overflow-hidden border border-fg-muted bg-surface-raised text-fg';
+const KEY_CHIP_CLASS = 'inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-tip-chip-edge bg-tip-chip px-1 font-sans text-[11px] font-medium leading-none text-surface';
+
+function isUsablePointer(event: ReactPointerEvent<Element>): boolean {
+  // Touch never hovers: a tap is a press. A held button is a drag crossing the control.
+  return event.pointerType !== 'touch' && event.buttons === 0;
+}
+
+/** Dev-only checks on a trigger, run once when it is first touched. */
+function warnAboutTrigger(element: Element): void {
+  const where = element.outerHTML.slice(0, 120);
+  if (element.hasAttribute('title')) {
+    console.error(`HoverTip: the trigger still carries a native title, so two tooltips show: ${where}`);
+  }
+  const interactive = element.matches('button, a[href], [role="button"], [role="switch"], [role="tab"]');
+  const named = element.hasAttribute('aria-label') || element.hasAttribute('aria-labelledby')
+    || (element.textContent ?? '').trim() !== '';
+  if (interactive && !named) {
+    console.error(`HoverTip: the trigger has no accessible name. A tip never names its trigger; give it an aria-label: ${where}`);
+  }
+}
+
+export function HoverTip(props: HoverTipProps): ReactElement {
+  const { label, detail, keys, describe, enabled = true, children } = props;
+  const child = isValidElement(children) ? (children as ReactElement<TriggerProps>) : null;
+  const childProps: TriggerProps = child?.props ?? {};
+
+  // The trigger element, taken from the event that opens a tip rather than through a ref, so the
+  // child's own ref passes through untouched and nothing has to be merged.
+  const triggerRef = useRef<Element | null>(null);
+  const layerRef = useRef<TipLayerHandle | null>(null);
+  const hoveredRef = useRef(false);
+  const armedRef = useRef(false);
+  const hoverBlockedRef = useRef(false);
+  const pressFocusRef = useRef(false);
+  const focusOpenedRef = useRef(false);
+  const enabledRef = useRef(enabled);
+  const dwellTimerRef = useRef<number | null>(null);
+  const checkedRef = useRef(false);
+
+  const clearDwell = useCallback((): void => {
+    if (dwellTimerRef.current === null) return;
+    window.clearTimeout(dwellTimerRef.current);
+    dwellTimerRef.current = null;
+  }, []);
+
+  const takeTrigger = useCallback((element: Element): void => {
+    triggerRef.current = element;
+    if (!__KANGENTIC_DEV__ || checkedRef.current) return;
+    checkedRef.current = true;
+    warnAboutTrigger(element);
+  }, []);
+
+  const handlePointerEnter = useCallback((event: ReactPointerEvent<Element>): void => {
+    if (!isUsablePointer(event)) return;
+    hoveredRef.current = true;
+    takeTrigger(event.currentTarget);
+  }, [takeTrigger]);
+
+  const handlePointerMove = useCallback((event: ReactPointerEvent<Element>): void => {
+    if (!isUsablePointer(event)) return;
+    hoveredRef.current = true;
+    if (armedRef.current || hoverBlockedRef.current || !enabledRef.current) return;
+    takeTrigger(event.currentTarget);
+    armedRef.current = true;
+    if (isTipWarm(performance.now())) {
+      layerRef.current?.show('warm');
+      return;
+    }
+    dwellTimerRef.current = window.setTimeout(() => {
+      dwellTimerRef.current = null;
+      if (hoveredRef.current && !hoverBlockedRef.current && enabledRef.current) layerRef.current?.show('cold');
+    }, HOVER_TIP_DWELL_MS);
+  }, [takeTrigger]);
+
+  const handlePointerLeave = useCallback((): void => {
+    hoveredRef.current = false;
+    armedRef.current = false;
+    hoverBlockedRef.current = false;
+    clearDwell();
+    if (!focusOpenedRef.current) layerRef.current?.hide(true);
+  }, [clearDwell]);
+
+  const handlePointerDown = useCallback((): void => {
+    hoverBlockedRef.current = true;
+    pressFocusRef.current = true;
+    clearDwell();
+    layerRef.current?.hide(false);
+    // The focus a press gives the trigger arrives before the release, so the release ends the
+    // "this focus came from a press" window.
+    const release = (): void => {
+      pressFocusRef.current = false;
+      window.removeEventListener('pointerup', release, true);
+      window.removeEventListener('pointercancel', release, true);
+    };
+    window.addEventListener('pointerup', release, true);
+    window.addEventListener('pointercancel', release, true);
+  }, [clearDwell]);
+
+  const handleClick = useCallback((): void => {
+    // A keyboard Enter or Space click, or the click a press ends in.
+    hoverBlockedRef.current = true;
+    clearDwell();
+    layerRef.current?.hide(false);
+  }, [clearDwell]);
+
+  const handleFocus = useCallback((event: FocusEvent<Element>): void => {
+    const target = event.target;
+    if (pressFocusRef.current || !enabledRef.current) return;
+    if (!(target instanceof Element) || !target.matches(':focus-visible')) return;
+    takeTrigger(event.currentTarget);
+    focusOpenedRef.current = true;
+    clearDwell();
+    layerRef.current?.show(isTipWarm(performance.now()) ? 'warm' : 'cold');
+  }, [clearDwell, takeTrigger]);
+
+  const handleBlur = useCallback((event: FocusEvent<Element>): void => {
+    const next = event.relatedTarget;
+    if (next instanceof Node && event.currentTarget.contains(next)) return;
+    pressFocusRef.current = false;
+    focusOpenedRef.current = false;
+    // A tip the pointer is still holding open outlives the focus.
+    if (hoveredRef.current && armedRef.current && !hoverBlockedRef.current) return;
+    layerRef.current?.hide(true);
+  }, []);
 
   useLayoutEffect(() => {
-    // Closing resets the style in the handler that closes, so the next open
-    // starts hidden again; this effect only measures an open tip.
-    if (!open) return;
-    const trigger = triggerRef.current;
-    const tip = tipRef.current;
-    if (!trigger || !tip) return;
+    enabledRef.current = enabled;
+    if (enabled) return;
+    clearDwell();
+    layerRef.current?.hide(false);
+  }, [enabled, clearDwell]);
 
-    const anchor = trigger.getBoundingClientRect();
-    // `offsetWidth`/`offsetHeight`, not the rect: the tip animates in from a
-    // scaled transform, and a rect measured mid-animation reads short.
-    const width = tip.offsetWidth;
-    const height = tip.offsetHeight;
+  useEffect(() => clearDwell, [clearDwell]);
 
-    const centred = anchor.left + anchor.width / 2 - width / 2;
-    const above = anchor.top - height - TIP_OFFSET;
-    setStyle({
-      position: 'fixed',
-      left: clamp(centred, VIEWPORT_PADDING, window.innerWidth - width - VIEWPORT_PADDING),
-      // Below only when there is genuinely no room above, so the tip does not
-      // cover the next control down in a stack of them.
-      top: above >= VIEWPORT_PADDING ? above : anchor.bottom + TIP_OFFSET,
-    });
-  }, [open, label]);
+  // Every tip reads the store, but its selector returns nothing unless it has keys, so a tip
+  // re-renders only when its own shortcut is rebound.
+  const combo = useEffectiveCombo(keys);
+  const triggerName = childProps['aria-label']
+    ?? (typeof childProps.children === 'string' ? childProps.children : undefined);
+  const readLabel = describe ?? !repeatsTriggerName(label, triggerName);
+  const description = tipDescription({
+    label,
+    readLabel,
+    combo: combo === '' ? '' : formatCombo(combo),
+    detail: describe === false ? undefined : detail,
+  });
 
-  const close = (): void => {
-    setOpen(false);
-    setStyle({ visibility: 'hidden' });
-  };
+  if (child === null) return <>{children}</>;
 
+  // The child re-rendered as itself with the tip's handlers chained after its own. Plain JSX on
+  // the child's own type rather than cloneElement: React 19 keeps `ref` in props, so the spread
+  // carries the child's ref through.
+  const Trigger = child.type as ElementType;
   return (
-    <span
-      ref={triggerRef}
-      className={className}
-      onPointerEnter={() => setOpen(true)}
-      onPointerLeave={close}
-      // Focus too, so a sighted keyboard user tabbing to the wrapped control
-      // sees what a pointer user sees. React's focus events bubble from it.
-      onFocus={() => setOpen(true)}
-      onBlur={close}
-    >
-      {children}
-      <span className="sr-only">{label}</span>
-      {open
-        ? createPortal(
-            <span
-              ref={tipRef}
-              role="tooltip"
-              data-testid={testId}
-              style={style}
-              className={`${TIP_PANEL_CLASS} ${content === undefined ? LABEL_TIP_CLASS : RICH_TIP_CLASS}`}
-            >
-              {content === undefined ? label : content}
-            </span>,
-            document.body,
-          )
-        : null}
+    <>
+      <Trigger
+        {...child.props}
+        onPointerEnter={(event: ReactPointerEvent<Element>) => {
+          childProps.onPointerEnter?.(event);
+          handlePointerEnter(event);
+        }}
+        onPointerMove={(event: ReactPointerEvent<Element>) => {
+          childProps.onPointerMove?.(event);
+          handlePointerMove(event);
+        }}
+        onPointerLeave={(event: ReactPointerEvent<Element>) => {
+          childProps.onPointerLeave?.(event);
+          handlePointerLeave();
+        }}
+        onPointerDown={(event: ReactPointerEvent<Element>) => {
+          childProps.onPointerDown?.(event);
+          handlePointerDown();
+        }}
+        onClick={(event: ReactMouseEvent<Element>) => {
+          childProps.onClick?.(event);
+          handleClick();
+        }}
+        onFocus={(event: FocusEvent<Element>) => {
+          childProps.onFocus?.(event);
+          handleFocus(event);
+        }}
+        onBlur={(event: FocusEvent<Element>) => {
+          childProps.onBlur?.(event);
+          handleBlur(event);
+        }}
+        aria-description={description === '' ? undefined : description}
+      />
+      <TipLayer
+        handleRef={layerRef}
+        triggerRef={triggerRef}
+        label={label}
+        detail={detail}
+        combo={combo}
+        icon={props.icon}
+        content={props.content}
+        header={props.header}
+        footer={props.footer}
+        testId={props.testId}
+      />
+    </>
+  );
+}
+
+function TipKeys({ combo }: { combo: string }): ReactElement {
+  return (
+    <span className="ml-1 flex shrink-0 items-center gap-0.5 self-center" data-hover-tip-part="keys">
+      {formatComboSegments(combo).map((segment, index) => (
+        <kbd key={`${index}-${segment}`} className={KEY_CHIP_CLASS}>{segment}</kbd>
+      ))}
     </span>
+  );
+}
+
+interface TipLayerProps {
+  handleRef: RefObject<TipLayerHandle | null>;
+  triggerRef: RefObject<Element | null>;
+  label: string;
+  detail?: string;
+  /** The live combo in canonical form, or '' for no keys. */
+  combo: string;
+  icon?: ReactNode;
+  content?: ReactNode;
+  header?: HoverTipHeader;
+  footer?: ReactNode;
+  testId?: string;
+}
+
+/**
+ * The tip itself, and everything that lives only while it shows. It owns the open state, so
+ * opening a tip re-renders this layer and never the trigger's subtree.
+ */
+function TipLayer(props: TipLayerProps): ReactElement | null {
+  const { handleRef, triggerRef } = props;
+  const [shown, setShown] = useState<'cold' | 'warm' | null>(null);
+  const shownRef = useRef<'cold' | 'warm' | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  const hideRef = useRef<(warm: boolean) => void>(() => {});
+  // A stable identity for the shared one-tip-at-a-time slot. Another tip claiming the slot
+  // replaces this one, which is a warm close: the pointer is already on the next trigger.
+  const [replaceThisTip] = useState(() => (): void => hideRef.current(true));
+
+  const hide = useCallback((warm: boolean): void => {
+    if (shownRef.current === null) return;
+    shownRef.current = null;
+    releaseTip(replaceThisTip, warm, performance.now());
+    setShown(null);
+  }, [replaceThisTip]);
+
+  const show = useCallback((mode: 'cold' | 'warm'): void => {
+    if (shownRef.current !== null) return;
+    claimTip(replaceThisTip);
+    shownRef.current = mode;
+    setShown(mode);
+  }, [replaceThisTip]);
+
+  useLayoutEffect(() => {
+    hideRef.current = hide;
+  }, [hide]);
+
+  useImperativeHandle(handleRef, () => ({ show, hide }), [show, hide]);
+
+  useEffect(() => () => {
+    if (shownRef.current === null) return;
+    shownRef.current = null;
+    releaseTip(replaceThisTip, true, performance.now());
+  }, [replaceThisTip]);
+
+  const position = useCallback((): void => {
+    const tip = tipRef.current;
+    const trigger = triggerRef.current;
+    if (tip === null || trigger === null) return;
+    const anchor = trigger.getBoundingClientRect();
+    if (!trigger.isConnected || (anchor.width === 0 && anchor.height === 0)) {
+      hide(false);
+      return;
+    }
+    // offsetWidth/offsetHeight, not the rect: a cold tip enters from a scaled transform, and a
+    // rect measured mid-animation reads short.
+    const placement = placeTip(
+      anchor,
+      { width: tip.offsetWidth, height: tip.offsetHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    tip.style.left = `${placement.left}px`;
+    tip.style.top = `${placement.top}px`;
+    tip.style.transformOrigin = placement.side === 'above' ? 'bottom center' : 'top center';
+    tip.dataset.side = placement.side;
+  }, [hide, triggerRef]);
+
+  // Before paint, so the first frame is already in place.
+  useLayoutEffect(() => {
+    if (shown !== null) position();
+  }, [shown, position]);
+
+  useEffect(() => {
+    if (shown === null) return;
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      hide(false);
+      if (isRebindCaptureActive()) return;
+      const focused = document.activeElement;
+      if (focused instanceof Element && focused.closest('.xterm') !== null) return;
+      event.stopPropagation();
+    };
+    const handleScroll = (event: Event): void => {
+      const target = event.target;
+      const trigger = triggerRef.current;
+      // Only a scroll that moves the trigger: a terminal streaming output elsewhere must not
+      // close a tip on a header button.
+      if (target === document || (target instanceof Node && trigger !== null && target.contains(trigger))) hide(false);
+    };
+    const closeCold = (): void => hide(false);
+    const observer = new ResizeObserver(() => position());
+    if (tipRef.current !== null) observer.observe(tipRef.current);
+    if (triggerRef.current !== null) observer.observe(triggerRef.current);
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('scroll', handleScroll, { capture: true, passive: true });
+    window.addEventListener('resize', closeCold);
+    window.addEventListener('blur', closeCold);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', closeCold);
+      window.removeEventListener('blur', closeCold);
+    };
+  }, [shown, hide, position, triggerRef]);
+
+  if (shown === null) return null;
+  const rich = props.content !== undefined || props.header !== undefined || props.footer !== undefined;
+  return createPortal(
+    <div
+      ref={tipRef}
+      role="tooltip"
+      data-hover-tip=""
+      data-shape={rich ? 'rich' : 'label'}
+      data-testid={props.testId}
+      className={`${TIP_BASE_CLASS} ${rich ? RICH_TIP_CLASS : LABEL_TIP_CLASS}${shown === 'cold' ? ' overlay-popover-in' : ''}`}
+    >
+      {rich ? (
+        <>
+          {props.header !== undefined && (
+            <div data-hover-tip-part="header" className="flex items-center gap-2 border-b border-edge bg-surface-hover/40 px-3 py-2">
+              {props.header.icon !== undefined && (
+                <span aria-hidden="true" className="flex shrink-0 text-fg-muted [&>svg]:size-[13px]">{props.header.icon}</span>
+              )}
+              <span className="font-semibold">{props.header.title}</span>
+            </div>
+          )}
+          {props.content !== undefined && (
+            <div data-hover-tip-part="body" className="px-3 py-2.5">{props.content}</div>
+          )}
+          {props.footer !== undefined && (
+            <div data-hover-tip-part="footer" className="border-t border-edge px-3 py-1.5 text-fg-muted">{props.footer}</div>
+          )}
+        </>
+      ) : (
+        <span className="flex items-start gap-1.5">
+          {props.icon !== undefined && (
+            <span aria-hidden="true" className="mt-0.5 flex size-3 shrink-0 items-center justify-center [&>svg]:size-3">{props.icon}</span>
+          )}
+          <span className="min-w-0 whitespace-pre-line break-words">
+            {props.label}
+            {props.detail !== undefined && props.detail !== '' && (
+              <span className="block text-tip-muted">{props.detail}</span>
+            )}
+          </span>
+          {props.combo !== '' && <TipKeys combo={props.combo} />}
+        </span>
+      )}
+    </div>,
+    document.body,
   );
 }

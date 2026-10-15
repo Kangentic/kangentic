@@ -196,8 +196,8 @@ test('a download error names one model: only that line reads Download failed, th
     // reason in the line's info tip (a line holds one short value).
     await expect(refinementValue).toHaveText(failedText(PARAKEET_V3));
     await expect(refinementValue.locator('.text-warning')).toHaveText('Download failed');
-    await expect(refinementLine.getByRole('button', { name: 'About Refinement model: No space left on device' }))
-      .toHaveAttribute('title', 'No space left on device');
+    await expect(refinementLine.getByRole('button', { name: 'About Refinement model', exact: true }))
+      .toHaveAccessibleDescription('No space left on device');
 
     // The live model did not: still queued, its name and size muted, no warning.
     await expect(liveValue).toHaveText(readyText(NEMOTRON_STREAMING));
@@ -229,8 +229,8 @@ test('an error naming the live model leaves the refinement line queued', async (
 
     await expect(liveValue).toHaveText(failedText(NEMOTRON_STREAMING));
     await expect(liveValue.locator('.text-warning')).toHaveText('Download failed');
-    await expect(liveLine.getByRole('button', { name: 'About Live model: Network unreachable' }))
-      .toHaveAttribute('title', 'Network unreachable');
+    await expect(liveLine.getByRole('button', { name: 'About Live model', exact: true }))
+      .toHaveAccessibleDescription('Network unreachable');
 
     await expect(refinementValue).toHaveText(readyText(PARAKEET_V3));
     await expect(refinementValue).toHaveClass(/text-fg-muted/);

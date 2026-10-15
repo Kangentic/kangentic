@@ -427,8 +427,7 @@ export function ConversationWindow({
             <HeaderActionButton
               icon={SquareTerminal}
               onClick={handleOpenTask}
-              title="Open task"
-              ariaLabel="Open task"
+              tip="Open task"
               testId="conversation-open-task-button"
             />
           )}
@@ -436,7 +435,7 @@ export function ConversationWindow({
             icon={copied ? CopiedCheckIcon : Copy}
             onClick={handleCopyMarkdown}
             disabled={!response}
-            title="Copy conversation as Markdown"
+            tip="Copy conversation as Markdown"
             ariaLabel="Copy conversation"
             testId="conversation-copy-markdown-button"
           />

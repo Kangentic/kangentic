@@ -162,8 +162,7 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
             icon={ChevronUp}
             onClick={goToPrevious}
             disabled={matches.length === 0}
-            title="Previous match"
-            ariaLabel="Previous match"
+            tip="Previous match"
             size="small"
             testId="conversation-search-previous"
           />
@@ -171,8 +170,7 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
             icon={ChevronDown}
             onClick={goToNext}
             disabled={matches.length === 0}
-            title="Next match"
-            ariaLabel="Next match"
+            tip="Next match"
             size="small"
             testId="conversation-search-next"
           />

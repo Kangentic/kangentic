@@ -2,11 +2,11 @@ import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
 import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Workflow as WorkflowIcon } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
-import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
 import { ActivityMark } from '../../ActivityMark';
 import { HeaderActionButton } from '../../HeaderActionButton';
+import { HoverTip } from '../../HoverTip';
 import { IconSlot } from '../../IconSlot';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
@@ -198,9 +198,6 @@ export function TaskDetailHeader({
   const titleSpanRef = useRef<HTMLSpanElement>(null);
   const { projectId: hostProjectId } = useTaskDetailHost();
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
-  const closeCombo = useFormattedCombo('panel.close');
-  const browserCombo = useFormattedCombo('taskDetail.toggleBrowser');
-  const changesCombo = useFormattedCombo('taskDetail.toggleChanges');
 
   // Conversation availability, for disabling the pill/kebab item rather than
   // letting a click resolve to nothing. A live session (any state, not just
@@ -357,7 +354,7 @@ export function TaskDetailHeader({
               <HeaderActionButton
                 icon={task.worktree_path ? FolderGit2 : FolderGit}
                 onClick={() => window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!)}
-                title={task.worktree_path ? 'Open Worktree' : 'Open Folder'}
+                tip={task.worktree_path ? 'Open Worktree' : 'Open Folder'}
                 ariaLabel={task.worktree_path ? 'Open worktree folder' : 'Open project folder'}
                 testId="branch-pill"
               />
@@ -371,7 +368,8 @@ export function TaskDetailHeader({
                 icon={GitCompare}
                 onClick={onToggleChanges}
                 active={changesOpen}
-                title={`${changesOpen ? 'Hide' : 'Show'} changes (${changesCombo})`}
+                tip={changesOpen ? 'Hide changes' : 'Show changes'}
+                keys="taskDetail.toggleChanges"
                 ariaLabel="Toggle changes"
                 testId="changes-toggle"
               />
@@ -385,13 +383,8 @@ export function TaskDetailHeader({
                 icon={Globe}
                 onClick={onToggleBrowser}
                 active={browserOpen}
-                title={
-                  browserOpen
-                    ? `Hide browser (${browserCombo}). Kept alive until you close it.`
-                    : browserAlive
-                      ? `Show browser (${browserCombo}). Page kept.`
-                      : `Show browser (${browserCombo})`
-                }
+                tip={browserOpen ? 'Hide browser' : 'Show browser'}
+                keys="taskDetail.toggleBrowser"
                 ariaLabel="Toggle browser"
                 testId="browser-toggle"
               />
@@ -424,8 +417,8 @@ export function TaskDetailHeader({
                 icon={MessageSquare}
                 onClick={() => void openTaskConversation(task.id, hostProjectId || null)}
                 disabled={!conversationAvailable}
-                title={conversationAvailable ? 'View conversation' : 'No conversation history for this task yet'}
-                ariaLabel="View conversation"
+                tip="View conversation"
+                disabledReason="No conversation history for this task yet"
                 testId="conversation-pill"
               />
             </div>
@@ -440,7 +433,7 @@ export function TaskDetailHeader({
                 icon={WorkflowIcon}
                 onClick={onToggleWorkflow}
                 active={workflowPanelOpen}
-                title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
+                tip={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
                 ariaLabel="Toggle workflow"
                 testId="workflow-toggle"
               />
@@ -460,7 +453,7 @@ export function TaskDetailHeader({
                 <HeaderActionButton
                   icon={ActionIcon}
                   onClick={() => executeShortcut(action)}
-                  title={action.command}
+                  tip={action.command}
                   label={action.label}
                   testId={`shortcut-pill-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
                 />
@@ -516,30 +509,32 @@ export function TaskDetailHeader({
         {/* Divider + Pop out (tiled only) + Maximize + Close */}
         <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
         {onUndock && (
-          <button
-            onClick={onUndock}
-            data-testid="task-detail-undock"
-            aria-label="Pop out of tiling"
-            title="Pop out (float this window out of the tiled layout)"
-            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-          >
-            <PictureInPicture2 size={16} />
-          </button>
+          <HoverTip label="Pop out">
+            <button
+              onClick={onUndock}
+              data-testid="task-detail-undock"
+              aria-label="Pop out of tiling"
+              className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+            >
+              <PictureInPicture2 size={16} />
+            </button>
+          </HoverTip>
         )}
         <MaximizeToggleButton
           isMaximized={isMaximized}
           onToggle={onToggleMaximized}
           testId="task-detail-maximize"
         />
-        <button
-          onClick={onClose}
-          data-testid="task-detail-close"
-          aria-label="Close"
-          title={`Close (${closeCombo})`}
-          className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-        >
-          <X size={16} />
-        </button>
+        <HoverTip label="Close" keys="panel.close">
+          <button
+            onClick={onClose}
+            data-testid="task-detail-close"
+            aria-label="Close"
+            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+          >
+            <X size={16} />
+          </button>
+        </HoverTip>
       </div>
     </div>
   );

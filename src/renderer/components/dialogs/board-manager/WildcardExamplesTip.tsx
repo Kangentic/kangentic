@@ -15,16 +15,21 @@ import { TEXT_MATCH_WILDCARD_EXAMPLES } from '../../../../shared/final-line-matc
  *
  * The trigger is a real button, so a keyboard user opens the tip by focus, as
  * `HoverTip` does for a pointer, and a screen reader reads the plain-text
- * version below.
+ * version below as the button's description.
  */
 export function WildcardExamplesTip(): ReactElement {
   return (
-    <HoverTip label={wildcardExamplesText()} content={<WildcardExamplesPanel />} testId="edit-automation-wildcard-tip" className="inline-flex">
+    <HoverTip
+      label={wildcardExamplesText()}
+      header={{ icon: <Info />, title: 'Wildcard examples' }}
+      content={<WildcardExamplesGrid />}
+      testId="edit-automation-wildcard-tip"
+    >
       <button
         type="button"
         aria-label="Wildcard examples"
         data-testid="edit-automation-wildcard-info"
-        className="flex flex-shrink-0 cursor-help rounded text-fg-faint hover:text-fg-tertiary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="inline-flex flex-shrink-0 cursor-help rounded text-fg-faint hover:text-fg-tertiary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <Info size={13} aria-hidden="true" />
       </button>
@@ -32,28 +37,22 @@ export function WildcardExamplesTip(): ReactElement {
   );
 }
 
-/** The tip's panel. Spans throughout, since `HoverTip` renders it inside a span. */
-function WildcardExamplesPanel(): ReactElement {
+/** The tip's body: each pattern chip beside its rule. */
+function WildcardExamplesGrid(): ReactElement {
   return (
-    <span className="block">
-      <span className="flex items-center gap-2 border-b border-edge bg-surface-hover/40 px-3 py-2">
-        <Info size={13} className="flex-shrink-0 text-fg-muted" aria-hidden="true" />
-        <span className="text-xs font-semibold text-fg">Wildcard examples</span>
-      </span>
-      <span className="grid grid-cols-[max-content_1fr] items-center gap-x-3 gap-y-2 px-3 py-2.5">
-        {TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => (
-          <Fragment key={example.pattern}>
-            <code className="justify-self-start whitespace-pre rounded border border-edge-input bg-surface-control px-1.5 font-mono text-xs text-fg-secondary">
-              {example.pattern}
-            </code>
-            <span className="text-xs text-fg-tertiary">
-              {example.rule}
-              {example.sample !== null && <span className="text-fg-muted">, as in {example.sample}</span>}
-            </span>
-          </Fragment>
-        ))}
-      </span>
-    </span>
+    <div className="grid grid-cols-[max-content_1fr] items-center gap-x-3 gap-y-2">
+      {TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => (
+        <Fragment key={example.pattern}>
+          <code className="justify-self-start whitespace-pre rounded border border-edge-input bg-surface-control px-1.5 font-mono text-xs text-fg-secondary">
+            {example.pattern}
+          </code>
+          <span className="text-xs text-fg-tertiary">
+            {example.rule}
+            {example.sample !== null && <span className="text-fg-muted">, as in {example.sample}</span>}
+          </span>
+        </Fragment>
+      ))}
+    </div>
   );
 }
 

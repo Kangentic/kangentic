@@ -430,7 +430,7 @@ test.describe('knowledge graph', () => {
       await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
       const gone = page.locator('[data-testid="knowledge-graph-index-fact-transcript-gone"]');
       await expect(gone.locator('[data-testid="knowledge-graph-index-fact-transcript-gone-value"]')).toHaveText('414');
-      await expect(gone.locator('button[aria-label*="still searchable"]')).toHaveCount(1);
+      await expect(gone.getByRole('button', { name: /^About / })).toHaveAccessibleDescription(/still searchable/);
       // No failure line is rendered when there are none.
       await expect(page.locator('[data-testid="knowledge-graph-index-fact-failed"]')).toHaveCount(0);
     } finally {
@@ -730,7 +730,7 @@ test.describe('knowledge graph', () => {
       // Position is a ~33%-faithful reduction of 1024 dimensions; links are exact.
       const links = page.locator('[data-testid="knowledge-graph-index-fact-map"]');
       await expect(links).toContainText('Links');
-      await expect(links.locator('button[aria-label*="exact"]')).toHaveCount(1);
+      await expect(links.getByRole('button', { name: /^About / })).toHaveAccessibleDescription(/exact/);
     } finally {
       await browser.close();
     }
@@ -1207,9 +1207,9 @@ test.describe('knowledge graph', () => {
       // The submit glyph appears once there is TEXT. Enter is the button; this
       // is for discoverability and the mouse, and it names the agent.
       await expect(ask).toBeVisible();
-      await expect(ask).toHaveAttribute('aria-label', 'Ask Claude Code');
+      await expect(ask).toHaveAccessibleName('Ask Claude Code');
       await ask.hover();
-      await expect(page.locator('[data-testid="knowledge-graph-ask-tip"]')).toContainText('related work');
+      await expect(page.locator('[data-testid="knowledge-graph-ask-tip"]')).toHaveText('Ask Claude Code');
       expect(await answerCalls(page)).toHaveLength(0);
     } finally {
       await browser.close();
@@ -1219,7 +1219,7 @@ test.describe('knowledge graph', () => {
   test('the ask glyph\'s tip opens on keyboard focus and closes when focus leaves', async () => {
     // The tip used to open on pointer enter only, so someone tabbing to the
     // glyph was told nothing about who answers. Focus now opens it and blur
-    // closes it, and the words are ALSO in the trigger for a reader with
+    // closes it, and who answers is ALSO the glyph's own name for a reader with
     // neither a pointer nor sight of the tip, which is only mounted while open.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
     try {
@@ -1231,14 +1231,14 @@ test.describe('knowledge graph', () => {
       await input.fill('sphere fit');
       await expect(ask).toBeVisible();
       await expect(tip).toHaveCount(0);
-      // Closed, the words are still in the trigger (the button's sibling).
-      await expect(ask.locator('xpath=..')).toContainText('It reads the related work');
+      // Closed, the glyph still says who answers.
+      await expect(ask).toHaveAccessibleName('Ask Claude Code');
 
       // Tab from the box lands on the glyph, and the tip follows focus.
       await input.press('Tab');
       await expect(ask).toBeFocused();
       await expect(tip).toBeVisible();
-      await expect(tip).toContainText('related work');
+      await expect(tip).toHaveText('Ask Claude Code');
 
       // Shift+Tab back to the box moves focus off the glyph, and the tip goes.
       await page.keyboard.press('Shift+Tab');
@@ -2832,7 +2832,11 @@ test.describe('knowledge graph', () => {
       expect(toolbar.y).toBeGreaterThan(canvas.y + canvas.height / 2);
       expect(legendBox.y + legendBox.height).toBeLessThanOrEqual(toolbar.y);
 
-      // Escape closes the legend first and leaves the graph open.
+      // One Escape undoes one thing: the open tip first, then the legend, and
+      // the graph stays open.
+      await page.keyboard.press('Escape');
+      await expect(tip).toHaveCount(0);
+      await expect(legend).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(legend).toHaveCount(0);
       await expect(page.locator('[data-testid="knowledge-graph-page"]')).toBeVisible();

@@ -153,12 +153,12 @@ test.describe('Changes pop-out close does not reclaim the inline panel', () => {
       // "Show changes" over a detached window would be a lie.
       await firePopOutChanged(page, [CHANGES_POPOUT_KEY]);
       await expect(changesPanel).not.toBeVisible({ timeout: 10000 });
-      await expect(changesPill).toHaveAttribute('title', /^Hide changes/);
+      await expect(changesPill).toHaveAccessibleDescription(/^Hide changes/);
       expect(await changesOpenEntityIds(page)).toContain(TASK_ID);
 
       // Close the pop-out: the panel must NOT come back.
       await firePopOutChanged(page, []);
-      await expect(changesPill).toHaveAttribute('title', /^Show changes/, { timeout: 10000 });
+      await expect(changesPill).toHaveAccessibleDescription(/^Show changes/, { timeout: 10000 });
       await expect(changesPanel).not.toBeVisible();
       expect(await changesOpenEntityIds(page)).not.toContain(TASK_ID);
 
@@ -200,7 +200,7 @@ test.describe('Changes pop-out close does not reclaim the inline panel', () => {
 
       // Reopening the task shows the panel closed.
       await openTaskDetail(page);
-      await expect(changesPill).toHaveAttribute('title', /^Show changes/, { timeout: 10000 });
+      await expect(changesPill).toHaveAccessibleDescription(/^Show changes/, { timeout: 10000 });
       await expect(changesPanel).not.toBeVisible();
     } finally {
       await browser.close();
@@ -226,7 +226,7 @@ test.describe('Changes pop-out close does not reclaim the inline panel', () => {
       await firePopOutChanged(page, []);
 
       await expect(changesPanel).toBeVisible();
-      await expect(changesPill).toHaveAttribute('title', /^Hide changes/);
+      await expect(changesPill).toHaveAccessibleDescription(/^Hide changes/);
       expect(await changesOpenEntityIds(page)).toContain(TASK_ID);
     } finally {
       await browser.close();
