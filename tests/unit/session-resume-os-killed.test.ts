@@ -577,7 +577,7 @@ describe('resumeSuspendedSessions: scoped to the sessions a pty host crash took 
   // the unlisted record is resumed too; drop the `if (onlySessionIds)` arm
   // ahead of the orphan marking and the marking mocks fire.
 
-  /** The positional signature: ids sit behind six optional parameters. */
+  /** The ids ride the options object behind five optional parameters. */
   function resumeScoped(
     sessionManager: ReturnType<typeof makeSessionManager>,
     onlySessionIds: ReadonlySet<string> | undefined,
@@ -592,7 +592,7 @@ describe('resumeSuspendedSessions: scoped to the sessions a pty host crash took 
       undefined,
       undefined,
       undefined,
-      onlySessionIds,
+      { onlySessionIds },
     );
   }
 
@@ -737,7 +737,7 @@ describe('resumeSuspendedSessions: the resume re-checks its task under the task 
       undefined,
       undefined,
       undefined,
-      new Set(['rec-lost']),
+      { onlySessionIds: new Set(['rec-lost']) },
     );
   }
 

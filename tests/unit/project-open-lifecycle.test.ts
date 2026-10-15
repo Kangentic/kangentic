@@ -315,6 +315,7 @@ interface MockContext {
     applyConfigOnOpen: ReturnType<typeof vi.fn>;
     exportFromDb: ReturnType<typeof vi.fn>;
     getBoardProfiles: ReturnType<typeof vi.fn>;
+    getDefaultBaseBranchForPath: ReturnType<typeof vi.fn>;
     sendOpenWarnings: ReturnType<typeof vi.fn>;
   };
   currentProjectId: string | null;
@@ -346,6 +347,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       applyConfigOnOpen: vi.fn(() => []),
       exportFromDb: vi.fn(),
       getBoardProfiles: vi.fn(() => []),
+      getDefaultBaseBranchForPath: vi.fn(() => undefined),
       sendOpenWarnings: vi.fn(),
     },
     currentProjectId: null,
@@ -1212,11 +1214,14 @@ describe('ensureGitignore fire-and-forget on the open critical path', () => {
 // ---------------------------------------------------------------------------
 
 describe('recoverSessionsAfterPtyHostLoss', () => {
-  // resumeSuspendedSessions' tenth parameter is the scope: without it the
-  // recovery gather would also wake sessions the host never held. Red-green:
-  // drop `lostSessionIds` from the call in projects.ts and the first test goes
-  // red (the tenth argument is undefined).
-  const RESUME_ONLY_SESSION_IDS_ARGUMENT = 9;
+  // resumeSuspendedSessions' tenth parameter, its options, carries the scope:
+  // without it the recovery gather would also wake sessions the host never
+  // held. Red-green: drop `lostSessionIds` from the call in projects.ts and the
+  // first test goes red (`onlySessionIds` is undefined).
+  const RESUME_OPTIONS_ARGUMENT = 9;
+  const resumeScopeOf = (call: unknown[]): unknown => (
+    (call[RESUME_OPTIONS_ARGUMENT] as { onlySessionIds?: ReadonlySet<string> } | undefined)?.onlySessionIds
+  );
   // autoSpawnTasks' tenth parameter is its scope, for the same reason: an
   // unscoped pass would also restart a task whose agent exited earlier this run.
   // It is `{ taskIds, lostSessionIds }`: the lost sessions' tasks, and the lost
@@ -1253,10 +1258,10 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
     expect(calls[0][1]).toBe(projectA.path);
     expect(calls[0][2]).toBe(context.sessionManager);
     expect(calls[0][4]).toBe('claude');
-    expect(calls[0][RESUME_ONLY_SESSION_IDS_ARGUMENT]).toBe(lostInA);
+    expect(resumeScopeOf(calls[0])).toBe(lostInA);
     expect(calls[1][0]).toBe('project-B');
     expect(calls[1][4]).toBe('codex');
-    expect(calls[1][RESUME_ONLY_SESSION_IDS_ARGUMENT]).toBe(lostInB);
+    expect(resumeScopeOf(calls[1])).toBe(lostInB);
   });
 
   it('then starts fresh only the tasks whose sessions the loss took down, the way startup does', async () => {
