@@ -1418,7 +1418,6 @@ describe('the options each recovery pass hands resumeSuspendedSessions (recovery
     taskId: 'task-1',
     taskTitle: 'Resume after the cleanup window',
     lastActiveAt: '2026-07-01T09:30:00.000Z',
-    messageDropped: false,
   };
 
   async function waitForRecoveryToFinish(): Promise<void> {

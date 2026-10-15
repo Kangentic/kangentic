@@ -137,8 +137,6 @@ export interface SpawnOutcome {
    * to it on this move.
    */
   recapOnly: boolean;
-  /** True when the message the resume carried was not sent. */
-  messageDropped: boolean;
   /**
    * True when the spawn ran fresh with the task template as its prompt, so the
    * message the resume carried is not in it. The caller delivers that message
@@ -580,7 +578,6 @@ export class TransitionEngine {
     // prove resumes as before.
     let startOver: SpawnOutcome['startOver'] = null;
     let recapOnly = false;
-    let messageDropped = false;
     let expiredNotice: ConversationExpiredNotice | null = null;
     if (intent.mode === 'resume' && resumedAgentSessionId) {
       const { lineage, lastActiveAt } = resolveResumeLineage({
@@ -649,7 +646,6 @@ export class TransitionEngine {
         }, this.services.recapSources);
         if (onMainSession) {
           recapOnly = true;
-          messageDropped = Boolean(resumePrompt?.trim());
           intent = { ...freshIntent, prompt: recap };
         } else {
           // An empty recap left no room beside the column's prompt.
@@ -660,7 +656,6 @@ export class TransitionEngine {
           taskId: task.id,
           taskTitle: task.title,
           lastActiveAt,
-          messageDropped,
         };
       }
     }
@@ -842,7 +837,7 @@ export class TransitionEngine {
     // message out. A recap-only start withholds it on purpose instead.
     const resumePromptUnsent = !canResume && !recapOnly
       && Boolean(resumePrompt?.trim()) && Boolean(spawnIntentOptions.promptTemplate);
-    return { startOver, recapOnly, messageDropped, resumePromptUnsent };
+    return { startOver, recapOnly, resumePromptUnsent };
   }
 
 }

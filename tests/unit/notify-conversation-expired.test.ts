@@ -77,7 +77,6 @@ const NOTICE: ConversationExpiredNotice = {
   taskId: 'task-1',
   taskTitle: 'Resume me',
   lastActiveAt: '2026-07-01T09:30:00.000Z',
-  messageDropped: true,
 };
 
 function makeContext(mainWindow: object | null): IpcContext {
@@ -147,7 +146,7 @@ describe('the pending conversation-expired queue', () => {
   });
 
   it('keeps only the latest notice for a task that started over twice', () => {
-    const later = { ...NOTICE, lastActiveAt: '2026-08-01T09:30:00.000Z', messageDropped: false };
+    const later = { ...NOTICE, lastActiveAt: '2026-08-01T09:30:00.000Z' };
     const otherTask = { ...NOTICE, taskId: 'task-2', taskTitle: 'Another' };
     queueConversationExpired(NOTICE);
     queueConversationExpired(otherTask);

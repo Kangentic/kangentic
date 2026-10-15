@@ -166,7 +166,6 @@ describe('createTransitionEngine: the conversation-expired notice', () => {
     taskId: 'task-1',
     taskTitle: 'Resume me',
     lastActiveAt: '2026-07-01T09:30:00.000Z',
-    messageDropped: true,
   };
 
   it('hands the engine a notifier that is not called until a conversation expires', () => {

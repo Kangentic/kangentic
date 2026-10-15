@@ -12,8 +12,7 @@
  *   (`resuming: true`), the documented orphan-recovery contract.
  * - The inserted session record keeps the recap as its `prompt`.
  * - `onConversationExpired` is told once, with the task and the date the deleted
- *   conversation last ran, and `messageDropped: false` (recovery carries no
- *   message to drop). A never-started or ordinary resume never calls it.
+ *   conversation last ran. A never-started or ordinary resume never calls it.
  * - The new session is marked a recap session (`markRecapSession`), so its first
  *   turn end runs no On agent turn end rows. Main and isolated sessions alike:
  *   startup builds the recap as the whole prompt for both.
@@ -31,7 +30,7 @@
  *
  * Red-green: change `resuming: !input.prompt` to `true`, delete the
  * `markRecapSession(newSession.id)` line, delete the `onConversationExpired?.(...)`
- * call or change its `messageDropped`, drop `prompt: input.prompt ?? null` from
+ * call or change its fields, drop `prompt: input.prompt ?? null` from
  * the insert, delete `boardDefaultBaseBranch,` from the `prepareAgentSpawn`
  * input, delete `recapSources,` from it, change `createExpiredRecapSources(projectId)`
  * to another id, or move it inside the per-record loop, and the matching test
@@ -336,14 +335,12 @@ describe('resumeSuspendedSessions: a recovered session whose conversation expire
     await runRecovery(makeSessionManager(), { onConversationExpired });
 
     expect(onConversationExpired).toHaveBeenCalledTimes(1);
-    // Exact, so a field added, dropped or renamed fails: recovery carries no
-    // message, so there is none to drop.
+    // Exact, so a field added, dropped or renamed fails.
     expect(onConversationExpired).toHaveBeenCalledWith({
       projectId: 'proj-1',
       taskId: 'task-1',
       taskTitle: 'Resume after the cleanup window',
       lastActiveAt: EXPIRED_LAST_ACTIVE_AT,
-      messageDropped: false,
     });
   });
 

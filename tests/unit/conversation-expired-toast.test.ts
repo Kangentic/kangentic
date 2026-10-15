@@ -1,7 +1,7 @@
 /**
  * `showConversationExpiredNotices` (src/renderer/lib/conversation-expired-toast.ts)
  * takes a project's queued expired-conversation notices from main and toasts
- * them as one info toast.
+ * each as its own one-sentence info toast.
  *
  * Behaviors pinned:
  *   - A preload without `tasks.takeConversationExpired` is a quiet no-op: it
@@ -9,9 +9,8 @@
  *     failure to report).
  *   - A rejected take is swallowed with a `console.warn` and toasts nothing: the
  *     toast is advisory, so it must never surface as an unhandled rejection.
- *   - One or more notices for the project that is still current become exactly
- *     one toast: variant 'info', 12000 ms, message from
- *     `describeConversationsExpired`.
+ *   - Each notice for the project that is still current becomes its own toast:
+ *     variant 'info', 12000 ms, message from `describeConversationExpired`.
  *   - Notices taken while the user moved to another project (or to none) are
  *     dropped, since they name tasks of a board no longer on screen.
  *   - An empty take adds nothing.
@@ -24,10 +23,11 @@
  * Red-green: drop the `!takeConversationExpired` guard and the absent-method case
  * fails (the call throws inside the try, and the warn it logs is asserted
  * against); drop the try/catch and the rejection case fails; drop the
- * `notices.length === 0` return and the empty case fails (an empty list would
- * toast "0 tasks started a new conversation"); drop the current-project check and
- * the switched-away cases fail; change the variant or duration and the toast case
- * fails.
+ * `notices.length === 0` return and the empty case still passes (the loop adds
+ * nothing for an empty list), so that guard is only an early exit; drop the
+ * current-project check and the switched-away cases fail; change the variant or
+ * duration and the toast cases fail; toast only `notices[0]` and the
+ * several-notices case fails.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -51,7 +51,7 @@ vi.mock('../../src/renderer/stores/project-cache', () => ({
 }));
 
 import { showConversationExpiredNotices } from '../../src/renderer/lib/conversation-expired-toast';
-import { describeConversationsExpired } from '../../src/renderer/lib/conversation-expired';
+import { describeConversationExpired } from '../../src/renderer/lib/conversation-expired';
 import { useProjectStore } from '../../src/renderer/stores/project-store';
 import { useToastStore } from '../../src/renderer/stores/toast-store';
 import type { ConversationExpiredNotice, Project } from '../../src/shared/types';
@@ -64,7 +64,6 @@ const NOTICE: ConversationExpiredNotice = {
   taskId: 'task-1',
   taskTitle: 'Resume me',
   lastActiveAt: null,
-  messageDropped: false,
 };
 
 function makeProject(id: string): Project {
@@ -147,23 +146,25 @@ describe('showConversationExpiredNotices', () => {
     expect(toasts).toHaveLength(1);
     expect(toasts[0].variant).toBe('info');
     expect(toasts[0].duration).toBe(12000);
-    expect(toasts[0].message).toBe(describeConversationsExpired([NOTICE]));
-    expect(toasts[0].message).toBe('"Resume me" started a new conversation. Its previous one had expired.');
+    expect(toasts[0].message).toBe(describeConversationExpired(NOTICE));
+    expect(toasts[0].message).toBe('"Resume me" started a new conversation because its previous one expired.');
   });
 
-  it('folds several notices into one toast', async () => {
+  it('toasts each of several notices on its own, one sentence each', async () => {
     const notices = [
       NOTICE,
-      { ...NOTICE, taskId: 'task-2', taskTitle: 'Another', messageDropped: true },
+      { ...NOTICE, taskId: 'task-2', taskTitle: 'Another', lastActiveAt: '2026-08-16T14:00:00.000Z' },
     ];
     stubTake(vi.fn(async () => notices));
 
     await showConversationExpiredNotices(PROJECT_ID);
 
     const toasts = useToastStore.getState().toasts;
-    expect(toasts).toHaveLength(1);
-    expect(toasts[0].message).toBe(describeConversationsExpired(notices));
-    expect(toasts[0].message).toContain('2 tasks started a new conversation');
+    expect(toasts.map((toast) => toast.message)).toEqual(notices.map((notice) => describeConversationExpired(notice)));
+    // No summary: every message names its own task.
+    expect(toasts[0].message).toContain('"Resume me"');
+    expect(toasts[1].message).toContain('"Another"');
+    expect(toasts.every((toast) => toast.variant === 'info' && toast.duration === 12000)).toBe(true);
   });
 
   it('adds no toast when the take comes back empty', async () => {

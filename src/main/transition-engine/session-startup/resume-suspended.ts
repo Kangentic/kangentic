@@ -617,8 +617,6 @@ export async function resumeSuspendedSessions(
             taskId: input.task.id,
             taskTitle: input.task.title,
             lastActiveAt: input.expiredLastActiveAt,
-            // Recovery carries no message, so there is none to drop.
-            messageDropped: false,
           });
         }
         return newSession;

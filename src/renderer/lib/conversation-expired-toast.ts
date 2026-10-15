@@ -1,7 +1,7 @@
 import type { ConversationExpiredNotice } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
-import { describeConversationsExpired } from './conversation-expired';
+import { describeConversationExpired } from './conversation-expired';
 
 /**
  * Take a project's queued expired-conversation notices from main and toast
@@ -32,11 +32,14 @@ export async function showConversationExpiredNotices(projectId: string): Promise
   // of a board no longer on screen, so they are dropped rather than toasted
   // over another project's board.
   if (useProjectStore.getState().currentProject?.id !== projectId) return;
-  // Info, not a warning: nothing failed, and each agent is already summarizing
-  // where its work stands.
-  useToastStore.getState().addToast({
-    message: describeConversationsExpired(notices),
-    variant: 'info',
-    duration: 12000,
-  });
+  // One toast per task. Info, not a warning: nothing failed, and each agent is
+  // already summarizing where its work stands. The toast store's own limit
+  // drops the oldest when a launch finds many tasks expired at once.
+  for (const notice of notices) {
+    useToastStore.getState().addToast({
+      message: describeConversationExpired(notice),
+      variant: 'info',
+      duration: 12000,
+    });
+  }
 }

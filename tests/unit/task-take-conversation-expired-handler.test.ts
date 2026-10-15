@@ -168,7 +168,6 @@ function makeNotice(taskId: string, overrides: Partial<ConversationExpiredNotice
     taskId,
     taskTitle: `Task ${taskId}`,
     lastActiveAt: '2026-07-01T09:30:00.000Z',
-    messageDropped: false,
     ...overrides,
   };
 }

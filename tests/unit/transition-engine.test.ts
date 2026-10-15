@@ -1394,7 +1394,7 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
 
       // Not recap-only: a conversation that never started has nothing to recap,
       // so the downgrade is a plain fresh spawn and the message is still owed.
-      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, messageDropped: false, resumePromptUnsent: true });
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, resumePromptUnsent: true });
       expect(capturedOptions?.resume).toBe(false);
       expect(capturedOptions?.prompt).toContain('Fix login flow');
       expect(capturedOptions?.prompt).not.toContain('/code-review');
@@ -1414,7 +1414,7 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
         null, true, '/code-review', undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, resumePromptUnsent: false });
       expect(capturedOptions?.prompt).toBe('/code-review');
     });
   });
@@ -1506,7 +1506,7 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
 
     // recapOnly: the recap IS the prompt and the message is withheld on purpose,
     // so it is not "unsent" in the sense `resumePromptUnsent` reports.
-    expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: true, resumePromptUnsent: false });
+    expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.sessionId).not.toBe(AGENT_SESSION_ID);
     expect(capturedOptions?.prompt).toContain('deleted it after its retention period');
@@ -1525,7 +1525,6 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
       taskId: 'task-abc-1',
       taskTitle: 'Fix login flow',
       lastActiveAt: LAST_ACTIVE_AT,
-      messageDropped: true,
     }]);
   });
 
@@ -1557,13 +1556,12 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
 
     // skipPromptTemplate is true, so the message IS the fresh prompt (it is the
     // last thing in it): nothing was left out for the caller to deliver.
-    expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+    expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.prompt).toContain('for context');
     expect(capturedOptions?.prompt).not.toContain('then wait');
     expect(capturedOptions?.prompt?.endsWith('/code-review')).toBe(true);
     expect(notices).toHaveLength(1);
-    expect(notices[0].messageDropped).toBe(false);
   });
 
   it('sends no notice when the spawn itself fails', async () => {
@@ -1596,7 +1594,7 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
     );
 
     // A resume that went ahead carries the message as its own prompt.
-    expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+    expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: false });
     expect(capturedOptions?.resume).toBe(true);
     expect(capturedOptions?.sessionId).toBe(AGENT_SESSION_ID);
     expect(capturedOptions?.prompt).toBe('/code-review');
