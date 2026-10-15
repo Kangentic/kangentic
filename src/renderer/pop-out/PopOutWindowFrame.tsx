@@ -95,6 +95,7 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
               type="button"
               onClick={() => window.electronAPI.window.minimize()}
               className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+              aria-label="Minimize"
               title="Minimize"
             >
               <Minus size={16} />
@@ -103,6 +104,7 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
               type="button"
               onClick={() => window.electronAPI.window.maximize()}
               className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+              aria-label="Maximize"
               title="Maximize"
             >
               <Square size={14} />
@@ -111,6 +113,7 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
               type="button"
               onClick={() => window.electronAPI.window.close()}
               className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
+              aria-label="Close"
               title="Close"
               data-testid="popout-close"
             >

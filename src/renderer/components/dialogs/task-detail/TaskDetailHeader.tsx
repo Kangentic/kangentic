@@ -286,6 +286,7 @@ export function TaskDetailHeader({
                   ? 'text-active hover:bg-surface-hover'
                   : 'text-fg-faint hover:bg-surface-hover hover:text-fg-tertiary'
           }`}
+          aria-label={isSessionActive || isQueued ? 'Pause session' : 'Resume session'}
           title={toggling ? 'Working...' : isQueued ? 'Queued (click to pause)' : isSessionActive ? 'Pause session' : 'Resume session'}
         >
           <PauseButtonIcon
@@ -533,6 +534,7 @@ export function TaskDetailHeader({
         <button
           onClick={onClose}
           data-testid="task-detail-close"
+          aria-label="Close"
           title={`Close (${closeCombo})`}
           className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
         >

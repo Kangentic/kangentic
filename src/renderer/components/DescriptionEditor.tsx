@@ -325,6 +325,7 @@ export function DescriptionEditor({
           // on the scrollbar track, which read as one broken control - so the
           // top simply matches it.
           className={`absolute top-3 right-3 z-10 ${toggleButtonClass(showPreview)}`}
+          aria-label={showPreview ? 'Back to writing markdown' : 'Preview rendered markdown'}
           title={showPreview ? 'Back to writing markdown' : 'Preview rendered markdown'}
           aria-pressed={showPreview}
           data-testid="description-preview-toggle"

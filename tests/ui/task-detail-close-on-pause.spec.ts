@@ -184,7 +184,7 @@ async function openDetailWindow(page: Page) {
 
   const dialog = page.locator('[data-testid="task-detail-dialog"]');
   await expect(dialog).toBeVisible({ timeout: 10000 });
-  await expect(dialog.locator('button[title="Pause session"]')).toBeVisible({ timeout: 10000 });
+  await expect(dialog.locator('button[aria-label="Pause session"]')).toBeVisible({ timeout: 10000 });
   return dialog;
 }
 
@@ -257,7 +257,7 @@ test('pausing from the header button closes the detail window', async () => {
     const dialog = await openDetailWindow(page);
     await recordKillCalls(page);
 
-    await dialog.locator('button[title="Pause session"]').click();
+    await dialog.locator('button[aria-label="Pause session"]').click();
 
     // The window animates out, so poll rather than asserting on the next tick.
     await expect(dialog).toBeHidden({ timeout: 10000 });
@@ -290,7 +290,7 @@ test('pausing releases the terminal-ownership claim so the bottom panel can recl
     // Baseline: the open window holds the claim.
     await expect.poll(() => readDialogSessionIds(page), { timeout: 10000 }).toContain(SESSION_ID);
 
-    await dialog.locator('button[title="Pause session"]').click();
+    await dialog.locator('button[aria-label="Pause session"]').click();
     await expect(dialog).toBeHidden({ timeout: 10000 });
 
     // The claim is released once the window actually unmounts, a beat after
@@ -316,7 +316,7 @@ test('the window closes without waiting for the suspend to resolve', async () =>
       };
     });
 
-    await dialog.locator('button[title="Pause session"]').click();
+    await dialog.locator('button[aria-label="Pause session"]').click();
 
     // Comfortably below the 2500ms suspend and well above the 150ms exit
     // animation, so this discriminates eager from chained without being tight.
@@ -382,7 +382,7 @@ test('the closing window never flashes the pause/resume prompt or blanks the ter
       };
 
       recordTerminal();
-      const button = dialogNode()?.querySelector('button[title="Pause session"]');
+      const button = dialogNode()?.querySelector('button[aria-label="Pause session"]');
       (button as HTMLButtonElement).click();
 
       checkPrompt();
@@ -483,7 +483,7 @@ test('pausing from the kebab menu closes the detail window', async () => {
     const dialog = await openDetailWindow(page);
     await recordKillCalls(page);
 
-    await dialog.locator('button[title="Actions"]').click();
+    await dialog.locator('button[aria-label="Actions"]').click();
     // The kebab popover portals to document.body, so it is not inside the
     // dialog: scope by its own testid rather than a page-global locator.
     const menuItem = page.locator('[data-testid="toggle-session-btn"]');
@@ -573,7 +573,7 @@ async function tileTwoThenClose(page: Page, how: 'pause' | 'x'): Promise<LayoutS
     .toBe(2);
 
   const closePane = async (pane: ReturnType<typeof page.locator>) => {
-    if (how === 'pause') await pane.locator('button[title="Pause session"]').click();
+    if (how === 'pause') await pane.locator('button[aria-label="Pause session"]').click();
     else await pane.locator('[data-testid="task-detail-close"]').click();
   };
 
@@ -696,7 +696,7 @@ test('a failed suspend still closes the window but surfaces the error', async ()
       };
     });
 
-    await dialog.locator('button[title="Pause session"]').click();
+    await dialog.locator('button[aria-label="Pause session"]').click();
 
     const toast = page.locator('[data-testid="toast"]', { hasText: 'Failed to suspend session' });
     await expect(toast).toBeVisible({ timeout: 10000 });

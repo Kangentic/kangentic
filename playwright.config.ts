@@ -151,7 +151,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npx vite --port ${vitePort}`,
+    // --strictPort: findFreePort only probes, so two worktrees running UI specs at once can
+    // both pick the same port. Without it Vite quietly binds the next port up while
+    // Playwright waits on the probed one, and the run tests the OTHER worktree's renderer.
+    // Strict, the loser exits and the run fails loudly instead of passing on foreign code.
+    command: `npx vite --port ${vitePort} --strictPort`,
     port: vitePort,
     reuseExistingServer: reuseServer,
     timeout: 60000,

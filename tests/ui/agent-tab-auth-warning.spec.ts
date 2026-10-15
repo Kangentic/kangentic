@@ -96,7 +96,7 @@ async function openAgentSettingsTab(page: Page, agentId: string): Promise<void> 
   }, agentId);
 
   const welcomeButton = page.locator('[data-testid="welcome-open-project"]');
-  const sidebarButton = page.locator('button[title="Open folder as project"]');
+  const sidebarButton = page.locator('[data-testid="sidebar-new-project-button"]');
 
   if (await welcomeButton.isVisible()) {
     await welcomeButton.click();

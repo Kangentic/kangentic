@@ -543,7 +543,7 @@ test.describe('terminal panel reveal', () => {
     try {
       const container = page.locator(PANEL_CONTAINER);
       await expect(container).toHaveClass(/transition-\[height\]/, { timeout: 5000 });
-      await page.locator('button[title^="Collapse terminal panel"]').click();
+      await page.locator('button[aria-label="Collapse terminal panel"]').click();
       await page.locator(SESSION_PANE).waitFor({ state: 'detached', timeout: 5000 });
 
       // Expand, yield one microtask so React commits it, then leave for Backlog in the same
@@ -551,7 +551,7 @@ test.describe('terminal panel reveal', () => {
       // flight. The document timeline advances only between frames, so the transition is
       // still running when the switch lands, however loaded the runner is.
       const expandState = await page.evaluate(async () => {
-        const expandButton = document.querySelector<HTMLElement>('button[title^="Expand terminal panel"]');
+        const expandButton = document.querySelector<HTMLElement>('button[aria-label="Expand terminal panel"]');
         const backlogToggle = document.querySelector<HTMLElement>('[data-testid="view-toggle-backlog"]');
         const panelContainer = document.querySelector<HTMLElement>('[data-testid="terminal-panel-container"]');
         if (!expandButton || !backlogToggle || !panelContainer) throw new Error('panel controls not rendered');
@@ -581,7 +581,7 @@ test.describe('terminal panel reveal', () => {
     try {
       const container = page.locator(PANEL_CONTAINER);
       await expect(container).toHaveClass(/transition-\[height\]/, { timeout: 5000 });
-      await page.locator('button[title^="Collapse terminal panel"]').click();
+      await page.locator('button[aria-label="Collapse terminal panel"]').click();
       await page.locator(SESSION_PANE).waitFor({ state: 'detached', timeout: 5000 });
       await waitForNoHeightTransition(page);
       await installPaneAdditionRecorder(page);
@@ -595,7 +595,7 @@ test.describe('terminal panel reveal', () => {
       // about, and it is awaited here so the case cannot end before it has been delivered.
       const sequence = await page.evaluate(async () => {
         const panelContainer = document.querySelector<HTMLElement>('[data-testid="terminal-panel-container"]');
-        const expandButton = document.querySelector<HTMLElement>('button[title^="Expand terminal panel"]');
+        const expandButton = document.querySelector<HTMLElement>('button[aria-label="Expand terminal panel"]');
         if (!panelContainer || !expandButton) throw new Error('panel controls not rendered');
         expandButton.click();
         await Promise.resolve();
@@ -609,7 +609,7 @@ test.describe('terminal panel reveal', () => {
         const expandSettled = expandTransition
           ? expandTransition.finished.then(() => 'finished', () => 'cancelled')
           : Promise.resolve('none');
-        const collapseButton = document.querySelector<HTMLElement>('button[title^="Collapse terminal panel"]');
+        const collapseButton = document.querySelector<HTMLElement>('button[aria-label="Collapse terminal panel"]');
         if (!collapseButton) throw new Error('collapse control not rendered');
         collapseButton.click();
         await Promise.resolve();
@@ -635,7 +635,7 @@ test.describe('terminal panel reveal', () => {
       expect(await readPaneAdditions(page)).toBe(0);
 
       // The recorder works and the panel is not stuck: a later expand mounts the terminal.
-      await page.locator('button[title^="Expand terminal panel"]').click();
+      await page.locator('button[aria-label="Expand terminal panel"]').click();
       await expect(page.locator(SESSION_PANE)).toBeAttached({ timeout: 5000 });
       expect(await readPaneAdditions(page)).toBeGreaterThanOrEqual(1);
     } finally {
@@ -648,7 +648,7 @@ test.describe('terminal panel reveal', () => {
     try {
       const container = page.locator(PANEL_CONTAINER);
       await expect(container).toHaveClass(/transition-\[height\]/, { timeout: 5000 });
-      await page.locator('button[title^="Collapse terminal panel"]').click();
+      await page.locator('button[aria-label="Collapse terminal panel"]').click();
       await page.locator(SESSION_PANE).waitFor({ state: 'detached', timeout: 5000 });
       await waitForNoHeightTransition(page);
 
@@ -658,7 +658,7 @@ test.describe('terminal panel reveal', () => {
       // would fit at a height the panel is still moving away from.
       const expandState = await page.evaluate((paneSelector) => {
         const panelContainer = document.querySelector<HTMLElement>('[data-testid="terminal-panel-container"]');
-        const expandButton = document.querySelector<HTMLElement>('button[title^="Expand terminal panel"]');
+        const expandButton = document.querySelector<HTMLElement>('button[aria-label="Expand terminal panel"]');
         if (!panelContainer || !expandButton) throw new Error('panel controls not rendered');
         const pageWindow = window as unknown as {
           __paneMountState?: { capturedTransitionState: string; heightTransitionRunning: boolean };
@@ -818,12 +818,12 @@ test.describe('terminal panel reveal', () => {
     const { browser, page } = await launch();
     try {
       const container = page.locator(PANEL_CONTAINER);
-      await page.locator('button[title^="Collapse terminal panel"]').click();
+      await page.locator('button[aria-label="Collapse terminal panel"]').click();
       await expect(container).toHaveAttribute('data-collapsed', 'true');
       await expect
         .poll(async () => Math.abs((await readPanelContainerHeight(page)) - COLLAPSED_STRIP_HEIGHT), { timeout: 5000 })
         .toBeLessThanOrEqual(2);
-      await expect(page.locator('button[title^="Expand terminal panel"]')).toBeVisible();
+      await expect(page.locator('button[aria-label="Expand terminal panel"]')).toBeVisible();
     } finally {
       await browser.close();
     }
@@ -929,9 +929,9 @@ test.describe('terminal panel reveal', () => {
       // Proves the store is stale, which is what a full-object write would carry back to main.
       expect((await readStoreGlobalTerminal(page)).panelHeight).toBe(loadedHeight);
 
-      await page.locator('button[title^="Collapse terminal panel"]').click();
+      await page.locator('button[aria-label="Collapse terminal panel"]').click();
       await expect(container).toHaveAttribute('data-collapsed', 'true');
-      await page.locator('button[title^="Expand terminal panel"]').click();
+      await page.locator('button[aria-label="Expand terminal panel"]').click();
       await expect(container).toHaveAttribute('data-collapsed', 'false');
 
       // The write sits in the state updater, which has run by the time `data-collapsed` flips,
@@ -956,10 +956,10 @@ test.describe('terminal panel reveal', () => {
       // Make the store disagree with main in the direction a revert would show. Collapsing
       // writes true to main and leaves the store at false. A refresh then brings the store to
       // true, and expanding writes false to main, so the store now reads the stale true.
-      await page.locator('button[title^="Collapse terminal panel"]').click();
+      await page.locator('button[aria-label="Collapse terminal panel"]').click();
       await expect(container).toHaveAttribute('data-collapsed', 'true');
       await reloadConfigStore(page);
-      await page.locator('button[title^="Expand terminal panel"]').click();
+      await page.locator('button[aria-label="Expand terminal panel"]').click();
       await expect(container).toHaveAttribute('data-collapsed', 'false');
       // Wait for the expand to rest, so the handle is read where it stays.
       await waitForNoHeightTransition(page);
@@ -991,7 +991,7 @@ test.describe('terminal panel reveal', () => {
         .poll(async () => Math.abs((await readPanelContainerHeight(page)) - COLLAPSED_STRIP_HEIGHT), { timeout: 5000 })
         .toBeLessThanOrEqual(2);
       // Visibility ignores the container's clip, so the height above is what proves the strip.
-      await expect(page.locator('button[title^="Expand terminal panel"]')).toBeVisible();
+      await expect(page.locator('button[aria-label="Expand terminal panel"]')).toBeVisible();
 
       // Releasing the arm expands it again, which shows the hold was the restore and not a
       // collapse the user made.

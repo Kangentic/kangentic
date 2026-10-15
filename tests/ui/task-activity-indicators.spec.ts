@@ -357,7 +357,7 @@ test.describe('Task Activity Indicators', () => {
         await thinkPage.locator('text=Test Initializing Task').first().click();
         await thinkPage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
 
-        await thinkPage.locator('[title="Actions"]').click();
+        await thinkPage.locator('[aria-label="Actions"]').click();
 
         const editButton = thinkPage.locator('button:has-text("Edit")').filter({ has: thinkPage.locator('.lucide-pencil') });
         await expect(editButton).toBeVisible();
@@ -1399,7 +1399,7 @@ test.describe('Task Activity Indicators', () => {
         const dialog = page.locator('[data-testid="task-detail-dialog"]');
         await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-        const pauseButton = dialog.locator('button[title="Pause session"]');
+        const pauseButton = dialog.locator('button[aria-label="Pause session"]');
         await expect(pauseButton).toBeVisible({ timeout: 10000 });
         // Active: the rotating ring with the pause centered inside it. Ring and bars are one
         // packaged mark now, so the mark's identity carries both facts.
@@ -1418,7 +1418,7 @@ test.describe('Task Activity Indicators', () => {
         const dialog = page.locator('[data-testid="task-detail-dialog"]');
         await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-        const pauseButton = dialog.locator('button[title="Pause session"]');
+        const pauseButton = dialog.locator('button[aria-label="Pause session"]');
         await expect(pauseButton).toBeVisible({ timeout: 10000 });
         // Idle: the static amber ring + the centered pause; the ring does not rotate.
         await expect(pauseButton.locator('[data-mark="control-pause-idle"]')).toBeVisible();
@@ -1436,7 +1436,7 @@ test.describe('Task Activity Indicators', () => {
         const dialog = page.locator('[data-testid="task-detail-dialog"]');
         await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-        const pauseButton = dialog.locator('button[title="Pause session"]');
+        const pauseButton = dialog.locator('button[aria-label="Pause session"]');
         await expect(pauseButton).toBeVisible({ timeout: 10000 });
         // Permission maps to idle: the static amber ring, never the rotating one.
         await expect(pauseButton.locator('[data-mark="control-pause-idle"]')).toBeVisible();
@@ -1505,7 +1505,7 @@ test.describe('Task Activity Indicators', () => {
         // Header: a muted (grey) launch spinner - still a lucide Loader2, since "waiting to
         // start" is not agent activity and the branding set has no loading mark - with no
         // activity ring at all yet (the agent has not started).
-        const pauseButton = dialog.locator('button[title="Pause session"]');
+        const pauseButton = dialog.locator('button[aria-label="Pause session"]');
         await expect(pauseButton.locator('.lucide-loader-circle')).toBeVisible();
         await expect(pauseButton.locator('[data-mark^="control-pause-"]')).toHaveCount(0);
       } finally {

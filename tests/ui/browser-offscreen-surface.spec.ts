@@ -220,7 +220,7 @@ test.describe('closing an offscreen surface', () => {
     await pushOffscreenSurfaces(sharedPage, [TASK_ID]);
     await expect(dialog.locator('[data-testid="browser-toggle-alive"]')).toHaveCount(1);
 
-    await dialog.locator('button[title="Actions"]').first().click();
+    await dialog.locator('button[aria-label="Actions"]').first().click();
     await sharedPage.locator('[data-testid="kebab-close-browser"]').click();
 
     await expect.poll(async () => sharedPage.evaluate(() => (
@@ -256,7 +256,7 @@ test.describe('closing an offscreen surface', () => {
     });
     await expect(dialog.locator('[data-testid="browser-toggle-alive"]')).toHaveCount(1);
 
-    await dialog.locator('button[title="Actions"]').first().click();
+    await dialog.locator('button[aria-label="Actions"]').first().click();
     await sharedPage.locator('[data-testid="kebab-close-browser"]').click();
 
     await expect.poll(async () => sharedPage.evaluate(() => (

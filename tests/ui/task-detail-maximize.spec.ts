@@ -172,14 +172,14 @@ test.describe('Task Detail: maximize / restore', () => {
     // Starts windowed (running session -> floating state): action is "Maximize",
     // frame has rounded corners. The dialog content is always w-full h-full inside
     // the frame - sizing is expressed on the frame, not the content div.
-    await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
     await expect(frame).toHaveClass(/rounded-lg/);
     await expect(frame).not.toHaveClass(/rounded-none/);
 
     // Maximize -> frame fills the window-overlay area (between title bar and status
     // bar), corners squared so the border meets the overlay edges flush.
     await maximizeButton.click();
-    await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
     await expect(frame).toHaveClass(/rounded-none/);
     await expect(frame).not.toHaveClass(/rounded-lg/);
     // The window overlay is always top-10 bottom-9 (between app chrome) in the
@@ -190,16 +190,16 @@ test.describe('Task Detail: maximize / restore', () => {
 
     // Restore -> frame back to floating with rounded corners.
     await maximizeButton.click();
-    await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
     await expect(frame).toHaveClass(/rounded-lg/);
     await expect(frame).not.toHaveClass(/rounded-none/);
 
     // Hotkey: Ctrl/Cmd+Shift+M toggles maximize (terminal-safe combo).
     await page.keyboard.press('Control+Shift+M');
-    await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
     await expect(frame).toHaveClass(/rounded-none/);
     await page.keyboard.press('Control+Shift+M');
-    await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
     await expect(frame).toHaveClass(/rounded-lg/);
 
     // Hotkey: Ctrl/Cmd+Shift+W closes the window (terminal-safe combo).
@@ -281,20 +281,20 @@ test.describe('Task Detail: maximize / restore', () => {
     // The maximize button is surfaced in the edit header.
     const maximizeButton = page.locator('[data-testid="task-detail-maximize"]');
     await expect(maximizeButton).toBeVisible();
-    await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
     // Starts floating: frame has rounded corners.
     await expect(frame).toHaveClass(/rounded-lg/);
     await expect(frame).not.toHaveClass(/rounded-none/);
 
     // Ctrl+Shift+M maximizes: frame fills the overlay area, corners squared.
     await page.keyboard.press('Control+Shift+M');
-    await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
     await expect(frame).toHaveClass(/rounded-none/);
     await expect(frame).not.toHaveClass(/rounded-lg/);
 
     // Restore via the hotkey so the window state does not leak into the next test.
     await page.keyboard.press('Control+Shift+M');
-    await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
     await expect(frame).toHaveClass(/rounded-lg/);
     await expect(frame).not.toHaveClass(/rounded-none/);
 
@@ -366,7 +366,7 @@ test.describe('Task Detail: maximize / restore', () => {
     const maximizeButton = page.locator('[data-testid="dialog-maximize"]');
     await expect(maximizeButton).toBeVisible();
     await maximizeButton.click();
-    await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
     await expect(contentBox).toHaveClass(/w-full/);
     await expect(contentBox).toHaveClass(/h-full/);
     await expect(contentBox).toHaveClass(/rounded-none/);
@@ -376,7 +376,7 @@ test.describe('Task Detail: maximize / restore', () => {
 
     // Restore via the hotkey so the sentinel-keyed flag does not leak.
     await page.keyboard.press('Control+Shift+M');
-    await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
     await expect(contentBox).toHaveClass(/w-\[840px\]/);
 
     // Dismiss the dialog.
@@ -486,12 +486,12 @@ test.describe('Task Detail: maximize focus restore', () => {
       // The maximize button is surfaced in the TaskDetailHeader for running sessions.
       const maximizeButton = page.locator('[data-testid="task-detail-maximize"]');
       await expect(maximizeButton).toBeVisible();
-      await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+      await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
 
       // Click maximize - the button takes DOM focus (this is the pre-fix broken
       // state: without the useEffect the xterm textarea would stay unfocused).
       await maximizeButton.click();
-      await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+      await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
 
       // The fix: the useEffect([isMaximized, windowId]) in TaskDetailWindow calls
       // textarea.focus() on every toggle after mount. toBeFocused() retries
@@ -500,7 +500,7 @@ test.describe('Task Detail: maximize focus restore', () => {
 
       // Restore via button - focus must also return to xterm after the downward toggle.
       await maximizeButton.click();
-      await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+      await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
       await expect(xtermTextarea).toBeFocused({ timeout: 3000 });
     } finally {
       await browser.close();

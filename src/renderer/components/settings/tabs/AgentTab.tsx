@@ -207,6 +207,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 onClick={handleRefreshAgents}
                 disabled={refreshing}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors disabled:opacity-50"
+                aria-label="Re-detect agent"
                 title={agent.found ? 'Re-detect agent' : `${agent.displayName} not found - click to re-detect`}
               >
                 <RefreshCw size={16} className={`text-fg-faint hover:text-fg-muted ${refreshing ? 'animate-spin' : ''}`} />
@@ -219,6 +220,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
                   type="button"
                   onClick={() => handleCopyLoginCommand(agent.name, loginCommand)}
                   className="inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
+                  aria-label={`Copy "${loginCommand}" to clipboard`}
                   title={`Copy "${loginCommand}" to clipboard`}
                   data-testid={`agent-tab-copy-login-${agent.name}`}
                 >

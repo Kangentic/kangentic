@@ -455,6 +455,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
             type="button"
             onClick={() => setOpenToolBreakdown((previous) => !previous)}
             className={`${pill} text-fg-muted tabular-nums inline-flex items-center gap-1 cursor-pointer hover:bg-surface-hover`}
+            aria-label="Tool calls"
             title="Tool calls across every run of this session - click for the per-tool breakdown"
             aria-expanded={openToolBreakdown}
             data-testid="context-bar-tool-calls-trigger"

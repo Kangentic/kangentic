@@ -196,7 +196,7 @@ test.describe('clicking a stale sidebar project', () => {
       // configuring `sidebarVisible: false` does not work here: the sidebar's
       // open/closed `useState` is frozen at mount time, so it has to be
       // toggled live (mirrors collapsed-rail.spec.ts's collapseSidebar()).
-      await page.locator('button[title^="Hide sidebar"]').click();
+      await page.locator('button[aria-label="Hide sidebar"]').click();
       await page.locator('[data-testid="sidebar-expand-button"]').waitFor({ state: 'attached', timeout: 5000 });
 
       await page.evaluate(({ prefix, projectAId }) => {

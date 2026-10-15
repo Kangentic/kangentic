@@ -386,6 +386,7 @@ export function TitleBar({
           className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
             settingsOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
           }`}
+          aria-label="Settings"
           title={`Settings (${settingsCombo})`}
           data-testid="settings-button"
         >
@@ -399,6 +400,7 @@ export function TitleBar({
             <button
               onClick={() => window.electronAPI.window.minimize()}
               className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+              aria-label="Minimize"
               title="Minimize"
             >
               <Minus size={16} />
@@ -406,6 +408,7 @@ export function TitleBar({
             <button
               onClick={() => window.electronAPI.window.maximize()}
               className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+              aria-label="Maximize"
               title="Maximize"
             >
               <Square size={14} />
@@ -413,6 +416,7 @@ export function TitleBar({
             <button
               onClick={() => window.electronAPI.window.close()}
               className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
+              aria-label="Close"
               title="Close"
             >
               <X size={16} />

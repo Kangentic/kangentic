@@ -276,6 +276,7 @@ function LabelRow({
           ref={colorButtonRef}
           type="button"
           onClick={() => setShowColorPicker(!showColorPicker)}
+          aria-label="Change color"
           title="Change color"
         >
           {editing ? (
@@ -326,6 +327,7 @@ function LabelRow({
         type="button"
         onClick={startEditing}
         className="p-1 text-fg-disabled hover:text-fg-muted rounded transition-colors flex-shrink-0"
+        aria-label="Rename"
         title="Rename"
       >
         <Pencil size={12} />
@@ -335,6 +337,7 @@ function LabelRow({
         type="button"
         onClick={onDelete}
         className="p-1 text-fg-disabled hover:text-red-400 rounded transition-colors flex-shrink-0"
+        aria-label="Delete label"
         title="Delete label"
       >
         <Trash2 size={13} />

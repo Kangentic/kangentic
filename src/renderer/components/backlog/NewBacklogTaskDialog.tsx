@@ -392,6 +392,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
                   type="button"
                   onClick={() => window.electronAPI.shell.openExternal(editTask.external_url!)}
                   className="flex-shrink-0 text-fg-faint hover:text-fg-secondary transition-colors"
+                  aria-label={`Open in ${editTask.external_source.startsWith('github') ? 'GitHub' : editTask.external_source}`}
                   title={`Open in ${editTask.external_source.startsWith('github') ? 'GitHub' : editTask.external_source}`}
                   data-testid="backlog-task-external-link"
                 >

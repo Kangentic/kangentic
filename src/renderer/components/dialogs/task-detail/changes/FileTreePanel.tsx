@@ -373,6 +373,7 @@ const FileRowView = memo(function FileRowView({
       <button
         type="button"
         onClick={() => onToggleViewed(row.file.path)}
+        aria-label={viewed ? 'Mark as not viewed' : 'Mark as viewed'}
         title={viewed ? 'Mark as not viewed' : 'Mark as viewed'}
         aria-pressed={viewed}
         data-testid="changes-viewed-toggle"

@@ -2173,7 +2173,7 @@ test('pausing and resuming a working agent brings back the same session and view
   const getRecordingRequests = recordingRequests(page);
   await gotoScene(page, { view: 'task', embed: '1' });
   const toggle = page.locator('[data-testid="header-toggle-session-btn"]');
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
   await toggle.click();
   await expect.poll(async () => (await monitorFields(page, SESSION_MIDDLEWARE))?.status).toBe('suspended');
   // A paused agent stops: its Monitor peek, which changes every 2.5 to 6 seconds while the
@@ -2182,9 +2182,9 @@ test('pausing and resuming a working agent brings back the same session and view
 
   // Pausing closed the window; the card reopens it on the Resume prompt.
   await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
-  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
 
   const readRows = () => page.evaluate(async (taskId) => {
     const sessions = await (window as unknown as { electronAPI: { sessions: { list: () => Promise<Array<{ id: string; taskId: string; status: string; resuming: boolean }>> } } }).electronAPI.sessions.list();
@@ -2221,13 +2221,13 @@ test('resuming a session paused at its recording\'s end replays the recorded res
   const card = page.locator(`[data-task-id="${TASK_WEBSOCKET}"]`);
   const toggle = page.locator('[data-testid="header-toggle-session-btn"]');
   await card.click();
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
   await toggle.click();
   await expect.poll(async () => (await monitorFields(page, SESSION_WEBSOCKET))?.status).toBe('suspended');
   await card.click();
-  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
 
   await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/resume-sess-cw-websocket-')), { timeout: 10_000 }).toBe(true);
   const resumedId = await sessionIdsForTask(page, TASK_WEBSOCKET);
@@ -2256,13 +2256,13 @@ test('a second Pause then Resume on that same session replays the recorded resum
 
   // First cycle: identical to the sibling test above.
   await card.click();
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
   await toggle.click();
   await expect.poll(async () => (await monitorFields(page, SESSION_WEBSOCKET))?.status).toBe('suspended');
   await card.click();
-  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
   await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/resume-sess-cw-websocket-')), { timeout: 10_000 }).toBe(true);
   const firstResumedIds = await sessionIdsForTask(page, TASK_WEBSOCKET);
   expect(firstResumedIds).toHaveLength(1);
@@ -2275,14 +2275,14 @@ test('a second Pause then Resume on that same session replays the recorded resum
   await toggle.click();
   await expect.poll(async () => (await monitorFields(page, firstResumed))?.status).toBe('suspended');
   await card.click();
-  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await expect(toggle).toHaveAccessibleName('Resume session');
   // Listen for streamed bytes BEFORE the click that starts the second resume: the resume-boot
   // path streams the recording live through onData, while a frozen fallback emits nothing at all,
   // so which one (if either) streams for the new session id is the direct signal that the second
   // resume took the boot-replay branch rather than silently falling back to a frozen frame.
   const pendingStreamedSessionId = firstStreamedSession(page, 8000);
   await toggle.click();
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
 
   const secondResumedIds = await sessionIdsForTask(page, TASK_WEBSOCKET);
   expect(secondResumedIds).toHaveLength(1);
@@ -2323,13 +2323,13 @@ test('a second Pause then Resume on a working agent frozen mid-recording opens o
   };
 
   // First cycle.
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
   await toggle.click();
   await expect.poll(async () => (await monitorFields(page, SESSION_MIDDLEWARE))?.status).toBe('suspended');
   await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
-  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
 
   const firstResumedIds = await sessionIdsForTask(page, TASK_MIDDLEWARE);
   expect(firstResumedIds).toHaveLength(1);
@@ -2346,9 +2346,9 @@ test('a second Pause then Resume on a working agent frozen mid-recording opens o
   await toggle.click();
   await expect.poll(async () => (await monitorFields(page, firstResumed))?.status).toBe('suspended');
   await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
-  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await expect(toggle).toHaveAccessibleName('Resume session');
   await toggle.click();
-  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect(toggle).toHaveAccessibleName('Pause session');
 
   const secondResumedIds = await sessionIdsForTask(page, TASK_MIDDLEWARE);
   expect(secondResumedIds).toHaveLength(1);

@@ -119,6 +119,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
             </div>
             <button
               onClick={requestClose}
+              aria-label="Close settings"
               className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors"
             >
               <X size={16} />

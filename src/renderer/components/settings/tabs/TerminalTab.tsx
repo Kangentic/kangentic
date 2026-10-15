@@ -63,6 +63,7 @@ function ColorSwatchField({
         ref={buttonRef}
         type="button"
         onClick={() => setShowPicker(!showPicker)}
+        aria-label={`Change ${label}`}
         title={`Change ${label}`}
         data-testid={`terminal-color-swatch-${colorKey}`}
         className="w-8 h-8 rounded-md border border-edge-input hover:border-fg-muted hover:scale-105 transition-all shadow-sm"

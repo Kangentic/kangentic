@@ -91,6 +91,7 @@ function Chip({ icon, label, title, onRemove, testId }: ChipProps) {
         type="button"
         onClick={onRemove}
         className="flex-shrink-0 p-0.5 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
+        aria-label="Remove from queue"
         title="Remove from queue"
       >
         <X size={11} />

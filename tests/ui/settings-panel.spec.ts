@@ -194,9 +194,9 @@ test.describe('Settings Panel', () => {
 
     // Opening a swatch shows the shared color picker popover.
     await colorsRow.getByTestId('terminal-color-swatch-background').click();
-    await expect(page.getByTitle('Custom color')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Custom color', exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByTitle('Custom color')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Custom color', exact: true })).toHaveCount(0);
 
     await expect(colorsRow.getByTestId('terminal-colors-reset-all')).toBeVisible();
 
@@ -1277,7 +1277,7 @@ test.describe('Settings Panel', () => {
         // Close via the chevron toggle, not Escape: the Settings panel itself
         // closes on Escape (see "Escape key closes panel" above), so pressing
         // it here would tear down the whole panel instead of just this popover.
-        await permRow.locator('button[title="Close dropdown"]').click();
+        await permRow.locator('button[aria-label="Close dropdown"]').click();
         return texts;
       }, { timeout: 3000 }).toEqual([
         'Plan (Read-Only)',
@@ -1322,7 +1322,7 @@ test.describe('Settings Panel', () => {
         await permInput.click();
         const texts = await page.locator('[data-combobox-option]').allTextContents();
         // Close via the chevron toggle, not Escape - see the Kimi test above.
-        await permRow.locator('button[title="Close dropdown"]').click();
+        await permRow.locator('button[aria-label="Close dropdown"]').click();
         return texts;
       }, { timeout: 3000 }).toEqual([
         'Plan',

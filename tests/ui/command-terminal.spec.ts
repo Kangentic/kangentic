@@ -976,7 +976,7 @@ test.describe('Command Terminal', () => {
         await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
 
         // Click the kebab menu button
-        await sharedPage.locator('[title="Actions"]').click();
+        await sharedPage.locator('[aria-label="Actions"]').click();
 
         // Verify menu items. Commands is kebab-only now (no header pill), so it is the
         // sole "Commands" button.
@@ -2158,7 +2158,7 @@ test.describe('Command Terminal', () => {
         const windowTwoFrame = page.getByTestId(`window-frame-${idsBySlot['slot-2']}`);
 
         // Open window 1's Changes panel via its own kebab menu.
-        await windowOneFrame.getByTitle('Actions').click();
+        await windowOneFrame.getByRole('button', { name: 'Actions', exact: true }).click();
         await page.getByText('Show changes', { exact: true }).click();
 
         // Store-level assertion: only window 1's per-slot entity id is open -
@@ -2169,13 +2169,13 @@ test.describe('Command Terminal', () => {
         // UI-level assertion: window 2's own kebab still reads "Show changes"
         // (unaffected). This exercises the real render path (the changesOpen
         // selector read inside CommandTerminalWindow), not just the store.
-        await windowTwoFrame.getByTitle('Actions').click();
+        await windowTwoFrame.getByRole('button', { name: 'Actions', exact: true }).click();
         await expect(page.getByText('Show changes', { exact: true })).toBeVisible();
 
         // And window 1's own kebab now reads "Hide changes", confirming its
         // toggle round-tripped through the real component, not just the store.
-        await windowTwoFrame.getByTitle('Actions').click(); // close window 2's menu first
-        await windowOneFrame.getByTitle('Actions').click();
+        await windowTwoFrame.getByRole('button', { name: 'Actions', exact: true }).click(); // close window 2's menu first
+        await windowOneFrame.getByRole('button', { name: 'Actions', exact: true }).click();
         await expect(page.getByText('Hide changes', { exact: true })).toBeVisible();
       } finally {
         await browser.close();
@@ -3554,7 +3554,7 @@ test.describe('Command Terminal', () => {
 
         // Toggle via the kebab menu (always reachable, unlike the header pill
         // which can fold at narrow widths).
-        await page.getByTestId('command-terminal-window').getByTitle('Actions').click();
+        await page.getByTestId('command-terminal-window').getByRole('button', { name: 'Actions', exact: true }).click();
         await page.getByText('Show changes', { exact: true }).click();
 
         await expect.poll(

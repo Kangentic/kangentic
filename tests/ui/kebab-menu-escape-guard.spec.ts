@@ -121,7 +121,7 @@ test('Escape over the open Actions menu closes only the menu, not the task windo
 
     // The kebab popover portals to document.body, so its items are located on
     // the page, not inside the window frame.
-    await dialog.locator('button[title="Actions"]').click();
+    await dialog.locator('button[aria-label="Actions"]').click();
     const menuItem = page.locator('[data-testid="view-conversation-btn"]');
     await expect(menuItem).toBeVisible({ timeout: 5000 });
 

@@ -552,7 +552,7 @@ test.describe('Sidebar Command Terminal indicator', () => {
 
 test.describe('Collapsed rail Command Terminal dot', () => {
   async function collapseSidebar(page: Page): Promise<void> {
-    await page.locator('button[title^="Hide sidebar"]').click();
+    await page.locator('button[aria-label="Hide sidebar"]').click();
     await page.locator('[data-testid="sidebar-expand-button"]').waitFor({ state: 'attached', timeout: 5000 });
   }
 

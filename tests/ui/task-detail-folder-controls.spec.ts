@@ -143,12 +143,12 @@ async function openDetailWindow(page: Page, taskId: string): Promise<string> {
 
 /** The kebab popover is portaled to document.body, so its items are located on the page. */
 async function openKebab(page: Page, windowId: string): Promise<void> {
-  await page.locator(`[data-testid="window-frame-${windowId}"] button[title="Actions"]`).click();
+  await page.locator(`[data-testid="window-frame-${windowId}"] button[aria-label="Actions"]`).click();
   await expect(page.locator('[data-testid="view-conversation-btn"]')).toBeVisible({ timeout: 5000 });
 }
 
 async function closeKebab(page: Page, windowId: string): Promise<void> {
-  await page.locator(`[data-testid="window-frame-${windowId}"] button[title="Actions"]`).click();
+  await page.locator(`[data-testid="window-frame-${windowId}"] button[aria-label="Actions"]`).click();
   await expect(page.locator('[data-testid="view-conversation-btn"]')).toHaveCount(0);
 }
 

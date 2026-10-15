@@ -80,6 +80,7 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
                 onClick={() => useSessionStore.getState().setConversationSessionId(hit.sessionId)}
                 className="w-full text-left rounded px-2 py-1.5 hover:bg-surface-hover cursor-pointer"
                 data-testid="task-prior-work-item"
+                aria-label="Open this conversation"
                 title="Open this conversation"
               >
                 {/* Title only, deliberately. In the Knowledge Graph's search

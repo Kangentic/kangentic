@@ -147,7 +147,7 @@ async function waitForSession(taskTitle: string, timeoutMs = 15000): Promise<voi
 /** Open the kebab menu in the task detail dialog and click an action */
 async function clickKebabAction(dialog: ReturnType<Page['locator']>, actionText: string) {
   // Click the kebab (MoreHorizontal) button scoped to the task-detail window.
-  const kebabButton = dialog.locator('button[title="Actions"]');
+  const kebabButton = dialog.locator('button[aria-label="Actions"]');
   await kebabButton.waitFor({ state: 'visible', timeout: 3000 });
   await kebabButton.click();
 

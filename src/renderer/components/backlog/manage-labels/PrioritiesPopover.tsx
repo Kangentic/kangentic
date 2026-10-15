@@ -324,6 +324,7 @@ function PriorityRow({
           ref={colorButtonRef}
           type="button"
           onClick={() => setShowColorPicker(!showColorPicker)}
+          aria-label="Change color"
           title="Change color"
         >
           {editing ? (
@@ -374,6 +375,7 @@ function PriorityRow({
         type="button"
         onClick={startEditing}
         className="p-1 text-fg-disabled hover:text-fg-muted rounded transition-colors flex-shrink-0"
+        aria-label="Rename"
         title="Rename"
       >
         <Pencil size={12} />
@@ -384,6 +386,7 @@ function PriorityRow({
           type="button"
           onClick={onDelete}
           className="p-1 text-fg-disabled hover:text-red-400 rounded transition-colors flex-shrink-0"
+          aria-label="Delete priority"
           title="Delete priority"
         >
           <Trash2 size={13} />

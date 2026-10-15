@@ -175,7 +175,7 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
 
 /** Collapse the sidebar to its 36px strip through the control that owns the state. */
 async function collapseSidebar(page: Page): Promise<void> {
-  await page.locator('button[title^="Hide sidebar"]').click();
+  await page.locator('button[aria-label="Hide sidebar"]').click();
   await page.locator('[data-testid="sidebar-expand-button"]').waitFor({ state: 'attached', timeout: 5000 });
 }
 

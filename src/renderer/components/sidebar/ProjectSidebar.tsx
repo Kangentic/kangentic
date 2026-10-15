@@ -267,6 +267,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             <button
               onClick={onToggleSidebar}
               className="p-1 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+              aria-label="Hide sidebar"
               title={`Hide sidebar (${sidebarCombo})`}
             >
               <ChevronsLeft size={16} />
@@ -301,6 +302,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
               onClick={() => setSearch('')}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-disabled hover:text-fg-muted transition-colors"
               data-testid="project-sidebar-search-clear"
+              aria-label="Clear search"
               title="Clear search"
             >
               <X size={14} />

@@ -77,6 +77,7 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
       <button
         onClick={onExpandSidebar}
         className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors mb-2"
+        aria-label="Show sidebar"
         title={`Show sidebar (${sidebarCombo})`}
         data-testid="sidebar-expand-button"
       >
@@ -128,6 +129,7 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
       <button
         onClick={startAddProject}
         className="p-1.5 mt-2 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
+        aria-label="New project"
         title="New project"
         data-testid="rail-new-project-button"
       >
