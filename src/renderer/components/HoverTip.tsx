@@ -19,7 +19,12 @@
  *    once while another tip shows or for HOVER_TIP_WARM_MS after one closed.
  *  - Closes on pointer leave (a tip keyboard focus opened stays until blur), blur, a press or
  *    click of the trigger, Escape, a scroll of anything holding the trigger, a window resize, and
- *    the window losing focus. A press keeps it shut until the pointer leaves.
+ *    the window losing focus.
+ *  - A hover arms the tip once per visit. Once it has, a close while the pointer stays on the
+ *    trigger (Escape, a scroll, a resize, the window losing focus, another tip taking its place)
+ *    keeps it shut until the pointer leaves and comes back, as a press always does. Two cases arm
+ *    again on the next move instead: a tip held shut and then enabled again, and a tip whose move
+ *    an inner trigger took, once the pointer is back on its own area.
  *  - Escape closes ONLY the tip. A `window` capture-phase listener, added only while the tip
  *    shows, stops the key before any menu or dialog listener sees it, so one press undoes one
  *    thing. Focus in a terminal (Escape is the agent interrupt) or a hotkey rebind keeps the key.
@@ -297,6 +302,8 @@ export function HoverTip(props: HoverTipProps): ReactElement {
     const next = event.relatedTarget;
     if (next instanceof Node && event.currentTarget.contains(next)) return;
     pressFocusRef.current = false;
+    // Cleared here and not left to handleHidden: the early return below keeps a tip the pointer
+    // holds without closing it, and that tip must still close on the leave that follows.
     focusOpenedRef.current = false;
     // A tip the pointer is still holding open outlives the focus.
     if (hoveredRef.current && armedRef.current && !hoverBlockedRef.current) return;
@@ -315,6 +322,8 @@ export function HoverTip(props: HoverTipProps): ReactElement {
     // Disarmed as well as hidden, so the tip arms again on the next move once it is enabled,
     // even with the pointer still resting on the trigger.
     armedRef.current = false;
+    // The hide below clears it through handleHidden whenever a tip shows, and focus sets it only
+    // as it shows one. Cleared here as well so this effect does not lean on that pairing.
     focusOpenedRef.current = false;
     clearDwell();
     layerRef.current?.hide(false);

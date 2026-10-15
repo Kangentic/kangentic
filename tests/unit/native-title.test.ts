@@ -62,11 +62,15 @@ function isIntrinsic(tagName: string): boolean {
   return /^[a-z][\w-]*$/.test(tagName);
 }
 
-/** A property's key as written, unquoted, so `'title'` and `title` are the same key. */
+/**
+ * A property's key as written, unquoted, so `'title'`, `title`, `['title']` and a computed key in
+ * backticks with no substitution are all the same key.
+ */
 function propertyKey(member: ts.ObjectLiteralElementLike, sourceFile: ts.SourceFile): string | undefined {
   const name = member.name;
   if (name === undefined) return undefined;
   if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression)) return name.expression.text;
   return name.getText(sourceFile);
 }
 
@@ -416,6 +420,27 @@ describe('the native title detector itself', () => {
       ');',
     ].join('\n'));
     expect(found.map((site) => [site.line, site.kind])).toEqual([[3, 'spread'], [4, 'spread'], [5, 'spread'], [6, 'spread']]);
+  });
+
+  it('reports a spread whose title key is computed from a string or a plain backtick string', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = () => (',
+      '  <div>',
+      "    <span {...{ ['title']: why }} />",
+      '    <span {...{ [`title`]: why }} />',
+      '  </div>',
+      ');',
+    ].join('\n'));
+    expect(found.map((site) => [site.line, site.kind])).toEqual([[3, 'spread'], [4, 'spread']]);
+  });
+
+  it('does not report a spread whose computed key is a variable', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = () => (',
+      '  <span {...{ [attributeName]: why }} />',
+      ');',
+    ].join('\n'));
+    expect(found).toEqual([]);
   });
 
   it('does not report a conditional spread with no title in it', () => {

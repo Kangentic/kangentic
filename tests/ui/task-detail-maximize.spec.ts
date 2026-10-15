@@ -224,8 +224,8 @@ test.describe('Task Detail: maximize / restore', () => {
     const browserToggle = dialog.locator('[data-testid="browser-toggle"]');
     await expect(browserToggle).toBeVisible();
 
-    // Browser pane is closed initially - the pill shows "Show browser" title
-    // (now suffixed with the live hotkey combo).
+    // Browser pane is closed initially - the pill's tip reads "Show browser", suffixed with the
+    // live hotkey combo, as its accessible description.
     await expect(browserToggle).toHaveAccessibleDescription(/^Show browser/);
     // Nothing to keep yet, so the tip has no second line (its detail is "Kept alive until you
     // close it" while the pane is open and "Page kept" while a hidden pane still has a guest).
