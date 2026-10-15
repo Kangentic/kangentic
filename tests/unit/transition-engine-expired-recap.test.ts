@@ -474,6 +474,40 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
       expect(commandLineLength(prompt)).toBeLessThanOrEqual(INLINE_PROMPT_BUDGET);
       expect(commandLineLength(prompt)).toBeGreaterThan(INLINE_PROMPT_BUDGET - 100);
     });
+
+    it('runs an isolated column on its own prompt alone when that prompt leaves no room for the recap', async () => {
+      // Plain single-spaced text with no `%` and no placeholders, so the
+      // template interpolates to itself and its command-line length is its length.
+      const sentence = 'Read the diff and note each risk with its file. ';
+      const NO_ROOM_PROMPT = sentence.repeat(Math.ceil(6_900 / sentence.length)).slice(0, 6_900).trim();
+      // The recap's header and pointer alone take about 365 characters; the
+      // 2 is the blank line that would join it to the column's prompt.
+      const roomLeft = INLINE_PROMPT_BUDGET - commandLineLength(NO_ROOM_PROMPT) - 2;
+      expect(roomLeft).toBeLessThan(300);
+      const notices: ConversationExpiredNotice[] = [];
+      const { sources } = greedyTailSource();
+      const { engine } = makeEngine({
+        sessionRepo: resumableRepo(ISOLATED_LANE_ID),
+        projectPath,
+        services: { recapSources: sources, onConversationExpired: (notice) => notices.push(notice) },
+      });
+
+      const outcome = await engine.runLegacySpawnAgent(
+        { promptTemplate: NO_ROOM_PROMPT } as unknown as LegacySpawnConfig,
+        makeTask() as unknown as SpawnTask, null, undefined, 'claude', { isolatedSwimlaneId: ISOLATED_LANE_ID },
+      );
+
+      // Exactly the column's own prompt: no recap header and no blank lines
+      // before it. A boolean compare, so a failure does not print 6,900 characters.
+      const prompt = capturedOptions?.prompt ?? '';
+      expect(prompt.slice(0, 40)).toBe(NO_ROOM_PROMPT.slice(0, 40));
+      expect(prompt.length).toBe(NO_ROOM_PROMPT.length);
+      expect(prompt === NO_ROOM_PROMPT).toBe(true);
+      expect(capturedOptions?.resume).toBe(false);
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      // The notice still tells the user their conversation was replaced.
+      expect(notices).toHaveLength(1);
+    });
   });
 
   describe('whether the message the resume carried reached the fresh session (resumePromptUnsent)', () => {
@@ -568,6 +602,67 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
       expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false });
       expect(notices).toHaveLength(1);
       expect(notices[0].messageDropped).toBe(false);
+    });
+
+    // An always_spawn_new column passes `forceFresh` (agent-spawn.ts): it spawns
+    // fresh over a record that could be resumed, so the conversation is neither
+    // missing nor expired and `startOver` stays null. The carried message is
+    // still left out of a fresh spawn that has a template.
+    it('is true for an always-new column: it spawns fresh over a resumable record, with the template as the prompt and no message in it', async () => {
+      const { engine } = makeEngine({ sessionRepo: resumableRepo(), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, false, CARRIED_MESSAGE, undefined, 'claude',
+        undefined, { forceFresh: true },
+      );
+
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: true });
+      expect(capturedOptions?.resume).toBe(false);
+      const prompt = capturedOptions?.prompt ?? '';
+      expect(prompt).toContain('Fix login flow');
+      expect(prompt).not.toContain('/code-review');
+    });
+
+    it('is false for the same always-new column with the template skipped: the message is the fresh prompt', async () => {
+      const { engine } = makeEngine({ sessionRepo: resumableRepo(), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, true, CARRIED_MESSAGE, undefined, 'claude',
+        undefined, { forceFresh: true },
+      );
+
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(capturedOptions?.resume).toBe(false);
+      expect(capturedOptions?.prompt).toBe(CARRIED_MESSAGE);
+    });
+  });
+
+  describe('the outcome a legacy Start agent row hands back (runLegacySpawnAgent)', () => {
+    // The Send message rows after a legacy Start agent row are withheld on a
+    // recap-only start (ipc/helpers/agent-spawn.ts), so the engine has to hand
+    // the spawn's outcome back rather than drop it.
+    it('reports a recap-only start when the task\'s main conversation expired', async () => {
+      const { engine } = makeEngine({ sessionRepo: resumableRepo(), projectPath });
+
+      const outcome = await engine.runLegacySpawnAgent(
+        { promptTemplate: '{{task_xml}}' } as unknown as LegacySpawnConfig,
+        makeTask() as unknown as SpawnTask, null, undefined, 'claude',
+      );
+
+      // A legacy row carries no resume message, so none is dropped.
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false });
+      expect(capturedOptions?.resume).toBe(false);
+    });
+
+    it('reports an ordinary start when there is no conversation to resume', async () => {
+      const { engine } = makeEngine({ projectPath });
+
+      const outcome = await engine.runLegacySpawnAgent(
+        { promptTemplate: '{{task_xml}}' } as unknown as LegacySpawnConfig,
+        makeTask() as unknown as SpawnTask, null, undefined, 'claude',
+      );
+
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
     });
   });
 

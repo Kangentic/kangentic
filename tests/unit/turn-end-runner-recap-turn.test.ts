@@ -438,6 +438,49 @@ describe('the turn that answers an expired conversation\'s recap', () => {
       expect(runs.countRuns(ROW_ID, taskId)).toBe(1);
     });
 
+    // The mark is judged and forgotten before the subject is resolved, so a
+    // recap turn end that finds no subject still ends it. Otherwise the mark
+    // outlives its turn and swallows the first turn the user starts afterwards.
+    it.each([
+      [
+        'the task\'s live session is another one',
+        () => { hoisted.task.session_id = 'another-session'; },
+        () => { hoisted.task.session_id = SESSION_ID; },
+      ],
+      [
+        'the task was archived',
+        () => { hoisted.task.archived_at = '2026-10-15T12:30:00.000Z'; },
+        () => { hoisted.task.archived_at = null; },
+      ],
+    ])('forgets the mark when the recap turn end finds no subject, so a later turn runs the row: %s', async (_label, loseSubject, regainSubject) => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      advanceClock(20_000);
+      reportActivity('idle');
+      // The mark is live going in, so what follows is the pass's doing.
+      expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(true);
+      loseSubject();
+
+      await endTurn(SPAWNED_AT);
+
+      // The pass returned at the subject check: no row, no skip line, no run.
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(recapSkipLines(logSpy)).toEqual([]);
+      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(false);
+
+      // The subject is back and a later turn begins after the idle with no prompt
+      // behind it. Had the mark survived, it would read as the recap's own.
+      regainSubject();
+      advanceClock(5_000);
+      const laterStartedAt = Date.now();
+      advanceClock(10_000);
+      reportActivity('idle');
+      await endTurn(laterStartedAt);
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns(ROW_ID, taskId)).toBe(1);
+    });
+
     it('still skips the recap turn when its turn end arrives before the idle event', async () => {
       // The engine reports the idle first, but the pass starts on a later tick, so
       // the order the two events were emitted in must not matter.

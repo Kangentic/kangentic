@@ -54,6 +54,7 @@ const WINDOW_BYTES = 2000;
 const PROJECT_ID = 'project-1';
 const ARCHIVED_AGENT = 'Archived Agent';
 const LIVE_AGENT = 'Live Agent';
+const PARSERLESS_AGENT = 'Parserless Agent';
 const temporaryDirectories: string[] = [];
 const openDatabases: DatabaseType.Database[] = [];
 
@@ -96,7 +97,8 @@ function transcriptLines(turns: number, label: string): string[] {
 
 interface SessionSeed {
   id: string;
-  agentSessionId: string;
+  /** Null for a session whose agent has not reported its own id yet. */
+  agentSessionId: string | null;
   sessionType: string;
   startedAt: string;
 }
@@ -152,7 +154,10 @@ function fixture(sessions: SessionSeed[] = [], options: { windowBytes?: number }
   };
 }
 
-/** The registry answering for two agents: one whose live parse finds nothing, one whose finds a turn. */
+/**
+ * The registry answering for three agents: one whose live parse finds nothing,
+ * one whose finds a turn, and one with no structured parser at all.
+ */
 function useAgents(options: { archivedSourcePath?: string | null; liveSourcePath?: string } = {}): {
   parseArchivedAgent: ReturnType<typeof vi.fn>;
   parseLiveAgent: ReturnType<typeof vi.fn>;
@@ -168,6 +173,8 @@ function useAgents(options: { archivedSourcePath?: string | null; liveSourcePath
   vi.mocked(agentRegistry.getBySessionType).mockImplementation((sessionType: string) => {
     if (sessionType === 'archived_agent') return { displayName: ARCHIVED_AGENT, parseTranscript: parseArchivedAgent } as unknown as AgentAdapter;
     if (sessionType === 'live_agent') return { displayName: LIVE_AGENT, parseTranscript: parseLiveAgent } as unknown as AgentAdapter;
+    // An adapter that exists but implements no `parseTranscript`.
+    if (sessionType === 'parserless_agent') return { displayName: PARSERLESS_AGENT } as unknown as AgentAdapter;
     return undefined;
   });
   return { parseArchivedAgent, parseLiveAgent };
@@ -414,5 +421,111 @@ describe('resolveSessionTranscript on an archived conversation', () => {
     // A short span is left as it was.
     const short = resolved!.entries.find((entry) => entry.uuid === 'short-user');
     expect(short).toMatchObject({ kind: 'user', text: 'a short question' });
+  });
+});
+
+// The second path of `resolveSessionTranscript`: no live parse is attempted, so
+// the saved copy is the only source. Every case above uses an adapter with a
+// `parseTranscript`, which takes the first path.
+describe('resolveSessionTranscript for a session with no live parse to attempt', () => {
+  const PARSERLESS_SESSION: SessionSeed = {
+    id: 'session-parserless', agentSessionId: 'agent-parserless', sessionType: 'parserless_agent', startedAt: '2026-09-30T12:00:00.000Z',
+  };
+
+  // Red-green: the `if (saved) { ... }` body of the second path. Return
+  // `source: 'none'` there and every case below that reads a saved copy fails.
+  it('serves an archived conversation as the archive, undegraded and with no source path', async () => {
+    const { database, archiveConversation } = fixture([PARSERLESS_SESSION]);
+    const original = await archiveConversation('session-parserless', 'agent-parserless', 'parserless');
+    useAgents();
+    readIndexedChunks.mockResolvedValue([{ id: 1, role: 'user', text: 'index text that must not win', tsStart: 1, turnUuidStart: 'index-1' }]);
+
+    const resolved = await resolveSessionTranscript(database, 'session-parserless');
+
+    expect(resolved?.source).toBe('archive');
+    expect(resolved?.degraded).toBe(false);
+    expect(resolved?.sourcePath).toBeNull();
+    expect(resolved?.unavailableReason).toBeUndefined();
+    expect(resolved?.agentName).toBe(PARSERLESS_AGENT);
+    expect(uuids(resolved!.entries)).toEqual(uuids(await parseClaudeTranscript(original)));
+    // The archive answered, so the index was never consulted.
+    expect(readIndexedChunks).not.toHaveBeenCalled();
+  });
+
+  it('opens an archive longer than the parse window with the truncated notice', async () => {
+    const { database, archiveConversation } = fixture([PARSERLESS_SESSION]);
+    const original = await archiveConversation('session-parserless', 'agent-parserless', 'parserless', transcriptLines(16, 'parserless'));
+    useAgents();
+    const whole = await parseClaudeTranscript(original);
+    setParseWindowBytesForTests(WINDOW_BYTES);
+
+    const resolved = await resolveSessionTranscript(database, 'session-parserless');
+
+    expect(resolved?.source).toBe('archive');
+    expect(resolved?.degraded).toBe(false);
+    const [notice, ...shown] = resolved!.entries;
+    expect(notice).toMatchObject({ kind: 'system', subtype: 'truncated' });
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThan(whole.length);
+    expect(uuids(shown)).toEqual(uuids(whole.slice(whole.length - shown.length)));
+  });
+
+  it('serves the index\'s chunks as degraded when only they hold the conversation', async () => {
+    const { database } = fixture([PARSERLESS_SESSION]);
+    useAgents();
+    readIndexedChunks.mockImplementation(async (_db, docId) => (docId === 'agent-parserless'
+      ? [
+        { id: 4, role: 'user', text: 'what did we decide', tsStart: 10, turnUuidStart: 'turn-1' },
+        { id: 5, role: 'assistant', text: 'we kept the saved copy', tsStart: 11, turnUuidStart: null },
+      ]
+      : []));
+
+    const resolved = await resolveSessionTranscript(database, 'session-parserless');
+
+    expect(resolved?.source).toBe('index');
+    expect(resolved?.degraded).toBe(true);
+    expect(resolved?.sourcePath).toBeNull();
+    expect(resolved?.unavailableReason).toBeUndefined();
+    expect(resolved?.entries).toEqual([
+      { kind: 'user', uuid: 'turn-1', ts: 10, text: 'what did we decide' },
+      { kind: 'assistant', uuid: 'chunk-5', ts: 11, blocks: [{ type: 'text', text: 'we kept the saved copy' }] },
+    ]);
+    expect(readIndexedChunks).toHaveBeenCalledWith(database, 'agent-parserless');
+  });
+
+  it('reads a session that has no agent session id yet by the session\'s own id, even for an agent with a parser', async () => {
+    const { database } = fixture([
+      { id: 'session-no-agent-id', agentSessionId: null, sessionType: 'live_agent', startedAt: '2026-10-01T12:00:00.000Z' },
+    ]);
+    const { parseLiveAgent } = useAgents();
+    readIndexedChunks.mockImplementation(async (_db, docId) => (docId === 'session-no-agent-id'
+      ? [{ id: 9, role: 'user', text: 'a question asked before the agent reported its id', tsStart: 20, turnUuidStart: 'turn-9' }]
+      : []));
+
+    const resolved = await resolveSessionTranscript(database, 'session-no-agent-id');
+
+    expect(resolved?.source).toBe('index');
+    expect(resolved?.degraded).toBe(true);
+    expect(uuids(resolved!.entries)).toEqual(['turn-9']);
+    expect(readIndexedChunks).toHaveBeenCalledWith(database, 'session-no-agent-id');
+    // With no agent session id there is nothing for the live parse to look up.
+    expect(parseLiveAgent).not.toHaveBeenCalled();
+  });
+
+  // Red-green: the `unavailableReason` ternary of the second path. Swap its two
+  // strings and both rows fail.
+  it.each([
+    ['an agent with no parser', { id: 'session-parserless', agentSessionId: 'agent-parserless', sessionType: 'parserless_agent' }, 'unsupported_agent'],
+    ['an agent with a parser but no agent session id', { id: 'session-no-agent-id', agentSessionId: null, sessionType: 'live_agent' }, 'no_agent_session_id'],
+  ] as const)('says why there is nothing to show when nothing was saved: %s', async (_label, seed, unavailableReason) => {
+    const { database } = fixture([{ ...seed, startedAt: '2026-10-01T12:00:00.000Z' }]);
+    useAgents();
+
+    const resolved = await resolveSessionTranscript(database, seed.id);
+
+    expect(resolved?.source).toBe('none');
+    expect(resolved?.entries).toEqual([]);
+    expect(resolved?.degraded).toBe(false);
+    expect(resolved?.unavailableReason).toBe(unavailableReason);
   });
 });

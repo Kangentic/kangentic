@@ -48,11 +48,19 @@ export function noteRecapSessionPrompt(sessionId: string): void {
   if (entry && entry.firstIdleAt !== null) entry.promptedAfterIdle = true;
 }
 
-/** Whether a turn end is the one that answered the recap. */
+/**
+ * Whether a turn end is the one that answered the recap. A query: the turn-end
+ * runner forgets the session once this answers true (`forgetRecapSession`), so
+ * a caller that asks without forgetting would read every later turn with no
+ * prompt behind it as the recap's.
+ */
 export function isRecapTurn(sessionId: string, turnStartedAt: number | null): boolean {
   const entry = recapSessions.get(sessionId);
   if (!entry || turnStartedAt === null) return false;
-  return entry.firstIdleAt === null || turnStartedAt < entry.firstIdleAt || !entry.promptedAfterIdle;
+  // The recap's turn lasts until a prompt arrives after the first idle. A turn
+  // end whose turn began before that idle is the recap's own all the same.
+  if (!entry.promptedAfterIdle) return true;
+  return entry.firstIdleAt !== null && turnStartedAt < entry.firstIdleAt;
 }
 
 /** Forget a session that left the registry, or whose recap turn has ended. */

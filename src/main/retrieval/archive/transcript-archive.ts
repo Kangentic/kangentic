@@ -247,6 +247,10 @@ export class TranscriptArchive {
         const entries = parsedWindow.entries.filter((entry) => !(entry.kind === 'system' && entry.subtype === 'truncated'));
         if (entries.length > 0) {
           if (!replaced) {
+            // Not one transaction with the writes: each stays under the write
+            // budget's caps. A read in between finds the conversation without
+            // its newest window, and the revision bump at the end of the walk
+            // sends the next read back for it.
             await deleteRows(db, target.agentSessionId, resumeOffset);
             replaced = true;
           }

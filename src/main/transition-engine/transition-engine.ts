@@ -652,7 +652,8 @@ export class TransitionEngine {
           messageDropped = Boolean(resumePrompt?.trim());
           intent = { ...freshIntent, prompt: recap };
         } else {
-          intent = { ...freshIntent, prompt: freshIntent.prompt ? `${recap}\n\n${freshIntent.prompt}` : recap };
+          // An empty recap left no room beside the column's prompt.
+          intent = { ...freshIntent, prompt: [recap, freshIntent.prompt].filter(Boolean).join('\n\n') };
         }
         expiredNotice = {
           projectId: appConfig.projectId,

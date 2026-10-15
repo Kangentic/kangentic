@@ -3,10 +3,12 @@
  * (`src/main/agent/shared/expired-conversation-recap.ts`), which rides the
  * command line as the opening prompt of a session that replaced a resume.
  *
- * `expired-conversation-recap.test.ts` holds the content; these hold the four
+ * `expired-conversation-recap.test.ts` holds the content; these hold the five
  * rules a review pass tightened:
  *  - lengths are measured as cmd.exe receives them (each `%` is four characters),
  *  - `reservedChars` shrinks the room for the optional parts,
+ *  - in context mode a reserve that leaves no room for the header and the
+ *    pointer gives an empty recap, and whole-prompt mode still gives one,
  *  - the title is capped so the closing instruction always ends the recap,
  *  - the tail read starts with the summary and git reads, and is included only
  *    when at least 400 characters are left for it.
@@ -135,6 +137,55 @@ describe('reservedChars', () => {
     expect(recap.includes('<previous_conversation_tail>')).toBe(true);
     expect(commandLineLength(recap)).toBeLessThanOrEqual(INLINE_PROMPT_BUDGET - 3_000);
     expect(recap.endsWith(CLOSING)).toBe(true);
+  });
+});
+
+describe('a reserve that leaves no room for the fixed parts', () => {
+  // 7,000 less 6,900 leaves 100 characters, and the header and the pointer
+  // alone take over 300.
+  const HUGE_RESERVE = 6_900;
+  const sources: ExpiredConversationRecapSources = {
+    readTaskSummary: async () => 'Moved the redirect into AuthGate.',
+    readConversationTail: async (_agentSessionId, maxChars) => 'x'.repeat(maxChars),
+    readGitState: async () => ({ branch: 'fix-login', commits: ['abc1234 Move redirect'], changes: [' M src/auth.ts'] }),
+  };
+
+  it('in context mode answers an empty recap, so the column\'s pass runs on its own prompt', async () => {
+    // The premise: the fixed parts do not fit what the reserve leaves.
+    const fixedParts = await buildExpiredConversationRecap(input({ mode: 'context' }));
+    expect(commandLineLength(fixedParts)).toBeGreaterThan(INLINE_PROMPT_BUDGET - HUGE_RESERVE);
+
+    const recap = await buildExpiredConversationRecap(input({ mode: 'context', reservedChars: HUGE_RESERVE }), sources);
+
+    expect(recap).toBe('');
+  });
+
+  it('in context mode builds the recap, with its pointer, when the reserve leaves room for the fixed parts', async () => {
+    const recap = await buildExpiredConversationRecap(input({ mode: 'context', reservedChars: 3_000 }), sources);
+
+    expect(recap).not.toBe('');
+    expect(recap).toContain('kangentic_get_transcript tool, passing sessionId aaaaaaaa-1111-4222-8333-444444444444.');
+    expect(commandLineLength(recap)).toBeLessThanOrEqual(INLINE_PROMPT_BUDGET - 3_000);
+  });
+
+  it('in context mode builds the recap when the fixed parts fill the room exactly, and answers empty one character short', async () => {
+    // With no source, the recap is the fixed parts and nothing else.
+    const fixedPartsLength = commandLineLength(await buildExpiredConversationRecap(input({ mode: 'context' })));
+
+    const exactFit = await buildExpiredConversationRecap(input({ mode: 'context', reservedChars: INLINE_PROMPT_BUDGET - fixedPartsLength }));
+    const oneShort = await buildExpiredConversationRecap(input({ mode: 'context', reservedChars: INLINE_PROMPT_BUDGET - fixedPartsLength + 1 }));
+
+    expect(commandLineLength(exactFit)).toBe(fixedPartsLength);
+    expect(oneShort).toBe('');
+  });
+
+  it('in whole-prompt mode still builds a recap, which is the new session\'s only prompt and ends on the closing instruction', async () => {
+    const recap = await buildExpiredConversationRecap(input({ mode: 'whole-prompt', reservedChars: HUGE_RESERVE }), sources);
+
+    expect(recap).not.toBe('');
+    expect(recap).toContain('kangentic_get_transcript tool, passing sessionId aaaaaaaa-1111-4222-8333-444444444444.');
+    expect(recap.endsWith(CLOSING)).toBe(true);
+    expect(commandLineLength(recap)).toBeLessThanOrEqual(INLINE_PROMPT_BUDGET);
   });
 });
 
