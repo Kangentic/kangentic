@@ -171,6 +171,10 @@ async function focusByTab(page: Page, trigger: Locator): Promise<void> {
   await expect(trigger).not.toBeFocused();
   await page.keyboard.press('Tab');
   await expect(trigger).toBeFocused();
+  // The control Shift+Tab stepped onto may be a trigger too: its tip opened and closed on the
+  // way back, which starts the warm window. Wait it out, so a test timing a later hover measures
+  // a cold dwell and not that neighbour's handoff. The trigger's own tip stays up, held by focus.
+  await waitPageMs(page, TOOLTIP_WARM_MS + 50);
 }
 
 async function parkPointer(page: Page): Promise<void> {
