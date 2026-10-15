@@ -6,7 +6,7 @@ import type { ActivityReason } from '../../../shared/types';
 
 /**
  * Plain-text summary of an `ActivityReason`. TaskCard's activity mark takes it
- * as its name and its HoverTip, explaining why the spinner is on (or why an idle
+ * as its name and its Tooltip, explaining why the spinner is on (or why an idle
  * session is paused).
  *
  * Same priority ladder as the engine: permission > tool > subagent >
@@ -38,7 +38,7 @@ export function formatActivityReasonText(reason: ActivityReason): string {
 
 /**
  * The glyph for a reason's kind, the one `ActivityReasonTooltip` below draws, with no colour
- * class: it takes the colour of the text it leads. TaskCard's HoverTip opens with it.
+ * class: it takes the colour of the text it leads. TaskCard's Tooltip opens with it.
  */
 export function activityReasonIcon(reason: ActivityReason): ReactNode {
   switch (reason.kind) {

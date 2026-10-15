@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { Columns3, ListTodo, Plus, Workflow as WorkflowIcon } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import { CountBadge } from '../CountBadge';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { SegmentedControl } from '../SegmentedControl';
 import { ToolbarSearchFilter } from '../ToolbarSearchFilter';
 import { ImportPopover } from '../backlog/ImportPopover';
@@ -191,11 +191,11 @@ export const ViewToggle = React.memo(function ViewToggle() {
             // not-started or a finished workflow shows nothing here.
             trailing: workflowRunning
               ? (
-                <HoverTip label="A workflow is running">
+                <Tooltip label="A workflow is running">
                   <span className="inline-flex shrink-0 text-active" data-testid="view-toggle-workflows-running">
                     <ActivityMark mark="agent-working" size={16} />
                   </span>
-                </HoverTip>
+                </Tooltip>
               )
               : undefined,
           },
@@ -267,7 +267,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           cluster to the right now. */}
       {activeView === 'board' ? (
         <div key="board-actions" className="ml-2 flex items-center gap-2 shrink-0">
-          <HoverTip label="Add column">
+          <Tooltip label="Add column">
             <button
               type="button"
               onClick={() => openBoardManager(null, true)}
@@ -278,11 +278,11 @@ export const ViewToggle = React.memo(function ViewToggle() {
               <Plus size={16} className="shrink-0" />
               <span className={collapse.primaryAction.label}>Add column</span>
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
       ) : activeView === 'workflows' ? null : (
         <div key="backlog-actions" className="ml-2 flex items-center gap-2 shrink-0">
-          <HoverTip label="New Task">
+          <Tooltip label="New Task">
             <button
               type="button"
               onClick={openNewDialog}
@@ -293,7 +293,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
               <Plus size={14} className="shrink-0" />
               <span className={collapse.primaryAction.label}>New Task</span>
             </button>
-          </HoverTip>
+          </Tooltip>
           <ImportPopover onOpenImportDialog={setImportSource} collapse={collapse.filterControl} />
         </div>
       )}

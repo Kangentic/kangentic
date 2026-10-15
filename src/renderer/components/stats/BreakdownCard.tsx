@@ -3,7 +3,7 @@ import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost } from '../../utils/format-session';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { ChartCard } from './ChartCard';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { KngDonut } from './charts/KngDonut';
 import { rankSlicesByMetric, visibleSlices, type DonutSlice } from './useStatsData';
 
@@ -97,7 +97,7 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
         </div>
         <ul className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden max-h-full space-y-1.5" data-testid={`${testId}-list`}>
           {listSlices.map((slice) => (
-            <HoverTip key={slice.id} label={rowTip(slice)}>
+            <Tooltip key={slice.id} label={rowTip(slice)}>
               <li
                 className={`flex items-center gap-2 text-xs rounded transition-colors ${hoveredSliceId === slice.id ? 'bg-surface-hover/40' : ''}`}
                 data-testid={`${testId}-row`}
@@ -125,7 +125,7 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
                 </span>
                 <span className="text-fg-muted tabular-nums w-8 text-right">{`${sharePercent(slice)}%`}</span>
               </li>
-            </HoverTip>
+            </Tooltip>
           ))}
         </ul>
       </div>

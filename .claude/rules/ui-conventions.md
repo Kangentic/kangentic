@@ -110,7 +110,7 @@ chrome unless these are stated.
     the other adopters. Every class must be a complete literal, since Tailwind scans source text.
   - **An icon-only control keeps its name.** `hidden` on a label removes it from the
     accessibility tree, so a control that sheds its text carries an `aria-label`, and its hover
-    text is a HoverTip ([[one-tooltip]]).
+    text is a Tooltip ([[one-tooltip]]).
   - **Watch the flexible child, not just the clipping.** A search field with a max and no min
     absorbs the whole shortfall silently: the row fits perfectly while the field shrinks to
     92px. "Nothing clipped" is not the same as "still usable", and only the first is visible in

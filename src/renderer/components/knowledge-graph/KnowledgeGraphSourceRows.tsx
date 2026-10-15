@@ -15,7 +15,7 @@
 
 import { useState } from 'react';
 import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /** Rows shown before "Show all N". */
 export const SOURCE_ROWS_SHOWN = 5;
@@ -62,7 +62,7 @@ export function KnowledgeGraphSourceRows({
       {/* The tip is the full title, which the row cuts short, and under it why
           a row that cannot open is off. */}
       {visible.map((task) => (
-        <HoverTip
+        <Tooltip
           key={task.key}
           label={task.title}
           detail={canOpenTask(task) ? undefined : 'No recorded conversation to open here'}
@@ -87,7 +87,7 @@ export function KnowledgeGraphSourceRows({
             ) : null}
             <span className="min-w-0 flex-1 truncate">{task.title}</span>
           </button>
-        </HoverTip>
+        </Tooltip>
       ))}
       {!expanded && !collapsed && rows.length > SOURCE_ROWS_SHOWN ? (
         <button

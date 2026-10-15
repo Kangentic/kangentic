@@ -200,7 +200,7 @@ export async function openScene(page: Page, scene: SceneDefinition, options: Ope
   await expect(page.locator('html')).toHaveAttribute('data-demo-ready', '1', { timeout: READY_TIMEOUT_MS });
   // A step that hovers a card can leave the pointer resting on a tip trigger inside it, and the
   // tip opens 400ms later. No scene is a picture of a tooltip, so none is ever painted into one.
-  await page.addStyleTag({ content: '[data-hover-tip] { display: none !important; }' });
+  await page.addStyleTag({ content: '[data-tooltip] { display: none !important; }' });
   if (scene.reach === 'driver') {
     for (const step of scene.steps) await playStep(page, step);
   }

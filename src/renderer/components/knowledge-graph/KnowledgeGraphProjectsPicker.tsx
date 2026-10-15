@@ -20,7 +20,7 @@ import { Check, ChevronDown, Search } from 'lucide-react';
 import type { KnowledgeGraphProjectSummary } from '../../../shared/types';
 import { isIndexedProject } from '../../../shared/index-summary';
 import { OverlayPopover } from '../OverlayPopover';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 export interface KnowledgeGraphProjectsPickerProps {
@@ -193,7 +193,7 @@ export function KnowledgeGraphProjectsPicker({
           >
             All
           </button>
-          <HoverTip label="Just the open project">
+          <Tooltip label="Just the open project">
             <button
               type="button"
               // The scope is never empty, so None is the open project alone.
@@ -204,7 +204,7 @@ export function KnowledgeGraphProjectsPicker({
             >
               None
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
         <div
           className="min-h-0 flex-1 overflow-y-auto pb-1.5"
@@ -246,11 +246,11 @@ export function KnowledgeGraphProjectsPicker({
                 {isPending ? <span className="flex-shrink-0 text-[11px] text-fg-muted">Building</span> : null}
                 {/* The count is what the map draws; the task records it also
                     searches are named on hover. */}
-                <HoverTip label={`${project.conversations.toLocaleString()} conversations, ${project.taskRecords.toLocaleString()} task records`}>
+                <Tooltip label={`${project.conversations.toLocaleString()} conversations, ${project.taskRecords.toLocaleString()} task records`}>
                   <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint">
                     {project.conversations}
                   </span>
-                </HoverTip>
+                </Tooltip>
               </button>
             );
           })}
@@ -260,7 +260,7 @@ export function KnowledgeGraphProjectsPicker({
                 Not indexed
               </div>
               {shownNotIndexed.map((project) => (
-                <HoverTip key={project.id} label="Nothing indexed yet, so there is no map to draw">
+                <Tooltip key={project.id} label="Nothing indexed yet, so there is no map to draw">
                   <button
                     type="button"
                     role="option"
@@ -275,7 +275,7 @@ export function KnowledgeGraphProjectsPicker({
                     <span className="min-w-0 flex-1 truncate">{project.name}</span>
                     <span className="flex-shrink-0 text-[11px] tabular-nums">0</span>
                   </button>
-                </HoverTip>
+                </Tooltip>
               ))}
             </>
           ) : null}

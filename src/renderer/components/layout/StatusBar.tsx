@@ -6,7 +6,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useUpdaterStore } from '../../stores/updater-store';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { Pill } from '../Pill';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { bakedReleaseNotes } from '../../lib/baked-release-notes';
 
 /**
@@ -78,9 +78,9 @@ export function StatusBar() {
           // `undefined` when the build has no notes leaves it a plain <span>: a
           // clickable pill that opens an empty dialog is worse than a static one -
           // and a static one correctly reads as dead space that dismisses.
-          // HoverTip adds no click to a child without one, so the span survives
+          // Tooltip adds no click to a child without one, so the span survives
           // the wrap, and its empty label shows nothing.
-          <HoverTip label={bakedReleaseNotes ? `What's new in v${appVersion}` : ''}>
+          <Tooltip label={bakedReleaseNotes ? `What's new in v${appVersion}` : ''}>
             <Pill
               size="sm"
               onClick={bakedReleaseNotes ? openWhatsNew : undefined}
@@ -91,7 +91,7 @@ export function StatusBar() {
             >
               v{appVersion}
             </Pill>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { ButtonGroup } from '../ButtonGroup';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import type { UsageCustomWindow, UsageTimePeriod } from '../../../shared/types';
 import { StatsCustomRangePicker } from './StatsCustomRangePicker';
 import { PERIOD_OPTIONS } from './period-options';
@@ -53,7 +53,7 @@ export function StatsFilterRow({
         onClear={onCustomWindowClear}
       />
       {drillLabel && (
-        <HoverTip label="Back to the full range">
+        <Tooltip label="Back to the full range">
           <button
             type="button"
             onClick={onDrillClear}
@@ -63,7 +63,7 @@ export function StatsFilterRow({
             {drillLabel}
             <X size={14} className="text-fg-muted" />
           </button>
-        </HoverTip>
+        </Tooltip>
       )}
     </div>
   );

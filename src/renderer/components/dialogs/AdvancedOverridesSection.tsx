@@ -12,7 +12,7 @@ import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
 import { Field, FIELD_SELECT_CLASS } from '../Field';
 import { Select } from '../settings/shared';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 interface AdvancedOverridesSectionProps {
   /** Destination/current swimlane ID. Used to resolve the fallback agent (column.agent_override > project default) for capability lookup. */
@@ -84,7 +84,7 @@ interface EditPencilButtonProps {
  */
 function EditPencilButton({ onClick, label, testId, disabled = false }: EditPencilButtonProps) {
   return (
-    <HoverTip label={label}>
+    <Tooltip label={label}>
       <button
         type="button"
         onClick={onClick}
@@ -95,7 +95,7 @@ function EditPencilButton({ onClick, label, testId, disabled = false }: EditPenc
       >
         <Pencil size={14} />
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -425,7 +425,7 @@ export function AdvancedOverridesSection({
                 With only Default it renders DISABLED rather than hidden: it shows
                 the concept exists and that Default is what this task will use. */}
             {/* Select spreads its props onto the native select, so the tip lands there. */}
-            <HoverTip
+            <Tooltip
               label={hasProfiles
                 ? 'An alternate set of per-column agent, model, and effort settings'
                 : 'No profiles yet - create one in Edit Columns'}
@@ -445,7 +445,7 @@ export function AdvancedOverridesSection({
                 ))}
                 {unlistedProfile && <option value={profileId ?? ''}>Removed profile</option>}
               </Select>
-            </HoverTip>
+            </Tooltip>
             {/* An affordance where a line of instructions used to be. It is the
                 only route to authoring from here, so it stays visible whether or
                 not profiles exist - "create the first one" and "retune an
@@ -482,7 +482,7 @@ export function AdvancedOverridesSection({
                 this wrapper rather than on the Combobox: the pencil's own tip is
                 the inner trigger and wins while the pointer is on the button, so
                 both read correctly with no prop added to a shared control. */}
-            <HoverTip label={agentFieldTip}>
+            <Tooltip label={agentFieldTip}>
               <div data-testid="task-agent-field">
                 <Field label="Agent">
                   <div className="flex items-center gap-2">
@@ -513,7 +513,7 @@ export function AdvancedOverridesSection({
                   </div>
                 </Field>
               </div>
-            </HoverTip>
+            </Tooltip>
             {(showModelPicker || showEffortPicker) && (
               <div className="flex gap-3">
                 {showModelPicker && (

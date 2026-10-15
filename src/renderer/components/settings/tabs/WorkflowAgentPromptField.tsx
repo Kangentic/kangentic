@@ -4,7 +4,7 @@ import { Maximize2, RotateCcw, Workflow as WorkflowIcon } from 'lucide-react';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import { TemplateVariablePicker } from '../../TemplateVariablePicker';
 import { Pill } from '../../Pill';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { BaseDialog, DialogFooterActions } from '../../dialogs/BaseDialog';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { maximizedDialogLayout, MaximizeToggleButton } from '../../dialogs/dialog-maximize';
@@ -117,7 +117,7 @@ export function WorkflowAgentPromptSetting({ stored, onSave }: { stored: string;
 /** The card header's Expand: the same prompt, larger. */
 export function WorkflowAgentPromptExpandButton({ onClick }: { onClick: () => void }) {
   return (
-    <HoverTip label="Expand the prompt">
+    <Tooltip label="Expand the prompt">
       <button
         type="button"
         onClick={onClick}
@@ -127,7 +127,7 @@ export function WorkflowAgentPromptExpandButton({ onClick }: { onClick: () => vo
         <Maximize2 size={13} aria-hidden="true" />
         Expand
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

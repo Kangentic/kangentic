@@ -10,7 +10,7 @@ import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow } from '../settings
 import { settingProps } from '../settings-registry';
 import { ColorPickerPopover, PRESET_COLORS } from '../../backlog/manage-labels/ColorPickerPopover';
 import { Pill } from '../../Pill';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { FontCombobox } from '../../dialogs/FontCombobox';
 
 type TerminalColorKey = keyof TerminalColorOverrides;
@@ -60,7 +60,7 @@ function ColorSwatchField({
   const buttonRef = useRef<HTMLButtonElement>(null);
   return (
     <div className="flex flex-col items-center gap-1.5 w-16">
-      <HoverTip label={`Change ${label}`} enabled={!showPicker}>
+      <Tooltip label={`Change ${label}`} enabled={!showPicker}>
         <button
           ref={buttonRef}
           type="button"
@@ -70,7 +70,7 @@ function ColorSwatchField({
           className="w-8 h-8 rounded-md border border-edge-input hover:border-fg-muted hover:scale-105 transition-all shadow-sm"
           style={{ backgroundColor: value }}
         />
-      </HoverTip>
+      </Tooltip>
       <span className="text-[11px] text-fg-faint text-center leading-tight">{label}</span>
       {showPicker && (
         <ColorPickerPopover

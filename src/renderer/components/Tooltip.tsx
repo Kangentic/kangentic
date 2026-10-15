@@ -1,5 +1,5 @@
 /**
- * The one tooltip. Every hover text in the renderer is a HoverTip, the full value of text the layout
+ * The one tooltip. Every hover text in the renderer is a Tooltip, the full value of text the layout
  * cuts short included; the renderer has no native `title` (`.claude/rules/one-tooltip.md`).
  *
  * Two shapes:
@@ -10,13 +10,13 @@
  *    over a divider), a free-form body and an optional footer. Any of `content`, `header` or
  *    `footer` selects it; `label` is then what a screen reader reads.
  *
- * Behaviour (timing and placement live in `utils/hover-tip.ts`):
- *  - Opens after HOVER_TIP_DWELL_MS of hover. The dwell arms on a pointer MOVE over the trigger,
+ * Behaviour (timing and placement live in `utils/tooltip.ts`):
+ *  - Opens after TOOLTIP_DWELL_MS of hover. The dwell arms on a pointer MOVE over the trigger,
  *    not on the enter alone: a control that appears under a resting pointer (a button in a
  *    dialog that just opened) only gets boundary events, so it shows nothing until the pointer
  *    moves, and a stray tip cannot eat the Escape meant for that dialog.
  *  - Opens at once when Tab or Shift+Tab moves focus to the trigger (`utils/tab-focus.ts`), and at
- *    once while another tip shows or for HOVER_TIP_WARM_MS after one closed. A script's focus and
+ *    once while another tip shows or for TOOLTIP_WARM_MS after one closed. A script's focus and
  *    arrowing inside a menu or a radio group open nothing: the next Escape there belongs to the
  *    dialog or the widget, and a tip would take it.
  *  - Only events inside the trigger's own element count, so a menu it portals out does not arm
@@ -84,21 +84,21 @@ import { formatCombo, formatComboSegments } from '../utils/keybindings';
 import { isRebindCaptureActive } from '../utils/rebind-state';
 import { focusCameFromTab, installTabFocusTracker } from '../utils/tab-focus';
 import {
-  HOVER_TIP_DWELL_MS,
+  TOOLTIP_DWELL_MS,
   claimTip,
   isTipWarm,
   placeTip,
   releaseTip,
   repeatsTriggerName,
   tipDescription,
-} from '../utils/hover-tip';
+} from '../utils/tooltip';
 
-export interface HoverTipHeader {
+export interface TooltipHeader {
   icon?: ReactNode;
   title: string;
 }
 
-export interface HoverTipProps {
+export interface TooltipProps {
   /**
    * Plain text: the label tip itself, and what a screen reader reads for a rich tip. "\n" breaks
    * a line. An empty label with no rich part holds the tip shut.
@@ -112,7 +112,7 @@ export interface HoverTipProps {
   icon?: ReactNode;
   /** A rich tip's body. Any of `content`, `header` or `footer` selects the rich shape. */
   content?: ReactNode;
-  header?: HoverTipHeader;
+  header?: TooltipHeader;
   footer?: ReactNode;
   /**
    * Whether the label and detail are read as the trigger's description. Default: yes, unless the
@@ -129,7 +129,7 @@ export interface HoverTipProps {
   children: ReactElement;
 }
 
-/** What HoverTip reads from its child and chains onto it. */
+/** What Tooltip reads from its child and chains onto it. */
 interface TriggerProps {
   onPointerEnter?: (event: ReactPointerEvent<Element>) => void;
   onPointerMove?: (event: ReactPointerEvent<Element>) => void;
@@ -151,12 +151,12 @@ interface TipLayerHandle {
 }
 
 /** Every tip: fixed above everything, never hit by the pointer. Positioned imperatively. */
-const TIP_BASE_CLASS = 'pointer-events-none fixed left-0 top-0 z-[2147483646] rounded-md text-xs shadow-tip';
+const TIP_BASE_CLASS = 'pointer-events-none fixed left-0 top-0 z-[2147483646] rounded-md text-xs shadow-tooltip';
 /** The label shape: inverted, wrapping at 280px (or the window, if narrower). */
 const LABEL_TIP_CLASS = 'w-max max-w-[min(280px,calc(100vw-16px))] bg-fg px-2 py-1 leading-4 text-surface';
 /** The rich shape: the raised panel with a muted outline. */
 const RICH_TIP_CLASS = 'w-max max-w-[calc(100vw-16px)] overflow-hidden border border-fg-muted bg-surface-raised text-fg';
-const KEY_CHIP_CLASS = 'inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-tip-chip-edge bg-tip-chip px-1 font-sans text-[11px] font-medium leading-none text-surface';
+const KEY_CHIP_CLASS = 'inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-tooltip-chip-edge bg-tooltip-chip px-1 font-sans text-[11px] font-medium leading-none text-surface';
 
 /**
  * Events an inner trigger already answered. A trigger can sit inside another (a PR state badge
@@ -191,17 +191,17 @@ function isOwnEvent(event: { target: EventTarget; currentTarget: Element }): boo
 function warnAboutTrigger(element: Element): void {
   const where = element.outerHTML.slice(0, 120);
   if (element.hasAttribute('title')) {
-    console.error(`HoverTip: the trigger still carries a native title, so two tooltips show: ${where}`);
+    console.error(`Tooltip: the trigger still carries a native title, so two tooltips show: ${where}`);
   }
   const interactive = element.matches('button, a[href], [role="button"], [role="switch"], [role="tab"]');
   const named = element.hasAttribute('aria-label') || element.hasAttribute('aria-labelledby')
     || (element.textContent ?? '').trim() !== '';
   if (interactive && !named) {
-    console.error(`HoverTip: the trigger has no accessible name. A tip never names its trigger; give it an aria-label: ${where}`);
+    console.error(`Tooltip: the trigger has no accessible name. A tip never names its trigger; give it an aria-label: ${where}`);
   }
 }
 
-export function HoverTip(props: HoverTipProps): ReactElement {
+export function Tooltip(props: TooltipProps): ReactElement {
   const { label, detail, keys, icon, content, header, footer, describe, enabled = true, testId, children } = props;
   const child = isValidElement(children) ? (children as ReactElement<TriggerProps>) : null;
   const childProps: TriggerProps = child?.props ?? {};
@@ -270,7 +270,7 @@ export function HoverTip(props: HoverTipProps): ReactElement {
     dwellTimerRef.current = window.setTimeout(() => {
       dwellTimerRef.current = null;
       if (hoveredRef.current && !hoverBlockedRef.current && enabledRef.current) layerRef.current?.show('cold');
-    }, HOVER_TIP_DWELL_MS);
+    }, TOOLTIP_DWELL_MS);
   }, [clearDwell, takeTrigger]);
 
   const handlePointerLeave = useCallback((): void => {
@@ -366,7 +366,7 @@ export function HoverTip(props: HoverTipProps): ReactElement {
 
   useEffect(() => {
     if (__KANGENTIC_DEV__ && childIsFragment) {
-      console.error('HoverTip: the trigger is a Fragment, which takes no handlers, so its tip never opens. Pass one element.');
+      console.error('Tooltip: the trigger is a Fragment, which takes no handlers, so its tip never opens. Pass one element.');
     }
   }, [childIsFragment]);
 
@@ -468,7 +468,7 @@ export function HoverTip(props: HoverTipProps): ReactElement {
 
 function TipKeys({ combo }: { combo: string }): ReactElement {
   return (
-    <span className="ml-1 flex shrink-0 items-center gap-0.5 self-center" data-hover-tip-part="keys">
+    <span className="ml-1 flex shrink-0 items-center gap-0.5 self-center" data-tooltip-part="keys">
       {formatComboSegments(combo).map((segment, index) => (
         <kbd key={`${index}-${segment}`} className={KEY_CHIP_CLASS}>{segment}</kbd>
       ))}
@@ -481,7 +481,7 @@ interface TipLayerProps {
   triggerRef: RefObject<Element | null>;
   /** Called on every close of a shown tip, whatever closed it. */
   onHidden: () => void;
-  /** The rich shape: HoverTip decides it, since it also decides whether the tip opens at all. */
+  /** The rich shape: Tooltip decides it, since it also decides whether the tip opens at all. */
   rich: boolean;
   label: string;
   detail?: string;
@@ -489,7 +489,7 @@ interface TipLayerProps {
   combo: string;
   icon?: ReactNode;
   content?: ReactNode;
-  header?: HoverTipHeader;
+  header?: TooltipHeader;
   footer?: ReactNode;
   testId?: string;
 }
@@ -601,7 +601,7 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
     <div
       ref={tipRef}
       role="tooltip"
-      data-hover-tip=""
+      data-tooltip=""
       data-shape={rich ? 'rich' : 'label'}
       data-testid={testId}
       className={`${TIP_BASE_CLASS} ${rich ? RICH_TIP_CLASS : LABEL_TIP_CLASS}${shown === 'cold' ? ' overlay-popover-in' : ''}`}
@@ -609,18 +609,18 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
       {rich ? (
         <>
           {header !== undefined && (
-            <div data-hover-tip-part="header" className="flex items-center gap-2 border-b border-edge bg-surface-hover/40 px-3 py-2">
+            <div data-tooltip-part="header" className="flex items-center gap-2 border-b border-edge bg-surface-hover/40 px-3 py-2">
               {header.icon !== undefined && (
-                <span aria-hidden="true" className="flex shrink-0 text-tip-rich-muted [&>svg]:size-[13px]">{header.icon}</span>
+                <span aria-hidden="true" className="flex shrink-0 text-tooltip-rich-muted [&>svg]:size-[13px]">{header.icon}</span>
               )}
               <span className="font-semibold">{header.title}</span>
             </div>
           )}
           {content !== undefined && (
-            <div data-hover-tip-part="body" className="px-3 py-2.5">{content}</div>
+            <div data-tooltip-part="body" className="px-3 py-2.5">{content}</div>
           )}
           {footer !== undefined && (
-            <div data-hover-tip-part="footer" className="border-t border-edge px-3 py-1.5 text-tip-rich-muted">{footer}</div>
+            <div data-tooltip-part="footer" className="border-t border-edge px-3 py-1.5 text-tooltip-rich-muted">{footer}</div>
           )}
         </>
       ) : (
@@ -631,7 +631,7 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
           <span className="min-w-0 whitespace-pre-line break-words">
             {label}
             {detail !== undefined && detail !== '' && (
-              <span className="block text-tip-muted">{detail}</span>
+              <span className="block text-tooltip-muted">{detail}</span>
             )}
           </span>
           {combo !== '' && <TipKeys combo={combo} />}

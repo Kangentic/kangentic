@@ -1,14 +1,14 @@
 /**
- * The pure half of `HoverTip` (components/HoverTip.tsx): its timing, where it sits, what a
+ * The pure half of `Tooltip` (components/Tooltip.tsx): its timing, where it sits, what a
  * screen reader hears, and the one-tip-at-a-time state every instance shares.
  *
  * No DOM imports, so the unit tier and the UI spec read the same numbers the component runs on.
  */
 
 /** Hover dwell before a cold tip opens. Long enough that sweeping across a row of icons shows nothing. */
-export const HOVER_TIP_DWELL_MS = 400;
+export const TOOLTIP_DWELL_MS = 400;
 /** After a tip closes by pointer leave or blur, the next trigger's tip opens at once for this long. */
-export const HOVER_TIP_WARM_MS = 300;
+export const TOOLTIP_WARM_MS = 300;
 /** Gap between the trigger and the tip. */
 export const TIP_OFFSET = 8;
 /** Minimum distance the tip keeps from the window edge. */
@@ -105,7 +105,7 @@ let lastWarmCloseAt = Number.NEGATIVE_INFINITY;
 
 /** Whether the next tip opens at once: one is showing, or one closed by leave or blur just now. */
 export function isTipWarm(now: number): boolean {
-  return shownTipClose !== null || now - lastWarmCloseAt < HOVER_TIP_WARM_MS;
+  return shownTipClose !== null || now - lastWarmCloseAt < TOOLTIP_WARM_MS;
 }
 
 /** Record `close` as the tip on screen, closing whichever tip held that place. */

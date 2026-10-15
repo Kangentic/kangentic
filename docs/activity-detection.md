@@ -630,7 +630,7 @@ The resume path now adopts nothing. Any surviving shell-like descendants are ins
 
 ### TaskCard hover tooltip
 
-The activity mark on each task card is wrapped in the app's HoverTip. Its label is `formatActivityReasonText` and it leads with `activityReasonIcon`, one glyph per reason kind: "Running Bash", "2 subagents active", "1 background shell", "Awaiting permission", etc. The mark's `aria-label` is the same text, so a screen reader hears the reason once, without hovering.
+The activity mark on each task card is wrapped in the app's Tooltip. Its label is `formatActivityReasonText` and it leads with `activityReasonIcon`, one glyph per reason kind: "Running Bash", "2 subagents active", "1 background shell", "Awaiting permission", etc. The mark's `aria-label` is the same text, so a screen reader hears the reason once, without hovering.
 
 ### Activity Engine Debug Overlay (Developer settings tab)
 

@@ -2,7 +2,7 @@ import { useRef, useState, type ClipboardEvent, type KeyboardEvent, type RefObje
 import { Paperclip, Eye, PenLine } from 'lucide-react';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { DescriptionMentionMenu } from './DescriptionMentionMenu';
-import { HoverTip } from './HoverTip';
+import { Tooltip } from './Tooltip';
 import { useDescriptionMentions } from '../hooks/useDescriptionMentions';
 import {
   applyTextareaEdit,
@@ -316,7 +316,7 @@ export function DescriptionEditor({
             )}
           </div>
         )}
-        <HoverTip label={showPreview ? 'Back to writing markdown' : 'Preview rendered markdown'}>
+        <Tooltip label={showPreview ? 'Back to writing markdown' : 'Preview rendered markdown'}>
           <button
             type="button"
             onClick={togglePreview}
@@ -337,7 +337,7 @@ export function DescriptionEditor({
                 arrives already knowing. */}
             {showPreview ? 'Write' : 'Preview'}
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
     </div>
   );

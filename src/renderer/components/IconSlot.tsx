@@ -50,10 +50,10 @@ interface IconSlotProps {
  *
  * One trap. The slot neutralizes the element it wraps, which for an `<ActivityMark>` is
  * that component's `<svg>` root - the very node `ActivityMark` documents as having to
- * stay hit-testable, because a `HoverTip` around it opens only while the element itself
+ * stay hit-testable, because a `Tooltip` around it opens only while the element itself
  * can receive the pointer (see `TaskCard`, which relies on exactly that). A mark inside a
  * slot must therefore label itself with `aria-label`, and its tip goes on the slot's
- * button, not the mark; a HoverTip around the mark there would be silently inert, with no
+ * button, not the mark; a Tooltip around the mark there would be silently inert, with no
  * test to catch it.
  */
 export function IconSlot({ size, className, children }: IconSlotProps) {

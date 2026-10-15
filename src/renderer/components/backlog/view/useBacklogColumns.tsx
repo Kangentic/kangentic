@@ -3,7 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import { GitHubIcon } from '../../icons/GitHubIcon';
 import { formatRelativeTime } from '../../../lib/datetime';
 import type { DataTableColumn } from '../../DataTable';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { PriorityBadge } from '../PriorityBadge';
 import { stripMarkdown } from '../../../utils/strip-markdown';
@@ -86,7 +86,7 @@ export function useBacklogColumns(input: {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             {item.external_source && item.external_url && (
-              <HoverTip label={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}>
+              <Tooltip label={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}>
                 <button
                   type="button"
                   className="shrink-0 text-fg-faint hover:text-fg transition-colors"
@@ -98,7 +98,7 @@ export function useBacklogColumns(input: {
                 >
                   {item.external_source?.startsWith('github') ? <GitHubIcon size={13} /> : <ExternalLink size={13} />}
                 </button>
-              </HoverTip>
+              </Tooltip>
             )}
             <span className="text-fg font-medium truncate">{item.title}</span>
           </div>

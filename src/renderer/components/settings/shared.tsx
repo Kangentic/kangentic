@@ -4,8 +4,8 @@ import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { TIER_LABELS } from './settings-tabs';
 import type { SettingsTabTier } from './settings-tabs';
 import { Pill } from '../Pill';
-import { HoverTip } from '../HoverTip';
-import { tipLabel } from '../../utils/hover-tip';
+import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 
 // Re-export scope primitives so consumers can import everything from './shared'.
 export { SettingsPanelProvider, useScopedUpdate } from './setting-scope';
@@ -188,7 +188,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                     {isNewTier && (
                       <div className={`${sectionHeaderClass} pt-3 pb-1`}>{TIER_LABELS[tab.tier as Exclude<SettingsTabTier, 'core'>]}</div>
                     )}
-                    <HoverTip label={tab.tooltip ?? ''}>
+                    <Tooltip label={tab.tooltip ?? ''}>
                       <button
                         data-testid={`settings-tab-${tab.id}`}
                         onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
@@ -208,7 +208,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                           </Pill>
                         )}
                       </button>
-                    </HoverTip>
+                    </Tooltip>
                   </React.Fragment>
                 );
               })}
@@ -343,7 +343,7 @@ export function ToggleSwitch({
   readOnly?: boolean;
 }) {
   return (
-    <HoverTip label={tipLabel({ disabled, disabledReason, tip })}>
+    <Tooltip label={tipLabel({ disabled, disabledReason, tip })}>
       <button
         role="switch"
         aria-checked={checked}
@@ -362,7 +362,7 @@ export function ToggleSwitch({
           }`}
         />
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

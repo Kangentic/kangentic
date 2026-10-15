@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Globe, ArrowRight } from 'lucide-react';
 import { normalizeUrl } from './BrowserEmptyState.utils';
 import { focusIsInTypingSurface } from '../../utils/terminal-arrival-focus';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 interface BrowserEmptyStateProps {
   onSubmit: (url: string) => void;
@@ -118,7 +118,7 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
           </span>
           <div className="grid grid-cols-2 gap-1.5">
             {QUICK_PICKS.map((pick) => (
-              <HoverTip key={pick.url} label={`Open ${pick.url}`}>
+              <Tooltip key={pick.url} label={`Open ${pick.url}`}>
                 <button
                   type="button"
                   onClick={() => submit(pick.url)}
@@ -132,7 +132,7 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
                     {pick.hint}
                   </span>
                 </button>
-              </HoverTip>
+              </Tooltip>
             ))}
           </div>
         </div>

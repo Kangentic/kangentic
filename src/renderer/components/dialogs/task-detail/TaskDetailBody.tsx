@@ -23,7 +23,7 @@ import { useSessionStore } from '../../../stores/session-store';
 import { useAgentDriveVeil } from '../../../hooks/useAgentDriveVeil';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
 import { PanelErrorBoundary } from '../../PanelErrorBoundary';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { usePopOut } from '../../../pop-out/usePopOut';
 import { onIdle } from '../../../utils/on-idle';
 
@@ -371,7 +371,7 @@ export function TaskDetailBody({
   // Draggable seam between the main pane (terminal / launch overlay) and the
   // right panel. Shared by the active-terminal and preparing branches.
   const splitDivider = (
-    <HoverTip label="Drag to resize">
+    <Tooltip label="Drag to resize">
       <div
         onMouseDown={onSplitResizeStart}
         data-testid="task-detail-split-divider"
@@ -390,7 +390,7 @@ export function TaskDetailBody({
           }`}
         />
       </div>
-    </HoverTip>
+    </Tooltip>
   );
   // While dragging, an overlay keeps mouse events flowing over the Electron
   // <webview> (Browser pane) and the xterm canvas.

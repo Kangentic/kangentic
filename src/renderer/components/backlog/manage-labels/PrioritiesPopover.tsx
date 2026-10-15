@@ -17,7 +17,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
@@ -159,7 +159,7 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
 
   return (
     <div className="relative shrink-0">
-      <HoverTip label="Priorities" enabled={!open}>
+      <Tooltip label="Priorities" enabled={!open}>
         <button
           ref={buttonRef}
           type="button"
@@ -175,7 +175,7 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
           <Flag size={14} className="shrink-0" />
           <span className={collapse?.label}>Priorities</span>
         </button>
-      </HoverTip>
+      </Tooltip>
 
       <PopoverShell open={open} popoverRef={popoverRef}>
         <div>
@@ -322,7 +322,7 @@ function PriorityRow({
       )}
 
       <div className="relative flex-shrink-0">
-        <HoverTip label="Change color" enabled={!showColorPicker}>
+        <Tooltip label="Change color" enabled={!showColorPicker}>
           <button
             ref={colorButtonRef}
             type="button"
@@ -344,7 +344,7 @@ function PriorityRow({
               </Pill>
             )}
           </button>
-        </HoverTip>
+        </Tooltip>
         {showColorPicker && (
           <ColorPickerPopover
             color={color}
@@ -374,7 +374,7 @@ function PriorityRow({
 
       {!editing && <div className="flex-1" />}
 
-      <HoverTip label="Rename">
+      <Tooltip label="Rename">
         <button
           type="button"
           onClick={startEditing}
@@ -383,10 +383,10 @@ function PriorityRow({
         >
           <Pencil size={12} />
         </button>
-      </HoverTip>
+      </Tooltip>
 
       {!isLocked ? (
-        <HoverTip label="Delete priority">
+        <Tooltip label="Delete priority">
           <button
             type="button"
             onClick={onDelete}
@@ -395,7 +395,7 @@ function PriorityRow({
           >
             <Trash2 size={13} />
           </button>
-        </HoverTip>
+        </Tooltip>
       ) : (
         <div className="w-[21px] flex-shrink-0" />
       )}

@@ -5,7 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { selectAutomationCounts } from '../../stores/board-store/automations-slice';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * The column header's automation mark: `Columns3Cog`, a column with a cog, and
@@ -54,7 +54,7 @@ export function AutomationGlyph({ swimlaneId }: { swimlaneId: string }) {
 
   // The sentence is the glyph's name as well as its tip, so a screen reader hears it once.
   return (
-    <HoverTip label={sentence}>
+    <Tooltip label={sentence}>
       <span
         role="img"
         aria-label={sentence}
@@ -67,6 +67,6 @@ export function AutomationGlyph({ swimlaneId }: { swimlaneId: string }) {
         <Columns3Cog size={12} />
         <span className="text-[11px] tabular-nums">{total}</span>
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }

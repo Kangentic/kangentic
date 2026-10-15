@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Search, Smile } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { ALL_ICONS } from '../../utils/swimlane-icons';
-import { tipLabel } from '../../utils/hover-tip';
+import { tipLabel } from '../../utils/tooltip';
 
 /** Why a used icon cannot be picked: each column's icon is its own. */
 const USED_ICON_REASON = 'Another column uses this icon';
@@ -72,7 +72,7 @@ export function IconPickerDialog({
         <div className="flex flex-wrap gap-1">
           {/* None option */}
           {!hideNone && (
-            <HoverTip label="None">
+            <Tooltip label="None">
               <button
                 type="button"
                 onClick={() => onSelect(null)}
@@ -88,7 +88,7 @@ export function IconPickerDialog({
                   style={{ backgroundColor: accentColor }}
                 />
               </button>
-            </HoverTip>
+            </Tooltip>
           )}
 
           {/* Icon buttons */}
@@ -96,7 +96,7 @@ export function IconPickerDialog({
             const isUsed = usedIcons.has(entry.name);
             const isSelected = selectedIcon === entry.name;
             return (
-              <HoverTip
+              <Tooltip
                 key={entry.name}
                 label={tipLabel({ disabled: isUsed, disabledReason: USED_ICON_REASON, tip: entry.label })}
               >
@@ -119,7 +119,7 @@ export function IconPickerDialog({
                     style={isSelected ? { color: accentColor } : undefined}
                   />
                 </button>
-              </HoverTip>
+              </Tooltip>
             );
           })}
         </div>

@@ -35,7 +35,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Filter, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { Select } from '../settings/shared';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import type { KnowledgeGraphColorMode } from './KnowledgeGraphCanvas';
 import { clusterHue } from './knowledge-graph-scene';
 import type {
@@ -270,7 +270,7 @@ function RegionRow({
   onToggle: () => void;
 }) {
   return (
-    <HoverTip label={on ? `Hide ${label}` : `Show ${label}`}>
+    <Tooltip label={on ? `Hide ${label}` : `Show ${label}`}>
       <button
         type="button"
         onClick={onToggle}
@@ -291,7 +291,7 @@ function RegionRow({
         <span className="min-w-0 flex-1 truncate text-[11px] text-fg">{label}</span>
         <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint">{count}</span>
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

@@ -760,13 +760,13 @@ test('Escape in the bottom panel terminal posts even with a task window open', a
 });
 
 test('an open tip takes the first Escape, in a task window and in the bare app, and the next one goes on', async ({ page }) => {
-  // A HoverTip closes on the first Escape through a window capture listener it adds when it opens,
+  // A Tooltip closes on the first Escape through a window capture listener it adds when it opens,
   // which is AFTER boot.js added its own. boot.js therefore reads the key first, with the tip
-  // still in the DOM, and has to treat it as the app's (isOverlayOpen counts `[data-hover-tip]`).
+  // still in the DOM, and has to treat it as the app's (isOverlayOpen counts `[data-tooltip]`).
   const readMessages = await hostFrame(page, 'task');
   const frame = page.frameLocator('#demo');
   const detail = frame.locator('[data-testid="task-detail-titlebar"]');
-  const tip = frame.locator('[data-hover-tip]');
+  const tip = frame.locator('[data-tooltip]');
   await expect(detail).toBeVisible();
   // The window's terminal takes keyboard focus once, when its replay arrives (the arrival-focus
   // arbiter). Wait for that first, so nothing moves focus back after the focus change below.
@@ -790,7 +790,7 @@ test('an open tip takes the first Escape, in a task window and in the bare app, 
   await expect(detail).toBeHidden();
   expect(hasEscape(await readMessages()), 'the window took the second Escape').toBe(false);
 
-  // With no window open. This is the half boot.js's `[data-hover-tip]` check decides: nothing else
+  // With no window open. This is the half boot.js's `[data-tooltip]` check decides: nothing else
   // in the frame claims the key, and a focused terminal outside every window keeps no Escape of
   // its own, so without the check the first press would post to the host as well as closing the tip.
   const panelTextarea = frame.locator('[data-testid="terminal-session-pane"] .xterm-helper-textarea').first();

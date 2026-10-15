@@ -2,8 +2,8 @@ import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { MoreHorizontal, Check } from 'lucide-react';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
 import { OverlayPopover } from './OverlayPopover';
-import { HoverTip } from './HoverTip';
-import { tipLabel } from '../utils/hover-tip';
+import { Tooltip } from './Tooltip';
+import { tipLabel } from '../utils/tooltip';
 
 interface KebabMenuProps {
   /** Render menu items. Call `close` to dismiss the menu after an action. */
@@ -79,7 +79,7 @@ export function KebabMenu({ children, icon, label = 'Actions', triggerClassName,
   return (
     <div className="relative flex-shrink-0" ref={containerRef}>
       {/* No tip while the menu it names is open. */}
-      <HoverTip label={label} enabled={!open}>
+      <Tooltip label={label} enabled={!open}>
         <button
           onClick={() => setOpen(!open)}
           className={triggerClassName ?? DEFAULT_TRIGGER_CLASS}
@@ -89,7 +89,7 @@ export function KebabMenu({ children, icon, label = 'Actions', triggerClassName,
         >
           {icon ?? <MoreHorizontal size={16} />}
         </button>
-      </HoverTip>
+      </Tooltip>
       <OverlayPopover
         open={open}
         popoverRef={popoverRef}
@@ -158,7 +158,7 @@ interface MenuCheckItemProps {
  */
 export function KebabMenuCheckItem({ label, checked, onChange, disabled, disabledReason, ...rest }: MenuCheckItemProps) {
   return (
-    <HoverTip label={tipLabel({ disabled, disabledReason })}>
+    <Tooltip label={tipLabel({ disabled, disabledReason })}>
       <button
         role="menuitemcheckbox"
         aria-checked={checked}
@@ -172,6 +172,6 @@ export function KebabMenuCheckItem({ label, checked, onChange, disabled, disable
         </span>
         {label}
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 export interface ComboboxOption {
@@ -274,7 +274,7 @@ export function Combobox({
           }`}
         />
         {allowClear && value && !disabled && (
-          <HoverTip label="Clear">
+          <Tooltip label="Clear">
             <button
               type="button"
               onClick={handleClear}
@@ -283,12 +283,12 @@ export function Combobox({
             >
               <X size={16} />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
         {options.length > 0 && (
           // Shut while disabled. A host that wraps the field in its own tip says why it is
           // off, and that tip shows instead.
-          <HoverTip label={isOpen ? 'Close dropdown' : 'Open dropdown'} enabled={!disabled}>
+          <Tooltip label={isOpen ? 'Close dropdown' : 'Open dropdown'} enabled={!disabled}>
             <button
               type="button"
               onClick={handleToggleDropdown}
@@ -301,7 +301,7 @@ export function Combobox({
                 className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
               />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
 
@@ -321,7 +321,7 @@ export function Combobox({
         {filteredOptions.length > 0 ? (
           filteredOptions.map((option) => (
             // The full label of a row the menu's width may cut short.
-            <HoverTip key={option.value} label={option.label}>
+            <Tooltip key={option.value} label={option.label}>
               <button
                 type="button"
                 data-combobox-option
@@ -334,7 +334,7 @@ export function Combobox({
               >
                 {option.label}
               </button>
-            </HoverTip>
+            </Tooltip>
           ))
         ) : (
           <div className="px-3 py-2 text-xs text-fg-faint text-center">No matches</div>

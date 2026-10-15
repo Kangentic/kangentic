@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { Tags, Trash2, Plus, Pencil } from 'lucide-react';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useBoardStore } from '../../../stores/board-store';
 import { useConfigStore } from '../../../stores/config-store';
@@ -119,7 +119,7 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
 
   return (
     <div className="relative shrink-0">
-      <HoverTip label="Labels" enabled={!open}>
+      <Tooltip label="Labels" enabled={!open}>
         <button
           ref={buttonRef}
           type="button"
@@ -135,7 +135,7 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
           <Tags size={14} className="shrink-0" />
           <span className={collapse?.label}>Labels</span>
         </button>
-      </HoverTip>
+      </Tooltip>
 
       <PopoverShell open={open} popoverRef={popoverRef}>
         <div>
@@ -274,7 +274,7 @@ function LabelRow({
   return (
     <div className="flex items-center gap-2 h-9 px-1.5 rounded hover:bg-surface-hover/30">
       <div className="relative flex-shrink-0">
-        <HoverTip label="Change color" enabled={!showColorPicker}>
+        <Tooltip label="Change color" enabled={!showColorPicker}>
           <button
             ref={colorButtonRef}
             type="button"
@@ -296,7 +296,7 @@ function LabelRow({
               </Pill>
             )}
           </button>
-        </HoverTip>
+        </Tooltip>
         {showColorPicker && (
           <ColorPickerPopover
             color={effectiveColor}
@@ -326,7 +326,7 @@ function LabelRow({
 
       {!editing && <div className="flex-1" />}
 
-      <HoverTip label="Rename">
+      <Tooltip label="Rename">
         <button
           type="button"
           onClick={startEditing}
@@ -335,9 +335,9 @@ function LabelRow({
         >
           <Pencil size={12} />
         </button>
-      </HoverTip>
+      </Tooltip>
 
-      <HoverTip label="Delete label">
+      <Tooltip label="Delete label">
         <button
           type="button"
           onClick={onDelete}
@@ -346,7 +346,7 @@ function LabelRow({
         >
           <Trash2 size={13} />
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 }

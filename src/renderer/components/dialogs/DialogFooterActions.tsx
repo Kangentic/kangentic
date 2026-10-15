@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { HoverTip } from '../HoverTip';
-import { tipLabel } from '../../utils/hover-tip';
+import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 
 interface DialogFooterActionsProps {
   onCancel: () => void;
@@ -64,7 +64,7 @@ export function DialogFooterActions({
         >
           Cancel
         </button>
-        <HoverTip label={tipLabel({ disabled, disabledReason })}>
+        <Tooltip label={tipLabel({ disabled, disabledReason })}>
           <button
             type={onSubmit ? 'button' : 'submit'}
             onClick={onSubmit}
@@ -74,7 +74,7 @@ export function DialogFooterActions({
           >
             {submitLabel}
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
     </div>
   );

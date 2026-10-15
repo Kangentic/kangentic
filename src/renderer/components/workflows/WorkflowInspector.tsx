@@ -6,8 +6,8 @@ import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { ActivityMark } from '../ActivityMark';
-import { HoverTip } from '../HoverTip';
-import { tipLabel } from '../../utils/hover-tip';
+import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 import { OverlayPopover } from '../OverlayPopover';
 import { ToggleSwitch } from '../settings/shared';
 import { useTaskCardViewModel } from '../board/task-card-view';
@@ -59,16 +59,16 @@ function TaskActivityMark({ task, size }: { task: Task; size: number }) {
   const view = useTaskCardViewModel(task);
   if (view.isThinking) {
     return (
-      <HoverTip label="Active">
+      <Tooltip label="Active">
         <span className="inline-flex shrink-0 text-active" role="img" aria-label="Active"><ActivityMark mark="agent-working" size={size} /></span>
-      </HoverTip>
+      </Tooltip>
     );
   }
   if (view.isIdle) {
     return (
-      <HoverTip label="Idle">
+      <Tooltip label="Idle">
         <span className="inline-flex shrink-0 text-attention" role="img" aria-label="Idle"><ActivityMark mark="agent-idle" size={size} /></span>
-      </HoverTip>
+      </Tooltip>
     );
   }
   return null;
@@ -214,11 +214,11 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
             <ColumnGlyph column={{ icon: step.icon, role: null }} size={14} color={on ? color : 'var(--color-fg-disabled)'} />
             <span className={`flex-1 min-w-0 truncate ${on ? 'text-fg-secondary' : 'text-fg-faint line-through decoration-fg-faint decoration-[1.5px]'}`}>{step.name}</span>
             {finished && (
-              <HoverTip label={formatDateTime(step.finishedAt!)}>
+              <Tooltip label={formatDateTime(step.finishedAt!)}>
                 <span className="shrink-0 text-xs text-fg-faint whitespace-nowrap">
                   {formatRelativeTime(step.finishedAt!)}
                 </span>
-              </HoverTip>
+              </Tooltip>
             )}
             <span onClick={(event) => event.stopPropagation()}>
               <ToggleSwitch
@@ -290,7 +290,7 @@ function LinkRow({ linked, projectName, removeRefusal, onSelect, onRemove }: {
           </>
         )}
       </button>
-      <HoverTip label={tipLabel({ disabled: removeRefusal !== null, disabledReason: removeRefusal, tip: 'Remove link' })}>
+      <Tooltip label={tipLabel({ disabled: removeRefusal !== null, disabledReason: removeRefusal, tip: 'Remove link' })}>
         <button
           type="button"
           onClick={onRemove}
@@ -301,7 +301,7 @@ function LinkRow({ linked, projectName, removeRefusal, onSelect, onRemove }: {
         >
           <X size={14} />
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 }
@@ -342,7 +342,7 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
 
   return (
     <>
-      <HoverTip label={tipLabel({ disabled: refusal !== null, disabledReason: refusal, tip: 'Make this task wait for another' })} enabled={!open}>
+      <Tooltip label={tipLabel({ disabled: refusal !== null, disabledReason: refusal, tip: 'Make this task wait for another' })} enabled={!open}>
         <button
           ref={triggerRef}
           type="button"
@@ -353,7 +353,7 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
         >
           <Plus size={13} />Add blocker
         </button>
-      </HoverTip>
+      </Tooltip>
       <OverlayPopover
         open={open}
         popoverRef={menuRef}
@@ -435,9 +435,9 @@ function RunOrderRowMark({ task }: { task: Task }) {
   const view = useTaskCardViewModel(task);
   if (!view.isIdle) return null;
   return (
-    <HoverTip label="Waiting for you">
+    <Tooltip label="Waiting for you">
       <span className="inline-flex shrink-0 text-attention" role="img" aria-label="Waiting for you"><ActivityMark mark="agent-idle" size={14} /></span>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -465,7 +465,7 @@ function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorP
             </div>
             <div className="flex-1 min-w-0">
               {group.map((task) => (
-                <HoverTip key={task.key} label="Select this task">
+                <Tooltip key={task.key} label="Select this task">
                   <button
                     type="button"
                     onClick={() => onSelectTask(task.key)}
@@ -476,7 +476,7 @@ function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorP
                     <span className="flex-1 min-w-0 truncate text-[13px] text-fg-secondary">{task.title}</span>
                     {task.task && <RunOrderRowMark task={task.task} />}
                   </button>
-                </HoverTip>
+                </Tooltip>
               ))}
             </div>
           </div>
@@ -529,18 +529,18 @@ function TaskPanel({
       {variant === 'canvas' && (
         <div className="flex items-center gap-2.5 h-[54px] shrink-0 px-4 border-b border-edge/60" data-testid="workflow-inspector-title">
           {task.task && <TaskActivityMark task={task.task} size={16} />}
-          <HoverTip label={task.title}>
+          <Tooltip label={task.title}>
             <span className="flex-1 min-w-0 truncate text-base font-semibold text-fg">{task.title}</span>
-          </HoverTip>
+          </Tooltip>
           {task.displayId ? <span className="shrink-0 text-[13px] text-fg-muted tabular-nums">#{task.displayId}</span> : null}
         </div>
       )}
       {variant === 'taskDetail' && (
         <div className="flex items-center gap-2 h-11 shrink-0 px-4 border-b border-edge/60" data-testid="workflow-panel-workflow">
           <WorkflowIcon size={16} className="shrink-0" style={{ color: workflowColor(detail.workflow.color_slot) }} />
-          <HoverTip label={detail.workflow.title}>
+          <Tooltip label={detail.workflow.title}>
             <span className="flex-1 min-w-0 truncate text-sm font-semibold text-fg">{detail.workflow.title}</span>
-          </HoverTip>
+          </Tooltip>
           <WorkflowStateChip state={detail.workflow.state} />
         </div>
       )}
@@ -548,14 +548,14 @@ function TaskPanel({
         <section className="px-4 py-3.5 border-b border-edge/60">
           <SectionHeading
             trailing={acrossBoards ? (
-              <HoverTip label={detail.projectNames[task.projectId] ? `Columns on the ${detail.projectNames[task.projectId]} board` : 'Columns on its board'}>
+              <Tooltip label={detail.projectNames[task.projectId] ? `Columns on the ${detail.projectNames[task.projectId]} board` : 'Columns on its board'}>
                 <span
                   className="ml-auto inline-flex items-center gap-1 text-xs font-medium normal-case tracking-normal text-fg-muted"
                   data-testid="workflow-route-board"
                 >
                   <Folder size={12} />{detail.projectNames[task.projectId] ?? ''}
                 </span>
-              </HoverTip>
+              </Tooltip>
             ) : undefined}
           >
             Route
@@ -600,7 +600,7 @@ function TaskPanel({
         )}
       </div>
       <div className="grid grid-cols-2 gap-2 shrink-0 px-4 py-3.5 whitespace-nowrap" data-testid="workflow-inspector-footer">
-        <HoverTip label={tipLabel({ disabled: removeReason !== null, disabledReason: removeReason, tip: 'Take this task out of the workflow' })}>
+        <Tooltip label={tipLabel({ disabled: removeReason !== null, disabledReason: removeReason, tip: 'Take this task out of the workflow' })}>
           <button
             type="button"
             onClick={() => onRequestRemove(task.key)}
@@ -610,11 +610,11 @@ function TaskPanel({
           >
             <X size={14} />Remove
           </button>
-        </HoverTip>
+        </Tooltip>
         {/* The tip is the full label, which the button can cut short, or the
             reason it is off. Only the reason is read, since the label is
             already the button's name. */}
-        <HoverTip label={tipLabel({ disabled: openRefusal !== null, disabledReason: openRefusal, tip: openLabel })} describe={openRefusal !== null}>
+        <Tooltip label={tipLabel({ disabled: openRefusal !== null, disabledReason: openRefusal, tip: openLabel })} describe={openRefusal !== null}>
           <button
             type="button"
             onClick={() => (variant === 'taskDetail' ? onOpenWorkflow?.() : onOpenTask(task.key))}
@@ -627,7 +627,7 @@ function TaskPanel({
             {variant === 'taskDetail' ? <WorkflowIcon size={14} className="shrink-0" /> : <SquareTerminal size={14} className="shrink-0" />}
             <span className="truncate">{openLabel}</span>
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
     </>
   );

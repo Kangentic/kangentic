@@ -1,5 +1,5 @@
 /**
- * HoverTip, the one tooltip (src/renderer/components/HoverTip.tsx), through its live adopters:
+ * Tooltip, the one tooltip (src/renderer/components/Tooltip.tsx), through its live adopters:
  * the settings InfoTip (a label that wraps), the task window's header (icon buttons with keys, a
  * disabled pill with its reason), and the Edit automation dialog's wildcard examples (the rich
  * shape).
@@ -14,7 +14,7 @@
 import { test, expect, chromium, type Browser, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite, launchPage, createProject } from './helpers';
-import { HOVER_TIP_DWELL_MS, HOVER_TIP_WARM_MS, TIP_OFFSET, VIEWPORT_PADDING } from '../../src/renderer/utils/hover-tip';
+import { TOOLTIP_DWELL_MS, TOOLTIP_WARM_MS, TIP_OFFSET, VIEWPORT_PADDING } from '../../src/renderer/utils/tooltip';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -24,7 +24,7 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 const PROJECT_ID = 'proj-hover-tip';
 const TASK_ID = 'task-hover-tip';
 const SETTINGS_PANEL = '[data-testid="settings-panel"]';
-const TIP = '[data-hover-tip]';
+const TIP = '[data-tooltip]';
 
 /** A project with one Code Review task that has no session, so its pill is disabled. */
 const PRE_CONFIG = `
@@ -93,7 +93,7 @@ async function installTipLog(page: Page): Promise<void> {
   await page.evaluate(() => {
     const events: TipLogEvent[] = [];
     (window as unknown as { __tipLog: TipLogEvent[] }).__tipLog = events;
-    const isTip = (node: Node): boolean => node instanceof Element && node.hasAttribute('data-hover-tip');
+    const isTip = (node: Node): boolean => node instanceof Element && node.hasAttribute('data-tooltip');
     new MutationObserver((records) => {
       for (const record of records) {
         for (const node of record.addedNodes) if (isTip(node)) events.push({ type: 'open', at: performance.now() });
@@ -166,7 +166,7 @@ test('a label tip opens after the dwell, wraps its prose, and opens no overlay',
     await trigger.hover();
     const tip = page.locator(TIP);
     await expect(tip).toBeVisible();
-    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(HOVER_TIP_DWELL_MS - 5);
+    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(TOOLTIP_DWELL_MS - 5);
 
     await expect(tip).toHaveAttribute('role', 'tooltip');
     await expect(tip).toHaveAttribute('data-shape', 'label');
@@ -215,12 +215,12 @@ test('Tab focus opens a tip at once, and a script focus after a key and a mouse 
     await expect(tip).toHaveCount(0);
     // The blur started the warm window, in which the click's own pointer move would open a tip
     // at once. Outside it, only the focus the click gives could open one, and it must not.
-    await waitPageMs(page, HOVER_TIP_WARM_MS + 50);
+    await waitPageMs(page, TOOLTIP_WARM_MS + 50);
 
     const other = infoTips.nth(1);
     await clearTipLog(page);
     await other.click();
-    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
   } finally {
     await browser.close();
@@ -314,8 +314,8 @@ test('the rich shape draws a header band over its body', async () => {
     const tip = page.locator('[data-testid="edit-automation-wildcard-tip"]');
     await expect(tip).toBeVisible();
     await expect(tip).toHaveAttribute('data-shape', 'rich');
-    await expect(tip.locator('[data-hover-tip-part="header"]')).toHaveText('Wildcard examples');
-    await expect(tip.locator('[data-hover-tip-part="body"] code')).toHaveCount(4);
+    await expect(tip.locator('[data-tooltip-part="header"]')).toHaveText('Wildcard examples');
+    await expect(tip.locator('[data-tooltip-part="body"] code')).toHaveCount(4);
     await expect(info).toHaveAccessibleName('Wildcard examples');
     await expect(info).toHaveAccessibleDescription(/^Wildcard examples\. Ready for review: exactly this line/);
   } finally {
@@ -340,11 +340,11 @@ test('the next tip opens at once while one shows, and waits its dwell again afte
 
     await parkPointer(page);
     await expect(tip).toHaveCount(0);
-    await waitPageMs(page, HOVER_TIP_WARM_MS + 50);
+    await waitPageMs(page, TOOLTIP_WARM_MS + 50);
     await clearTipLog(page);
     await first.hover();
     await expect(tip).toBeVisible();
-    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(HOVER_TIP_DWELL_MS - 5);
+    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(TOOLTIP_DWELL_MS - 5);
   } finally {
     await browser.close();
   }
@@ -370,7 +370,7 @@ test('a press closes the tip and keeps it shut until the pointer leaves', async 
     await clearTipLog(page);
     await page.mouse.move(centerX + 1, centerY);
     await page.mouse.move(centerX - 1, centerY);
-    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
 
     // Leaving ends the press, so the next hover opens the tip again.
@@ -415,7 +415,7 @@ test('a trigger that appears under a resting pointer opens nothing, so Escape re
     const close = page.getByTestId('task-detail-close');
     await expect.poll(() => close.evaluate((element) => element.matches(':hover'))).toBe(true);
     await clearTipLog(page);
-    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
 
     await page.keyboard.press('Escape');

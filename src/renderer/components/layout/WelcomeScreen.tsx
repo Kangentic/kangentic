@@ -6,7 +6,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { agentInstallUrl, agentLoginCommand, RECOMMENDED_AGENT_ORDER } from '../../utils/agent-display-name';
 import { useAddProject } from '../../hooks/useAddProject';
 import { Pill } from '../Pill';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { OverseerMascot } from '../onboarding/OverseerMascot';
 // The full-color mark (rust disc, amber card) rather than the theme-tinted
 // BrandMark the title bar uses. This is the app's identity moment and the
@@ -82,7 +82,7 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
                 {loginCommand && (
                   <>
                     <span className="text-xs text-fg-faint">-</span>
-                    <HoverTip label={`Copy "${loginCommand}" to clipboard`}>
+                    <Tooltip label={`Copy "${loginCommand}" to clipboard`}>
                       <button
                         className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
                         onClick={handleCopy}
@@ -92,7 +92,7 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
                         {copied ? 'Copied!' : <>Copy <code className="font-mono">{loginCommand}</code></>}
                         {!copied && <Copy size={10} />}
                       </button>
-                    </HoverTip>
+                    </Tooltip>
                   </>
                 )}
               </div>
@@ -339,7 +339,7 @@ export function WelcomeScreen() {
                   among fourteen agents where it reads as just another one. */}
               <div className="flex items-center justify-between">
                 <div className="text-xs text-fg-faint uppercase tracking-wider">Core</div>
-                <HoverTip label="Check again for git and agent CLIs">
+                <Tooltip label="Check again for git and agent CLIs">
                   <button
                     onClick={handleRefresh}
                     disabled={refreshing}
@@ -349,7 +349,7 @@ export function WelcomeScreen() {
                     <RefreshCw size={12} />
                     Refresh
                   </button>
-                </HoverTip>
+                </Tooltip>
               </div>
               <div className="grid grid-cols-3 gap-2 text-left">
                 {gitInfo === null ? (
@@ -461,7 +461,7 @@ export function WelcomeScreen() {
         </div>
 
         <div className="mt-6 mb-8 flex items-center justify-center gap-4 text-sm">
-          <HoverTip label={DOCS_URLS.gettingStarted}>
+          <Tooltip label={DOCS_URLS.gettingStarted}>
             <button
               type="button"
               onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.gettingStarted)}
@@ -471,8 +471,8 @@ export function WelcomeScreen() {
               Read the setup guide
               <ExternalLink size={12} />
             </button>
-          </HoverTip>
-          <HoverTip label={DOCS_URLS.mobilePairing}>
+          </Tooltip>
+          <Tooltip label={DOCS_URLS.mobilePairing}>
             <button
               type="button"
               onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.mobilePairing)}
@@ -482,7 +482,7 @@ export function WelcomeScreen() {
               Pair a phone
               <ExternalLink size={12} />
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
       </div>
     </div>

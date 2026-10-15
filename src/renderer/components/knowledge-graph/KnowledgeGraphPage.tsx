@@ -23,7 +23,7 @@ import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
 import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { knowledgeGraphWindowManager } from '../../window-manager';
 import { LazyKnowledgeGraph } from './LazyKnowledgeGraph';
 import { KnowledgeGraphDetailLayer } from './KnowledgeGraphDetailLayer';
@@ -70,7 +70,7 @@ export function KnowledgeGraphPage() {
           params={{}}
           className="px-4 py-2.5"
           trailing={
-            <HoverTip label="Close Knowledge Graph" keys="dialog.dismiss">
+            <Tooltip label="Close Knowledge Graph" keys="dialog.dismiss">
               <button
                 type="button"
                 onClick={() => overlay.requestClose()}
@@ -80,7 +80,7 @@ export function KnowledgeGraphPage() {
               >
                 <X size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           }
         >
           {/* A plain lucide glyph, not a branding activity mark: those all mean

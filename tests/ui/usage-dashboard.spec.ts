@@ -281,7 +281,7 @@ test.describe('usage dashboard', () => {
     }
   });
 
-  // DataTable puts its column tip on the <th> itself (HoverTip adds no wrapper), so the header
+  // DataTable puts its column tip on the <th> itself (Tooltip adds no wrapper), so the header
   // keeps its table layout, its click handler, and its own name. The tip says what the column is,
   // and a sortable column gets the sort gestures appended on a second line.
   test('a sortable per-project header describes its column and the sort gestures, and a click on it still sorts', async () => {
@@ -304,7 +304,7 @@ test.describe('usage dashboard', () => {
 
       // The same two lines show on hover.
       await tokensInHeader.hover();
-      await expect(page.locator('[data-hover-tip]')).toHaveText(`${columnTip} ${sortLine}`);
+      await expect(page.locator('[data-tooltip]')).toHaveText(`${columnTip} ${sortLine}`);
 
       // The header still sorts: the press closes the tip, and the click reaches the cell's own
       // handler. Numeric columns start descending, so the second click is the one that moves the

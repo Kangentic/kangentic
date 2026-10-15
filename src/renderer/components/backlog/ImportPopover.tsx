@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Download, Plus, Trash2, ChevronRight, ArrowLeft, Loader2, X } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { PROVIDERS, getSourceLabel, getSourceIcon } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
 import type { ImportSource } from '../../../shared/types';
@@ -222,7 +222,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
 
   return (
     <div className="relative shrink-0">
-      <HoverTip label="Import Tasks" enabled={!open}>
+      <Tooltip label="Import Tasks" enabled={!open}>
         <button
           ref={buttonRef}
           type="button"
@@ -236,7 +236,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
           <Download size={14} className="shrink-0" />
           <span className={collapse?.label}>Import Tasks</span>
         </button>
-      </HoverTip>
+      </Tooltip>
 
       <OverlayPopover
         open={open}

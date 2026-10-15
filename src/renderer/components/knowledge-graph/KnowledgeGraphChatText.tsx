@@ -16,7 +16,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -232,18 +232,18 @@ export function KnowledgeGraphChatText({
         );
         if (!canOpenTask(task)) {
           return (
-            <HoverTip label={task.title}>
+            <Tooltip label={task.title}>
               <span
                 data-testid="knowledge-graph-chat-ticket"
                 className={`${MARK_CLASS} text-fg-muted`}
               >
                 {label}
               </span>
-            </HoverTip>
+            </Tooltip>
           );
         }
         return (
-          <HoverTip label={task.title}>
+          <Tooltip label={task.title}>
             <button
               type="button"
               onClick={() => onOpenTask(task)}
@@ -252,7 +252,7 @@ export function KnowledgeGraphChatText({
             >
               {label}
             </button>
-          </HoverTip>
+          </Tooltip>
         );
       }
       // A genuine link the agent wrote, opened externally rather than

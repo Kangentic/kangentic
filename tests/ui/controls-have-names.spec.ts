@@ -2,10 +2,10 @@
  * Every control keeps an accessible name with no native `title` in the page.
  *
  * Chromium names an element by its `title` when nothing else names it, so an
- * icon-only button can be named by its tooltip alone. HoverTip never names its
+ * icon-only button can be named by its tooltip alone. Tooltip never names its
  * trigger (the trigger keeps its own name, and the tip only describes it), so a
  * control that leaned on that fallback goes nameless the moment its `title`
- * becomes a HoverTip. Nothing visible changes, but screen readers announce
+ * becomes a Tooltip. Nothing visible changes, but screen readers announce
  * "button", and every `getByRole(..., { name })` lookup on it stops matching.
  *
  * Each test turns every `title` write into a no-op before React renders, visits

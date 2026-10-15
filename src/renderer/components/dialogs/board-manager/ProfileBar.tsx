@@ -1,6 +1,6 @@
 import { Copy, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { BoardProfile } from '../../../../shared/types';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { Select } from '../../settings/shared';
 
 /**
@@ -97,7 +97,7 @@ export function ProfileBar({
           </button>
         ) : (
           <div className={`flex items-stretch ${ACTION_ROW_HEIGHT} rounded border border-edge/40 divide-x divide-edge/40 overflow-hidden`}>
-            <HoverTip label="New profile">
+            <Tooltip label="New profile">
               <button
                 type="button"
                 onClick={onNew}
@@ -107,8 +107,8 @@ export function ProfileBar({
               >
                 <Plus size={14} />
               </button>
-            </HoverTip>
-            <HoverTip label="Duplicate this profile">
+            </Tooltip>
+            <Tooltip label="Duplicate this profile">
               <button
                 type="button"
                 onClick={onDuplicate}
@@ -118,8 +118,8 @@ export function ProfileBar({
               >
                 <Copy size={14} />
               </button>
-            </HoverTip>
-            <HoverTip label="Rename this profile">
+            </Tooltip>
+            <Tooltip label="Rename this profile">
               <button
                 type="button"
                 onClick={onRename}
@@ -129,8 +129,8 @@ export function ProfileBar({
               >
                 <Pencil size={14} />
               </button>
-            </HoverTip>
-            <HoverTip label="Delete this profile">
+            </Tooltip>
+            <Tooltip label="Delete this profile">
               <button
                 type="button"
                 onClick={onDelete}
@@ -140,7 +140,7 @@ export function ProfileBar({
               >
                 <Trash2 size={14} />
               </button>
-            </HoverTip>
+            </Tooltip>
           </div>
         )}
       </div>

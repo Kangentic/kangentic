@@ -2,30 +2,30 @@
 paths:
   - "src/renderer/**"
 ---
-# Rule: one tooltip, and it is HoverTip
+# Rule: every tooltip is the `Tooltip` component
 
 Hover text in the renderer used to be a native `title` almost everywhere. A native tip is slow and
 unstyled, a keyboard user never sees it, it cannot draw a shortcut's key chips, and a test can read
-it only as an attribute. `HoverTip` (`components/HoverTip.tsx`) replaces it: a body-portal tip that
+it only as an attribute. `Tooltip` (`components/Tooltip.tsx`) replaces it: a body-portal tip that
 opens on hover and on keyboard focus, draws live key chips, and gives its text to the trigger as an
 `aria-description`.
 
 ## The rule
 
-- **Explanatory hover text is a HoverTip.** Wrap the ONE element it explains:
-  `<HoverTip label="..."><button ... /></HoverTip>`. HoverTip adds no element around it. The child
+- **Explanatory hover text is a Tooltip.** Wrap the ONE element it explains:
+  `<Tooltip label="..."><button ... /></Tooltip>`. Tooltip adds no element around it. The child
   must pass pointer, focus and click handlers and `aria-description` through to a DOM node. A plain
   element does; a component must forward them.
 - **There is no native `title` anywhere in the renderer.** That includes the full value of text the
-  layout cuts short (a truncated path, branch name or model id): it is a HoverTip with the whole
+  layout cuts short (a truncated path, branch name or model id): it is a Tooltip with the whole
   value, so every tooltip in the app has one look. A native tip is square and OS-styled beside the
-  rounded HoverTip, and a user sees the two side by side. There is no opt-out marker.
+  rounded Tooltip, and a user sees the two side by side. There is no opt-out marker.
 - **A tip never names its trigger.** An icon-only control carries its own `aria-label`, and the tip
   only describes it. A label that repeats the name is not read twice.
 - **An optional tip passes straight through.** An empty label holds the tip shut, so
   `label={tip ?? ''}` needs no `enabled`. `enabled={false}` is for a tip with text that must stay
   shut, such as a trigger whose menu is open. A disabled control shows why with `tipLabel`
-  (`utils/hover-tip.ts`), which every `disabledReason` prop uses.
+  (`utils/tooltip.ts`), which every `disabledReason` prop uses.
 - **A shortcut is `keys="<KEYBINDINGS id>"`, never a combo typed into the label.** The chips follow
   the user's rebind.
 - **Tests never select by `title`.** Use role and name, `aria-label`, or a `data-testid`, and assert
@@ -39,7 +39,7 @@ opens on hover and on keyboard focus, draws live key chips, and gives its text t
   in CI via `npm run test:unit`.
 - **Test:** `tests/ui/controls-have-names.spec.ts` strips every `title` before React renders and
   fails on a control with no accessible name, which is what a migrated control that leaned on its
-  title becomes. `tests/ui/hover-tip.spec.ts` pins the timing, placement, Escape and description.
+  title becomes. `tests/ui/tooltip.spec.ts` pins the timing, placement, Escape and description.
 - **Gap:** a component that spreads `...rest` passes a `title` it was given straight past the scan.
   Pill, IsolatedBadge and Select omit `title` from the attributes they accept; any other forwarding
   wrapper is review-only.

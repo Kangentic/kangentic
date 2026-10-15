@@ -142,6 +142,6 @@ A popover with no clipping ancestor at any mount site may stay in flow with a
 
 ## Scope
 
-Choice-presenting popovers under `src/renderer/`. Does not govern tooltips, which are HoverTip's
+Choice-presenting popovers under `src/renderer/`. Does not govern tooltips, which are Tooltip's
 job (it portals and places itself, see [[one-tooltip]]), context menus (already `position: fixed` at the cursor), or floating
 toolbars that are deliberately positioned inside their own pane.

@@ -327,11 +327,15 @@ describe('every tests/unit scan reads its marker through this module', () => {
    * Files that name a marker without reading one. Each needs a reason, because
    * the cheap way to pass this guard is to add an entry instead of an import.
    *
-   * Empty today, and legitimately so: every file that names a marker reads one.
    * The helper's own suite names `example-ok` all over and would qualify, but it
    * imports the module it tests, so it passes the same way every consumer does.
    */
-  const NOT_MARKER_READERS = new Map<string, string>();
+  const NOT_MARKER_READERS = new Map<string, string>([
+    [
+      'native-title.test.ts',
+      'names the retired native-title-ok marker only in a probe proving it no longer exempts a title; the scan reads no marker at all',
+    ],
+  ]);
 
   type ScannedFile = { name: string; contents: string };
 

@@ -21,7 +21,7 @@ import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
 import type { KnowledgeGraphChatTurn } from '../../stores/knowledge-graph-store';
 import { KnowledgeGraphChatText, stripProtocolLine, ticketRef } from './KnowledgeGraphChatText';
 import { KnowledgeGraphSourceRows } from './KnowledgeGraphSourceRows';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 function Avatar() {
   return (
@@ -224,7 +224,7 @@ export function KnowledgeGraphChat({
           carries it once rather than the panel stamping it again above them. */}
       <div className="flex items-center gap-2 border-b border-edge py-2.5 pl-3.5 pr-2.5">
         <span className="min-w-0 flex-1 truncate text-xs font-semibold text-fg" data-testid="knowledge-graph-chat-title">Chat</span>
-        <HoverTip label="End the chat">
+        <Tooltip label="End the chat">
           <button
             type="button"
             onClick={onEnd}
@@ -234,7 +234,7 @@ export function KnowledgeGraphChat({
           >
             <X size={14} />
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
 
       <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto p-3.5" data-testid="knowledge-graph-chat-thread">

@@ -13,7 +13,7 @@ import { useWorkflowStore } from '../../stores/workflow-store';
 import { workflowColor } from '../workflows/workflow-graph';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
 /**
@@ -110,7 +110,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
           a click there closes an open task window instead. The highlight now lives on the
           button that actually acts, so what lights up is exactly what responds. */}
       {/* The column's description, when it has one, is the whole strip's tip. */}
-      <HoverTip label={swimlane.description ?? ''}>
+      <Tooltip label={swimlane.description ?? ''}>
         <div className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left">
           {(() => {
             const Icon = getSwimlaneIcon(swimlane);
@@ -149,7 +149,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
             <Pencil size={12} />
           </button>
         </div>
-      </HoverTip>
+      </Tooltip>
 
       {/* Drop zone */}
       <div className="p-2 flex-shrink-0">

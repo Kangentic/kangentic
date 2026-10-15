@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { MaximizeOnDoubleClick } from './MaximizeOnDoubleClick';
 
 const FOCUSABLE_SELECTOR = [
@@ -272,7 +272,7 @@ export function BaseDialog({
             {headerRight}
             {/* The consumer's bound close hotkey (e.g. panel.close) shows as key chips. An
                 omitted id draws none. Escape, the hidden universal closer, is never shown. */}
-            <HoverTip label="Close dialog" keys={closeHotkeyActionId}>
+            <Tooltip label="Close dialog" keys={closeHotkeyActionId}>
               <button
                 type="button"
                 onClick={requestCloseViaGuard}
@@ -281,7 +281,7 @@ export function BaseDialog({
               >
                 <X size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           </MaximizeOnDoubleClick>
         )}
 

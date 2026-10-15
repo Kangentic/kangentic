@@ -6,7 +6,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_LABELS, canTriggerRun } from '../../../../shared/automation-manifest';
 import { describeAutomationMarks, describeAutomationSentence } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
@@ -488,21 +488,21 @@ function AutomationRow({
               picker's copy rows draw the same component. */}
           <AutomationMarks marks={marks} />
           {isDirty(draft) && (
-            <HoverTip label="Unsaved">
+            <Tooltip label="Unsaved">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-            </HoverTip>
+            </Tooltip>
           )}
         </span>
         {/* A long value ends where the row ends, and a multi-line one shows its
             first line. The tip holds all of it, every line. */}
-        <HoverTip label={sentence.tooltip}>
+        <Tooltip label={sentence.tooltip}>
           <span
             data-testid="column-automation-row-sentence"
             className={`block truncate ${sentence.code ? AUTOMATION_ROW_SENTENCE_CODE_CLASS : AUTOMATION_ROW_SENTENCE_CLASS}`}
           >
             {sentence.text}
           </span>
-        </HoverTip>
+        </Tooltip>
         {/* No last-run line. One used to print under the description once a row
             had run, so rows in one list differed in height by their history,
             and nobody found the history valuable here: a failure reaches the
@@ -563,7 +563,7 @@ function RowButton({ testId, label, onClick, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <HoverTip label={label}>
+    <Tooltip label={label}>
       <button
         type="button"
         data-testid={testId}
@@ -576,6 +576,6 @@ function RowButton({ testId, label, onClick, children }: {
       >
         {children}
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }

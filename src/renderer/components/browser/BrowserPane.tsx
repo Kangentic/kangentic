@@ -16,8 +16,8 @@ import { registerBrowserNavigationTarget } from '../../utils/browser-navigation-
 import { useAgentDriveStore } from '../../stores/agent-drive-store';
 import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
 import { PopOutButton } from '../../pop-out/PopOutButton';
-import { HoverTip } from '../HoverTip';
-import { tipLabel } from '../../utils/hover-tip';
+import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 import { browserPartitionForTask } from '../../../shared/browser-partition';
 import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverride } from '../../../shared/types';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
@@ -832,7 +832,7 @@ function BrowserPaneActive({
             both. The pop-out's OS close button already unmounts the pane, which
             unregisters the guest properly. */}
         {!window.electronAPI.popOut?.descriptor && (
-        <HoverTip label="Close the browser and free its memory. Show reopens the page.">
+        <Tooltip label="Close the browser and free its memory. Show reopens the page.">
           <button
             type="button"
             onClick={handleCloseBrowser}
@@ -843,12 +843,12 @@ function BrowserPaneActive({
             <CircleStop size={18} />
             Close browser
           </button>
-        </HoverTip>
+        </Tooltip>
         )}
         {!window.electronAPI.popOut?.descriptor && (
           <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
         )}
-        <HoverTip label={tipLabel({ disabled: !canGoBack, disabledReason: 'No earlier page', tip: 'Back' })}>
+        <Tooltip label={tipLabel({ disabled: !canGoBack, disabledReason: 'No earlier page', tip: 'Back' })}>
           <button
             type="button"
             onClick={() => webviewRef.current?.goBack()}
@@ -858,8 +858,8 @@ function BrowserPaneActive({
           >
             <ArrowLeft size={14} />
           </button>
-        </HoverTip>
-        <HoverTip label={tipLabel({ disabled: !canGoForward, disabledReason: 'No forward page', tip: 'Forward' })}>
+        </Tooltip>
+        <Tooltip label={tipLabel({ disabled: !canGoForward, disabledReason: 'No forward page', tip: 'Forward' })}>
           <button
             type="button"
             onClick={() => webviewRef.current?.goForward()}
@@ -869,8 +869,8 @@ function BrowserPaneActive({
           >
             <ArrowRight size={14} />
           </button>
-        </HoverTip>
-        <HoverTip label="Reload" keys="browser.reload">
+        </Tooltip>
+        <Tooltip label="Reload" keys="browser.reload">
           <button
             type="button"
             onClick={() => webviewRef.current?.reload()}
@@ -879,7 +879,7 @@ function BrowserPaneActive({
           >
             <RotateCcw size={14} />
           </button>
-        </HoverTip>
+        </Tooltip>
         {/* The drive cue is NOT in this row. It lives over the page, in the
             overlay container below, for three reasons that were all reported
             from real use: an inline child here is ~110px the URL field pays
@@ -898,7 +898,7 @@ function BrowserPaneActive({
         />
         {/* Pressing Enter inside the URL input submits the form -- no Go button needed. */}
         <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
-        <HoverTip
+        <Tooltip
           label={matchesProjectDefault
             ? 'This URL is the project default'
             : 'Save as project default for all tasks'}
@@ -921,7 +921,7 @@ function BrowserPaneActive({
               ? <Loader2 size={14} className="animate-spin" />
               : <Pin size={14} strokeWidth={matchesProjectDefault ? 2 : 1.75} fill={matchesProjectDefault ? 'currentColor' : 'none'} />}
           </button>
-        </HoverTip>
+        </Tooltip>
         {/* An agent set the viewport this page lays out against. Nothing else
             on screen can say so: the guest's own element never changes size, so
             without this the page simply renders at a width the user cannot
@@ -971,7 +971,7 @@ function BrowserPaneActive({
               className="flex items-stretch h-7 bg-surface-input border border-edge-input rounded overflow-hidden flex-shrink-0"
               data-testid="browser-viewport-chip"
             >
-              <HoverTip label={`An agent set this page to render at ${viewportOverride.measured.width} x ${viewportOverride.measured.height} CSS pixels. Reset to use the pane's own size again.`}>
+              <Tooltip label={`An agent set this page to render at ${viewportOverride.measured.width} x ${viewportOverride.measured.height} CSS pixels. Reset to use the pane's own size again.`}>
                 <span className="flex items-center gap-1 px-2 text-[11px] text-accent whitespace-nowrap tabular-nums">
                   <Monitor size={11} />
                   {viewportOverride.measured.width} x {viewportOverride.measured.height}
@@ -983,8 +983,8 @@ function BrowserPaneActive({
                     <span className="text-accent/70">at {Math.round(zoomFactor * 100)}%</span>
                   )}
                 </span>
-              </HoverTip>
-              <HoverTip label="Reset this page to the pane's own size">
+              </Tooltip>
+              <Tooltip label="Reset this page to the pane's own size">
                 <button
                   type="button"
                   onClick={handleClearViewport}
@@ -994,7 +994,7 @@ function BrowserPaneActive({
                 >
                   Reset
                 </button>
-              </HoverTip>
+              </Tooltip>
             </div>
           </>
         )}
@@ -1019,7 +1019,7 @@ function BrowserPaneActive({
           className="flex items-stretch h-7 bg-surface-input border border-edge-input rounded overflow-hidden"
           data-testid="browser-zoom-pill"
         >
-          <HoverTip
+          <Tooltip
             label={tipLabel({ disabled: atMinZoom, disabledReason: 'Already at the smallest zoom', tip: 'Zoom out' })}
             keys={atMinZoom ? undefined : 'browser.zoomOut'}
           >
@@ -1033,8 +1033,8 @@ function BrowserPaneActive({
             >
               <ZoomOut size={14} />
             </button>
-          </HoverTip>
-          <HoverTip label="Reset zoom to 100%" keys="browser.zoomReset">
+          </Tooltip>
+          <Tooltip label="Reset zoom to 100%" keys="browser.zoomReset">
             <button
               type="button"
               onClick={resetZoom}
@@ -1044,8 +1044,8 @@ function BrowserPaneActive({
             >
               {Math.round(zoomFactor * 100)}%
             </button>
-          </HoverTip>
-          <HoverTip
+          </Tooltip>
+          <Tooltip
             label={tipLabel({ disabled: atMaxZoom, disabledReason: 'Already at the largest zoom', tip: 'Zoom in' })}
             keys={atMaxZoom ? undefined : 'browser.zoomIn'}
           >
@@ -1059,7 +1059,7 @@ function BrowserPaneActive({
             >
               <ZoomIn size={14} />
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
         </>
         )}
@@ -1253,7 +1253,7 @@ function BrowserPaneActive({
       {/* Toolbar: capture zone (left) | flex spacer | compose zone (right) */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-t border-edge flex-shrink-0">
         {/* Capture zone: Draw + its stroke sub-actions, then Inspect. */}
-        <HoverTip label="Toggle draw mode" keys="browser.draw">
+        <Tooltip label="Toggle draw mode" keys="browser.draw">
           <button
             type="button"
             onClick={() => {
@@ -1275,8 +1275,8 @@ function BrowserPaneActive({
             <Pencil size={12} />
             Draw
           </button>
-        </HoverTip>
-        <HoverTip label={tipLabel({ disabled: nothingDrawn, disabledReason: 'Nothing drawn yet', tip: 'Undo last stroke' })}>
+        </Tooltip>
+        <Tooltip label={tipLabel({ disabled: nothingDrawn, disabledReason: 'Nothing drawn yet', tip: 'Undo last stroke' })}>
           <button
             type="button"
             onClick={undo}
@@ -1286,8 +1286,8 @@ function BrowserPaneActive({
             <Undo2 size={12} />
             Undo
           </button>
-        </HoverTip>
-        <HoverTip label={tipLabel({ disabled: nothingDrawn, disabledReason: 'Nothing drawn yet', tip: 'Clear all strokes' })}>
+        </Tooltip>
+        <Tooltip label={tipLabel({ disabled: nothingDrawn, disabledReason: 'Nothing drawn yet', tip: 'Clear all strokes' })}>
           <button
             type="button"
             onClick={clear}
@@ -1297,9 +1297,9 @@ function BrowserPaneActive({
             <Eraser size={12} />
             Clear
           </button>
-        </HoverTip>
+        </Tooltip>
         <div className="w-px h-4 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
-        <HoverTip label="Click elements to capture their identity" keys="browser.inspect" detail="Esc stops inspecting">
+        <Tooltip label="Click elements to capture their identity" keys="browser.inspect" detail="Esc stops inspecting">
           <button
             type="button"
             onClick={() => void startInspect()}
@@ -1313,7 +1313,7 @@ function BrowserPaneActive({
             <Crosshair size={12} />
             Inspect
           </button>
-        </HoverTip>
+        </Tooltip>
 
         {/* Compose zone. A bare Enter sends, and the absent modifier check is
             deliberate: `submitTextTarget` commits a dictation target by
@@ -1336,7 +1336,7 @@ function BrowserPaneActive({
           spellCheck={true}
           data-testid="browser-note-input"
         />
-        <HoverTip label="Send to agent" detail="Enter in the note also sends">
+        <Tooltip label="Send to agent" detail="Enter in the note also sends">
           <button
             type="button"
             onClick={handleSend}
@@ -1347,7 +1347,7 @@ function BrowserPaneActive({
             {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
             Send
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
 
       {error && (

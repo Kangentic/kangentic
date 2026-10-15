@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, CircleCheckBig, CircleDashed, Pause, Workflow a
 import type { WorkflowState, WorkflowSummary } from '../../../shared/types';
 import { OverlayPopover } from '../OverlayPopover';
 import { ActivityMark } from '../ActivityMark';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { Pill, TINTED_PILL_EDGE, TINTED_PILL_FILL } from '../Pill';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { workflowColor } from './workflow-graph';
@@ -88,9 +88,9 @@ function PickerRowName({ summary }: { summary: WorkflowSummary }) {
   const note = useAgentNote(summary);
   return (
     <span className="flex-1 min-w-0">
-      <HoverTip label={summary.workflow.title}>
+      <Tooltip label={summary.workflow.title}>
         <span className="block truncate text-[13px] font-medium text-fg">{summary.workflow.title}</span>
-      </HoverTip>
+      </Tooltip>
       {note && <span className="block truncate text-[11px] text-fg-faint" data-testid="workflow-picker-note">{note}</span>}
     </span>
   );
@@ -147,7 +147,7 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
 
   return (
     <>
-      <HoverTip label={`${name}, ${tasksText(count)}`} enabled={!open}>
+      <Tooltip label={`${name}, ${tasksText(count)}`} enabled={!open}>
         <button
           ref={triggerRef}
           type="button"
@@ -171,7 +171,7 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
           <span className="flex-1" />
           <Chevron size={14} className="shrink-0 text-fg-muted" />
         </button>
-      </HoverTip>
+      </Tooltip>
       <OverlayPopover
         open={open}
         popoverRef={menuRef}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 /** Only the fields the picker renders. Widened from the full `Project` so the
@@ -89,7 +89,7 @@ export function StatsScopePicker({
 
   return (
     <div className="relative">
-      <HoverTip label="Choose which project's usage to view" enabled={!open}>
+      <Tooltip label="Choose which project's usage to view" enabled={!open}>
         <button
           ref={triggerRef}
           type="button"
@@ -101,7 +101,7 @@ export function StatsScopePicker({
           {label}
           <ChevronDown size={14} className="text-fg-muted" />
         </button>
-      </HoverTip>
+      </Tooltip>
       <OverlayPopover
         open={open}
         popoverRef={popoverRef}

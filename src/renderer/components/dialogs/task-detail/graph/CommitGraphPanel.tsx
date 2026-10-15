@@ -4,7 +4,7 @@ import { layoutCommitGraph } from '../../../../lib/commit-graph-layout';
 import { CommitGraphSvg, ROW_HEIGHT_PX, laneColor } from './CommitGraphSvg';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { CountBadge } from '../../../CountBadge';
-import { HoverTip } from '../../../HoverTip';
+import { Tooltip } from '../../../Tooltip';
 import type { GitCommitGraphCommit, GitCommitGraphResult, Task } from '../../../../../shared/types';
 
 interface CommitGraphPanelProps {
@@ -226,7 +226,7 @@ export function CommitGraphPanel({
                 ? `${commit.authorName}${isBase ? `\nBase: ${baseBranch}` : ''}${isPr ? `\nPR #${task.pr_number}` : ''}`
                 : undefined;
               return (
-                <HoverTip key={commit.hash} label={compactTipLabel} detail={compactTipDetail}>
+                <Tooltip key={commit.hash} label={compactTipLabel} detail={compactTipDetail}>
                   <button
                     type="button"
                     onClick={() => onSelectCommit(commit)}
@@ -273,7 +273,7 @@ export function CommitGraphPanel({
                       )}
                     </div>
                   </button>
-                </HoverTip>
+                </Tooltip>
               );
             })}
           </div>

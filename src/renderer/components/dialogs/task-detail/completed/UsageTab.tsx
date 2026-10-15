@@ -9,7 +9,7 @@ import { useConfigStore } from '../../../../stores/config-store';
 import { AUTOMATION_MANIFEST } from '../../../../../shared/automation-manifest';
 import { DEFAULT_PERMISSIONS, getPermissionLabel } from '../../../../../shared/types';
 import { ColumnLabel, LinkButton, ReportCard, ToolCallsPill, ValuePill } from './report-parts';
-import { HoverTip } from '../../../HoverTip';
+import { Tooltip } from '../../../Tooltip';
 import type {
   BackgroundCallJob,
   PermissionMode,
@@ -171,10 +171,10 @@ function ConversationHeader({ label, conversationId }: { label: string; conversa
   return (
     <span className="inline-flex items-center gap-2">
       <span className="text-xs font-semibold text-fg-secondary">{label}</span>
-      <HoverTip label={conversationId}>
+      <Tooltip label={conversationId}>
         <span className="font-mono text-xs text-fg-faint">{conversationId.slice(0, 8)}</span>
-      </HoverTip>
-      <HoverTip label="Copy conversation ID">
+      </Tooltip>
+      <Tooltip label="Copy conversation ID">
         <button
           type="button"
           aria-label="Copy conversation ID"
@@ -194,7 +194,7 @@ function ConversationHeader({ label, conversationId }: { label: string; conversa
         >
           {copied ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
         </button>
-      </HoverTip>
+      </Tooltip>
     </span>
   );
 }
@@ -226,13 +226,13 @@ function RunRow({
         </td>
       )}
       <td className={cellClass('body', 'left', !showColumn)}>
-        <HoverTip label={formatDateTime(run.startedAt)}>
+        <Tooltip label={formatDateTime(run.startedAt)}>
           <span className="inline-flex items-center gap-1.5">
             {formatMonthDayTime(run.startedAt)}
             {/* A run whose process ended with an error. The task's status reads only
                 its last run, so an earlier run's crash would otherwise go unseen. */}
             {run.exitCode !== null && run.exitCode !== 0 && (
-              <HoverTip label={`Exited (${run.exitCode})`}>
+              <Tooltip label={`Exited (${run.exitCode})`}>
                 <span
                   role="img"
                   aria-label={`Exited (${run.exitCode})`}
@@ -241,10 +241,10 @@ function RunRow({
                 >
                   <XCircle size={13} />
                 </span>
-              </HoverTip>
+              </Tooltip>
             )}
           </span>
-        </HoverTip>
+        </Tooltip>
       </td>
       <td className={cellClass('body', 'left')}>{run.model ? <ValuePill>{run.model}</ValuePill> : <Dash />}</td>
       <td className={cellClass('body', 'left')}>{run.effort ? <ValuePill>{run.effort}</ValuePill> : <Dash />}</td>
@@ -357,9 +357,9 @@ function FallbackModelsCard({ fallback }: { fallback: TaskReportModelFallback[] 
 function TokenCell({ value, kind }: { value: number; kind: CellKind }) {
   return (
     <td className={cellClass(kind, 'right')}>
-      <HoverTip label={value.toLocaleString()}>
+      <Tooltip label={value.toLocaleString()}>
         <span>{formatTokenCount(value)}</span>
-      </HoverTip>
+      </Tooltip>
     </td>
   );
 }
@@ -423,9 +423,9 @@ function BackgroundCallsCard({ calls, total }: { calls: TaskReportBackgroundCall
                 <td className={`${cellClass('body', 'left', true)} overflow-hidden`}>{call.column ? <ColumnLabel column={call.column} /> : <Dash />}</td>
                 <td className={`${cellClass('body', 'left')} overflow-hidden`}><CallLabel call={call} /></td>
                 <td className={cellClass('body', 'left')}>
-                  <HoverTip label={formatDateTime(call.startedAt)}>
+                  <Tooltip label={formatDateTime(call.startedAt)}>
                     <span>{formatMonthDayTime(call.startedAt)}</span>
-                  </HoverTip>
+                  </Tooltip>
                 </td>
                 <td className={cellClass('body', 'left')}>{call.model ? <ValuePill>{call.model}</ValuePill> : <Dash />}</td>
                 <td className={cellClass('body', 'left')}>{call.effort ? <ValuePill>{call.effort}</ValuePill> : <Dash />}</td>
@@ -464,7 +464,7 @@ function OutcomePill({ call }: { call: TaskReportBackgroundCall }) {
   if (call.outcome === null) return <Dash />;
   const pill = OUTCOME_PILLS[call.outcome];
   return (
-    <HoverTip label={call.reason ? `${pill.label}: ${call.reason}` : pill.label}>
+    <Tooltip label={call.reason ? `${pill.label}: ${call.reason}` : pill.label}>
       <span
         className={`inline-flex h-[22px] items-center rounded border px-2 text-xs font-medium ${pill.className}`}
         data-testid="completed-call-outcome"
@@ -472,7 +472,7 @@ function OutcomePill({ call }: { call: TaskReportBackgroundCall }) {
       >
         {pill.label}
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -480,7 +480,7 @@ function OutcomePill({ call }: { call: TaskReportBackgroundCall }) {
 function CallLabel({ call }: { call: TaskReportBackgroundCall }) {
   const automationIconName = call.automationType ? AUTOMATION_MANIFEST[call.automationType]?.icon ?? '' : '';
   return (
-    <HoverTip label={call.condition ? `Condition: ${call.condition}` : ''}>
+    <Tooltip label={call.condition ? `Condition: ${call.condition}` : ''}>
       <span
         className="inline-flex max-w-full items-center gap-1.5 text-fg-secondary"
         data-testid="completed-call-label"
@@ -490,6 +490,6 @@ function CallLabel({ call }: { call: TaskReportBackgroundCall }) {
           : JOB_CALLS[call.job].icon}
         <span className="truncate">{call.automationName ?? JOB_CALLS[call.job].label}</span>
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }

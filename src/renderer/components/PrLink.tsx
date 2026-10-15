@@ -1,7 +1,7 @@
 import { type MouseEvent } from 'react';
 import { GitPullRequest, ExternalLink } from 'lucide-react';
 import { Pill } from './Pill';
-import { HoverTip } from './HoverTip';
+import { Tooltip } from './Tooltip';
 import { prStatePresentation, prMergeReadinessTooltip } from '../lib/pr-state';
 import type { PRMergeReadiness, PRState } from '../../shared/types';
 
@@ -29,14 +29,14 @@ function PrStateBadge({
   return (
     // With no caveat the tip is held shut and lets the pointer through, so the
     // link pill's own tip still shows over the badge.
-    <HoverTip label={caveat}>
+    <Tooltip label={caveat}>
       <span
         data-testid="pr-state-badge"
         className={`inline-flex items-center rounded px-1.5 py-px text-[11px] font-medium leading-none ${badgeClass}`}
       >
         {label}
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -66,7 +66,7 @@ export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, cla
   // bare "PR" label rather than rendering the literal string "PR #null".
   const prLabel = prNumber != null ? `PR #${prNumber}` : 'PR';
   return (
-    <HoverTip label={`Open ${prLabel} in browser`}>
+    <Tooltip label={`Open ${prLabel} in browser`}>
       <Pill
         shape="square"
         size="xs"
@@ -82,6 +82,6 @@ export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, cla
         <PrStateBadge state={prState} readiness={prMergeReadiness} />
         <ExternalLink size={11} className="opacity-60" />
       </Pill>
-    </HoverTip>
+    </Tooltip>
   );
 }

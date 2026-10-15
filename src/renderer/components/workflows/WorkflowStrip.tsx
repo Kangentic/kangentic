@@ -2,7 +2,7 @@ import React from 'react';
 import type { WorkflowBoardEnds, WorkflowRouteStep, WorkflowTaskPlace } from '../../../shared/types';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { trackStops, type TrackStop } from './workflow-track';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /**
  * The strip on top of a workflow task's card: on the left whatever the card
@@ -25,7 +25,7 @@ const UNCOLORED = 'var(--color-fg-faint)';
 function StepMarker({ stop, color }: { stop: TrackStop; color: string }) {
   const label = `${stop.name}: now`;
   return (
-    <HoverTip label={label}>
+    <Tooltip label={label}>
       <span
         role="img"
         aria-label={label}
@@ -37,7 +37,7 @@ function StepMarker({ stop, color }: { stop: TrackStop; color: string }) {
       >
         <ColumnGlyph column={{ icon: stop.icon, role: stop.end }} size={12} color={color} />
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -72,7 +72,7 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
         if (stop.state === 'current') {
           const currentLabel = `${stop.name}: now`;
           return (
-            <HoverTip key={stop.swimlaneId} label={currentLabel}>
+            <Tooltip key={stop.swimlaneId} label={currentLabel}>
               <i
                 role="img"
                 aria-label={currentLabel}
@@ -81,12 +81,12 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
                 className="block w-[15px] h-[6px] rounded-[3px]"
                 style={{ background: color, boxShadow: `0 0 0 2px color-mix(in srgb, ${color} 18%, transparent)` }}
               />
-            </HoverTip>
+            </Tooltip>
           );
         }
         const stopLabel = `${stop.name}: ${stop.state === 'done' ? 'done' : 'next'}`;
         return (
-          <HoverTip key={stop.swimlaneId} label={stopLabel}>
+          <Tooltip key={stop.swimlaneId} label={stopLabel}>
             <i
               role="img"
               aria-label={stopLabel}
@@ -97,7 +97,7 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
                 ? { background: UNCOLORED, opacity: 0.55 }
                 : { background: `color-mix(in srgb, ${color} 45%, transparent)` }}
             />
-          </HoverTip>
+          </Tooltip>
         );
       })}
     </span>
@@ -117,9 +117,9 @@ export function WorkflowStripLabel({ icon, label, labelTrailing, className, test
   return (
     <span className={`inline-flex items-center text-xs min-w-0 ${className}`} data-testid={testId}>
       <span className="inline-flex shrink-0">{icon}</span>
-      <HoverTip label={label}>
+      <Tooltip label={label}>
         <span className="truncate">{label}</span>
-      </HoverTip>
+      </Tooltip>
       {labelTrailing && <span className="inline-flex shrink-0">{labelTrailing}</span>}
     </span>
   );

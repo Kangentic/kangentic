@@ -180,7 +180,7 @@ test.describe('Model combobox with floating aliases', () => {
    * dismissed only when it is up.
    */
   async function discardDialog(): Promise<void> {
-    const tip = page.locator('[data-hover-tip]');
+    const tip = page.locator('[data-tooltip]');
     if (await tip.isVisible().catch(() => false)) {
       await page.keyboard.press('Escape');
       await expect(tip).toHaveCount(0);

@@ -12,7 +12,7 @@ import {
   modelVersionSectionLabel,
 } from '../../utils/format-tokens';
 import { OverlayPopover } from '../OverlayPopover';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 interface ModelComboboxProps {
@@ -411,7 +411,7 @@ export function ModelCombobox({
       <div key={alias.id} data-model-row className="flex items-center hover:bg-surface-hover transition-colors">
         {/* No `data-model-id` here: an alias row is selected by `data-model-alias`, so a spec
             asking for "no option with id `sonnet`" is not answered by the Sonnet alias row. */}
-        <HoverTip label={row.title}>
+        <Tooltip label={row.title}>
           <button
             type="button"
             data-model-option
@@ -427,7 +427,7 @@ export function ModelCombobox({
               </span>
             )}
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
     );
   };
@@ -445,7 +445,7 @@ export function ModelCombobox({
     const contextLabel = modelContextBadgeLabel(group, contextWindows);
     return (
       <div key={group.primaryId} data-model-row className="flex items-center hover:bg-surface-hover transition-colors">
-        <HoverTip label={group.primaryId}>
+        <Tooltip label={group.primaryId}>
           <button
             type="button"
             data-model-option
@@ -459,19 +459,19 @@ export function ModelCombobox({
             <span className="truncate">{modelRowLabel(group.primaryId, modelDisplayNames)}</span>
             {renderNewerHint([group.primaryId, oneMillionId])}
           </button>
-        </HoverTip>
+        </Tooltip>
         {contextLabel && (
-          <HoverTip label={`${contextLabel} context window`}>
+          <Tooltip label={`${contextLabel} context window`}>
             <span
               data-model-context-window
               className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-faint flex-shrink-0"
             >
               {contextLabel}
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
         {oneMillionId !== null && (
-          <HoverTip label={oneMillionId}>
+          <Tooltip label={oneMillionId}>
             <button
               type="button"
               data-model-1m
@@ -482,7 +482,7 @@ export function ModelCombobox({
             >
               1M
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
     );
@@ -496,7 +496,7 @@ export function ModelCombobox({
         {/* An empty label (a value that is not an alias) holds the tip shut. Shut while the
             menu shows too: the chevron focuses the input as it opens the menu, and a tip
             opened by that focus would take the Escape meant for the menu. */}
-        <HoverTip label={valueTitle ?? ''} enabled={!showSuggestions}>
+        <Tooltip label={valueTitle ?? ''} enabled={!showSuggestions}>
           <input
             ref={inputRef}
             type="text"
@@ -510,9 +510,9 @@ export function ModelCombobox({
               placeholderVariant === 'muted' ? 'placeholder-fg-faint' : 'placeholder-fg'
             }`}
           />
-        </HoverTip>
+        </Tooltip>
         {displayValue && (
-          <HoverTip label="Clear">
+          <Tooltip label="Clear">
             <button
               type="button"
               onClick={handleClear}
@@ -521,10 +521,10 @@ export function ModelCombobox({
             >
               <X size={16} />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
         {hasOptions && (
-          <HoverTip label={isOpen ? 'Close dropdown' : 'Open dropdown'}>
+          <Tooltip label={isOpen ? 'Close dropdown' : 'Open dropdown'}>
             <button
               type="button"
               onClick={handleToggleDropdown}
@@ -536,7 +536,7 @@ export function ModelCombobox({
                 className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
               />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
 
@@ -591,7 +591,7 @@ export function ModelCombobox({
                     row.kind === 'group' ? (
                       renderGroupRow(row.group, true)
                     ) : (
-                      <HoverTip key={row.id} label={row.id}>
+                      <Tooltip key={row.id} label={row.id}>
                         <button
                           type="button"
                           data-model-option
@@ -604,7 +604,7 @@ export function ModelCombobox({
                           <span className="truncate">{modelRowLabel(row.id, modelDisplayNames)}</span>
                           {renderNewerHint([row.id])}
                         </button>
-                      </HoverTip>
+                      </Tooltip>
                     ),
                   )}
               </div>

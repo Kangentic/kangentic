@@ -4,7 +4,7 @@ import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { LabelPills, Pill } from '../Pill';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { PrLink } from '../PrLink';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { ContextUsageFooter } from '../board/ContextUsageFooter';
@@ -108,7 +108,7 @@ function stateGlyphContent(row: MonitorSessionRow) {
     // siblings: React reconciles siblings positionally, so an idle/working flip
     // would unmount one and mount the other, restarting the march from zero
     // (the lesson pinned for TaskCard in tests/unit/activity-mark.test.ts).
-    // Labelled with aria-label and given no HoverTip: inside an IconSlot the mark's own
+    // Labelled with aria-label and given no Tooltip: inside an IconSlot the mark's own
     // <svg> root is not hit-testable, so a tip on it would never open (see IconSlot).
     return (
       <ActivityMark
@@ -232,7 +232,7 @@ function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: M
   const activityLine = formatMonitorStatus(row);
   const handleContextMenu = useCardContextMenu(row, onContextMenu);
   return (
-    <HoverTip label={`Open ${row.taskTitle}`}>
+    <Tooltip label={`Open ${row.taskTitle}`}>
       <div
         role="button"
         tabIndex={0}
@@ -260,7 +260,7 @@ function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: M
           <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
         )}
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -296,7 +296,7 @@ function MonitorFullCard({
   const slotKind = monitorSlotKind(row, trailMode, hasTrail);
 
   return (
-    <HoverTip label={`Open ${row.taskTitle}`}>
+    <Tooltip label={`Open ${row.taskTitle}`}>
       <div
         role="button"
         tabIndex={0}
@@ -335,7 +335,7 @@ function MonitorFullCard({
           )}
           {activityLine && (
             // The whole line on hover: the pill cuts it at 22 characters.
-            <HoverTip label={activityLine} describe={false}>
+            <Tooltip label={activityLine} describe={false}>
               <Pill
                 size="xs"
                 className={`ml-auto shrink-0 max-w-[22ch] ${needsUser(row)
@@ -345,7 +345,7 @@ function MonitorFullCard({
               >
                 <span className="truncate select-text">{activityLine}</span>
               </Pill>
-            </HoverTip>
+            </Tooltip>
           )}
         </div>
 
@@ -437,7 +437,7 @@ function MonitorFullCard({
           testId="monitor-card-usage"
         />
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

@@ -14,8 +14,8 @@ import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
 import { ActivityMark } from '../ActivityMark';
-import { HoverTip } from '../HoverTip';
-import { tipLabel } from '../../utils/hover-tip';
+import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 import { PauseButtonIcon } from '../dialogs/task-detail/TaskDetailHeader';
 import { INSPECTOR_WIDTH } from './WorkflowInspector';
 import { startPanelDrag } from '../../hooks/panel-drag';
@@ -252,7 +252,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         data-testid="workflow-agent-pane"
         data-collapsed="true"
       >
-        <HoverTip label="Show the workflow agent">
+        <Tooltip label="Show the workflow agent">
           <button
             type="button"
             onClick={() => setCollapsed(false)}
@@ -262,9 +262,9 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           >
             <PanelLeftOpen size={16} />
           </button>
-        </HoverTip>
+        </Tooltip>
         {running && (
-          <HoverTip label={stripMarkLabel}>
+          <Tooltip label={stripMarkLabel}>
             <span role="img" aria-label={stripMarkLabel}>
               <ActivityMark
                 mark={working ? 'agent-working' : 'agent-idle'}
@@ -272,7 +272,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
                 className={working ? 'text-active' : 'text-attention'}
               />
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
       </div>
     );
@@ -294,7 +294,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
     >
       <div className="flex h-10 flex-shrink-0 items-center gap-2 border-b border-edge bg-surface-raised px-3" data-testid="workflow-agent-pane-header">
         {canToggle && (
-          <HoverTip label={toggleLabel}>
+          <Tooltip label={toggleLabel}>
             <button
               type="button"
               onClick={toggle}
@@ -313,12 +313,12 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
                 isSessionActive={live}
               />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">Workflow agent</span>
         {/* Task detail's own Conversation control: the transcript viewer, on the
             conversation the workflow keeps, so it opens with the agent paused too. */}
-        <HoverTip label={tipLabel({ disabled: !conversationId, disabledReason: 'No conversation yet', tip: 'View conversation' })}>
+        <Tooltip label={tipLabel({ disabled: !conversationId, disabledReason: 'No conversation yet', tip: 'View conversation' })}>
           <button
             type="button"
             onClick={() => { if (conversationId) useSessionStore.getState().setConversationSessionId(conversationId); }}
@@ -329,8 +329,8 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           >
             <MessageSquare size={16} />
           </button>
-        </HoverTip>
-        <HoverTip label="Collapse agent">
+        </Tooltip>
+        <Tooltip label="Collapse agent">
           <button
             type="button"
             onClick={() => setCollapsed(true)}
@@ -340,7 +340,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           >
             <PanelLeftClose size={16} />
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
 
       {/* The agent's conversation could not be resumed, so main started a new
@@ -355,7 +355,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           <span className="min-w-0 flex-1 text-[13px] text-fg-secondary">
             The earlier conversation could not be resumed, so the agent started a new one.
           </span>
-          <HoverTip label="Dismiss">
+          <Tooltip label="Dismiss">
             <button
               type="button"
               onClick={dismissStartedOver}
@@ -365,7 +365,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
             >
               <X size={14} />
             </button>
-          </HoverTip>
+          </Tooltip>
         </div>
       )}
 
@@ -405,7 +405,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         )}
       </div>
       {/* The edge: drag to widen or narrow the pane; the width is kept. */}
-      <HoverTip label="Drag to resize">
+      <Tooltip label="Drag to resize">
         <div
           role="separator"
           aria-orientation="vertical"
@@ -416,7 +416,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           data-testid="workflow-agent-pane-resize"
           className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize select-none transition-colors hover:bg-accent/30"
         />
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 

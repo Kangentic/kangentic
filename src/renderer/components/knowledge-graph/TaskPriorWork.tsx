@@ -17,7 +17,7 @@ import { useEffect, useState } from 'react';
 import { History, ChevronDown, ChevronRight } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import type { KnowledgeGraphQueryHit } from '../../../shared/types';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 export interface TaskPriorWorkProps {
   taskId: string;
@@ -76,7 +76,7 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
         <ul className="px-1.5 pb-1.5">
           {hits.map((hit) => (
             <li key={hit.sessionId}>
-              <HoverTip label="Open this conversation">
+              <Tooltip label="Open this conversation">
                 <button
                   type="button"
                   onClick={() => useSessionStore.getState().setConversationSessionId(hit.sessionId)}
@@ -91,7 +91,7 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
                       line that is actually useful. */}
                   <div className="text-xs text-fg truncate">{hit.taskTitle ?? 'Untitled conversation'}</div>
                 </button>
-              </HoverTip>
+              </Tooltip>
             </li>
           ))}
         </ul>

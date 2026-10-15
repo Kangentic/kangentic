@@ -4,7 +4,7 @@ import { BACKGROUND_CALL_JOB_LABELS } from '../../../shared/background-call-jobs
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost } from '../../utils/format-session';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import {
   backgroundCallsTitle,
   backgroundMetricText,
@@ -29,7 +29,7 @@ interface BackgroundCellProps {
 function BackgroundCell({ label, totals, models, metric, footnote, isTotal, positionClassName, testId }: BackgroundCellProps) {
   const value = backgroundMetricText(totals, metric);
   return (
-    <HoverTip label={backgroundCallsTitle(totals, models)}>
+    <Tooltip label={backgroundCallsTitle(totals, models)}>
       <div
         className={`min-w-0 flex flex-col gap-0.5 ${positionClassName}`}
         data-testid={testId}
@@ -44,7 +44,7 @@ function BackgroundCell({ label, totals, models, metric, footnote, isTotal, posi
         <span className="text-[11px] text-fg-muted tabular-nums truncate">{formatCallCount(totals.calls)}</span>
         {footnote && <span className="text-[11px] text-fg-faint truncate">{footnote}</span>}
       </div>
-    </HoverTip>
+    </Tooltip>
   );
 }
 

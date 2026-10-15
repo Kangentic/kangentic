@@ -45,7 +45,7 @@ import { availableColorModes } from './color-mode-availability';
 import { answerFocusIndices } from './answer-focus';
 import { answerSetupGap, codeIndexOn, resolveAnswerAgent } from '../../../shared/answer-agent';
 import { knowledgeGraphSupported } from '../../lib/knowledge-graph-support';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import type { KnowledgeGraphGranularity, KnowledgeGraphRelatedTask } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
 import { KnowledgeGraphNodeDetail, openConversationForNode } from './KnowledgeGraphNodeDetail';
@@ -794,7 +794,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
                   for discoverability and for the mouse. Before an agent is
                   chosen, the tip says where the choice is made instead. */}
               {queryText.trim() ? (
-                <HoverTip
+                <Tooltip
                   label={setupGap ? 'Choose an agent and model in Settings > Knowledge Graph.' : `Ask ${askAgentLabel}`}
                   testId="knowledge-graph-ask-tip"
                 >
@@ -806,7 +806,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
                   >
                     <CornerDownLeft size={14} />
                   </button>
-                </HoverTip>
+                </Tooltip>
               ) : null}
             </div>
           </form>

@@ -4,7 +4,7 @@ import { Check, ChevronDown, ExternalLink, Info, TriangleAlert } from 'lucide-re
 import { useAnySettingVisible, useSettingVisible } from './settings-search';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 import { CountBadge } from '../CountBadge';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { ToggleSwitch } from './shared';
 import { SegmentedControl } from '../SegmentedControl';
 import type { SegmentedControlOption } from '../SegmentedControl';
@@ -248,7 +248,7 @@ export function SettingsCard({
  */
 export function InfoTip({ label, text }: { label: string; text: string }) {
   return (
-    <HoverTip label={text}>
+    <Tooltip label={text}>
       <button
         type="button"
         aria-label={`About ${label}`}
@@ -256,7 +256,7 @@ export function InfoTip({ label, text }: { label: string; text: string }) {
       >
         <Info size={13} aria-hidden="true" />
       </button>
-    </HoverTip>
+    </Tooltip>
   );
 }
 
@@ -426,7 +426,7 @@ export function CardStatusRow({ label, value, tone = 'neutral', percent = null, 
             value on hover: a failure's value is its error, which can carry a
             URL far wider than the tile. The span's own text already reads the
             value, so the tip adds no description. */}
-        <HoverTip label={value} describe={false}>
+        <Tooltip label={value} describe={false}>
           <span
             className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[13px] tabular-nums text-fg-secondary"
             data-testid={valueTestId ?? (testId ? `${testId}-text` : undefined)}
@@ -434,7 +434,7 @@ export function CardStatusRow({ label, value, tone = 'neutral', percent = null, 
             {tone === 'ready' ? <Check size={14} className="flex-shrink-0 text-emerald-500" aria-hidden="true" /> : null}
             <span className="truncate">{value}</span>
           </span>
-        </HoverTip>
+        </Tooltip>
       </div>
       {percent !== null ? <ProgressTrack percent={width} label={progressLabel} /> : null}
     </CardTile>
@@ -464,7 +464,7 @@ export function CardLinkRow({ label, links, onOpen, testId }: CardLinkRowProps) 
         {links.map((link, index) => (
           <Fragment key={link.href}>
             {index > 0 ? <span className="text-fg-muted">and</span> : null}
-            <HoverTip label={link.href}>
+            <Tooltip label={link.href}>
               <button
                 type="button"
                 onClick={() => onOpen(link.href)}
@@ -474,7 +474,7 @@ export function CardLinkRow({ label, links, onOpen, testId }: CardLinkRowProps) 
                 {link.label}
                 {index === links.length - 1 ? <ExternalLink size={12} aria-hidden="true" /> : null}
               </button>
-            </HoverTip>
+            </Tooltip>
           </Fragment>
         ))}
       </span>

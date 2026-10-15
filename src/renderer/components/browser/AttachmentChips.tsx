@@ -1,6 +1,6 @@
 import { Crosshair, Pencil, X } from 'lucide-react';
 import type { BrowserPickedElement } from '../../../shared/types';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 interface AttachmentChipsProps {
   strokeCount: number;
@@ -84,14 +84,14 @@ function Chip({ icon, label, tip, onRemove, testId }: ChipProps) {
   return (
     // Described, not only shown on hover: the label is cut short, and the whole value is
     // otherwise out of reach without a pointer.
-    <HoverTip label={tip ?? ''}>
+    <Tooltip label={tip ?? ''}>
       <span
         className="inline-flex items-center gap-1 pl-1.5 pr-0.5 py-0.5 rounded border border-edge-input bg-surface-input text-[11px] text-fg-tertiary max-w-[260px]"
         data-testid={testId}
       >
         <span className="text-fg-muted flex-shrink-0">{icon}</span>
         <span className="font-mono truncate min-w-0">{label}</span>
-        <HoverTip label="Remove from queue">
+        <Tooltip label="Remove from queue">
           <button
             type="button"
             onClick={onRemove}
@@ -100,8 +100,8 @@ function Chip({ icon, label, tip, onRemove, testId }: ChipProps) {
           >
             <X size={11} />
           </button>
-        </HoverTip>
+        </Tooltip>
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 }

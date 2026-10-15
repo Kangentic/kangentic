@@ -42,7 +42,7 @@ import {
   NO_VIEWPORT_INSETS,
   type ViewportInsets,
 } from './knowledge-graph-scene';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import { shownTheme, useConfigStore } from '../../stores/config-store';
 import { humanizeModelId } from '../../../shared/model-id';
 import { TASK_OUTCOME_LABELS, type KnowledgeGraphTaskOutcome } from '../../../shared/knowledge-graph-task-fields';
@@ -1538,7 +1538,7 @@ export function KnowledgeGraphCanvas({
           left: `clamp(${paneInsets.left + toolbarHalfWidth}px, 50%, calc(100% - ${paneInsets.right + toolbarHalfWidth}px))`,
         }}
       >
-        <HoverTip label="Fly back to the opening view">
+        <Tooltip label="Fly back to the opening view">
           <button
             type="button"
             onClick={handleResetView}
@@ -1549,9 +1549,9 @@ export function KnowledgeGraphCanvas({
             <RotateCcw size={14} aria-hidden />
             Reset view
           </button>
-        </HoverTip>
+        </Tooltip>
         <span className="h-5 w-px bg-edge" aria-hidden />
-        <HoverTip label="Show the camera keys" enabled={!legendOpen}>
+        <Tooltip label="Show the camera keys" enabled={!legendOpen}>
           <button
             ref={legendButtonRef}
             type="button"
@@ -1568,7 +1568,7 @@ export function KnowledgeGraphCanvas({
                 toolbar is wider than that. Reset view keeps its label. */}
             <span className="hidden @[1100px]:inline">Controls</span>
           </button>
-        </HoverTip>
+        </Tooltip>
 
         {/* A control LEGEND, in the shape games use: the keys, and nothing else
             until you point at one.
@@ -1660,7 +1660,7 @@ const KeyCap = ({ children }: { children: string }) => (
 /**
  * One binding: its keys, and the verb in a tooltip above them.
  *
- * The open state lives in HoverTip's own layer, so a pointer crossing re-renders
+ * The open state lives in Tooltip's own layer, so a pointer crossing re-renders
  * that layer and never this canvas component, which keeps its work off the main
  * thread.
  *
@@ -1685,12 +1685,12 @@ const LegendGroup = ({
   label: string;
   children: ReactNode;
 }) => (
-  <HoverTip label={label} testId="knowledge-graph-camera-tip" describe={false}>
+  <Tooltip label={label} testId="knowledge-graph-camera-tip" describe={false}>
     <span data-binding={binding} className="pointer-events-auto flex cursor-help flex-col items-center gap-[3px]">
       {children}
       <span className="sr-only">{label}</span>
     </span>
-  </HoverTip>
+  </Tooltip>
 );
 
 const ClusterLabel = ({

@@ -15,7 +15,7 @@ import { useHmrGeneration } from '../../utils/hmr-generation';
 import { useAddProject } from '../../hooks/useAddProject';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { CountBadge } from '../CountBadge';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 import type { Project, ProjectGroup } from '../../../shared/types';
 import {
   ProjectListItem,
@@ -263,7 +263,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
       <div className="px-3 pt-3 pb-2 border-b border-edge space-y-2">
         <div className="flex items-center gap-2">
           {onToggleSidebar && (
-            <HoverTip label="Hide sidebar" keys="view.toggleSidebar">
+            <Tooltip label="Hide sidebar" keys="view.toggleSidebar">
               <button
                 onClick={onToggleSidebar}
                 className="p-1 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
@@ -271,7 +271,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
               >
                 <ChevronsLeft size={16} />
               </button>
-            </HoverTip>
+            </Tooltip>
           )}
           <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">
             Projects
@@ -297,7 +297,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             className="w-full h-8 bg-surface/50 border border-edge/50 rounded-md text-xs text-fg placeholder-fg-muted pl-7 pr-7 outline-none focus:border-edge-input transition-colors"
           />
           {search && (
-            <HoverTip label="Clear search">
+            <Tooltip label="Clear search">
               <button
                 type="button"
                 onClick={() => setSearch('')}
@@ -307,7 +307,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
               >
                 <X size={14} />
               </button>
-            </HoverTip>
+            </Tooltip>
           )}
         </div>
       </div>

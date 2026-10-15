@@ -3,7 +3,7 @@ import { ArrowUp, ArrowDown, GripVertical } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { HoverTip } from './HoverTip';
+import { Tooltip } from './Tooltip';
 
 export interface DataTableColumn<TRow, TKey extends string = string> {
   key: TKey;
@@ -190,7 +190,7 @@ function SortableRow<TRow, TKey extends string>({
           of grabbing would be a promise the UI does not keep. Same shape as the swimlane
           column header's drag handle. */}
       <td className="w-[32px] px-1 py-2.5">
-        <HoverTip label="Drag to reorder">
+        <Tooltip label="Drag to reorder">
           <div
             {...attributes}
             {...listeners}
@@ -201,7 +201,7 @@ function SortableRow<TRow, TKey extends string>({
           >
             <GripVertical size={14} />
           </div>
-        </HoverTip>
+        </Tooltip>
       </td>
       {columns.map((column, columnIndex) => (
         <td
@@ -314,9 +314,9 @@ export function DataTable<TRow, TKey extends string = string>({
           isSortable ? 'Click to sort - Shift+Click adds a secondary sort' : undefined,
         ].filter(Boolean).join('\n');
         return (
-          // The tip goes on the cell itself: HoverTip adds no element, so the
+          // The tip goes on the cell itself: Tooltip adds no element, so the
           // header row keeps its table layout.
-          <HoverTip key={`${column.key}-${columnIndex}`} label={headerTip}>
+          <Tooltip key={`${column.key}-${columnIndex}`} label={headerTip}>
             <th
               className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none transition-colors ${column.width || ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${isSortable ? 'cursor-pointer hover:text-fg-muted' : ''}`}
               onClick={isSortable ? (event) => handleHeaderClick(column, event.shiftKey) : undefined}
@@ -346,7 +346,7 @@ export function DataTable<TRow, TKey extends string = string>({
                 </span>
               )}
             </th>
-          </HoverTip>
+          </Tooltip>
         );
       })}
     </tr>

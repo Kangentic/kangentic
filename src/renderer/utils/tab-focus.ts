@@ -1,7 +1,7 @@
 /**
  * Whether the focus move happening right now came from Tab or Shift+Tab.
  *
- * A HoverTip opens on focus only for this move: the user stepping to the next control. Chromium's
+ * A Tooltip opens on focus only for this move: the user stepping to the next control. Chromium's
  * `:focus-visible` is not the same test. It also matches a script's focus after ANY key, so a
  * confirm dialog that a key opened, which moves focus to its close button on mount, popped that
  * button's tip, and the next Escape closed the tip instead of the dialog. Arrowing through a menu,
@@ -33,7 +33,7 @@ function handlePointerDown(): void {
   tabKeyDownPending = false;
 }
 
-/** Start watching for Tab. Idempotent; the first HoverTip to mount calls it. */
+/** Start watching for Tab. Idempotent; the first Tooltip to mount calls it. */
 export function installTabFocusTracker(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;

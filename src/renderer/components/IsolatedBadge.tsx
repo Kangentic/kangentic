@@ -1,7 +1,7 @@
 import React from 'react';
-import { HoverTip } from './HoverTip';
+import { Tooltip } from './Tooltip';
 
-/** Native span attributes, less `title`: the badge's explanation is its HoverTip. */
+/** Native span attributes, less `title`: the badge's explanation is its Tooltip. */
 type IsolatedBadgeProps = Omit<React.HTMLAttributes<HTMLSpanElement>, 'title'>;
 
 /**
@@ -12,13 +12,13 @@ type IsolatedBadgeProps = Omit<React.HTMLAttributes<HTMLSpanElement>, 'title'>;
  */
 export const IsolatedBadge = React.memo(function IsolatedBadge({ className, ...rest }: IsolatedBadgeProps) {
   return (
-    <HoverTip label="Its own context, separate from the main conversation">
+    <Tooltip label="Its own context, separate from the main conversation">
       <span
         className={['inline-flex items-center text-[11px] text-accent-fg bg-surface-hover/60 border border-edge/50 rounded px-1.5 py-0.5 leading-none flex-shrink-0', className].filter(Boolean).join(' ')}
         {...rest}
       >
         Isolated
       </span>
-    </HoverTip>
+    </Tooltip>
   );
 });

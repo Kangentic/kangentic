@@ -1,10 +1,10 @@
 /**
- * HoverTip behaviour that tests/ui/hover-tip.spec.ts leaves open: the Escape exceptions, nested
+ * Tooltip behaviour that tests/ui/tooltip.spec.ts leaves open: the Escape exceptions, nested
  * triggers, the block a keyboard click leaves behind, a tip that is held shut and then not, every
  * way an open tip closes, a live rebind, pointers that cannot hover, an unmount while open, and
  * the two pills that must stay a plain span under a tip.
  *
- * It reads time the way hover-tip.spec.ts does. A MutationObserver stamps each tip's mount and
+ * It reads time the way tooltip.spec.ts does. A MutationObserver stamps each tip's mount and
  * unmount with `performance.now()`, capture listeners stamp the pointer and focus events that
  * start one, and a window in which nothing may happen waits on the PAGE clock against the
  * component's own constants. A negative assertion has no condition to poll, so each one pins a
@@ -15,7 +15,7 @@
 import { test, expect, chromium, type Browser, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite, launchPage, createProject, launchWithTransientTerminal, openTransientCommandTerminal } from './helpers';
-import { HOVER_TIP_DWELL_MS, HOVER_TIP_WARM_MS } from '../../src/renderer/utils/hover-tip';
+import { TOOLTIP_DWELL_MS, TOOLTIP_WARM_MS } from '../../src/renderer/utils/tooltip';
 import { getKeybinding } from '../../src/shared/keybindings';
 
 test.describe.configure({ mode: 'parallel' });
@@ -28,7 +28,7 @@ const TIP_TASK_ID = 'task-tip-plain';
 const BLOCKED_TASK_ID = 'task-tip-pr-blocked';
 const MERGED_TASK_ID = 'task-tip-pr-merged';
 const SETTINGS_PANEL = '[data-testid="settings-panel"]';
-const TIP = '[data-hover-tip]';
+const TIP = '[data-tooltip]';
 
 /**
  * A project with a plain Code Review task (no session, so its window opens on the header) and two
@@ -119,7 +119,7 @@ async function installTipLog(page: Page): Promise<void> {
   await page.evaluate(() => {
     const events: TipLogEvent[] = [];
     (window as unknown as { __tipLog: TipLogEvent[] }).__tipLog = events;
-    const isTip = (node: Node): boolean => node instanceof Element && node.hasAttribute('data-hover-tip');
+    const isTip = (node: Node): boolean => node instanceof Element && node.hasAttribute('data-tooltip');
     new MutationObserver((records) => {
       for (const record of records) {
         for (const node of record.addedNodes) if (isTip(node)) events.push({ type: 'open', at: performance.now() });
@@ -359,7 +359,7 @@ test('a keyboard click made with the pointer elsewhere does not keep the next ho
     await clearTipLog(page);
     await trigger.hover();
     await expect(tip).toBeVisible();
-    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(HOVER_TIP_DWELL_MS - 5);
+    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(TOOLTIP_DWELL_MS - 5);
   } finally {
     await browser.close();
   }
@@ -394,7 +394,7 @@ test('a tip closed by Escape with focus still on the trigger does not keep the n
     await expect(trigger).toBeFocused();
     // Closed for good, not a flicker that reopens: the dead space has no tip to claim the warm
     // window. Read after more than a dwell, so a late reopen is in the log.
-    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     await expectNoTipOpened(page);
   } finally {
     await browser.close();
@@ -416,7 +416,7 @@ test('a trigger whose menu is open shows no tip, and shows it again once the men
     await clearTipLog(page);
     await actions.hover();
     await expect.poll(() => actions.evaluate((node) => node.matches(':hover'))).toBe(true);
-    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     await expectNoTipOpened(page);
 
     // Positive control: the same pointer on the same trigger shows its tip once the menu is gone.
@@ -463,7 +463,7 @@ test('a tip that goes from shut to open under a resting pointer opens on the nex
     await expect(badge).toHaveText('blocked');
     await expect(badge).toHaveAttribute('aria-description', /^Merge blocked/);
     await clearTipLog(page);
-    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     await expectNoTipOpened(page);
     const box = await badge.boundingBox();
     if (!box) throw new Error('no badge box');
@@ -614,7 +614,7 @@ for (const closer of COLD_CLOSERS) {
       await clearTipLog(page);
       await infoTips.nth(1).hover();
       await expect(tip).toBeVisible();
-      expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(HOVER_TIP_DWELL_MS - 5);
+      expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(TOOLTIP_DWELL_MS - 5);
     } finally {
       await browser.close();
     }
@@ -679,7 +679,7 @@ test('a pointer that arrives with a mouse button held opens no tip, and does onc
     await clearTipLog(page);
     await trigger.hover();
     await expect.poll(() => trigger.evaluate((node) => node.matches(':hover'))).toBe(true);
-    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     await expectNoTipOpened(page);
 
     // Released over the trigger, the next move is an ordinary hover and the tip opens.
@@ -706,7 +706,7 @@ test('a touch pointer opens no tip, and a mouse pointer on the same trigger does
 
     await clearTipLog(page);
     await arriveAs('touch');
-    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     await expectNoTipOpened(page);
 
     await arriveAs('mouse');
@@ -738,11 +738,11 @@ test('a tip open when its window unmounts goes with it, and frees the shared slo
 
     // The unmount closed warm, so wait that window out. A slot the dead tip still held would
     // keep every later tip warm for good.
-    await waitPageMs(page, HOVER_TIP_WARM_MS + 50);
+    await waitPageMs(page, TOOLTIP_WARM_MS + 50);
     await clearTipLog(page);
     await page.getByTestId('status-bar-version-pill').hover();
     await expect(tip).toBeVisible();
-    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(HOVER_TIP_DWELL_MS - 5);
+    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(TOOLTIP_DWELL_MS - 5);
   } finally {
     await browser.close();
   }

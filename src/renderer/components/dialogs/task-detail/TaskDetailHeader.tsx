@@ -6,7 +6,7 @@ import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
 import { ActivityMark } from '../../ActivityMark';
 import { HeaderActionButton } from '../../HeaderActionButton';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { IconSlot } from '../../IconSlot';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
@@ -270,7 +270,7 @@ export function TaskDetailHeader({
       <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
-        <HoverTip label={toggling ? 'Working...' : isQueued ? 'Queued' : isSessionActive ? 'Pause session' : 'Resume session'}>
+        <Tooltip label={toggling ? 'Working...' : isQueued ? 'Queued' : isSessionActive ? 'Pause session' : 'Resume session'}>
           <button
             onClick={onToggle}
             disabled={toggling}
@@ -295,11 +295,11 @@ export function TaskDetailHeader({
               isSessionActive={isSessionActive}
             />
           </button>
-        </HoverTip>
+        </Tooltip>
       )}
 
       {/* Display ID - clickable to copy */}
-      <HoverTip label="Copy task ID">
+      <Tooltip label="Copy task ID">
         <button
           type="button"
           className="group/copyid flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors flex-shrink-0"
@@ -312,7 +312,7 @@ export function TaskDetailHeader({
           }
           #{task.display_id}
         </button>
-      </HoverTip>
+      </Tooltip>
 
       {/* Priority badge (hidden when priority is 0) */}
       <PriorityBadge priority={task.priority ?? 0} />
@@ -326,19 +326,19 @@ export function TaskDetailHeader({
           inner span is content-sized, so its scrollWidth is the title's natural
           width (read by useHeaderPillOverflow). The tip carries the full title;
           the heading already reads it, so the tip is not read a second time. */}
-      <HoverTip label={task.title} describe={false}>
+      <Tooltip label={task.title} describe={false}>
         <h2 className="text-base font-semibold text-fg truncate flex-1 min-w-[64px] flex items-center gap-2">
           <span ref={titleSpanRef} className="truncate" data-testid="task-title-text">{task.title}</span>
           {isArchived && (
-            <HoverTip label="This task is archived. It does not appear on the board.">
+            <Tooltip label="This task is archived. It does not appear on the board.">
               <span className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-disabled bg-surface-hover/60 border border-edge/40 rounded px-1.5 py-0.5">
                 Archived
               </span>
-            </HoverTip>
+            </Tooltip>
           )}
           {isIsolated && <IsolatedBadge data-testid="task-detail-isolated-badge" />}
         </h2>
-      </HoverTip>
+      </Tooltip>
 
       {/* Quick-access pills - progressively fold into the kebab as the window
           narrows (useHeaderPillOverflow). Hidden for archived tasks; the title then
@@ -513,7 +513,7 @@ export function TaskDetailHeader({
         {/* Divider + Pop out (tiled only) + Maximize + Close */}
         <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
         {onUndock && (
-          <HoverTip label="Pop out of tiling">
+          <Tooltip label="Pop out of tiling">
             <button
               onClick={onUndock}
               data-testid="task-detail-undock"
@@ -522,14 +522,14 @@ export function TaskDetailHeader({
             >
               <PictureInPicture2 size={16} />
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
         <MaximizeToggleButton
           isMaximized={isMaximized}
           onToggle={onToggleMaximized}
           testId="task-detail-maximize"
         />
-        <HoverTip label="Close" keys="panel.close">
+        <Tooltip label="Close" keys="panel.close">
           <button
             onClick={onClose}
             data-testid="task-detail-close"
@@ -538,7 +538,7 @@ export function TaskDetailHeader({
           >
             <X size={16} />
           </button>
-        </HoverTip>
+        </Tooltip>
       </div>
     </div>
   );

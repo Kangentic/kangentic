@@ -3,7 +3,7 @@ import { X, Copy, Check } from 'lucide-react';
 import type { Toast } from '../../stores/toast-store';
 import { useNow } from '../../hooks/useNow';
 import { formatTimeAgo } from '../../lib/datetime';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 /** How often a toast's age re-reads the clock; it shows whole minutes. */
 const AGE_TICK_MS = 30_000;
@@ -176,7 +176,7 @@ export function ToastItem({ toast, onDismiss }: ToastItemProps) {
         </span>
 
         {toast.variant === 'error' && (
-          <HoverTip label={copied ? 'Message copied' : 'Copy message'}>
+          <Tooltip label={copied ? 'Message copied' : 'Copy message'}>
             <button
               onClick={handleCopyClick}
               data-testid="toast-copy"
@@ -185,7 +185,7 @@ export function ToastItem({ toast, onDismiss }: ToastItemProps) {
             >
               {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
             </button>
-          </HoverTip>
+          </Tooltip>
         )}
 
         <button

@@ -8,8 +8,8 @@ import { PrLink } from '../../../PrLink';
 import { OverlayPopover } from '../../../OverlayPopover';
 import { usePopoverPosition } from '../../../../hooks/usePopoverPosition';
 import { CountBadge } from '../../../CountBadge';
-import { HoverTip } from '../../../HoverTip';
-import { tipLabel } from '../../../../utils/hover-tip';
+import { Tooltip } from '../../../Tooltip';
+import { tipLabel } from '../../../../utils/tooltip';
 
 /** Linked-PR chip data, declared once so the panel prop and the header prop cannot drift. */
 interface PrLinkData {
@@ -345,7 +345,7 @@ const FileRowView = memo(function FileRowView({
       data-path={row.file.path}
       data-selected={isSelected}
     >
-      <HoverTip label={`${statusConfig.label}: ${row.file.path}`}>
+      <Tooltip label={`${statusConfig.label}: ${row.file.path}`}>
         <button
           onClick={() => onSelect(row.file.path)}
           // Detach this one file's diff into its own OS window. Both clicks of the
@@ -370,10 +370,10 @@ const FileRowView = memo(function FileRowView({
             </span>
           )}
         </button>
-      </HoverTip>
+      </Tooltip>
       {/* "Viewed" toggle: a reviewed file's row dims. Always visible (not
           hover-only) so the review state is discoverable; subtle until checked. */}
-      <HoverTip label={viewed ? 'Mark as not viewed' : 'Mark as viewed'}>
+      <Tooltip label={viewed ? 'Mark as not viewed' : 'Mark as viewed'}>
         <button
           type="button"
           onClick={() => onToggleViewed(row.file.path)}
@@ -393,7 +393,7 @@ const FileRowView = memo(function FileRowView({
             <Check size={10} strokeWidth={3} />
           </span>
         </button>
-      </HoverTip>
+      </Tooltip>
     </div>
   );
 });
@@ -788,11 +788,11 @@ function FileHistoryPopover({
       data-dismissable-layer
       data-testid="changes-file-history"
     >
-      <HoverTip label={file.path}>
+      <Tooltip label={file.path}>
         <div className="px-3 py-1.5 text-[11px] font-medium text-fg-faint truncate border-b border-edge-subtle">
           History: {file.path.split('/').pop() ?? file.path}
         </div>
-      </HoverTip>
+      </Tooltip>
       {commits === null ? (
         <div className="flex items-center justify-center py-4">
           <Loader2 size={14} className="animate-spin text-fg-faint" />
@@ -854,13 +854,13 @@ function BranchHeader({
     <div className="border-b border-edge flex-shrink-0">
       <div className="flex items-center gap-1.5 px-3 py-2 text-xs">
         <GitBranch size={12} className="text-fg-muted flex-shrink-0" />
-        <HoverTip label={branch ?? ''}>
+        <Tooltip label={branch ?? ''}>
           <span className="text-fg-secondary font-medium truncate" data-testid="changes-branch-name">
             {branch ?? 'Detached HEAD'}
           </span>
-        </HoverTip>
+        </Tooltip>
         {baseLabel && (
-          <HoverTip label={baseLabelCustom ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}>
+          <Tooltip label={baseLabelCustom ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}>
             <span
               className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none truncate ${
                 baseLabelCustom ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
@@ -869,10 +869,10 @@ function BranchHeader({
             >
               {baseLabel}
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
         {(ahead > 0 || behind > 0) && (
-          <HoverTip label={`${ahead} ahead, ${behind} behind base branch`}>
+          <Tooltip label={`${ahead} ahead, ${behind} behind base branch`}>
             <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0">
               {ahead > 0 && (
                 <span className="flex items-center gap-0.5 tabular-nums">
@@ -887,7 +887,7 @@ function BranchHeader({
                 </span>
               )}
             </span>
-          </HoverTip>
+          </Tooltip>
         )}
         {prLink && (
           <PrLink
@@ -901,7 +901,7 @@ function BranchHeader({
         )}
       </div>
       {lastCommit && (
-        <HoverTip label={`${lastCommit.hash} ${lastCommit.subject}`}>
+        <Tooltip label={`${lastCommit.hash} ${lastCommit.subject}`}>
           <div
             className="px-3 pb-2 -mt-1 text-[11px] text-fg-muted truncate"
             data-testid="changes-last-commit"
@@ -910,7 +910,7 @@ function BranchHeader({
             {lastCommit.subject}
             {lastCommit.timestamp && <span className="text-fg-faint"> {'·'} {formatRelativeTime(lastCommit.timestamp)}</span>}
           </div>
-        </HoverTip>
+        </Tooltip>
       )}
     </div>
   );
@@ -1116,7 +1116,7 @@ export function FileTreePanel({
             // review-marks feature is discoverable before the first mark.
             // Bare n/m - the word lives in the tooltip; the rail cannot
             // afford it at 220px (matches the surface header's chip).
-            <HoverTip label={`${viewedCount} of ${files.length} files viewed`}>
+            <Tooltip label={`${viewedCount} of ${files.length} files viewed`}>
               <span
                 className="flex items-center gap-1 whitespace-nowrap text-fg-faint tabular-nums"
                 data-testid="changes-viewed-count"
@@ -1133,11 +1133,11 @@ export function FileTreePanel({
                 />
                 {viewedCount}/{files.length}
               </span>
-            </HoverTip>
+            </Tooltip>
           )}
           <div className="flex items-center gap-0.5">
             {/* The name says the current view; the detail says what a click does. */}
-            <HoverTip label={flat ? 'Flat list' : 'Tree view'} detail={flat ? 'Switch to tree' : 'Switch to flat list'}>
+            <Tooltip label={flat ? 'Flat list' : 'Tree view'} detail={flat ? 'Switch to tree' : 'Switch to flat list'}>
               <button
                 type="button"
                 onClick={() => updateConfig({ diffFlatList: !flat })}
@@ -1148,10 +1148,10 @@ export function FileTreePanel({
               >
                 {flat ? <List size={14} /> : <ListTree size={14} />}
               </button>
-            </HoverTip>
+            </Tooltip>
             {/* Always rendered (disabled in flat mode, where there are no
                 directories) so toggling tree/flat never shifts the other buttons. */}
-            <HoverTip label={tipLabel({ disabled: flat, disabledReason: 'Tree view only', tip: expansion.expand ? 'Collapse all' : 'Expand all' })}>
+            <Tooltip label={tipLabel({ disabled: flat, disabledReason: 'Tree view only', tip: expansion.expand ? 'Collapse all' : 'Expand all' })}>
               <button
                 type="button"
                 onClick={toggleCollapseAll}
@@ -1162,7 +1162,7 @@ export function FileTreePanel({
               >
                 {expansion.expand ? <FoldVertical size={14} /> : <UnfoldVertical size={14} />}
               </button>
-            </HoverTip>
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -1179,7 +1179,7 @@ export function FileTreePanel({
             className="bg-transparent outline-none flex-1 min-w-0 text-fg placeholder:text-fg-disabled"
           />
           <div ref={sortButtonRef} className="flex-shrink-0 -mr-1">
-            <HoverTip
+            <Tooltip
               label={`Sort: by ${SORT_OPTIONS.find((option) => option.value === sort)?.label.toLowerCase() ?? sort}`}
               enabled={!sortMenuOpen}
             >
@@ -1193,7 +1193,7 @@ export function FileTreePanel({
               >
                 <ArrowDownUp size={14} />
               </button>
-            </HoverTip>
+            </Tooltip>
             <OverlayPopover
               open={sortMenuOpen}
               popoverRef={sortMenuRef}

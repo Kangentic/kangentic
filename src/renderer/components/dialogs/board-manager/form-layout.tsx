@@ -1,6 +1,6 @@
 import React from 'react';
 import { Info, type LucideIcon } from 'lucide-react';
-import { HoverTip } from '../../HoverTip';
+import { Tooltip } from '../../Tooltip';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 
 /**
@@ -66,7 +66,7 @@ export function SectionCard({ id, label, icon: SectionIcon, info, actions, child
           // read as one thing. A real button, so a keyboard user opens the tip
           // by focus. Its name says what it is about; the text is its
           // description, read without hovering.
-          <HoverTip label={info}>
+          <Tooltip label={info}>
             <button
               type="button"
               data-testid={`board-manager-section-${id}-info`}
@@ -75,7 +75,7 @@ export function SectionCard({ id, label, icon: SectionIcon, info, actions, child
             >
               <Info size={13} aria-hidden="true" />
             </button>
-          </HoverTip>
+          </Tooltip>
         ) : null}
         {actions ? <div className="ml-auto flex items-center gap-2">{actions}</div> : null}
       </header>

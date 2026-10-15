@@ -18,7 +18,7 @@ import { ProfilePicker } from './ProfilePicker';
 import { ElapsedTime } from './ElapsedTime';
 import { ToolBreakdownPopover } from './ToolBreakdownPopover';
 import { pill, pillForProvenance } from './context-bar-pill';
-import { HoverTip } from '../HoverTip';
+import { Tooltip } from '../Tooltip';
 
 interface ContextBarProps {
   sessionId: string;
@@ -155,11 +155,11 @@ function RateLimitBlocks({ rateLimits }: { rateLimits: RateLimitWindow[] }) {
         return (
           <div key={limitWindow.id} className="flex flex-col gap-0.5" data-testid="rate-limits-tip-window">
             <div className="flex items-center gap-1.5">
-              <Icon size={12} className="shrink-0 text-tip-rich-muted" aria-hidden="true" />
+              <Icon size={12} className="shrink-0 text-tooltip-rich-muted" aria-hidden="true" />
               <span className="whitespace-nowrap font-semibold">{limitWindow.label}</span>
               <span className="ml-auto pl-7 tabular-nums text-fg-secondary">{Math.round(limitWindow.usedPercentage)}%</span>
             </div>
-            <span className="whitespace-nowrap pl-[18px] text-tip-rich-muted">{formatResetTime(limitWindow.resetsAt)}</span>
+            <span className="whitespace-nowrap pl-[18px] text-tooltip-rich-muted">{formatResetTime(limitWindow.resetsAt)}</span>
           </div>
         );
       })}
@@ -276,11 +276,11 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           data-live-telemetry="unsupported"
           data-no-dismiss
         >
-          <HoverTip label={agentLiveTelemetryUnsupported.unavailableTitle}>
+          <Tooltip label={agentLiveTelemetryUnsupported.unavailableTitle}>
             <span className={`${pill} text-fg-muted`}>
               {agentLiveTelemetryUnsupported.unavailableLabel}
             </span>
-          </HoverTip>
+          </Tooltip>
         </div>
       );
     }
@@ -390,11 +390,11 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           has no task, so there is no profile to pick. */}
       {task && <ProfilePicker taskId={task.id} />}
       {showShell && (
-        <HoverTip label={sessionShell as string}>
+        <Tooltip label={sessionShell as string}>
           <span className={`${pill} text-fg-faint`}>
             {shellDisplayName(sessionShell as string)}
           </span>
-        </HoverTip>
+        </Tooltip>
       )}
       {showVersion && (
         <span className={`${pill} text-fg-muted`}>
@@ -453,7 +453,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           .map((limitWindow) => `${limitWindow.label} ${Math.round(limitWindow.usedPercentage)}%. ${formatResetTime(limitWindow.resetsAt)}`)
           .join('. ');
         return (
-          <HoverTip
+          <Tooltip
             label={spoken}
             header={{ icon: <Gauge />, title: 'Rate limits' }}
             content={<RateLimitBlocks rateLimits={rateLimits} />}
@@ -469,13 +469,13 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
                 <RateLimitBar key={limitWindow.id} limitWindow={limitWindow} />
               ))}
             </span>
-          </HoverTip>
+          </Tooltip>
         );
       })()}
       {showCost && (
-        <HoverTip label="Session API cost">
+        <Tooltip label="Session API cost">
           <span ref={costRef} className={`${pill} text-fg-muted tabular-nums`}>{formatCost(usage.cost.totalCostUsd)}</span>
-        </HoverTip>
+        </Tooltip>
       )}
 
       {/* Activity stats sit directly to the left of the token counts. Tool
@@ -485,7 +485,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           not count past 500 events itself either). */}
       {showToolCalls && (
         <span className="relative inline-flex">
-          <HoverTip label="Tool calls across every run of this session" enabled={!openToolBreakdown}>
+          <Tooltip label="Tool calls across every run of this session" enabled={!openToolBreakdown}>
             <button
               ref={toolCallTriggerRef}
               type="button"
@@ -499,7 +499,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
               <span ref={toolCallRef}>{usage.toolCallCount ?? 0}</span>
               <ChevronDown size={11} className="text-fg-faint flex-shrink-0" />
             </button>
-          </HoverTip>
+          </Tooltip>
           {openToolBreakdown && (
             <ToolBreakdownPopover
               triggerRef={toolCallTriggerRef}
@@ -513,7 +513,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       )}
 
       {showAgentActive && usage.cost.totalDurationMs > 0 && (
-        <HoverTip label="Agent active time">
+        <Tooltip label="Agent active time">
           <span
             className={`${pill} text-fg-muted tabular-nums flex items-center gap-1`}
             data-testid="context-agent-active"
@@ -521,11 +521,11 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
             <Hourglass size={11} className="text-fg-faint" />
             {formatDuration(usage.cost.totalDurationMs)}
           </span>
-        </HoverTip>
+        </Tooltip>
       )}
 
       {showTokens && (
-        <HoverTip label="Input / output tokens">
+        <Tooltip label="Input / output tokens">
           <span ref={tokenRef} className={`${pill} text-fg-muted tabular-nums flex items-center gap-3`}>
             <span className="flex items-center gap-1">
               <ArrowUp size={11} className="text-fg-faint" />
@@ -536,7 +536,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
               {formatTokenCount(usage.contextWindow.totalOutputTokens)}
             </span>
           </span>
-        </HoverTip>
+        </Tooltip>
       )}
 
       {/* Context usage: the absolute fraction (used / total) sits to the LEFT of
@@ -559,11 +559,11 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           return (
             <div className={`${pill} text-fg-muted flex items-center gap-2 flex-1 basis-0 min-w-[160px]`}>
               {showFraction && (
-                <HoverTip label="Context tokens used / total window size">
+                <Tooltip label="Context tokens used / total window size">
                   <span ref={fractionRef} className="tabular-nums text-fg-faint whitespace-nowrap">
                     {fractionLabel}
                   </span>
-                </HoverTip>
+                </Tooltip>
               )}
               {/* Scaled on X rather than width-animated: `transform` is composited,
                   `width` costs layout and paint on every frame of the 300ms. Keep
@@ -571,7 +571,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
                   leave the bar drawing at the right size but never animating, and
                   no test asserts motion. See ContextUsageFooter.tsx, which carries
                   the same treatment for the board and monitor cards. */}
-              <HoverTip label={barTooltip}>
+              <Tooltip label={barTooltip}>
                 <div className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden">
                   <div
                     className="h-full w-full origin-left rounded-full transition-[transform,background-color] duration-300"
@@ -579,20 +579,20 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
                     style={{ transform: `scaleX(${Math.min(pct, 100) / 100})`, backgroundColor: progressColor }}
                   />
                 </div>
-              </HoverTip>
-              <HoverTip label={`${100 - pct}% remaining`}>
+              </Tooltip>
+              <Tooltip label={`${100 - pct}% remaining`}>
                 <span ref={pctRef} className="tabular-nums text-fg-faint whitespace-nowrap transition-colors duration-300">{pct}%{!showFraction && ' context'}</span>
-              </HoverTip>
+              </Tooltip>
             </div>
           );
         }
         if (showFraction) {
           return (
-            <HoverTip label="Context tokens used / total window size">
+            <Tooltip label="Context tokens used / total window size">
               <span ref={fractionRef} className={`${pill} text-fg-muted tabular-nums`}>
                 {fractionLabel}
               </span>
-            </HoverTip>
+            </Tooltip>
           );
         }
         return null;
@@ -603,7 +603,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           flex-1 progress pill to its left and never reflows the other cells, so
           no fixed-width reservation is needed. */}
       {showElapsed && session?.startedAt && (
-        <HoverTip label="Elapsed session time">
+        <Tooltip label="Elapsed session time">
           <span
             className={`${pill} text-fg-muted tabular-nums flex items-center gap-1`}
             data-testid="context-elapsed"
@@ -611,7 +611,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
             <Clock size={11} className="text-fg-faint" />
             <ElapsedTime startedAt={session.startedAt} />
           </span>
-        </HoverTip>
+        </Tooltip>
       )}
     </div>
   );
