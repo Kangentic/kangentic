@@ -7,10 +7,16 @@
  * only that turn: a prompted spawn seeds its turn's start at the spawn, so the
  * recap's turn began before the session first went idle. A Ctrl+C ends a turn
  * with no turn end, which leaves the mark behind, and the turn the user starts
- * after it begins after that first idle and must run its rows.
+ * after it begins with a prompt and must run its rows.
+ *
+ * The first idle alone does not end the recap's turn. An idle no Stop caused
+ * (the stale-thinking watchdog) can land mid-turn, and the activity engine
+ * re-stamps the turn's start when thinking resumes, so a start after the first
+ * idle says nothing about which turn it is. Only a prompt the agent received
+ * after that idle does.
  *
  * The module is main-process memory with no dependencies, so these tests drive
- * its five exports directly. The wiring into the turn-end runner and the
+ * its six exports directly. The wiring into the turn-end runner and the
  * transition engine is pinned in turn-end-runner-recap-turn.test.ts and
  * transition-engine-expired-recap.test.ts.
  */
@@ -18,6 +24,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   markRecapSession,
   noteRecapSessionIdle,
+  noteRecapSessionPrompt,
   isRecapTurn,
   forgetRecapSession,
   resetRecapSessionsForTests,
@@ -61,6 +68,26 @@ describe('recap turns', () => {
 
       expect(isRecapTurn(SESSION_ID, null)).toBe(false);
     });
+
+    it('ignores a prompt: the recap\'s own opening prompt is not a later turn\'s', () => {
+      markRecapSession(SESSION_ID);
+
+      noteRecapSessionPrompt(SESSION_ID);
+
+      expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(true);
+    });
+
+    it('does not carry a prompt noted before the first idle past that idle', () => {
+      // The recap itself reaches the agent as a prompt, so a prompt event lands
+      // before any idle. If it were latched, the first idle would read as "the
+      // user already answered" and a re-stamped turn start after it would run the rows.
+      markRecapSession(SESSION_ID);
+      noteRecapSessionPrompt(SESSION_ID);
+
+      noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT);
+
+      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(true);
+    });
   });
 
   describe('a marked session that has gone idle', () => {
@@ -74,28 +101,54 @@ describe('recap turns', () => {
       expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT - 1)).toBe(true);
     });
 
-    it('is not a recap turn for a turn that began after the first idle (the turn after an interrupted recap)', () => {
-      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(false);
-      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 3_600_000)).toBe(false);
+    it('is still the recap turn for a start re-stamped after the first idle when no prompt followed it', () => {
+      // The stale-thinking watchdog went idle mid-turn and the engine re-stamped
+      // the start when thinking resumed: a start after the idle, with no new turn behind it.
+      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(true);
+      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 3_600_000)).toBe(true);
     });
 
-    it('is not a recap turn for a turn that began at the very moment of the first idle', () => {
-      // Strictly before: a turn the user started as the session went idle is theirs.
-      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT)).toBe(false);
+    it('is still the recap turn for a start at the very moment of the first idle when no prompt followed it', () => {
+      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT)).toBe(true);
     });
 
     it('is not a recap turn when the turn start is unknown (null)', () => {
       expect(isRecapTurn(SESSION_ID, null)).toBe(false);
     });
 
-    it('keeps the FIRST idle: a later idle does not move the boundary', () => {
-      // The recap's reply was the first idle. The user's turns after it go idle
-      // again and again; the boundary must stay where the recap's turn ended, or
-      // the second turn would read as a recap turn.
-      noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT + 600_000);
+    describe('and was then prompted', () => {
+      beforeEach(() => {
+        noteRecapSessionPrompt(SESSION_ID);
+      });
 
-      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(false);
-      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 300_000)).toBe(false);
+      it('is not a recap turn for a turn that began after the first idle (the turn after an interrupted recap)', () => {
+        expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(false);
+        expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 3_600_000)).toBe(false);
+      });
+
+      it('is not a recap turn for a turn that began at the very moment of the first idle', () => {
+        // Strictly before: a turn the user started as the session went idle is theirs.
+        expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT)).toBe(false);
+      });
+
+      it('is still the recap turn for a start before the first idle, however late its turn end arrives', () => {
+        expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(true);
+        expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT - 1)).toBe(true);
+      });
+
+      it('is not a recap turn when the turn start is unknown (null)', () => {
+        expect(isRecapTurn(SESSION_ID, null)).toBe(false);
+      });
+
+      it('keeps the FIRST idle: a later idle does not move the boundary', () => {
+        // The recap's reply was the first idle. The user's turns after it go idle
+        // again and again; the boundary must stay where the recap's turn ended, or
+        // the second turn would read as a recap turn.
+        noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT + 600_000);
+
+        expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(false);
+        expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 300_000)).toBe(false);
+      });
     });
   });
 
@@ -112,10 +165,33 @@ describe('recap turns', () => {
       markRecapSession(OTHER_SESSION_ID);
 
       noteRecapSessionIdle(OTHER_SESSION_ID, FIRST_IDLE_AT);
+      noteRecapSessionPrompt(OTHER_SESSION_ID);
+      // A no-op for a session with no idle of its own, but it latches if the idle above leaked into this one.
+      noteRecapSessionPrompt(SESSION_ID);
 
       // Still on its opening turn: no idle of its own yet.
       expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(true);
       expect(isRecapTurn(OTHER_SESSION_ID, FIRST_IDLE_AT + 1)).toBe(false);
+    });
+
+    it('a prompt noted for one session ends no other session\'s recap turn', () => {
+      markRecapSession(SESSION_ID);
+      markRecapSession(OTHER_SESSION_ID);
+      noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT);
+      noteRecapSessionIdle(OTHER_SESSION_ID, FIRST_IDLE_AT);
+
+      noteRecapSessionPrompt(OTHER_SESSION_ID);
+
+      expect(isRecapTurn(OTHER_SESSION_ID, FIRST_IDLE_AT + 1)).toBe(false);
+      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(true);
+    });
+
+    it('a prompt noted for a session that was never marked does not mark it', () => {
+      noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT);
+      noteRecapSessionPrompt(SESSION_ID);
+
+      expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(false);
+      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(false);
     });
   });
 
@@ -136,6 +212,18 @@ describe('recap turns', () => {
       noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT + 1_000);
 
       expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(false);
+    });
+
+    it('clears a marked session that had been prompted, and a later prompt does not bring it back', () => {
+      markRecapSession(SESSION_ID);
+      noteRecapSessionIdle(SESSION_ID, FIRST_IDLE_AT);
+      noteRecapSessionPrompt(SESSION_ID);
+
+      forgetRecapSession(SESSION_ID);
+      noteRecapSessionPrompt(SESSION_ID);
+
+      expect(isRecapTurn(SESSION_ID, SPAWNED_AT)).toBe(false);
+      expect(isRecapTurn(SESSION_ID, FIRST_IDLE_AT + 1)).toBe(false);
     });
 
     it('leaves other sessions marked', () => {

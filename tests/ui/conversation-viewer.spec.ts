@@ -118,6 +118,21 @@ function preConfig(): string {
         sessions: [{ sessionId: 'sess-archived', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
       };
 
+      // Degraded AND archived: the index fallback carrying an archivedAgentName.
+      // The amber banner must win and the calm archive banner must stay hidden
+      // (the two are mutually exclusive: the view guards the archive banner on
+      // not being degraded). Unlike transcriptDegraded above, this fixture
+      // carries an archivedAgentName, so the archive banner's count of 0 only
+      // holds because of that guard.
+      var transcriptDegradedArchived = {
+        sessionId: 'sess-degraded-archived', taskId: null, taskTitle: 'Old archived session',
+        agentName: 'Claude Code', startedAt: ts, source: 'index', sourcePath: null,
+        entries: [{ kind: 'user', uuid: 'turn-deg-arch', ts: nowMs, text: 'DEGRADED_ARCHIVED_TEXT' }],
+        degraded: true,
+        archivedAgentName: 'Claude Code',
+        sessions: [{ sessionId: 'sess-degraded-archived', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
+      };
+
       function emptyResp(sid, reason) {
         return {
           sessionId: sid, taskId: null, taskTitle: '', agentName: '', startedAt: ts,
@@ -258,6 +273,7 @@ function preConfig(): string {
       transcriptSeeds['sess-conv-consecutive'] = transcriptConsecutive;
       transcriptSeeds['sess-degraded'] = transcriptDegraded;
       transcriptSeeds['sess-archived'] = transcriptArchived;
+      transcriptSeeds['sess-degraded-archived'] = transcriptDegradedArchived;
       transcriptSeeds['sess-empty-unsupported'] = emptyResp('sess-empty-unsupported', 'unsupported_agent');
       transcriptSeeds['sess-empty-nosession'] = emptyResp('sess-empty-nosession', 'no_agent_session_id');
       transcriptSeeds['sess-empty-missing'] = emptyResp('sess-empty-missing', 'file_missing');
@@ -447,6 +463,20 @@ test.describe('Conversation Viewer', () => {
       // Structured: the tool call renders as a tool card, not as prose.
       await expect(page.getByText('ARCHIVED_QUESTION')).toBeVisible();
       await expect(page.getByTestId('conversation-tool-toggle').first()).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a degraded conversation that also names an archived agent shows only the amber banner, never the calm archive one', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, 'sess-degraded-archived');
+      await expect(page.getByTestId('conversation-degraded-banner')).toBeVisible();
+      await expect(page.getByText('DEGRADED_ARCHIVED_TEXT')).toBeVisible();
+      // The fixture carries archivedAgentName, so this count is 0 only because
+      // the archive banner is gated on not being degraded.
+      await expect(page.getByTestId('conversation-archive-banner')).toHaveCount(0);
     } finally {
       await browser.close();
     }

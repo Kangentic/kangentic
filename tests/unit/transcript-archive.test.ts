@@ -187,7 +187,7 @@ describe('transcript archive', () => {
     writeTranscript(transcriptPath, transcriptLines(10));
     await archive.archiveSession('project-1', 'session-1');
 
-    // Same length, different bytes before the resume point.
+    // Different bytes before the resume point.
     writeTranscript(transcriptPath, transcriptLines(10, 'X'));
     await archive.archiveSession('project-1', 'session-1');
 

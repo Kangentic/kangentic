@@ -112,8 +112,10 @@ export async function buildExpiredConversationRecap(
   // session, which is this new one. No quotes around the id: a double-quoted
   // shell gets its prompt's double quotes rewritten (command-builder.ts).
   const pointer = `Read the previous conversation with the kangentic_get_transcript tool, passing sessionId ${escapeXml(input.previousAgentSessionId)}.`;
+  // No apostrophe: a unix-like host quotes the prompt in single quotes, and
+  // nushell has no escape for one inside them.
   const closing = input.mode === 'whole-prompt'
-    ? 'Reply with a short summary of where the work stands, then wait for the user\'s next instruction.'
+    ? 'Reply with a short summary of where the work stands, then wait for the next instruction from the user.'
     : null;
 
   const blocks: RecapBlocks = {
@@ -147,17 +149,19 @@ export async function buildExpiredConversationRecap(
   ]);
 
   // The summary and the branch go in only while they fit.
-  blocks.summaryBlock = summary?.trim() ? `<task_summary>\n${escapeXml(summary.trim())}\n</task_summary>` : null;
+  const summaryText = summary ? withoutControlCharacters(summary).trim() : '';
+  blocks.summaryBlock = summaryText ? `<task_summary>\n${escapeXml(summaryText)}\n</task_summary>` : null;
   if (lengthOf() > budget) blocks.summaryBlock = null;
   blocks.gitBlock = buildGitBlock(gitState, input.baseBranch, input.task.pr_url);
   if (lengthOf() > budget) blocks.gitBlock = null;
 
   // The tail gets what is left, and only when that is worth a block.
   const tailRoom = budget - lengthOf() - TAIL_WRAPPER.length;
-  if (tailRoom >= TAIL_MIN_CHARS && tail?.trim()) {
+  const tailText = tail ? withoutControlCharacters(tail).trim() : '';
+  if (tailRoom >= TAIL_MIN_CHARS && tailText) {
     // Escaping can lengthen the text, so cut after it, from the start: the
     // newest turns are the ones worth keeping.
-    const escaped = fitCommandLine(escapeXml(tail.trim()), tailRoom, 'end');
+    const escaped = fitCommandLine(escapeXml(tailText), tailRoom, 'end');
     blocks.tailBlock = `<previous_conversation_tail>\n${escaped}\n</previous_conversation_tail>`;
   }
 
@@ -211,7 +215,26 @@ function buildGitBlock(state: RecapGitState | null, baseBranch: string, prUrl: s
     kept.push(escaped);
     used += escaped.length + 1;
   }
+  // A first line longer than the block would leave it empty, which costs room and says nothing.
+  if (kept.length === 0) return null;
   return `<branch_state>\n${kept.join('\n')}\n</branch_state>`;
+}
+
+/**
+ * Conversation and summary text as it may be typed into the spawning shell:
+ * line breaks kept, a tab as a space (a tab completes in bash, zsh and fish,
+ * even inside quotes), and every other control character dropped (an escape
+ * from a pasted terminal log, a Ctrl+C, a bare carriage return, which is Enter).
+ * Never longer than the input, so a tail cut to its room still fits.
+ */
+function withoutControlCharacters(text: string): string {
+  let kept = '';
+  for (const character of text.replace(/\r\n/g, '\n')) {
+    const code = character.charCodeAt(0);
+    if (character === '\t') kept += ' ';
+    else if (character === '\n' || (code >= 0x20 && code < 0x7f) || code > 0x9f) kept += character;
+  }
+  return kept;
 }
 
 async function readSafely<Result>(read: () => Promise<Result | null> | undefined): Promise<Result | null> {

@@ -21,7 +21,7 @@ import { INLINE_PROMPT_BUDGET, commandLineLength } from '../../src/main/agent/sh
 import { CommandBuilder } from '../../src/main/agent/adapters/claude';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 
-const CLOSING = 'Reply with a short summary of where the work stands, then wait for the user\'s next instruction.';
+const CLOSING = 'Reply with a short summary of where the work stands, then wait for the next instruction from the user.';
 /** cmd.exe's longest command line. */
 const CMD_LINE_LIMIT = 8_191;
 

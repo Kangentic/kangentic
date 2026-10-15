@@ -139,6 +139,12 @@ export interface SpawnOutcome {
   recapOnly: boolean;
   /** True when the message the resume carried was not sent. */
   messageDropped: boolean;
+  /**
+   * True when the spawn ran fresh with the task template as its prompt, so the
+   * message the resume carried is not in it. The caller delivers that message
+   * after the spawn, as it does on any fresh spawn.
+   */
+  resumePromptUnsent: boolean;
 }
 
 /** Options shared by every way into an automation group. */
@@ -467,7 +473,7 @@ export class TransitionEngine {
     signal?: AbortSignal,
     agentOverride?: string,
     spawnOverrides?: SpawnOverrides,
-  ): Promise<void> {
+  ): Promise<SpawnOutcome> {
     const engineConfig = this.getConfig();
     const templateVars = resolveTaskTemplateVars({
       task,
@@ -479,7 +485,7 @@ export class TransitionEngine {
       move: null,
       workflow: readWorkflowPromptFacts(task, engineConfig.projectId),
     });
-    await this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal, agentOverride, undefined, spawnOverrides);
+    return this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal, agentOverride, undefined, spawnOverrides);
   }
 
   private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
@@ -830,7 +836,12 @@ export class TransitionEngine {
     // first turn is a summary for the user, so it runs no turn-end rows.
     if (recapOnly) markRecapSession(session.id);
     if (expiredNotice) this.services.onConversationExpired?.(expiredNotice);
-    return { startOver, recapOnly, messageDropped };
+    // A fresh spawn takes the template over `resumePrompt` (resolveSpawnIntent),
+    // so a resume that started over, or a forced-fresh spawn, left the carried
+    // message out. A recap-only start withholds it on purpose instead.
+    const resumePromptUnsent = !canResume && !recapOnly
+      && Boolean(resumePrompt?.trim()) && Boolean(spawnIntentOptions.promptTemplate);
+    return { startOver, recapOnly, messageDropped, resumePromptUnsent };
   }
 
 }

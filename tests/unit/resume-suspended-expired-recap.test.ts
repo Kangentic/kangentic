@@ -19,15 +19,23 @@
  *   startup builds the recap as the whole prompt for both.
  * - The project's team-shared default base branch reaches `prepareAgentSpawn`,
  *   where it picks the recap's base ref.
+ * - The recap's sources are the project's own (`createExpiredRecapSources(projectId)`),
+ *   built once per pass and handed to every record's preparation, so a recap
+ *   reads the old conversation's tail and the branch state for real. A
+ *   preparation handed none would build every recap bare.
  *
  * `recap-turns` is left real and read back through `isRecapTurn`, so the mark is
  * observed rather than assumed; its module-level map is cleared before each test.
+ * `expired-recap-sources` is wrapped, not replaced: the real factory still runs,
+ * and the wrapper only records the project id it was asked for and what it built.
  *
  * Red-green: change `resuming: !input.prompt` to `true`, delete the
  * `markRecapSession(newSession.id)` line, delete the `onConversationExpired?.(...)`
  * call or change its `messageDropped`, drop `prompt: input.prompt ?? null` from
- * the insert, or delete `boardDefaultBaseBranch,` from the `prepareAgentSpawn`
- * input, and the matching test below fails.
+ * the insert, delete `boardDefaultBaseBranch,` from the `prepareAgentSpawn`
+ * input, delete `recapSources,` from it, change `createExpiredRecapSources(projectId)`
+ * to another id, or move it inside the per-record loop, and the matching test
+ * below fails.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -100,6 +108,25 @@ vi.mock('../../src/main/transition-engine/session-startup/prepare-spawn', () => 
 vi.mock('../../src/main/transition-engine/spawn-intent', () => ({
   isResumeEligible: (record: SessionRecord | null | undefined) => !!record?.agent_session_id,
 }));
+
+// The REAL factory still runs (so the sources are the shipped ones); the wrapper
+// only records which project it was asked for and what it built.
+const recapSourcesFactory = vi.hoisted(() => ({
+  projectIds: [] as string[],
+  built: [] as unknown[],
+}));
+vi.mock('../../src/main/transition-engine/expired-recap-sources', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/transition-engine/expired-recap-sources')>();
+  return {
+    ...actual,
+    createExpiredRecapSources: (projectId: string) => {
+      const sources = actual.createExpiredRecapSources(projectId);
+      recapSourcesFactory.projectIds.push(projectId);
+      recapSourcesFactory.built.push(sources);
+      return sources;
+    },
+  };
+});
 
 // column-strategy, session-isolation and recap-turns are deliberately left UNMOCKED.
 import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup/resume-suspended';
@@ -247,6 +274,8 @@ async function runRecovery(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  recapSourcesFactory.projectIds.length = 0;
+  recapSourcesFactory.built.length = 0;
   resetRecapSessionsForTests();
   prepareAgentSpawnMock.mockReset();
   retireRecordMock.mockReturnValue(true);
@@ -392,5 +421,58 @@ describe('resumeSuspendedSessions: the default base branch for the recap', () =>
     expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
     const preparationInput = prepareAgentSpawnMock.mock.calls[0][0] as { boardDefaultBaseBranch?: string | null };
     expect(preparationInput.boardDefaultBaseBranch ?? null).toBeNull();
+  });
+});
+
+describe('resumeSuspendedSessions: the recap sources handed to the spawn preparation', () => {
+  interface PreparationInput {
+    recapSources?: {
+      readTaskSummary?: unknown;
+      readConversationTail?: unknown;
+      readGitState?: unknown;
+    };
+  }
+  const preparationInputOf = (callIndex: number): PreparationInput => (
+    prepareAgentSpawnMock.mock.calls[callIndex][0] as PreparationInput
+  );
+
+  it('builds the sources for the project being recovered and hands that set to the preparation', async () => {
+    prepareAgentSpawnMock.mockResolvedValue(preparedSpawn());
+
+    await runRecovery(makeSessionManager());
+
+    // The factory is asked for THIS project: a recap reads the index and the
+    // old conversation's saved copy by project id.
+    expect(recapSourcesFactory.projectIds).toEqual(['proj-1']);
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    const { recapSources } = preparationInputOf(0);
+    // The very set the factory built, not a copy or an empty stand-in.
+    expect(recapSources).toBe(recapSourcesFactory.built[0]);
+    // The two reads the recap cannot do without once the agent's file is gone.
+    expect(recapSources?.readConversationTail).toEqual(expect.any(Function));
+    expect(recapSources?.readGitState).toEqual(expect.any(Function));
+  });
+
+  it('builds one set per pass and shares it across every recovered task, so one slow worker read is paid once', async () => {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ id: 'record-1', task_id: 'task-1' }),
+      makeRecord({ id: 'record-2', task_id: 'task-2' }),
+    ]);
+    taskRepoList.mockReturnValue([
+      makeTask({ id: 'task-1', display_id: 1 }),
+      makeTask({ id: 'task-2', display_id: 2, title: 'A second task' }),
+    ]);
+    prepareAgentSpawnMock
+      .mockResolvedValueOnce(preparedSpawn({ sessionRecordId: 'prepared-session-1' }))
+      .mockResolvedValueOnce(preparedSpawn({ sessionRecordId: 'prepared-session-2' }));
+
+    await runRecovery(makeSessionManager());
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(2);
+    // Built once, outside the per-record loop: a set per record would restart
+    // the worker-wait budget for each expired task in turn.
+    expect(recapSourcesFactory.built).toHaveLength(1);
+    expect(preparationInputOf(0).recapSources).toBe(recapSourcesFactory.built[0]);
+    expect(preparationInputOf(1).recapSources).toBe(recapSourcesFactory.built[0]);
   });
 });

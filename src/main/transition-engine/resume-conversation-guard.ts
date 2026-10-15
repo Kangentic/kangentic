@@ -91,7 +91,7 @@ export function resolveResumeLineage(params: {
  *  - The path is one the AGENT reported (its status line, its SessionStart
  *    hook, or the copy of it kept on the session record), never one derived
  *    here.
- *  - `never-started` additionally needs the agent's own report that nothing
+ *  - `never-started` also needs the agent's own report that nothing
  *    ever happened. `expired` needs the adapter's proof that the file is gone
  *    from every place it could be (`proveConversationGone`), which only an
  *    adapter that knows its layout can give.

@@ -1,5 +1,5 @@
 /**
- * Pins for four fixes a review pass made to the structured transcript archive
+ * Pins for fixes a review pass made to the structured transcript archive
  * (`src/main/retrieval/archive/transcript-archive.ts`). The main behavior tests
  * live in `transcript-archive.test.ts`; these hold the edges that file leaves
  * open, each with the real window parser, real Brotli and real better-sqlite3:
@@ -13,6 +13,18 @@
  *    revision 1 is not answered with the old content.
  * 4. A row that decodes to something other than a list is skipped, and an
  *    element without a string `kind` is left out of a list.
+ *
+ * Four more edges came out of a later review pass:
+ *
+ * 5. The read of the file after the walk, and the state write that follows it,
+ *    sit inside the guard that bumps the revision, so a file the agent deletes
+ *    right after the walk replaced rows cannot leave a stale cached read.
+ * 6. A purge deletes a conversation's rows in capped batches and still removes
+ *    every one, and only that conversation's.
+ * 7. An adapter with no window parser is 'unsupported', and its file is never
+ *    looked up.
+ * 8. A row whose stored pieces do not match its piece count is left out of a
+ *    read, and the rows around it are kept.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -51,9 +63,9 @@ function temporaryDirectory(): string {
 }
 
 /** Claude-format lines: a user line, then an assistant text line and a tool line under one message id. */
-function transcriptLines(turns: number, variant = ''): string[] {
+function transcriptLines(turns: number, variant = '', from = 0): string[] {
   const lines: string[] = [];
-  for (let turn = 0; turn < turns; turn += 1) {
+  for (let turn = from; turn < from + turns; turn += 1) {
     const timestamp = new Date(Date.UTC(2026, 8, 30, 12, 0, turn)).toISOString();
     lines.push(JSON.stringify({
       type: 'user', uuid: `user-${turn}`, timestamp,
@@ -88,6 +100,8 @@ function writeTranscript(filePath: string, lines: string[]): void {
 interface ParseCounter {
   calls: number;
   failOnCall: number | null;
+  /** The agent deletes its file the moment the walk's last window has been parsed. */
+  deleteAfterWalk: boolean;
 }
 
 interface Fixture {
@@ -109,13 +123,18 @@ function fixture(options: { fileBackedDatabase?: boolean } = {}): Fixture {
      VALUES ('session-1', 'task-1', 'claude_agent', 'agent-1', 'claude', '/work', 'suspended', '2026-09-30T12:00:00.000Z')`,
   ).run();
   const transcriptPath = path.join(directory, 'agent-1.jsonl');
-  const counter: ParseCounter = { calls: 0, failOnCall: null };
+  const counter: ParseCounter = { calls: 0, failOnCall: null, deleteAfterWalk: false };
   const adapter: ArchiveAdapter = {
     locateSessionHistoryFile: async () => (fs.existsSync(transcriptPath) ? transcriptPath : null),
     parseTranscriptWindow: async (_agentSessionId, _cwd, startByte, maxBytes, carry) => {
       counter.calls += 1;
       if (counter.failOnCall === counter.calls) throw new Error('the adapter failed mid-walk');
       const window = await parseClaudeTranscriptWindow(transcriptPath, startByte, maxBytes, carry);
+      // After the parse and before the walk returns, so the archive's own read
+      // of the file once the walk is done is the first one to find it gone.
+      if (counter.deleteAfterWalk && window.nextByteOffset >= window.totalBytes) {
+        fs.rmSync(transcriptPath, { force: true });
+      }
       return { ...window, sourcePath: transcriptPath };
     },
   };
@@ -128,6 +147,7 @@ function stateOf(database: DatabaseType.Database, agentSessionId = 'agent-1') {
     source_path: string | null;
     source_size: number | null;
     source_mtime_ms: number | null;
+    resume_offset: number;
     revision: number;
   };
 }
@@ -209,6 +229,59 @@ describe('a walk that throws after it began replacing rows', () => {
 
 });
 
+describe('a walk whose read of the file after the last window fails', () => {
+  // Red-green: move the `hashBefore(sourcePath, lastRowStart)` read and the
+  // state upsert that follows it out of the `try` in `archiveConversation`,
+  // below its `catch`. The vanished file then throws past the revision bump:
+  // the state stays at revision 1, `afterFailure` is the object cached before
+  // the walk, and the first two revision and identity expectations fail.
+  it('bumps the revision, so the read cached before the walk is not served after the file vanished', async () => {
+    const { database, archive, transcriptPath, counter } = fixture();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const firstLines = transcriptLines(10);
+    writeTranscript(transcriptPath, firstLines);
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('archived');
+    const stateBefore = stateOf(database);
+    // `hashBefore` opens the file only for a resume point past byte 0, so the
+    // read this test makes fail exists only for an archive that has rows.
+    expect(stateBefore.resume_offset).toBeGreaterThan(0);
+    const cached = await readArchivedConversation(database, 'agent-1', ALL);
+    expect(cached?.revision).toBe(stateBefore.revision);
+
+    // The agent appends turns, so the walk resumes at the open row, replaces it
+    // and the rows after, and then finds the file deleted.
+    const appendedLines = [...firstLines, ...transcriptLines(6, '', 10)];
+    writeTranscript(transcriptPath, appendedLines);
+    const wholeFile = await parseClaudeTranscript(transcriptPath);
+    expect(wholeFile.length).toBeGreaterThan(cached!.entries.length);
+    counter.deleteAfterWalk = true;
+
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('error');
+    // The control: the file went away during the walk, so the read that failed
+    // was the one after it.
+    expect(fs.existsSync(transcriptPath)).toBe(false);
+
+    const stateAfter = stateOf(database);
+    expect(stateAfter.revision).toBe(stateBefore.revision + 1);
+    // The state write never landed: it still describes the last good walk.
+    expect(stateAfter.source_size).toBe(stateBefore.source_size);
+    expect(stateAfter.resume_offset).toBe(stateBefore.resume_offset);
+
+    const afterFailure = await readArchivedConversation(database, 'agent-1', ALL);
+    expect(afterFailure).not.toBe(cached);
+    expect(afterFailure?.revision).toBe(stateAfter.revision);
+    // The walk finished before the file went, so the rows hold the appended turns.
+    expect(afterFailure?.entries).toEqual(wholeFile);
+
+    // The next walk, with the file back, repeats the failed one and ends clean.
+    counter.deleteAfterWalk = false;
+    writeTranscript(transcriptPath, appendedLines);
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('archived');
+    expect(stateOf(database).revision).toBe(stateAfter.revision + 1);
+    expect(await archivedEntries(database)).toEqual(wholeFile);
+  });
+});
+
 describe('the read cache', () => {
   // Red-green: the `readCache.delete(readCacheKey(db, agentSessionId))` in
   // `purgeOrphans`. Remove it and the re-archive, which starts again at
@@ -265,31 +338,68 @@ describe('the read cache', () => {
   });
 });
 
+const NOW = '2026-10-01T12:00:00.000Z';
+
+/** A database with the archive tables and no session record, for rows written directly. */
+function rawDatabase(): DatabaseType.Database {
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  runProjectMigrations(database);
+  return database;
+}
+
+/** The state row a conversation has once the archive has walked it. */
+function insertRawState(database: DatabaseType.Database, agentSessionId: string): void {
+  database.prepare(
+    `INSERT INTO transcript_archive_state (agent_session_id, session_id, resume_offset, revision, updated_at)
+     VALUES (?, NULL, 0, 1, ?)`,
+  ).run(agentSessionId, NOW);
+}
+
+/** The Brotli payload the archive stores for a row holding `decoded`. */
+function compressedRow(decoded: unknown): Buffer {
+  return brotliCompressSync(Buffer.from(JSON.stringify(decoded), 'utf8'));
+}
+
+/** Writes one piece of a row directly, as an older or damaged archive could hold it. */
+function insertRawPiece(
+  database: DatabaseType.Database,
+  agentSessionId: string,
+  rowStart: number,
+  piece: number,
+  declaredPieceCount: number,
+  payload: Buffer,
+): void {
+  database.prepare(
+    `INSERT INTO transcript_archive_rows (agent_session_id, row_start, piece, piece_count, source_end, entry_count, payload)
+     VALUES (?, ?, ?, ?, ?, 1, ?)`,
+  ).run(agentSessionId, rowStart, piece, declaredPieceCount, rowStart + 100, payload);
+}
+
+/** Writes one single-piece row directly. */
+function insertRawRow(database: DatabaseType.Database, rowStart: number, decoded: unknown, agentSessionId = 'agent-raw'): void {
+  insertRawPiece(database, agentSessionId, rowStart, 0, 1, compressedRow(decoded));
+}
+
+function rowsOf(database: DatabaseType.Database, agentSessionId: string): number {
+  return (database.prepare('SELECT COUNT(*) AS found FROM transcript_archive_rows WHERE agent_session_id = ?')
+    .get(agentSessionId) as { found: number }).found;
+}
+
+function statesOf(database: DatabaseType.Database, agentSessionId: string): number {
+  return (database.prepare('SELECT COUNT(*) AS found FROM transcript_archive_state WHERE agent_session_id = ?')
+    .get(agentSessionId) as { found: number }).found;
+}
+
 describe('an archived row that is not a list of entries', () => {
-  const NOW = '2026-10-01T12:00:00.000Z';
-
-  /** Writes one single-piece row directly, as an older or damaged archive could hold it. */
-  function insertRawRow(database: DatabaseType.Database, rowStart: number, decoded: unknown): void {
-    const payload = brotliCompressSync(Buffer.from(JSON.stringify(decoded), 'utf8'));
-    database.prepare(
-      `INSERT INTO transcript_archive_rows (agent_session_id, row_start, piece, piece_count, source_end, entry_count, payload)
-       VALUES ('agent-raw', ?, 0, 1, ?, 1, ?)`,
-    ).run(rowStart, rowStart + 100, payload);
-  }
-
   // Red-green: `isArchivedEntry` and the list check in `readArchivedConversation`.
   // Replace the loop with `entries.push(...(rowEntries as TranscriptEntry[]))`
   // and the element with no `kind`, the bare values, and the characters of the
   // string row all reach the reader.
   it('skips a row that decodes to a non-list, and leaves out elements without a string kind', async () => {
-    const database = openTestDatabase();
-    openDatabases.push(database);
-    runProjectMigrations(database);
+    const database = rawDatabase();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    database.prepare(
-      `INSERT INTO transcript_archive_state (agent_session_id, session_id, resume_offset, revision, updated_at)
-       VALUES ('agent-raw', NULL, 0, 1, ?)`,
-    ).run(NOW);
+    insertRawState(database, 'agent-raw');
     const first = { kind: 'user', uuid: 'u1', ts: 1, text: 'valid first' };
     const second = { kind: 'user', uuid: 'u2', ts: 2, text: 'valid second' };
     insertRawRow(database, 0, { not: 'a list' });
@@ -300,5 +410,120 @@ describe('an archived row that is not a list of entries', () => {
     const conversation = await readArchivedConversation(database, 'agent-raw', ALL);
 
     expect(conversation?.entries).toEqual([first, second]);
+  });
+});
+
+describe('a purge of a conversation with more rows than one delete batch', () => {
+  // Red-green: the batch loop in `deleteRows`. Make it return after its first
+  // delete (`if (deleted < DELETES_PER_TRANSACTION) return;` becomes `return;`)
+  // and 86 of the 150 rows, and 1 of the 65, are left behind.
+  it('removes every row and the state of an orphan, and nothing of a conversation a session names', async () => {
+    const { database, archive, transcriptPath } = fixture();
+    writeTranscript(transcriptPath, transcriptLines(8));
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('archived');
+    const namedRows = rowsOf(database, 'agent-1');
+    const namedEntries = await archivedEntries(database);
+    expect(namedRows).toBeGreaterThan(0);
+
+    // No session names either of these. The first has a state row and 150 rows:
+    // two full batches of 64 and a batch of 22. The second has rows and no
+    // state, and one row more than a batch.
+    insertRawState(database, 'agent-orphan');
+    for (let index = 0; index < 150; index += 1) {
+      insertRawRow(database, index * 100, [{ kind: 'user', uuid: `orphan-${index}`, ts: index, text: 'orphan' }], 'agent-orphan');
+    }
+    for (let index = 0; index < 65; index += 1) {
+      insertRawRow(database, index * 100, [{ kind: 'user', uuid: `rows-only-${index}`, ts: index, text: 'orphan' }], 'agent-rows-only');
+    }
+    expect(rowsOf(database, 'agent-orphan')).toBe(150);
+    expect(rowsOf(database, 'agent-rows-only')).toBe(65);
+
+    expect(await archive.purgeOrphans(database, () => true)).toBe(2);
+
+    expect(rowsOf(database, 'agent-orphan')).toBe(0);
+    expect(statesOf(database, 'agent-orphan')).toBe(0);
+    expect(rowsOf(database, 'agent-rows-only')).toBe(0);
+    expect(rowsOf(database, 'agent-1')).toBe(namedRows);
+    expect(statesOf(database, 'agent-1')).toBe(1);
+    expect(await archivedEntries(database)).toEqual(namedEntries);
+  });
+});
+
+describe('an adapter that cannot parse a window', () => {
+  // Red-green: the `!adapter?.parseTranscriptWindow` check at the top of
+  // `archiveConversation`. Remove it and the first call goes on to look up the
+  // file and then calls a parser that is not there (the second dereferences a
+  // missing adapter), so both calls answer 'error' instead.
+  it("answers 'unsupported' for an adapter with no window parser, without looking up its file", async () => {
+    const { database, transcriptPath } = fixture();
+    writeTranscript(transcriptPath, transcriptLines(3));
+    const locateSessionHistoryFile = vi.fn(async () => transcriptPath);
+    const archive = new TranscriptArchive({
+      getDb: () => database, getAdapter: () => ({ locateSessionHistoryFile }), windowBytes: WINDOW_BYTES,
+    });
+
+    // The tables exist and the session names a conversation, so this is not the 'skipped' path.
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('unsupported');
+
+    expect(locateSessionHistoryFile).not.toHaveBeenCalled();
+    expect(rowsOf(database, 'agent-1')).toBe(0);
+    expect(statesOf(database, 'agent-1')).toBe(0);
+  });
+
+  it("answers 'unsupported' when no adapter serves the session type", async () => {
+    const { database, transcriptPath } = fixture();
+    writeTranscript(transcriptPath, transcriptLines(3));
+    const archive = new TranscriptArchive({ getDb: () => database, getAdapter: () => undefined, windowBytes: WINDOW_BYTES });
+
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('unsupported');
+
+    expect(rowsOf(database, 'agent-1')).toBe(0);
+    expect(statesOf(database, 'agent-1')).toBe(0);
+  });
+});
+
+describe('an archived row whose stored pieces do not match its piece count', () => {
+  const before = { kind: 'user', uuid: 'u-before', ts: 1, text: 'the row before' };
+  const damaged = { kind: 'user', uuid: 'u-damaged', ts: 2, text: 'the row that lost a piece' };
+  const after = { kind: 'user', uuid: 'u-after', ts: 3, text: 'the row after' };
+
+  // Red-green: the `pieces.length !== row.pieceCount` guard in
+  // `readArchivedConversation`. Turn its `continue` into a `break` and the row
+  // after the damaged one is lost with it; remove the guard and the second
+  // test reads the damaged row, whose one stored piece is a whole payload.
+  it('leaves the damaged row out without throwing, and keeps the rows around it', async () => {
+    const database = rawDatabase();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    insertRawState(database, 'agent-raw');
+    insertRawRow(database, 0, [before]);
+    // A row written in two pieces, as the archive splits one that outgrows a transaction.
+    const payload = compressedRow([damaged]);
+    const middle = Math.floor(payload.length / 2);
+    insertRawPiece(database, 'agent-raw', 100, 0, 2, payload.subarray(0, middle));
+    insertRawPiece(database, 'agent-raw', 100, 1, 2, payload.subarray(middle));
+    insertRawRow(database, 200, [after]);
+    // The control: whole, the two pieces read back as the row.
+    expect((await readArchivedConversation(database, 'agent-raw', ALL))?.entries).toEqual([before, damaged, after]);
+
+    // The cache answers at the same revision, so the damage must be read afresh.
+    resetArchiveReadCacheForTests();
+    database.prepare("DELETE FROM transcript_archive_rows WHERE agent_session_id = 'agent-raw' AND row_start = 100 AND piece = 1").run();
+
+    const conversation = await readArchivedConversation(database, 'agent-raw', ALL);
+
+    expect(conversation?.entries).toEqual([before, after]);
+  });
+
+  it('leaves out a row that declares more pieces than it holds, even when what it holds decodes', async () => {
+    const database = rawDatabase();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    insertRawState(database, 'agent-raw');
+    insertRawRow(database, 0, [before]);
+    insertRawPiece(database, 'agent-raw', 100, 0, 2, compressedRow([damaged]));
+    insertRawRow(database, 200, [after]);
+
+    const conversation = await readArchivedConversation(database, 'agent-raw', ALL);
+
+    expect(conversation?.entries).toEqual([before, after]);
   });
 });

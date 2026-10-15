@@ -71,7 +71,9 @@ async function readRecapGitState(cwd: string, baseBranch: string): Promise<Recap
   }
   let changes: string[] = [];
   try {
-    changes = splitLines(await runGitCommand(cwd, ['status', '--short'])).slice(0, MAX_CHANGES);
+    // No optional locks: a plain status refreshes the index under index.lock,
+    // and a read the wait gave up on keeps running into the agent's own git.
+    changes = splitLines(await runGitCommand(cwd, ['--no-optional-locks', 'status', '--short'])).slice(0, MAX_CHANGES);
   } catch {
     // The branch and commits still help.
   }

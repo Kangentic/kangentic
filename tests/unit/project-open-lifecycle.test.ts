@@ -275,7 +275,8 @@ import { detachProjectFromWorkflows } from '../../src/main/workflows/workflow-pr
 import { endWorkflowAgentsOfProject } from '../../src/main/workflows/workflow-agent';
 import { IPC, PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
-import type { Project } from '../../src/shared/types';
+import type { ResumeSuspendedOptions } from '../../src/main/transition-engine/session-startup';
+import type { ConversationExpiredNotice, Project } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -1213,15 +1214,19 @@ describe('ensureGitignore fire-and-forget on the open critical path', () => {
 // 5. recoverSessionsAfterPtyHostLoss: the pty host died and a new one is up.
 // ---------------------------------------------------------------------------
 
+/** resumeSuspendedSessions' tenth parameter is its options object. */
+const RESUME_OPTIONS_ARGUMENT = 9;
+/** The WHOLE options object a recovery pass handed resumeSuspendedSessions. */
+const resumeOptionsOf = (call: unknown[]): ResumeSuspendedOptions | undefined => (
+  call[RESUME_OPTIONS_ARGUMENT] as ResumeSuspendedOptions | undefined
+);
+
 describe('recoverSessionsAfterPtyHostLoss', () => {
-  // resumeSuspendedSessions' tenth parameter, its options, carries the scope:
-  // without it the recovery gather would also wake sessions the host never
-  // held. Red-green: drop `lostSessionIds` from the call in projects.ts and the
-  // first test goes red (`onlySessionIds` is undefined).
-  const RESUME_OPTIONS_ARGUMENT = 9;
-  const resumeScopeOf = (call: unknown[]): unknown => (
-    (call[RESUME_OPTIONS_ARGUMENT] as { onlySessionIds?: ReadonlySet<string> } | undefined)?.onlySessionIds
-  );
+  // The options object carries the scope: without it the recovery gather would
+  // also wake sessions the host never held. Red-green: drop `lostSessionIds`
+  // from the call in projects.ts and the first test goes red (`onlySessionIds`
+  // is undefined).
+  const resumeScopeOf = (call: unknown[]): unknown => resumeOptionsOf(call)?.onlySessionIds;
   // autoSpawnTasks' tenth parameter is its scope, for the same reason: an
   // unscoped pass would also restart a task whose agent exited earlier this run.
   // It is `{ taskIds, lostSessionIds }`: the lost sessions' tasks, and the lost
@@ -1397,6 +1402,138 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
     ]));
 
     expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-A']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5b. recoveryOptions (module-private): the options EVERY recovery pass hands
+//     resumeSuspendedSessions. It has four call sites, and a pass that lost
+//     either callback would recover a deleted conversation silently or build its
+//     recap off the wrong base branch, so each is driven here.
+// ---------------------------------------------------------------------------
+
+describe('the options each recovery pass hands resumeSuspendedSessions (recoveryOptions)', () => {
+  const NOTICE: ConversationExpiredNotice = {
+    projectId: 'project-1',
+    taskId: 'task-1',
+    taskTitle: 'Resume after the cleanup window',
+    lastActiveAt: '2026-07-01T09:30:00.000Z',
+    messageDropped: false,
+  };
+
+  async function waitForRecoveryToFinish(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+  }
+
+  async function openThroughHandler(context: MockContext, project: Project): Promise<void> {
+    context.projectRepo.getById.mockReturnValue(project);
+    registerProjectHandlers(asIpcContext(context));
+    const handler = capturedHandlers.get(IPC.PROJECT_OPEN);
+    if (!handler) throw new Error('PROJECT_OPEN handler was not registered');
+    await handler(null, project.id);
+  }
+
+  /** One entry per call site of recoveryOptions in projects.ts. */
+  const recoveryPasses: ReadonlyArray<readonly [string, (context: MockContext, project: Project) => Promise<void>]> = [
+    ['openProjectByPath', async (context, project) => {
+      context.projectRepo.list.mockReturnValue([project]);
+      await openProjectByPath(asIpcContext(context), project.path);
+    }],
+    ['the PROJECT_OPEN handler', openThroughHandler],
+    ['activateAllProjects', async (context, project) => {
+      context.projectRepo.list.mockReturnValue([project]);
+      await activateAllProjects(asIpcContext(context));
+    }],
+    ['recoverSessionsAfterPtyHostLoss', async (context, project) => {
+      context.projectRepo.getById.mockReturnValue(project);
+      await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([[project.id, new Set(['lost-session'])]]));
+    }],
+  ];
+
+  /** The options the single recovery pass handed resumeSuspendedSessions. */
+  function optionsOfTheOnlyPass(): ResumeSuspendedOptions {
+    const calls = vi.mocked(resumeSuspendedSessions).mock.calls;
+    expect(calls).toHaveLength(1);
+    const options = resumeOptionsOf(calls[0]);
+    if (!options) throw new Error('resumeSuspendedSessions was called without its options');
+    return options;
+  }
+
+  it.each(recoveryPasses)('%s: a recovered conversation the agent deleted reaches the renderer as TASK_CONVERSATION_EXPIRED', async (_label, runPass) => {
+    const context = createMockContext();
+    const project = makeProject();
+    state.existingPaths.add(project.path);
+
+    await runPass(context, project);
+    await waitForRecoveryToFinish();
+
+    const options = optionsOfTheOnlyPass();
+    expect(options.onConversationExpired).toEqual(expect.any(Function));
+    // Nothing is pushed until the recovery reports one.
+    const expiredPushes = () => context.mainWindow.webContents.send.mock.calls
+      .filter((call) => call[0] === IPC.TASK_CONVERSATION_EXPIRED);
+    expect(expiredPushes()).toHaveLength(0);
+
+    options.onConversationExpired?.(NOTICE);
+
+    // The notice itself, untouched, on the main window.
+    expect(expiredPushes()).toEqual([[IPC.TASK_CONVERSATION_EXPIRED, NOTICE]]);
+  });
+
+  it.each(recoveryPasses)('%s: hands the project\'s own board default base branch, read by the project path', async (_label, runPass) => {
+    const context = createMockContext();
+    const project = makeProject();
+    state.existingPaths.add(project.path);
+    context.boardConfigManager.getDefaultBaseBranchForPath.mockImplementation(
+      (projectPath: string) => (projectPath === project.path ? 'develop' : undefined),
+    );
+
+    await runPass(context, project);
+    await waitForRecoveryToFinish();
+
+    expect(optionsOfTheOnlyPass().boardDefaultBaseBranch).toBe('develop');
+    expect(context.boardConfigManager.getDefaultBaseBranchForPath).toHaveBeenCalledWith(project.path);
+  });
+
+  it.each(recoveryPasses)('%s: hands no base branch when the board config sets none, so the config\'s default decides', async (_label, runPass) => {
+    const context = createMockContext();
+    const project = makeProject();
+    state.existingPaths.add(project.path);
+    // The shared mock context already answers undefined for every path.
+
+    await runPass(context, project);
+    await waitForRecoveryToFinish();
+
+    // Null or absent, never a stand-in value that would shadow `git.defaultBaseBranch`.
+    expect(optionsOfTheOnlyPass().boardDefaultBaseBranch ?? null).toBeNull();
+  });
+
+  it('gives each project its own base branch when one host loss recovers several', async () => {
+    const context = createMockContext();
+    const projectA = makeProject({ id: 'project-A', path: path.join(PROJECT_PATH, 'a') });
+    const projectB = makeProject({ id: 'project-B', path: path.join(PROJECT_PATH, 'b') });
+    const byId = new Map([[projectA.id, projectA], [projectB.id, projectB]]);
+    context.projectRepo.getById.mockImplementation((projectId: string) => byId.get(projectId));
+    state.existingPaths.add(projectA.path);
+    state.existingPaths.add(projectB.path);
+    const branchByPath = new Map([[projectA.path, 'develop'], [projectB.path, 'release']]);
+    context.boardConfigManager.getDefaultBaseBranchForPath.mockImplementation(
+      (projectPath: string) => branchByPath.get(projectPath),
+    );
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([
+      [projectA.id, new Set(['session-a1'])],
+      [projectB.id, new Set(['session-b1'])],
+    ]));
+
+    const passes = vi.mocked(resumeSuspendedSessions).mock.calls;
+    expect(passes).toHaveLength(2);
+    expect(passes.map((call) => [call[0], resumeOptionsOf(call)?.boardDefaultBaseBranch])).toEqual([
+      ['project-A', 'develop'],
+      ['project-B', 'release'],
+    ]);
   });
 });
 

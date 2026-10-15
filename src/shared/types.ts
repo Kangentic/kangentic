@@ -8845,14 +8845,13 @@ export interface TranscriptGetRequest {
   knownRevision?: number;
 }
 
-/** Where a rendered conversation's content came from. `none` = neither the
- *  native history nor an index fallback was available. For a stitched
- *  multi-session view this describes the LATEST session (the one live-polling
- *  cares about); earlier sessions may individually be 'index' or 'none'. */
 /**
  * Where a session's transcript was read from: the agent's own file (`live`),
  * Kangentic's structured copy of it once the agent deleted the file
  * (`archive`), the index's text-only chunks (`index`), or nowhere (`none`).
+ * For a stitched multi-session view this describes the LATEST session (the
+ * one live-polling cares about); earlier sessions may each be 'archive',
+ * 'index' or 'none'.
  */
 export type TranscriptSource = 'live' | 'archive' | 'index' | 'none';
 

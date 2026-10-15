@@ -351,7 +351,7 @@ function makeEngine(options: {
     permissionOverride?: Parameters<typeof engine.runLegacySpawnAgent>[2],
     signal?: AbortSignal,
     agentOverride?: string,
-  ): Promise<void> => engine.runLegacySpawnAgent(
+  ): ReturnType<typeof engine.runLegacySpawnAgent> => engine.runLegacySpawnAgent(
     JSON.parse(action.config_json) as Parameters<typeof engine.runLegacySpawnAgent>[0],
     task as Parameters<typeof engine.runLegacySpawnAgent>[1],
     permissionOverride,
@@ -1361,6 +1361,63 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.prompt).toContain('Fix login flow');
   });
+
+  describe('the message the downgraded resume carried (resumePromptUnsent)', () => {
+    // `runSpawn` above carries no resumePrompt, so it cannot tell whether the
+    // downgrade left a carried message out. These call the resume entry point
+    // with one, the way a column move with a Send message row does.
+    function resumableMainSessionRepo() {
+      const sessionRepo = makeSessionRepo();
+      sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue({
+        id: RECORD_ID,
+        agent_session_id: AGENT_SESSION_ID,
+        session_type: 'claude_agent',
+        status: 'suspended',
+        cwd: projectPath,
+      });
+      return sessionRepo;
+    }
+
+    it('reports the message unsent when the downgrade spawns fresh with the template: the prompt is the task, not the message', async () => {
+      await writeEmptyStatusFile(RECORD_ID);
+      let capturedOptions: { resume?: boolean; prompt?: string } | undefined;
+      mockAdapter.buildCommand.mockImplementation((options: { resume?: boolean; prompt?: string }) => {
+        capturedOptions = options;
+        return `claude ${options.prompt ?? ''}`;
+      });
+      const { engine } = makeEngine({ sessionRepo: resumableMainSessionRepo(), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, '/code-review', undefined, 'claude',
+      );
+
+      // Not recap-only: a conversation that never started has nothing to recap,
+      // so the downgrade is a plain fresh spawn and the message is still owed.
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, messageDropped: false, resumePromptUnsent: true });
+      expect(capturedOptions?.resume).toBe(false);
+      expect(capturedOptions?.prompt).toContain('Fix login flow');
+      expect(capturedOptions?.prompt).not.toContain('/code-review');
+    });
+
+    it('reports nothing unsent when the spawn has no template: the message is the fresh prompt', async () => {
+      await writeEmptyStatusFile(RECORD_ID);
+      let capturedOptions: { resume?: boolean; prompt?: string } | undefined;
+      mockAdapter.buildCommand.mockImplementation((options: { resume?: boolean; prompt?: string }) => {
+        capturedOptions = options;
+        return `claude ${options.prompt ?? ''}`;
+      });
+      const { engine } = makeEngine({ sessionRepo: resumableMainSessionRepo(), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, true, '/code-review', undefined, 'claude',
+      );
+
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(capturedOptions?.prompt).toBe('/code-review');
+    });
+  });
 });
 
 describe('TransitionEngine - a resume whose conversation the agent deleted starts fresh from a recap (executeSpawnAgent chokepoint)', () => {
@@ -1447,7 +1504,9 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
       task as Parameters<typeof engine.resumeSuspendedSession>[0], null, false, '/code-review', undefined, 'claude',
     );
 
-    expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: true });
+    // recapOnly: the recap IS the prompt and the message is withheld on purpose,
+    // so it is not "unsent" in the sense `resumePromptUnsent` reports.
+    expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: true, resumePromptUnsent: false });
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.sessionId).not.toBe(AGENT_SESSION_ID);
     expect(capturedOptions?.prompt).toContain('deleted it after its retention period');
@@ -1496,7 +1555,9 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
       undefined, { isolatedSwimlaneId: 'lane-review' },
     );
 
-    expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false });
+    // skipPromptTemplate is true, so the message IS the fresh prompt (it is the
+    // last thing in it): nothing was left out for the caller to deliver.
+    expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.prompt).toContain('for context');
     expect(capturedOptions?.prompt).not.toContain('then wait');
@@ -1534,7 +1595,8 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
       task as Parameters<typeof engine.resumeSuspendedSession>[0], null, false, '/code-review', undefined, 'claude',
     );
 
-    expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false });
+    // A resume that went ahead carries the message as its own prompt.
+    expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
     expect(capturedOptions?.resume).toBe(true);
     expect(capturedOptions?.sessionId).toBe(AGENT_SESSION_ID);
     expect(capturedOptions?.prompt).toBe('/code-review');

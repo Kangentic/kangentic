@@ -525,6 +525,14 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   let promptTakenFromRow: string | null = null;
 
   /**
+   * Set when a legacy Start agent row opened the agent on an expired
+   * conversation's recap alone. That row needs no agent, so the runner asks
+   * `startAgent` at the next row that does, which finds the session already
+   * there and reports the withhold the row could not.
+   */
+  let legacyStartReport: AgentStartReport | null = null;
+
+  /**
    * The column the task came FROM, for `{{fromColumn}}` and a webhook payload.
    * A drag move already carries it as the settings-source lane; every other
    * entry point (create, promote, MCP create, unarchive) passes the `'*'`
@@ -544,7 +552,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
 
   const startAgent = async (pendingPrompt?: string): Promise<AgentStartReport | void> => {
     const beforeSpawn = tasks.getById(task.id);
-    if (!beforeSpawn || beforeSpawn.session_id) return;
+    if (!beforeSpawn || beforeSpawn.session_id) return legacyStartReport ?? undefined;
 
     console.log(`[spawnAgent] Starting ${targetAgent} for task ${task.id.slice(0, 8)}`);
 
@@ -566,9 +574,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // otherwise sit at an empty prompt, emit no 'thinking' event, and make the
     // keystroke scheduler wait out its full 30s fallback before the message
     // appears. That reads as "the automation never ran".
+    const overrideBeforeTake = pendingTaskOverride;
     const message = takeMessage(pendingPrompt ?? '');
     const takesPromptSlot = message !== '' && (canResumeDestination || skipPromptTemplate === true);
     if (takesPromptSlot && pendingPrompt !== undefined) promptTakenFromRow = pendingPrompt;
+    // A message that does not take the slot goes out after the spawn, and so
+    // does the task's own command: `deliverToAgent` takes it there.
+    if (!takesPromptSlot) pendingTaskOverride = overrideBeforeTake;
 
     // The continuation prompt (plan-exit auto-move) says why the session
     // restarted and asks the agent to proceed. It is a resume-only fallback:
@@ -595,6 +607,14 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // wait. The column's messages, the one in the prompt slot included, are
       // not sent; the runner records each as skipped with this reason.
       if (outcome?.recapOnly) return { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
+      // The engine spawned fresh with the task template as the prompt (the
+      // conversation never started or expired on an isolated column, or the
+      // column always spawns new), so the message goes out after the spawn, as
+      // on any fresh spawn.
+      if (takesPromptSlot && outcome?.resumePromptUnsent) {
+        promptTakenFromRow = null;
+        pendingTaskOverride = overrideBeforeTake;
+      }
     } catch (error) {
       if (isAbortError(error)) throw error;
       // This used to be the deepest silent failure on the board path. The
@@ -651,10 +671,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // leave `send_message` reporting "Delivered" for a message nobody got.
       suppressAgentMessages: options.suppressAutoCommand,
       deliverToAgent,
-      legacySpawnAgent: (legacyConfig) => engine.runLegacySpawnAgent(
-        legacyConfig, task, toLane.permission_mode, signal, targetAgent,
-        resolveSpawnOverrides(task, toLane, project),
-      ),
+      legacySpawnAgent: async (legacyConfig) => {
+        const outcome = await engine.runLegacySpawnAgent(
+          legacyConfig, task, toLane.permission_mode, signal, targetAgent,
+          resolveSpawnOverrides(task, toLane, project),
+        );
+        if (outcome?.recapOnly) legacyStartReport = { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
+      },
       showNotification: (input) => showDesktopNotification(context, input),
       onProgress: createProgressCallback(context.mainWindow, task.id),
       fromColumn: resolveFromColumn(),

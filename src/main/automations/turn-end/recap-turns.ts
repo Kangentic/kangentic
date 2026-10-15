@@ -9,8 +9,13 @@
  * Bound to that one turn, never to "the next turn end". A prompted spawn seeds
  * its turn's start at the spawn, so the recap's turn began before the session
  * first went idle. A Ctrl+C ends a turn with no turn end, so an interrupted
- * recap leaves its mark behind, and a turn the user starts after it begins
- * after that first idle and runs its rows as usual.
+ * recap leaves its mark behind, and the turn the user then starts with a prompt
+ * runs its rows as usual.
+ *
+ * The first idle alone does not end the recap's turn. An idle no Stop caused
+ * (the stale-thinking watchdog, PTY silence) can land mid-turn, and the engine
+ * re-stamps the turn's start when thinking resumes, so that start says nothing
+ * about which turn it is. A prompt the user submitted after the idle does.
  *
  * Main-process memory only, dropped when the session leaves the registry. A
  * restart loses it, which costs nothing: a recovered session is a new spawn
@@ -20,13 +25,15 @@
 interface RecapSession {
   /** When the session first went idle, or null while its opening turn runs. */
   firstIdleAt: number | null;
+  /** True once a prompt arrived after that first idle: the recap's turn is over. */
+  promptedAfterIdle: boolean;
 }
 
 const recapSessions = new Map<string, RecapSession>();
 
 /** Mark a session that opened on the recap. Call once it has spawned. */
 export function markRecapSession(sessionId: string): void {
-  recapSessions.set(sessionId, { firstIdleAt: null });
+  recapSessions.set(sessionId, { firstIdleAt: null, promptedAfterIdle: false });
 }
 
 /** Record the first time a marked session went idle. */
@@ -35,14 +42,20 @@ export function noteRecapSessionIdle(sessionId: string, at: number): void {
   if (entry && entry.firstIdleAt === null) entry.firstIdleAt = at;
 }
 
+/** Record a prompt the agent received, which starts a turn of its own once the session has been idle. */
+export function noteRecapSessionPrompt(sessionId: string): void {
+  const entry = recapSessions.get(sessionId);
+  if (entry && entry.firstIdleAt !== null) entry.promptedAfterIdle = true;
+}
+
 /** Whether a turn end is the one that answered the recap. */
 export function isRecapTurn(sessionId: string, turnStartedAt: number | null): boolean {
   const entry = recapSessions.get(sessionId);
   if (!entry || turnStartedAt === null) return false;
-  return entry.firstIdleAt === null || turnStartedAt < entry.firstIdleAt;
+  return entry.firstIdleAt === null || turnStartedAt < entry.firstIdleAt || !entry.promptedAfterIdle;
 }
 
-/** Forget a session that left the registry. */
+/** Forget a session that left the registry, or whose recap turn has ended. */
 export function forgetRecapSession(sessionId: string): void {
   recapSessions.delete(sessionId);
 }

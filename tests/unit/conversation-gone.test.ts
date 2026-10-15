@@ -23,6 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
 import { locateClaudeTranscriptFile } from '../../src/main/agent/adapters/claude/transcript-parser';
+import { isConfirmedMissing } from '../../src/main/agent/shared/confirmed-missing';
 
 const AGENT_SESSION_ID = '935a5611-0f79-4f34-a5ea-62f2a4bd7894';
 const OTHER_SESSION_ID = 'aaaaaaaa-0000-4000-8000-000000000000';
@@ -169,6 +170,91 @@ describe('proveClaudeConversationGone - a symlinked or junctioned project folder
     // Control: the link is still there, but empty, so the conversation is gone.
     fs.rmSync(holder);
     await expect(prove()).resolves.toBe(true);
+  });
+});
+
+describe('proveClaudeConversationGone - a symlinked entry whose target is not a folder', () => {
+  // Creating a real file symlink needs a privilege on Windows, and the errno
+  // looking inside a file gives differs by platform (ENOTDIR on POSIX). So the
+  // listing and the errno are stubbed, over real files and folders: the
+  // `readdir` of the projects root reports the named entry as a symlink, and the
+  // `stat` of a path under it answers what a POSIX kernel answers.
+  const LINK_NAME = '-linked-entry';
+
+  function errnoError(code: string): NodeJS.ErrnoException {
+    return Object.assign(new Error(`${code}: stubbed by the test`), { code });
+  }
+
+  /** Reports the entry called `name` in the projects root as a symlink, not as what it is. */
+  function listEntryAsSymlink(name: string): void {
+    const realReaddir = fs.promises.readdir.bind(fs.promises) as (...args: unknown[]) => Promise<unknown[]>;
+    vi.spyOn(fs.promises, 'readdir').mockImplementation((async (...args: unknown[]) => {
+      const entries = await realReaddir(...args);
+      if (path.resolve(String(args[0])) !== path.resolve(projectsRoot)) return entries;
+      return entries.map((entry) => ((entry as fs.Dirent).name === name
+        ? { name, isDirectory: () => false, isSymbolicLink: () => true }
+        : entry));
+    }) as unknown as typeof fs.promises.readdir);
+  }
+
+  /** Makes the `stat` of each listed path fail with the given error, and every other stat real. */
+  function failStatOf(failures: ReadonlyMap<string, NodeJS.ErrnoException>): void {
+    const realStat = fs.promises.stat.bind(fs.promises) as (...args: unknown[]) => Promise<unknown>;
+    vi.spyOn(fs.promises, 'stat').mockImplementation((async (...args: unknown[]) => {
+      const failure = failures.get(path.resolve(String(args[0])));
+      if (failure) throw failure;
+      return realStat(...args);
+    }) as unknown as typeof fs.promises.stat);
+  }
+
+  it('is true when a linked entry points at a file, which can hold no transcript', async () => {
+    // A stray file standing in the projects root, listed as the link to it.
+    const linkPath = path.join(projectsRoot, LINK_NAME);
+    fs.writeFileSync(linkPath, 'not a folder', 'utf8');
+    const insideLink = path.join(linkPath, TRANSCRIPT_FILE_NAME);
+    listEntryAsSymlink(LINK_NAME);
+    failStatOf(new Map([[path.resolve(insideLink), errnoError('ENOTDIR')]]));
+
+    // The premise: looking inside the link fails, and that is not proof of
+    // absence. Searched, it would keep every conversation of the profile from
+    // ever counting as gone.
+    await expect(fs.promises.stat(insideLink)).rejects.toMatchObject({ code: 'ENOTDIR' });
+    await expect(isConfirmedMissing(insideLink)).resolves.toBe(false);
+    const listed = await fs.promises.readdir(projectsRoot, { withFileTypes: true });
+    const linkEntry = listed.find((entry) => entry.name === LINK_NAME);
+    expect(linkEntry?.isSymbolicLink()).toBe(true);
+    expect((await fs.promises.stat(linkPath)).isDirectory()).toBe(false);
+
+    await expect(prove()).resolves.toBe(true);
+  });
+
+  it('is false when a linked entry points at a folder that holds the file', async () => {
+    // The same stubbed listing over a real folder: the stat of the entry says
+    // it is a folder, so it is searched like any project folder.
+    const folderPath = path.join(projectsRoot, LINK_NAME);
+    const holder = path.join(folderPath, TRANSCRIPT_FILE_NAME);
+    writeTranscript(holder);
+    listEntryAsSymlink(LINK_NAME);
+
+    await expect(prove()).resolves.toBe(false);
+
+    // Control: the same link, now empty, proves the conversation gone.
+    fs.rmSync(holder);
+    await expect(prove()).resolves.toBe(true);
+  });
+
+  it('is false when a linked entry cannot be statted and cannot be searched either', async () => {
+    // Not knowing what the link is must not read as "not a folder": the entry
+    // stays in the scan, and a permission error inside it is not proof.
+    const linkPath = path.join(projectsRoot, LINK_NAME);
+    fs.writeFileSync(linkPath, 'not a folder', 'utf8');
+    listEntryAsSymlink(LINK_NAME);
+    failStatOf(new Map([
+      [path.resolve(linkPath), errnoError('EACCES')],
+      [path.resolve(linkPath, TRANSCRIPT_FILE_NAME), errnoError('EACCES')],
+    ]));
+
+    await expect(prove()).resolves.toBe(false);
   });
 });
 

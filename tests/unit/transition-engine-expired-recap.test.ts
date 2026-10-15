@@ -33,6 +33,7 @@ import { INLINE_PROMPT_BUDGET, commandLineLength } from '../../src/main/agent/sh
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+import type { ConversationExpiredNotice } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Harness (trimmed from transition-engine.test.ts)
@@ -150,6 +151,8 @@ function makeEngine(options: {
   sessionRepo?: ReturnType<typeof makeSessionRepo>;
   projectPath: string;
   services?: EngineArgs[8];
+  /** The project's configured default base branch. Defaults to 'main'. */
+  defaultBaseBranch?: string;
 }) {
   const sessionManager = options.sessionManager ?? makeSessionManager();
   const sessionRepo = options.sessionRepo ?? makeSessionRepo();
@@ -158,7 +161,7 @@ function makeEngine(options: {
     projectPath: options.projectPath,
     projectId: 'proj-1',
     projectName: 'Mock project',
-    gitConfig: { worktreesEnabled: false, defaultBaseBranch: 'main', autoCleanup: false, copyFiles: [] },
+    gitConfig: { worktreesEnabled: false, defaultBaseBranch: options.defaultBaseBranch ?? 'main', autoCleanup: false, copyFiles: [] },
     mcpServerEnabled: false,
     mcpServerUrl: undefined,
     mcpServerToken: undefined,
@@ -337,7 +340,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         makeTask() as unknown as SpawnTask, null, false, '/code-review', undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
       expect(capturedOptions?.resume).toBe(true);
       expect(isRecapTurn(spawnedSessionId(sessionManager), aTurnStartedBeforeNow())).toBe(false);
     });
@@ -446,7 +449,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
 
       const prompt = capturedOptions?.prompt ?? '';
       expect(prompt).toContain('<previous_conversation_tail>');
-      expect(prompt).toContain('then wait for the user');
+      expect(prompt).toContain('then wait for the next instruction from the user.');
       expect(prompt.startsWith(`${HANDOFF_PREFIX}\n\n`)).toBe(true);
       expect(commandLineLength(prompt)).toBeLessThanOrEqual(INLINE_PROMPT_BUDGET);
     });
@@ -470,6 +473,142 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
       expect(requestedRooms[0]).toBeGreaterThan(INLINE_PROMPT_BUDGET - 1_500);
       expect(commandLineLength(prompt)).toBeLessThanOrEqual(INLINE_PROMPT_BUDGET);
       expect(commandLineLength(prompt)).toBeGreaterThan(INLINE_PROMPT_BUDGET - 100);
+    });
+  });
+
+  describe('whether the message the resume carried reached the fresh session (resumePromptUnsent)', () => {
+    // A fresh spawn takes the task template over the carried message
+    // (resolveSpawnIntent), so a resume that started over with a template left
+    // the message out and the caller must deliver it after the spawn. Every case
+    // below changes exactly one of the four things that decide it: whether the
+    // resume went ahead, whether the recap withheld the message on purpose,
+    // whether there was a message, and whether there was a template.
+    const CARRIED_MESSAGE = '/code-review main';
+
+    it('is true for an isolated column whose own conversation expired: the prompt is the recap and the template, without the message', async () => {
+      const notices: ConversationExpiredNotice[] = [];
+      const { engine } = makeEngine({
+        sessionRepo: resumableRepo(ISOLATED_LANE_ID),
+        projectPath,
+        services: { onConversationExpired: (notice) => notices.push(notice) },
+      });
+
+      // skipPromptTemplate false: the destination column has the default template.
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, false, CARRIED_MESSAGE, undefined, 'claude',
+        undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
+      );
+
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: true });
+      const prompt = capturedOptions?.prompt ?? '';
+      expect(capturedOptions?.resume).toBe(false);
+      // The template's task block is the prompt after the recap, and the message is nowhere in it.
+      expect(prompt).toContain('for context');
+      expect(prompt).toContain('Fix login flow');
+      expect(prompt).not.toContain('/code-review');
+      // The message was not dropped on purpose, so the notice does not say so.
+      expect(notices).toHaveLength(1);
+      expect(notices[0].messageDropped).toBe(false);
+    });
+
+    it('is false for the same isolated column with no template: the message is the fresh prompt, last in it', async () => {
+      const { engine } = makeEngine({ sessionRepo: resumableRepo(ISOLATED_LANE_ID), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, true, CARRIED_MESSAGE, undefined, 'claude',
+        undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
+      );
+
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(capturedOptions?.prompt?.endsWith(`\n\n${CARRIED_MESSAGE}`)).toBe(true);
+    });
+
+    it.each([
+      ['no message', undefined],
+      ['a blank message', '   '],
+    ])('is false for an isolated column with a template and %s: there is nothing to deliver', async (_label, carriedMessage) => {
+      const { engine } = makeEngine({ sessionRepo: resumableRepo(ISOLATED_LANE_ID), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, false, carriedMessage, undefined, 'claude',
+        undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
+      );
+
+      expect(outcome).toMatchObject({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
+    });
+
+    it('is false for the main session: its recap withholds the message on purpose, and says so', async () => {
+      const { engine } = makeEngine({ sessionRepo: resumableRepo(), projectPath });
+
+      // The default template is present and a message was carried, so only
+      // `recapOnly` keeps this from being true.
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, false, CARRIED_MESSAGE, undefined, 'claude',
+      );
+
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: true, resumePromptUnsent: false });
+      expect(capturedOptions?.prompt).not.toContain('/code-review');
+    });
+
+    it.each([
+      ['no message', undefined],
+      ['a blank message', '   '],
+    ])('drops nothing on the main session when it carried %s: the outcome and the notice both say the message was kept', async (_label, carriedMessage) => {
+      const notices: ConversationExpiredNotice[] = [];
+      const { engine } = makeEngine({
+        sessionRepo: resumableRepo(),
+        projectPath,
+        services: { onConversationExpired: (notice) => notices.push(notice) },
+      });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, false, carriedMessage, undefined, 'claude',
+      );
+
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false });
+      expect(notices).toHaveLength(1);
+      expect(notices[0].messageDropped).toBe(false);
+    });
+  });
+
+  describe('the branch the recap compares against', () => {
+    function gitStateSource() {
+      return vi.fn(async (_cwd: string, _baseBranch: string) => ({
+        branch: 'feature/login',
+        commits: ['a1b2c3d Refresh the token'],
+        changes: [],
+      }));
+    }
+
+    it('reads the branch state in the task\'s checkout against the base branch the task sets', async () => {
+      const readGitState = gitStateSource();
+      const { engine } = makeEngine({
+        sessionRepo: resumableRepo(), projectPath, services: { recapSources: { readGitState } },
+      });
+
+      // A base the project default ('main') and the literal fallback ('main')
+      // cannot both produce by accident.
+      await engine.resumeSuspendedSession(
+        makeTask({ base_branch: 'release/2.0' }) as unknown as SpawnTask, null, false, undefined, undefined, 'claude',
+      );
+
+      expect(readGitState).toHaveBeenCalledTimes(1);
+      expect(readGitState).toHaveBeenCalledWith(projectPath, 'release/2.0');
+      // The same base is the one the recap names.
+      expect(capturedOptions?.prompt).toContain('Branch: feature/login, based on release/2.0');
+    });
+
+    it('falls back to the project\'s default base branch when the task sets none', async () => {
+      const readGitState = gitStateSource();
+      const { engine } = makeEngine({
+        sessionRepo: resumableRepo(), projectPath, defaultBaseBranch: 'develop', services: { recapSources: { readGitState } },
+      });
+
+      await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, false, undefined, undefined, 'claude',
+      );
+
+      expect(readGitState).toHaveBeenCalledWith(projectPath, 'develop');
     });
   });
 });
