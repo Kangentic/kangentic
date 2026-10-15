@@ -29,8 +29,10 @@ export interface TranscriptPositionSource {
   hasPendingRead(sessionId: string): boolean;
   /**
    * Whether a read of the session's transcript is running now. One runs at a
-   * time per session, so a read running when a turn is stamped started before
-   * the stamp, and the next read to land is that one.
+   * time per session, so the next read to land is the one running when a turn
+   * is stamped. The event that opened the turn can have started it: a
+   * `tool_start` triggers a read before the engine stamps the turn, a prompt
+   * does not.
    */
   hasReadInFlight(sessionId: string): boolean;
 }

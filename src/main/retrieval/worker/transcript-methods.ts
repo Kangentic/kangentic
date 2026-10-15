@@ -22,7 +22,7 @@ import { renderStructuredTranscript, type StructuredTranscriptRequest } from '..
 import { readFinalReply, readTrail } from '../../agent/message-trail-read';
 import type { AgentReply } from '../../agent/shared/agent-reply';
 import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
-import type { MessageTrailSessionFacts, TrailRead } from '../../agent/message-trail-tracker';
+import type { MessageTrailReadFacts, TrailRead } from '../../agent/message-trail-tracker';
 import type { CommandResponse } from '../../agent/commands/types';
 import { lastAssistantPreview } from '../../agent/shared/message-preview';
 import { sliceTranscriptWindow, TranscriptSync, type TranscriptWindowSlice } from '../../mobile-bridge/handlers/transcript-sync';
@@ -76,7 +76,7 @@ export interface TranscriptMethods {
   };
   /** One message-trail read: the newest assistant previews since `cursor`. */
   'transcript.trailRead': {
-    params: { facts: MessageTrailSessionFacts & { agentSessionId: string }; cursor: number | null; remoteTargets: RemoteTargets };
+    params: { facts: MessageTrailReadFacts; cursor: number | null; remoteTargets: RemoteTargets };
     result: TrailRead;
   };
   /**
@@ -85,7 +85,7 @@ export interface TranscriptMethods {
    * `since`, never a reply from before the turn that began there.
    */
   'transcript.finalReply': {
-    params: { facts: MessageTrailSessionFacts & { agentSessionId: string }; since?: TranscriptAnchor | null; remoteTargets: RemoteTargets };
+    params: { facts: MessageTrailReadFacts; since?: TranscriptAnchor | null; remoteTargets: RemoteTargets };
     result: AgentReply | null;
   };
   /** Lifetime tokens from a finished run's transcript (`transcriptUsage`). */

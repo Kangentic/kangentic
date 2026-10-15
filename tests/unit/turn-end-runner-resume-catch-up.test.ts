@@ -372,6 +372,7 @@ describe('a resumed workflow task and its unjudged reply', () => {
         isolatedSwimlaneId: null,
         turnStartedAt: TURN_STARTED_AT,
         workSerial: RESUMED_WORK_SERIAL,
+        transcriptAnchor: null,
       };
     }
 

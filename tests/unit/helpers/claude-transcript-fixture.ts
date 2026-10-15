@@ -3,7 +3,9 @@
  * with the REAL window parser (`parseClaudeTranscriptWindow`): the human prompt,
  * a background job's `<task-notification>`, an `isMeta` peer hand-back, assistant
  * text, an assistant tool call, its tool result, and the lines the CLI writes
- * when a turn ends. `claudeWindowAdapter` is the window read over such a file.
+ * when a turn ends. `claudeWindowAdapter` is the window read over such a file,
+ * and `trailAnchorAfterRead` reads one with it to take the anchor a turn
+ * beginning there would get.
  *
  * The lines are synthetic, shaped like the CLI's own. Which fields matter:
  *
@@ -24,7 +26,7 @@
  */
 import { parseClaudeTranscriptWindow } from '../../../src/main/agent/adapters/claude/transcript-parser';
 import { readTrail, type MessageTrailAdapter } from '../../../src/main/agent/message-trail-read';
-import type { MessageTrailSessionFacts } from '../../../src/main/agent/message-trail-tracker';
+import type { MessageTrailReadFacts } from '../../../src/main/agent/message-trail-tracker';
 import type { TranscriptAnchor } from '../../../src/main/agent/shared/transcript-anchor';
 
 export interface ClaudeTranscriptSession {
@@ -131,7 +133,7 @@ export function claudeWindowAdapter(filePath: string): MessageTrailAdapter {
  */
 export async function trailAnchorAfterRead(
   filePath: string,
-  facts: MessageTrailSessionFacts & { agentSessionId: string },
+  facts: MessageTrailReadFacts,
 ): Promise<TranscriptAnchor> {
   const read = await readTrail(claudeWindowAdapter(filePath), facts, null);
   if (read.cursor === null) throw new Error(`The trail read of ${filePath} anchored nowhere.`);

@@ -100,6 +100,9 @@ export interface MessageTrailSessionFacts {
   cwd: string;
 }
 
+/** Session facts once the agent session id is known: what a read of its transcript needs. */
+export type MessageTrailReadFacts = MessageTrailSessionFacts & { agentSessionId: string };
+
 /** One read's outcome (`message-trail-read.ts`, run in the retrieval worker). */
 export interface TrailRead {
   /** The newest assistant previews among the entries read. */
@@ -140,7 +143,7 @@ export interface MessageTrailTrackerDeps {
    * assistant previews (`message-trail-read.ts`). The app runs it in the
    * retrieval worker, so main parses no transcript; tests run it in-process.
    */
-  readTrail: (facts: MessageTrailSessionFacts & { agentSessionId: string }, cursor: number | null) => Promise<TrailRead>;
+  readTrail: (facts: MessageTrailReadFacts, cursor: number | null) => Promise<TrailRead>;
   now?: () => number;
   /** Test seams for the two read floors, so coalescing is exercised in milliseconds, not seconds. */
   minIntervalMs?: number;

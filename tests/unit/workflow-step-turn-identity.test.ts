@@ -94,6 +94,7 @@ const PAYLOAD: TurnEndedPayload = {
   isolatedSwimlaneId: null,
   turnStartedAt: null,
   workSerial: TURN_WORK_SERIAL,
+  transcriptAnchor: null,
 };
 
 describe('the workflow step and the turn it judged', () => {
