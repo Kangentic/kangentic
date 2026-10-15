@@ -989,6 +989,8 @@ Sessions survive app restarts. When you close Kangentic:
 
 Because Claude Code supports `--resume`, conversation context is fully preserved even when a session is killed rather than exited. If the app crashes, orphaned sessions are detected and recovered on the next launch.
 
+If Claude Code has already deleted a conversation (it removes transcripts older than its `cleanupPeriodDays`), the resume starts a new conversation from a recap of the old one instead, and an info toast says so.
+
 ### User-Paused Sessions
 
 Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu, or from a paired phone; see [Mobile Bridge](mobile-bridge.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
@@ -1058,6 +1060,8 @@ Keyword (full-text) search is always available while indexing is on. Turning on 
 A read-only window on the same layer as task detail windows: drag, resize, snap, tile, and maximize it like any other window. Open viewers persist in the workspace across project switches and app restarts. Each turn renders cleanly with per-message copy buttons, and the header keeps two one-tap actions, **Open task** (jump to the owning task's detail window) and **Copy conversation as Markdown**, both also available from the window's kebab menu.
 
 The viewer opens positioned at the latest message, or centered on the turn matching where you had scrolled in the live terminal, so it lands where you were looking. A search bar at the top does debounced substring search across the transcript with snippet results and prev/next navigation; press **Mod+F** (Ctrl+F on Windows/Linux, Cmd+F on macOS) to focus it, and click a result to jump straight to that turn. Very long transcripts (tens of thousands of messages) stay smooth via row virtualization and a custom overlay scrollbar with a "jump to latest" pill.
+
+When the agent has deleted its own transcript, the viewer shows Kangentic's saved copy under a banner that names the agent. The copy is written on each settled turn, a suspend, and an exit, so it stays readable after the agent's cleanup.
 
 ## Command Terminal
 
@@ -1492,4 +1496,4 @@ Terminal:
 - **Plan mode workflow:** Use a Planning column with `permission_mode='plan'` and `plan_exit_target_id` pointing to your Executing column. The agent plans first, then auto-moves to execution.
 - **Column messages:** Add a **Send message to agent** automation on a Code Review column to automatically ask the agent to review its own code when tasks arrive. Prose works: "Review the diff on this branch and fix what you would change."
 - **Concurrent agents:** Increase `maxConcurrentSessions` to run more agents in parallel. Each needs its own worktree to avoid conflicts.
-- **Resume from Done:** Unarchive a completed task and drag it back to an active column. Kangentic recreates the worktree from the preserved branch on the fly, and the agent picks up exactly where it left off.
+- **Resume from Done:** Unarchive a completed task and drag it back to an active column. Kangentic recreates the worktree from the preserved branch on the fly, and the agent picks up exactly where it left off. If the agent deleted that conversation in the meantime, it starts a new one from a recap instead (see Session Persistence).
