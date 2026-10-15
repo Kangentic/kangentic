@@ -1,4 +1,6 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { HoverTip } from './HoverTip';
+import { tipLabel } from '../utils/hover-tip';
 
 export interface SegmentedControlOption<T extends string> {
   value: T;
@@ -17,13 +19,16 @@ export interface SegmentedControlOption<T extends string> {
   trailing?: React.ReactNode;
   /** Per-option test hook. Not derived from `value`, so adopters keep their existing ids. */
   testId?: string;
-  title?: string;
+  /** What a short label means, as the option's tip and its description. */
+  tip?: string;
   /**
    * Disable this one option: it cannot be selected by click or arrow key and
    * reads dimmed, while the rest of the group stays live. For a group that is
    * unavailable as a whole, use the group-level `disabled` instead.
    */
   disabled?: boolean;
+  /** Why this option is off. It replaces `tip` while the option is disabled. */
+  disabledReason?: string;
 }
 
 interface SegmentedControlProps<T extends string> {
@@ -343,43 +348,48 @@ export function SegmentedControl<T extends string>({
           const selected = index === activeIndex;
           const optionDisabled = disabled || option.disabled === true;
           return (
-            <button
+            // Every option is wrapped, tip or not, so an option that gains a reason
+            // when it turns off is not remounted (and does not lose focus) for it.
+            <HoverTip
               key={option.value}
-              // Not optional: several dialogs wrap their body in a <form>, where
-              // a bare button submits it (the New Task dialog's Branch row is
-              // one such adopter).
-              type="button"
-              ref={(element) => { optionRefs.current[index] = element; }}
-              role="radio"
-              aria-checked={selected}
-              // Roving tabindex: the group is one tab stop, arrows move within it.
-              tabIndex={selected ? 0 : -1}
-              disabled={optionDisabled}
-              // Unconditional, not only when `labelClassName` hides the label:
-              // `hidden` takes the span out of the accessibility tree, so without
-              // this a collapsed option has no accessible name at all. When the
-              // label IS showing it repeats the visible text, which is harmless -
-              // but it also REPLACES whatever `trailing` contributed, which is why
-              // an option with a meaningful badge passes its own `ariaLabel`.
-              aria-label={option.ariaLabel ?? option.label}
-              title={option.title}
-              onClick={() => onChange(option.value)}
-              data-testid={option.testId}
-              data-selected={selected}
-              className={`relative z-[1] flex items-center justify-center rounded ${optionSpacingClassName ?? `${tight ? text.tightPadding : text.padding} gap-1.5`} ${text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-                fullWidth ? 'flex-1' : ''
-              } ${
-                selected
-                  ? text.selected
-                  : option.disabled && !disabled
-                    ? text.optionDisabled
-                    : `${text.idle} ${disabled ? '' : text.idleHover}`
-              } ${optionDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+              label={tipLabel({ disabled: optionDisabled, disabledReason: option.disabledReason, tip: option.tip })}
             >
-              {option.icon}
-              <span className={labelClassName}>{option.label}</span>
-              {option.trailing}
-            </button>
+              <button
+                // Not optional: several dialogs wrap their body in a <form>, where
+                // a bare button submits it (the New Task dialog's Branch row is
+                // one such adopter).
+                type="button"
+                ref={(element) => { optionRefs.current[index] = element; }}
+                role="radio"
+                aria-checked={selected}
+                // Roving tabindex: the group is one tab stop, arrows move within it.
+                tabIndex={selected ? 0 : -1}
+                disabled={optionDisabled}
+                // Unconditional, not only when `labelClassName` hides the label:
+                // `hidden` takes the span out of the accessibility tree, so without
+                // this a collapsed option has no accessible name at all. When the
+                // label IS showing it repeats the visible text, which is harmless -
+                // but it also REPLACES whatever `trailing` contributed, which is why
+                // an option with a meaningful badge passes its own `ariaLabel`.
+                aria-label={option.ariaLabel ?? option.label}
+                onClick={() => onChange(option.value)}
+                data-testid={option.testId}
+                data-selected={selected}
+                className={`relative z-[1] flex items-center justify-center rounded ${optionSpacingClassName ?? `${tight ? text.tightPadding : text.padding} gap-1.5`} ${text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+                  fullWidth ? 'flex-1' : ''
+                } ${
+                  selected
+                    ? text.selected
+                    : option.disabled && !disabled
+                      ? text.optionDisabled
+                      : `${text.idle} ${disabled ? '' : text.idleHover}`
+                } ${optionDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                {option.icon}
+                <span className={labelClassName}>{option.label}</span>
+                {option.trailing}
+              </button>
+            </HoverTip>
           );
         })}
       </div>

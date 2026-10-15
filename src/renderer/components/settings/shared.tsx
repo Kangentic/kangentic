@@ -4,6 +4,8 @@ import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { TIER_LABELS } from './settings-tabs';
 import type { SettingsTabTier } from './settings-tabs';
 import { Pill } from '../Pill';
+import { HoverTip } from '../HoverTip';
+import { tipLabel } from '../../utils/hover-tip';
 
 // Re-export scope primitives so consumers can import everything from './shared'.
 export { SettingsPanelProvider, useScopedUpdate } from './setting-scope';
@@ -186,26 +188,27 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                     {isNewTier && (
                       <div className={`${sectionHeaderClass} pt-3 pb-1`}>{TIER_LABELS[tab.tier as Exclude<SettingsTabTier, 'core'>]}</div>
                     )}
-                    <button
-                      data-testid={`settings-tab-${tab.id}`}
-                      onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
-                      title={tab.tooltip}
-                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${
-                        hasNoMatches
-                          ? 'opacity-40 cursor-default text-fg-muted'
-                          : isActive
-                            ? 'text-fg bg-surface-hover font-medium'
-                            : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/50'
-                      }`}
-                    >
-                      <Icon size={16} className={isActive && !hasNoMatches ? 'text-accent' : ''} />
-                      <span className="flex-1 text-left">{tab.label}</span>
-                      {isSearching && matchCount !== undefined && matchCount > 0 && (
-                        <Pill size="sm" className="bg-surface-hover text-fg-faint min-w-[1.25rem] text-center">
-                          {matchCount}
-                        </Pill>
-                      )}
-                    </button>
+                    <HoverTip label={tab.tooltip ?? ''}>
+                      <button
+                        data-testid={`settings-tab-${tab.id}`}
+                        onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
+                        className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${
+                          hasNoMatches
+                            ? 'opacity-40 cursor-default text-fg-muted'
+                            : isActive
+                              ? 'text-fg bg-surface-hover font-medium'
+                              : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/50'
+                        }`}
+                      >
+                        <Icon size={16} className={isActive && !hasNoMatches ? 'text-accent' : ''} />
+                        <span className="flex-1 text-left">{tab.label}</span>
+                        {isSearching && matchCount !== undefined && matchCount > 0 && (
+                          <Pill size="sm" className="bg-surface-hover text-fg-faint min-w-[1.25rem] text-center">
+                            {matchCount}
+                          </Pill>
+                        )}
+                      </button>
+                    </HoverTip>
                   </React.Fragment>
                 );
               })}
@@ -280,7 +283,7 @@ export function Select({
   chevronClassName = 'right-3',
   wrapperClassName = 'relative',
   ...props
-}: React.SelectHTMLAttributes<HTMLSelectElement> & SelectExtraProps) {
+}: Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'title'> & SelectExtraProps) {
   return (
     <div className={`${wrapperClassName}${props.disabled ? ' opacity-60' : ''}`}>
       {leadingIcon}
@@ -303,7 +306,8 @@ export function ToggleSwitch({
   disabled,
   ariaLabel,
   testId,
-  title,
+  tip,
+  disabledReason,
   readOnly,
 }: {
   checked: boolean;
@@ -322,8 +326,10 @@ export function ToggleSwitch({
    */
   ariaLabel?: string;
   testId?: string;
-  /** Native tooltip, used to explain a disabled state. */
-  title?: string;
+  /** What flipping it does, as its tip, for a switch with no label beside it. */
+  tip?: string;
+  /** Why a disabled switch is off. It replaces `tip` while the switch is disabled. */
+  disabledReason?: string;
   /**
    * The value is real and worth reading, it just is not editable here. The All
    * columns table renders the column page's own switches this way so a row
@@ -337,25 +343,26 @@ export function ToggleSwitch({
   readOnly?: boolean;
 }) {
   return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
-      aria-readonly={readOnly ? true : undefined}
-      data-testid={testId}
-      title={title}
-      disabled={disabled}
-      onClick={disabled ? undefined : () => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-        checked ? 'bg-accent' : 'bg-edge-input'
-      } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
-    >
-      <span
-        className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-          checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
-        }`}
-      />
-    </button>
+    <HoverTip label={tipLabel({ disabled, disabledReason, tip })}>
+      <button
+        role="switch"
+        aria-checked={checked}
+        aria-label={ariaLabel}
+        aria-readonly={readOnly ? true : undefined}
+        data-testid={testId}
+        disabled={disabled}
+        onClick={disabled ? undefined : () => onChange(!checked)}
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+          checked ? 'bg-accent' : 'bg-edge-input'
+        } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+      >
+        <span
+          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+            checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
+          }`}
+        />
+      </button>
+    </HoverTip>
   );
 }
 

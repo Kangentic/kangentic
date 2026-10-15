@@ -71,10 +71,10 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
         <CardChoiceRow<WindowLightDismiss>
           {...settingProps('windowLightDismiss')}
           options={[
-            { value: 'off', label: 'Off', title: 'Clicking outside never closes a task window' },
-            { value: 'single', label: 'Single', title: 'Closes a task window only when it is the only one open' },
-            { value: 'focused', label: 'Focused', title: 'Closes the focused task window' },
-            { value: 'all', label: 'All', title: 'Closes every open task window' },
+            { value: 'off', label: 'Off', tip: 'Clicking outside never closes a task window' },
+            { value: 'single', label: 'Single', tip: 'Closes a task window only when it is the only one open' },
+            { value: 'focused', label: 'Focused', tip: 'Closes the focused task window' },
+            { value: 'all', label: 'All', tip: 'Closes every open task window' },
           ]}
           value={globalConfig.windowLightDismiss}
           onChange={(value) => updateGlobal({ windowLightDismiss: value })}

@@ -18,8 +18,10 @@ import { hasJsxOptOutMarker } from './helpers/opt-out-marker';
 //  - an SVG `<title>` element,
 //  - an object literal spread onto an intrinsic element that carries `title`.
 // A component prop named `title` is never visited: on ConfirmDialog, BaseDialog
-// and the rest it is a heading, and a component that forwards a tooltip either
-// renders HoverTip or ends at an intrinsic `title=`, which this scan sees.
+// and the rest it is a heading. That leaves one hole: a component that spreads
+// `...rest` onto an element passes a `title` it was given straight through, and
+// this scan sees neither end. The backstop is the type: Pill, IsolatedBadge and
+// Select omit `title` from the attributes they accept.
 //
 // The scan parses the TSX AST, as clickable-control-select-none.test.ts does: a
 // regex truncates at the `>` inside `onClick={() => ...}` and misreads tags whose
@@ -32,6 +34,9 @@ const REASON_PREFIX = 'full value of';
 
 /** Dev-only overlays, built out of production; they keep their raw titles on purpose. */
 const EXEMPT_DIRECTORY = 'src/renderer/components/debug/';
+
+/** How far above a site a marker reason is read: the shared reader's own walk cap. */
+const MARKER_WALK_LIMIT = 60;
 
 interface NativeTitleSite {
   file: string;
@@ -75,9 +80,8 @@ function scanSource(fileLabel: string, source: string): NativeTitleSite[] {
   const lines = source.split('\n');
   const found: NativeTitleSite[] = [];
 
-  function record(node: ts.Node, element: ts.Node, kind: NativeTitleSite['kind'], tagName: string): void {
+  function record(node: ts.Node, kind: NativeTitleSite['kind'], tagName: string): void {
     const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line;
-    const elementLine = sourceFile.getLineAndCharacterOfPosition(element.getStart(sourceFile)).line;
     const marked = hasJsxOptOutMarker(lines, line, MARKER);
     found.push({
       file: fileLabel,
@@ -85,24 +89,27 @@ function scanSource(fileLabel: string, source: string): NativeTitleSite[] {
       kind,
       tagName,
       marked,
-      reason: marked ? markerReason(lines, line, elementLine - 6) : '',
+      // The shared reader found a marker inside this element's own reach, and the nearest one
+      // above the site is that marker, so the reason is read as far up as that reader walks. A
+      // shorter floor cut off a long reason block and reported the marker as having none.
+      reason: marked ? markerReason(lines, line, line - MARKER_WALK_LIMIT) : '',
     });
   }
 
   function visit(node: ts.Node): void {
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tagName = node.tagName.getText(sourceFile);
-      if (tagName === 'title') record(node, node, 'svg-title', tagName);
+      if (tagName === 'title') record(node, 'svg-title', tagName);
       if (isIntrinsic(tagName)) {
         for (const property of node.attributes.properties) {
           if (ts.isJsxAttribute(property) && property.name.getText(sourceFile) === 'title') {
-            record(property, node, 'attribute', tagName);
+            record(property, 'attribute', tagName);
           } else if (
             ts.isJsxSpreadAttribute(property)
             && ts.isObjectLiteralExpression(property.expression)
             && property.expression.properties.some((member) => member.name?.getText(sourceFile) === 'title')
           ) {
-            record(property, node, 'spread', tagName);
+            record(property, 'spread', tagName);
           }
         }
       }
@@ -127,16 +134,14 @@ const scannedSites = allSites.filter((site) => !site.file.startsWith(EXEMPT_DIRE
  * above its entry is a new native title, and a count below it means a file moved and its entry
  * must come down with it. Deleted once the migration lands, after which every site is either a
  * HoverTip or a marked keeper.
+ *
+ * Many counted controls already carry an `aria-label` equal to their title, so they keep a name
+ * when the title becomes a HoverTip. Migrating one means dropping its `title` and wrapping it;
+ * the `aria-label` beside it stays.
  */
 const BASELINE: Record<string, number> = {
-  'src/renderer/components/ButtonGroup.tsx': 1,
-  'src/renderer/components/DataTable.tsx': 2,
   'src/renderer/components/DescriptionEditor.tsx': 1,
-  'src/renderer/components/IsolatedBadge.tsx': 1,
-  'src/renderer/components/KebabMenu.tsx': 2,
   'src/renderer/components/NameFromPromptButton.tsx': 1,
-  'src/renderer/components/PrLink.tsx': 1,
-  'src/renderer/components/SegmentedControl.tsx': 1,
   'src/renderer/components/TemplateTextField.tsx': 1,
   'src/renderer/components/TemplateVariablePicker.tsx': 1,
   'src/renderer/components/ToggleCard.tsx': 1,
@@ -161,29 +166,26 @@ const BASELINE: Record<string, number> = {
   'src/renderer/components/board/Swimlane.tsx': 3,
   'src/renderer/components/board/TaskContextMenu.tsx': 3,
   'src/renderer/components/board/ViewToggle.tsx': 3,
-  'src/renderer/components/board/task-card-view.tsx': 3,
+  'src/renderer/components/board/task-card-view.tsx': 2,
 
-  'src/renderer/components/browser/AttachmentChips.tsx': 2,
   'src/renderer/components/browser/BrowserEmptyState.tsx': 1,
   'src/renderer/components/browser/BrowserPane.tsx': 15,
 
   'src/renderer/components/command-bar/CommandTerminalWindow.tsx': 4,
 
-  'src/renderer/components/dialogs/AdvancedOverridesSection.tsx': 2,
+  'src/renderer/components/dialogs/AdvancedOverridesSection.tsx': 1,
   'src/renderer/components/dialogs/AttachmentChipStrip.tsx': 2,
   'src/renderer/components/dialogs/BaseDialog.tsx': 1,
-  'src/renderer/components/dialogs/BoardManagerDialog.tsx': 4,
+  'src/renderer/components/dialogs/BoardManagerDialog.tsx': 3,
   'src/renderer/components/dialogs/BranchPicker.tsx': 1,
   'src/renderer/components/dialogs/Combobox.tsx': 3,
-  'src/renderer/components/dialogs/DialogFooterActions.tsx': 1,
   'src/renderer/components/dialogs/FontCombobox.tsx': 2,
   'src/renderer/components/dialogs/IconPickerDialog.tsx': 2,
   'src/renderer/components/dialogs/LeftoverProcessesDialog.tsx': 1,
   'src/renderer/components/dialogs/ModelCombobox.tsx': 8,
-  'src/renderer/components/dialogs/WorktreePlacementControl.tsx': 1,
 
   'src/renderer/components/dialogs/board-manager/AutomationTypePicker.tsx': 1,
-  'src/renderer/components/dialogs/board-manager/AutomationsPane.tsx': 3,
+  'src/renderer/components/dialogs/board-manager/AutomationsPane.tsx': 2,
   'src/renderer/components/dialogs/board-manager/ColumnRail.tsx': 5,
   'src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx': 5,
   'src/renderer/components/dialogs/board-manager/ProfileBar.tsx': 4,
@@ -209,7 +211,7 @@ const BASELINE: Record<string, number> = {
   'src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx': 1,
   'src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx': 4,
   'src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx': 8,
-  'src/renderer/components/dialogs/task-detail/completed/report-parts.tsx': 2,
+  'src/renderer/components/dialogs/task-detail/completed/report-parts.tsx': 1,
 
   'src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx': 1,
 
@@ -240,9 +242,6 @@ const BASELINE: Record<string, number> = {
 
   'src/renderer/components/settings/keybindings/HotkeyRow.tsx': 2,
 
-  'src/renderer/components/settings/settings-card.tsx': 2,
-  'src/renderer/components/settings/shared.tsx': 2,
-
   'src/renderer/components/settings/tabs/AgentTab.tsx': 2,
   'src/renderer/components/settings/tabs/DictationTab.tsx': 1,
   'src/renderer/components/settings/tabs/GeneralTab.tsx': 1,
@@ -253,7 +252,7 @@ const BASELINE: Record<string, number> = {
   'src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx': 1,
   'src/renderer/components/settings/tabs/agent-execution-fields.tsx': 1,
 
-  'src/renderer/components/shared/ByToolTable.tsx': 2,
+  'src/renderer/components/shared/ByToolTable.tsx': 1,
 
   'src/renderer/components/sidebar/CollapsedRail.tsx': 3,
   'src/renderer/components/sidebar/ProjectSidebar.tsx': 2,
@@ -288,9 +287,8 @@ const BASELINE: Record<string, number> = {
   'src/renderer/components/workflows/WorkflowHeader.tsx': 7,
   'src/renderer/components/workflows/WorkflowInspector.tsx': 12,
   'src/renderer/components/workflows/WorkflowPicker.tsx': 2,
-  'src/renderer/components/workflows/WorkflowStrip.tsx': 4,
+  'src/renderer/components/workflows/WorkflowStrip.tsx': 3,
 
-  'src/renderer/pop-out/PopOutButton.tsx': 1,
   'src/renderer/pop-out/PopOutWindowFrame.tsx': 4,
 
   'src/renderer/window-manager/components/ConversationWindow.tsx': 2,
@@ -432,5 +430,76 @@ describe('the native title detector itself', () => {
       ');',
     ].join('\n'));
     expect(found.map((site) => [site.marked, site.reason.startsWith(REASON_PREFIX)])).toEqual([[true, false]]);
+  });
+
+  // The marker sits 9 lines above the title attribute and 7 above the opening tag, so a reason
+  // read from a short fixed distance above the site (the old 6 lines) comes back empty even
+  // though the shared reader, which walks 60 lines, did find the marker and marked the site.
+  it('reads the reason of a marker that tops a long comment block above a multi-line tag', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = () => (',
+      '  // native-title-ok: full value of the truncated working directory',
+      '  // The cell cuts the path short with an ellipsis, so the hover text is',
+      '  // the only place the whole path can be read.',
+      '  // This block is long on purpose: it puts the marker well above the',
+      '  // title attribute, further than a short upward read would reach.',
+      '  // It keeps going for a few more lines so the distance holds for',
+      '  // either end of the element.',
+      '  <span',
+      '    className="truncate"',
+      '    title={directory}',
+      '  >{directory}</span>',
+      ');',
+    ].join('\n'));
+    expect(found.map((site) => [site.line, site.marked, site.reason])).toEqual([
+      [11, true, 'full value of the truncated working directory'],
+    ]);
+  });
+
+  it('does not let the marker of a previous sibling mark a later element', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = () => (',
+      '  <div>',
+      '    {/* native-title-ok: full value of the first path */}',
+      '    <span',
+      '      className="truncate"',
+      '      title={first}',
+      '    >',
+      '      {first}',
+      '    </span>',
+      '    <span className="truncate" title={second}>{second}</span>',
+      '  </div>',
+      ');',
+    ].join('\n'));
+    expect(found.map((site) => [site.line, site.marked, site.reason])).toEqual([
+      [6, true, 'full value of the first path'],
+      [10, false, ''],
+    ]);
+  });
+
+  // The scan sees an object literal spread, where the keys are visible, and nothing behind a
+  // spread of a variable. `one-tooltip.md` names this gap and leaves it to the component types
+  // (Pill, IsolatedBadge and Select omit `title`), so the detector must not guess at it.
+  it('does not report a spread of a non-literal', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = ({ ...rest }) => (',
+      '  <span className="truncate" {...rest} />',
+      ');',
+    ].join('\n'));
+    expect(found).toEqual([]);
+  });
+
+  it('reads the reason on a marked SVG title element, without the comment closer', () => {
+    const found = scanSource('probe.tsx', [
+      'export const Probe = () => (',
+      '  <svg>',
+      '    {/* native-title-ok: full value of the truncated glyph name */}',
+      '    <title>{glyphName}</title>',
+      '  </svg>',
+      ');',
+    ].join('\n'));
+    expect(found.map((site) => [site.kind, site.marked, site.reason])).toEqual([
+      ['svg-title', true, 'full value of the truncated glyph name'],
+    ]);
   });
 });

@@ -136,7 +136,7 @@ function EndRow({ end, current, color, icon, name }: {
         checked
         onChange={() => undefined}
         disabled
-        title={end === 'todo' ? `Every route starts in ${name}` : `Every route ends in ${name}`}
+        disabledReason={end === 'todo' ? `Every route starts in ${name}` : `Every route ends in ${name}`}
         ariaLabel={name}
       />
     </div>
@@ -209,7 +209,8 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
                 checked={on}
                 onChange={() => onToggle(step)}
                 disabled={!interactive}
-                title={refusal ?? `${on ? 'Skip' : 'Include'} ${step.name}`}
+                tip={`${on ? 'Skip' : 'Include'} ${step.name}`}
+                disabledReason={refusal ?? undefined}
                 ariaLabel={`${on ? 'Skip' : 'Include'} ${step.name}`}
                 testId={`workflow-route-switch-${step.swimlaneId}`}
               />

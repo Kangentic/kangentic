@@ -163,7 +163,7 @@ function RouteCard({ route, startedAt }: { route: TaskReportRouteColumn[]; start
               <ColumnPill
                 column={column}
                 label={formatSpanCompact(column.totalMs)}
-                title={`${column.name}: ${formatSpan(column.totalMs)}`}
+                tip={`${column.name}: ${formatSpan(column.totalMs)}`}
               />
               {stays.length >= 2 && stays.map((visit) => (
                 <div

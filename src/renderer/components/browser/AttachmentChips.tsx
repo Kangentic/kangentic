@@ -1,5 +1,6 @@
 import { Crosshair, Pencil, X } from 'lucide-react';
 import type { BrowserPickedElement } from '../../../shared/types';
+import { HoverTip } from '../HoverTip';
 
 interface AttachmentChipsProps {
   strokeCount: number;
@@ -42,7 +43,7 @@ export function AttachmentChips({
         <Chip
           icon={<Crosshair size={11} />}
           label={pickedElementLabel(pickedElement)}
-          title={pickedElement.selector}
+          tip={pickedElement.selector}
           onRemove={onClearPicked}
           testId="chip-picked"
         />
@@ -73,29 +74,34 @@ function truncate(value: string, max: number): string {
 interface ChipProps {
   icon: React.ReactNode;
   label: string;
-  title?: string;
+  /** The whole value behind a shortened label, as the chip's tip. */
+  tip?: string;
   onRemove: () => void;
   testId?: string;
 }
 
-function Chip({ icon, label, title, onRemove, testId }: ChipProps) {
+function Chip({ icon, label, tip, onRemove, testId }: ChipProps) {
   return (
-    <span
-      className="inline-flex items-center gap-1 pl-1.5 pr-0.5 py-0.5 rounded border border-edge-input bg-surface-input text-[11px] text-fg-tertiary max-w-[260px]"
-      title={title}
-      data-testid={testId}
-    >
-      <span className="text-fg-muted flex-shrink-0">{icon}</span>
-      <span className="font-mono truncate min-w-0">{label}</span>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="flex-shrink-0 p-0.5 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
-        aria-label="Remove from queue"
-        title="Remove from queue"
+    // Described, not only shown on hover: the label is cut short, and the whole value is
+    // otherwise out of reach without a pointer.
+    <HoverTip label={tip ?? ''}>
+      <span
+        className="inline-flex items-center gap-1 pl-1.5 pr-0.5 py-0.5 rounded border border-edge-input bg-surface-input text-[11px] text-fg-tertiary max-w-[260px]"
+        data-testid={testId}
       >
-        <X size={11} />
-      </button>
-    </span>
+        <span className="text-fg-muted flex-shrink-0">{icon}</span>
+        <span className="font-mono truncate min-w-0">{label}</span>
+        <HoverTip label="Remove from queue">
+          <button
+            type="button"
+            onClick={onRemove}
+            className="flex-shrink-0 p-0.5 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
+            aria-label="Remove from queue"
+          >
+            <X size={11} />
+          </button>
+        </HoverTip>
+      </span>
+    </HoverTip>
   );
 }

@@ -2,6 +2,7 @@ import React from 'react';
 import type { WorkflowBoardEnds, WorkflowRouteStep, WorkflowTaskPlace } from '../../../shared/types';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { trackStops, type TrackStop } from './workflow-track';
+import { HoverTip } from '../HoverTip';
 
 /**
  * The strip on top of a workflow task's card: on the left whatever the card
@@ -24,18 +25,19 @@ const UNCOLORED = 'var(--color-fg-faint)';
 function StepMarker({ stop, color }: { stop: TrackStop; color: string }) {
   const label = `${stop.name}: now`;
   return (
-    <span
-      role="img"
-      aria-label={label}
-      title={label}
-      data-testid="workflow-step-marker"
-      data-step-state="current"
-      data-step-end={stop.end ?? undefined}
-      className="inline-flex items-center justify-center w-[18px] h-[18px] rounded-[5px] shrink-0"
-      style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
-    >
-      <ColumnGlyph column={{ icon: stop.icon, role: stop.end }} size={12} color={color} />
-    </span>
+    <HoverTip label={label}>
+      <span
+        role="img"
+        aria-label={label}
+        data-testid="workflow-step-marker"
+        data-step-state="current"
+        data-step-end={stop.end ?? undefined}
+        className="inline-flex items-center justify-center w-[18px] h-[18px] rounded-[5px] shrink-0"
+        style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
+      >
+        <ColumnGlyph column={{ icon: stop.icon, role: stop.end }} size={12} color={color} />
+      </span>
+    </HoverTip>
   );
 }
 

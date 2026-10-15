@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { HoverTip } from './HoverTip';
 
 interface ButtonGroupOption<T extends string> {
   value: T;
@@ -21,7 +22,7 @@ interface ButtonGroupProps<T extends string> {
    * like another option. A glyph cannot be misread as a choice.
    */
   icon?: ReactNode;
-  /** Names the control for assistive tech and the icon's tooltip. */
+  /** Names the control for assistive tech, and is the icon's tip. */
   label?: string;
   ariaLabel?: string;
 }
@@ -45,13 +46,15 @@ export function ButtonGroup<T extends string>({
     >
       {icon && (
         <>
-          <span
-            className="pl-2 flex items-center text-fg-muted flex-shrink-0"
-            title={label}
-            aria-hidden
-          >
-            {icon}
-          </span>
+          {/* The group already carries the name, so the tip is for the eye only. */}
+          <HoverTip label={label ?? ''} describe={false}>
+            <span
+              className="pl-2 flex items-center text-fg-muted flex-shrink-0"
+              aria-hidden
+            >
+              {icon}
+            </span>
+          </HoverTip>
           <span className="mx-2 h-4 w-px bg-edge flex-shrink-0" aria-hidden />
         </>
       )}

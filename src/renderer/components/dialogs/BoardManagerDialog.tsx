@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { useBoardStore } from '../../stores/board-store';
+import { HoverTip } from '../HoverTip';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -458,17 +459,18 @@ function SettingField({ label, description, hint, children, className = '' }: {
   );
 }
 
-function ResetHint({ onClick, title }: { onClick: () => void; title: string }) {
+function ResetHint({ onClick, tip }: { onClick: () => void; tip: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className="flex flex-shrink-0 items-center gap-1 text-xs text-fg-faint hover:text-fg-tertiary transition-colors"
-    >
-      <RotateCcw size={11} />
-      Reset
-    </button>
+    <HoverTip label={tip}>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex flex-shrink-0 items-center gap-1 text-xs text-fg-faint hover:text-fg-tertiary transition-colors"
+      >
+        <RotateCcw size={11} />
+        Reset
+      </button>
+    </HoverTip>
   );
 }
 
@@ -2110,7 +2112,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     label="Agent"
                     hint={draft.agent_override ? (
                       <ResetHint
-                        title="Reset to project setting"
+                        tip="Reset to project setting"
                         onClick={() => {
                           updateDraft((current) => {
                             let nextPermission = current.permission_mode;
@@ -2150,7 +2152,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       label="Model"
                       hint={draft.model_override ? (
                         <ResetHint
-                          title={projectDefaultModelLabel ? 'Reset to project default' : 'Reset to agent default'}
+                          tip={projectDefaultModelLabel ? 'Reset to project default' : 'Reset to agent default'}
                           onClick={() => updateDraft((current) => ({ ...current, model_override: null }))}
                         />
                       ) : undefined}
@@ -2177,7 +2179,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       label="Effort"
                       hint={draft.effort_override ? (
                         <ResetHint
-                          title={projectDefaultEffort ? 'Reset to project default' : 'Reset to agent default'}
+                          tip={projectDefaultEffort ? 'Reset to project default' : 'Reset to agent default'}
                           onClick={() => updateDraft((current) => ({ ...current, effort_override: null }))}
                         />
                       ) : undefined}
@@ -2197,7 +2199,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     label="Permissions"
                     hint={draft.permission_mode ? (
                       <ResetHint
-                        title="Reset to project setting"
+                        tip="Reset to project setting"
                         onClick={() => updateDraft((current) => ({ ...current, permission_mode: null }))}
                       />
                     ) : undefined}

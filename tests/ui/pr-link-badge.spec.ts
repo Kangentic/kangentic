@@ -183,7 +183,7 @@ test.describe('PR link: state badge and clickable affordance', () => {
     await expect(prLink.locator('.lucide-external-link')).toBeVisible();
 
     // Tooltip names the action.
-    await expect(prLink).toHaveAttribute('title', 'Open PR #287 in browser');
+    await expect(prLink).toHaveAccessibleDescription('Open PR #287 in browser');
   });
 
   test('detail header has no PR pill; the kebab "View PR" entry opens the same URL', async () => {
@@ -243,16 +243,16 @@ test.describe('PR merge readiness folds into the state chip', () => {
     const chip = chipFor('task-readiness-ready');
     await expect(chip).toHaveText('ready');
     await expect(chip).toHaveClass(/text-emerald-400/);
-    await expect(chip).toHaveAttribute('title', /last PR refresh/);
+    await expect(chip).toHaveAccessibleDescription(/last PR refresh/);
     // The caveat lives on the chip; the pill keeps its own action tooltip.
-    await expect(pillFor('task-readiness-ready')).toHaveAttribute('title', 'Open PR #301 in browser');
+    await expect(pillFor('task-readiness-ready')).toHaveAccessibleDescription('Open PR #301 in browser');
   });
 
   test('blocked is amber', async () => {
     const chip = chipFor('task-readiness-blocked');
     await expect(chip).toHaveText('blocked');
     await expect(chip).toHaveClass(/text-amber-400/);
-    await expect(chip).toHaveAttribute('title', /Merge blocked/);
+    await expect(chip).toHaveAccessibleDescription(/Merge blocked/);
   });
 
   test('conflicts is orange, never the red that closed uses', async () => {
@@ -260,33 +260,33 @@ test.describe('PR merge readiness folds into the state chip', () => {
     await expect(chip).toHaveText('conflicts');
     await expect(chip).toHaveClass(/text-orange-400/);
     await expect(chip).not.toHaveClass(/text-red-400/);
-    await expect(chip).toHaveAttribute('title', /Merge conflicts/);
+    await expect(chip).toHaveAccessibleDescription(/Merge conflicts/);
   });
 
   test('a pending unknown verdict keeps plain open', async () => {
     const chip = chipFor('task-readiness-unknown');
     await expect(chip).toHaveText('open');
-    await expect(chip).not.toHaveAttribute('title', /./);
+    await expect(chip).toHaveAccessibleDescription('');
   });
 
   test('queued and running are sky, so a check in flight reads as progress rather than pass or fail', async () => {
     const queued = chipFor('task-readiness-queued');
     await expect(queued).toHaveText('queued');
     await expect(queued).toHaveClass(/text-sky-400/);
-    await expect(queued).toHaveAttribute('title', /queued as of the last PR refresh/);
+    await expect(queued).toHaveAccessibleDescription(/queued as of the last PR refresh/);
 
     const running = chipFor('task-readiness-running');
     await expect(running).toHaveText('running');
     await expect(running).toHaveClass(/text-sky-400/);
     await expect(running).not.toHaveClass(/text-emerald-400|text-amber-400|text-orange-400|text-fg-muted/);
-    await expect(running).toHaveAttribute('title', /running as of the last PR refresh/);
+    await expect(running).toHaveAccessibleDescription(/running as of the last PR refresh/);
   });
 
   test('a stale verdict on a merged PR never shows through', async () => {
     const chip = chipFor('task-readiness-stale-merged');
     await expect(chip).toHaveText('merged');
     await expect(chip).toHaveClass(/text-purple-400/);
-    await expect(chip).not.toHaveAttribute('title', /./);
+    await expect(chip).toHaveAccessibleDescription('');
   });
 
   test('the kebab offers Refresh PR for a task linked by PR number alone', async () => {

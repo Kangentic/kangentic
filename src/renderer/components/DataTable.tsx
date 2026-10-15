@@ -3,6 +3,7 @@ import { ArrowUp, ArrowDown, GripVertical } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { HoverTip } from './HoverTip';
 
 export interface DataTableColumn<TRow, TKey extends string = string> {
   key: TKey;
@@ -189,16 +190,18 @@ function SortableRow<TRow, TKey extends string>({
           of grabbing would be a promise the UI does not keep. Same shape as the swimlane
           column header's drag handle. */}
       <td className="w-[32px] px-1 py-2.5">
-        <div
-          {...attributes}
-          {...listeners}
-          className="flex items-center justify-center text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing"
-          title="Drag to reorder"
-          data-testid="row-drag-handle"
-          data-no-dismiss
-        >
-          <GripVertical size={14} />
-        </div>
+        <HoverTip label="Drag to reorder">
+          <div
+            {...attributes}
+            {...listeners}
+            className="flex items-center justify-center text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing"
+            aria-label="Drag to reorder"
+            data-testid="row-drag-handle"
+            data-no-dismiss
+          >
+            <GripVertical size={14} />
+          </div>
+        </HoverTip>
       </td>
       {columns.map((column, columnIndex) => (
         <td
@@ -311,11 +314,12 @@ export function DataTable<TRow, TKey extends string = string>({
           isSortable ? 'Click to sort - Shift+Click adds a secondary sort' : undefined,
         ].filter(Boolean).join('\n');
         return (
+          // The tip goes on the cell itself: HoverTip adds no element, so the
+          // header row keeps its table layout.
+          <HoverTip key={`${column.key}-${columnIndex}`} label={headerTitle}>
           <th
-            key={`${column.key}-${columnIndex}`}
             className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none transition-colors ${column.width || ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${isSortable ? 'cursor-pointer hover:text-fg-muted' : ''}`}
             onClick={isSortable ? (event) => handleHeaderClick(column, event.shiftKey) : undefined}
-            title={headerTitle || undefined}
           >
             {column.headerRender ? (
               column.headerRender(sortedData)
@@ -342,6 +346,7 @@ export function DataTable<TRow, TKey extends string = string>({
               </span>
             )}
           </th>
+          </HoverTip>
         );
       })}
     </tr>

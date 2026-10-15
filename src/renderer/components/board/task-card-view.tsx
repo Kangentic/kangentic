@@ -46,7 +46,11 @@ export function CardStatusBar({
   return (
     <div className="mt-2 pt-2 border-t border-edge" data-testid={testId}>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs text-fg-faint flex items-center gap-1 min-w-0" title={title}>
+        <span
+          className="text-xs text-fg-faint flex items-center gap-1 min-w-0"
+          // native-title-ok: full value of the status label the bar truncates
+          title={title}
+        >
           {children}
         </span>
       </div>

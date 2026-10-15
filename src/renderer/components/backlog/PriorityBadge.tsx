@@ -23,7 +23,6 @@ export const PriorityBadge = React.memo(function PriorityBadge({ priority, showL
       size="sm"
       className="font-medium border"
       style={{ color: entry.color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
-      title={entry.label}
     >
       {entry.label}
     </Pill>

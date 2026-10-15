@@ -413,7 +413,7 @@ test.describe('Column automations', () => {
     const messageSwitch = message.locator('[data-testid="column-automation-enabled"]');
     await expect(messageSwitch).toBeDisabled();
     await expect(messageSwitch).toHaveAttribute('aria-checked', 'false');
-    await expect(messageSwitch).toHaveAttribute('title', /Start an agent here/);
+    await expect(messageSwitch).toHaveAccessibleDescription(/Start an agent here/);
 
     // A script needs nothing and is untouched.
     await expect(row('Archive')).toHaveAttribute('data-can-run', 'true');

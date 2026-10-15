@@ -56,7 +56,7 @@ export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
   return (
     <KebabMenu
       icon={<SlidersHorizontal size={16} />}
-      title="View options"
+      label="View options"
       triggerClassName={diffToolbarButtonClass(false)}
       triggerTestId="diff-view-options"
       menuTestId="diff-view-options-menu"
@@ -94,7 +94,7 @@ export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
                 label="Show blame"
                 checked={blame.on}
                 disabled={blame.unavailable}
-                title={blame.unavailable ? 'Blame is unavailable for this file' : undefined}
+                disabledReason="Blame is unavailable for this file"
                 onChange={blame.onToggle}
                 data-testid="diff-blame-toggle"
               />

@@ -1,6 +1,7 @@
 import { type MouseEvent } from 'react';
 import { GitPullRequest, ExternalLink } from 'lucide-react';
 import { Pill } from './Pill';
+import { HoverTip } from './HoverTip';
 import { prStatePresentation, prMergeReadinessTooltip } from '../lib/pr-state';
 import type { PRMergeReadiness, PRState } from '../../shared/types';
 
@@ -24,14 +25,18 @@ function PrStateBadge({
 }) {
   const { label, badgeClass } = prStatePresentation(state, readiness);
   if (!label) return null;
+  const caveat = prMergeReadinessTooltip(state, readiness) ?? '';
   return (
-    <span
-      data-testid="pr-state-badge"
-      title={prMergeReadinessTooltip(state, readiness)}
-      className={`inline-flex items-center rounded px-1.5 py-px text-[11px] font-medium leading-none ${badgeClass}`}
-    >
-      {label}
-    </span>
+    // With no caveat the tip is held shut and lets the pointer through, so the
+    // link pill's own tip still shows over the badge.
+    <HoverTip label={caveat}>
+      <span
+        data-testid="pr-state-badge"
+        className={`inline-flex items-center rounded px-1.5 py-px text-[11px] font-medium leading-none ${badgeClass}`}
+      >
+        {label}
+      </span>
+    </HoverTip>
   );
 }
 
@@ -61,21 +66,22 @@ export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, cla
   // bare "PR" label rather than rendering the literal string "PR #null".
   const prLabel = prNumber != null ? `PR #${prNumber}` : 'PR';
   return (
-    <Pill
-      shape="square"
-      size="xs"
-      onClick={(event: MouseEvent) => {
-        event.stopPropagation();
-        window.electronAPI.shell.openExternal(prUrl);
-      }}
-      className={`bg-surface-hover/50 hover:bg-surface-hover text-fg-secondary hover:text-fg transition-colors ${className ?? ''}`}
-      title={`Open ${prLabel} in browser`}
-      data-testid={testId}
-    >
-      <GitPullRequest size={12} className="text-fg-muted" />
-      {prLabel}
-      <PrStateBadge state={prState} readiness={prMergeReadiness} />
-      <ExternalLink size={11} className="opacity-60" />
-    </Pill>
+    <HoverTip label={`Open ${prLabel} in browser`}>
+      <Pill
+        shape="square"
+        size="xs"
+        onClick={(event: MouseEvent) => {
+          event.stopPropagation();
+          window.electronAPI.shell.openExternal(prUrl);
+        }}
+        className={`bg-surface-hover/50 hover:bg-surface-hover text-fg-secondary hover:text-fg transition-colors ${className ?? ''}`}
+        data-testid={testId}
+      >
+        <GitPullRequest size={12} className="text-fg-muted" />
+        {prLabel}
+        <PrStateBadge state={prState} readiness={prMergeReadiness} />
+        <ExternalLink size={11} className="opacity-60" />
+      </Pill>
+    </HoverTip>
   );
 }

@@ -176,13 +176,13 @@ test('Save waits with the reason while the workflow agent works', async () => {
       window.__mockFireActivity(id, 'thinking', null, projectId, workflowId);
     }, [sessionId, PROJECT_ID, WORKFLOW_ID]);
     await expect(save).toBeDisabled();
-    await expect(save).toHaveAttribute('title', 'Available when the workflow agent finishes');
+    await expect(save).toHaveAccessibleDescription('Available when the workflow agent finishes');
 
     await page.evaluate(([id, projectId, workflowId]) => {
       window.__mockFireActivity(id, 'idle', null, projectId, workflowId);
     }, [sessionId, PROJECT_ID, WORKFLOW_ID]);
     await expect(save).toBeEnabled();
-    await expect(save).not.toHaveAttribute('title', /.+/);
+    await expect(save).toHaveAccessibleDescription('');
   } finally {
     await browser.close();
   }
@@ -241,7 +241,7 @@ test('on another board the form reads that board: its branches, base branch, Wor
     await expect(profileSelect).toBeEnabled();
     await expect(profileSelect.locator('option')).toHaveText(['Default', 'Phone']);
     await expect(dialog.locator('[data-testid="task-profile-edit"]')).toBeDisabled();
-    await expect(dialog.locator('[data-testid="task-profile-edit"]')).toHaveAttribute('title', 'Open that board to edit its profiles');
+    await expect(dialog.locator('[data-testid="task-profile-edit"]')).toHaveAccessibleName('Open that board to edit its profiles');
     // The agent a task there inherits is that project's default, not this one's.
     await dialog.locator('[data-testid="task-advanced-toggle"]').click();
     await expect(dialog.locator('input[data-testid="task-agent-override"]')).toHaveAttribute('placeholder', /codex/i);

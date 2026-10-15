@@ -13,6 +13,7 @@ import { useScopedUpdate } from '../shared';
 import { SettingsCard } from '../settings-card';
 import { CountBadge } from '../../CountBadge';
 import { Pill } from '../../Pill';
+import { HoverTip } from '../../HoverTip';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { HotkeyRow } from '../keybindings/HotkeyRow';
 import { OsHotkeyBanner } from '../keybindings/OsHotkeyBanner';
@@ -148,16 +149,17 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
             </span>
           ) : undefined}
           action={(
-            <Pill
-              size="md"
-              onClick={() => setShowResetAll(true)}
-              disabled={customCount === 0}
-              title={customCount === 0 ? 'Every hotkey is at its default' : 'Restore every hotkey to its default'}
-              className="text-fg-muted bg-surface-hover/50 enabled:hover:bg-surface-hover enabled:hover:text-fg-secondary disabled:opacity-40 disabled:cursor-default transition-colors"
-              data-testid="hotkeys-reset-all"
-            >
-              <RotateCcw size={14} /> Reset to default
-            </Pill>
+            <HoverTip label={customCount === 0 ? 'Every hotkey is at its default' : 'Restore every hotkey to its default'}>
+              <Pill
+                size="md"
+                onClick={() => setShowResetAll(true)}
+                disabled={customCount === 0}
+                className="text-fg-muted bg-surface-hover/50 enabled:hover:bg-surface-hover enabled:hover:text-fg-secondary disabled:opacity-40 disabled:cursor-default transition-colors"
+                data-testid="hotkeys-reset-all"
+              >
+                <RotateCcw size={14} /> Reset to default
+              </Pill>
+            </HoverTip>
           )}
         />
       </SettingsCard>

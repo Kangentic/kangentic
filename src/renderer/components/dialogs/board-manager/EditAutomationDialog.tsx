@@ -91,7 +91,7 @@ const CONDITION_KIND_OPTIONS: SegmentedControlOption<ConditionKind>[] = [AGENT_K
 /** Off a turn end there is no final message, so Text match is shown and disabled, with the reason as its tip. */
 const CONDITION_KIND_OPTIONS_NO_TEXT: SegmentedControlOption<ConditionKind>[] = [
   AGENT_KIND_OPTION,
-  { ...TEXT_KIND_OPTION, disabled: true, title: TEXT_MATCH_UNAVAILABLE_REASON },
+  { ...TEXT_KIND_OPTION, disabled: true, disabledReason: TEXT_MATCH_UNAVAILABLE_REASON },
 ];
 
 /** The Text match hint, under its field. */
@@ -145,7 +145,7 @@ function triggerOptionsFor(
   if (cached) return cached;
   const built = TRIGGER_OPTIONS.map((option, index) => {
     const reason = reasons[index];
-    return reason === null ? option : { ...option, disabled: true, title: reason };
+    return reason === null ? option : { ...option, disabled: true, disabledReason: reason };
   });
   blockedTriggerOptions.set(cacheKey, built);
   return built;
@@ -192,7 +192,7 @@ function segmentedOptionsFor(field: AutomationField, unavailableReason: string |
     label: option.label,
     testId: option.testId,
     ...(option.icon ? { icon: <AutomationIcon name={option.icon} size={14} /> } : {}),
-    ...(unavailableReason !== null ? { disabled: true, title: unavailableReason } : {}),
+    ...(unavailableReason !== null ? { disabled: true, disabledReason: unavailableReason } : {}),
   }));
   byReason.set(cacheKey, built);
   return built;

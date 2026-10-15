@@ -305,7 +305,7 @@ test.describe('Workflow tasks on the board', () => {
       // On the board the lane names the column, so the current step stays a
       // bar (15 by 6), not the column marker the Workflows canvas draws.
       const current = strip.locator('[data-step-state="current"]');
-      await expect(current).toHaveAttribute('title', 'Executing: now');
+      await expect(current).toHaveAccessibleName('Executing: now');
       await expect(current).toHaveCSS('width', '15px');
       await expect(current).toHaveCSS('height', '6px');
       await expect(strip.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
@@ -1293,7 +1293,7 @@ test.describe('Workflow tasks on the board', () => {
       await expect(panel.locator('[data-testid="task-workflow-panel-header"]')).toHaveCSS('font-weight', '600');
       await expect(panel.locator('[data-testid="workflow-panel-workflow"]')).toContainText('Usage budgets');
       await expect(panel.locator('[data-testid="workflow-state-chip"]')).toHaveAttribute('data-state', 'running');
-      await expect(panel.locator('[data-testid="workflow-route-switch-lane-1"]')).toHaveAttribute('title', '#414 has reached Executing. Only the columns after it can change.');
+      await expect(panel.locator('[data-testid="workflow-route-switch-lane-1"]')).toHaveAccessibleDescription('#414 has reached Executing. Only the columns after it can change.');
       await expect(panel.locator('[data-testid="workflow-link-row"][data-task-key="t412"] [data-testid="workflow-unlink"]')).toBeDisabled();
 
       // A step still ahead switches off, in the task's own workflow.

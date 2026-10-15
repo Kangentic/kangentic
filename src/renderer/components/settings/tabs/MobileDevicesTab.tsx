@@ -47,8 +47,8 @@ const RELAY_SEARCH_IDS = ['mobileBridge.relayMode', 'mobileBridge.relayUrl'];
  */
 const RELAY_MODE_OPTIONS: SegmentedControlOption<'hosted' | 'local' | 'custom'>[] = [
   ...(__KANGENTIC_DEV__ ? [{ value: 'local' as const, label: 'Local', testId: 'mobile-relay-mode-local' }] : []),
-  { value: 'hosted', label: 'Kangentic', title: 'The Kangentic relay', testId: 'mobile-relay-mode-hosted' },
-  { value: 'custom', label: 'Custom', title: 'A relay you run', testId: 'mobile-relay-mode-custom' },
+  { value: 'hosted', label: 'Kangentic', tip: 'The Kangentic relay', testId: 'mobile-relay-mode-hosted' },
+  { value: 'custom', label: 'Custom', tip: 'A relay you run', testId: 'mobile-relay-mode-custom' },
 ];
 
 /** The relay address field's classes, authored in full rather than layered onto

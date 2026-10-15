@@ -240,9 +240,9 @@ function SortableActionItem({
               <label className="text-xs text-fg-muted mb-1 block">Display</label>
               <SegmentedControl<ShortcutDisplay>
                 options={[
-                  { value: 'both', label: 'Both', title: 'In the task window header and its menu' },
-                  { value: 'header', label: 'Header', title: 'In the task window header only' },
-                  { value: 'menu', label: 'Menu', title: 'In the task window menu only' },
+                  { value: 'both', label: 'Both', tip: 'In the task window header and its menu' },
+                  { value: 'header', label: 'Header', tip: 'In the task window header only' },
+                  { value: 'menu', label: 'Menu', tip: 'In the task window menu only' },
                 ]}
                 value={action.display ?? 'both'}
                 onChange={(display) => onUpdateAndSave({ display })}
@@ -256,8 +256,8 @@ function SortableActionItem({
               <label className="text-xs text-fg-muted mb-1 block">Scope</label>
               <SegmentedControl
                 options={[
-                  { value: 'team', label: 'Team', title: 'Shared with the team in kangentic.json' },
-                  { value: 'local', label: 'Personal', title: 'Only yours, in kangentic.local.json' },
+                  { value: 'team', label: 'Team', tip: 'Shared with the team in kangentic.json' },
+                  { value: 'local', label: 'Personal', tip: 'Only yours, in kangentic.local.json' },
                 ]}
                 value={action.source}
                 onChange={(newSource) => onUpdateAndSave({ source: newSource })}

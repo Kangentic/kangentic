@@ -428,6 +428,7 @@ export function CardStatusRow({ label, value, tone = 'neutral', percent = null, 
         <span
           className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[13px] tabular-nums text-fg-secondary"
           data-testid={valueTestId ?? (testId ? `${testId}-text` : undefined)}
+          // native-title-ok: full value of the status value the tile truncates
           title={value}
         >
           {tone === 'ready' ? <Check size={14} className="flex-shrink-0 text-emerald-500" aria-hidden="true" /> : null}
@@ -462,16 +463,17 @@ export function CardLinkRow({ label, links, onOpen, testId }: CardLinkRowProps) 
         {links.map((link, index) => (
           <Fragment key={link.href}>
             {index > 0 ? <span className="text-fg-muted">and</span> : null}
-            <button
-              type="button"
-              onClick={() => onOpen(link.href)}
-              title={link.href}
-              className="inline-flex cursor-pointer items-center gap-1 rounded text-accent hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              data-testid={testId ? `${testId}-link` : undefined}
-            >
-              {link.label}
-              {index === links.length - 1 ? <ExternalLink size={12} aria-hidden="true" /> : null}
-            </button>
+            <HoverTip label={link.href}>
+              <button
+                type="button"
+                onClick={() => onOpen(link.href)}
+                className="inline-flex cursor-pointer items-center gap-1 rounded text-accent hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                data-testid={testId ? `${testId}-link` : undefined}
+              >
+                {link.label}
+                {index === links.length - 1 ? <ExternalLink size={12} aria-hidden="true" /> : null}
+              </button>
+            </HoverTip>
           </Fragment>
         ))}
       </span>
@@ -601,7 +603,7 @@ function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent
             disabled
             readOnly
             ariaLabel={`${label}, always on`}
-            title="Always on while the index is on"
+            disabledReason="Always on while the index is on"
             testId={testId ? `${testId}-locked` : undefined}
           />
         )}
