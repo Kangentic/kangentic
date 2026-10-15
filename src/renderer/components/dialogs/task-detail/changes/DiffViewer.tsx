@@ -141,6 +141,9 @@ export function DiffViewer({
   const isPreviewableSvg = imageKind === 'svg' && !binary;
   const [showPreview, setShowPreview] = useState(false);
   const previewActive = (isMarkdown || isPreviewableSvg) && showPreview;
+  const previewToggleLabel = isMarkdown
+    ? (previewActive ? 'Show diff' : 'Preview rendered markdown')
+    : (previewActive ? 'Show text diff' : 'Preview image');
   // The one preview that is neither the diff editor nor the image view.
   const markdownPreviewActive = isMarkdown && showPreview;
 
@@ -856,12 +859,8 @@ export function DiffViewer({
             <button
               onClick={() => setShowPreview((value) => !value)}
               className={toolbarButtonClass(previewActive)}
-              aria-label={isMarkdown
-                ? (previewActive ? 'Show diff' : 'Preview rendered markdown')
-                : (previewActive ? 'Show text diff' : 'Preview image')}
-              title={isMarkdown
-                ? (previewActive ? 'Show diff' : 'Preview rendered markdown')
-                : (previewActive ? 'Show text diff' : 'Preview image')}
+              aria-label={previewToggleLabel}
+              title={previewToggleLabel}
               aria-pressed={previewActive}
               data-testid={isMarkdown ? 'diff-markdown-preview' : 'diff-svg-preview'}
             >
