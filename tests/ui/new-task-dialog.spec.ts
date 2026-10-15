@@ -212,6 +212,14 @@ test.describe('Worktree placement', () => {
     // The dialog is still open: the arrow was swallowed by the group, not the form.
     await expect(page.locator('input[placeholder="Task title"]')).toBeVisible();
 
+    // An arrow key places focus by keyboard, so the option's tip opens at once, and the
+    // first Escape closes only that tip. The next one closes the dialog.
+    const tip = page.locator('[data-hover-tip]');
+    await expect(tip).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(tip).toHaveCount(0);
+    await expect(page.locator('input[placeholder="Task title"]')).toBeVisible();
+
     await closeDialog();
   });
 

@@ -645,9 +645,16 @@ test('Escape posts nothing while the app owns it, and the app closes its own sur
   // Pin the isolation the way the rung-1 test does: no dialog is open, so this can only be rung 3.
   await expect(frame.locator('[data-dismissable-layer]')).toHaveCount(0);
   await focusAcrossFrame(frame.locator('[data-testid="task-detail-close"]'));
+  // The close button's tip opens at once on keyboard focus and takes the first Escape, so the
+  // window is still there after it. The next one is the window's.
+  const tip = frame.locator('[data-hover-tip]');
+  await expect(tip).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(tip).toHaveCount(0);
+  await expect(detail).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(detail).toBeHidden();
-  expect(hasEscape(await readWindowMessages()), 'a task window owns the first Escape').toBe(false);
+  expect(hasEscape(await readWindowMessages()), 'a task window owns the Escape after its tip').toBe(false);
 });
 
 test('Escape in a task window terminal under the pointer closes the window, then the next one posts', async ({ page }) => {
