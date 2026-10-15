@@ -21,7 +21,7 @@ import { selectEngine } from '../../../src/main/transcription/engines/engine-sel
 import { DEFAULT_CONFIG } from '../../../src/shared/types';
 import type {
   KnowledgeGraphClustering, KnowledgeGraphCoverageSummary, KnowledgeGraphEdge, KnowledgeGraphGranularity,
-  KnowledgeGraphIndexSummary, KnowledgeGraphStatus,
+  KnowledgeGraphIndexSummary, KnowledgeGraphStatus, PerToolStat,
 } from '../../../src/shared/types';
 import { resolveEmbeddingModel } from '../../../src/shared/embedding-models';
 import { NO_SOURCE, sourceStatusOf, sumIndexCounts, summaryStatusOf } from '../../../src/shared/index-summary';
@@ -375,7 +375,7 @@ const DEMO_BOARD_TASKS: DemoTask[] = [
   { id: TASK_MIDDLEWARE, projectId: PROJECT_CONTOSO, display_id: 4, title: 'Extract auth middleware', description: 'Move auth logic into reusable Express middleware', lane: 'executing', position: 0, agent: 'claude', session_id: SESSION_MIDDLEWARE, worktree_folder: 'auth-middleware-def456', branch_name: 'extract-auth-middleware', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['refactor'], priority: 2, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 1 },
   { id: TASK_API_CLIENT, projectId: PROJECT_CONTOSO, display_id: 5, title: 'Generate API client types', description: 'Request and response interfaces for every route in server/routes.ts, and apiFetch generic over them', lane: 'executing', position: 1, agent: 'claude', session_id: SESSION_API_CLIENT, worktree_folder: 'api-types-ghi789', branch_name: 'generate-api-types', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 12 },
   { id: 'task-cw-empty-states', projectId: PROJECT_CONTOSO, display_id: 8, title: 'Onboarding empty states', description: 'First-run screens for the dashboard, projects, and billing pages before any data exists', lane: 'planning', position: 1, agent: null, session_id: SESSION_EMPTY_STATES, worktree_folder: 'empty-states-stu901', branch_name: 'onboarding-empty-states', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['design'], priority: 2, attachment_count: 3, createdDaysAgo: 4, updatedMinutesAgo: 95 },
-  { id: TASK_RATE_LIMIT, projectId: PROJECT_CONTOSO, display_id: 6, title: 'Add rate limiting', description: 'Implement per-user rate limiting on API endpoints', lane: 'review', position: 0, agent: 'copilot', session_id: SESSION_RATE_LIMIT, worktree_folder: 'rate-limit-jkl012', branch_name: 'add-rate-limiting', pr_number: 42, pr_url: 'https://github.com/contoso/contoso-web/pull/42', pr_state: 'open', base_branch: 'main', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 22 },
+  { id: TASK_RATE_LIMIT, projectId: PROJECT_CONTOSO, display_id: 6, title: 'Add rate limiting', description: 'Implement per-user rate limiting on API endpoints', lane: 'review', position: 0, agent: 'copilot', session_id: SESSION_RATE_LIMIT, worktree_folder: 'rate-limit-jkl012', branch_name: 'add-rate-limiting', pr_number: 42, pr_url: 'https://github.com/contoso/contoso-web/pull/42', pr_state: 'open', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 22 },
   { id: 'task-cw-integration', projectId: PROJECT_CONTOSO, display_id: 7, title: 'Integration test coverage', description: 'Add integration tests for auth and billing flows', lane: 'testing', position: 0, agent: 'cursor', session_id: SESSION_INTEGRATION, worktree_folder: 'integration-tests-mno345', branch_name: 'integration-tests', pr_number: 38, pr_url: 'https://github.com/contoso/contoso-web/pull/38', pr_state: 'open', pr_merge_readiness: 'blocked', base_branch: 'main', labels: ['tests'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 6 },
   { id: 'task-cw-vite8', projectId: PROJECT_CONTOSO, display_id: 9, title: 'Upgrade to Vite 8', description: 'Move the build to Vite 8 and drop the legacy Rollup plugins', lane: 'merge', position: 0, agent: null, session_id: SESSION_VITE8, worktree_folder: 'vite-8-pqr678', branch_name: 'upgrade-vite-8', pr_number: 45, pr_url: 'https://github.com/contoso/contoso-web/pull/45', pr_state: 'open', pr_merge_readiness: 'ready', base_branch: 'main', labels: [], priority: 1, attachment_count: 0, createdDaysAgo: 6, updatedMinutesAgo: 48 },
   { id: 'task-cw-done-deploy', projectId: PROJECT_CONTOSO, display_id: 10, title: 'Set up CI/CD pipeline', description: 'GitHub Actions for build, test, deploy', lane: 'done', position: 0, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'setup-cicd', pr_number: 31, pr_url: 'https://github.com/contoso/contoso-web/pull/31', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 12, updatedMinutesAgo: 4300, archivedDaysAgo: 3 },
@@ -389,7 +389,7 @@ const DEMO_BOARD_TASKS: DemoTask[] = [
   { id: 'task-pc-flaky-tests', projectId: PROJECT_PETCLINIC, display_id: 4, title: 'Fix flaky PetClinicIntegrationTests on MySQL', description: 'testOwnerDetails fails one run in ten on the MySQL profile; suspect the visit ordering', lane: 'executing', position: 0, agent: 'codex', session_id: SESSION_PETCLINIC_FLAKY, worktree_folder: 'flaky-mysql-9b8c7d', branch_name: 'fix-flaky-mysql-integration', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['bug'], priority: 3, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 2 },
   { id: 'task-pc-owner-search', projectId: PROJECT_PETCLINIC, display_id: 5, title: 'Add owner search by phone number', description: 'The find-owners form only searches last name; add a telephone field and a repository query', lane: 'executing', position: 1, agent: 'gemini', session_id: SESSION_PETCLINIC_SEARCH, worktree_folder: 'owner-phone-search-1e2d3c', branch_name: 'owner-search-by-phone', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 9 },
   { id: 'task-pc-boot-35', projectId: PROJECT_PETCLINIC, display_id: 6, title: 'Upgrade the toolchain to Java 25', description: 'java.version in pom.xml, the GitHub Actions matrix, and the Dockerfile base image', lane: 'review', position: 0, agent: 'claude', session_id: SESSION_PETCLINIC_BOOT35, worktree_folder: 'java-25-7a6b5c', branch_name: 'java-25-toolchain', pr_number: 1412, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1412', pr_state: 'draft', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 2, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 130 },
-  { id: 'task-pc-caffeine', projectId: PROJECT_PETCLINIC, display_id: 7, title: 'Cache vets with Caffeine instead of JCache', description: 'Drop the JCache config in favour of the Caffeine starter; keep the cache name so the actuator view stays', lane: 'testing', position: 0, agent: 'opencode', session_id: SESSION_PETCLINIC_CACHE, worktree_folder: 'caffeine-cache-3c4d5e', branch_name: 'vets-cache-caffeine', pr_number: 1408, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1408', pr_state: 'open', base_branch: 'main', labels: ['perf'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 17 },
+  { id: 'task-pc-caffeine', projectId: PROJECT_PETCLINIC, display_id: 7, title: 'Cache vets with Caffeine instead of JCache', description: 'Drop the JCache config in favour of the Caffeine starter; keep the cache name so the actuator view stays', lane: 'testing', position: 0, agent: 'opencode', session_id: SESSION_PETCLINIC_CACHE, worktree_folder: 'caffeine-cache-3c4d5e', branch_name: 'vets-cache-caffeine', pr_number: 1408, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1408', pr_state: 'open', pr_merge_readiness: null, base_branch: 'main', labels: ['perf'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 17 },
   { id: 'task-pc-done-java21', projectId: PROJECT_PETCLINIC, display_id: 8, title: 'Bump Java to 21', description: 'Toolchain, CI matrix, and the Dockerfile base image', lane: 'done', position: 0, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'java-21', pr_number: 1391, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1391', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 14, updatedMinutesAgo: 8600, archivedDaysAgo: 5 },
   { id: 'task-pc-done-postgres', projectId: PROJECT_PETCLINIC, display_id: 9, title: 'Add a Postgres profile', description: 'application-postgres.properties plus the docker-compose service', lane: 'done', position: 1, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'postgres-profile', pr_number: 1397, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1397', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 0, attachment_count: 0, createdDaysAgo: 11, updatedMinutesAgo: 7200, archivedDaysAgo: 4 },
 
@@ -400,7 +400,7 @@ const DEMO_BOARD_TASKS: DemoTask[] = [
   { id: 'task-ob-redis-ttl', projectId: PROJECT_BOUTIQUE, display_id: 4, title: 'cartservice: expire abandoned carts in Redis', description: 'Carts never expire; set a TTL on write and refresh it on read so the memory store stops growing', lane: 'executing', position: 0, agent: 'codex', session_id: SESSION_BOUTIQUE_REDIS, worktree_folder: 'cart-ttl-8d9e0f', branch_name: 'cartservice-redis-ttl', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['bug', 'perf'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 5 },
   { id: 'task-ob-mtls', projectId: PROJECT_BOUTIQUE, display_id: 5, title: 'Istio strict mTLS for the frontend namespace', description: 'PeerAuthentication in STRICT mode plus the DestinationRules the frontend needs to keep talking to the services', lane: 'executing', position: 1, agent: 'opencode', session_id: SESSION_BOUTIQUE_MTLS, worktree_folder: 'istio-mtls-2b3c4d', branch_name: 'istio-strict-mtls', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['security'], priority: 2, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 41 },
   { id: 'task-ob-currency-a11y', projectId: PROJECT_BOUTIQUE, display_id: 6, title: 'Frontend: currency selector keyboard and screen-reader support', description: 'The header currency dropdown is a styled div; make it a real select with a label', lane: 'review', position: 0, agent: 'copilot', session_id: SESSION_BOUTIQUE_A11Y, worktree_folder: 'currency-a11y-5e6f7a', branch_name: 'frontend-currency-a11y', pr_number: 2941, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2941', pr_state: 'open', pr_merge_readiness: 'conflicting', base_branch: 'main', labels: ['a11y'], priority: 1, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 75 },
-  { id: 'task-ob-otel', projectId: PROJECT_BOUTIQUE, display_id: 7, title: 'OpenTelemetry traces for shippingservice', description: 'Instrument the gRPC server with the otel Go SDK and export to the collector already in the cluster', lane: 'testing', position: 0, agent: 'codex', session_id: SESSION_BOUTIQUE_OTEL, worktree_folder: 'otel-shipping-6f7a8b', branch_name: 'shippingservice-otel', pr_number: 2937, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2937', pr_state: 'open', base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 30 },
+  { id: 'task-ob-otel', projectId: PROJECT_BOUTIQUE, display_id: 7, title: 'OpenTelemetry traces for shippingservice', description: 'Instrument the gRPC server with the otel Go SDK and export to the collector already in the cluster', lane: 'testing', position: 0, agent: 'codex', session_id: SESSION_BOUTIQUE_OTEL, worktree_folder: 'otel-shipping-6f7a8b', branch_name: 'shippingservice-otel', pr_number: 2937, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2937', pr_state: 'open', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 30 },
   { id: 'task-ob-done-go124', projectId: PROJECT_BOUTIQUE, display_id: 8, title: 'Bump Go to 1.24 across services', description: 'go.mod, the Dockerfiles, and the release workflow', lane: 'done', position: 0, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'go-1-24', pr_number: 2921, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2921', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 9, updatedMinutesAgo: 5800, archivedDaysAgo: 3 },
   { id: 'task-ob-done-skaffold', projectId: PROJECT_BOUTIQUE, display_id: 9, title: 'Update the Skaffold profiles for the new registry', description: 'Image names in the manifests and the kustomize overlays, from gcr.io/google-samples to us-central1-docker.pkg.dev/google-samples/microservices-demo', lane: 'done', position: 1, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'skaffold-registry', pr_number: 2915, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2915', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 12, updatedMinutesAgo: 9000, archivedDaysAgo: 6 },
 ];
@@ -416,14 +416,18 @@ interface DemoHistoryEntry {
   upstream: { commit: string; parent: string; pr: number | null } | null;
 }
 
-interface DemoHistory {
+/**
+ * The archived-task history file. Not `DemoHistory`, the exported git history above: two
+ * interfaces of one name in a module merge into a single type that is neither.
+ */
+interface DemoArchivedHistory {
   model: string;
   effort: string;
   tasks: DemoHistoryEntry[];
 }
 
 /** The install's older history, whose runs give the Knowledge Graph its depth. */
-export const DEMO_HISTORY = historyFixture as DemoHistory;
+export const DEMO_HISTORY = historyFixture as DemoArchivedHistory;
 
 /**
  * The history as Done task rows, archived on their fixture dates. Each project's history takes
@@ -616,6 +620,26 @@ export const DEMO_ARCHIVED_SUMMARIES: DemoArchivedSummary[] = DEMO_ARCHIVED_TASK
       costUsd, durationMs, inputTokens, outputTokens, tools, filesChanged, linesAdded, linesRemoved,
     };
   });
+
+/**
+ * How long a recorded run's tool calls took, which its transcript does not say: each call at its
+ * tool's typical duration, any other tool at the fallback. The Completed Tasks row's tool popover
+ * reads the result, and so does every run row of the completed-task scenes' report, whose rows
+ * must add back to the row's (demo-task-report.ts). Both read archivedToolBreakdown, so the two
+ * cannot disagree. The seed applier is handed its results, never a copy of the rule.
+ */
+const ARCHIVED_TOOL_MEAN_MS: Readonly<Record<string, number>> = { Read: 300, Grep: 250, Edit: 400, Write: 350, Bash: 6000 };
+const ARCHIVED_TOOL_FALLBACK_MEAN_MS = 500;
+
+/** A recorded run's calls per tool as the per-tool table reads them, in the run's own tool order. */
+export function archivedToolBreakdown(tools: Record<string, number>): PerToolStat[] {
+  return Object.keys(tools).map((toolName) => ({
+    toolName,
+    callCount: tools[toolName],
+    totalDurationMs: tools[toolName] * (Object.hasOwn(ARCHIVED_TOOL_MEAN_MS, toolName) ? ARCHIVED_TOOL_MEAN_MS[toolName] : ARCHIVED_TOOL_FALLBACK_MEAN_MS),
+    interruptedCount: 0,
+  }));
+}
 
 export const DEMO_BACKLOG: DemoBacklogItem[] = [
   { id: 'backlog-cw-dark-mode', projectId: PROJECT_CONTOSO, title: 'Dark mode for the dashboard', description: 'Token pass over the dashboard cards and charts; the marketing site already ships both themes', priority: 2, labels: ['design'], position: 0, external_source: null, external_id: null, external_url: null, createdDaysAgo: 9 },
@@ -866,6 +890,8 @@ export function buildDemoPreConfig(options: {
     archivedSummaries: DEMO_ARCHIVED_SUMMARIES,
     // One rule for an archived task's session id, read by its summary and its graph node alike.
     archivedSessionIds: Object.fromEntries(DEMO_ARCHIVED_SUMMARIES.map((summary) => [summary.taskId, archivedSessionIdOf(summary.taskId)])),
+    // Each archived row's per-tool table, for the applier below, which cannot import the rule.
+    archivedToolBreakdowns: Object.fromEntries(DEMO_ARCHIVED_SUMMARIES.map((summary) => [summary.taskId, archivedToolBreakdown(summary.tools)])),
     // Null when the seed fetches the maps instead (the `knowledgeGraph` option).
     knowledgeGraph: options.knowledgeGraph === 'fetched' ? null : shippedKnowledgeGraph(),
     knowledgeGraphConfig: DEMO_KNOWLEDGE_GRAPH_CONFIG,
@@ -1206,14 +1232,10 @@ export function buildDemoPreConfig(options: {
         });
         // The Completed Tasks dialog's cost, duration, token, tool, file, and line cells, timed from
         // when the run ended (archivedExitedAtMs).
-        var TOOL_MEAN_MS = { Read: 300, Grep: 250, Edit: 400, Write: 350, Bash: 6000 };
         data.archivedSummaries.forEach(function (summary) {
           var task = tasksById[summary.taskId];
           var exitedAtMs = archivedExitedAtMs(task);
-          var toolBreakdown = Object.keys(summary.tools).map(function (toolName) {
-            var calls = summary.tools[toolName];
-            return { toolName: toolName, callCount: calls, totalDurationMs: calls * (TOOL_MEAN_MS[toolName] || 500), interruptedCount: 0 };
-          });
+          var toolBreakdown = data.archivedToolBreakdowns[summary.taskId];
           state.summaryCache[summary.taskId] = {
             sessionId: data.archivedSessionIds[summary.taskId],
             totalCostUsd: summary.costUsd, totalInputTokens: summary.inputTokens, totalOutputTokens: summary.outputTokens,

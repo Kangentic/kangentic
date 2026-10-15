@@ -25,6 +25,8 @@ import {
   SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET,
   TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
+import { DEMO_COMPLETED_TASK_REPORT, DEMO_COMPLETED_TASK_SUMMARY } from '../captures/helpers/demo-task-report';
+import { formatCost, formatSpan } from '../../src/renderer/utils/format-session';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
 
@@ -217,7 +219,8 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   'column-automation-turn-end': async (page) => {
     // The review loop on Testing: two Move to column rows at the turn end, in the order the runner
     // reads them, runnable because Claude reports a turn end, each with the marks
-    // describeAutomationMarks gives it.
+    // describeAutomationMarks gives it. One row of each Condition kind: the robot mark for the
+    // Agent evaluation, the text search mark for the Text match.
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
     const turnEnd = dialog.locator('[data-testid="column-automation-group"][data-trigger="turn_end"]');
     const rows = turnEnd.locator('[data-testid="column-automation-row"]');
@@ -226,7 +229,7 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(turnEnd.locator('[data-testid="column-automation-group-blocked"]')).toHaveCount(0);
     const expected = [
       { marks: ['column-automation-condition-mark', 'column-automation-frequency-mark', 'column-automation-message-mark'], count: '3', sentence: 'Moves the task to Executing' },
-      { marks: ['column-automation-condition-mark', 'column-automation-frequency-mark'], count: '1', sentence: 'Moves the task to Merge' },
+      { marks: ['column-automation-text-match-mark', 'column-automation-frequency-mark'], count: '1', sentence: 'Moves the task to Merge' },
     ];
     for (const [index, row] of expected.entries()) {
       const target = rows.nth(index);
@@ -342,6 +345,38 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(dialog).not.toContainText('$0.00 total cost');
     const summarized = new Set(DEMO_ARCHIVED_SUMMARIES.map((summary) => summary.taskId));
     for (const task of contosoArchived) expect(summarized.has(task.id), `${task.id} has no summary`).toBe(true);
+  },
+  'completed-task': async (page) => {
+    // The header strip reads the Completed Tasks row's own summary, so it shows the cost and agent
+    // runtime the completed-tasks scene's row shows for this task.
+    const rowSummary = DEMO_COMPLETED_TASK_SUMMARY;
+    const strip = page.locator('[data-testid="completed-header-strip"]');
+    await expect(strip.locator('[data-testid="completed-metric-cost"]')).toContainText(formatCost(rowSummary.costUsd));
+    await expect(strip.locator('[data-testid="completed-metric-agent-runtime"]')).toContainText(formatSpan(rowSummary.durationMs));
+    await expect(page.locator('[data-testid="completed-panel-summary"]')).toBeVisible();
+    // The seeded report, not the one the mock derives: a written summary, a route whose repeated
+    // columns draw a card per visit, the commits, and the run's own changed files.
+    await expect(page.locator('[data-testid="completed-task-summary-text"]')).toBeVisible();
+    await expect(page.locator('[data-testid="completed-summary-state-pending"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="route-column-pill"]')).toHaveCount(DEMO_COMPLETED_TASK_REPORT.route.length);
+    await expect(page.locator('[data-testid="route-visit"]')).toHaveCount(DEMO_COMPLETED_TASK_REPORT.route.reduce((sum, column) => sum + column.visits.length, 0));
+    await expect(page.locator('[data-testid="completed-commits"]')).toBeVisible();
+    await expect(page.locator('[data-testid="completed-changed-file"]')).toHaveCount(rowSummary.filesChanged);
+  },
+  'completed-task-usage': async (page) => {
+    const rowSummary = DEMO_COMPLETED_TASK_SUMMARY;
+    await expect(page.locator('[data-testid="completed-panel-usage"]')).toBeVisible();
+    // Two conversations, the main one and Code Review's isolated one, over every run.
+    await expect(page.locator('[data-testid="completed-conversation-header"]')).toHaveCount(DEMO_COMPLETED_TASK_REPORT.conversations.length);
+    await expect(page.locator('[data-testid="completed-run-row"]')).toHaveCount(DEMO_COMPLETED_TASK_REPORT.conversations.reduce((sum, conversation) => sum + conversation.runs.length, 0));
+    // The Runs Total adds back to the row's cost.
+    await expect(page.locator('[data-testid="completed-runs-total"]')).toContainText(formatCost(rowSummary.costUsd));
+    // The ledger card, never the derived report's fallback card.
+    await expect(page.locator('[data-testid="completed-model-row"]')).toHaveCount(DEMO_COMPLETED_TASK_REPORT.models?.length ?? 0);
+    await expect(page.locator('[data-testid="completed-models-fallback"]')).toHaveCount(0);
+    // A condition met and a condition not met, in the order they were asked.
+    const outcomes = await page.locator('[data-testid="completed-call-outcome"]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-outcome')));
+    expect(outcomes).toEqual(['ran', 'skipped']);
   },
   'knowledge-graph': async (page) => {
     // The map drew in a real 3D context. This tier runs on the headless shell the release's

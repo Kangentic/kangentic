@@ -21,10 +21,13 @@
  * set, names the element whose rect the ready message reports, so a host can crop a dialog scene
  * to the dialog without knowing the layout.
  *
- * No Node imports on purpose: demo/vite.config.mts serializes this module into the static build,
- * and the capture rig reads it as well. tests/unit/scene-registry.test.ts pins the shape.
+ * Evaluated only in Node: demo/vite.config.mts serializes its values into the static build, and the
+ * capture rig reads it as well, so every value is plain data. It calls no Node API itself; the
+ * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
+ * free. tests/unit/scene-registry.test.ts pins the shape.
  */
 import { DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -93,7 +96,12 @@ export interface DemoState {
   steps?: DemoBootStep[];
 }
 
-interface SceneBase extends DemoState {
+/**
+ * A scene's fields beside its steps. `steps` is left to each reach below: inherited from
+ * DemoState as well, it intersected with the driver variant's and narrowed a driver step to one
+ * that is a boot step and a rig step at once.
+ */
+interface SceneBase extends Omit<DemoState, 'steps'> {
   name: string;
   /** One line for the maintainer: what the scene is for and why it is shaped this way. */
   description: string;
@@ -351,14 +359,15 @@ const REVIEW_PASS_AUTOMATION = {
 };
 
 /**
- * The review loop, at Testing's turn end: two rows the runner reads in order, the shape this
- * repo's own kangentic.json gives Code Review (Back for revisions, then On to Testing). Codex
- * reviews in Code Review and its adapter reports no turn end, so the desktop blocks On agent turn
- * end on that column (DEMO_AGENT_OVERRIDES carries the flag). The ladder hands the review on to
- * Claude in Testing, and that is where the loop can run. When the review found work, the first row
- * sends the task back to Executing with Claude's reply, and a move ends the group, so the second
- * never runs; otherwise the second moves it on to Merge. Snake case `max_runs`, because the mock
- * copies a seeded row's keys as they are.
+ * The review loop, at Testing's turn end: two rows the runner reads in order, one of each
+ * Condition kind. Codex reviews in Code Review and its adapter reports no turn end, so the desktop
+ * blocks On agent turn end on that column (DEMO_AGENT_OVERRIDES carries the flag). The ladder hands
+ * the review on to Claude in Testing, and that is where the loop can run. The first row is an
+ * Agent evaluation: when the review found work, it sends the task back to Executing with Claude's
+ * reply, and a move ends the group, so the second never runs. The second is a Text match, checked
+ * in code with no agent call: it moves the task on to Merge when Claude's final message ends on
+ * the line "PR: ready to merge", which is how this repo's own kangentic.json gates Testing. Snake
+ * case `max_runs` and `final_line`, because the mock copies a seeded row's keys as they are.
  */
 const TESTING_TURN_END_AUTOMATIONS = [
   {
@@ -380,10 +389,31 @@ const TESTING_TURN_END_AUTOMATIONS = [
     type: 'move_to_column',
     trigger: 'turn_end',
     position: 1,
-    condition: 'The tests pass and the review left nothing to fix',
+    final_line: 'PR: ready to merge',
     max_runs: 1,
     config: { targetColumn: 'Merge' },
   },
+];
+
+/**
+ * The whole record of one archived contoso task, Set up CI/CD pipeline, shared by the two
+ * completed-task scenes (helpers/demo-task-report.ts says which parts are its recorded run and
+ * which are authored). A scene seed, never the dataset. The dataset holds what the recordings
+ * hold, and this report is partly authored, so it stays with the two figures that show it.
+ */
+const COMPLETED_TASK_REPORTS = { [DEMO_COMPLETED_TASK_ID]: DEMO_COMPLETED_TASK_REPORT };
+
+/**
+ * Opening that task's view the way a user does: the Done column's Completed header, then View
+ * details on its row, which opens the task's window and closes the dialog. Clicks, not a restored
+ * window: workspace restore keeps a window only for a task on the board, and an archived one is not.
+ * Then the window's maximize toggle, because the floating window cuts both tabs off after their
+ * first card or two: Files changed on Summary, and Models and tokens and Background calls on Usage.
+ */
+const COMPLETED_TASK_STEPS: DemoBootStep[] = [
+  { click: '[data-testid="expand-completed-btn"]', waitFor: '[data-testid="completed-tasks-dialog"]' },
+  { click: `[data-testid="completed-task-row"][data-row-id="${DEMO_COMPLETED_TASK_ID}"] [data-testid="view-task-btn"]`, waitFor: '[data-testid="completed-task-view"]' },
+  { click: '[data-testid="task-detail-maximize"]', waitFor: '[data-testid="task-detail-maximize"][aria-label="Restore dialog"]' },
 ];
 
 /**
@@ -1107,8 +1137,8 @@ export const SCENES: Record<string, SceneDefinition> = {
   'column-automation-turn-end': {
     name: 'column-automation-turn-end',
     reach: 'boot',
-    description: 'The Column Manager on Testing with two Move to column automations on agent turn end, run in order, for the landing page\'s Automations tab and the Workflows docs: the review loop sending findings back, then the move on. The shape of Code Review\'s pair in this repo\'s kangentic.json. Codex CLI reviews in Code Review and reports no turn end, so the desktop blocks that trigger there; the ladder hands the review on to Claude in Testing, which is where the loop runs. A scene seed on the same configured board as the other Column Manager scenes, which keeps their Code Review automation too.',
-    alt: 'The Column Manager on the Testing column, where Claude Code runs on Sonnet 5. On agent turn end holds two rows in order: Send findings back to Executing, with a condition, a limit of three runs and a message, then On to Merge, with its own condition, once.',
+    description: 'The Column Manager on Testing with two Move to column automations on agent turn end, run in order, for the landing page\'s Automations tab and the Columns and automations docs: the review loop sending findings back, then the move on, with one row of each Condition kind so both row marks show side by side. Send findings back is an Agent evaluation (the robot mark) with a Frequency of three and a Message carrying {{agentReply}}. On to Merge is a Text match (the text search mark) on the line PR: ready to merge, checked in code with no agent call, once. Codex CLI reviews in Code Review and reports no turn end, so the desktop blocks that trigger there; the ladder hands the review on to Claude in Testing, which is where the loop runs. A scene seed on the same configured board as the other Column Manager scenes, which keeps their Code Review automation too.',
+    alt: 'The Column Manager on Testing, where Claude Code runs on Sonnet 5. On agent turn end runs two rows in order: Send findings back to Executing, an Agent evaluation with a message, up to three times, then On to Merge, a Text match on PR: ready to merge, once.',
     seeds: {
       __mockSwimlanePatches: COLUMN_LADDER,
       __mockAutomations: [REVIEW_PASS_AUTOMATION, ...TESTING_TURN_END_AUTOMATIONS],
@@ -1190,6 +1220,29 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="completed-task-checkbox"]',
     focus: '[data-testid="completed-tasks-dialog"]',
     steps: [{ click: '[data-testid="expand-completed-btn"]', waitFor: '[data-testid="completed-tasks-dialog"]' }],
+  },
+  'completed-task': {
+    name: 'completed-task',
+    reach: 'boot',
+    description: 'The completed task view of an archived contoso task, opened the way a user opens one: the Done column\'s Completed header, then View details on the Set up CI/CD pipeline row, then the window\'s maximize toggle so every card fits. It shows the default Summary tab under the header strip, for the Completed tasks docs. The maximized window fills the frame between the title and status bars, so its focus rect is close to the whole frame. The report is a scene seed (`__mockTaskReports`, helpers/demo-task-report.ts) that main\'s assembleTaskReport builds. The header strip is the row\'s own summary, so its cost and agent runtime match the completed-tasks scene. The runs, tokens and changed files come from the task\'s recorded run. The columns, the second conversation, the time between runs, the moves, the commits, the background calls and the summary wording are authored.',
+    alt: 'The completed task view of Set up CI/CD pipeline. A header strip gives dates, runtime, changes, pull request, cost and status. The Summary tab shows the written summary, a route through Executing and Code Review twice each, two commits and four changed files.',
+    seeds: { __mockTaskReports: COMPLETED_TASK_REPORTS },
+    ready: '[data-testid="completed-route"]',
+    focus: '[data-testid="task-detail-dialog"]',
+    steps: COMPLETED_TASK_STEPS,
+  },
+  'completed-task-usage': {
+    name: 'completed-task-usage',
+    reach: 'boot',
+    description: 'The same completed task view, maximized, after a click on Usage, for the Completed tasks docs: the Runs table over two conversations (main, and Code Review\'s isolated one) with its per-tool popovers, Models and tokens from the run\'s own ledger (one model, so one row), and the background calls with Code Review\'s Agent evaluation met once and not met once, then the summary call. The same scene seed as completed-task.',
+    alt: 'The Usage tab of the completed CI/CD pipeline task: four runs across a main and a Code Review conversation, each with its column, model, permissions, runtime, cost and tool calls, then tokens by kind and background calls that ran once and skipped once.',
+    seeds: { __mockTaskReports: COMPLETED_TASK_REPORTS },
+    ready: '[data-testid="completed-models"]',
+    focus: '[data-testid="task-detail-dialog"]',
+    steps: [
+      ...COMPLETED_TASK_STEPS,
+      { click: '[data-testid="completed-task-tabs-usage"]', waitFor: '[data-testid="completed-task-tabs-usage"][aria-selected="true"]' },
+    ],
   },
 
   // ---------------------------------------------------------------- settings, one per tab

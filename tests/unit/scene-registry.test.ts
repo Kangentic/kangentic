@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
 import { SCENES, isRigStep, type DemoBootStep, type RigStep, type SceneDefinition } from '../../tests/captures/scenes';
-import { DEMO_AGENT_OVERRIDES, DEMO_SESSIONS, DEMO_TASKS, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
 import { loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
@@ -344,6 +344,28 @@ describe('scene registry', () => {
     }
     // Vacuity guard: the column-automation and column-handoff scenes both seed one.
     expect(checked).toBeGreaterThanOrEqual(2);
+  });
+
+  it('seeds a task report only for an archived task of the open project', () => {
+    // The mock serves a `__mockTaskReports` entry for whatever id it is keyed by, so a typo'd or
+    // live task id fails silently: View details on the row opens the thin derived report, the
+    // ready selector never resolves, and the scene times out with nothing to say why. Only an
+    // archived contoso task has a row in the Completed Tasks dialog the scenes open it from.
+    const archivedContosoIds = new Set(DEMO_TASKS.filter((task) => task.projectId === PROJECT_CONTOSO && task.archivedDaysAgo).map((task) => task.id));
+    let checked = 0;
+    const seededTaskIds = new Set<string>();
+    for (const scene of scenes) {
+      const reports = (scene.seeds ?? {}).__mockTaskReports as Record<string, unknown> | undefined;
+      for (const taskId of Object.keys(reports ?? {})) {
+        checked += 1;
+        seededTaskIds.add(taskId);
+        expect(archivedContosoIds.has(taskId), `${scene.name} seeds a report for ${taskId}, which is not an archived contoso task`).toBe(true);
+      }
+    }
+    // Vacuity guard: the two completed-task scenes each seed one.
+    expect(checked).toBeGreaterThanOrEqual(2);
+    // The one authored report web-demo-parity.md allows: every scene that seeds one seeds the same task's.
+    expect([...seededTaskIds], 'a second task carries an authored report').toHaveLength(1);
   });
 
   it('seeds only __mock globals', () => {
