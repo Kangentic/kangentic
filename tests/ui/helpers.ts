@@ -97,12 +97,13 @@ const VITE_UNREACHED_MARKERS = ['net::ERR_CONNECTION_REFUSED', 'chrome-error://c
  * waitForViteReady already exists to absorb, so it gets the same treatment here.
  *
  * The same failed connect can also reach Playwright as the navigation being "interrupted by
- * another navigation to chrome-error://chromewebdata/": Chromium committed its network error page
- * before goto saw the error. The v0.46.0 release run hit that form in project-move.spec.ts's
- * beforeAll, with nothing in the server log and the spec passing alone, so it is retried too.
+ * another navigation to chrome-error://chromewebdata/", because Chromium committed its network
+ * error page before goto saw the error. The v0.46.0 release run hit that form in
+ * project-move.spec.ts's beforeAll, with nothing in the server log and the spec passing alone, so it
+ * is retried too.
  *
- * No assertion is ever retried: neither form means the app loaded. Any other navigation error, and
- * either form on the last attempt, is rethrown.
+ * No assertion is ever retried, since neither form means the app loaded. Any other navigation
+ * error, and either form on the last attempt, is rethrown.
  */
 export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
