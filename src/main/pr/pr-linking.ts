@@ -252,6 +252,19 @@ export function cancelPendingVerdictRepolls(): void {
   for (const taskId of [...inFlightVerdictRepolls.keys()]) clearInFlightVerdictRepoll(taskId);
 }
 
+/**
+ * Drop one task's merge-verdict re-polls, both the unknown hold and the
+ * in-flight chain. Used for a task that is gone, and for one that just forgot
+ * its PR (`forgetPRLinkOnTodoReset`). A re-poll's timer resolves the row with
+ * `force` or `bypassThrottle` and never looks at the lane, so a chain left
+ * running could link the forgotten PR again from a branch a partial cleanup
+ * left behind.
+ */
+export function cancelVerdictRepollsForTask(taskId: string): void {
+  clearPendingVerdictRepoll(taskId);
+  clearInFlightVerdictRepoll(taskId);
+}
+
 export interface PRLinkDeps {
   tasks: TaskRepository;
   /** Repo root used as the resolver `cwd` when the task has no worktree of its own. */
@@ -627,8 +640,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
       // A task deleted mid-hold still fires its re-poll timer; nothing below
       // runs, so the entry it left behind is dropped here rather than lingering
       // until the next project switch clears every re-poll at once.
-      clearPendingVerdictRepoll(taskId);
-      clearInFlightVerdictRepoll(taskId);
+      cancelVerdictRepollsForTask(taskId);
       return { status: 'no-anchor', task: null };
     }
 
@@ -856,7 +868,8 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     if (shaChanged) patch.head_sha = freshSha;
     // Never cleared here, only corrected: a resolve that simply did not reach
     // Tier 6 (a Tier-1 hit, a base-tip bail) says nothing about whether the
-    // recorded branch is still right. Cleanup paths null it with `branch_name`.
+    // recorded branch is still right. Only the row insert and the To Do move's
+    // `forgetPRLinkOnTodoReset` null it.
     const pushedBranchChanged = discoveredPushedBranch != null && discoveredPushedBranch !== task.pushed_branch;
     if (pushedBranchChanged) patch.pushed_branch = discoveredPushedBranch;
 
@@ -1022,6 +1035,11 @@ export function prRepollInFlightFromGitConfig(gitConfig: AppConfig['git'] | unde
  * name that could link WRONGLY: a merge-back's `git push origin HEAD:develop`
  * would otherwise make Tier 5 answer with the base branch's own PR.
  *
+ * Nothing is recorded for a task in To Do. A push can finish while a To Do
+ * move holds the task lock, and that push belongs to the work the move threw
+ * away. Recording it after the move forgot the PR (`forgetPRLinkOnTodoReset`)
+ * would let Tier 5 link the old PR again.
+ *
  * The patch is only `{ id, pushed_branch }` against a row re-read under the
  * task lock, so it cannot clobber a concurrent PR-link write.
  */
@@ -1038,7 +1056,7 @@ export async function recordPushedBranchForSession(
   } catch {
     return;
   }
-  const { tasks } = repos;
+  const { tasks, swimlanes } = repos;
   const task = tasks.getBySessionId(sessionId);
   if (!task) return;
 
@@ -1048,6 +1066,7 @@ export async function recordPushedBranchForSession(
   await withTaskLock(task.id, async () => {
     const fresh = tasks.getById(task.id);
     if (!fresh) return;
+    if (swimlanes.getById(fresh.swimlane_id)?.role === 'todo') return;
     const effectiveBase = fresh.base_branch || fresh.resolved_base_branch || defaultBaseBranch;
     if (branch === fresh.branch_name || branch === fresh.pushed_branch || branch === effectiveBase) return;
     tasks.update({ id: fresh.id, pushed_branch: branch });

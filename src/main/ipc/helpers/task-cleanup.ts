@@ -369,7 +369,9 @@ export async function cleanupTaskResources(
     // Guard against concurrent delete: the task row may already be gone
     // by the time removeWorktree resolves. Update is idempotent.
     // `pushed_branch` is deliberately kept: it is a remote fact and a PR
-    // anchor that outlives the local checkout, like `pr_number`.
+    // anchor that outlives the local checkout. A To Do move forgets it
+    // afterwards (`forgetPRLinkOnTodoReset`); a delete and a Backlog demote
+    // keep it.
     if (removed && tasks.getById(task.id)) {
       tasks.update({
         id: task.id,

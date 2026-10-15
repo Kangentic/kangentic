@@ -601,7 +601,8 @@ Task moved back from Done (into any non-todo, non-done column)
 Task moved to To Do
   → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
   → Agent adapters notified so they can drop per-directory state (see below)
-  → DB references cleared (worktree_path, branch_name set to null)
+  → DB references cleared once the directory is removed (worktree_path, branch_name, resolved_base_branch set to null; head_sha captured first when readable)
+  → For a task that did its own work, the PR link (pr_url, pr_number, pr_state, pr_merge_readiness), pushed_branch and head_sha are cleared too, and its merge-verdict re-polls are cancelled (forgetPRLinkOnTodoReset)
   → Next activation creates a fresh worktree and branch
 
 Task deleted

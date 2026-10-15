@@ -652,7 +652,7 @@ Returns the linked PR (number, url, state, merge readiness) on success. "Searche
 
 ### kangentic_move_task
 
-Move a task to a different column, optionally placing it at a chosen slot in that column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task, and moving OUT of Done un-archives it again so it returns to the board. Moving to To Do kills the session and removes the worktree.
+Move a task to a different column, optionally placing it at a chosen slot in that column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task, and moving OUT of Done un-archives it again so it returns to the board. Moving to To Do kills the session, removes the worktree, and drops the PR link of a task that did its own work.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

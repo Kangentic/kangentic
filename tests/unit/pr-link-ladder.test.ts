@@ -140,7 +140,8 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
   };
 });
 
-import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession, cancelPendingVerdictRepolls, prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig, clearPRCheckStamps, lastPRCheckAt } from '../../src/main/pr/pr-linking';
+import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession, cancelPendingVerdictRepolls, cancelVerdictRepollsForTask, prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig, clearPRCheckStamps, lastPRCheckAt } from '../../src/main/pr/pr-linking';
+import { forgetPRLinkOnTodoReset } from '../../src/main/pr/pr-link-reset';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -204,7 +205,8 @@ function worktreeTask(
  * and kept the base. Without it this is a reset (To Do, delete, the Backlog
  * sweep, a missing directory at startup): `branch_name` and the base go with
  * the checkout, the sha is captured when it could be read, and
- * `pushed_branch` survives either way (a remote fact).
+ * `pushed_branch` survives (a remote fact). A To Do move then forgets the PR,
+ * `pushed_branch` and the sha too (`forgetPRLinkOnTodoReset`, tested below).
  */
 function reclaimedWorktreeTask(
   anchors: { branch?: string | null; headSha?: string | null; pushedBranch?: string | null; resolvedBase?: string | null } = {},
@@ -2164,6 +2166,119 @@ describe('linkPRForTask in-flight verdict re-poll', () => {
 });
 
 /**
+ * Dropping ONE task's merge-verdict re-polls (`cancelVerdictRepollsForTask`),
+ * which a task that forgot its PR on a To Do move relies on. The project-wide
+ * `cancelPendingVerdictRepolls` would also stop every other task's chain on the
+ * board, so the other task's re-poll firing is half of what these prove.
+ *
+ * Each task is armed with BOTH kinds: the 30 s in-flight chain, and the 5 s
+ * unknown hold that takes over while GitHub recomputes and leaves the chain's
+ * timer alone. A re-poll resolves the row through `deps.tasks.getById`, so a
+ * getById call after the cancel is the signal that a timer survived. That signal
+ * still moves after a forget, when the row has no pr_number and a stray re-poll
+ * never reaches the by-number resolver.
+ */
+describe('cancelVerdictRepollsForTask: one task at a time', () => {
+  const HOLD_MS = 5_000;
+  const CHAIN_MS = 30_000;
+  let answers: Record<number, string>;
+
+  beforeEach(() => {
+    cancelPendingVerdictRepolls();
+    vi.useFakeTimers();
+    answers = {};
+    conn.byNumber = (_cwd: unknown, prNumber: unknown) => ({
+      ...resolved(Number(prNumber)),
+      mergeReadiness: answers[Number(prNumber)],
+    });
+  });
+
+  afterEach(() => {
+    cancelPendingVerdictRepolls();
+    vi.useRealTimers();
+  });
+
+  /**
+   * An open PR with an in-flight chain AND an unknown hold armed, both on the
+   * same deps (a hold's timer re-polls with the deps that scheduled it, and the
+   * chain only survives that re-poll when they carry `repollInFlightVerdict`).
+   */
+  async function armedTask(prNumber: number) {
+    const task = reclaimedWorktreeTask({ branch: `slug-${prNumber}` }, {
+      pr_number: prNumber, pr_url: `u${prNumber}`, pr_state: 'open', pr_merge_readiness: 'blocked',
+    });
+    const getByIdSpy = vi.fn((): Task | undefined => task);
+    const baseDeps = depsFor(task, { repollInFlightVerdict: true });
+    const deps = { ...baseDeps, tasks: { ...(baseDeps.tasks as object), getById: getByIdSpy } as never };
+
+    // CI is running: the verdict writes through and arms the 30 s chain.
+    answers[prNumber] = 'running';
+    await linkPRForTask(task.id, deps);
+    // GitHub recomputes: the hold arms its 5 s timer and leaves the chain alone.
+    answers[prNumber] = 'unknown';
+    await linkPRForTask(task.id, deps);
+    return { task, deps, getByIdSpy };
+  }
+
+  it('drops that task\'s hold and chain and leaves the other task\'s re-polls firing', async () => {
+    const taskA = await armedTask(10);
+    const taskB = await armedTask(11);
+    // Two kinds per task. The count is what proves both were really armed.
+    expect(vi.getTimerCount()).toBe(4);
+    const baselineA = taskA.getByIdSpy.mock.calls.length;
+    const baselineB = taskB.getByIdSpy.mock.calls.length;
+
+    cancelVerdictRepollsForTask(taskA.task.id);
+    // Red-green: deleting either clear inside it leaves one of A's timers, so this reads 3.
+    expect(vi.getTimerCount()).toBe(2);
+
+    // Both PRs are still in flight at the next answer.
+    answers[10] = 'running';
+    answers[11] = 'running';
+
+    // The 5 s hold: B's fires, A's is gone.
+    await vi.advanceTimersByTimeAsync(HOLD_MS);
+    expect(taskA.getByIdSpy.mock.calls.length - baselineA).toBe(0);
+    expect(taskB.getByIdSpy.mock.calls.length - baselineB).toBe(1);
+
+    // The 30 s chain: B's fires again and re-arms, A's is gone.
+    await vi.advanceTimersByTimeAsync(CHAIN_MS - HOLD_MS);
+    expect(taskA.getByIdSpy.mock.calls.length - baselineA).toBe(0);
+    expect(taskB.getByIdSpy.mock.calls.length - baselineB).toBe(2);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('forgetPRLinkOnTodoReset stops that task\'s re-polls and leaves the other task\'s firing', async () => {
+    const taskA = await armedTask(10);
+    const taskB = await armedTask(11);
+    expect(vi.getTimerCount()).toBe(4);
+
+    const context = { mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } } } as never;
+    // The snapshot handleTaskMove took before the cleanup, when the checkout was still there.
+    const cleared = forgetPRLinkOnTodoReset(context, taskA.deps.tasks, {
+      id: taskA.task.id, worktree_path: '/old-wt', branch_name: 'old-slug', pushed_branch: null, head_sha: null,
+    }, 'proj-1');
+
+    // The premise: the link really was forgotten, so only the cancel can stop a re-poll.
+    expect(cleared).toBe(true);
+    expect(taskA.task.pr_number).toBeNull();
+    expect(vi.getTimerCount()).toBe(2);
+    // After the forget, which reads the row itself.
+    const baselineA = taskA.getByIdSpy.mock.calls.length;
+    const baselineB = taskB.getByIdSpy.mock.calls.length;
+    answers[11] = 'running';
+
+    await vi.advanceTimersByTimeAsync(HOLD_MS);
+    expect(taskA.getByIdSpy.mock.calls.length - baselineA).toBe(0);
+    expect(taskB.getByIdSpy.mock.calls.length - baselineB).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(CHAIN_MS - HOLD_MS);
+    expect(taskA.getByIdSpy.mock.calls.length - baselineA).toBe(0);
+    expect(taskB.getByIdSpy.mock.calls.length - baselineB).toBe(2);
+  });
+});
+
+/**
  * `linkPR`'s board-config-first base resolution:
  *   defaultBaseBranch = boardConfigManager.getDefaultBaseBranchForPath(projectPath)
  *     || configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch
@@ -2456,6 +2571,98 @@ describe('linkPRForTask: a task with no worktree', () => {
 });
 
 /**
+ * A To Do move forgets the task's PR (`forgetPRLinkOnTodoReset`), and the
+ * resolve after the task leaves To Do must not find it again. The shape is a
+ * task resteered into a side fix: that run pushed
+ * `test/goto-vite-chrome-error-retry` and opened and merged PR #574 from it.
+ * A PR keeps its source branch name after the branch is deleted, so Tier 5
+ * on a kept `pushed_branch` answers with the old PR.
+ *
+ * The new run's worktree is cut from base with no commits yet, so Tier 3 is
+ * gated off and Tier 6 has no ref to read: Tier 5 is the only way back to #574,
+ * which is what makes the second case below the red half of the pair.
+ */
+describe('linkPRForTask after a To Do move forgot the PR', () => {
+  const OLD_PUSHED_BRANCH = 'test/goto-vite-chrome-error-retry';
+
+  /** The row `cleanupTaskResources` leaves: checkout gone, sha captured, the PR and the push kept. */
+  function rowAfterTodoCleanup(): Task {
+    return reclaimedWorktreeTask(
+      { headSha: HEX_SHA, pushedBranch: OLD_PUSHED_BRANCH },
+      { pr_number: 574, pr_url: 'https://github.com/owner/repo/pull/574', pr_state: 'merged', pr_merge_readiness: 'ready' },
+    );
+  }
+
+  /** The task leaves To Do: a fresh worktree on a new slug, on base's tip. */
+  function leaveTodo(task: Task): void {
+    Object.assign(task, { worktree_path: '/wt', branch_name: 'new-slug' });
+    git.branch = 'new-slug';
+    git.aheadCount = '0';
+  }
+
+  function answerOnlyTheOldBranch(): void {
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === OLD_PUSHED_BRANCH ? resolved(574, 'merged') : null);
+  }
+
+  it('does not link the old PR again through the forgotten pushed_branch', async () => {
+    answerOnlyTheOldBranch();
+    const task = rowAfterTodoCleanup();
+    const sendSpy = vi.fn();
+    const context = { mainWindow: { isDestroyed: () => false, webContents: { send: sendSpy } } } as never;
+    const taskRepo = {
+      getById: () => task,
+      update: vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; }),
+    } as never;
+
+    // The snapshot handleTaskMove took before the cleanup, when the worktree was still there.
+    const cleared = forgetPRLinkOnTodoReset(context, taskRepo, {
+      id: task.id, worktree_path: '/old-wt', branch_name: 'old-slug', pushed_branch: OLD_PUSHED_BRANCH, head_sha: HEX_SHA,
+    }, 'proj-1');
+    expect(cleared).toBe(true);
+    expect(sendSpy).toHaveBeenCalledWith(IPC.TASK_PR_LINK_CHANGED, 'proj-1');
+
+    leaveTodo(task);
+    const result = await linkPRForTask(task.id, depsFor(task, { force: false }));
+
+    expect(queriedBranches()).not.toContain(OLD_PUSHED_BRANCH);
+    expect(conn.calls).not.toContain('byNumber');
+    expect(result.task?.pr_number ?? null).toBeNull();
+  });
+
+  it('red half: clearing only the PR fields lets Tier 5 link the old PR again', async () => {
+    answerOnlyTheOldBranch();
+    const task = rowAfterTodoCleanup();
+    Object.assign(task, { pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null });
+
+    leaveTodo(task);
+    const result = await linkPRForTask(task.id, depsFor(task, { force: false }));
+
+    expect(queriedBranches()).toContain(OLD_PUSHED_BRANCH);
+    expect(result.status).toBe('linked');
+    expect(result.task?.pr_number).toBe(574);
+  });
+});
+
+describe('forgetPRLinkOnTodoReset: a task deleted while the cleanup ran', () => {
+  it('returns false and writes and pushes nothing when the row is gone', () => {
+    const sendSpy = vi.fn();
+    const context = { mainWindow: { isDestroyed: () => false, webContents: { send: sendSpy } } } as never;
+    const getById = vi.fn((): Task | undefined => undefined);
+    const update = vi.fn();
+
+    const cleared = forgetPRLinkOnTodoReset(context, { getById, update } as never, {
+      id: 'task-deleted', worktree_path: '/old-wt', branch_name: null, pushed_branch: null, head_sha: null,
+    }, 'proj-1');
+
+    // The own-work gate passed, so the missing row is what returned false.
+    expect(getById).toHaveBeenCalledWith('task-deleted');
+    expect(cleared).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * `autoLinkPRForTask` is the gate every implicit trigger (a move, a session
  * going idle) passes through before `linkPR`. It mirrored the ladder's old
  * anchor gate, so a no-worktree task whose push WAS recorded still bailed
@@ -2514,15 +2721,19 @@ describe('autoLinkPRForTask: the anchor gate admits pushed_branch', () => {
  * Tier 5 link the base branch's own PR).
  */
 describe('recordPushedBranchForSession', () => {
-  /** `boardBase: null` models a board config that names no default base. */
+  /**
+   * `boardBase: null` models a board config that names no default base.
+   * `laneRole` is the role of the lane the task sits in when the record runs.
+   */
   function contextFor(
     task: Task | undefined,
     updateSpy: ReturnType<typeof vi.fn>,
-    options: { boardBase?: string | null } = {},
+    options: { boardBase?: string | null; laneRole?: 'todo' | 'done' | null } = {},
   ): IpcContext {
     const boardBase = options.boardBase === undefined ? 'develop' : options.boardBase;
     repos.value = {
       tasks: { getById: () => task, getBySessionId: () => task, update: updateSpy },
+      swimlanes: { getById: () => ({ id: 'lane', role: options.laneRole ?? null }) },
     } as never;
     return {
       currentProjectId: 'proj-1',
@@ -2599,6 +2810,19 @@ describe('recordPushedBranchForSession', () => {
     const context = contextFor(undefined, updateSpy);
 
     await recordPushedBranchForSession(context, 'sess-unknown', 'feature/x');
+
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing for a task a To Do move just reset', async () => {
+    // The push finished while the move held the task lock, so the record runs
+    // after the move forgot the PR. Writing it would hand Tier 5 the old PR's
+    // source branch again. The row is what the reset leaves: no checkout, no
+    // branch, no pushed_branch, so none of the three name refusals applies.
+    const updateSpy = vi.fn();
+    const context = contextFor(reclaimedWorktreeTask(), updateSpy, { laneRole: 'todo' });
+
+    await recordPushedBranchForSession(context, 'sess-1', 'test/goto-vite-chrome-error-retry');
 
     expect(updateSpy).not.toHaveBeenCalled();
   });
