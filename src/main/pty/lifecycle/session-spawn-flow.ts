@@ -75,6 +75,12 @@ export interface SpawnFlowContext {
    */
   forgetSessionGrid?: (sessionId: string) => void;
   /**
+   * Drop the transcript anchors kept for a row this spawn replaces under a
+   * different id: that id ends no more turns. A context built without this
+   * keeps them.
+   */
+  forgetTranscriptAnchors?: (sessionId: string) => void;
+  /**
    * Drop a resize stashed under this spawn's own id after `takePendingResize`
    * read it: one that reached a promotion's placeholder during the host round
    * trip. A context built without this keeps it.
@@ -406,6 +412,7 @@ export async function performSpawn(
     if (sibling.id !== id) {
       context.host.post({ type: 'removeSession', sessionId: sibling.id });
       context.forgetSessionGrid?.(sibling.id);
+      context.forgetTranscriptAnchors?.(sibling.id);
     }
   }
 

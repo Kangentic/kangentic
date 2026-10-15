@@ -696,6 +696,28 @@ describe('Respawn grid', () => {
     expect(lastSpawnGrid()).toEqual([210, 48]);
   });
 
+  /**
+   * The respawn's sibling drain deletes the exited predecessor's row without a
+   * kill, so the drain itself must drop the predecessor's transcript anchors
+   * (session-manager-turn-anchor.test.ts covers kill, suspend and eviction).
+   */
+  it('forgets the transcript anchors of the exited predecessor it replaces', async () => {
+    const { session, triggerExit } = await spawnFor('task-respawn-anchors');
+    triggerExit(1);
+    const anchorMaps = manager as unknown as {
+      idleTranscriptAnchors: Map<string, unknown>;
+      turnTranscriptAnchors: Map<string, unknown>;
+    };
+    anchorMaps.idleTranscriptAnchors.set(session.id, { anchor: null, settling: false });
+    anchorMaps.turnTranscriptAnchors.set(session.id, { turnStartedAt: 1, anchor: null });
+
+    const { session: successor } = await spawnFor('task-respawn-anchors', { resuming: true });
+
+    expect(successor.id).not.toBe(session.id);
+    expect(anchorMaps.idleTranscriptAnchors.has(session.id)).toBe(false);
+    expect(anchorMaps.turnTranscriptAnchors.has(session.id)).toBe(false);
+  });
+
   it('a killed predecessor hands nothing on', async () => {
     const { session } = await spawnFor('task-killed-resize');
     manager.resize(session.id, 170, 45);
