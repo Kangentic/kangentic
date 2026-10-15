@@ -375,10 +375,11 @@ that wait once.
 
 - **On the task's main session the recap is the whole prompt** and ends "reply with a short summary
   of where the work stands, then wait". The message the resume carried (a column's message, a
-  plan-exit continuation) and the column's task template are not sent: a conversation old enough to
-  expire belongs to a stale task. The automation runner records every message row of that move as
-  skipped, "Not sent" (`AgentStartReport.withholdMessages`), and so does a move whose legacy Start
-  agent row opened the session. A cross-agent handoff that resumes the target agent's own deleted
+  plan-exit continuation) and the column's task template are not sent, and neither is the task's own
+  `auto_command`: a conversation old enough to expire belongs to a stale task. The automation runner
+  records every message row of that move as skipped, "Not sent"
+  (`AgentStartReport.withholdMessages`), and so does a move whose legacy Start agent row opened the
+  session on that recap. A cross-agent handoff that resumes the target agent's own deleted
   conversation sends no column message either. The turn that answers the recap runs no On agent
   turn end rows and no workflow step (`automations/turn-end/recap-turns.ts`). That turn began at the
   spawn, before the session first went idle, and it lasts until the agent receives a prompt after
@@ -405,9 +406,12 @@ the project on screen and whenever a project becomes current (`useProjectSwitchE
 is a synchronous handler that removes what it returns, so a notice shows at most once however the
 two takes race. It can show not at all: a renderer reload between the take and the toast loses
 it, and a take that resolves after the user switched to another project is dropped rather than
-toasted over that board. One notice gives a toast naming the task, the old conversation's date, and whether
-its message was sent. Several give one toast with counts, which is the usual shape after a long
-absence, since every suspended task expires on the same launch.
+toasted over that board. Each notice gives its own toast, one sentence naming the task and the old
+conversation's date: "Fix login redirect" started a new conversation because the one from Sep 3
+expired. A long absence expires every suspended task on the same launch, so the toast limit drops
+the oldest. The toast does not say whether a message was held back: the agent summarizing instead
+of acting shows that, the run log records it for a column's rows, and a handoff logs it only in
+main.
 
 The queue is what keeps the startup notice. The auto-opened project's recovery starts while the
 window is still loading, before App.tsx subscribes and before the project store holds the opened

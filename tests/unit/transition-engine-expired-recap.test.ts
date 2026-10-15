@@ -340,7 +340,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         makeTask() as unknown as SpawnTask, null, false, '/code-review', undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: false });
       expect(capturedOptions?.resume).toBe(true);
       expect(isRecapTurn(spawnedSessionId(sessionManager), aTurnStartedBeforeNow())).toBe(false);
     });
@@ -466,7 +466,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
       );
 
       const prompt = capturedOptions?.prompt ?? '';
-      expect(outcome.messageDropped).toBe(true);
+      expect(outcome.recapOnly).toBe(true);
       expect(prompt).not.toContain(COLUMN_PROMPT);
       // Fixed parts of the main session's recap take well under 1,500 of the budget.
       expect(requestedRooms).toHaveLength(1);
@@ -504,7 +504,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
       expect(prompt.length).toBe(NO_ROOM_PROMPT.length);
       expect(prompt === NO_ROOM_PROMPT).toBe(true);
       expect(capturedOptions?.resume).toBe(false);
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
       // The notice still tells the user their conversation was replaced.
       expect(notices).toHaveLength(1);
     });
@@ -533,16 +533,14 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
       );
 
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: true });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, resumePromptUnsent: true });
       const prompt = capturedOptions?.prompt ?? '';
       expect(capturedOptions?.resume).toBe(false);
       // The template's task block is the prompt after the recap, and the message is nowhere in it.
       expect(prompt).toContain('for context');
       expect(prompt).toContain('Fix login flow');
       expect(prompt).not.toContain('/code-review');
-      // The message was not dropped on purpose, so the notice does not say so.
       expect(notices).toHaveLength(1);
-      expect(notices[0].messageDropped).toBe(false);
     });
 
     it('is false for the same isolated column with no template: the message is the fresh prompt, last in it', async () => {
@@ -553,7 +551,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
       );
 
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
       expect(capturedOptions?.prompt?.endsWith(`\n\n${CARRIED_MESSAGE}`)).toBe(true);
     });
 
@@ -580,28 +578,8 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         makeTask() as unknown as SpawnTask, null, false, CARRIED_MESSAGE, undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: true, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
       expect(capturedOptions?.prompt).not.toContain('/code-review');
-    });
-
-    it.each([
-      ['no message', undefined],
-      ['a blank message', '   '],
-    ])('drops nothing on the main session when it carried %s: the outcome and the notice both say the message was kept', async (_label, carriedMessage) => {
-      const notices: ConversationExpiredNotice[] = [];
-      const { engine } = makeEngine({
-        sessionRepo: resumableRepo(),
-        projectPath,
-        services: { onConversationExpired: (notice) => notices.push(notice) },
-      });
-
-      const outcome = await engine.resumeSuspendedSession(
-        makeTask() as unknown as SpawnTask, null, false, carriedMessage, undefined, 'claude',
-      );
-
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false });
-      expect(notices).toHaveLength(1);
-      expect(notices[0].messageDropped).toBe(false);
     });
 
     // An always_spawn_new column passes `forceFresh` (agent-spawn.ts): it spawns
@@ -616,7 +594,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { forceFresh: true },
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: true });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: true });
       expect(capturedOptions?.resume).toBe(false);
       const prompt = capturedOptions?.prompt ?? '';
       expect(prompt).toContain('Fix login flow');
@@ -631,7 +609,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { forceFresh: true },
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: false });
       expect(capturedOptions?.resume).toBe(false);
       expect(capturedOptions?.prompt).toBe(CARRIED_MESSAGE);
     });
@@ -650,7 +628,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
       );
 
       // A legacy row carries no resume message, so none is dropped.
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
       expect(capturedOptions?.resume).toBe(false);
     });
 
@@ -662,7 +640,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         makeTask() as unknown as SpawnTask, null, undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: false });
     });
   });
 

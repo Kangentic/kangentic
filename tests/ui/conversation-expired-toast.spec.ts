@@ -76,7 +76,6 @@ function fireConversationExpired(page: Page, notice: {
   projectId: string;
   taskTitle: string;
   lastActiveAt: string | null;
-  messageDropped: boolean;
 }) {
   return page.evaluate((payload) => {
     (window as unknown as {
@@ -86,21 +85,20 @@ function fireConversationExpired(page: Page, notice: {
 }
 
 test.describe('task:conversationExpired push', () => {
-  test('shows an info toast naming the task, and says when its message was not sent', async () => {
+  test('shows one sentence naming the task and when its old conversation last ran', async () => {
     const { browser, page } = await launch();
     try {
       await fireConversationExpired(page, {
         projectId: CURRENT_PROJECT_ID,
         taskTitle: 'Fix login redirect',
         lastActiveAt: '2026-08-16T14:00:00.000Z',
-        messageDropped: true,
       });
 
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Fix login redirect' });
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast).toContainText('started a new conversation');
-      await expect(toast).toContainText('had expired');
-      await expect(toast).toContainText('Its pending message was not sent.');
+      await expect(toast).toContainText('started a new conversation because the one from');
+      await expect(toast).toContainText('expired.');
+      await expect(toast).not.toContainText('pending message');
     } finally {
       await browser.close();
     }
@@ -110,12 +108,12 @@ test.describe('task:conversationExpired push', () => {
     const { browser, page } = await launch();
     try {
       await fireConversationExpired(page, {
-        projectId: OTHER_PROJECT_ID, taskTitle: 'Background Task', lastActiveAt: null, messageDropped: false,
+        projectId: OTHER_PROJECT_ID, taskTitle: 'Background Task', lastActiveAt: null,
       });
       // Both pushes cross the same channel in order, so once the second has
       // rendered the first has definitively been handled and held.
       await fireConversationExpired(page, {
-        projectId: CURRENT_PROJECT_ID, taskTitle: 'Foreground Task', lastActiveAt: null, messageDropped: false,
+        projectId: CURRENT_PROJECT_ID, taskTitle: 'Foreground Task', lastActiveAt: null,
       });
       await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Foreground Task' }))
         .toBeVisible({ timeout: 5000 });
@@ -129,10 +127,10 @@ test.describe('task:conversationExpired push', () => {
     const { browser, page } = await launch();
     try {
       await fireConversationExpired(page, {
-        projectId: OTHER_PROJECT_ID, taskTitle: 'Held Task', lastActiveAt: null, messageDropped: false,
+        projectId: OTHER_PROJECT_ID, taskTitle: 'Held Task', lastActiveAt: null,
       });
       await fireConversationExpired(page, {
-        projectId: CURRENT_PROJECT_ID, taskTitle: 'Barrier Task', lastActiveAt: null, messageDropped: false,
+        projectId: CURRENT_PROJECT_ID, taskTitle: 'Barrier Task', lastActiveAt: null,
       });
       await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Barrier Task' }))
         .toBeVisible({ timeout: 5000 });
@@ -153,7 +151,7 @@ test.describe('task:conversationExpired push', () => {
     const { browser, page } = await launch();
     try {
       await fireConversationExpired(page, {
-        projectId: CURRENT_PROJECT_ID, taskTitle: 'Shown Once Task', lastActiveAt: null, messageDropped: false,
+        projectId: CURRENT_PROJECT_ID, taskTitle: 'Shown Once Task', lastActiveAt: null,
       });
       const shownOnce = page.locator('[data-testid="toast"]').filter({ hasText: 'Shown Once Task' });
       await expect(shownOnce).toBeVisible({ timeout: 5000 });
@@ -163,7 +161,7 @@ test.describe('task:conversationExpired push', () => {
       // A take that would repeat the first notice runs no later than this
       // one's, so once this toast is up a repeat would be too.
       await fireConversationExpired(page, {
-        projectId: CURRENT_PROJECT_ID, taskTitle: 'After Return Task', lastActiveAt: null, messageDropped: false,
+        projectId: CURRENT_PROJECT_ID, taskTitle: 'After Return Task', lastActiveAt: null,
       });
       await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'After Return Task' }))
         .toBeVisible({ timeout: 5000 });
@@ -174,21 +172,24 @@ test.describe('task:conversationExpired push', () => {
     }
   });
 
-  test('shows several held notices as one toast with counts', async () => {
+  test('shows several held notices as one toast each, with no summary', async () => {
     const { browser, page } = await launch();
     try {
-      for (const taskTitle of ['First Held', 'Second Held', 'Third Held']) {
+      const taskTitles = ['First Held', 'Second Held', 'Third Held'];
+      for (const taskTitle of taskTitles) {
         await fireConversationExpired(page, {
-          projectId: OTHER_PROJECT_ID, taskTitle, lastActiveAt: null, messageDropped: taskTitle === 'First Held',
+          projectId: OTHER_PROJECT_ID, taskTitle, lastActiveAt: null,
         });
       }
 
       await openProjectProgrammatically(page, OTHER_PROJECT_ID);
 
-      const countToast = page.locator('[data-testid="toast"]').filter({ hasText: '3 tasks started a new conversation' });
-      await expect(countToast).toBeVisible({ timeout: 5000 });
-      await expect(countToast).toContainText('1 pending message was not sent.');
-      await expect(page.locator('[data-testid="toast"]')).toHaveCount(1);
+      for (const taskTitle of taskTitles) {
+        await expect(page.locator('[data-testid="toast"]').filter({ hasText: taskTitle }))
+          .toHaveCount(1, { timeout: 5000 });
+      }
+      await expect(page.locator('[data-testid="toast"]')).toHaveCount(3);
+      await expect(page.locator('text=/3 tasks started/')).toHaveCount(0);
     } finally {
       await browser.close();
     }

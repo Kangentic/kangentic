@@ -46,7 +46,17 @@
  * A legacy Start agent row (manifest `needs: []`) opens the agent through
  * `legacySpawnAgent`, not `startAgent`. When that start was recap-only, the
  * next Send message row asks `startAgent`, which finds the session already
- * there and reports the withhold the legacy row could not.
+ * there and reports the withhold the legacy row could not. That row sends no
+ * message itself, so when no row after it sends the task's own `auto_command`,
+ * `spawnAgent` delivers it once the group ends, unless the start was
+ * recap-only.
+ *
+ * A Send message row with no message to send starts the agent the same way
+ * from the other side: the runner calls `startAgent(undefined)`, because an
+ * empty message is no pending prompt, and then the row returns "No message to
+ * send." without calling `deliverToAgent`. On a fresh spawn the task's own
+ * command could not take the prompt slot, so `spawnAgent` delivers it once the
+ * group ends.
  *
  * Red-green: delete the `if (outcome?.recapOnly) return { withholdMessages: ... }`
  * line in `startAgent` and the first test fails; key it on `outcome?.startOver`
@@ -64,12 +74,25 @@
  * line and the first two "no row that needs the agent" tests fail with nothing
  * delivered; delete the `if (outcome?.recapOnly) return ...` line and the
  * recap-only-with-resume-prompt-unsent test there fails with the command delivered.
+ * Delete the `await deliverToAgent('', 'immediate')` after a legacy row's start
+ * and the first "after a legacy Start agent row" test fails with nothing
+ * delivered; deliver there even on a recap-only start and the second fails.
+ * Drop `&& !signal?.aborted` from that branch and only the superseded-move test
+ * fails; drop `startedAgentInGroup &&` and only the already-live-session test
+ * fails; key the branch on the outcome's `startOver` and only the expired
+ * fresh-pass test fails.
+ * Delete the `startedAgentInGroup = true;` line inside `startAgent` (the one
+ * after `engine.resumeSuspendedSession`, not `legacySpawnAgent`'s) and the Send
+ * message rows with no message to send fail with nothing delivered, while the
+ * tests whose row delivers the command itself keep passing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentStartReport } from '../../src/main/automations/automation-runner';
 import type { SpawnOutcome } from '../../src/main/transition-engine/transition-engine';
 import type { AutoCommandMode, AutomationConfig, AutomationRunStatus, ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
 import type { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
+import type { AutomationAdapter } from '../../src/main/automations/shared/automation-adapter';
+import { AUTOMATION_MANIFEST } from '../../src/shared/automation-manifest';
 
 const mockTaskGetById = vi.fn();
 const mockEnsureTaskWorktree = vi.fn();
@@ -284,7 +307,7 @@ beforeEach(() => {
 
 describe('spawnAgent: an expired conversation withholds the column\'s messages', () => {
   it('reports the messages withheld, with the run-log reason, when the outcome is recap-only', async () => {
-    const report = await startAgentThroughSpawnAgent({ startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false });
+    const report = await startAgentThroughSpawnAgent({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
 
     // The reason is what the run log shows beside each skipped message row, so
     // it is pinned by its opening words rather than the whole sentence.
@@ -294,19 +317,19 @@ describe('spawnAgent: an expired conversation withholds the column\'s messages',
   });
 
   it('reports nothing for an ordinary resume, so the column\'s messages go out', async () => {
-    const report = await startAgentThroughSpawnAgent({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+    const report = await startAgentThroughSpawnAgent({ startOver: null, recapOnly: false, resumePromptUnsent: false });
 
     expect(report).toBeUndefined();
   });
 
   it('reports nothing for an expired start-over that is not recap-only (an isolated column\'s own fresh pass)', async () => {
-    const report = await startAgentThroughSpawnAgent({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+    const report = await startAgentThroughSpawnAgent({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
 
     expect(report).toBeUndefined();
   });
 
   it('reports nothing for a conversation that never started, which is a fresh spawn and not a recap', async () => {
-    const report = await startAgentThroughSpawnAgent({ startOver: 'never-started', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+    const report = await startAgentThroughSpawnAgent({ startOver: 'never-started', recapOnly: false, resumePromptUnsent: false });
 
     expect(report).toBeUndefined();
   });
@@ -399,7 +422,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
   }
 
   it('delivers nothing and logs once when the outcome is recap-only and the column has a message', async () => {
-    await runHandoff({ startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false });
+    await runHandoff({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
 
     expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
     expect(withheldLogLines()).toHaveLength(1);
@@ -407,7 +430,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
 
   it('withholds the task\'s own auto_command the same way', async () => {
     await runHandoff(
-      { startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false },
+      { startOver: 'expired', recapOnly: true, resumePromptUnsent: false },
       { columnMessage: false, taskAutoCommand: 'Run the checks' },
     );
 
@@ -417,7 +440,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
 
   it('logs nothing when the outcome is recap-only but there is no message to withhold', async () => {
     await runHandoff(
-      { startOver: 'expired', recapOnly: true, messageDropped: false, resumePromptUnsent: false },
+      { startOver: 'expired', recapOnly: true, resumePromptUnsent: false },
       { columnMessage: false },
     );
 
@@ -426,7 +449,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
   });
 
   it('delivers the column\'s message once for an ordinary handoff', async () => {
-    await runHandoff({ startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+    await runHandoff({ startOver: null, recapOnly: false, resumePromptUnsent: false });
 
     expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledTimes(1);
     expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
@@ -444,7 +467,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
 
   it('delivers the task\'s own auto_command once for an ordinary handoff', async () => {
     await runHandoff(
-      { startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false },
+      { startOver: null, recapOnly: false, resumePromptUnsent: false },
       { columnMessage: false, taskAutoCommand: 'Run the checks' },
     );
 
@@ -456,7 +479,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
   });
 
   it('still delivers when the start-over expired but is not recap-only (an isolated column\'s own fresh pass)', async () => {
-    await runHandoff({ startOver: 'expired', recapOnly: false, messageDropped: false, resumePromptUnsent: false });
+    await runHandoff({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
 
     expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledTimes(1);
     expect(withheldLogLines()).toHaveLength(0);
@@ -472,7 +495,7 @@ const TASK_COMMAND = 'Run the checks';
 
 /** A spawn outcome that changed nothing; a test names only the fields it cares about. */
 function outcomeOf(fields: Partial<SpawnOutcome> = {}): SpawnOutcome {
-  return { startOver: null, recapOnly: false, messageDropped: false, resumePromptUnsent: false, ...fields };
+  return { startOver: null, recapOnly: false, resumePromptUnsent: false, ...fields };
 }
 
 function enterRow(fields: Pick<ColumnAutomation, 'name' | 'type' | 'config' | 'position'>): ColumnAutomation {
@@ -556,6 +579,12 @@ interface EnterGroupScenario {
   taskFields?: Partial<Task>;
   /** The destination has no conversation to resume, so a message cannot take the prompt slot. */
   noResumableDestination?: boolean;
+  /** The task already has a live session when `spawnAgent` is called, so nothing in the move starts one. */
+  sessionAlreadyLive?: boolean;
+  /** The move's signal, which a test aborts to supersede the move mid-group. */
+  signal?: AbortSignal;
+  /** Adapters registered next to the Send message and Start agent ones, for a row that is not either. */
+  extraAdapters?: AutomationAdapter[];
 }
 
 /** No suspended conversation at the destination: the spawn is fresh from the start. */
@@ -573,7 +602,7 @@ const freshDestinationRepo = {
  * Once an agent start has resolved the task reads back with a session.
  */
 async function runEnterGroup(scenario: EnterGroupScenario): Promise<{ rows: RunLogRow[] }> {
-  let agentStarted = false;
+  let agentStarted = scenario.sessionAlreadyLive === true;
   // The engine's resume is what gives the task its session, so it reads back
   // with one from there on. That holds for the fallback start after the
   // automations too, where no row's `startAgent` wrapper below is involved.
@@ -590,6 +619,7 @@ async function runEnterGroup(scenario: EnterGroupScenario): Promise<{ rows: RunL
   const registry = new AutomationRegistry();
   registry.register(sendMessageAdapter);
   registry.register(legacySpawnAgentAdapter);
+  for (const extraAdapter of scenario.extraAdapters ?? []) registry.register(extraAdapter);
   const runLog = fakeRunLog();
 
   mockExecuteTransition.mockImplementation(async (task: Task, lane: Swimlane, _trigger: string, groupOptions: EnterGroupOptions) => runAutomations({
@@ -631,11 +661,12 @@ async function runEnterGroup(scenario: EnterGroupScenario): Promise<{ rows: RunL
     } as never,
     tasks: { getById: (...args: unknown[]) => mockTaskGetById(...args), update: vi.fn() } as never,
     sessionRepo: scenario.noResumableDestination ? freshDestinationRepo : resumableDestinationRepo,
-    task: makeTask(scenario.taskFields),
+    task: makeTask({ ...scenario.taskFields, session_id: scenario.sessionAlreadyLive ? 'session-new' : null }),
     fromSwimlaneId: '*',
     toLane: makeLane(scenario.lane),
     projectId: PROJECT_ID,
     projectPath: '/mock/project',
+    signal: scenario.signal,
   });
 
   return { rows: runLog.rows };
@@ -922,5 +953,281 @@ describe('spawnAgent: a legacy Start agent row that opened the agent on an expir
 
     expect(deliveredMessages()).toEqual([]);
     expect(rows.map((row) => row.status)).toEqual(['succeeded', 'skipped', 'skipped']);
+  });
+});
+
+/** A Run script row. Its adapter is `failingScriptAdapter`, so no shell runs. */
+function scriptRow(position: number): ColumnAutomation {
+  return enterRow({ name: 'Run script', type: 'run_script', config: { script: 'npm run setup' }, position });
+}
+
+/** Stands in for the Run script adapter: runs `beforeFailing`, then fails as a script that exits non-zero does. */
+function failingScriptAdapter(beforeFailing: () => void = () => undefined): AutomationAdapter {
+  return {
+    id: 'run_script',
+    manifest: AUTOMATION_MANIFEST.run_script,
+    describe: () => 'Run script',
+    execute: async () => {
+      beforeFailing();
+      throw new Error('Script exited with code 1.');
+    },
+  };
+}
+
+// A legacy Start agent row starts the agent and sends nothing, so in a column
+// where no row after it needs the agent, the task's own `auto_command` used to
+// go nowhere: `spawnAgent` returned as soon as it saw a session.
+describe('spawnAgent: the task\'s own auto_command after a legacy Start agent row', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    // A failed row is logged by the runner, and the error it rethrows by spawnAgent, both through console.error.
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  // Red-green: delete the `await deliverToAgent('', 'immediate')` after the
+  // enter group and this test fails with nothing delivered.
+  it('delivers the command once after the group when the legacy row is the only agent start', async () => {
+    await runEnterGroup({
+      rows: [startAgentRow(0)],
+      taskFields: { auto_command: TASK_COMMAND },
+      legacyOutcome: outcomeOf(),
+    });
+
+    expect(mockRunLegacySpawnAgent).toHaveBeenCalledTimes(1);
+    // The legacy row's session is the agent; the fallback start does not run.
+    expect(mockResumeSuspendedSession).not.toHaveBeenCalled();
+    expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+    expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ taskId: TASK_ID, sessionId: 'session-new', message: TASK_COMMAND, mode: 'immediate', freshlySpawned: true }),
+    );
+  });
+
+  // Red-green: drop the `if (legacyStartReport)` branch (deliver either way)
+  // and this test fails with the command typed over the recap.
+  it('delivers nothing when the legacy start opened on an expired conversation\'s recap', async () => {
+    await runEnterGroup({
+      rows: [startAgentRow(0)],
+      taskFields: { auto_command: TASK_COMMAND },
+      legacyOutcome: outcomeOf({ startOver: 'expired', recapOnly: true }),
+    });
+
+    expect(deliveredMessages()).toEqual([]);
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('the task\'s command is not sent'));
+  });
+
+  it('delivers the command once when a Send message row after the legacy row already sent it', async () => {
+    await runEnterGroup({
+      rows: [startAgentRow(0), messageRow(COLUMN_TEXT, 1)],
+      taskFields: { auto_command: TASK_COMMAND },
+      legacyOutcome: outcomeOf(),
+    });
+
+    // The message row took the task's command in place of the column's text.
+    expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+  });
+
+  it('delivers nothing when the task has no command of its own', async () => {
+    await runEnterGroup({
+      rows: [startAgentRow(0)],
+      legacyOutcome: outcomeOf(),
+    });
+
+    expect(deliveredMessages()).toEqual([]);
+  });
+
+  // Red-green: key the branch on the outcome's `startOver` instead of on
+  // `legacyStartReport` (store `outcome?.startOver === 'expired'` in
+  // `legacySpawnAgent` and test that) and this test fails with nothing
+  // delivered. The Send message test above, which pins the column's text, does
+  // not fail under that mutation: this is the one that pins the task's command.
+  it('delivers the command once when the legacy start was an expired conversation\'s fresh pass, which is not recap-only', async () => {
+    await runEnterGroup({
+      rows: [startAgentRow(0)],
+      taskFields: { auto_command: TASK_COMMAND },
+      legacyOutcome: outcomeOf({ startOver: 'expired', recapOnly: false }),
+    });
+
+    // An isolated column keeps its own conversation and runs a normal fresh
+    // pass with the recap as context, so nothing waits on the recap and the
+    // command is the agent's first instruction.
+    expect(mockResumeSuspendedSession).not.toHaveBeenCalled();
+    expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+    expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('the task\'s command is not sent'));
+  });
+
+  // Red-green: delete the `await deliverToAgent('', 'immediate')` after the
+  // group and this test fails with nothing delivered, as does the first test
+  // in this block.
+  it('delivers the command once at the end of the group when the Send message row after the legacy row was skipped', async () => {
+    const { rows } = await runEnterGroup({
+      // A Condition with no checker behind it skips the row before it can ask
+      // for the agent, which the legacy row has already started.
+      rows: [startAgentRow(0), { ...messageRow(COLUMN_TEXT, 1), condition: 'The diff is ready for review' }],
+      taskFields: { auto_command: TASK_COMMAND },
+      legacyOutcome: outcomeOf(),
+    });
+
+    expect(rows.map((row) => [row.name, row.status])).toEqual([['Start agent', 'succeeded'], ['Message 1', 'skipped']]);
+    expect(rows[1].detail).toBe('The condition was not checked.');
+    expect(mockResumeSuspendedSession).not.toHaveBeenCalled();
+    // Once, and the task's command rather than the skipped row's text: nothing
+    // consumed it before the group ended.
+    expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+  });
+
+  // Red-green: drop `startedAgentInGroup &&` from the branch after the group and
+  // this test fails with the command delivered to a session this move did not
+  // start. The flag is set by a legacy Start agent row or by `startAgent`, and
+  // neither runs here. `spawnAgent` is an idempotent ensure, so a second call
+  // for a task whose agent is already live must not type the command at it again.
+  it('delivers nothing when the task already had a live session and no row in the group started an agent', async () => {
+    await runEnterGroup({
+      rows: [],
+      taskFields: { auto_command: TASK_COMMAND },
+      sessionAlreadyLive: true,
+    });
+
+    expect(mockRunLegacySpawnAgent).not.toHaveBeenCalled();
+    expect(mockResumeSuspendedSession).not.toHaveBeenCalled();
+    expect(deliveredMessages()).toEqual([]);
+  });
+
+  // The runner rethrows a row's OWN error, not an AbortError, when the move's
+  // signal was aborted while the row ran. `spawnAgent`'s catch rethrows only
+  // AbortErrors, so the move reaches the code after the group looking as if it
+  // ran to the end. A superseded move must not type the command.
+  //
+  // Red-green: delete `&& !signal?.aborted` from the branch after the enter
+  // group and this test fails with the command delivered.
+  it('delivers nothing when a row after the legacy row fails with its own error while the move is aborted', async () => {
+    const supersededMove = new AbortController();
+    const { rows } = await runEnterGroup({
+      rows: [startAgentRow(0), scriptRow(1)],
+      taskFields: { auto_command: TASK_COMMAND },
+      legacyOutcome: outcomeOf(),
+      signal: supersededMove.signal,
+      extraAdapters: [failingScriptAdapter(() => supersededMove.abort())],
+    });
+
+    // The legacy row started the agent, and the script row was interrupted by
+    // the abort and rethrew a plain Error: the case the gate exists for.
+    expect(mockRunLegacySpawnAgent).toHaveBeenCalledTimes(1);
+    expect(rows.map((row) => [row.name, row.status])).toEqual([['Start agent', 'succeeded'], ['Run script', 'interrupted']]);
+    expect(supersededMove.signal.aborted).toBe(true);
+    expect(deliveredMessages()).toEqual([]);
+  });
+
+  // The control: the same rows and the same failure, with the move left alone.
+  // It shows the abort, not the failing row, is what withholds the command, so
+  // a gate widened to "any failed row" fails here.
+  it('still delivers the command once when the later row failed but the move was not superseded', async () => {
+    const { rows } = await runEnterGroup({
+      rows: [startAgentRow(0), scriptRow(1)],
+      taskFields: { auto_command: TASK_COMMAND },
+      legacyOutcome: outcomeOf(),
+      extraAdapters: [failingScriptAdapter()],
+    });
+
+    expect(rows.map((row) => [row.name, row.status])).toEqual([['Start agent', 'succeeded'], ['Run script', 'failed']]);
+    expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+  });
+});
+
+// A Send message row with no message needs the agent, so the runner starts it
+// through `startAgent`, but `pendingPrompt` is undefined for an empty message
+// and the row's `execute` returns "No message to send." without calling
+// `deliverToAgent`. Nothing in the group sends the task's own `auto_command`,
+// so it has to go out once the group ends.
+describe('spawnAgent: the task\'s own auto_command after a Send message row with no message to send', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+  });
+
+  /** `readMessage` trims, so both read as no message. */
+  const EMPTY_MESSAGES = [
+    { name: 'an empty message', message: '' },
+    { name: 'a message of only whitespace', message: '  \n\t ' },
+  ];
+
+  describe.each(EMPTY_MESSAGES)('$name', ({ message }) => {
+    // Red-green: delete the `startedAgentInGroup = true;` line inside
+    // `startAgent` and this test fails with nothing delivered. The row
+    // statuses are what show the Send message row, and not the no-row
+    // fallback, started the agent.
+    it('delivers the command once after a fresh spawn whose prompt is the task template', async () => {
+      const { rows } = await runEnterGroup({
+        rows: [messageRow(message)],
+        taskFields: { auto_command: TASK_COMMAND },
+        noResumableDestination: true,
+      });
+
+      expect(mockExecuteTransition).toHaveBeenCalledTimes(1);
+      expect(mockRunLegacySpawnAgent).not.toHaveBeenCalled();
+      // No conversation to resume and no `skipPromptTemplate`, so the command
+      // could not take the prompt slot: the engine got no resume prompt at all.
+      expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+      expect(mockResumeSuspendedSession.mock.calls[0][3]).toBeUndefined();
+      expect(rows.map((row) => [row.name, row.status, row.detail])).toEqual([['Message 0', 'succeeded', 'No message to send.']]);
+      expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+      expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ taskId: TASK_ID, sessionId: 'session-new', message: TASK_COMMAND, mode: 'immediate', freshlySpawned: true }),
+      );
+    });
+
+    // Red-green: the same deletion. The command took the prompt slot and the
+    // engine reports it never reached the agent, so the restore hands it back
+    // and only the end of the group can send it.
+    it('delivers the command once after the spawn when it took the prompt slot and the engine reports the resume prompt unsent', async () => {
+      const { rows } = await runEnterGroup({
+        rows: [messageRow(message)],
+        taskFields: { auto_command: TASK_COMMAND },
+        resumeOutcome: outcomeOf({ startOver: 'never-started', resumePromptUnsent: true }),
+      });
+
+      expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+      expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(TASK_COMMAND);
+      expect(rows.map((row) => [row.name, row.status, row.detail])).toEqual([['Message 0', 'succeeded', 'No message to send.']]);
+      expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+    });
+
+    it('does not deliver the command a second time when the resume carried it as its prompt', async () => {
+      const { rows } = await runEnterGroup({
+        rows: [messageRow(message)],
+        taskFields: { auto_command: TASK_COMMAND },
+        resumeOutcome: outcomeOf({ resumePromptUnsent: false }),
+      });
+
+      expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+      expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(TASK_COMMAND);
+      expect(rows.map((row) => [row.name, row.status, row.detail])).toEqual([['Message 0', 'succeeded', 'No message to send.']]);
+      expect(deliveredMessages()).toEqual([]);
+    });
+
+    it('delivers nothing when the task has no command of its own', async () => {
+      const { rows } = await runEnterGroup({
+        rows: [messageRow(message)],
+        noResumableDestination: true,
+      });
+
+      expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+      expect(rows.map((row) => [row.name, row.status, row.detail])).toEqual([['Message 0', 'succeeded', 'No message to send.']]);
+      expect(deliveredMessages()).toEqual([]);
+    });
   });
 });

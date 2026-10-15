@@ -891,8 +891,6 @@ export interface ConversationExpiredNotice {
   taskTitle: string;
   /** When the deleted conversation last ran, as a UTC ISO timestamp; null when unknown. */
   lastActiveAt: string | null;
-  /** True when the message the resume carried (a column's message, a plan-exit continuation) was not sent. */
-  messageDropped: boolean;
 }
 
 export type ActionType =

@@ -533,6 +533,15 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   let legacyStartReport: AgentStartReport | null = null;
 
   /**
+   * Set once a row in the enter group has started the agent: a legacy Start
+   * agent row, or the first row that needs the agent. Neither always sends the
+   * task's own command (a Start agent row sends no message, and a Send message
+   * row whose message is empty sends nothing), so when no row did, it still has
+   * to go out once the group ends.
+   */
+  let startedAgentInGroup = false;
+
+  /**
    * The column the task came FROM, for `{{fromColumn}}` and a webhook payload.
    * A drag move already carries it as the settings-source lane; every other
    * entry point (create, promote, MCP create, unarchive) passes the `'*'`
@@ -599,6 +608,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         undefined,
         resolveSpawnOverrides(beforeSpawn, toLane, project),
       );
+      startedAgentInGroup = true;
       // The agent deleted the conversation this move would have resumed, so
       // the task started over from a recap that asks the agent to summarize and
       // wait. The column's messages, the one in the prompt slot included, are
@@ -675,6 +685,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           legacyConfig, task, toLane.permission_mode, signal, targetAgent,
           resolveSpawnOverrides(task, toLane, project),
         );
+        startedAgentInGroup = true;
         if (outcome?.recapOnly) legacyStartReport = { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
       },
       showNotification: (input) => showDesktopNotification(context, input),
@@ -694,10 +705,28 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     console.error('[spawnAgent] Automations failed:', error);
   }
 
-  // Nothing in the list started the agent, so the column's own "Start an agent
-  // here" setting does. An automation that started one already returned above.
   const afterAutomations = tasks.getById(task.id);
-  if (!afterAutomations || afterAutomations.session_id) return;
+  if (!afterAutomations) return;
+  if (afterAutomations.session_id) {
+    // A row in the group started the agent and no row sent the task's own
+    // command, which a message row would have taken first. It goes out now, as
+    // after the fallback start below, unless a legacy Start agent row opened on
+    // an expired conversation's recap, which is the session's whole prompt. (A
+    // recap-only start through `startAgent` already used the command up.)
+    // A superseded move sends nothing: the runner rethrows a row's own error
+    // when the move was aborted, which the catch above does not read as one.
+    if (startedAgentInGroup && pendingTaskOverride !== null && !signal?.aborted) {
+      if (legacyStartReport) {
+        console.log(`[spawnAgent] Task ${task.id.slice(0, 8)}: the conversation had expired and the agent is waiting on its recap, so the task's command is not sent.`);
+      } else {
+        await deliverToAgent('', 'immediate');
+      }
+    }
+    return;
+  }
+
+  // Nothing in the list started the agent, so the column's own "Start an agent
+  // here" setting does.
 
   try {
     await startAgent();
