@@ -97,10 +97,9 @@ const FINAL_REPLY_MAX_WINDOWS = 8;
  *
  * `since` is where the turn being judged began (`TranscriptAnchor`). With a
  * window read and an anchor in the same agent session's history file, the
- * read starts there, or at the
- * tail when the turn is longer than the tail, so nothing the turn did not
- * write can be its reply. Without one, or for an adapter with no window read,
- * the reply is the newest one in the tail, as before.
+ * read starts there, or at the tail when the turn is longer than the tail, so
+ * nothing the turn did not write can be its reply. Without one, or for an
+ * adapter with no window read, the reply is the newest one in the tail.
  */
 export async function readFinalReply(
   adapter: MessageTrailAdapter,

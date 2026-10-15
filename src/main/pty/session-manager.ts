@@ -1369,7 +1369,8 @@ export class SessionManager extends EventEmitter {
    *
    * A turn stamped before such a read landed took the copy as it stood. The
    * read running at the stamp started before the turn, so its landing moves
-   * that turn's anchor, once (noteTurnStarted).
+   * that turn's anchor, once (noteTurnStarted), unless that read never lands
+   * (transcriptReadDropped).
    *
    * A position the landing does not know (null, as after the agent session id
    * changed) leaves the copy's position and the turn's anchor where they were.
@@ -1386,6 +1387,20 @@ export class SessionManager extends EventEmitter {
       turn.followsReadInFlight = false;
       turn.anchor = this.sampleTranscriptPosition(sessionId).anchor ?? turn.anchor;
     }
+  }
+
+  /**
+   * A trail read running for the session will never land: the tracker dropped
+   * the session's state while it ran (an eviction at its session cap, a prune).
+   * A turn following that read keeps the anchor it has. The next read to land
+   * comes from a fresh state, which starts at the file's end after the turn
+   * began, so following it could skip the turn's own text. An idle copy still
+   * settling is left for that next read, since while the session stays idle
+   * the file's end is where its next turn begins.
+   */
+  transcriptReadDropped(sessionId: string): void {
+    const turn = this.turnTranscriptAnchors.get(sessionId);
+    if (turn) turn.followsReadInFlight = false;
   }
 
   /**

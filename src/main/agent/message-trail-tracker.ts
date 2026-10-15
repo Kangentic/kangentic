@@ -132,6 +132,12 @@ export interface MessageTrailSessionSource {
   setTranscriptPositionSource?(source: TranscriptPositionSource): void;
   /** Told after each read lands (`SessionManager.transcriptReadLanded`). Optional, as above. */
   transcriptReadLanded?(sessionId: string): void;
+  /**
+   * Told when a read still running will never land, because the session's
+   * state was dropped under it (`SessionManager.transcriptReadDropped`).
+   * Optional, as above.
+   */
+  transcriptReadDropped?(sessionId: string): void;
 }
 
 export interface MessageTrailTrackerDeps {
@@ -229,7 +235,8 @@ export class MessageTrailTracker extends EventEmitter implements TranscriptPosit
    * manager is told when each read lands (`transcriptReadLanded`) and asks
    * `hasPendingRead` whether more of that burst is still to come, and
    * `hasReadInFlight` whether a read running as a turn is stamped can still
-   * move that turn's anchor.
+   * move that turn's anchor. A read running when its session's state is
+   * dropped never lands, and the manager is told so (`transcriptReadDropped`).
    */
   transcriptPosition(sessionId: string): TranscriptAnchor | null {
     const state = this.states.get(sessionId);
@@ -300,6 +307,9 @@ export class MessageTrailTracker extends EventEmitter implements TranscriptPosit
     if (state.trailingTimer) clearTimeout(state.trailingTimer);
     state.trailingTimer = null;
     this.states.delete(sessionId);
+    // A read still running settles on a state no longer tracked, which
+    // announces no landing (`read`), so the manager hears it here instead.
+    if (state.readInFlight) this.deps.sessionManager.transcriptReadDropped?.(sessionId);
   }
 
   private minIntervalFor(state: TrailState): number {

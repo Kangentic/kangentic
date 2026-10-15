@@ -574,6 +574,25 @@ describe('MessageTrailTracker', () => {
       await settle(MIN_INTERVAL_MS * 3);
       expect(transcriptReadLanded).not.toHaveBeenCalled();
     });
+
+    it('tells the manager a read will never land when the session is dropped while it runs', async () => {
+      const { reads, transcriptReadLanded } = startHeldTracker();
+      const transcriptReadDropped = vi.fn();
+      Object.assign(manager, { transcriptReadDropped });
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => reads.length === 1);
+
+      manager.emit('session-removed', 's1', fakeSession('s1'));
+      expect(transcriptReadDropped).toHaveBeenCalledTimes(1);
+      expect(transcriptReadDropped).toHaveBeenCalledWith('s1');
+
+      // Intentional fixed wait: the read still settles, on a state no longer
+      // tracked, and this asserts that it then announces nothing more.
+      reads[0].resolve(100);
+      await settle(MIN_INTERVAL_MS * 3);
+      expect(transcriptReadLanded).not.toHaveBeenCalled();
+      expect(transcriptReadDropped).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('MESSAGE_TRAIL_MAX_SESSIONS eviction', () => {
@@ -587,6 +606,8 @@ describe('MessageTrailTracker', () => {
         }),
       };
       const evictionPushes: string[] = [];
+      const transcriptReadDropped = vi.fn();
+      Object.assign(manager, { transcriptReadDropped });
       const evictionTracker = new MessageTrailTracker({
         sessionManager: manager,
         resolveSessionFacts: (sessionId) => ({ sessionType: 'fake-agent', agentSessionId: sessionId, cwd: '/mock/project' }),
@@ -631,8 +652,40 @@ describe('MessageTrailTracker', () => {
       // here is direct evidence s0's trailing timer was cleared, not merely
       // abandoned still-pending.
       expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+      // s0's read landed before the eviction, so no read of it is left to drop.
+      expect(transcriptReadDropped).not.toHaveBeenCalled();
 
       clearTimeoutSpy.mockRestore();
+    });
+
+    it('tells the manager when it evicts a session whose read is still running', () => {
+      const transcriptReadDropped = vi.fn();
+      Object.assign(manager, { transcriptReadDropped });
+      const evictionTracker = new MessageTrailTracker({
+        sessionManager: manager,
+        resolveSessionFacts: (sessionId) => ({ sessionType: 'fake-agent', agentSessionId: sessionId, cwd: '/mock/project' }),
+        // Never settles, so every read started below is still running at the eviction.
+        readTrail: () => new Promise<TrailRead>(() => undefined),
+        minIntervalMs: 5000,
+        fallbackMinIntervalMs: 5000,
+      });
+      tracker = evictionTracker;
+
+      // Every step from here on is synchronous, so no read can settle in between.
+      for (let index = 0; index < MESSAGE_TRAIL_MAX_SESSIONS; index += 1) {
+        const sessionId = `s${index}`;
+        manager.sessions.set(sessionId, fakeSession(sessionId));
+        evictionTracker.schedule(sessionId);
+      }
+      expect(evictionTracker.hasReadInFlight('s0')).toBe(true);
+      expect(transcriptReadDropped).not.toHaveBeenCalled();
+
+      manager.sessions.set('s200', fakeSession('s200'));
+      evictionTracker.schedule('s200');
+
+      expect(evictionTracker.hasReadInFlight('s0')).toBe(false);
+      expect(transcriptReadDropped).toHaveBeenCalledTimes(1);
+      expect(transcriptReadDropped).toHaveBeenCalledWith('s0');
     });
   });
 

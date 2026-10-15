@@ -199,6 +199,7 @@ describe('a turn end and the workflow step', () => {
       isolatedSwimlaneId: null,
       turnStartedAt: null,
       workSerial: TURN_WORK_SERIAL,
+      transcriptAnchor: null,
     });
     await vi.waitFor(() => expect(hoisted.clearSpawnProgress).toHaveBeenCalledWith(MAIN_WINDOW, taskId));
   }
