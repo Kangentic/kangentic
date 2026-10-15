@@ -31,7 +31,7 @@
  * The directory sits under the run's parent from unit-data-root.ts, whose
  * teardown removes whatever a locked file kept this `afterAll` from removing.
  *
- * Registered in vitest.config.ts `test.setupFiles`.
+ * Registered in vitest.config.mts `test.setupFiles`.
  */
 import { afterAll } from 'vitest';
 import fs from 'node:fs';

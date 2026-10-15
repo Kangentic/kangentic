@@ -54,7 +54,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
-// `recordTerminalTrace` is gated on `__KANGENTIC_DEV__`, which vitest.config.ts
+// `recordTerminalTrace` is gated on `__KANGENTIC_DEV__`, which vitest.config.mts
 // pins to `false`, so the real implementation is a no-op here and a relayed
 // trace leaves nothing to read. Wrap it (not replace it) so the arguments the
 // relay passes are observable while every other test's behavior stays

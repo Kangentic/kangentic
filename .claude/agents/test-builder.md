@@ -148,7 +148,7 @@ Use for: dialog flows, form validation, DnD interactions, store mutations, anyth
 Use for: anything that touches a real PTY, real IPC, real session lifecycle, real file watchers, real git operations, or app-restart scenarios.
 
 - Run with `npx playwright test --project=electron`
-- workers=1 on Windows/local (opens a real Electron window); CI runs it on `ubuntu-latest` under xvfb at workers=4, sharded
+- workers=1 on Windows/local (opens a real Electron window); CI runs it on `ubuntu-24.04` under xvfb at workers=4, sharded
 - Build required first: `npm run build`
 - Always uses mock CLI fixtures (mock-claude / mock-codex / mock-gemini)
 - Examples: `branch-rename.spec.ts`, `session-resume.spec.ts`, `terminal-rendering.spec.ts`
@@ -588,7 +588,7 @@ All unit and UI tests must pass on Linux, even though most developers run Kangen
 
 - **Never hardcode personal usernames, emails, or machine-specific paths.** Use generic placeholders like `C:\Users\dev` or `/home/dev`. The repo is or will be public.
 
-- **E2E now runs on CI** on `ubuntu-latest` (xvfb, `--no-sandbox`), sharded, at workers=4 (since 2026-06-19; the workers=1 lock is Windows-only). So the Linux-safety rules above apply to E2E specs too - a spec that only ever ran green on local Windows can now fail on CI Linux. Per-test-isolated multi-`describe` specs may opt into `test.describe.configure({ mode: 'parallel' })` to use the CI workers; shared-page specs (one app shared across the file via `beforeAll`) must stay serial.
+- **E2E now runs on CI** on `ubuntu-24.04` (xvfb, `--no-sandbox`), sharded, at workers=4 (since 2026-06-19; the workers=1 lock is Windows-only). So the Linux-safety rules above apply to E2E specs too - a spec that only ever ran green on local Windows can now fail on CI Linux. Per-test-isolated multi-`describe` specs may opt into `test.describe.configure({ mode: 'parallel' })` to use the CI workers; shared-page specs (one app shared across the file via `beforeAll`) must stay serial.
 
 ## Historical Reference: 2026-04-11 Audit
 

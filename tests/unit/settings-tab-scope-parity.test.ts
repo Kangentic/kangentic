@@ -433,7 +433,7 @@ describe('settings tab/scope parity: tier grouping', () => {
 
 describe('settings tab/scope parity: mobile bridge ships in production', () => {
   // Regression guard for the mobile-bridge launch un-gate. This suite
-  // compiles with __KANGENTIC_DEV__ = false (vitest.config.ts), i.e. the
+  // compiles with __KANGENTIC_DEV__ = false (vitest.config.mts), i.e. the
   // production build - so a re-introduced `...(__KANGENTIC_DEV__ ? [...] :
   // [])` gate around either the tab entry or the registry entries would
   // make these assertions fail here, not just at runtime in a packaged app.

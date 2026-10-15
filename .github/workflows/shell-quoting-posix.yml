@@ -24,7 +24,7 @@ on:
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/shell-quote.test.ts'
-      - 'vitest.config.ts'
+      - 'vitest.config.mts'
       - '.github/workflows/shell-quoting-posix.yml'
   push:
     branches: [main]
@@ -35,7 +35,7 @@ on:
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/shell-quote.test.ts'
-      - 'vitest.config.ts'
+      - 'vitest.config.mts'
       - '.github/workflows/shell-quoting-posix.yml'
   workflow_dispatch:
 
@@ -54,7 +54,7 @@ env:
 jobs:
   posix-shells:
     name: shell quoting against real nushell and fish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository

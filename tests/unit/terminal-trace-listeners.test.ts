@@ -13,7 +13,7 @@
  *  - an entry recorded once the ring is full (the old one evicted) still
  *    reaches listeners, and the ring stays at its bound.
  *
- * The module is a no-op unless `__KANGENTIC_DEV__` is true, and vitest.config.ts
+ * The module is a no-op unless `__KANGENTIC_DEV__` is true, and vitest.config.mts
  * pins that constant to `false` by replacing the identifier in the source text
  * at transform time, so `vi.stubGlobal` cannot reach it. These tests therefore
  * bundle the real source with esbuild, defining the constant as `true`, and

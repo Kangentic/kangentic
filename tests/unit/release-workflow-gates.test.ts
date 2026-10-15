@@ -362,7 +362,7 @@ describe('release.yml job graph', () => {
     const releaseBody = jobs.find((job) => job.name === 'release')?.body ?? '';
     const legs = [...releaseBody.matchAll(/^ {10}- os: (\S+)\n {12}platform: (\S+)$/gm)].map((match) => [match[1], match[2]]);
     expect(legs).toEqual([
-      ['ubuntu-latest', 'linux'],
+      ['ubuntu-24.04', 'linux'],
       ['ubuntu-24.04-arm', 'linux-arm64'],
       ['windows-latest', 'windows'],
       ['macos-latest', 'macos-arm64'],
@@ -639,7 +639,7 @@ describe('release.yml upgrade gates baseline on the newest release OLDER than th
 
 // The pins above prove the text. This block proves the rule, by running the program the workflow
 // actually carries through a real jq against release lists shaped like the incidents. jq is
-// preinstalled on ubuntu-latest, where CI's unit job runs (and where release.yml itself calls it
+// preinstalled on ubuntu-24.04, where CI's unit job runs (and where release.yml itself calls it
 // with no install step); a developer machine without it gets the skip notice below rather than a
 // silent pass.
 const HAS_JQ = (() => {
@@ -827,13 +827,13 @@ describe.runIf(HAS_JQ)('release.yml first-arch upgrade skip, executed', () => {
 });
 
 describe.runIf(!HAS_JQ)('release.yml upgrade baseline program, executed (skipped)', () => {
-  it('skipped - jq is not on PATH; CI runs this on ubuntu-latest where it is preinstalled', () => {
+  it('skipped - jq is not on PATH; CI runs this on ubuntu-24.04 where it is preinstalled', () => {
     expect(HAS_JQ).toBe(false);
   });
 });
 
 // A local machine without jq may skip the executed block; CI may not. The comment above HAS_JQ
-// rests on ubuntu-latest shipping jq, and if that ever stops being true the six behavioural cases
+// rests on ubuntu-24.04 shipping jq, and if that ever stops being true the six behavioural cases
 // go uncollected and the file still reports green - the "reads as coverage but is not" shape this
 // whole file exists to forbid. Nothing above can catch it, because the only assertion on HAS_JQ
 // lives in the branch that runs when it is already false. This is the check that makes the
@@ -858,7 +858,7 @@ describe.runIf(RUNNING_ON_CI)('release.yml upgrade baseline program, executed (C
 const SMOKE_WORKFLOW_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'package-smoke.yml');
 const smokeWorkflowSource = fs.readFileSync(SMOKE_WORKFLOW_PATH, 'utf8');
 
-const RELEASE_RUNNERS = ['ubuntu-latest', 'ubuntu-24.04-arm', 'windows-latest', 'macos-latest', 'macos-26-intel'];
+const RELEASE_RUNNERS = ['ubuntu-24.04', 'ubuntu-24.04-arm', 'windows-latest', 'macos-latest', 'macos-26-intel'];
 
 /** The `os:` of each matrix leg in a job body. Legs open with `- os: <runner>` at ten spaces. */
 function matrixRunners(workflowName: string, jobBody: string): string[] {

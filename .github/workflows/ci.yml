@@ -67,6 +67,13 @@ concurrency:
 # The thin gates run AFTER their shards (`needs`), so they do not consume a
 # shard-phase slot.
 #
+# Every job runs on ubuntu-24.04, not ubuntu-latest, which moves to Ubuntu 26
+# from 2026-10-19. Move them together: the node_modules and Playwright cache
+# keys start with runner.os, which reads `Linux` on both releases, so a split
+# would hand one release's installed tree to the other. A trial on 26 has to
+# change those key prefixes too, or it restores the 24.04 tree and never runs
+# npm ci there.
+#
 # To scale as the suites grow: E2E is launch-bound and its heaviest shards
 # already spill past one workers=8 wave, so 5 is a FLOOR, not a donor (see the
 # e2e-shards note); unit is npm-ci-floored once cached.
@@ -110,7 +117,7 @@ jobs:
   #   publish-protocol.yml only runs on a protocol-v* tag) and lives here now.
   checks:
     name: Lint, Typecheck, Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -172,7 +179,7 @@ jobs:
   # must not be followed by a second red for the same cause.
   demo:
     name: Web demo (build + smoke)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -212,7 +219,7 @@ jobs:
   # ONE Vitest summary on the run page and is the required status check.
   unit-shards:
     name: Unit Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -256,7 +263,7 @@ jobs:
     name: Unit tests (Vitest)
     needs: [unit-shards]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check out repository
@@ -292,11 +299,11 @@ jobs:
   # not gated by a serial merge. Install is the same plain `npm ci` as every other
   # tier, restored from the one shared node_modules cache (see the inline note on
   # the cache step). Chromium's system libs already ship on
-  # ubuntu-latest, so the browser install needs no --with-deps; the binary is
+  # ubuntu-24.04, so the browser install needs no --with-deps; the binary is
   # cached. The single required status check is the thin `ui` gate below.
   playwright-shards:
     name: UI Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -330,7 +337,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
           restore-keys: ${{ runner.os }}-playwright-
-      # No --with-deps: GitHub's ubuntu-latest image already ships Chromium's
+      # No --with-deps: GitHub's ubuntu-24.04 image already ships Chromium's
       # system libraries, so the ~2min --with-deps apt install was nearly all
       # redundant (the browser binary itself is the cached step above, ~3s). If a
       # required lib is ever missing, Chromium fails to launch - re-add --with-deps.
@@ -348,7 +355,7 @@ jobs:
     name: UI tests (Playwright)
     needs: [playwright-shards]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Gate on shard results
@@ -361,7 +368,7 @@ jobs:
 
   # E2E tier (Linux only): launches the REAL bundled Electron app via
   # electron.launch() (tests/e2e/helpers.ts) under xvfb. Sharded across
-  # ubuntu-latest runners (Playwright `--shard`) - 1x cost and faster than
+  # ubuntu-24.04 runners (Playwright `--shard`) - 1x cost and faster than
   # Windows. It runs ONLY on Linux: the suite is platform-neutral, so Linux
   # covers the macOS/Linux users while the team dogfoods the Windows build, and
   # the local workers=1 lock (concurrent electron.launch() on Windows) does not
@@ -389,7 +396,7 @@ jobs:
   # comes from playwright.config.ts.
   e2e-shards:
     name: E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -424,7 +431,7 @@ jobs:
     name: E2E tests (Electron)
     needs: [e2e-shards]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Gate on shard results

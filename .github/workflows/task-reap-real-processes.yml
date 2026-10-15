@@ -27,7 +27,7 @@ name: Task reap against real processes
 # every native call the Windows and macOS readers make, so package.json and the
 # lockfile are in the filter too, as are the four source files outside
 # process-tag/ the tests import (the Windows Toolhelp listing among them, and
-# the process-tree probe that listing uses on POSIX), and vitest.config.ts,
+# the process-tree probe that listing uses on POSIX), and vitest.config.mts,
 # whose aliases and defines every one of these tests runs under.
 
 on:
@@ -47,7 +47,7 @@ on:
       - 'tests/unit/task-tagged-reap.test.ts'
       - 'tests/unit/process-label.test.ts'
       - 'tests/unit/local-connections.test.ts'
-      - 'vitest.config.ts'
+      - 'vitest.config.mts'
       - '.github/workflows/task-reap-real-processes.yml'
   push:
     branches: [main]
@@ -65,7 +65,7 @@ on:
       - 'tests/unit/task-tagged-reap.test.ts'
       - 'tests/unit/process-label.test.ts'
       - 'tests/unit/local-connections.test.ts'
-      - 'vitest.config.ts'
+      - 'vitest.config.mts'
       - '.github/workflows/task-reap-real-processes.yml'
   workflow_dispatch:
 
@@ -84,7 +84,7 @@ jobs:
       matrix:
         # Apple silicon and Intel macOS sign Apple's tools with different flags,
         # so both are worth a run.
-        os: [ubuntu-latest, macos-latest, macos-26-intel, windows-latest]
+        os: [ubuntu-24.04, macos-latest, macos-26-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:

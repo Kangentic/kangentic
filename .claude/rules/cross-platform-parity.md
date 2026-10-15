@@ -12,8 +12,9 @@ paths:
 # Rule: code and tests must behave identically across Windows, macOS, Linux, and CI
 
 The team develops and dogfoods on Windows, but CI runs its checks (typecheck, build,
-lint, unit, UI, and E2E tests) on **headless Linux** (`ubuntu-latest`; the E2E/electron tier under
-xvfb). Anything that silently depends
+lint, unit, UI, and E2E tests) on **headless Linux** (`ubuntu-24.04`; the E2E/electron tier under
+xvfb). That label is pinned on purpose. The runner note at the top of `.github/workflows/ci.yml`
+says why and how to move off it. Anything that silently depends
 on the local OS therefore passes on a developer's machine and fails only in CI, where it is
 slowest and most expensive to diagnose. This bit us with four UI tests (the Ctrl+N hotkey and the
 three split-divider drag tests) that were green on local Windows and red on every CI run because
@@ -81,10 +82,14 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
 ## Enforcement (self-maintaining)
 
 - **CI is the mechanical backstop for tests (primary):** the `unit`, `ui`, and `e2e-shards` jobs run
-  the unit, UI, and E2E (electron, under xvfb at workers=4) tiers on `ubuntu-latest` on every push
+  the unit, UI, and E2E (electron, under xvfb at workers=4) tiers on `ubuntu-24.04` on every push
   (`.github/workflows/ci.yml`), so a Windows-only-green test now fails CI at every tier - including
   E2E, which previously ran only on local Windows. This is the load-bearing guarantee; keep the UI
   and E2E gates in the required checks.
+- **Test for the runner pin:** `tests/unit/ci-workflow-hygiene.test.ts` fails when any Linux
+  `runs-on:` or matrix `os` entry in `.github/workflows/*.yml` is not `ubuntu-24.04` or
+  `ubuntu-24.04-arm`, so one job cannot drift to another Ubuntu release alone. The same file fails
+  on a literal `paths:` filter entry that names a file that no longer exists.
 - **Author-time guard for test fs writes (runs locally on Windows AND Linux):**
   `tests/unit/test-fs-writes-sandboxed.test.ts` statically scans `tests/**` for a write call
   (`mkdirSync`, `writeFileSync`, `rmSync`, `mkdtempSync`, and the rest) whose first argument is a
@@ -111,7 +116,7 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   and string pins alone stayed green for a `%%` escape cmd never honored. Path-filtered and not a
   required check, like `task-reap-real-processes.yml`.
 - **nushell and fish quoting:** `.github/workflows/shell-quoting-posix.yml` installs both on
-  `ubuntu-latest` and runs the live round trip in `command-builder.test.ts` that types the Claude
+  `ubuntu-24.04` and runs the live round trip in `command-builder.test.ts` that types the Claude
   builder's output into each. Neither quotes like POSIX sh, so `quoteArg` has a branch for each,
   and the unit tier, which has neither shell, checks only their string pins. Path-filtered and not
   a required check.

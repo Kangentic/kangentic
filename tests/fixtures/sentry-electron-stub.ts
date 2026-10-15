@@ -1,6 +1,6 @@
 /**
  * Unit-tier stand-in for `@sentry/electron/main` and `@sentry/electron/renderer`,
- * wired via the aliases in vitest.config.ts for the same reason as the
+ * wired via the aliases in vitest.config.mts for the same reason as the
  * Aptabase stub beside it: the real package's ESM build named-imports from
  * 'electron', which Node's ESM linker rejects against the CJS electron stub
  * under plain-node vitest. Suites that assert on error-reporting behavior

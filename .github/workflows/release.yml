@@ -18,7 +18,7 @@ jobs:
   # When triggered manually, create and push the tag first.
   create-tag:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       tag: v${{ inputs.version }}
@@ -66,7 +66,7 @@ jobs:
   # create-draft-release does not: a required reviewer or wait timer here would
   # stall the whole release on an approval gate.
   preflight-symbols:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require the Sentry symbol-upload token
@@ -93,7 +93,7 @@ jobs:
   # them and so does this job, which carries no `environment:` for the same
   # reason preflight-symbols does not.
   preflight-signing:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require the Apple signing and notarization secrets
@@ -151,7 +151,7 @@ jobs:
   create-draft-release:
     needs: [create-tag, preflight-symbols, preflight-signing]
     if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.preflight-symbols.result == 'success' && needs.preflight-signing.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -265,11 +265,15 @@ jobs:
     # The Linux legs carry electron-builder's per-format arch names, because the
     # package files are named with them (builder-util's getArtifactArchName) and
     # every Linux step below reads them instead of a literal.
+    #
+    # Both Linux legs pin Ubuntu 24.04 (ubuntu-24.04 and ubuntu-24.04-arm), so the
+    # two Linux packages build on one OS release. The runner note at the top of
+    # ci.yml says why every Linux job is pinned and how to move them off it.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             platform: linux
             deb_arch: amd64
             rpm_arch: x86_64
@@ -731,7 +735,7 @@ jobs:
   publish-release:
     needs: [release]
     if: ${{ !cancelled() && needs.release.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The macOS feed merge downloads both arches' zip and dmg (about 800 MB) to
     # hash them, which the old 5 minutes left too little room for.
     timeout-minutes: 15
@@ -847,7 +851,7 @@ jobs:
   demo-posters:
     needs: [publish-release]
     if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
       contents: write
@@ -955,7 +959,7 @@ jobs:
   publish-npm:
     needs: [publish-release]
     if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read

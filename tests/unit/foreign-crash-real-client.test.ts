@@ -15,7 +15,7 @@ import * as path from 'node:path';
  * SDK's minidump integration makes, and reads the envelope the client builds.
  *
  * `@sentry/electron/main` cannot load outside Electron (it reads `electron.app`
- * at import), and vitest.config.ts aliases it to a stub anyway. So the client
+ * at import), and vitest.config.mts aliases it to a stub anyway. So the client
  * classes are required from the copy of `@sentry/node` and `@sentry/core` that
  * `@sentry/electron` resolves, which is the copy the app bundles. The source
  * guard at the bottom fails if the SDK stops using that client or that call, so

@@ -32,8 +32,14 @@ for (const argument of forwarded) {
   }
 }
 
-const args = [viteBin, 'build', '--config', path.join(projectDir, 'demo', 'vite.config.mts'), ...forwarded];
-const result = spawnSync(process.execPath, args, { cwd: projectDir, stdio: 'inherit', env: process.env });
+// The config imports extensionless .ts files from src/ and tests/captures/, which Vite's native
+// config loader cannot load. Vite 8 already defaults to the bundle loader, and its own warning
+// says `native` is planned to become the default in a later major, so the build pins `bundle`.
+// That warning prints on every bundle-loaded build, so the spawn env sets
+// VITE_CONFIG_NATIVE_IGNORE_WARNING to silence it. Remove the env var together with the pin.
+const args = [viteBin, 'build', '--configLoader', 'bundle', '--config', path.join(projectDir, 'demo', 'vite.config.mts'), ...forwarded];
+const env = { ...process.env, VITE_CONFIG_NATIVE_IGNORE_WARNING: 'true' };
+const result = spawnSync(process.execPath, args, { cwd: projectDir, stdio: 'inherit', env });
 if (result.error) {
   console.error('[build:demo] could not start vite:', result.error);
   process.exit(1);
