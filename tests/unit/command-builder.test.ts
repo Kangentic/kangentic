@@ -23,10 +23,12 @@ import {
 } from '../../src/shared/paths';
 import {
   createShellArgvProbe,
+  installedPosixShells,
   installedPowerShellHosts,
   lineWithPrinterHead,
   PROBE_EXPANSION,
   typeAtCmdPrompt,
+  typeAtPosixShell,
   typeAtPowerShellPrompt,
   type ShellArgvProbe,
 } from './helpers/shell-argv-probe';
@@ -535,6 +537,41 @@ describe('Command Builder Logic', () => {
     expect(result).toBe("'use $HOME and `whoami`'");
   });
 
+  // nushell's single-quoted strings have no escapes, so the POSIX `'\''` ends
+  // the string and leaves a stray quote. Its double-quoted string escapes `\`
+  // and `"` and does not interpolate.
+  it('quoteArg double-quotes for nushell, so an apostrophe stays inside the argument', () => {
+    expect(quoteArg("it's a bug", '/usr/bin/nu')).toBe(`"it's a bug"`);
+    expect(quoteArg('say "hi" in C:\\dir\\', 'nu')).toBe('"say \\"hi\\" in C:\\\\dir\\\\"');
+    expect(quoteArg('use $HOME and $(whoami)', 'nu')).toBe('"use $HOME and $(whoami)"');
+  });
+
+  it('quoteArg writes a nushell newline as \\n, keeping the command on one line', () => {
+    expect(quoteArg("line one\nit's line two", 'nu', { multiline: true })).toBe(`"line one\\nit's line two"`);
+  });
+
+  // fish reads `\\` and `\'` as escapes inside single quotes, so every
+  // backslash is escaped too, or `a\\b` loses one and a trailing `\` leaves
+  // the quote open.
+  it('quoteArg escapes backslashes and quotes inside fish single quotes', () => {
+    expect(quoteArg("it's a bug", '/usr/bin/fish')).toBe("'it\\'s a bug'");
+    expect(quoteArg('match a\\\\b', 'fish')).toBe("'match a\\\\\\\\b'");
+    expect(quoteArg('C:\\dir\\', 'fish')).toBe("'C:\\\\dir\\\\'");
+  });
+
+  // The program name decides, ahead of the older substring gates: a directory
+  // named cmd or pwsh does not make fish or nushell a Windows shell.
+  it('quoteArg picks fish and nushell by program even under a directory named cmd or pwsh', () => {
+    expect(quoteArg("it's", '/opt/cmd/bin/fish')).toBe("'it\\'s'");
+    expect(quoteArg("it's", '/home/dev/pwsh-tools/bin/nu')).toBe(`"it's"`);
+  });
+
+  it('quoteArg keeps the POSIX form for bash, zsh and sh', () => {
+    for (const shell of ['bash', '/bin/zsh', '/bin/sh', '/opt/menu/bin/bash']) {
+      expect(quoteArg("it's C:\\dir\\", shell), shell).toBe("'it'\\''s C:\\dir\\'");
+    }
+  });
+
   it('quoteArg with shell omitted falls back to platform detection', () => {
     const result = quoteArg('hello world');
     // Should produce either single or double quotes depending on platform
@@ -866,6 +903,21 @@ describe('Windows Path Conversion for Shells (adaptCommandForShell)', () => {
     const cmd = '"/opt/homebrew/opt/node@22/bin/claude" --print "hello"';
     expect(adaptCommandForShell(cmd, '/usr/local/bin/pwsh', 'darwin')).toBe('& ' + cmd);
     expect(adaptCommandForShell(cmd, '/usr/bin/pwsh', 'linux')).toBe('& ' + cmd);
+  });
+
+  it('gives nushell a ^ before a quoted head, and only a quoted one', () => {
+    // nushell runs a string as an external command only behind `^` (the
+    // nushell book, "Strings as external commands"). A bare head is a command
+    // already, and a `^` there would also land in front of anything else a
+    // command line starts with.
+    const quoted = '"/opt/homebrew/opt/node@22/bin/claude" --print "hello"';
+    expect(adaptCommandForShell(quoted, '/opt/homebrew/bin/nu', 'darwin')).toBe('^' + quoted);
+    expect(adaptCommandForShell(quoted, '/usr/bin/nu', 'linux')).toBe('^' + quoted);
+    const bare = '/usr/local/bin/claude --print "hello"';
+    expect(adaptCommandForShell(bare, '/usr/bin/nu', 'linux')).toBe(bare);
+    expect(adaptCommandForShell(quoted, '/usr/bin/fish', 'linux')).toBe(quoted);
+    // By program name, ahead of the PowerShell substring gate.
+    expect(adaptCommandForShell(quoted, '/home/dev/pwsh-tools/bin/nu', 'linux')).toBe('^' + quoted);
   });
 
   it('treats a wsl.exe-prefixed shell spec (hand-edited config) as WSL, converting to /mnt/c/...', () => {
@@ -1396,6 +1448,75 @@ describe.skipIf(process.platform !== 'win32')('PowerShell round trip: a quote in
       expect(run.strayLines, host).toEqual([]);
       expect(run.printed, host).toEqual([['--session-id', 'probe-model', '--model', "x';Write-Output INJECTED_MARKER;'"]]);
     }
+  }, 60_000);
+});
+
+// The nushell and fish quoting rerun against the shells themselves. Both are in
+// the picker on macOS and Linux only; shell-quoting-posix.yml installs them on
+// Linux and requires them. nushell's parser is the same on Windows, so a
+// Windows machine with `nu` on PATH runs the nushell half too; fish has no
+// native Windows build. Anywhere neither is on PATH this skips, and the string
+// pins in 'Command Builder Logic' are what runs.
+const POSIX_ROUND_TRIP_SHELLS = installedPosixShells()
+  .filter((shell) => process.platform !== 'win32' || shell === 'nu');
+describe.skipIf(POSIX_ROUND_TRIP_SHELLS.length === 0)('nushell and fish round trip: an agent prompt', () => {
+  let probe: ShellArgvProbe;
+
+  beforeAll(() => {
+    probe = createShellArgvProbe();
+  });
+
+  afterAll(() => {
+    probe.dispose();
+  });
+
+  it('delivers each prompt to an agent at a quoted path byte-identical and runs nothing else', () => {
+    const prompts = [
+      "it's a bug",
+      '$(touch INJECTED_MARKER) and $HOME',
+      'a; echo INJECTED_MARKER',
+      'a | echo INJECTED_MARKER',
+      '# not a comment',
+      '{ braces } and (parens) and [brackets]',
+      '100% done %PATH%',
+      'use `whoami` here',
+      'literal \\n stays two characters',
+      'match a\\\\b',
+      'ends with a backslash\\',
+      'node "/tmp/a b/bridge.js" "x"',
+      `say ${LEFT_DOUBLE_QUOTE}hi${RIGHT_DOUBLE_QUOTE} it${RIGHT_SINGLE_QUOTE}s`,
+      "line one\nit's line two\n\tindented",
+    ];
+    for (const shell of POSIX_ROUND_TRIP_SHELLS) {
+      const lines = prompts.map((prompt, index) => {
+        const command = new CommandBuilder().buildClaudeCommand({
+          cliPath: probe.posixAgentPath ?? 'claude',
+          taskId: 'task-1',
+          cwd: process.cwd(),
+          permissionMode: 'default',
+          sessionId: `probe-${index}`,
+          shell,
+          prompt,
+        });
+        // Windows has no executable script to stand in for the agent, so node
+        // and the argv printer replace the head, as in the PowerShell round trip.
+        return probe.posixAgentPath
+          ? adaptCommandForShell(command, shell)
+          : lineWithPrinterHead(probe, shell, command, 'claude');
+      });
+      // The agent's path has a space (a Windows path, a backslash), so it is
+      // quoted, and nushell needs the `^` adaptCommandForShell adds to run it.
+      expect(lines[0], shell).toMatch(shell === 'nu' ? /^\^["']/ : /^'/);
+
+      const run = typeAtPosixShell(probe, shell, lines);
+
+      expect(run.strayLines, shell).toEqual([]);
+      prompts.forEach((prompt, index) => {
+        const argv = run.printed.find((candidate) => candidate.includes(`probe-${index}`));
+        expect(argv?.at(-1), `${shell}: ${JSON.stringify(prompt)}`).toBe(prompt);
+      });
+    }
+    expect(fs.existsSync(path.join(process.cwd(), 'INJECTED_MARKER'))).toBe(false);
   }, 60_000);
 });
 

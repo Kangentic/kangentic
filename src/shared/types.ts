@@ -6978,9 +6978,17 @@ export interface ElectronAPI {
      * A resume found the agent had deleted the task's conversation (Claude Code
      * removes transcripts older than its `cleanupPeriodDays`), so the task
      * started a new conversation with a recap instead. Also fires for a task
-     * startup recovery resumed with nobody watching.
+     * startup recovery resumed with nobody watching. A signal: main has already
+     * queued the notice, and `takeConversationExpired` is what hands it out.
      */
     onConversationExpired: (callback: (notice: ConversationExpiredNotice) => void) => () => void;
+    /**
+     * The project's queued expired-conversation notices, oldest first, removed
+     * from main's queue so each is shown once. Called on the push and whenever
+     * a project becomes current, which is what catches a startup notice the
+     * push could not deliver.
+     */
+    takeConversationExpired: (projectId: string) => Promise<ConversationExpiredNotice[]>;
     onCreatedByAgent: (callback: (taskId: string, taskTitle: string, columnName: string, projectId?: string) => void) => () => void;
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onDeletedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;

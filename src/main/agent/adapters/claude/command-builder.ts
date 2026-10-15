@@ -237,8 +237,9 @@ export class CommandBuilder {
       // For double-quoted shells (PowerShell, cmd), replace double quotes
       // with single quotes. quoteArg does the same for every value it quotes
       // for those shells (escapeForDoubleQuotedShell).
-      // For single-quoted shells (bash, zsh, WSL), double quotes inside
-      // single-quoted strings are preserved literally - no replacement needed.
+      // Unix-like shells (bash, zsh, fish, WSL, and nushell, whose string
+      // quoteArg double-quotes with `\"`) carry a double quote as written - no
+      // replacement needed.
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)
         : process.platform === 'win32';

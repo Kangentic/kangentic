@@ -1632,11 +1632,19 @@
       },
       onConversationExpired: function (callback) {
         // Tests fire this via window.__mockFireConversationExpired(notice), where
-        // `notice` is a ConversationExpiredNotice.
+        // `notice` is a ConversationExpiredNotice. Like main, it queues the notice
+        // (latest per task) BEFORE it signals, and takeConversationExpired below
+        // drains the queue, so a notice for a project that is not current waits
+        // for that project instead of being dropped.
         if (!window.__mockConversationExpiredListeners) window.__mockConversationExpiredListeners = [];
         window.__mockConversationExpiredListeners.push(callback);
         if (!window.__mockFireConversationExpired) {
           window.__mockFireConversationExpired = function (notice) {
+            if (!window.__mockPendingConversationExpired) window.__mockPendingConversationExpired = {};
+            var pending = window.__mockPendingConversationExpired[notice.projectId] || [];
+            pending = pending.filter(function (queued) { return queued.taskId !== notice.taskId; });
+            pending.push(notice);
+            window.__mockPendingConversationExpired[notice.projectId] = pending;
             var listeners = (window.__mockConversationExpiredListeners || []).slice();
             listeners.forEach(function (listener) { listener(notice); });
           };
@@ -1647,6 +1655,14 @@
           var index = listeners.indexOf(callback);
           if (index !== -1) listeners.splice(index, 1);
         };
+      },
+      takeConversationExpired: async function (projectId) {
+        // Drains what __mockFireConversationExpired queued, once, as main's
+        // synchronous handler does.
+        var queues = window.__mockPendingConversationExpired || {};
+        var pending = queues[projectId] || [];
+        delete queues[projectId];
+        return pending;
       },
       onCreatedByAgent: function (callback) {
         // Tests can fire this via window.__mockFireTaskCreatedByAgent(taskId, title, column, projectId).

@@ -1,0 +1,90 @@
+name: Shell quoting against real nushell and fish
+
+# The POSIX sibling of shell-quoting-windows.yml. nushell and fish are in the
+# shell picker on macOS and Linux, and neither quotes like POSIX sh: nushell's
+# single-quoted strings have no escapes, so they cannot hold an apostrophe, and
+# fish reads `\\` and `\'` inside its single quotes. quoteArg has a branch for
+# each, and this job types real command lines into both shells and reads back
+# the argv a node process received (typeAtPosixShell in
+# tests/unit/helpers/shell-argv-probe.ts). CI's unit tier has neither shell, so
+# it skips that block and checks only the string pins.
+#
+# Path-filtered, and deliberately NOT a required check, for the reason
+# shell-quoting-windows.yml gives: ci.yml runs at its job concurrency ceiling,
+# and this only has something to say when the escapes, the code that builds the
+# quoted line, or these tests change.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/shared/shell-quote.ts'
+      - 'src/shared/paths.ts'
+      - 'src/main/agent/adapters/claude/command-builder.ts'
+      - 'tests/unit/helpers/shell-argv-probe.ts'
+      - 'tests/unit/command-builder.test.ts'
+      - 'tests/unit/shell-quote.test.ts'
+      - 'vitest.config.ts'
+      - '.github/workflows/shell-quoting-posix.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/shared/shell-quote.ts'
+      - 'src/shared/paths.ts'
+      - 'src/main/agent/adapters/claude/command-builder.ts'
+      - 'tests/unit/helpers/shell-argv-probe.ts'
+      - 'tests/unit/command-builder.test.ts'
+      - 'tests/unit/shell-quote.test.ts'
+      - 'vitest.config.ts'
+      - '.github/workflows/shell-quoting-posix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shell-quoting-posix-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned, and checked against the digest GitHub publishes for the asset.
+  NUSHELL_VERSION: '0.116.0'
+  NUSHELL_SHA256: '9f73a6913f9515a621bd916dc91d7f3e0494e488161c2d686f6b98ffa0555945'
+
+jobs:
+  posix-shells:
+    name: shell quoting against real nushell and fish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install fish
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fish
+      - name: Install nushell
+        run: |
+          archive="nu-${NUSHELL_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/nushell/nushell/releases/download/${NUSHELL_VERSION}/$archive"
+          echo "${NUSHELL_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/nushell"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/nushell" --strip-components=1
+          echo "$RUNNER_TEMP/nushell" >> "$GITHUB_PATH"
+      # Says which shell builds this run measured.
+      - name: Report the shells under test
+        run: |
+          fish --version
+          nu --version
+      - name: Install dependencies (npm ci)
+        run: npm ci
+      - name: Round-trip the escapes through real shells
+        # A shell missing from the runner fails the run instead of skipping it.
+        env:
+          KANGENTIC_SHELL_PROBE_REQUIRE_POSIX_SHELLS: '1'
+        run: npx vitest run tests/unit/command-builder.test.ts tests/unit/shell-quote.test.ts

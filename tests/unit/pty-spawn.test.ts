@@ -95,11 +95,18 @@ describe('resolveShellArgs', () => {
   it('passes nothing to fish and nushell', () => {
     expect(resolveShellArgs('/usr/bin/fish')).toEqual({ exe: '/usr/bin/fish', args: [] });
     expect(resolveShellArgs('/usr/bin/nu')).toEqual({ exe: '/usr/bin/nu', args: [] });
+    // By program name, ahead of the cmd and PowerShell substring gates.
+    expect(resolveShellArgs('/opt/cmd/bin/fish')).toEqual({ exe: '/opt/cmd/bin/fish', args: [] });
+    expect(resolveShellArgs('/home/dev/pwsh-tools/bin/nu')).toEqual({ exe: '/home/dev/pwsh-tools/bin/nu', args: [] });
   });
 
   it('defaults to --login for bash/zsh', () => {
     expect(resolveShellArgs('/bin/bash')).toEqual({ exe: '/bin/bash', args: ['--login'] });
     expect(resolveShellArgs('/bin/zsh')).toEqual({ exe: '/bin/zsh', args: ['--login'] });
+    // Matched by program name: a path that merely contains "nu" or "fish" is
+    // still a login shell.
+    expect(resolveShellArgs('/opt/menu/bin/bash')).toEqual({ exe: '/opt/menu/bin/bash', args: ['--login'] });
+    expect(resolveShellArgs('/opt/fisheye/bin/zsh')).toEqual({ exe: '/opt/fisheye/bin/zsh', args: ['--login'] });
   });
 
   it('is case-insensitive', () => {

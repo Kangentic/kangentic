@@ -72,8 +72,12 @@ export const IPC = {
   TASK_SPAWN_WARNING: 'task:spawnWarning',
   TASK_AUTO_COMMAND_RESULT: 'task:autoCommandResult',
   // A resume found the agent had deleted the conversation, so the task started
-  // a new one with a recap (`ConversationExpiredNotice`).
+  // a new one with a recap (`ConversationExpiredNotice`). Main queues the notice
+  // and pushes it as a signal; the renderer shows what TAKE returns, both on the
+  // push and whenever a project becomes current, because startup recovery
+  // reports before the renderer could take a push (pending-conversation-expired.ts).
   TASK_CONVERSATION_EXPIRED: 'task:conversationExpired',
+  TASK_TAKE_CONVERSATION_EXPIRED: 'task:takeConversationExpired',
   TASK_SPAWN_PROGRESS: 'task:spawnProgress',
   TASK_GET_SPAWN_PROGRESS: 'task:getSpawnProgress',
   TASK_UPDATE_FROM_BASE: 'task:updateFromBase',

@@ -35,6 +35,15 @@
  * The argv printer writes every non-ASCII character as a `\uXXXX` JSON escape,
  * so the argv it prints survives whatever code page a shell decodes its output
  * in on the way back.
+ *
+ * nushell and fish get the same treatment (`typeAtPosixShell`). They are in the
+ * shell picker on macOS and Linux only, and neither quotes like POSIX sh, so
+ * `quoteArg` has a branch for each. `shell-quoting-posix.yml` installs both on
+ * Linux; anywhere else the round trip runs only where they are on PATH (nushell
+ * on Windows included, whose parser is the same; fish has no Windows build). On
+ * POSIX the probe adds `posixAgentPath`, an executable script in a directory
+ * whose name has a space, so the agent's own path is quoted the way a Homebrew
+ * `node@22` path is, and nushell has to run a quoted command head.
  */
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs';
@@ -89,7 +98,13 @@ export interface ShellArgvProbe {
   readonly percentShimPath: string;
   /** The argv printer itself, for a host that runs node directly. */
   readonly printerPath: string;
-  /** Scratch directory for the PowerShell script files. */
+  /**
+   * POSIX only (null on Windows): an executable `/bin/sh` script, in a
+   * directory whose name has a space, that runs the argv printer. Used as an
+   * agent's command head so that head is quoted.
+   */
+  readonly posixAgentPath: string | null;
+  /** Scratch directory for the PowerShell, nushell and fish script files. */
   readonly scratchDirectory: string;
   /** Removes the probe's temp directory. */
   dispose(): void;
@@ -102,15 +117,27 @@ function writeShim(directory: string): string {
   return path.join(directory, 'agent.cmd');
 }
 
+/** A `/bin/sh` script that hands its arguments to the argv printer unchanged. */
+function writePosixAgent(directory: string, printerPath: string): string {
+  fs.mkdirSync(directory);
+  const agentPath = path.join(directory, 'agent');
+  const singleQuoted = (text: string): string => `'${text.replace(/'/g, "'\\''")}'`;
+  fs.writeFileSync(agentPath, `#!/bin/sh\nexec ${singleQuoted(process.execPath)} ${singleQuoted(printerPath)} "$@"\n`);
+  fs.chmodSync(agentPath, 0o755);
+  return agentPath;
+}
+
 export function createShellArgvProbe(): ShellArgvProbe {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-argv-probe-'));
   const shimPath = writeShim(path.join(root, 'plain'));
+  const printerPath = path.join(path.dirname(shimPath), 'probe.js');
   const scratchDirectory = path.join(root, 'scratch');
   fs.mkdirSync(scratchDirectory);
   return {
     shimPath,
     percentShimPath: writeShim(path.join(root, '%KNG_PROBE%dir')),
-    printerPath: path.join(path.dirname(shimPath), 'probe.js'),
+    printerPath,
+    posixAgentPath: process.platform === 'win32' ? null : writePosixAgent(path.join(root, 'agent dir'), printerPath),
     scratchDirectory,
     dispose: () => fs.rmSync(root, { recursive: true, force: true }),
   };
@@ -241,4 +268,60 @@ export function typeAtPowerShellPrompt(probe: ShellArgvProbe, host: string, line
   });
   assertRunFinished(result, host);
   return readProbeOutput(`${result.stdout}\n${result.stderr}`);
+}
+
+/** The shells with their own `quoteArg` branch outside POSIX sh. */
+export type PosixProbeShell = 'nu' | 'fish';
+
+const POSIX_PROBE_SHELLS: readonly PosixProbeShell[] = ['nu', 'fish'];
+
+/** How each shell runs a script file without the user's own config. */
+const POSIX_SCRIPT_ARGS: Record<PosixProbeShell, readonly string[]> = {
+  nu: ['--no-config-file'],
+  fish: ['--no-config'],
+};
+
+let cachedPosixShells: PosixProbeShell[] | undefined;
+
+/**
+ * nushell and fish, where each is on PATH. `shell-quoting-posix.yml` sets
+ * KANGENTIC_SHELL_PROBE_REQUIRE_POSIX_SHELLS, so a runner that lost either
+ * fails there instead of skipping the round trip. Cached for the test file.
+ */
+export function installedPosixShells(): PosixProbeShell[] {
+  if (cachedPosixShells) return cachedPosixShells;
+  const shells: PosixProbeShell[] = [];
+  for (const shell of POSIX_PROBE_SHELLS) {
+    const version = spawnSync(shell, ['--version'], { windowsHide: true, timeout: PROBE_RUN_TIMEOUT_MS });
+    if (version.status === 0) {
+      shells.push(shell);
+    } else if (process.env.KANGENTIC_SHELL_PROBE_REQUIRE_POSIX_SHELLS === '1') {
+      throw new Error(`${shell} is not on PATH, and KANGENTIC_SHELL_PROBE_REQUIRE_POSIX_SHELLS requires it`);
+    }
+  }
+  cachedPosixShells = shells;
+  return shells;
+}
+
+/**
+ * Run each line through `shell` as a script file of its own, which the shell
+ * tokenizes as it does its prompt. One process per line, so every line's
+ * command is the script's last and its output is never held back as an
+ * intermediate value.
+ */
+export function typeAtPosixShell(probe: ShellArgvProbe, shell: PosixProbeShell, lines: readonly string[]): ProbeRun {
+  let output = '';
+  lines.forEach((line, index) => {
+    const scriptPath = path.join(probe.scratchDirectory, `typed-line-${index}.${shell}`);
+    fs.writeFileSync(scriptPath, `${line}\n`, 'utf8');
+    const result = spawnSync(shell, [...POSIX_SCRIPT_ARGS[shell], scriptPath], {
+      encoding: 'utf8',
+      env: { ...process.env, ...PROBE_ENVIRONMENT_OVERRIDES },
+      windowsHide: true,
+      timeout: PROBE_RUN_TIMEOUT_MS,
+    });
+    assertRunFinished(result, shell);
+    output += `${result.stdout}\n${result.stderr}\n`;
+  });
+  return readProbeOutput(output);
 }

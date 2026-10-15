@@ -1,12 +1,17 @@
 /**
- * UI coverage for the `task:conversationExpired` push.
+ * UI coverage for the `task:conversationExpired` notice.
  *
  * A resume that found the agent had deleted the task's conversation (Claude
  * Code removes transcripts older than its `cleanupPeriodDays`) starts a new one
  * from a recap. A task startup recovery resumes in the background would
- * otherwise start over with nobody told, so main pushes this and the renderer
- * shows an info toast. The spawn itself is covered in the unit tier; this spec
- * covers the push half.
+ * otherwise start over with nobody told, so main queues a notice and pushes a
+ * signal, and the renderer takes the queue (`tasks.takeConversationExpired`)
+ * when the signal names the current project and whenever a project becomes
+ * current. Startup recovery runs before the renderer knows which project is
+ * current, so a notice for a project that is not current must wait for it
+ * rather than be dropped. The mock's `__mockFireConversationExpired` queues
+ * before it signals, as main does. The spawn itself is covered in the unit
+ * tier; this spec covers the renderer half.
  *
  * Tier: UI (headless Chromium). No PTY, no Electron main process.
  */
@@ -108,7 +113,7 @@ test.describe('task:conversationExpired push', () => {
         projectId: OTHER_PROJECT_ID, taskTitle: 'Background Task', lastActiveAt: null, messageDropped: false,
       });
       // Both pushes cross the same channel in order, so once the second has
-      // rendered the first has definitively been handled and dropped.
+      // rendered the first has definitively been handled and held.
       await fireConversationExpired(page, {
         projectId: CURRENT_PROJECT_ID, taskTitle: 'Foreground Task', lastActiveAt: null, messageDropped: false,
       });
@@ -119,4 +124,81 @@ test.describe('task:conversationExpired push', () => {
       await browser.close();
     }
   });
+
+  test('shows a held notice once its project becomes current', async () => {
+    const { browser, page } = await launch();
+    try {
+      await fireConversationExpired(page, {
+        projectId: OTHER_PROJECT_ID, taskTitle: 'Held Task', lastActiveAt: null, messageDropped: false,
+      });
+      await fireConversationExpired(page, {
+        projectId: CURRENT_PROJECT_ID, taskTitle: 'Barrier Task', lastActiveAt: null, messageDropped: false,
+      });
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Barrier Task' }))
+        .toBeVisible({ timeout: 5000 });
+      await expect(page.locator('text=/Held Task/')).toHaveCount(0);
+
+      // The launch-time auto-open path: the project becomes current after its
+      // recovery already reported the start-over.
+      await openProjectProgrammatically(page, OTHER_PROJECT_ID);
+
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Held Task' }))
+        .toBeVisible({ timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('does not show a notice again when its project becomes current again', async () => {
+    const { browser, page } = await launch();
+    try {
+      await fireConversationExpired(page, {
+        projectId: CURRENT_PROJECT_ID, taskTitle: 'Shown Once Task', lastActiveAt: null, messageDropped: false,
+      });
+      const shownOnce = page.locator('[data-testid="toast"]').filter({ hasText: 'Shown Once Task' });
+      await expect(shownOnce).toBeVisible({ timeout: 5000 });
+
+      await openProjectProgrammatically(page, OTHER_PROJECT_ID);
+      await openProjectProgrammatically(page, CURRENT_PROJECT_ID);
+      // A take that would repeat the first notice runs no later than this
+      // one's, so once this toast is up a repeat would be too.
+      await fireConversationExpired(page, {
+        projectId: CURRENT_PROJECT_ID, taskTitle: 'After Return Task', lastActiveAt: null, messageDropped: false,
+      });
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'After Return Task' }))
+        .toBeVisible({ timeout: 5000 });
+
+      await expect(shownOnce).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('shows several held notices as one toast with counts', async () => {
+    const { browser, page } = await launch();
+    try {
+      for (const taskTitle of ['First Held', 'Second Held', 'Third Held']) {
+        await fireConversationExpired(page, {
+          projectId: OTHER_PROJECT_ID, taskTitle, lastActiveAt: null, messageDropped: taskTitle === 'First Held',
+        });
+      }
+
+      await openProjectProgrammatically(page, OTHER_PROJECT_ID);
+
+      const countToast = page.locator('[data-testid="toast"]').filter({ hasText: '3 tasks started a new conversation' });
+      await expect(countToast).toBeVisible({ timeout: 5000 });
+      await expect(countToast).toContainText('1 pending message was not sent.');
+      await expect(page.locator('[data-testid="toast"]')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
 });
+
+/** Make a project current the way a launch-time auto-open does. */
+async function openProjectProgrammatically(page: Page, projectId: string): Promise<void> {
+  await page.evaluate((id) => {
+    (window as unknown as { __mockFireProjectAutoOpened: (projectId: string) => void })
+      .__mockFireProjectAutoOpened(id);
+  }, projectId);
+}

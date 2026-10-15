@@ -7,9 +7,13 @@ import {
   escapePercentForCmd,
   isBareShellToken,
   isCmdShell,
+  isFishShell,
+  isNushellShell,
   isPowerShellShell,
   isUnixLikeShell,
   quoteCmdExecutable,
+  quoteForFish,
+  quoteForNushell,
 } from '../../src/shared/shell-quote';
 import { convertPathForShell, quoteForShell } from '../../src/renderer/utils/terminal-clipboard';
 
@@ -261,6 +265,53 @@ describe('shell predicates', () => {
     expect(isPowerShellShell('pwsh')).toBe(true);
     expect(isPowerShellShell('cmd.exe')).toBe(false);
   });
+
+  it('names nushell and fish by the program, not by letters anywhere in the path', () => {
+    for (const shell of ['nu', 'nu.exe', 'NU', '/opt/homebrew/bin/nu', 'C:\\Program Files\\nu\\bin\\nu.exe']) {
+      expect(isNushellShell(shell), shell).toBe(true);
+    }
+    for (const shell of ['/opt/menu/bin/bash', 'menu', '/usr/bin/nushell-helper', 'bash', 'fish']) {
+      expect(isNushellShell(shell), shell).toBe(false);
+    }
+    for (const shell of ['fish', '/usr/bin/fish', '/opt/homebrew/bin/fish']) {
+      expect(isFishShell(shell), shell).toBe(true);
+    }
+    for (const shell of ['/opt/fisheye/bin/bash', 'nu', 'bash']) {
+      expect(isFishShell(shell), shell).toBe(false);
+    }
+  });
+});
+
+/**
+ * Rules from the nushell book ("Working with strings") and the fish language
+ * reference ("Quotes"). The live round trip in command-builder.test.ts runs
+ * them through a real `nu` and `fish` (shell-quoting-posix.yml).
+ */
+describe('quoteForNushell', () => {
+  it('double-quotes, escaping only the backslash and the double quote', () => {
+    expect(quoteForNushell("it's")).toBe(`"it's"`);
+    expect(quoteForNushell('a\\b "c"')).toBe('"a\\\\b \\"c\\""');
+  });
+
+  it('leaves $ and parentheses alone, since a plain double-quoted string does not interpolate', () => {
+    expect(quoteForNushell('$HOME $(x) (y) {z} # | ;')).toBe('"$HOME $(x) (y) {z} # | ;"');
+  });
+
+  it('writes newlines, carriage returns and tabs as escapes', () => {
+    expect(quoteForNushell('a\r\nb\nc\rd\te')).toBe('"a\\nb\\nc\\nd\\te"');
+  });
+});
+
+describe('quoteForFish', () => {
+  it('escapes every backslash and single quote inside single quotes', () => {
+    expect(quoteForFish("it's")).toBe("'it\\'s'");
+    expect(quoteForFish('a\\\\b')).toBe("'a\\\\\\\\b'");
+    expect(quoteForFish('C:\\dir\\')).toBe("'C:\\\\dir\\\\'");
+  });
+
+  it('leaves everything else literal', () => {
+    expect(quoteForFish('$HOME "q" `w` (x)')).toBe("'$HOME \"q\" `w` (x)'");
+  });
 });
 
 describe('isBareShellToken', () => {
@@ -321,6 +372,13 @@ describe('quoteForShell', () => {
   it('still single-quotes for unix-like shells, WSL included', () => {
     expect(quoteForShell('/mnt/c/a b/x.txt', 'wsl')).toBe("'/mnt/c/a b/x.txt'");
     expect(quoteForShell("/tmp/it's.txt", 'bash')).toBe("'/tmp/it'\\''s.txt'");
+  });
+
+  it('quotes a dropped path the way nushell and fish read it', () => {
+    expect(quoteForShell("/tmp/it's.txt", '/usr/bin/nu')).toBe(`"/tmp/it's.txt"`);
+    expect(quoteForShell("/tmp/it's.txt", '/usr/bin/fish')).toBe("'/tmp/it\\'s.txt'");
+    // Consecutive spaces survive both, as they do for bash.
+    expect(quoteForShell('/home/dev/My  Docs/a.txt', 'nu')).toBe('"/home/dev/My  Docs/a.txt"');
   });
 });
 

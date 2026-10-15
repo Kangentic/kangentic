@@ -116,8 +116,6 @@ export async function buildExpiredConversationRecap(
   // session, which is this new one. No quotes around the id: a double-quoted
   // shell gets its prompt's double quotes rewritten (command-builder.ts).
   const pointer = `Read the previous conversation with the kangentic_get_transcript tool, passing sessionId ${escapeXml(input.previousAgentSessionId)}.`;
-  // No apostrophe: a unix-like host quotes the prompt in single quotes, and
-  // nushell has no escape for one inside them.
   const closing = input.mode === 'whole-prompt'
     ? 'Reply with a short summary of where the work stands, then wait for the next instruction from the user.'
     : null;

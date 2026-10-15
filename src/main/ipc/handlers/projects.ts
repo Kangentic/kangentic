@@ -23,6 +23,7 @@ import { endWorkflowAgentsOfProject } from '../../workflows/workflow-agent';
 import { detachProjectFromWorkflows } from '../../workflows/workflow-project-delete';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { notifyConversationExpired } from '../helpers/task-git';
+import { clearConversationExpired } from '../helpers/pending-conversation-expired';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone, bucketTaskCount } from '../../analytics/usage';
 import { DEFAULT_SWIMLANES } from '../../db/migrations/default-data';
@@ -115,6 +116,8 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   prRefreshScheduler.stop(projectId);
   gitFetchScheduler.stop(projectId);
   retrievalService.stop(projectId);
+  // Its toasts would name tasks of a board that no longer exists.
+  clearConversationExpired(projectId);
 
   // Out of every workflow first, while its database is open: its tasks stop
   // counting in workflows homed elsewhere, its own workflows' tasks on other
