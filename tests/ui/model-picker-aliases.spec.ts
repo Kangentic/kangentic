@@ -454,6 +454,30 @@ test.describe('Model combobox typed-text commit close paths (New Task, Advanced)
     });
   });
 
+  // The field's tip is not held shut while its menu shows: the chevron focuses the input by script
+  // as it opens the menu, and a scripted focus opens no tip, so there is nothing to hold off. The
+  // alias line therefore stays the field's description for as long as a screen reader sits on it.
+  // Every other open-menu case in this file types text the field has not committed, so none of
+  // them sees a stored alias with the menu up.
+  test('reopening the menu on a committed alias keeps its target as the field description', async () => {
+    await withAliasPage(async (page) => {
+      await openNewTaskAdvanced(page);
+      await modelInput(page).click();
+      await page.locator('button[data-model-alias="opus"]').click();
+      await expect(menu(page)).toBeHidden({ timeout: 3000 });
+      await expect(modelInput(page)).toHaveValue('Opus');
+      await expect(modelInput(page)).toHaveAccessibleDescription(OPUS_TITLE);
+
+      await fieldControl(page, 'button[aria-label="Open dropdown"]').click();
+      await expect(menu(page)).toBeVisible();
+      await expect(modelInput(page)).toHaveValue('Opus');
+      await expect(modelInput(page)).toHaveAccessibleDescription(OPUS_TITLE);
+      // The matcher retries for its whole timeout, so a pass that only held once the menu had
+      // closed again would read green. The menu is still up after the description matched.
+      await expect(menu(page)).toBeVisible();
+    });
+  });
+
   test('typing then clearing leaves the field empty when focus later leaves it', async () => {
     await withAliasPage(async (page) => {
       await openNewTaskAdvanced(page);

@@ -91,7 +91,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
                     inherits the header's `select-none` anyway. */}
                 <div
                   {...dragHandleProps}
-                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  onClick={(event: React.MouseEvent) => event.stopPropagation()}
                   aria-label={`Reorder ${swimlane.name} column`}
                   data-testid="column-drag-handle"
                   className="text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing transition-colors -ml-1"
@@ -129,8 +129,8 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
               type="button"
               data-testid="edit-column-btn"
               aria-label={`Edit ${swimlane.name} column`}
-              onClick={(e: React.MouseEvent) => {
-                e.stopPropagation();
+              onClick={(event: React.MouseEvent) => {
+                event.stopPropagation();
                 openBoardManager(swimlane.id);
               }}
               className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"

@@ -270,7 +270,7 @@ export function TaskDetailHeader({
       <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
-        <Tooltip label={toggling ? 'Working...' : isQueued ? 'Queued' : isSessionActive ? 'Pause session' : 'Resume session'}>
+        <Tooltip label={toggling ? 'Working...' : isQueued ? 'Queued (click to pause)' : isSessionActive ? 'Pause session' : 'Resume session'}>
           <button
             onClick={onToggle}
             disabled={toggling}

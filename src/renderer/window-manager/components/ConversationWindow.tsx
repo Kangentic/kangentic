@@ -471,7 +471,7 @@ export function ConversationWindow({
 
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
           {isTiled && (
-            <Tooltip label="Pop out">
+            <Tooltip label="Float this window out of the tiled layout">
               <button
                 type="button"
                 onClick={handleUndock}

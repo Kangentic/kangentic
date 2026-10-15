@@ -373,7 +373,7 @@ test.describe('Completed task view', () => {
     // The guard for the overflow test below: it sets up the same narrow strip and
     // fails loudly if the fixture, the shrink, or the metrics are not what that
     // test assumes. Under 640px the strip drops Started and Ended and keeps the
-    // span in Elapsed's hover tip.
+    // span in Elapsed's tooltip.
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
     try {
       const strip = await narrowStrip(page);

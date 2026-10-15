@@ -140,8 +140,8 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
             type="button"
             data-testid="edit-column-btn"
             aria-label={`Edit ${swimlane.name} column`}
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
+            onClick={(event: React.MouseEvent) => {
+              event.stopPropagation();
               openBoardManager(swimlane.id);
             }}
             className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"

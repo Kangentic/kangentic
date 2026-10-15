@@ -19,7 +19,7 @@
  * 8. BrowserAutomationTab master-switch gating - the dependent switches show
  *    only while the master switch is on.
  * 9. Info icon variant (BoardManagerDialog Handoff toggle) - the optional
- *    `info` prop renders an aria-hidden Info icon with a hover tip beside
+ *    `info` prop renders an aria-hidden Info icon with a tooltip beside
  *    the label, a ToggleCard without `info` renders no such icon, and
  *    clicking the icon does not flip the switch (stopPropagation).
  *
@@ -633,7 +633,7 @@ test.describe('BrowserAutomationTab master-switch gating', () => {
 // ── Gap 9: Info icon variant (BoardManagerDialog Handoff toggle) ─────────────
 //
 // ToggleCard's optional `info` prop renders an aria-hidden Info icon beside the
-// label, with the info text as its hover tip and as the switch's accessible
+// label, with the info text as its tooltip and as the switch's accessible
 // description. Clicking the icon must NOT
 // flip the switch (the icon's onClick calls stopPropagation). The Board
 // Manager's "Hand off context when the agent changes" toggle (Handoff section) is the

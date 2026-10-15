@@ -501,7 +501,7 @@ export function ModelCombobox({
             ref={inputRef}
             type="text"
             value={displayValue}
-            onChange={(e) => handleInputChange(e.target.value)}
+            onChange={(event) => handleInputChange(event.target.value)}
             onFocus={handleInputFocus}
             onKeyDown={handleInputKeyDown}
             placeholder={placeholder}

@@ -476,7 +476,7 @@ function OutcomePill({ call }: { call: TaskReportBackgroundCall }) {
   );
 }
 
-/** The automation with its type's icon and its Condition as the hover tip; else the call's job. */
+/** The automation with its type's icon and its Condition as the tooltip; else the call's job. */
 function CallLabel({ call }: { call: TaskReportBackgroundCall }) {
   const automationIconName = call.automationType ? AUTOMATION_MANIFEST[call.automationType]?.icon ?? '' : '';
   return (

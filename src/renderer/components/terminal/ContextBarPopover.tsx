@@ -104,7 +104,7 @@ export function ContextBarPopover({
    * CLI ids (`claude-sonnet-5`), which read as noise next to the humanized rows
    * above ("Sonnet 5"), so the model picker passes the same label those rows
    * use. Omit for fields whose values are already human-readable (effort levels
-   * are literally "low".."max") and the raw value is shown. The row's hover tip
+   * are literally "low".."max") and the raw value is shown. The row's tooltip
    * keeps the exact value either way, matching the option rows.
    */
   swimlaneDefaultLabel?: string | null;
@@ -259,7 +259,7 @@ export function ContextBarPopover({
       // sets like effort levels ("low" .. "max") stay snug. The max-w caps
       // pathological CLI-reported names with ellipsis truncation so they
       // can't push the popover off-screen; the full value still surfaces in
-      // the row's hover tip.
+      // the row's tooltip.
       className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 w-max max-w-[420px] max-h-[min(340px,var(--popover-available-height,340px))] overflow-y-auto overlay-popover-in"
       data-testid={testId}
       // `data-dismissable-layer`: consistency with every other menu (portaled ones get it

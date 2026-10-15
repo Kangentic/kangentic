@@ -1773,6 +1773,32 @@ test.describe('agent monitor', () => {
     }
   });
 
+  test('each summary tile describes what it counts in one full sentence', async () => {
+    // A tile is a plain div with a Tooltip around it, so its hover text lands on the div as its
+    // accessible description. A rewrite once cut each tip to a trailing fragment ("on a response
+    // from you, ..."), which no other assertion in this file reads. Exact strings, so a fragment,
+    // a swapped pair of tiles, or a dropped clause all fail.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      await expect(page.locator('[data-testid="monitor-summary-needs-you"]')).toHaveAccessibleDescription(
+        'Agents waiting on a response from you, across every project in view',
+      );
+      await expect(page.locator('[data-testid="monitor-summary-working"]')).toHaveAccessibleDescription(
+        'Agents actively running right now, across every project in view',
+      );
+      await expect(page.locator('[data-testid="monitor-summary-idle"]')).toHaveAccessibleDescription(
+        'Sessions you paused, plus any queued waiting for a free slot',
+      );
+      await expect(page.locator('[data-testid="monitor-summary-projects"]')).toHaveAccessibleDescription(
+        'Projects in view with at least one live session',
+      );
+    } finally {
+      await browser.close();
+    }
+  });
+
   /**
    * The Active tile freezes its own icon at `counts.working === 0`, so an idle machine's
    * chrome stops moving. The only prior coverage was a source-text scan in

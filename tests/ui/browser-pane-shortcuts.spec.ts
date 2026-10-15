@@ -16,8 +16,9 @@
  *   - Ctrl+D / draw button click call cancelInspect() which calls
  *     webviewRef.current?.executeJavaScript(...). In headless this throws
  *     synchronously (executeJavaScript is not a function on an HTMLElement),
- *     crashing BrowserPaneActive via the ErrorBoundary. Draw mode shortcuts
- *     cannot be tested in the UI tier.
+ *     crashing BrowserPaneActive via the ErrorBoundary. Draw mode needs a test
+ *     that stubs executeJavaScript on the webview first, as the toolbar tips
+ *     case for Undo and Clear does.
  *   - Ctrl+I calls startInspect() -> webviewRef.current?.executeJavaScript(INSPECT_SCRIPT).
  *     Same crash. Inspect shortcuts cannot be tested in the UI tier.
  *   - Ctrl+Enter (plain Enter with ctrlKey) handling moved in the PR that
@@ -473,6 +474,130 @@ test.describe('BrowserPaneActive zoom controls', () => {
 
     // hoveredRef was true -> shortcut fires -> zoomFactor steps from 1.0 to 1.1.
     await expect(zoomReset).toHaveText('110%');
+  });
+});
+
+// The toolbar's computed tips. Each control states its own tip while it works and the reason once it
+// cannot (`tipLabel`), and the zoom pair drops its key chips and its wheel line with the reason. A
+// tip's text is the trigger's accessible description (`aria-description`), so these read it there.
+// Strings are exact: a leftover shortcut or detail line on a disabled control must fail.
+test.describe('BrowserPaneActive toolbar tips', () => {
+  /** What Tooltip reads for a `Mod+<key>` combo: Ctrl+ on this mock's default platform, the Command glyph on a Mac. */
+  async function modifierPrefix(page: Page): Promise<string> {
+    const isMac = await page.evaluate(() => window.electronAPI.platform === 'darwin');
+    return isMac ? '⌘' : 'Ctrl+';
+  }
+
+  test('zoom tips carry the shortcut and the wheel line until a limit, then give the reason', async () => {
+    await openBrowserPane(sharedPage);
+    const zoomReset = sharedPage.locator('[data-testid="browser-zoom-reset"]');
+    const zoomIn = sharedPage.locator('[data-testid="browser-zoom-in"]');
+    const zoomOut = sharedPage.locator('[data-testid="browser-zoom-out"]');
+    const prefix = await modifierPrefix(sharedPage);
+    // Each label repeats its button's own name ("Zoom out"), so the description is the shortcut
+    // and the detail line alone.
+    const zoomOutTip = `${prefix}-\nOr Ctrl+scroll wheel`;
+    const zoomInTip = `${prefix}=\nOr Ctrl+scroll wheel`;
+
+    await expect(zoomReset).toHaveText('100%');
+    await expect(zoomOut).toHaveAccessibleDescription(zoomOutTip);
+    await expect(zoomIn).toHaveAccessibleDescription(zoomInTip);
+
+    // Down the Chrome ladder to the floor: 7 steps from 100%.
+    for (const percent of ['90%', '80%', '75%', '67%', '50%', '33%', '25%']) {
+      await zoomOut.click();
+      await expect(zoomReset).toHaveText(percent);
+    }
+    // No eighth click: a disabled button never becomes actionable.
+    await expect(zoomOut).toBeDisabled();
+    await expect(zoomOut).toHaveAccessibleDescription('Already at the smallest zoom');
+    // The other direction is untouched by the floor.
+    await expect(zoomIn).toHaveAccessibleDescription(zoomInTip);
+
+    // Leaving the floor brings the shortcut and the wheel line back.
+    await zoomReset.click();
+    await expect(zoomReset).toHaveText('100%');
+    await expect(zoomOut).toBeEnabled();
+    await expect(zoomOut).toHaveAccessibleDescription(zoomOutTip);
+
+    // Up the ladder to the ceiling: 9 steps from 100%.
+    for (const percent of ['110%', '125%', '150%', '175%', '200%', '250%', '300%', '400%', '500%']) {
+      await zoomIn.click();
+      await expect(zoomReset).toHaveText(percent);
+    }
+    await expect(zoomIn).toBeDisabled();
+    await expect(zoomIn).toHaveAccessibleDescription('Already at the largest zoom');
+    await expect(zoomOut).toHaveAccessibleDescription(zoomOutTip);
+  });
+
+  test('back and forward say why they are off, and describe nothing once there is history', async () => {
+    await openBrowserPane(sharedPage);
+    const back = sharedPage.getByRole('button', { name: 'Back', exact: true });
+    const forward = sharedPage.getByRole('button', { name: 'Forward', exact: true });
+
+    // A fresh pane has no history in either direction.
+    await expect(back).toBeDisabled();
+    await expect(back).toHaveAccessibleDescription('No earlier page');
+    await expect(forward).toBeDisabled();
+    await expect(forward).toHaveAccessibleDescription('No forward page');
+
+    // Give the stand-in guest a history and tell the pane it navigated, as the real guest's
+    // did-navigate does. about:blank is not http(s), so the pane records nothing for it.
+    await sharedPage.evaluate(() => {
+      const webview = document.querySelector('[data-testid="browser-webview"]');
+      if (!webview) throw new Error('no webview stub');
+      Object.assign(webview, {
+        getURL: () => 'about:blank',
+        canGoBack: () => true,
+        canGoForward: () => true,
+      });
+      webview.dispatchEvent(new Event('did-navigate'));
+    });
+
+    // Enabled, "Back" only repeats the button's own name, so there is nothing left to describe.
+    await expect(back).toBeEnabled();
+    await expect(back).toHaveAccessibleDescription('');
+    await expect(forward).toBeEnabled();
+    await expect(forward).toHaveAccessibleDescription('');
+  });
+
+  test('undo and clear say nothing is drawn until a stroke exists, and again once it is cleared', async () => {
+    await openBrowserPane(sharedPage);
+    const pane = sharedPage.locator('[data-testid="browser-pane"]');
+    const undo = pane.getByRole('button', { name: 'Undo', exact: true });
+    const clear = pane.getByRole('button', { name: 'Clear', exact: true });
+
+    await expect(undo).toBeDisabled();
+    await expect(undo).toHaveAccessibleDescription('Nothing drawn yet');
+    await expect(clear).toBeDisabled();
+    await expect(clear).toHaveAccessibleDescription('Nothing drawn yet');
+
+    // Turning draw mode on cancels Inspect through the guest's executeJavaScript, which the
+    // headless <webview> stub lacks (the file header explains the crash). A resolved promise is
+    // all that call needs, so the toggle and a real drag on the canvas work.
+    await sharedPage.evaluate(() => {
+      const webview = document.querySelector('[data-testid="browser-webview"]');
+      if (!webview) throw new Error('no webview stub');
+      Object.assign(webview, { executeJavaScript: () => Promise.resolve() });
+    });
+    await sharedPage.locator('[data-testid="browser-draw-toggle"]').click();
+    const canvasBox = await sharedPage.locator('[data-testid="browser-overlay"]').boundingBox();
+    if (!canvasBox) throw new Error('the draw canvas has no geometry');
+    await sharedPage.mouse.move(canvasBox.x + 40, canvasBox.y + 40);
+    await sharedPage.mouse.down();
+    await sharedPage.mouse.move(canvasBox.x + 120, canvasBox.y + 90, { steps: 4 });
+    await sharedPage.mouse.up();
+
+    await expect(undo).toBeEnabled();
+    await expect(undo).toHaveAccessibleDescription('Undo last stroke');
+    await expect(clear).toBeEnabled();
+    await expect(clear).toHaveAccessibleDescription('Clear all strokes');
+
+    await clear.click();
+    await expect(clear).toBeDisabled();
+    await expect(clear).toHaveAccessibleDescription('Nothing drawn yet');
+    await expect(undo).toBeDisabled();
+    await expect(undo).toHaveAccessibleDescription('Nothing drawn yet');
   });
 });
 

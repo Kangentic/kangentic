@@ -73,7 +73,7 @@ function ColumnDisc({ column }: { column: Pick<TaskReportColumn, 'color' | 'icon
 
 /**
  * A column in a table cell: its disc and name. Inside a `@container` narrower
- * than 860px the name drops and the disc carries it as its hover tip and label,
+ * than 860px the name drops and the disc carries it as its tooltip and label,
  * so a run that spanned two columns still fits a default-size window.
  */
 export function ColumnLabel({ column }: { column: TaskReportColumn }) {

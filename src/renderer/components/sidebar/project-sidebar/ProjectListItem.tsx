@@ -121,8 +121,8 @@ function ProjectListItemImpl({
         role="button"
         tabIndex={0}
         onClick={() => onSelect(project.id)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(project.id); }}
-        onContextMenu={(e) => onContextMenu(e, project)}
+        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(project.id); }}
+        onContextMenu={(event) => onContextMenu(event, project)}
         data-testid={`project-row-${project.id}`}
         className={`group w-full text-left py-2.5 text-sm transition-colors border-l-2 cursor-pointer outline-none px-3 ${
           isGrouped ? 'pl-7' : ''
@@ -137,13 +137,13 @@ function ProjectListItemImpl({
             <input
               ref={renameInputRef}
               value={editName}
-              onChange={(e) => setEditName(e.target.value)}
+              onChange={(event) => setEditName(event.target.value)}
               onBlur={handleSubmitRename}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === 'Enter') handleSubmitRename();
-                if (e.key === 'Escape') {
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === 'Enter') handleSubmitRename();
+                if (event.key === 'Escape') {
                   setEditName(project.name);
                   onCancelRename();
                 }
@@ -172,10 +172,10 @@ function ProjectListItemImpl({
           <Tooltip label="More options">
             <button
               type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onContextMenu(e, project);
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onContextMenu(event, project);
               }}
               className={`flex-shrink-0 p-1 rounded transition-[opacity,color,background-color] outline-none ${
                 isActive

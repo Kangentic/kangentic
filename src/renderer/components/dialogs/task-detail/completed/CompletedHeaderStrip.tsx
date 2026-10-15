@@ -13,7 +13,7 @@ import type { Task, TaskReport } from '../../../../../shared/types';
  * the agent ended cleanly.
  *
  * Always one row. A container query on the strip gives ground in a fixed
- * order, each step keeping what it hides in a hover tip:
+ * order, each step keeping what it hides in a tooltip:
  *  1. under 1000px, Started and Ended drop their time;
  *  2. under 860px, the separators tighten, and Changes drops its file count
  *     and Pull request its state;
@@ -133,7 +133,7 @@ interface Metric {
   key: string;
   label: string;
   value: ReactNode;
-  /** What a narrow strip hides from the value, kept as the metric's hover tip. */
+  /** What a narrow strip hides from the value, kept as the metric's tooltip. */
   tip?: string;
   /** Dropped under 640px, where the strip keeps the figures and leaves the moments to Elapsed's tip. */
   wideOnly?: boolean;

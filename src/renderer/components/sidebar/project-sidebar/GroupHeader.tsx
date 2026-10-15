@@ -97,14 +97,14 @@ export function GroupHeader({
         <CountBadge count={projectCount} variant="muted" size="sm" className="flex-shrink-0" />
       </div>
 
-      <Tooltip label="Group options">
+      <Tooltip label="Group options (or right-click)">
         <button
           type="button"
           data-group-actions
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onContextMenu(e, group);
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onContextMenu(event, group);
           }}
           className="flex-shrink-0 p-1 rounded text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/60 transition-[opacity,color,background-color] opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
           data-testid={`group-menu-${group.id}`}
