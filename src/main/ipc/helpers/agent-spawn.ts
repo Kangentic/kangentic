@@ -578,9 +578,6 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     const message = takeMessage(pendingPrompt ?? '');
     const takesPromptSlot = message !== '' && (canResumeDestination || skipPromptTemplate === true);
     if (takesPromptSlot && pendingPrompt !== undefined) promptTakenFromRow = pendingPrompt;
-    // A message that does not take the slot goes out after the spawn, and so
-    // does the task's own command: `deliverToAgent` takes it there.
-    if (!takesPromptSlot) pendingTaskOverride = overrideBeforeTake;
 
     // The continuation prompt (plan-exit auto-move) says why the session
     // restarted and asks the agent to proceed. It is a resume-only fallback:
@@ -607,11 +604,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // wait. The column's messages, the one in the prompt slot included, are
       // not sent; the runner records each as skipped with this reason.
       if (outcome?.recapOnly) return { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
-      // The engine spawned fresh with the task template as the prompt (the
-      // conversation never started or expired on an isolated column, or the
-      // column always spawns new), so the message goes out after the spawn, as
-      // on any fresh spawn.
-      if (takesPromptSlot && outcome?.resumePromptUnsent) {
+      // A message the spawn did not send goes out after it, and so does the
+      // task's own command: `deliverToAgent` sends both. The spawn did not send
+      // it when it did not take the prompt slot, or when the engine spawned
+      // fresh with the task template as the prompt (the conversation never
+      // started or expired on an isolated column, or the column always spawns
+      // new).
+      if (!takesPromptSlot || outcome?.resumePromptUnsent) {
         promptTakenFromRow = null;
         pendingTaskOverride = overrideBeforeTake;
       }
@@ -701,9 +700,12 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   if (!afterAutomations || afterAutomations.session_id) return;
 
   try {
-    // No row asked for the agent, so there is no message for an expired
-    // conversation's start-over to withhold.
     await startAgent();
+    // No row asked for the agent, so the only message is the task's own
+    // command. When the spawn did not send it, it goes out now, as it does
+    // after a message row. An expired conversation's recap-only start leaves
+    // none to send.
+    if (pendingTaskOverride !== null) await deliverToAgent('', 'immediate');
   } catch (error) {
     if (isAbortError(error)) throw error;
     // startAgent has already logged, counted, and notified.
