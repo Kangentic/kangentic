@@ -37,7 +37,7 @@
  * first load resolving late and being dropped.
  *
  * If useTerminal ever needs full hook-level mounting, add @testing-library/react
- * + jsdom to vitest.config.ts and move these tests to exercise the real
+ * + jsdom to vitest.config.mts and move these tests to exercise the real
  * effect directly, per the note in use-browser-url-logic.test.ts.
  */
 import { describe, it, expect, vi } from 'vitest';

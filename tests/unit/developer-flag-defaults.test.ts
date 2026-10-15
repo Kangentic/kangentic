@@ -5,7 +5,7 @@
  * src/main/index.ts, extracted specifically because that file cannot itself
  * be imported by a test: it is an Electron entry-point module with top-level
  * `electron` API calls (`app`, `BrowserWindow`, ...) that throw outside a
- * running Electron process, and vitest.config.ts pins `__KANGENTIC_DEV__` to
+ * running Electron process, and vitest.config.mts pins `__KANGENTIC_DEV__` to
  * `false` globally, so even an importable module could never observe the
  * "true" branch of that build-time constant. Taking `isDevBuild` as a plain
  * parameter here sidesteps both problems and lets every branch be exercised.

@@ -31,7 +31,7 @@
  * own scan below.
  *
  * This cannot be a behavioral test: __KANGENTIC_DEV__ is a compile-time
- * substitution, and vitest.config.ts pins it to `false`, so the gated branch
+ * substitution, and vitest.config.mts pins it to `false`, so the gated branch
  * is simply dead code at test time - a runtime assertion could not observe
  * whether either gate is still there or was accidentally removed. A source
  * scan is the only way to pin this, mirroring esbuild-cjs-imports.test.ts's

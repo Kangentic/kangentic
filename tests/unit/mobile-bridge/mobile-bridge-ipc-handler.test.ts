@@ -297,7 +297,7 @@ describe('registerMobileBridgeHandlers - MOBILE_TEST_RELAY', () => {
     // Belongs here rather than an inline call at the end of that test body: if
     // an assertion above it throws, an inline mockRestore() never runs and the
     // spy leaks into every later test in this file (unstubAllGlobals does not
-    // undo vi.spyOn, and this project's vitest.config.ts sets no restoreMocks).
+    // undo vi.spyOn, and this project's vitest.config.mts sets no restoreMocks).
     vi.restoreAllMocks();
   });
 

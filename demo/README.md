@@ -647,7 +647,7 @@ verified before the job runs, and listing the zip there would fail every release
 publish also means the release stands when the job fails; the run goes red and the site's own
 sync fails on the missing asset.
 
-The posters are shot on `ubuntu-latest` in Roboto, which the job installs (`fonts-roboto`) before
+The posters are shot on `ubuntu-24.04` in Roboto, which the job installs (`fonts-roboto`) before
 it shoots. The app sets no UI font of its own, so its text is Tailwind's default `--font-sans`:
 `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial`.
 A bare runner has none of the first five, so Chromium fell through to Arial's metric alias,

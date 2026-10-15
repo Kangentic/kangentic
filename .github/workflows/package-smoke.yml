@@ -78,7 +78,7 @@ jobs:
       # each target builds natively and loads its own arch's native packages.
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             package: npm run package -- --publish never
             smoke: xvfb-run -a node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
           - os: ubuntu-24.04-arm

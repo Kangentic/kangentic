@@ -19,7 +19,7 @@
  *
  * KANGENTIC_HOSTED_RELAY_URL and LOCAL_DEV_RELAY_URL are themselves
  * build-mode-independent constants - only what 'local' MODE resolves TO
- * depends on __KANGENTIC_DEV__ (invariant 3 above), which vitest.config.ts
+ * depends on __KANGENTIC_DEV__ (invariant 3 above), which vitest.config.mts
  * pins to `false`, so this suite exercises the production branch: the
  * 'local' case below asserts the hosted fallback, not loopback. The dev
  * branch (an actual `npm start` session resolving to loopback) is exercised
@@ -208,7 +208,7 @@ describe('resolveRelayUrl', () => {
  * a shared configDir). Binding inferRelayMode's raw value there gives a
  * controlled <select> a value matching no <option>, which renders blank.
  *
- * This suite compiles with __KANGENTIC_DEV__ = false (vitest.config.ts), i.e.
+ * This suite compiles with __KANGENTIC_DEV__ = false (vitest.config.mts), i.e.
  * the production build, so 'local' must come back as 'hosted' here.
  */
 describe('resolveRelayMode', () => {

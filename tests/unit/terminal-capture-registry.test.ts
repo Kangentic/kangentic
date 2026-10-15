@@ -118,7 +118,7 @@ describe('readViewportLines', () => {
 /**
  * Static pins for the three call sites that adopted the cut. None of them can be driven at the
  * unit tier. `useTerminal` needs a real DOM and a live xterm. `terminal-grid-registry` fills its
- * registry only inside `registerDevtoolsTerminal`, which `vitest.config.ts` compiles to a no-op,
+ * registry only inside `registerDevtoolsTerminal`, which `vitest.config.mts` compiles to a no-op,
  * because `__KANGENTIC_DEV__` is a transform-time `false` there.
  *
  * The scan reads the TypeScript AST, so a comment that quotes the old form and the

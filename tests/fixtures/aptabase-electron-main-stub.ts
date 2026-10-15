@@ -1,6 +1,6 @@
 /**
  * Unit-tier stand-in for `@aptabase/electron/main`, wired via the alias in
- * vitest.config.ts.
+ * vitest.config.mts.
  *
  * Why it exists: the real package ships ESM whose top level does
  * `import { app, ipcMain, net, protocol } from 'electron'`. Under plain-node

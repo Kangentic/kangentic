@@ -8,7 +8,7 @@
  * the cause. This runs in vitest's main process before any worker starts, and
  * says it once.
  *
- * Registered in vitest.config.ts `test.globalSetup`.
+ * Registered in vitest.config.mts `test.globalSetup`.
  */
 
 export const REQUIRED_NODE_API = 10;

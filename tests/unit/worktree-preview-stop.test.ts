@@ -8,7 +8,7 @@
  * The behavior cases run against a real node child that speaks `dev.js`'s side
  * of the protocol, so liveness and the files are real. The parity cases pin the
  * file names and the two bounds against the scripts themselves, which main
- * cannot import. The wiring case is a source check: `vitest.config.ts` defines
+ * cannot import. The wiring case is a source check: `vitest.config.mts` defines
  * `__KANGENTIC_DEV__` as false, so no unit test can run the gated call.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';

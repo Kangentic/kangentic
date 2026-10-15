@@ -1,3 +1,5 @@
+// The extension is .mts, not .ts, because package.json sets no "type". Vite's config loader reads a
+// .ts config as CommonJS and warns on every run that its ESM syntax would not load natively.
 import { defineConfig } from 'vitest/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

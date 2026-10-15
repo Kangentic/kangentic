@@ -2,7 +2,7 @@
  * Unit tests for src/renderer/utils/on-idle.ts.
  *
  * vitest runs this suite in the default 'node' environment (no jsdom in this
- * project's vitest.config.ts), so `window` is not a real global here. We stub
+ * project's vitest.config.mts), so `window` is not a real global here. We stub
  * `globalThis.window` per test, mirroring the pattern used by
  * tests/unit/terminal-clipboard-osc52.test.ts.
  */

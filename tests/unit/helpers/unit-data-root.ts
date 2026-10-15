@@ -16,7 +16,7 @@
  *
  * Workers are forked after this runs, so they inherit the variable.
  *
- * Registered in vitest.config.ts `test.globalSetup`.
+ * Registered in vitest.config.mts `test.globalSetup`.
  */
 import fs from 'node:fs';
 import os from 'node:os';

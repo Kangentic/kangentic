@@ -45,7 +45,7 @@ vi.mock('../../src/main/pty/lifecycle/deferred-kill', async (importOriginal) => 
   isYoungSession: () => false,
 }));
 
-// `traceTerminal` is gated on `__KANGENTIC_DEV__`, which vitest.config.ts
+// `traceTerminal` is gated on `__KANGENTIC_DEV__`, which vitest.config.mts
 // pins to `false` - the real implementation is a no-op in every test here.
 // Wrap it (not replace it) so the trace payload contract is observable via
 // `vi.mocked(traceTerminal).mock.calls` while every other test's behavior
@@ -3983,7 +3983,7 @@ describe('Post-boot geometry re-assert', () => {
    * `traceTerminal` carries the forensics contract docs/session-lifecycle.md
    * promises ("names the trigger"), but it is otherwise unobserved anywhere
    * in this file - its `__KANGENTIC_DEV__` gate is pinned off by
-   * vitest.config.ts's `define`, so the real implementation is a no-op here.
+   * vitest.config.mts's `define`, so the real implementation is a no-op here.
    * Spying it directly is the only way to pin which trigger fired, and that
    * `resize-applied`'s field is `preTuiReady`, not the old `preFirstOutput`.
    */
