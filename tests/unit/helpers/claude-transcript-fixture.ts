@@ -19,11 +19,13 @@
  *
  * `promptSource` and `origin` are on the prompt lines because the Claude CLI
  * writes them (src/main/agent/adapters/claude/background-shell-transcript.ts:16
- * cites `promptSource: "system"`; nothing in this repo cites `origin`). The
- * parser reads neither, so no test here depends on their values.
+ * cites `promptSource: "system"`). The parser reads neither, so no test here
+ * depends on their values.
  */
 import { parseClaudeTranscriptWindow } from '../../../src/main/agent/adapters/claude/transcript-parser';
-import type { MessageTrailAdapter } from '../../../src/main/agent/message-trail-read';
+import { readTrail, type MessageTrailAdapter } from '../../../src/main/agent/message-trail-read';
+import type { MessageTrailSessionFacts } from '../../../src/main/agent/message-trail-tracker';
+import type { TranscriptAnchor } from '../../../src/main/agent/shared/transcript-anchor';
 
 export interface ClaudeTranscriptSession {
   /** The `sessionId` every line carries. */
@@ -120,4 +122,18 @@ export function claudeWindowAdapter(filePath: string): MessageTrailAdapter {
       sourcePath: filePath,
     }),
   };
+}
+
+/**
+ * The anchor a turn beginning now would take: where the message trail stands
+ * after a first read of the file (`readTrail`, the read the trail tracker
+ * makes), so its offset form is the one production hands over.
+ */
+export async function trailAnchorAfterRead(
+  filePath: string,
+  facts: MessageTrailSessionFacts & { agentSessionId: string },
+): Promise<TranscriptAnchor> {
+  const read = await readTrail(claudeWindowAdapter(filePath), facts, null);
+  if (read.cursor === null) throw new Error(`The trail read of ${filePath} anchored nowhere.`);
+  return { agentSessionId: facts.agentSessionId, byteOffset: read.cursor };
 }

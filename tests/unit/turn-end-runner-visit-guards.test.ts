@@ -49,10 +49,10 @@ import { TaskMoveRepository } from '../../src/main/db/repositories/task-move-rep
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { supersedeTurnEndWork } from '../../src/main/automations/turn-end/turn-end-passes';
 import { matchFinalLine, TEXT_MATCH_NO_REPLY_REASON } from '../../src/shared/final-line-match';
-import { readFinalReply, readTrail } from '../../src/main/agent/message-trail-read';
+import { readFinalReply } from '../../src/main/agent/message-trail-read';
 import type { TranscriptAnchor } from '../../src/main/agent/shared/transcript-anchor';
 import type { TranscriptMethods } from '../../src/main/retrieval/worker/transcript-methods';
-import { claudeTranscriptLines, claudeWindowAdapter } from './helpers/claude-transcript-fixture';
+import { claudeTranscriptLines, claudeWindowAdapter, trailAnchorAfterRead } from './helpers/claude-transcript-fixture';
 import { openTestDatabase } from './helpers/test-database';
 
 interface ExecuteOptions {
@@ -495,11 +495,11 @@ describe('a turn end and the rows it may run', () => {
         })];
         fs.writeFileSync(transcriptFile, previousVisit);
         // Where the trail had read to when the resumed session went idle.
-        const read = await readTrail(claudeWindowAdapter(transcriptFile), FACTS, null);
+        const anchor = await trailAnchorAfterRead(transcriptFile, FACTS);
         fs.appendFileSync(transcriptFile, notificationTurn);
         readFromTranscript();
         enterColumnAt(secondsAgo(60));
-        return { agentSessionId: AGENT_SESSION_ID, byteOffset: read.cursor ?? 0 };
+        return anchor;
       }
 
       /** The read does real file I/O, so the pass outlives one immediate: wait for its `finally`. */

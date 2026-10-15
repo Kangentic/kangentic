@@ -96,7 +96,8 @@ const FINAL_REPLY_MAX_WINDOWS = 8;
  * (`transcript.finalReply`). Null for an agent with no transcript reader.
  *
  * `since` is where the turn being judged began (`TranscriptAnchor`). With a
- * window read and the same history file, the read starts there, or at the
+ * window read and an anchor in the same agent session's history file, the
+ * read starts there, or at the
  * tail when the turn is longer than the tail, so nothing the turn did not
  * write can be its reply. Without one, or for an adapter with no window read,
  * the reply is the newest one in the tail, as before.
@@ -135,8 +136,8 @@ export async function readFinalReply(
  * Where an anchored final-reply read starts: the anchor, or the tail when the
  * turn began further back than the tail reaches (every entry in the tail is
  * then the turn's). Null when the file is gone, or when the anchor lies past
- * its end, which means the file was replaced since the turn began; the read
- * then falls back to the plain tail, and says so once.
+ * its end, which means the file was replaced since the turn began; that read
+ * then falls back to the plain tail and logs one warning.
  */
 async function anchoredStart(
   adapter: MessageTrailAdapter,

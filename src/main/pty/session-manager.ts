@@ -360,6 +360,32 @@ const COMMAND_TERMINAL_AGENT_START_CEILING_MS = 120_000;
  */
 const COMMAND_TERMINAL_AGENT_END_SETTLE_MS = 5_000;
 
+/**
+ * A session's transcript position as sampled from its `TranscriptPositionSource`,
+ * and the idle copy kept from one: `settling` while a trail read is running or
+ * armed, so a landing read can still move the copy (see transcriptReadLanded).
+ */
+interface TranscriptPositionSample {
+  anchor: TranscriptAnchor | null;
+  settling: boolean;
+}
+
+/**
+ * Where a turn began, keyed to the turn by its start stamp. `followsReadInFlight`
+ * while the trail read that was running when the turn was stamped has yet to
+ * land: that read started before the turn, so its landing moves the anchor once.
+ */
+interface TurnTranscriptAnchor {
+  turnStartedAt: number;
+  anchor: TranscriptAnchor | null;
+  followsReadInFlight: boolean;
+}
+
+/** An idle copy no landing read moves any more: it holds a position, and no read is still out. */
+function isFixedIdleCopy(copy: TranscriptPositionSample): boolean {
+  return copy.anchor !== null && !copy.settling;
+}
+
 export class SessionManager extends EventEmitter {
   private registry = new SessionRegistry();
   /**
@@ -468,9 +494,9 @@ export class SessionManager extends EventEmitter {
    * predates any later turn. `settling` while a read pending at the commit
    * has yet to land (see transcriptReadLanded).
    */
-  private idleTranscriptAnchors = new Map<string, { anchor: TranscriptAnchor | null; settling: boolean }>();
-  /** The anchor of each session's current turn, keyed to the turn by its start stamp. */
-  private turnTranscriptAnchors = new Map<string, { turnStartedAt: number; anchor: TranscriptAnchor | null }>();
+  private idleTranscriptAnchors = new Map<string, TranscriptPositionSample>();
+  /** The anchor of each session's current turn (see noteTurnStarted). */
+  private turnTranscriptAnchors = new Map<string, TurnTranscriptAnchor>();
   /**
    * Pending resting-grid restores, keyed by session. See
    * scheduleRestingGridRestore.
@@ -1307,7 +1333,7 @@ export class SessionManager extends EventEmitter {
    * The session's transcript position now, and whether a read of it is still
    * pending. Never throws: it runs inside the engine's commit.
    */
-  private sampleTranscriptPosition(sessionId: string): { anchor: TranscriptAnchor | null; settling: boolean } {
+  private sampleTranscriptPosition(sessionId: string): TranscriptPositionSample {
     const source = this.transcriptPositionSource;
     if (!source) return { anchor: null, settling: false };
     try {
@@ -1315,6 +1341,18 @@ export class SessionManager extends EventEmitter {
     } catch (error) {
       console.error(`[SESSION] transcript position read threw for ${sessionId.slice(0, 8)}:`, error);
       return { anchor: null, settling: false };
+    }
+  }
+
+  /** Whether a trail read of the session is running now. Never throws, as above. */
+  private trailReadInFlight(sessionId: string): boolean {
+    const source = this.transcriptPositionSource;
+    if (!source) return false;
+    try {
+      return source.hasReadInFlight(sessionId);
+    } catch (error) {
+      console.error(`[SESSION] transcript read-in-flight check threw for ${sessionId.slice(0, 8)}:`, error);
+      return false;
     }
   }
 
@@ -1328,30 +1366,56 @@ export class SessionManager extends EventEmitter {
    * none is pending the copy is fixed, and a read a later event starts never
    * moves it. A copy that is still null takes any read: the turn start would
    * read the position then anyway.
+   *
+   * A turn stamped before such a read landed took the copy as it stood. The
+   * read running at the stamp started before the turn, so its landing moves
+   * that turn's anchor, once (noteTurnStarted). A position the landing does not
+   * know (null) leaves the anchor where it was.
    */
   transcriptReadLanded(sessionId: string): void {
     const copy = this.idleTranscriptAnchors.get(sessionId);
-    if (!copy || (!copy.settling && copy.anchor !== null)) return;
-    this.idleTranscriptAnchors.set(sessionId, this.sampleTranscriptPosition(sessionId));
+    if (copy && !isFixedIdleCopy(copy)) this.idleTranscriptAnchors.set(sessionId, this.sampleTranscriptPosition(sessionId));
+    const turn = this.turnTranscriptAnchors.get(sessionId);
+    if (turn?.followsReadInFlight) {
+      turn.followsReadInFlight = false;
+      turn.anchor = this.sampleTranscriptPosition(sessionId).anchor ?? turn.anchor;
+    }
   }
 
   /**
    * Where the turn the engine just stamped began. After idle, the copy taken
    * when the session went idle, or the position now when none was taken yet (a
    * resumed session goes idle before its first trail read). At a plan
-   * approval, the position now, which covers the plan and nothing after it:
-   * the implementation needs a new model call. A fresh spawn has none: its
-   * prompt rides the command line, and the reply read stops there.
+   * approval, the position now, which covers the plan once the read that
+   * reaches it has landed, and nothing after it: the implementation needs a new
+   * model call. A fresh spawn has none: its prompt rides the command line, and
+   * the reply read stops there.
+   *
+   * A read running at the stamp may be the one that reaches the last text
+   * before the turn (an idle copy still settling, or the plan just written), so
+   * the turn follows it to where it lands. Only a running read: one merely
+   * armed on its trailing timer starts after the stamp and could cover the new
+   * turn's own text. The cost is a turn stamped before an armed read fired,
+   * which keeps the earlier position.
    */
   private noteTurnStarted(sessionId: string, turnStartedAt: number, cause: TurnStartCause): void {
-    let anchor: TranscriptAnchor | null = null;
-    if (cause === 'idle') {
-      anchor = this.idleTranscriptAnchors.get(sessionId)?.anchor ?? this.sampleTranscriptPosition(sessionId).anchor;
-      this.idleTranscriptAnchors.delete(sessionId);
-    } else if (cause === 'plan-approval') {
-      anchor = this.sampleTranscriptPosition(sessionId).anchor;
+    if (cause === 'seed') {
+      this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor: null, followsReadInFlight: false });
+      return;
     }
-    this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor });
+    let anchor: TranscriptAnchor | null;
+    let mayStillMove: boolean;
+    if (cause === 'idle') {
+      const copy = this.idleTranscriptAnchors.get(sessionId);
+      this.idleTranscriptAnchors.delete(sessionId);
+      anchor = copy?.anchor ?? this.sampleTranscriptPosition(sessionId).anchor;
+      mayStillMove = copy === undefined || !isFixedIdleCopy(copy);
+    } else {
+      anchor = this.sampleTranscriptPosition(sessionId).anchor;
+      mayStillMove = true;
+    }
+    const followsReadInFlight = mayStillMove && this.trailReadInFlight(sessionId);
+    this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor, followsReadInFlight });
   }
 
   /**
