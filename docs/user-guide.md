@@ -18,7 +18,7 @@ New projects start with seven columns:
 
 | Column | Role | Behavior |
 |--------|------|----------|
-| **To Do** | todo | Holding area. No agent runs here. Moving a task here kills its session. |
+| **To Do** | todo | Holding area. No agent runs here. Moving a task here kills its session and removes its worktree. A task that did its own work also loses its PR link. |
 | **Planning** | (plan mode) | Spawns the agent in plan mode. Agent creates a plan, then task auto-moves to Executing. |
 | **Executing** | (auto) | Spawns the agent in default permission mode. Agent works on the task. |
 | **Code Review** | (auto) | Agent keeps running. Add a message telling it how to review the work (e.g. review the diff and fix what it finds). |
@@ -174,7 +174,7 @@ reason as their tooltip.
 
 ### Return to To Do
 
-Drag to To Do to reset the task to "not started": the session is killed and its history wiped, what its agent left running is stopped (see [Complete a Task](#complete-a-task)), and the worktree is removed (the branch too, when **git.autoCleanup** is on). When the reset would destroy pending changes, a confirmation dialog warns that the worktree and session history will be lost before anything happens. If you drag back to an active column, a fresh session starts in a fresh worktree.
+Drag to To Do to reset the task to "not started": the session is killed and its history wiped, what its agent left running is stopped (see [Complete a Task](#complete-a-task)), and the worktree is removed (the branch too, when **git.autoCleanup** is on). A task that did its own work also drops its PR link, so the next run links its own PR. A PR link you typed onto a task that never started stays. When the reset would destroy pending changes, a confirmation dialog warns that the worktree and session history will be lost before anything happens. If you drag back to an active column, a fresh session starts in a fresh worktree.
 
 ## Terminal Panel
 

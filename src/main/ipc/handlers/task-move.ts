@@ -23,6 +23,7 @@ import {
 } from '../helpers';
 import { showDesktopNotification } from './system';
 import { autoLinkPRForTask } from '../../pr/pr-linking';
+import { forgetPRLinkOnTodoReset } from '../../pr/pr-link-reset';
 import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
@@ -793,7 +794,22 @@ export async function handleTaskMove(
         // reset's non-zero force-kill exit never surfaces a false "Session
         // crashed" toast.
         context.sessionManager.killByTaskId(task.id);
-        await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
+        try {
+          await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
+        } finally {
+          // The next run starts from base, so the PR the old work opened is no
+          // longer this task's. It runs after the cleanup, which writes a
+          // captured head_sha this has to overwrite. It runs in a finally
+          // because the task is already in To Do, and a cleanup that throws
+          // must not leave the old link on it. Gated on the pre-cleanup snapshot.
+          // Wrapped because a throw here would replace the cleanup error the
+          // finally is already propagating.
+          try {
+            forgetPRLinkOnTodoReset(context, tasks, task, resolvedProjectId);
+          } catch (forgetError) {
+            console.error(`[TASK_MOVE] Forgetting the PR link failed for task ${task.id.slice(0, 8)}:`, forgetError);
+          }
+        }
         // Re-read the task to check if worktree_path was actually cleared
         const updatedTask = tasks.getById(task.id);
         if (updatedTask?.worktree_path) {

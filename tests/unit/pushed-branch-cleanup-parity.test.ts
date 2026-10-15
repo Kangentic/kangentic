@@ -15,13 +15,17 @@ import path from 'node:path';
  * work was pushed to, captured from the agent's own `git push` or by the
  * ladder's remote-tip inference. It is a remote fact that outlives the local
  * directory, and for a task with no worktree it is the ONLY PR anchor the app
- * can record. So the invariant is the opposite one: no cleanup path nulls it.
+ * can record. So the invariant is the opposite one: a cleanup path keeps it.
  * It used to be nulled alongside `branch_name` on the theory that a reset task
- * "no longer has any work"; `pr_number` survives every one of those paths, so
- * the reset never actually forgot the PR, and nulling `pushed_branch` only
- * stranded a task whose PR had not linked yet when the reset ran (resolver
- * down). Those paths capture `head_sha` before discarding the checkout for the
- * same reason. The one legal `pushed_branch: null` is the row insert.
+ * "no longer has any work", which stranded a task whose PR had not linked yet
+ * when the reset ran (resolver down). Those paths capture `head_sha` before
+ * discarding the checkout for the same reason.
+ *
+ * Two writes may null it, each named with its reason in
+ * `PUSHED_BRANCH_NULL_ALLOWED_IN`: the row insert, and the To Do move, which
+ * forgets the whole PR identity on purpose because the next run starts from
+ * base. That one lives in its own module so the allowlist cannot cover a
+ * cleanup path by sharing a file with it.
  *
  * Deliberately keyed on `branch_name: null` rather than on the cleanup
  * functions: `deleteTaskWorktree` nulls `worktree_path` on the Done move but
@@ -67,9 +71,17 @@ const CHECKOUT_IDENTITY_COLUMNS = ['resolved_base_branch'];
  */
 const HEAD_SHA_CAPTURE_ALLOWED_MISSING = new Set<string>([]);
 
-/** The write that must not exist outside the row insert. */
+/** The write that must not exist outside the files named below. */
 const CLEARS_PUSHED_BRANCH = /\bpushed_branch\s*:\s*null/g;
-const PUSHED_BRANCH_NULL_ALLOWED_IN = new Set(['src/main/db/repositories/task-repository.ts']);
+/** Each file allowed to write `pushed_branch: null`, with why. */
+const PUSHED_BRANCH_NULL_ALLOWED_IN = new Map<string, string>([
+  ['src/main/db/repositories/task-repository.ts', 'the row insert: a new task has pushed nothing'],
+  [
+    'src/main/pr/pr-link-reset.ts',
+    'a To Do move forgets the PR: the next run starts from base, so the old PR is not this task\'s work, '
+    + 'and a kept pushed_branch would let Tier 5 link it again',
+  ],
+]);
 
 function collectSourceFiles(directory: string): string[] {
   const files: string[] = [];
@@ -244,18 +256,21 @@ describe('a captured head_sha rides along wherever branch_name is cleared', () =
 });
 
 describe('pushed_branch is never discarded by a cleanup path', () => {
-  it('only the row insert writes pushed_branch: null', () => {
+  it('only the row insert and the To Do reset write pushed_branch: null', () => {
     const offenders = findPushedBranchClearingFiles().filter((file) => !PUSHED_BRANCH_NULL_ALLOWED_IN.has(file));
 
     expect(
       offenders,
       'These files null pushed_branch. It is a remote fact and a PR anchor that outlives the local '
       + 'checkout (for a task with no worktree, the only one), so a cleanup path must keep it and only '
-      + 'a newer observation may overwrite it:\n' + offenders.join('\n'),
+      + 'a newer observation may overwrite it. A write that must forget it goes in its own file, added to '
+      + 'PUSHED_BRANCH_NULL_ALLOWED_IN with its reason:\n' + offenders.join('\n'),
     ).toEqual([]);
   });
 
-  it('finds the row insert, so the scan cannot silently match nothing', () => {
-    expect(findPushedBranchClearingFiles()).toEqual([...PUSHED_BRANCH_NULL_ALLOWED_IN]);
+  it('finds every allowed write, so the scan cannot silently match nothing', () => {
+    // Sorted on both sides: the scan follows readdirSync order, which is
+    // alphabetical on NTFS but not on CI's ext4.
+    expect(findPushedBranchClearingFiles().sort()).toEqual([...PUSHED_BRANCH_NULL_ALLOWED_IN.keys()].sort());
   });
 });
