@@ -37,23 +37,23 @@ const TIP = '[data-hover-tip]';
  */
 const PRE_CONFIG = `
   window.__mockPreConfigure(function (state) {
-    var ts = new Date().toISOString();
+    var timestamp = new Date().toISOString();
     state.projects.push({
       id: '${PROJECT_ID}', name: 'Hover Tip Behaviour', path: '/mock/hover-tip-behaviour',
-      github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+      github_url: null, default_agent: 'claude', last_opened: timestamp, created_at: timestamp,
     });
     var laneIds = {};
     state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
       var id = 'lane-hover-tip-behaviour-' + index;
       laneIds[swimlane.name] = id;
-      state.swimlanes.push(Object.assign({}, swimlane, { id: id, position: index, created_at: ts }));
+      state.swimlanes.push(Object.assign({}, swimlane, { id: id, position: index, created_at: timestamp }));
     });
     function seedTask(id, title, laneName, position, extra) {
       state.tasks.push(Object.assign({
         id: id, title: title, description: '',
         swimlane_id: laneIds[laneName], position: position, agent: 'claude', session_id: null,
         worktree_path: null, branch_name: null, pr_number: null, pr_url: null,
-        base_branch: 'main', archived_at: null, created_at: ts, updated_at: ts,
+        base_branch: 'main', archived_at: null, created_at: timestamp, updated_at: timestamp,
       }, extra));
     }
     seedTask('${TIP_TASK_ID}', 'Plain tip task', 'Code Review', 0, {});
@@ -348,6 +348,41 @@ test('a keyboard click made with the pointer elsewhere does not keep the next ho
     await trigger.hover();
     await expect(tip).toBeVisible();
     expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(HOVER_TIP_DWELL_MS - 5);
+  } finally {
+    await browser.close();
+  }
+});
+
+// A tip keyboard focus opened is held open by the focus, so a pointer leave does not close it. The
+// flag that records that has to go when the tip closes some other way (Escape here), or the NEXT
+// tip, opened by a hover on the same still-focused trigger, would never close on pointer leave.
+test('a tip closed by Escape with focus still on the trigger does not keep the next hover open', async () => {
+  const { browser, page, infoTips } = await launchOnSettingsInfoTips('hotkeys');
+  try {
+    const trigger = infoTips.first();
+    const tip = page.locator(TIP);
+    // Text inside the panel that nothing listens to, so leaving the trigger lands on no tip.
+    const deadSpace = page.locator(SETTINGS_PANEL).getByRole('heading').first();
+
+    // A key first, so the focus that follows is keyboard focus and opens the tip at once.
+    await page.keyboard.press('Shift');
+    await trigger.focus();
+    await expect(tip).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(tip).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // The pointer now arrives on the focused trigger, and its hover tip opens.
+    await trigger.hover();
+    await expect(tip).toBeVisible();
+
+    // Leaving closes it, focus or no focus: the Escape already ended the tip focus opened.
+    await clearTipLog(page);
+    await deadSpace.hover();
+    await expect(tip).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    // Closed for good, not a flicker that reopens: the dead space has no tip to claim the warm window.
+    expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
   } finally {
     await browser.close();
   }
@@ -742,18 +777,18 @@ const MONITOR_PROJECT_ID = 'proj-tip-monitor';
 /** One finished session, whose activity line is "Finished ...". */
 const MONITOR_PRE_CONFIG = `
   window.__mockPreConfigure(function (state) {
-    var ts = new Date().toISOString();
+    var timestamp = new Date().toISOString();
     state.projects.push({
       id: '${MONITOR_PROJECT_ID}', name: 'Tip Monitor', path: '/mock/tip-monitor',
-      github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+      github_url: null, default_agent: 'claude', last_opened: timestamp, created_at: timestamp,
     });
     state.DEFAULT_SWIMLANES.forEach(function (lane, index) {
-      state.swimlanes.push(Object.assign({}, lane, { id: 'lane-tip-monitor-' + index, position: index, created_at: ts }));
+      state.swimlanes.push(Object.assign({}, lane, { id: 'lane-tip-monitor-' + index, position: index, created_at: timestamp }));
     });
     state.tasks.push({
       id: 'task-tip-monitor', title: 'Finished work', description: '', display_id: 11,
       swimlane_id: 'lane-tip-monitor-0', position: 0, labels: [], priority: 0, run_mode: 'agent',
-      archived_at: null, created_at: ts, updated_at: ts,
+      archived_at: null, created_at: timestamp, updated_at: timestamp,
     });
     return { currentProjectId: '${MONITOR_PROJECT_ID}' };
   });

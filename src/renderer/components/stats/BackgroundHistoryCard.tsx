@@ -56,7 +56,7 @@ const COLUMNS: DataTableColumn<BackgroundDayUsage, HistoryColumnKey>[] = [
     key: 'model',
     label: 'Model',
     width: 'w-[130px]',
-    headerTitle: 'What the CLI reported answering with; with no report, the model Kangentic asked for, or the agent default',
+    headerTip: 'What the CLI reported answering with; with no report, the model Kangentic asked for, or the agent default',
     sortValue: (row) => backgroundModelLine(row.models).toLowerCase(),
     render: (row) => {
       const line = backgroundModelLine(row.models);
@@ -76,7 +76,7 @@ const COLUMNS: DataTableColumn<BackgroundDayUsage, HistoryColumnKey>[] = [
     label: 'Failed',
     align: 'right',
     width: 'w-[70px]',
-    headerTitle: 'Calls that errored or timed out. They still cost what the agent reported.',
+    headerTip: 'Calls that errored or timed out. They still cost what the agent reported.',
     sortValue: (row) => row.failedCalls,
     render: (row) => (
       <span className={`tabular-nums ${row.failedCalls > 0 ? 'text-attention' : 'text-fg-faint'}`}>
@@ -121,7 +121,7 @@ const COLUMNS: DataTableColumn<BackgroundDayUsage, HistoryColumnKey>[] = [
     label: 'Avg time',
     align: 'right',
     width: 'w-[80px]',
-    headerTitle: 'Average wall time per call',
+    headerTip: 'Average wall time per call',
     sortValue: (row) => (row.calls > 0 ? row.durationMs / row.calls : 0),
     render: (row) => <span className="tabular-nums text-fg-muted">{formatAverageCallTime(row.durationMs, row.calls)}</span>,
   },
@@ -130,7 +130,7 @@ const COLUMNS: DataTableColumn<BackgroundDayUsage, HistoryColumnKey>[] = [
     label: 'Cost',
     align: 'right',
     width: 'w-[80px]',
-    headerTitle: 'API-equivalent cost as each agent reported it',
+    headerTip: 'API-equivalent cost as each agent reported it',
     sortValue: (row) => row.costUsd ?? -1,
     render: (row) => (row.costUsd === null
       ? <span className="text-fg-faint">-</span>

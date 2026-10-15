@@ -15,7 +15,7 @@ export interface DataTableColumn<TRow, TKey extends string = string> {
   headerRender?: (data: TRow[]) => React.ReactNode;
   /** Hover explanation for the column header (what the stat means). Sortable
    *  columns get the sort hint appended automatically. */
-  headerTitle?: string;
+  headerTip?: string;
 }
 
 /**
@@ -309,43 +309,43 @@ export function DataTable<TRow, TKey extends string = string>({
         const isSortable = !!column.sortValue;
         const sortIndex = sorts.findIndex((level) => level.key === column.key);
         const isActive = sortIndex >= 0;
-        const headerTitle = [
-          column.headerTitle,
+        const headerTip = [
+          column.headerTip,
           isSortable ? 'Click to sort - Shift+Click adds a secondary sort' : undefined,
         ].filter(Boolean).join('\n');
         return (
           // The tip goes on the cell itself: HoverTip adds no element, so the
           // header row keeps its table layout.
-          <HoverTip key={`${column.key}-${columnIndex}`} label={headerTitle}>
-          <th
-            className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none transition-colors ${column.width || ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${isSortable ? 'cursor-pointer hover:text-fg-muted' : ''}`}
-            onClick={isSortable ? (event) => handleHeaderClick(column, event.shiftKey) : undefined}
-          >
-            {column.headerRender ? (
-              column.headerRender(sortedData)
-            ) : (
-              // For right-aligned columns the sort indicator must sit to the
-              // LEFT of the label, otherwise the label's right edge is offset
-              // by the indicator slot's width and visibly drifts left of the
-              // numeric values below it.
-              <span className={`inline-flex items-center gap-1 ${column.align === 'right' ? 'flex-row-reverse' : ''}`}>
-                {column.label}
-                {isSortable && (
-                  <span className="w-3 h-3 flex items-center justify-center">
-                    {isActive && (
-                      sorts[sortIndex].direction === 'asc'
-                        ? <ArrowUp size={12} className="text-accent-fg" />
-                        : <ArrowDown size={12} className="text-accent-fg" />
-                    )}
-                  </span>
-                )}
-                {/* Tie-break priority, shown only when multiple levels are active. */}
-                {isActive && sorts.length > 1 && (
-                  <span className="text-[11px] text-accent-fg tabular-nums" data-testid="sort-priority">{sortIndex + 1}</span>
-                )}
-              </span>
-            )}
-          </th>
+          <HoverTip key={`${column.key}-${columnIndex}`} label={headerTip}>
+            <th
+              className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none transition-colors ${column.width || ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${isSortable ? 'cursor-pointer hover:text-fg-muted' : ''}`}
+              onClick={isSortable ? (event) => handleHeaderClick(column, event.shiftKey) : undefined}
+            >
+              {column.headerRender ? (
+                column.headerRender(sortedData)
+              ) : (
+                // For right-aligned columns the sort indicator must sit to the
+                // LEFT of the label, otherwise the label's right edge is offset
+                // by the indicator slot's width and visibly drifts left of the
+                // numeric values below it.
+                <span className={`inline-flex items-center gap-1 ${column.align === 'right' ? 'flex-row-reverse' : ''}`}>
+                  {column.label}
+                  {isSortable && (
+                    <span className="w-3 h-3 flex items-center justify-center">
+                      {isActive && (
+                        sorts[sortIndex].direction === 'asc'
+                          ? <ArrowUp size={12} className="text-accent-fg" />
+                          : <ArrowDown size={12} className="text-accent-fg" />
+                      )}
+                    </span>
+                  )}
+                  {/* Tie-break priority, shown only when multiple levels are active. */}
+                  {isActive && sorts.length > 1 && (
+                    <span className="text-[11px] text-accent-fg tabular-nums" data-testid="sort-priority">{sortIndex + 1}</span>
+                  )}
+                </span>
+              )}
+            </th>
           </HoverTip>
         );
       })}

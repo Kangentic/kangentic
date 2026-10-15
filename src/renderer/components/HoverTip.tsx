@@ -302,6 +302,12 @@ export function HoverTip(props: HoverTipProps): ReactElement {
     layerRef.current?.hide(true);
   }, []);
 
+  // Whatever closed the tip (Escape, a press, a scroll, another tip), the one focus opened is
+  // gone, so the next tip a hover opens closes on leave again.
+  const handleHidden = useCallback((): void => {
+    focusOpenedRef.current = false;
+  }, []);
+
   useLayoutEffect(() => {
     enabledRef.current = active;
     if (active) return;
@@ -390,6 +396,8 @@ export function HoverTip(props: HoverTipProps): ReactElement {
       <TipLayer
         handleRef={layerRef}
         triggerRef={triggerRef}
+        onHidden={handleHidden}
+        rich={rich}
         label={label}
         detail={detail}
         combo={combo}
@@ -416,6 +424,10 @@ function TipKeys({ combo }: { combo: string }): ReactElement {
 interface TipLayerProps {
   handleRef: RefObject<TipLayerHandle | null>;
   triggerRef: RefObject<Element | null>;
+  /** Called on every close of a shown tip, whatever closed it. */
+  onHidden: () => void;
+  /** The rich shape: HoverTip decides it, since it also decides whether the tip opens at all. */
+  rich: boolean;
   label: string;
   detail?: string;
   /** The live combo in canonical form, or '' for no keys. */
@@ -432,7 +444,7 @@ interface TipLayerProps {
  * opening a tip re-renders this layer and never the trigger's subtree.
  */
 function TipLayer(props: TipLayerProps): ReactElement | null {
-  const { handleRef, triggerRef, label, detail, combo, icon, content, header, footer, testId } = props;
+  const { handleRef, triggerRef, onHidden, rich, label, detail, combo, icon, content, header, footer, testId } = props;
   const [shown, setShown] = useState<'cold' | 'warm' | null>(null);
   const shownRef = useRef<'cold' | 'warm' | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
@@ -446,7 +458,8 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
     shownRef.current = null;
     releaseTip(replaceThisTip, warm, performance.now());
     setShown(null);
-  }, [replaceThisTip]);
+    onHidden();
+  }, [replaceThisTip, onHidden]);
 
   const show = useCallback((mode: 'cold' | 'warm'): void => {
     if (shownRef.current !== null) return;
@@ -529,7 +542,6 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
   }, [shown, hide, position, triggerRef]);
 
   if (shown === null) return null;
-  const rich = content !== undefined || header !== undefined || footer !== undefined;
   return createPortal(
     <div
       ref={tipRef}

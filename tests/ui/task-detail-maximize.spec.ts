@@ -227,14 +227,23 @@ test.describe('Task Detail: maximize / restore', () => {
     // Browser pane is closed initially - the pill shows "Show browser" title
     // (now suffixed with the live hotkey combo).
     await expect(browserToggle).toHaveAccessibleDescription(/^Show browser/);
+    // Nothing to keep yet, so the tip has no second line (its detail is "Kept alive until you
+    // close it" while the pane is open and "Page kept" while a hidden pane still has a guest).
+    await expect(browserToggle).not.toHaveAccessibleDescription(/Kept alive|Page kept/);
 
     // Ctrl+Shift+B opens the browser pane.
     await page.keyboard.press('Control+Shift+B');
     await expect(browserToggle).toHaveAccessibleDescription(/^Hide browser/);
+    // Hiding is not closing: the open pane's tip says the page outlives the hide. The detail is
+    // a second line of the tip, which the accessible description joins with a space.
+    await expect(browserToggle).toHaveAccessibleDescription(/^Hide browser.*Kept alive until you close it$/);
 
     // Ctrl+Shift+B again closes the browser pane.
     await page.keyboard.press('Control+Shift+B');
     await expect(browserToggle).toHaveAccessibleDescription(/^Show browser/);
+    // No guest was ever attached here (no URL was seeded), so the hidden pane has nothing to keep
+    // and the detail is gone with the pane. The "Page kept" case is in browser-pane-close.spec.ts.
+    await expect(browserToggle).not.toHaveAccessibleDescription(/Kept alive|Page kept/);
 
     // Close the dialog so subsequent tests start clean.
     //
@@ -419,6 +428,67 @@ test.describe('Task Detail: maximize / restore', () => {
     await page.keyboard.press('Escape');
     await page.keyboard.press('Control+Shift+W');
     await expect(editDialog).not.toBeVisible({ timeout: 8000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pop out of tiling: a tiled pane's header carries a control that floats it back out.
+// The control is icon-only, so its aria-label is its name, and its tip repeats that name:
+// the tip shows on hover but is not read a second time as a description.
+// Own browser, because docking two windows leaves a tile tree behind that would leak into
+// the next test on a shared page.
+// ---------------------------------------------------------------------------
+test.describe('Task Detail: pop out of tiling', () => {
+  test('a tiled pane has a named Pop out of tiling control that floats it, and a lone window has none', async () => {
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      const dialogs = page.locator('[data-testid="task-detail-dialog"]');
+      const runningPane = dialogs.filter({ hasText: 'Maximize Task' });
+      const undock = runningPane.locator('[data-testid="task-detail-undock"]');
+
+      await page.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      await expect(runningPane).toBeVisible();
+      // A lone floating window is not tiled, so it has no pop-out control.
+      await expect(undock).toHaveCount(0);
+
+      // The first window covers the board, so the second opens through the store, the entry point
+      // every card click funnels into. `dockIntoWindow` is what a drag-to-dock commits: it tiles both.
+      await page.evaluate((taskId) => {
+        (window as unknown as {
+          __zustandStores: { session: { getState: () => { setDetailTaskId: (id: string) => void } } };
+        }).__zustandStores.session.getState().setDetailTaskId(taskId);
+      }, EDIT_TASK_ID);
+      await expect(dialogs).toHaveCount(2);
+      await page.evaluate(() => {
+        const windowState = (window as unknown as {
+          __zustandStores: {
+            window: {
+              getState: () => {
+                windows: Record<string, unknown>;
+                dockIntoWindow: (draggedId: string, targetId: string, side: string) => void;
+              };
+            };
+          };
+        }).__zustandStores.window.getState();
+        const [firstId, secondId] = Object.keys(windowState.windows);
+        windowState.dockIntoWindow(secondId, firstId, 'right');
+      });
+
+      await expect(undock).toHaveCount(1);
+      await expect(undock).toHaveAccessibleName('Pop out of tiling');
+      // The tip is the name, so it is not read a second time.
+      await expect(undock).toHaveAccessibleDescription('');
+      await undock.hover();
+      await expect(page.locator('[data-hover-tip]')).toHaveText('Pop out of tiling');
+
+      // The tip does not swallow the click: the pane floats and its control goes.
+      await undock.click();
+      await expect(undock).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
   });
 });
 
