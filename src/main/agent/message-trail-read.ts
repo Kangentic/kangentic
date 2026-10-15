@@ -11,7 +11,7 @@ import {
   MESSAGE_TRAIL_MAX_WINDOWS_PER_READ,
   MESSAGE_TRAIL_TAIL_BYTES,
   MESSAGE_TRAIL_WINDOW_BYTES,
-  type MessageTrailSessionFacts,
+  type MessageTrailReadFacts,
   type TrailRead,
 } from './message-trail-tracker';
 
@@ -42,7 +42,7 @@ async function statSize(filePath: string): Promise<number> {
 
 export async function readTrail(
   adapter: MessageTrailAdapter,
-  facts: MessageTrailSessionFacts & { agentSessionId: string },
+  facts: MessageTrailReadFacts,
   cursor: number | null,
   fileSize: (filePath: string) => Promise<number> = statSize,
 ): Promise<TrailRead> {
@@ -71,7 +71,7 @@ export async function readTrail(
 export function localTrailReader(
   resolveAdapter: (sessionType: string) => MessageTrailAdapter | undefined,
   fileSize?: (filePath: string) => Promise<number>,
-): (facts: MessageTrailSessionFacts & { agentSessionId: string }, cursor: number | null) => Promise<TrailRead> {
+): (facts: MessageTrailReadFacts, cursor: number | null) => Promise<TrailRead> {
   return async (facts, cursor) => {
     const adapter = resolveAdapter(facts.sessionType);
     if (!adapter) return { previews: [], cursor, usedFallback: false };
@@ -104,7 +104,7 @@ const FINAL_REPLY_MAX_WINDOWS = 8;
  */
 export async function readFinalReply(
   adapter: MessageTrailAdapter,
-  facts: MessageTrailSessionFacts & { agentSessionId: string },
+  facts: MessageTrailReadFacts,
   since: TranscriptAnchor | null = null,
   fileSize: (filePath: string) => Promise<number> = statSize,
 ): Promise<AgentReply | null> {
@@ -142,7 +142,7 @@ export async function readFinalReply(
 async function anchoredStart(
   adapter: MessageTrailAdapter,
   locateFile: NonNullable<MessageTrailAdapter['locateSessionHistoryFile']>,
-  facts: MessageTrailSessionFacts & { agentSessionId: string },
+  facts: MessageTrailReadFacts,
   byteOffset: number,
   fileSize: (filePath: string) => Promise<number>,
 ): Promise<number | null> {

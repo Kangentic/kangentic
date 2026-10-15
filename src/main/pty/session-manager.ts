@@ -1369,12 +1369,18 @@ export class SessionManager extends EventEmitter {
    *
    * A turn stamped before such a read landed took the copy as it stood. The
    * read running at the stamp started before the turn, so its landing moves
-   * that turn's anchor, once (noteTurnStarted). A position the landing does not
-   * know (null) leaves the anchor where it was.
+   * that turn's anchor, once (noteTurnStarted).
+   *
+   * A position the landing does not know (null, as after the agent session id
+   * changed) leaves the copy's position and the turn's anchor where they were.
+   * An anchor into the old file is safe: the reply read ignores it.
    */
   transcriptReadLanded(sessionId: string): void {
     const copy = this.idleTranscriptAnchors.get(sessionId);
-    if (copy && !isFixedIdleCopy(copy)) this.idleTranscriptAnchors.set(sessionId, this.sampleTranscriptPosition(sessionId));
+    if (copy && !isFixedIdleCopy(copy)) {
+      const sample = this.sampleTranscriptPosition(sessionId);
+      this.idleTranscriptAnchors.set(sessionId, { anchor: sample.anchor ?? copy.anchor, settling: sample.settling });
+    }
     const turn = this.turnTranscriptAnchors.get(sessionId);
     if (turn?.followsReadInFlight) {
       turn.followsReadInFlight = false;
@@ -1397,22 +1403,33 @@ export class SessionManager extends EventEmitter {
    * armed on its trailing timer starts after the stamp and could cover the new
    * turn's own text. The cost is a turn stamped before an armed read fired,
    * which keeps the earlier position.
+   *
+   * The turn's own first event can still be what started the running read. A
+   * prompt starts none, but the `tool_start` that opens a turn with no prompt
+   * (a background job's notification) starts one before the engine stamps the
+   * turn when no read is running and the last began at least
+   * `MESSAGE_TRAIL_MIN_INTERVAL_MS` ago. That read covers the text the turn
+   * wrote before its first tool call, so a turn whose last message has no
+   * text then has an empty reply, never an earlier turn's.
    */
   private noteTurnStarted(sessionId: string, turnStartedAt: number, cause: TurnStartCause): void {
-    if (cause === 'seed') {
-      this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor: null, followsReadInFlight: false });
-      return;
-    }
     let anchor: TranscriptAnchor | null;
     let mayStillMove: boolean;
-    if (cause === 'idle') {
-      const copy = this.idleTranscriptAnchors.get(sessionId);
-      this.idleTranscriptAnchors.delete(sessionId);
-      anchor = copy?.anchor ?? this.sampleTranscriptPosition(sessionId).anchor;
-      mayStillMove = copy === undefined || !isFixedIdleCopy(copy);
-    } else {
-      anchor = this.sampleTranscriptPosition(sessionId).anchor;
-      mayStillMove = true;
+    switch (cause) {
+      case 'seed':
+        this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor: null, followsReadInFlight: false });
+        return;
+      case 'idle': {
+        const copy = this.idleTranscriptAnchors.get(sessionId);
+        this.idleTranscriptAnchors.delete(sessionId);
+        anchor = copy?.anchor ?? this.sampleTranscriptPosition(sessionId).anchor;
+        mayStillMove = copy === undefined || !isFixedIdleCopy(copy);
+        break;
+      }
+      case 'plan-approval':
+        anchor = this.sampleTranscriptPosition(sessionId).anchor;
+        mayStillMove = true;
+        break;
     }
     const followsReadInFlight = mayStillMove && this.trailReadInFlight(sessionId);
     this.turnTranscriptAnchors.set(sessionId, { turnStartedAt, anchor, followsReadInFlight });

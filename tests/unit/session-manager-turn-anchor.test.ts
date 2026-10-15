@@ -356,6 +356,75 @@ describe('SessionManager turn-end transcript anchor', () => {
       expect(anchors()).toEqual([at(100)]);
     });
 
+    it('moves the anchor of a turn stamped with no idle copy at all, when a read was running at the stamp', () => {
+      // No idle commit left a copy for this turn to take, and nothing is known
+      // of the position yet, so the read running now is the only way the turn
+      // learns where it began.
+      position = null;
+      getTelemetry(manager).initSession(sessionId);
+      getAnchorMaps(manager).idleTranscriptAnchors.delete(sessionId);
+      expect(getAnchorMaps(manager).idleTranscriptAnchors.has(sessionId)).toBe(false);
+      readInFlight = true;
+      send(EventType.Prompt);
+
+      position = at(80);
+      readInFlight = false;
+      manager.transcriptReadLanded(sessionId);
+
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(80)]);
+    });
+
+    it('moves the anchor of a turn stamped on an empty copy that nothing was pending for, when a read was running at the stamp', () => {
+      // A resumed session goes idle before its first trail read, with none
+      // pending: the copy holds no position, yet it is not settling either.
+      position = null;
+      pending = false;
+      getTelemetry(manager).initSession(sessionId);
+      expect(getAnchorMaps(manager).idleTranscriptAnchors.get(sessionId)).toEqual({ anchor: null, settling: false });
+      readInFlight = true;
+      send(EventType.Prompt);
+
+      position = at(80);
+      readInFlight = false;
+      manager.transcriptReadLanded(sessionId);
+
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(80)]);
+    });
+
+    it('keeps the copy\'s anchor when the check for a running read throws, since it runs inside the engine\'s commit', () => {
+      // A copy taken while a read is pending keeps settling, so the stamp asks
+      // whether a read is running. A fixed copy would short-circuit that ask.
+      manager.setTranscriptPositionSource({
+        transcriptPosition: () => position,
+        hasPendingRead: () => pending,
+        hasReadInFlight: () => {
+          throw new Error('The tracker is gone.');
+        },
+      });
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        position = at(100);
+        pending = true;
+        getTelemetry(manager).initSession(sessionId);
+        send(EventType.Prompt);
+        position = at(400);
+        send(EventType.Idle);
+        expect(anchors()).toEqual([at(100)]);
+
+        // The turn end's own commit to idle is a settling copy again, and the
+        // next stamp asks again.
+        position = at(900);
+        send(EventType.Prompt);
+        send(EventType.Idle);
+        expect(anchors()).toEqual([at(100), at(400)]);
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('read-in-flight check threw'), expect.any(Error));
+      } finally {
+        consoleError.mockRestore();
+      }
+    });
+
     it('keeps a turn\'s anchor when the read it follows lands with no position to report', () => {
       // A /clear fork discards the read's cursor, so the trail knows no position.
       position = at(100);
@@ -368,6 +437,27 @@ describe('SessionManager turn-end transcript anchor', () => {
       readInFlight = false;
       manager.transcriptReadLanded(sessionId);
 
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(100)]);
+    });
+
+    it('keeps a settling idle copy\'s position when the read that lands knows none, and fixes it', () => {
+      // The same /clear fork, landing while the session still sits idle: the
+      // copy keeps the position it had and stops settling, since none is pending.
+      position = at(100);
+      pending = true;
+      getTelemetry(manager).initSession(sessionId);
+
+      position = null;
+      pending = false;
+      manager.transcriptReadLanded(sessionId);
+      expect(getAnchorMaps(manager).idleTranscriptAnchors.get(sessionId)).toEqual({ anchor: at(100), settling: false });
+
+      // Fixed from here: a later landing must not move it.
+      position = at(500);
+      manager.transcriptReadLanded(sessionId);
+
+      send(EventType.Prompt);
       send(EventType.Idle);
       expect(anchors()).toEqual([at(100)]);
     });
@@ -396,6 +486,22 @@ describe('SessionManager turn-end transcript anchor', () => {
       edges.onTurnEnded(sessionId, 1000, 1);
       edges.onTurnEnded(sessionId, 1000, 2);
       expect(anchors()).toEqual([at(100), null]);
+    });
+
+    it('never follows a running read for a seed stamp, which has no anchor to move', () => {
+      // A fresh spawn's prompt rides the command line, so its turn has no
+      // anchor; a read running at the stamp must not give it one when it lands.
+      position = at(300);
+      readInFlight = true;
+      const edges = getTurnEdgeCallbacks(manager);
+      edges.onTurnStarted(sessionId, 1000, 'seed');
+
+      position = at(900);
+      readInFlight = false;
+      manager.transcriptReadLanded(sessionId);
+
+      edges.onTurnEnded(sessionId, 1000, 1);
+      expect(anchors()).toEqual([null]);
     });
 
     it('gives a turn end under another stamp no anchor, and drops the entry that was for another turn', () => {
