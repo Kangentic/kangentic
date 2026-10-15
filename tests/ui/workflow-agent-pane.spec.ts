@@ -142,7 +142,7 @@ test('the pane\'s header sits on the raised fill, and its collapse control is na
     expect(await header.evaluate((element) => getComputedStyle(element).backgroundColor))
       .toBe(await computedColor(page, 'var(--color-surface-raised)'));
     const collapse = byTestId(page, 'workflow-agent-pane-collapse');
-    await expect(collapse).toHaveAttribute('title', 'Collapse agent');
+    await expect(collapse).toHaveAccessibleName('Collapse agent');
     await expect(collapse).toHaveAttribute('aria-label', 'Collapse agent');
   } finally {
     await browser.close();
@@ -212,9 +212,9 @@ test('while the agent works, Start and Add task wait with the reason, and the ca
     await expect(byTestId(page, 'workflow-agent-working')).toHaveAttribute('data-working', 'true');
     await expect(byTestId(page, 'workflow-agent-working')).toContainText('Workflow agent is working');
     await expect(byTestId(page, 'workflow-start')).toBeDisabled();
-    await expect(byTestId(page, 'workflow-start')).toHaveAttribute('title', /Available when the workflow agent finishes/);
+    await expect(byTestId(page, 'workflow-start')).toHaveAccessibleDescription(/Available when the workflow agent finishes/);
     await expect(byTestId(page, 'workflow-add-task')).toBeDisabled();
-    await expect(byTestId(page, 'workflow-add-task')).toHaveAttribute('title', 'Available when the workflow agent finishes');
+    await expect(byTestId(page, 'workflow-add-task')).toHaveAccessibleDescription('Available when the workflow agent finishes');
 
     // Where each sits: the label top left, clear of Add task at the bottom
     // center, and the two view tools side by side at the bottom left.

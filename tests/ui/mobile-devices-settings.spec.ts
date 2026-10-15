@@ -247,7 +247,7 @@ test.describe('Mobile Devices settings tab', () => {
     await expect(urlInput).toHaveAttribute('readonly', '');
     await expect(urlInput).not.toBeDisabled();
     // The shield marks the Kangentic-operated relay, and only it.
-    await expect(page.locator('[title="Kangentic-operated relay"]')).toBeVisible();
+    await expect(page.getByTestId('mobile-relay-hosted-mark')).toBeVisible();
     // Below the bridge card, two peer cards: Relay and Phones. "Relay" must be
     // the card heading and NOT also a row label inside it: the relay controls
     // used to live in a SettingRow whose own label was "Relay" too, which put
@@ -306,7 +306,7 @@ test.describe('Mobile Devices settings tab', () => {
     // Read-only like hosted, but NOT shielded: local is loopback, not the
     // Kangentic-operated relay, so marking it would be untrue.
     await expect(urlInput).toHaveAttribute('readonly', '');
-    await expect(page.locator('[title="Kangentic-operated relay"]')).toHaveCount(0);
+    await expect(page.getByTestId('mobile-relay-hosted-mark')).toHaveCount(0);
 
     await closeSettings();
   });
@@ -327,7 +327,7 @@ test.describe('Mobile Devices settings tab', () => {
     await openMobileTab();
 
     const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
-    const officialMark = page.locator('[title="Kangentic-operated relay"]');
+    const officialMark = page.getByTestId('mobile-relay-hosted-mark');
     await expect(urlInput).toHaveValue('wss://relay.kangentic.com');
     await expect(officialMark).toBeVisible();
     await expect(urlInput).toHaveAttribute('aria-label', 'Relay address, the Kangentic-operated relay');
@@ -542,7 +542,7 @@ test.describe('Mobile Devices settings tab', () => {
     // text and rides in the tooltip.
     await expect(result).toHaveText('Reachable, 42 ms');
     await expect(result).toHaveAttribute('data-reachable', 'true');
-    await expect(result).toHaveAttribute('title', 'Relay v0.4.0');
+    await expect(result).toHaveAccessibleDescription('Relay v0.4.0');
     // Facts get weight, not hue (the same rule WelcomeScreen states at :293 for
     // its CLI-detection probe): the verdict is a bare caption with NO box of its
     // own, and only the icon carries the outcome. A filled box made a one-shot
@@ -562,7 +562,7 @@ test.describe('Mobile Devices settings tab', () => {
     await page.locator('[data-testid="mobile-relay-test-connection"]').click();
     const noResponse = page.getByText('No response');
     await expect(noResponse).toBeVisible();
-    await expect(noResponse).toHaveAttribute('title', 'ECONNREFUSED');
+    await expect(noResponse).toHaveAccessibleDescription('ECONNREFUSED');
     // Same treatment on the failure branch, via the attention token.
     await expect(result).not.toHaveClass(/\bbg-/);
     await expect(result.locator('svg')).toHaveClass(/text-attention/);
@@ -585,7 +585,7 @@ test.describe('Mobile Devices settings tab', () => {
     await page.locator('[data-testid="mobile-relay-test-connection"]').click();
     const result = page.locator('[data-testid="mobile-relay-test-result"]');
     await expect(result).toHaveText('Reachable');
-    await expect(result).not.toHaveAttribute('title', /.*/);
+    await expect(result).toHaveAccessibleDescription('');
     // A reachable probe prints no failure line.
     await expect(page.locator('[data-testid="mobile-relay-test-error"]')).toHaveCount(0);
 
@@ -1156,7 +1156,7 @@ test.describe('Mobile Devices settings tab', () => {
     // The since time is locale-formatted, so only its presence and prefix are
     // pinned; the full timestamp rides the tooltip.
     await expect(deviceRow.getByTestId('mobile-device-connection-since')).toContainText('since');
-    await expect(deviceRow.getByTestId('mobile-device-connection-since')).toHaveAttribute('title', /.+/);
+    await expect(deviceRow.getByTestId('mobile-device-connection-since')).toHaveAccessibleDescription(/.+/);
     await expect(deviceRow).toContainText('Paired');
 
     await closeSettings();

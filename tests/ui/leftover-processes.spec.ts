@@ -93,7 +93,7 @@ test.describe('Leftover processes', () => {
       const age = dialog.locator('[data-testid="leftover-processes-age"]');
       await expect(age).toHaveText('37 minutes ago');
       // The exact time is on hover, outside the heading, so the dialog's name stays its title.
-      await expect(age).toHaveAttribute('title', /\d/);
+      await expect(age).toHaveAccessibleDescription(/\d/);
       await expect(dialog.getByRole('heading')).toHaveText('Processes from "Fix login"');
       await expect(page.locator('[data-testid="leftover-processes-running"] [data-testid="leftover-process-row"]')).toHaveCount(2);
       await expect(page.locator('[data-testid="leftover-processes-stopped"] [data-testid="leftover-process-row"]')).toHaveCount(1);

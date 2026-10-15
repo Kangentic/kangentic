@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { MODEL_ALIAS_GROUP_HEADING, modelVersionSectionLabel } from '../../utils/format-tokens';
+import { HoverTip } from '../HoverTip';
 
 /**
  * `oneMillionValue` carries the exact `<base>[1m]` model string for rows
@@ -103,8 +104,8 @@ export function ContextBarPopover({
    * CLI ids (`claude-sonnet-5`), which read as noise next to the humanized rows
    * above ("Sonnet 5"), so the model picker passes the same label those rows
    * use. Omit for fields whose values are already human-readable (effort levels
-   * are literally "low".."max") and the raw value is shown. The `title` keeps
-   * the exact value either way, matching the option rows.
+   * are literally "low".."max") and the raw value is shown. The row's hover tip
+   * keeps the exact value either way, matching the option rows.
    */
   swimlaneDefaultLabel?: string | null;
   /** Called with the picked value, or `null` for "Use column default" (clears the per-task override). */
@@ -175,47 +176,50 @@ export function ContextBarPopover({
       // highlight scoped to it visibly stopped partway across the row, leaving
       // the badge sitting on the unhighlighted background.
       <div key={option.value} className="flex items-center hover:bg-surface-hover/40">
-        <button
-          type="button"
-          onClick={() => onSelect(option.value)}
-          title={option.value}
-          // Click target sizing: `py-2` + `text-sm` ≈ 38px tall (above WCAG
-          // 2.5.5 AA's 24px floor and close to AAA's 44px). `min-w-[180px]`
-          // keeps short option lists like effort (`low`..`max`) from
-          // collapsing to a 60px-wide target. Long model ids still grow
-          // the popover past this floor via the parent's `w-max`.
-          className={`flex-1 min-w-[180px] py-2 text-sm text-left flex items-center gap-2 whitespace-nowrap ${
-            indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg-secondary'
-          }`}
-          data-testid={testId ? `${testId}-option-${option.value}` : undefined}
-        >
-          <Check size={12} className={`flex-shrink-0 ${isCurrent ? 'text-fg-secondary' : 'text-transparent'}`} />
-          <span className="flex-1 truncate">{option.label}</span>
-          {option.hint && <span className="text-fg-faint text-xs flex-shrink-0">{option.hint}</span>}
-        </button>
-        {oneMillionValue === null && option.contextLabel && (
-          <span
-            title={`${option.contextLabel} context window`}
-            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
-            data-testid={testId ? `${testId}-option-context-${option.value}` : undefined}
-          >
-            {option.contextLabel}
-          </span>
-        )}
-        {oneMillionValue !== null && (
+        <HoverTip label={option.value}>
           <button
             type="button"
-            onClick={() => onSelect(oneMillionValue)}
-            title={oneMillionValue}
-            className={`mr-2 px-1.5 py-0.5 text-[11px] rounded border flex-shrink-0 transition-colors ${
-              currentValue === oneMillionValue
-                ? 'border-fg-muted text-fg-secondary'
-                : 'border-edge text-fg-muted hover:text-fg-secondary hover:border-fg-faint'
+            onClick={() => onSelect(option.value)}
+            // Click target sizing: `py-2` + `text-sm` ≈ 38px tall (above WCAG
+            // 2.5.5 AA's 24px floor and close to AAA's 44px). `min-w-[180px]`
+            // keeps short option lists like effort (`low`..`max`) from
+            // collapsing to a 60px-wide target. Long model ids still grow
+            // the popover past this floor via the parent's `w-max`.
+            className={`flex-1 min-w-[180px] py-2 text-sm text-left flex items-center gap-2 whitespace-nowrap ${
+              indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg-secondary'
             }`}
-            data-testid={testId ? `${testId}-option-1m-${oneMillionValue}` : undefined}
+            data-testid={testId ? `${testId}-option-${option.value}` : undefined}
           >
-            1M
+            <Check size={12} className={`flex-shrink-0 ${isCurrent ? 'text-fg-secondary' : 'text-transparent'}`} />
+            <span className="flex-1 truncate">{option.label}</span>
+            {option.hint && <span className="text-fg-faint text-xs flex-shrink-0">{option.hint}</span>}
           </button>
+        </HoverTip>
+        {oneMillionValue === null && option.contextLabel && (
+          <HoverTip label={`${option.contextLabel} context window`}>
+            <span
+              className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
+              data-testid={testId ? `${testId}-option-context-${option.value}` : undefined}
+            >
+              {option.contextLabel}
+            </span>
+          </HoverTip>
+        )}
+        {oneMillionValue !== null && (
+          <HoverTip label={oneMillionValue}>
+            <button
+              type="button"
+              onClick={() => onSelect(oneMillionValue)}
+              className={`mr-2 px-1.5 py-0.5 text-[11px] rounded border flex-shrink-0 transition-colors ${
+                currentValue === oneMillionValue
+                  ? 'border-fg-muted text-fg-secondary'
+                  : 'border-edge text-fg-muted hover:text-fg-secondary hover:border-fg-faint'
+              }`}
+              data-testid={testId ? `${testId}-option-1m-${oneMillionValue}` : undefined}
+            >
+              1M
+            </button>
+          </HoverTip>
         )}
       </div>
     );
@@ -226,22 +230,23 @@ export function ContextBarPopover({
   // badge: an alias names a family, not a window.
   const renderAliasRow = (option: AliasPopoverOption) => (
     <div key={option.value} className="flex items-center hover:bg-surface-hover/40">
-      <button
-        type="button"
-        onClick={() => onSelect(option.value)}
-        title={option.title ?? option.value}
-        className="flex-1 min-w-[180px] py-2 px-3 text-sm text-left flex items-center gap-2 whitespace-nowrap text-fg-secondary"
-        data-testid={testId ? `${testId}-option-${option.value}` : undefined}
-        data-model-alias={option.value}
-      >
-        <Check size={12} className={`flex-shrink-0 ${option.value === currentValue ? 'text-fg-secondary' : 'text-transparent'}`} />
-        <span className="min-w-14 truncate">{option.label}</span>
-        {option.target && (
-          <span className="text-fg-faint text-xs truncate" data-testid={testId ? `${testId}-option-target-${option.value}` : undefined}>
-            {option.target}
-          </span>
-        )}
-      </button>
+      <HoverTip label={option.title ?? option.value}>
+        <button
+          type="button"
+          onClick={() => onSelect(option.value)}
+          className="flex-1 min-w-[180px] py-2 px-3 text-sm text-left flex items-center gap-2 whitespace-nowrap text-fg-secondary"
+          data-testid={testId ? `${testId}-option-${option.value}` : undefined}
+          data-model-alias={option.value}
+        >
+          <Check size={12} className={`flex-shrink-0 ${option.value === currentValue ? 'text-fg-secondary' : 'text-transparent'}`} />
+          <span className="min-w-14 truncate">{option.label}</span>
+          {option.target && (
+            <span className="text-fg-faint text-xs truncate" data-testid={testId ? `${testId}-option-target-${option.value}` : undefined}>
+              {option.target}
+            </span>
+          )}
+        </button>
+      </HoverTip>
     </div>
   );
 
@@ -254,7 +259,7 @@ export function ContextBarPopover({
       // sets like effort levels ("low" .. "max") stay snug. The max-w caps
       // pathological CLI-reported names with ellipsis truncation so they
       // can't push the popover off-screen; the full value still surfaces in
-      // the button's title attribute.
+      // the row's hover tip.
       className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 w-max max-w-[420px] max-h-[min(340px,var(--popover-available-height,340px))] overflow-y-auto overlay-popover-in"
       data-testid={testId}
       // `data-dismissable-layer`: consistency with every other menu (portaled ones get it
@@ -305,16 +310,17 @@ export function ContextBarPopover({
         // session - confusing UX. Users with a per-task pin can still pick
         // any specific value from the list above to "revert".
         <div className="border-t border-edge mt-1 pt-1">
-          <button
-            type="button"
-            onClick={() => onSelect(null)}
-            title={swimlaneDefault}
-            className="w-full min-w-[180px] px-3 py-2 text-xs text-fg-faint text-left hover:bg-surface-hover/40 flex items-center gap-2 whitespace-nowrap"
-            data-testid={testId ? `${testId}-option-clear` : undefined}
-          >
-            <Check size={12} className={`flex-shrink-0 ${currentValue === null ? 'text-fg-secondary' : 'text-transparent'}`} />
-            <span className="flex-1 truncate">Use column default <span className="text-fg-disabled">({swimlaneDefaultLabel ?? swimlaneDefault})</span></span>
-          </button>
+          <HoverTip label={swimlaneDefault}>
+            <button
+              type="button"
+              onClick={() => onSelect(null)}
+              className="w-full min-w-[180px] px-3 py-2 text-xs text-fg-faint text-left hover:bg-surface-hover/40 flex items-center gap-2 whitespace-nowrap"
+              data-testid={testId ? `${testId}-option-clear` : undefined}
+            >
+              <Check size={12} className={`flex-shrink-0 ${currentValue === null ? 'text-fg-secondary' : 'text-transparent'}`} />
+              <span className="flex-1 truncate">Use column default <span className="text-fg-disabled">({swimlaneDefaultLabel ?? swimlaneDefault})</span></span>
+            </button>
+          </HoverTip>
         </div>
       )}
     </div>,

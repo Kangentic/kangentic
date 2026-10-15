@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { CountBadge } from '../../CountBadge';
+import { HoverTip } from '../../HoverTip';
 import type { ProjectGroup } from '../../../../shared/types';
 
 export interface GroupHeaderProps {
@@ -96,21 +97,22 @@ export function GroupHeader({
         <CountBadge count={projectCount} variant="muted" size="sm" className="flex-shrink-0" />
       </div>
 
-      <button
-        type="button"
-        data-group-actions
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          onContextMenu(e, group);
-        }}
-        className="flex-shrink-0 p-1 rounded text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/60 transition-[opacity,color,background-color] opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-        title="Group options (or right-click)"
-        data-testid={`group-menu-${group.id}`}
-        aria-label={`Open menu for group ${group.name}`}
-      >
-        <MoreHorizontal size={14} />
-      </button>
+      <HoverTip label="Group options">
+        <button
+          type="button"
+          data-group-actions
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onContextMenu(e, group);
+          }}
+          className="flex-shrink-0 p-1 rounded text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/60 transition-[opacity,color,background-color] opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+          data-testid={`group-menu-${group.id}`}
+          aria-label={`Open menu for group ${group.name}`}
+        >
+          <MoreHorizontal size={14} />
+        </button>
+      </HoverTip>
     </div>
   );
 }

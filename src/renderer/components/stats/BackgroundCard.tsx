@@ -4,6 +4,7 @@ import { BACKGROUND_CALL_JOB_LABELS } from '../../../shared/background-call-jobs
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost } from '../../utils/format-session';
+import { HoverTip } from '../HoverTip';
 import {
   backgroundCallsTitle,
   backgroundMetricText,
@@ -28,21 +29,22 @@ interface BackgroundCellProps {
 function BackgroundCell({ label, totals, models, metric, footnote, isTotal, positionClassName, testId }: BackgroundCellProps) {
   const value = backgroundMetricText(totals, metric);
   return (
-    <div
-      className={`min-w-0 flex flex-col gap-0.5 ${positionClassName}`}
-      title={backgroundCallsTitle(totals, models)}
-      data-testid={testId}
-    >
-      <span className="text-[11px] uppercase tracking-wider text-fg-muted truncate">{label}</span>
-      <span
-        className={`font-semibold tabular-nums truncate ${isTotal ? 'text-base' : 'text-sm'} ${value === null ? 'text-fg-faint' : 'text-fg'}`}
-        data-testid={`${testId}-value`}
+    <HoverTip label={backgroundCallsTitle(totals, models)}>
+      <div
+        className={`min-w-0 flex flex-col gap-0.5 ${positionClassName}`}
+        data-testid={testId}
       >
-        {value ?? '-'}
-      </span>
-      <span className="text-[11px] text-fg-muted tabular-nums truncate">{formatCallCount(totals.calls)}</span>
-      {footnote && <span className="text-[11px] text-fg-faint truncate">{footnote}</span>}
-    </div>
+        <span className="text-[11px] uppercase tracking-wider text-fg-muted truncate">{label}</span>
+        <span
+          className={`font-semibold tabular-nums truncate ${isTotal ? 'text-base' : 'text-sm'} ${value === null ? 'text-fg-faint' : 'text-fg'}`}
+          data-testid={`${testId}-value`}
+        >
+          {value ?? '-'}
+        </span>
+        <span className="text-[11px] text-fg-muted tabular-nums truncate">{formatCallCount(totals.calls)}</span>
+        {footnote && <span className="text-[11px] text-fg-faint truncate">{footnote}</span>}
+      </div>
+    </HoverTip>
   );
 }
 

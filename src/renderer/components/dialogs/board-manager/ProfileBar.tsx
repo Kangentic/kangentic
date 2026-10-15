@@ -1,5 +1,6 @@
 import { Copy, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { BoardProfile } from '../../../../shared/types';
+import { HoverTip } from '../../HoverTip';
 import { Select } from '../../settings/shared';
 
 /**
@@ -96,46 +97,50 @@ export function ProfileBar({
           </button>
         ) : (
           <div className={`flex items-stretch ${ACTION_ROW_HEIGHT} rounded border border-edge/40 divide-x divide-edge/40 overflow-hidden`}>
-            <button
-              type="button"
-              onClick={onNew}
-              className={action}
-              title="New profile"
-              aria-label="New profile"
-              data-testid="board-manager-profile-new"
-            >
-              <Plus size={14} />
-            </button>
-            <button
-              type="button"
-              onClick={onDuplicate}
-              className={action}
-              title="Duplicate this profile"
-              aria-label="Duplicate this profile"
-              data-testid="board-manager-profile-duplicate"
-            >
-              <Copy size={14} />
-            </button>
-            <button
-              type="button"
-              onClick={onRename}
-              className={action}
-              title="Rename this profile"
-              aria-label="Rename this profile"
-              data-testid="board-manager-profile-rename"
-            >
-              <Pencil size={14} />
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              className={`${action} hover:text-red-400 hover:bg-red-500/10`}
-              title="Delete this profile"
-              aria-label="Delete this profile"
-              data-testid="board-manager-profile-delete"
-            >
-              <Trash2 size={14} />
-            </button>
+            <HoverTip label="New profile">
+              <button
+                type="button"
+                onClick={onNew}
+                className={action}
+                aria-label="New profile"
+                data-testid="board-manager-profile-new"
+              >
+                <Plus size={14} />
+              </button>
+            </HoverTip>
+            <HoverTip label="Duplicate this profile">
+              <button
+                type="button"
+                onClick={onDuplicate}
+                className={action}
+                aria-label="Duplicate this profile"
+                data-testid="board-manager-profile-duplicate"
+              >
+                <Copy size={14} />
+              </button>
+            </HoverTip>
+            <HoverTip label="Rename this profile">
+              <button
+                type="button"
+                onClick={onRename}
+                className={action}
+                aria-label="Rename this profile"
+                data-testid="board-manager-profile-rename"
+              >
+                <Pencil size={14} />
+              </button>
+            </HoverTip>
+            <HoverTip label="Delete this profile">
+              <button
+                type="button"
+                onClick={onDelete}
+                className={`${action} hover:text-red-400 hover:bg-red-500/10`}
+                aria-label="Delete this profile"
+                data-testid="board-manager-profile-delete"
+              >
+                <Trash2 size={14} />
+              </button>
+            </HoverTip>
           </div>
         )}
       </div>

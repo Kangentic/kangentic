@@ -13,9 +13,9 @@ repo, so desktop, web, and mobile cannot drift from each other.
 `?raw`, strips the packaged `<svg>` wrapper, and injects the inner markup into a `<g>` under a
 React-authored root.
 
-The root has to be React-authored rather than `BrandMark`'s wrapper-`<span>` form because React
-forbids `children` next to `dangerouslySetInnerHTML` on one element, and `TaskCard` passes a
-`<title>` child for its hover tooltip.
+The root has to be React-authored rather than `BrandMark`'s wrapper-`<span>` form because it is
+the element a caller's HoverTip wraps: `TaskCard` shows the activity reason that way, so the root
+`<svg>` takes the tip's handlers itself. It used to carry a native `<title>` child for the same job.
 
 ## Motion has to be composited
 
@@ -74,7 +74,7 @@ Measured: the injected ink covered 15% of the pause button, and `control-stop`'s
 covers the exact centre.
 
 Hits have to land on the React-authored `<svg>`, which survives a `mark` change. So the
-`pointer-events: none` never moves up to the root, which `TaskCard`'s `<title>` tooltip needs
+`pointer-events: none` never moves up to the root, which `TaskCard`'s HoverTip needs
 hit-testable, and the `<g>` never gets `key={mark}`.
 
 That covers a mark FLIP only. An icon that changes element type between states (lucide at rest,

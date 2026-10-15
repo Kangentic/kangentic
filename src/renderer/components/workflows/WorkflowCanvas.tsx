@@ -20,6 +20,8 @@ import {
 import type { WorkflowColumnEnd, WorkflowDetail } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
 import { motionReduced } from '../../utils/motion-reduced';
+import { tipLabel } from '../../utils/hover-tip';
+import { HoverTip } from '../HoverTip';
 import { layoutWorkflow } from './workflow-layout';
 import { canBlock, canWait, findTask, linkRefusal, otherBoardDoneColor, taskLabel, waitingOf } from './workflow-graph';
 import { NO_MEASURED_HEIGHTS, estimatedCardHeight, withMeasuredHeights } from './canvas-card-heights';
@@ -594,20 +596,23 @@ function ViewTools({ moved, onFitView, onAutoLayout }: {
   const tool = `${CANVAS_TOOL_CLASS} ${VIEW_TOOL_WIDTH}`;
   return (
     <div className="grid grid-cols-2 gap-2" data-testid="workflow-canvas-tools">
-      <button type="button" onClick={onFitView} title="Fit every card in view" aria-label="Fit view" className={tool} data-testid="workflow-fit-view">
-        <Scan size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>Fit view</span>
-      </button>
-      <button
-        type="button"
-        onClick={onAutoLayout}
-        disabled={!moved}
-        title={moved ? 'Put moved cards back in the automatic layout' : 'No card has been moved'}
-        aria-label="Auto layout"
-        className={tool}
-        data-testid="workflow-auto-layout"
-      >
-        <LayoutGrid size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>Auto layout</span>
-      </button>
+      <HoverTip label="Fit every card in view">
+        <button type="button" onClick={onFitView} aria-label="Fit view" className={tool} data-testid="workflow-fit-view">
+          <Scan size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>Fit view</span>
+        </button>
+      </HoverTip>
+      <HoverTip label={tipLabel({ disabled: !moved, disabledReason: 'No card has been moved', tip: 'Put moved cards back in the automatic layout' })}>
+        <button
+          type="button"
+          onClick={onAutoLayout}
+          disabled={!moved}
+          aria-label="Auto layout"
+          className={tool}
+          data-testid="workflow-auto-layout"
+        >
+          <LayoutGrid size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>Auto layout</span>
+        </button>
+      </HoverTip>
     </div>
   );
 }
@@ -620,15 +625,16 @@ function ViewTools({ moved, onFitView, onAutoLayout }: {
  */
 function AddTaskTool({ addTaskRefusal, onAddTask }: { addTaskRefusal: string | null; onAddTask: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onAddTask}
-      disabled={addTaskRefusal !== null}
-      title={addTaskRefusal ?? 'Add a task to this workflow'}
-      className={`${ADD_TASK_CLASS} ${TOOL_WIDTH}`}
-      data-testid="workflow-add-task"
-    >
-      <Plus size={14} />Add task
-    </button>
+    <HoverTip label={tipLabel({ disabled: addTaskRefusal !== null, disabledReason: addTaskRefusal, tip: 'Add a task to this workflow' })}>
+      <button
+        type="button"
+        onClick={onAddTask}
+        disabled={addTaskRefusal !== null}
+        className={`${ADD_TASK_CLASS} ${TOOL_WIDTH}`}
+        data-testid="workflow-add-task"
+      >
+        <Plus size={14} />Add task
+      </button>
+    </HoverTip>
   );
 }

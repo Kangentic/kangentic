@@ -509,7 +509,7 @@ test.describe('Sidebar Command Terminal indicator', () => {
     try {
       const indicator = page.locator(`[data-testid="project-terminals-${PROJECT_A_ID}"]`);
       await expect(indicator).toHaveAttribute('aria-label', /1 Command Terminal running \(needs you\)/);
-      await expect(indicator).toHaveAttribute('title', /1 Command Terminal running \(needs you\)/);
+      await expect(indicator).toHaveAccessibleDescription(/1 Command Terminal running \(needs you\)/);
     } finally {
       await browser.close();
     }
@@ -596,7 +596,7 @@ test.describe('Collapsed rail Command Terminal dot', () => {
   });
 
   test('the rail tooltip stays the plain project name', async () => {
-    // Guards the existing regression rule: the title must not grow a compound
+    // Guards the existing regression rule: the tip must not grow a compound
     // "Alpha - 1 terminal" form. Terminal state rides on aria-label instead.
     const { browser, page } = await launchWithState(preConfig({
       terminals: [{ project: PROJECT_A_ID, id: 'ct-a1', activity: 'idle' }],
@@ -606,7 +606,7 @@ test.describe('Collapsed rail Command Terminal dot', () => {
       await collapseSidebar(page);
 
       const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
-      await expect(alphaButton).toHaveAttribute('title', 'Project Alpha');
+      await expect(alphaButton).toHaveAccessibleDescription('Project Alpha');
       await expect(alphaButton).toHaveAttribute('aria-label', /Project Alpha.*Command Terminals/);
     } finally {
       await browser.close();
@@ -656,7 +656,7 @@ test.describe('Collapsed rail Command Terminal dot', () => {
     // FIX B: the rail button's aria-label used to be the tone-blind
     // "<name>, Command Terminals running". It now speaks the tone via
     // RAIL_TERMINAL_LABEL. This fails if the label regresses to the
-    // tone-blind string. title stays the bare project name either way.
+    // tone-blind string. The tip stays the bare project name either way.
     const { browser, page } = await launchWithState(preConfig({
       terminals: [{ project: PROJECT_A_ID, id: 'ct-a1', activity: 'idle' }],
     }));
@@ -665,7 +665,7 @@ test.describe('Collapsed rail Command Terminal dot', () => {
       await collapseSidebar(page);
 
       const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
-      await expect(alphaButton).toHaveAttribute('title', 'Project Alpha');
+      await expect(alphaButton).toHaveAccessibleDescription('Project Alpha');
       await expect(alphaButton).toHaveAttribute(
         'aria-label',
         /Project Alpha, Command Terminals running \(needs you\)/,
@@ -684,7 +684,7 @@ test.describe('Collapsed rail Command Terminal dot', () => {
       await collapseSidebar(page);
 
       const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
-      await expect(alphaButton).toHaveAttribute('title', 'Project Alpha');
+      await expect(alphaButton).toHaveAccessibleDescription('Project Alpha');
       await expect(alphaButton).toHaveAttribute('aria-label', /\(working\)/);
     } finally {
       await browser.close();

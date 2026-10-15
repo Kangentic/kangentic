@@ -25,11 +25,12 @@ import { IconSlot } from '../IconSlot';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
+import { HoverTip } from '../HoverTip';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
 import { resolveTerminalBackground } from '../../hooks/useTerminal';
-import { useKeybinding, useFormattedCombo } from '../../hooks/useKeybinding';
+import { useKeybinding } from '../../hooks/useKeybinding';
 import { ContextBar } from '../terminal/ContextBar';
 import { CommandTerminalPane, type TerminalGridGetter } from './CommandTerminalPane';
 import { useSessionStore } from '../../stores/session-store';
@@ -189,7 +190,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
   const handleToggleChanges = useCallback(() => toggleChangesOpen(commandTerminalEntityId), [toggleChangesOpen, commandTerminalEntityId]);
 
-  const maximizeCombo = useFormattedCombo('panel.maximize');
   const spawnedRef = useRef(false);
   // The branch picker can fold into the kebab; this drives the kebab-anchored
   // fallback dropdown ("Switch branch").
@@ -485,21 +485,22 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         <div ref={leadingRef} className="flex items-center flex-shrink-0">
           {/* StopButtonIcon's branches all render through IconSlot, so the node under the
               pointer survives an activity change mid-press (see IconSlot). */}
-          <button
-            onClick={handleTerminate}
-            disabled={stopping}
-            className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
-              stopping ? 'text-fg-muted' : showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
-            }`}
-            title={stopping ? 'Stopping...' : 'Stop terminal'}
-            // Tracks `stopping` like the title and the kebab item's label: an explicit
-            // aria-label wins the accessible-name computation, so leaving it static would
-            // hide the pending state from exactly the users who cannot see the spinner.
-            aria-label={stopping ? 'Stopping terminal' : 'Stop terminal'}
-            data-testid="command-bar-terminate-button"
-          >
-            <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
-          </button>
+          <HoverTip label={stopping ? 'Stopping terminal' : 'Stop terminal'}>
+            <button
+              onClick={handleTerminate}
+              disabled={stopping}
+              className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
+                stopping ? 'text-fg-muted' : showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
+              }`}
+              // Tracks `stopping` like the tip and the kebab item's label: an explicit
+              // aria-label wins the accessible-name computation, so leaving it static would
+              // hide the pending state from exactly the users who cannot see the spinner.
+              aria-label={stopping ? 'Stopping terminal' : 'Stop terminal'}
+              data-testid="command-bar-terminate-button"
+            >
+              <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
+            </button>
+          </HoverTip>
         </div>
 
         {/* Title - the overflow calc reserves only a ~50ch floor (not the full
@@ -513,14 +514,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
           {/* Inline span so its scrollWidth measures the TEXT width (not the
               flex-grown div); useHeaderPillOverflow reserves up to a ~50ch floor
               of that width for the title and lets the pills reclaim the rest. */}
-          <span
-            ref={titleSpanRef}
-            className="text-base font-semibold text-fg truncate"
-            title={windowTitle}
-            data-testid="command-bar-label"
-          >
-            {windowTitle}
-          </span>
+          <HoverTip label={windowTitle}>
+            <span
+              ref={titleSpanRef}
+              className="text-base font-semibold text-fg truncate"
+              data-testid="command-bar-label"
+            >
+              {windowTitle}
+            </span>
+          </HoverTip>
         </div>
 
         {/* Quick-access pills - each wrapped with `data-pill-id` so the overflow
@@ -665,26 +667,28 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
 
           {isTiled && (
-            <button
-              onClick={handleUndock}
-              className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-              title="Pop out (float)"
-              aria-label="Pop out terminal"
-              data-testid="command-bar-popout"
-            >
-              <PictureInPicture2 size={16} />
-            </button>
+            <HoverTip label="Pop out terminal">
+              <button
+                onClick={handleUndock}
+                className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+                aria-label="Pop out terminal"
+                data-testid="command-bar-popout"
+              >
+                <PictureInPicture2 size={16} />
+              </button>
+            </HoverTip>
           )}
 
-          <button
-            onClick={handleToggleMaximized}
-            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-            title={`${isMaximized ? 'Restore' : 'Maximize'} (${maximizeCombo})`}
-            aria-label={isMaximized ? 'Restore terminal' : 'Maximize terminal'}
-            data-testid="command-bar-maximize"
-          >
-            {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-          </button>
+          <HoverTip label={isMaximized ? 'Restore terminal' : 'Maximize terminal'} keys="panel.maximize">
+            <button
+              onClick={handleToggleMaximized}
+              className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+              aria-label={isMaximized ? 'Restore terminal' : 'Maximize terminal'}
+              data-testid="command-bar-maximize"
+            >
+              {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
+          </HoverTip>
         </div>
 
         {/* Commands palette: rendered once at the header root. Commands is kebab-only

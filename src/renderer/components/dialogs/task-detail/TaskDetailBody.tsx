@@ -23,6 +23,7 @@ import { useSessionStore } from '../../../stores/session-store';
 import { useAgentDriveVeil } from '../../../hooks/useAgentDriveVeil';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
 import { PanelErrorBoundary } from '../../PanelErrorBoundary';
+import { HoverTip } from '../../HoverTip';
 import { usePopOut } from '../../../pop-out/usePopOut';
 import { onIdle } from '../../../utils/on-idle';
 
@@ -370,25 +371,26 @@ export function TaskDetailBody({
   // Draggable seam between the main pane (terminal / launch overlay) and the
   // right panel. Shared by the active-terminal and preparing branches.
   const splitDivider = (
-    <div
-      onMouseDown={onSplitResizeStart}
-      data-testid="task-detail-split-divider"
-      role="separator"
-      aria-orientation="vertical"
-      title="Drag to resize"
-      className="group relative z-10 w-1 -mx-0.5 flex-shrink-0 cursor-col-resize"
-    >
-      {/* Widened invisible hit zone for easier grabbing. */}
-      <span className="absolute inset-y-0 -inset-x-1" />
-      {/* Resting seam is the panel's border-edge. Highlight on hover, and
-          hold the highlight through the whole drag so the target split
-          stays visible while the panes resize underneath. */}
-      <span
-        className={`absolute inset-0 transition-colors ${
-          isSplitResizing ? 'bg-accent/60' : 'group-hover:bg-accent/40'
-        }`}
-      />
-    </div>
+    <HoverTip label="Drag to resize">
+      <div
+        onMouseDown={onSplitResizeStart}
+        data-testid="task-detail-split-divider"
+        role="separator"
+        aria-orientation="vertical"
+        className="group relative z-10 w-1 -mx-0.5 flex-shrink-0 cursor-col-resize"
+      >
+        {/* Widened invisible hit zone for easier grabbing. */}
+        <span className="absolute inset-y-0 -inset-x-1" />
+        {/* Resting seam is the panel's border-edge. Highlight on hover, and
+            hold the highlight through the whole drag so the target split
+            stays visible while the panes resize underneath. */}
+        <span
+          className={`absolute inset-0 transition-colors ${
+            isSplitResizing ? 'bg-accent/60' : 'group-hover:bg-accent/40'
+          }`}
+        />
+      </div>
+    </HoverTip>
   );
   // While dragging, an overlay keeps mouse events flowing over the Electron
   // <webview> (Browser pane) and the xterm canvas.

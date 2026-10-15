@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { CirclePause, FolderGit2 } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
+import { HoverTip } from '../HoverTip';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { formatRelativeTime } from '../../lib/datetime';
@@ -30,13 +31,14 @@ interface SummaryTileProps {
   icon: ReactNode;
   value: number;
   sub?: string;
-  title: string;
+  /** What the count counts, as the tile's hover tip. */
+  tip: string;
   testId: string;
   /** Applied to the numeral and the icon chip only while `value > 0`. */
   tone?: 'attention' | 'active';
 }
 
-function SummaryTile({ label, icon, value, sub, title, testId, tone }: SummaryTileProps) {
+function SummaryTile({ label, icon, value, sub, tip, testId, tone }: SummaryTileProps) {
   // A constant resetKey is correct here (rather than a project id): the monitor
   // is a machine-global aggregate that never re-points to another context, so
   // there is no restore to suppress - every change IS a live change worth pulsing.
@@ -44,39 +46,40 @@ function SummaryTile({ label, icon, value, sub, title, testId, tone }: SummaryTi
   const lit = value > 0 && tone;
 
   return (
-    <div
-      className="w-[224px] flex-shrink-0 bg-surface-raised border border-edge rounded-lg px-4 pt-3 pb-3 flex flex-col"
-      data-testid={testId}
-      title={title}
-    >
-      <div className="flex items-center gap-2 min-w-0">
-        <span
-          className={`flex items-center justify-center w-6 h-6 rounded-md flex-shrink-0 ${
-            lit === 'attention' ? 'bg-attention/10 text-attention'
-              : lit === 'active' ? 'bg-active/10 text-active'
-                : 'bg-surface-hover/60 text-fg-faint'
-          }`}
-          aria-hidden
-        >
-          {icon}
-        </span>
-        <span className="text-[11px] uppercase tracking-wider text-fg-muted truncate">{label}</span>
-      </div>
-
-      <span
-        ref={pulseRef}
-        className={`text-3xl font-semibold tabular-nums leading-none mt-2.5 ${
-          lit === 'attention' ? 'text-attention' : lit === 'active' ? 'text-active' : 'text-fg'
-        }`}
-        data-testid={`${testId}-value`}
+    <HoverTip label={tip}>
+      <div
+        className="w-[224px] flex-shrink-0 bg-surface-raised border border-edge rounded-lg px-4 pt-3 pb-3 flex flex-col"
+        data-testid={testId}
       >
-        {value}
-      </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`flex items-center justify-center w-6 h-6 rounded-md flex-shrink-0 ${
+              lit === 'attention' ? 'bg-attention/10 text-attention'
+                : lit === 'active' ? 'bg-active/10 text-active'
+                  : 'bg-surface-hover/60 text-fg-faint'
+            }`}
+            aria-hidden
+          >
+            {icon}
+          </span>
+          <span className="text-[11px] uppercase tracking-wider text-fg-muted truncate">{label}</span>
+        </div>
 
-      {/* Reserved whether or not there is a sub-line, so a tile that gains one
-          later does not grow taller than its neighbours mid-session. */}
-      <span className="text-[11px] text-fg-muted truncate mt-1.5 min-h-[15px]">{sub ?? ''}</span>
-    </div>
+        <span
+          ref={pulseRef}
+          className={`text-3xl font-semibold tabular-nums leading-none mt-2.5 ${
+            lit === 'attention' ? 'text-attention' : lit === 'active' ? 'text-active' : 'text-fg'
+          }`}
+          data-testid={`${testId}-value`}
+        >
+          {value}
+        </span>
+
+        {/* Reserved whether or not there is a sub-line, so a tile that gains one
+            later does not grow taller than its neighbours mid-session. */}
+        <span className="text-[11px] text-fg-muted truncate mt-1.5 min-h-[15px]">{sub ?? ''}</span>
+      </div>
+    </HoverTip>
   );
 }
 
@@ -101,7 +104,7 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
         sub={oldestNeedsYouSince === null ? undefined : `longest since ${formatRelativeTime(oldestNeedsYouSince)}`}
         tone="attention"
         testId="monitor-summary-needs-you"
-        title="Agents waiting on a response from you, across every project in view"
+        tip=" on a response from you, across every project in view"
       />
       <SummaryTile
         label="Active"
@@ -144,7 +147,7 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
           : lastActiveAt === null ? undefined : `last active ${formatRelativeTime(lastActiveAt)}`}
         tone="active"
         testId="monitor-summary-working"
-        title="Agents actively running right now, across every project in view"
+        tip=" running right now, across every project in view"
       />
       {/* "Paused or waiting to start", not "suspended or queued": the user-facing
           control is Pause/Resume, and "suspended" is internal status vocabulary
@@ -155,7 +158,7 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
         value={counts.idle}
         sub={counts.idle > 0 ? 'paused or waiting to start' : undefined}
         testId="monitor-summary-idle"
-        title="Sessions you paused, plus any queued waiting for a free slot"
+        tip=", plus any queued waiting for a free slot"
       />
       <SummaryTile
         label="Projects"
@@ -163,7 +166,7 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
         value={projectCount}
         sub={counts.finished > 0 ? `${counts.finished} recently finished` : 'with a live session'}
         testId="monitor-summary-projects"
-        title="Projects in view with at least one live session"
+        tip=" with at least one live session"
       />
     </div>
   );

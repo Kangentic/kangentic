@@ -169,7 +169,7 @@ test.describe('Changes panel: base-branch divergence label', () => {
     await expect(badge).toBeVisible({ timeout: 8000 });
     // The visible pill is just the branch name - no "off"/"based on" verb.
     await expect(badge).toHaveText('main');
-    await expect(badge).toHaveAttribute('title', 'Based on main, the project default');
+    await expect(badge).toHaveAccessibleDescription('Based on main, the project default');
     // Default base uses the subdued tone, matching the graph's own base-ref badge.
     await expect(badge).toHaveClass(/border-edge-subtle/);
     await expect(badge).not.toHaveClass(/border-accent/);
@@ -194,7 +194,7 @@ test.describe('Changes panel: base-branch divergence label', () => {
     const badge = page.locator('[data-testid="changes-base-label"]');
     await expect(badge).toBeVisible({ timeout: 8000 });
     await expect(badge).toHaveText('release/2.0');
-    await expect(badge).toHaveAttribute('title', 'Based on release/2.0, not the project default');
+    await expect(badge).toHaveAccessibleDescription('Based on release/2.0, not the project default');
     // Custom base uses the accent tone - the more surprising case, meant to draw the eye.
     await expect(badge).toHaveClass(/border-accent/);
     await expect(badge).not.toHaveClass(/border-edge-subtle/);

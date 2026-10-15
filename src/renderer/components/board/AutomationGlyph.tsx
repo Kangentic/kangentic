@@ -5,6 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { selectAutomationCounts } from '../../stores/board-store/automations-slice';
 import { DEFAULT_AGENT } from '../../../shared/types';
+import { HoverTip } from '../HoverTip';
 
 /**
  * The column header's automation mark: `Columns3Cog`, a column with a cog, and
@@ -48,19 +49,24 @@ export function AutomationGlyph({ swimlaneId }: { swimlaneId: string }) {
   if (counts.enter > 0) parts.push(`${counts.enter} on enter`);
   if (counts.turn_end > 0) parts.push(`${counts.turn_end} at a turn end`);
   if (counts.exit > 0) parts.push(`${counts.exit} on exit`);
+  // Both halves agree with the count: one automation RUNS, several RUN.
+  const sentence = `${total} automation${total > 1 ? 's run' : ' runs'} here: ${parts.join(', ')}`;
 
+  // The sentence is the glyph's name as well as its tip, so a screen reader hears it once.
   return (
-    <span
-      data-testid="column-automation-glyph"
-      data-enter={counts.enter}
-      data-turn-end={counts.turn_end}
-      data-exit={counts.exit}
-      // Both halves agree with the count: one automation RUNS, several RUN.
-      title={`${total} automation${total > 1 ? 's run' : ' runs'} here: ${parts.join(', ')}`}
-      className="flex flex-shrink-0 items-center gap-0.5 text-fg-disabled"
-    >
-      <Columns3Cog size={12} />
-      <span className="text-[11px] tabular-nums">{total}</span>
-    </span>
+    <HoverTip label={sentence}>
+      <span
+        role="img"
+        aria-label={sentence}
+        data-testid="column-automation-glyph"
+        data-enter={counts.enter}
+        data-turn-end={counts.turn_end}
+        data-exit={counts.exit}
+        className="flex flex-shrink-0 items-center gap-0.5 text-fg-disabled"
+      >
+        <Columns3Cog size={12} />
+        <span className="text-[11px] tabular-nums">{total}</span>
+      </span>
+    </HoverTip>
   );
 }

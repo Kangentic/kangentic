@@ -13,6 +13,7 @@ import { useWorkflowStore } from '../../stores/workflow-store';
 import { workflowColor } from '../workflows/workflow-graph';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
+import { HoverTip } from '../HoverTip';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
 /**
@@ -108,47 +109,47 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
           action the gaps between those buttons could not deliver; with light dismiss inverted
           a click there closes an open task window instead. The highlight now lives on the
           button that actually acts, so what lights up is exactly what responds. */}
-      <div
-        className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left"
-        title={swimlane.description ?? undefined}
-      >
-        {(() => {
-          const Icon = getSwimlaneIcon(swimlane);
-          return Icon ? (
-            <span style={{ color: swimlane.color }}><Icon size={14} strokeWidth={1.75} /></span>
-          ) : (
-            <div
-              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-              style={{ backgroundColor: swimlane.color }}
-            />
-          );
-        })()}
+      {/* The column's description, when it has one, is the whole strip's tip. */}
+      <HoverTip label={swimlane.description ?? ''}>
+        <div className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left">
+          {(() => {
+            const Icon = getSwimlaneIcon(swimlane);
+            return Icon ? (
+              <span style={{ color: swimlane.color }}><Icon size={14} strokeWidth={1.75} /></span>
+            ) : (
+              <div
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: swimlane.color }}
+              />
+            );
+          })()}
 
-        <button
-          type="button"
-          onClick={() => openBoardManager(swimlane.id)}
-          className="flex items-center gap-2 flex-1 min-w-0 rounded hover:bg-surface-hover/30 transition-colors"
-        >
-          <span className="text-sm font-medium truncate text-fg">
-            {swimlane.name}
-          </span>
-        </button>
+          <button
+            type="button"
+            onClick={() => openBoardManager(swimlane.id)}
+            className="flex items-center gap-2 flex-1 min-w-0 rounded hover:bg-surface-hover/30 transition-colors"
+          >
+            <span className="text-sm font-medium truncate text-fg">
+              {swimlane.name}
+            </span>
+          </button>
 
-        <CountBadge count={tasks.length} />
+          <CountBadge count={tasks.length} />
 
-        <button
-          type="button"
-          data-testid="edit-column-btn"
-          aria-label={`Edit ${swimlane.name} column`}
-          onClick={(e: React.MouseEvent) => {
-            e.stopPropagation();
-            openBoardManager(swimlane.id);
-          }}
-          className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"
-        >
-          <Pencil size={12} />
-        </button>
-      </div>
+          <button
+            type="button"
+            data-testid="edit-column-btn"
+            aria-label={`Edit ${swimlane.name} column`}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              openBoardManager(swimlane.id);
+            }}
+            className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"
+          >
+            <Pencil size={12} />
+          </button>
+        </div>
+      </HoverTip>
 
       {/* Drop zone */}
       <div className="p-2 flex-shrink-0">

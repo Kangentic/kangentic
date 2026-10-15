@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { LayoutGrid, Rows3, Table2, Search, Layers, ArrowUpDown } from 'lucide-react';
 import type { MonitorSessionRow, MonitorView } from '../../../shared/types';
 import { ButtonGroup } from '../ButtonGroup';
+import { HoverTip } from '../HoverTip';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
 
 /**
@@ -202,20 +203,21 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
         {/* "Live only", not "Hide inactive": this hides PAUSED and finished
             sessions, and calling those "inactive" collides with the Active/Idle
             words every other part of the view uses for something else. */}
-        <button
-          type="button"
-          onClick={() => setView({ liveOnly: !view.liveOnly })}
-          className={`rounded-full border px-3 py-1 text-xs font-medium cursor-pointer transition-colors ${
-            view.liveOnly
-              ? 'border-accent/60 bg-accent/10 text-fg'
-              : 'border-edge bg-surface/60 text-fg-muted hover:text-fg hover:bg-surface-hover/40'
-          }`}
-          aria-pressed={view.liveOnly}
-          data-testid="monitor-live-only"
-          title="Show only sessions with a live agent, hiding paused and recently finished"
-        >
-          Live only
-        </button>
+        <HoverTip label="Show only sessions with a live agent, hiding paused and recently finished">
+          <button
+            type="button"
+            onClick={() => setView({ liveOnly: !view.liveOnly })}
+            className={`rounded-full border px-3 py-1 text-xs font-medium cursor-pointer transition-colors ${
+              view.liveOnly
+                ? 'border-accent/60 bg-accent/10 text-fg'
+                : 'border-edge bg-surface/60 text-fg-muted hover:text-fg hover:bg-surface-hover/40'
+            }`}
+            aria-pressed={view.liveOnly}
+            data-testid="monitor-live-only"
+          >
+            Live only
+          </button>
+        </HoverTip>
 
         {/* `flex-1 min-w-0` with the width as a CAP rather than a fixed size. This
             row wraps, so a fixed 22rem never clipped, but it forced the wrap
@@ -241,15 +243,16 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
             just restated the tiles above, which is why it read as noise; filtered
             it is the one thing that explains where the missing sessions went. */}
         {visibleCount !== rows.length && (
-          <span
-            className="flex items-center gap-1.5 rounded-full border border-edge bg-surface/60 px-3 py-1 text-xs text-fg-muted flex-shrink-0"
-            title={`Filters are hiding ${rows.length - visibleCount} of ${rows.length} sessions`}
-            data-testid="monitor-visible-count"
-          >
-            <span className="tabular-nums text-fg font-medium">{visibleCount}</span>
-            of
-            <span className="tabular-nums">{rows.length}</span>
-          </span>
+          <HoverTip label={`Filters are hiding ${rows.length - visibleCount} of ${rows.length} sessions`}>
+            <span
+              className="flex items-center gap-1.5 rounded-full border border-edge bg-surface/60 px-3 py-1 text-xs text-fg-muted flex-shrink-0"
+              data-testid="monitor-visible-count"
+            >
+              <span className="tabular-nums text-fg font-medium">{visibleCount}</span>
+              of
+              <span className="tabular-nums">{rows.length}</span>
+            </span>
+          </HoverTip>
         )}
       </div>
     </div>

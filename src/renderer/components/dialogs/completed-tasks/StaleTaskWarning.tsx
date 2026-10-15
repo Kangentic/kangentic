@@ -1,3 +1,5 @@
+import { HoverTip } from '../../HoverTip';
+
 type AgeLevel = 'fresh' | 'aging' | 'stale';
 
 function getAgeLevel(archivedAt: string): AgeLevel {
@@ -26,9 +28,8 @@ export function StaleTaskWarning({ archivedAt }: { archivedAt: string }) {
   const color = level === 'aging' ? 'bg-yellow-400/70' : 'bg-fg-disabled';
   const tooltip = level === 'aging' ? 'Session may need to be re-created' : 'Session may be expired';
   return (
-    <span
-      className={`inline-block w-1.5 h-1.5 rounded-full ${color} mr-1.5 flex-shrink-0`}
-      title={tooltip}
-    />
+    <HoverTip label={tooltip}>
+      <span className={`inline-block w-1.5 h-1.5 rounded-full ${color} mr-1.5 flex-shrink-0`} />
+    </HoverTip>
   );
 }

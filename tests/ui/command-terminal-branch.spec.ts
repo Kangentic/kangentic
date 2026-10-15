@@ -139,7 +139,7 @@ test.describe('Command Terminal: Changes panel base', () => {
       const badge = page.getByTestId('changes-base-label');
       await expect(badge).toHaveText('develop', { timeout: 8000 });
       // No task behind a Command Terminal, so the base is always the project default.
-      await expect(badge).toHaveAttribute('title', 'Based on develop, the project default');
+      await expect(badge).toHaveAccessibleDescription('Based on develop, the project default');
     } finally {
       await browser.close();
     }

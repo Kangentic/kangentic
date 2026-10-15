@@ -237,10 +237,10 @@ test.describe('Workflows header', () => {
       await expect(byTestId(page, 'workflow-picker')).toContainText('Usage budgets');
       await expect(byTestId(page, 'workflow-picker')).toContainText('9 tasks');
       await expect(byTestId(page, 'workflow-pause')).toHaveAttribute('aria-label', 'Running. Pause workflow');
-      // A native tooltip cannot follow the width ladder, so each carries the floor's.
-      await expect(byTestId(page, 'workflow-pause')).toHaveAttribute('title', 'Running. Pause workflow');
-      await expect(byTestId(page, 'workflow-rename')).toHaveAttribute('title', 'Rename');
-      await expect(byTestId(page, 'workflow-delete')).toHaveAttribute('title', 'Delete');
+      // A tip cannot follow the width ladder, so each is named, and tipped, with the floor's text.
+      await expect(byTestId(page, 'workflow-pause')).toHaveAccessibleName('Running. Pause workflow');
+      await expect(byTestId(page, 'workflow-rename')).toHaveAccessibleName('Rename');
+      await expect(byTestId(page, 'workflow-delete')).toHaveAccessibleName('Delete');
       await expect(byTestId(page, 'workflow-progress')).toHaveText('2 of 9 done');
       // Two done, one in Merge, one in Executing: one continuous done segment,
       // then one segment per working task.
@@ -255,7 +255,7 @@ test.describe('Workflows header', () => {
       expect(doneLaneColor).not.toBe('');
       expect(await segments.first().evaluate((element) => getComputedStyle(element).backgroundColor))
         .toBe(await computedColor(page, doneLaneColor));
-      await expect(byTestId(page, 'workflow-progress-bar')).toHaveAttribute('title', '2 of 9 done. 2 in progress, 1 queued, 4 blocked.');
+      await expect(byTestId(page, 'workflow-progress-bar')).toHaveAccessibleName('2 of 9 done. 2 in progress, 1 queued, 4 blocked.');
       await expect(byTestId(page, 'workflow-counts')).toHaveText('2 in progress, 1 queued, 4 blocked');
 
       const lifecycleBox = await byTestId(page, 'workflow-pause').boundingBox();
@@ -309,7 +309,7 @@ test.describe('Workflows header', () => {
     const { browser, page } = await launch('empty-draft');
     try {
       await expect(byTestId(page, 'workflow-start')).toBeDisabled();
-      await expect(byTestId(page, 'workflow-start')).toHaveAttribute('title', 'This workflow has no tasks yet.');
+      await expect(byTestId(page, 'workflow-start')).toHaveAccessibleDescription('This workflow has no tasks yet.');
       // Nothing to select: the inspector shows the empty run order, with no prompt.
       await expect(byTestId(page, 'workflow-run-order')).toContainText('No tasks yet.');
       await expect(byTestId(page, 'workflow-inspector-title')).toHaveCount(0);
@@ -631,11 +631,11 @@ test.describe('Workflows inspector', () => {
       await expect(byTestId(page, 'workflow-route-switch-lane-1')).toHaveAccessibleDescription('#414 has reached Executing. Only the columns after it can change.');
       await expect(byTestId(page, 'workflow-route-switch-lane-3')).toBeEnabled();
       await expect(byTestId(page, 'workflow-add-blocker')).toBeDisabled();
-      await expect(byTestId(page, 'workflow-add-blocker')).toHaveAttribute('title', '#414 has started. Only a task in To Do can wait for another.');
+      await expect(byTestId(page, 'workflow-add-blocker')).toHaveAccessibleDescription('#414 has started. Only a task in To Do can wait for another.');
       // Its blocker #412 is done: removing the link changes nothing.
       const blockedBy = page.locator('[data-testid="workflow-link-row"][data-task-key="t412"] [data-testid="workflow-unlink"]');
       await expect(blockedBy).toBeDisabled();
-      await expect(blockedBy).toHaveAttribute('title', '#412 is done. Removing the link changes nothing.');
+      await expect(blockedBy).toHaveAccessibleDescription('#412 is done. Removing the link changes nothing.');
       // #417 still waits in To Do: removing that link changes something.
       await expect(page.locator('[data-testid="workflow-link-row"][data-task-key="t417"] [data-testid="workflow-unlink"]')).toBeEnabled();
 
@@ -677,7 +677,7 @@ test.describe('Workflows inspector', () => {
       // The canvas draws every link, so the menu does not offer to show them.
       await expect(menu.locator('[data-testid="context-show-workflow-links"]')).toHaveCount(0);
       await expect(menu.locator('[data-testid="context-move-to"]').filter({ hasText: 'Code Review' }))
-        .toHaveAttribute('title', '#414 is locked while Usage budgets runs.');
+        .toHaveAccessibleDescription('#414 is locked while Usage budgets runs.');
       await expect(menu.locator('[data-testid="context-archive-task"]')).toHaveAttribute('aria-disabled', 'true');
 
       // Open on board: Board, with the task's window open.
@@ -752,7 +752,7 @@ test.describe('Workflows inspector', () => {
     try {
       await card(page, 't411').click();
       await expect(byTestId(page, 'workflow-remove-task')).toBeDisabled();
-      await expect(byTestId(page, 'workflow-remove-task')).toHaveAttribute('title', '#411 is done and stays with its workflow.');
+      await expect(byTestId(page, 'workflow-remove-task')).toHaveAccessibleDescription('#411 is done and stays with its workflow.');
     } finally {
       await browser.close();
     }
@@ -877,7 +877,7 @@ test.describe('Workflows inspector', () => {
         await expect(options).toHaveCount(0);
       }
       await expect(addBlocker).toBeDisabled();
-      await expect(addBlocker).toHaveAttribute('title', 'No task it can wait for.');
+      await expect(addBlocker).toHaveAccessibleDescription('No task it can wait for.');
       await addBlocker.click({ force: true });
       await expect(byTestId(page, 'workflow-add-blocker-menu')).toBeHidden();
     } finally {
@@ -1114,7 +1114,7 @@ test.describe('Workflows canvas tools and search', () => {
     const { browser, page } = await launch('draft');
     try {
       await expect(byTestId(page, 'workflow-auto-layout')).toBeDisabled();
-      await expect(byTestId(page, 'workflow-auto-layout')).toHaveAttribute('title', 'No card has been moved');
+      await expect(byTestId(page, 'workflow-auto-layout')).toHaveAccessibleDescription('No card has been moved');
       await dragCardByHand(page, 'task-3');
       await expect(byTestId(page, 'workflow-auto-layout')).toBeEnabled();
       await byTestId(page, 'workflow-auto-layout').click();

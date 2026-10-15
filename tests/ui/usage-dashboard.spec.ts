@@ -457,8 +457,7 @@ test.describe('usage dashboard', () => {
       // Sessions tile two cards to the left, and a reader comparing the two
       // deserves to see why.
       await expect(tile).toContainText('over 6 sessions');
-      await expect(tile).toHaveAttribute(
-        'title',
+      await expect(tile).toHaveAccessibleDescription(
         'Time the agent was working, per session, excluding idle. Covers the 6 session(s) with '
         + 'activity tracking in this range, which is fewer than the Sessions tile counts.',
       );
@@ -521,11 +520,11 @@ test.describe('usage dashboard', () => {
 
       const tokensTile = page.locator('[data-testid="kpi-tokens"]');
       await expect(tokensTile).toBeVisible({ timeout: 10000 });
-      const title = await tokensTile.getAttribute('title');
-      // Stable substrings only: the title interpolates a locale-formatted
+      const tip = await tokensTile.getAttribute('aria-description');
+      // Stable substrings only: the tip interpolates a locale-formatted
       // date, which is not portable across Windows and CI Linux.
-      expect(title).toContain('Per-turn capture starts');
-      expect(title).toContain('covers less of the range than Cost does');
+      expect(tip).toContain('Per-turn capture starts');
+      expect(tip).toContain('covers less of the range than Cost does');
       await expect(page.locator('[data-testid="kpi-cost-value"]')).toContainText('$40.00');
     } finally {
       await browser.close();
@@ -559,8 +558,7 @@ test.describe('usage dashboard', () => {
       // kpis.subagentNestedCount), and that 'codex' (present in byAgent) cannot
       // report subagent usage at all, so this range's total is a floor, not a
       // complete count.
-      await expect(subagentTile).toHaveAttribute(
-        'title',
+      await expect(subagentTile).toHaveAccessibleDescription(
         'Fresh input and output from 190 subagent turn(s). The Tokens tile is main-thread only, '
         + 'so these are on top of it; the session\'s reported Cost already covers them. '
         + '5.2M cache read. 2 of 8 were spawned by another subagent. '
@@ -628,7 +626,7 @@ test.describe('usage dashboard', () => {
       await expect(tile).toContainText('-');
       // Every agent here CAN report subagent usage, so the dash is a real
       // measurement and the tooltip must not imply a blind spot.
-      await expect(tile).toHaveAttribute('title', 'No subagent turns recorded in this range');
+      await expect(tile).toHaveAccessibleDescription('No subagent turns recorded in this range');
     } finally {
       await browser.close();
     }
@@ -676,8 +674,7 @@ test.describe('usage dashboard', () => {
       await expect(tile).toContainText('-', { timeout: 10000 });
       // Singular agent, singular verb - the list is short enough that agreement
       // is worth getting right rather than papering over with "do(es) not".
-      await expect(tile).toHaveAttribute(
-        'title',
+      await expect(tile).toHaveAccessibleDescription(
         'Codex does not report subagent usage, so fan-outs in this range cannot be counted.',
       );
     } finally {
@@ -753,7 +750,7 @@ test.describe('usage dashboard', () => {
       // the row's tooltip.
       const claudeRow = page.locator('[data-testid="breakdown-agent-row"]').first();
       await expect(claudeRow.locator('[data-testid="breakdown-agent-row-value"]')).toHaveText('$11.00');
-      await expect(claudeRow).toHaveAttribute('title', 'Claude: $11.00, 166k tokens');
+      await expect(claudeRow).toHaveAccessibleDescription('Claude: $11.00, 166k tokens');
 
       // Switching to Tokens re-keys the share to the token split (claude 166k
       // of 192k = 86%), and the row shows tokens with the cost in its tooltip.
@@ -761,7 +758,7 @@ test.describe('usage dashboard', () => {
       await expect(page.locator('[data-testid="breakdown-agent"]')).toContainText('86%');
       await expect(page.locator('[data-testid="breakdown-agent"]')).not.toContainText('89%');
       await expect(claudeRow.locator('[data-testid="breakdown-agent-row-value"]')).toHaveText('166k');
-      await expect(claudeRow).toHaveAttribute('title', 'Claude: 166k tokens, $11.00');
+      await expect(claudeRow).toHaveAccessibleDescription('Claude: 166k tokens, $11.00');
     } finally {
       await browser.close();
     }
@@ -790,7 +787,7 @@ test.describe('usage dashboard', () => {
       await expect(page.locator('[data-testid="background-job-terminal_name-value"]')).toHaveText('-');
       await expect(names).toContainText('2 calls');
       await expect(names).toContainText('Codex default');
-      expect(await names.getAttribute('title')).toContain('Codex reported no usage');
+      expect(await names.getAttribute('aria-description')).toContain('Codex reported no usage');
 
       // Kept apart: the session tiles are the mock's own session figures.
       await expect(page.locator('[data-testid="kpi-cost-value"]')).toContainText('$12.34');
@@ -1309,7 +1306,7 @@ test.describe('usage dashboard', () => {
       });
 
       const statsButton = page.locator('[data-testid="usage-stats-button"]');
-      await expect(statsButton).toHaveAttribute('title', 'Focus usage stats window');
+      await expect(statsButton).toHaveAccessibleDescription('Focus usage stats window');
       await statsButton.click();
 
       await expect

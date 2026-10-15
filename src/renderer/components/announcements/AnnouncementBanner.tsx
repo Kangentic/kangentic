@@ -1,6 +1,7 @@
 import { Megaphone, X } from 'lucide-react';
 import { useAnnouncementsStore, selectBannerAnnouncement } from '../../stores/announcements-store';
 import { useConfigStore } from '../../stores/config-store';
+import { HoverTip } from '../HoverTip';
 
 /**
  * Slim dismissible strip above the board content for the highest-priority
@@ -28,9 +29,11 @@ export function AnnouncementBanner() {
       className="flex-shrink-0 flex items-center gap-2.5 border-b border-edge bg-surface-raised px-3 py-1.5"
     >
       <Megaphone size={14} className="text-accent flex-shrink-0" aria-hidden="true" />
-      {/* title attr: the strip truncates on narrow windows and the full text
-          should still be reachable without opening the dialog. */}
-      <span className="flex-1 min-w-0 truncate text-xs text-fg-secondary" title={banner.title}>{banner.title}</span>
+      {/* The strip truncates on narrow windows, so the tip keeps the full text
+          reachable without opening the dialog. */}
+      <HoverTip label={banner.title}>
+        <span className="flex-1 min-w-0 truncate text-xs text-fg-secondary">{banner.title}</span>
+      </HoverTip>
       <button
         type="button"
         data-testid="announcement-learn-more"

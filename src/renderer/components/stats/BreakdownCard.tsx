@@ -3,6 +3,7 @@ import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost } from '../../utils/format-session';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { ChartCard } from './ChartCard';
+import { HoverTip } from '../HoverTip';
 import { KngDonut } from './charts/KngDonut';
 import { rankSlicesByMetric, visibleSlices, type DonutSlice } from './useStatsData';
 
@@ -66,7 +67,7 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
   // The row's tooltip: the shown metric, then the other one ("Opus 5: $43.26,
   // 111.2M tokens"). Cost is named only where it is known.
   const tokensText = (slice: DonutSlice) => `${formatTokenCount(slice.value)} tokens`;
-  const rowTitle = (slice: DonutSlice) => (byCost
+  const rowTip = (slice: DonutSlice) => (byCost
     ? `${slice.label}: ${formatCost(slice.costUsd)}, ${tokensText(slice)}`
     : costKnown ? `${slice.label}: ${tokensText(slice)}, ${formatCost(slice.costUsd)}` : `${slice.label}: ${tokensText(slice)}`);
 
@@ -96,35 +97,35 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
         </div>
         <ul className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden max-h-full space-y-1.5" data-testid={`${testId}-list`}>
           {listSlices.map((slice) => (
-            <li
-              key={slice.id}
-              className={`flex items-center gap-2 text-xs rounded transition-colors ${hoveredSliceId === slice.id ? 'bg-surface-hover/40' : ''}`}
-              data-testid={`${testId}-row`}
-              data-slice-id={slice.id}
-              title={rowTitle(slice)}
-              onMouseEnter={() => setHoveredSliceId(slice.id)}
-              onMouseLeave={() => setHoveredSliceId(null)}
-            >
-              <span
-                aria-hidden
-                className="inline-block w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: `var(${slice.colorVar})` }}
-              />
-              <span className="text-fg-secondary truncate w-28 flex-shrink-0">{slice.label}</span>
-              <div className="flex-1 min-w-4 h-1 rounded-full bg-edge/40 overflow-hidden" aria-hidden>
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${metricTotal > 0 ? Math.max((sliceMetricValue(slice) / metricTotal) * 100, 2) : 0}%`,
-                    backgroundColor: `var(${slice.colorVar})`,
-                  }}
+            <HoverTip key={slice.id} label={rowTip(slice)}>
+              <li
+                className={`flex items-center gap-2 text-xs rounded transition-colors ${hoveredSliceId === slice.id ? 'bg-surface-hover/40' : ''}`}
+                data-testid={`${testId}-row`}
+                data-slice-id={slice.id}
+                onMouseEnter={() => setHoveredSliceId(slice.id)}
+                onMouseLeave={() => setHoveredSliceId(null)}
+              >
+                <span
+                  aria-hidden
+                  className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: `var(${slice.colorVar})` }}
                 />
-              </div>
-              <span className="text-fg tabular-nums" data-testid={`${testId}-row-value`}>
-                {metricFormatter(sliceMetricValue(slice))}
-              </span>
-              <span className="text-fg-muted tabular-nums w-8 text-right">{`${sharePercent(slice)}%`}</span>
-            </li>
+                <span className="text-fg-secondary truncate w-28 flex-shrink-0">{slice.label}</span>
+                <div className="flex-1 min-w-4 h-1 rounded-full bg-edge/40 overflow-hidden" aria-hidden>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${metricTotal > 0 ? Math.max((sliceMetricValue(slice) / metricTotal) * 100, 2) : 0}%`,
+                      backgroundColor: `var(${slice.colorVar})`,
+                    }}
+                  />
+                </div>
+                <span className="text-fg tabular-nums" data-testid={`${testId}-row-value`}>
+                  {metricFormatter(sliceMetricValue(slice))}
+                </span>
+                <span className="text-fg-muted tabular-nums w-8 text-right">{`${sharePercent(slice)}%`}</span>
+              </li>
+            </HoverTip>
           ))}
         </ul>
       </div>

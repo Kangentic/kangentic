@@ -2,6 +2,7 @@ import { Check, Cpu, LoaderCircle, Square } from 'lucide-react';
 import type { LeftoverProcess, LeftoverProcessReport } from '../../../shared/types';
 import { BaseDialog } from './BaseDialog';
 import { CountBadge } from '../CountBadge';
+import { HoverTip } from '../HoverTip';
 import { useLeftoverProcessesStore } from '../../stores/leftover-processes-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useNow } from '../../hooks/useNow';
@@ -53,7 +54,11 @@ function LeftoverProcessesDialogBody({ report, onClose }: { report: LeftoverProc
     <BaseDialog
       onClose={onClose}
       title={reportTitleOf(report)}
-      subtitle={age ? <span title={formatDateTime(report.reportedAt)} data-testid="leftover-processes-age">{age}</span> : undefined}
+      subtitle={age ? (
+        <HoverTip label={formatDateTime(report.reportedAt)}>
+          <span data-testid="leftover-processes-age">{age}</span>
+        </HoverTip>
+      ) : undefined}
       icon={<Cpu size={16} className="text-accent-fg" />}
       className="w-[560px] max-w-[calc(100vw-2rem)]"
       bodyClassName="max-h-[60vh] overflow-y-auto"

@@ -9,6 +9,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { formatRelativeTime } from '../../lib/datetime';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { usePopOut } from '../../pop-out/usePopOut';
+import { HoverTip } from '../HoverTip';
 import type { SearchHit, SearchHitKind } from '../../../shared/types';
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -599,13 +600,14 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
           {/* Matched by meaning, not keywords: a pure-semantic hit carries no
               highlighted term in its snippet, so flag why it surfaced. */}
           {hit.matchKind === 'semantic' && (
-            <span
-              className="flex-shrink-0 inline-flex text-accent"
-              title="Matched by meaning"
-              aria-label="Matched by meaning"
-            >
-              <Sparkles size={12} />
-            </span>
+            <HoverTip label="Matched by meaning">
+              <span
+                className="flex-shrink-0 inline-flex text-accent"
+                aria-label="Matched by meaning"
+              >
+                <Sparkles size={12} />
+              </span>
+            </HoverTip>
           )}
           {/* The agent name (e.g. "Claude Code") is intentionally omitted: the
               task title already identifies the conversation and the agent is
@@ -629,20 +631,22 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
               agent is still active (and a task row exists to open), otherwise the
               read-only conversation history. Mirrors the routing in `activate`. */}
           {hit.sessionActive && hit.taskId !== null ? (
-            <span
-              className="ml-1 flex-shrink-0 inline-flex items-center gap-1 text-[11px] rounded px-1.5 py-0.5"
-              style={{ color: 'var(--kng-active)', backgroundColor: 'color-mix(in srgb, var(--kng-active) 14%, transparent)' }}
-              title="Opens the active terminal"
-            >
-              <Terminal size={10} /> Terminal
-            </span>
+            <HoverTip label="Opens the active terminal">
+              <span
+                className="ml-1 flex-shrink-0 inline-flex items-center gap-1 text-[11px] rounded px-1.5 py-0.5"
+                style={{ color: 'var(--kng-active)', backgroundColor: 'color-mix(in srgb, var(--kng-active) 14%, transparent)' }}
+              >
+                <Terminal size={10} /> Terminal
+              </span>
+            </HoverTip>
           ) : (
-            <span
-              className="ml-1 flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-secondary bg-surface-hover rounded px-1.5 py-0.5"
-              title="Opens the conversation history"
-            >
-              <History size={10} /> History
-            </span>
+            <HoverTip label="Opens the conversation history">
+              <span
+                className="ml-1 flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-secondary bg-surface-hover rounded px-1.5 py-0.5"
+              >
+                <History size={10} /> History
+              </span>
+            </HoverTip>
           )}
           {hit.turnTs !== null && (
             <span className="ml-auto text-fg-muted tabular-nums whitespace-nowrap">

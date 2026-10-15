@@ -15,6 +15,7 @@
 
 import { useState } from 'react';
 import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
+import { HoverTip } from '../HoverTip';
 
 /** Rows shown before "Show all N". */
 export const SOURCE_ROWS_SHOWN = 5;
@@ -58,29 +59,35 @@ export function KnowledgeGraphSourceRows({
   const visible = expanded || collapsed ? rows : rows.slice(0, SOURCE_ROWS_SHOWN);
   return (
     <div className="flex flex-col gap-1" data-testid="knowledge-graph-chat-rows">
+      {/* The tip is the full title, which the row cuts short, and under it why
+          a row that cannot open is off. */}
       {visible.map((task) => (
-        <button
+        <HoverTip
           key={task.key}
-          type="button"
-          onClick={() => onOpenTask(task)}
-          disabled={!canOpenTask(task)}
-          title={canOpenTask(task) ? task.title : `${task.title} (no recorded conversation to open here)`}
-          className="flex w-full items-center gap-2 rounded-lg border border-edge bg-surface px-2.5 py-[7px] text-left text-xs text-fg hover:bg-surface-hover cursor-pointer disabled:cursor-default disabled:text-fg-muted disabled:hover:bg-surface"
-          data-testid="knowledge-graph-chat-row"
-          data-task-key={task.key}
+          label={task.title}
+          detail={canOpenTask(task) ? undefined : 'No recorded conversation to open here'}
         >
-          {/* An answer across projects names each row's project, since a
-              ticket number alone repeats between them. */}
-          {task.projectName ? (
-            <span className="max-w-[8rem] flex-shrink-0 truncate text-fg-muted" data-testid="knowledge-graph-chat-row-project">
-              {task.projectName}
-            </span>
-          ) : null}
-          {task.displayId != null ? (
-            <span className="flex-shrink-0 font-semibold text-fg">#{task.displayId}</span>
-          ) : null}
-          <span className="min-w-0 flex-1 truncate">{task.title}</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => onOpenTask(task)}
+            disabled={!canOpenTask(task)}
+            className="flex w-full items-center gap-2 rounded-lg border border-edge bg-surface px-2.5 py-[7px] text-left text-xs text-fg hover:bg-surface-hover cursor-pointer disabled:cursor-default disabled:text-fg-muted disabled:hover:bg-surface"
+            data-testid="knowledge-graph-chat-row"
+            data-task-key={task.key}
+          >
+            {/* An answer across projects names each row's project, since a
+                ticket number alone repeats between them. */}
+            {task.projectName ? (
+              <span className="max-w-[8rem] flex-shrink-0 truncate text-fg-muted" data-testid="knowledge-graph-chat-row-project">
+                {task.projectName}
+              </span>
+            ) : null}
+            {task.displayId != null ? (
+              <span className="flex-shrink-0 font-semibold text-fg">#{task.displayId}</span>
+            ) : null}
+            <span className="min-w-0 flex-1 truncate">{task.title}</span>
+          </button>
+        </HoverTip>
       ))}
       {!expanded && !collapsed && rows.length > SOURCE_ROWS_SHOWN ? (
         <button

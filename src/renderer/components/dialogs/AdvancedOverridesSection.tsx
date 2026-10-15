@@ -254,7 +254,7 @@ export function AdvancedOverridesSection({
   // empty and fills in from an async probe, and a machine with no agent CLI
   // never fills it), so one fixed "install another" string is wrong copy in the
   // second case.
-  const agentFieldTitle = canPickAgent
+  const agentFieldTip = canPickAgent
     ? 'The agent CLI this task runs on'
     : availableAgents.length === 1
       ? 'Only one agent CLI detected - install another to choose'
@@ -478,40 +478,42 @@ export function AdvancedOverridesSection({
             {/* Disabled rather than hidden with a single agent installed, the
                 same call the Profile select makes above: the field still names
                 what this task will run on, and the pencil beside it stays put
-                on every machine instead of moving row to row. The tooltip sits
-                on this wrapper rather than on the Combobox - the pencil's own
-                title wins over an ancestor's while hovering the button, so both
-                read correctly with no prop added to a shared control. */}
-            <div title={agentFieldTitle} data-testid="task-agent-field">
-              <Field label="Agent">
-                <div className="flex items-center gap-2">
-                  <Combobox
-                    value={agentOverride}
-                    onChange={handleAgentChange}
-                    options={availableAgents.map((entry) => ({ value: entry.name, label: entry.displayName ?? entry.name }))}
-                    placeholder={agentInheritLabel}
-                    placeholderVariant="muted"
-                    disabled={!canPickAgent}
-                    className="flex-1 min-w-0"
-                    testId="task-agent-override"
-                  />
-                  {/* The card's only route to where all four of these fields get
-                      their defaults, and the same component as the profile pencil
-                      opposite it, so the two cannot drift apart. Project-scoped
-                      open (see openProjectSettings above). `WindowLayer` mounts
-                      OUTSIDE AppLayout's `currentProject` gate, so an edit form can
-                      outlive its project; disabling on that rather than no-opping
-                      in the handler keeps the button from looking live when the
-                      click would do nothing. */}
-                  <EditPencilButton
-                    onClick={() => currentProject && openProjectSettings(currentProject.path, currentProject.name, 'agent')}
-                    label="Edit agent defaults in Settings"
-                    testId="task-agent-edit"
-                    disabled={!currentProject}
-                  />
-                </div>
-              </Field>
-            </div>
+                on every machine instead of moving row to row. The tip sits on
+                this wrapper rather than on the Combobox: the pencil's own tip is
+                the inner trigger and wins while the pointer is on the button, so
+                both read correctly with no prop added to a shared control. */}
+            <HoverTip label={agentFieldTip}>
+              <div data-testid="task-agent-field">
+                <Field label="Agent">
+                  <div className="flex items-center gap-2">
+                    <Combobox
+                      value={agentOverride}
+                      onChange={handleAgentChange}
+                      options={availableAgents.map((entry) => ({ value: entry.name, label: entry.displayName ?? entry.name }))}
+                      placeholder={agentInheritLabel}
+                      placeholderVariant="muted"
+                      disabled={!canPickAgent}
+                      className="flex-1 min-w-0"
+                      testId="task-agent-override"
+                    />
+                    {/* The card's only route to where all four of these fields get
+                        their defaults, and the same component as the profile pencil
+                        opposite it, so the two cannot drift apart. Project-scoped
+                        open (see openProjectSettings above). `WindowLayer` mounts
+                        OUTSIDE AppLayout's `currentProject` gate, so an edit form can
+                        outlive its project; disabling on that rather than no-opping
+                        in the handler keeps the button from looking live when the
+                        click would do nothing. */}
+                    <EditPencilButton
+                      onClick={() => currentProject && openProjectSettings(currentProject.path, currentProject.name, 'agent')}
+                      label="Edit agent defaults in Settings"
+                      testId="task-agent-edit"
+                      disabled={!currentProject}
+                    />
+                  </div>
+                </Field>
+              </div>
+            </HoverTip>
             {(showModelPicker || showEffortPicker) && (
               <div className="flex gap-3">
                 {showModelPicker && (

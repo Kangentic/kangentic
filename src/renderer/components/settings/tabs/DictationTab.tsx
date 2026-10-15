@@ -14,6 +14,7 @@ import {
   type CardSourceLineProps,
 } from '../settings-card';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
+import { HoverTip } from '../../HoverTip';
 import { settingProps } from '../settings-registry';
 import { effectiveCombo } from '../../../../shared/keybindings';
 import { formatCombo } from '../../../utils/keybindings';
@@ -305,18 +306,19 @@ export function DictationTab({
                 <span className={SETTING_LABEL_CLASS}>Push-to-talk</span>
                 <InfoTip label="Push-to-talk" text={pushToTalkDescription} />
               </div>
-              <button
-                type="button"
-                onClick={onOpenHotkeys}
-                title="Rebind in the Hotkeys settings"
-                data-testid="dictation-rebind-cta"
-                className="inline-flex flex-shrink-0 items-center gap-2 whitespace-nowrap rounded border border-edge-input bg-surface-control px-2 py-1 text-xs text-fg-secondary transition-colors hover:border-accent hover:text-fg"
-              >
-                <span className="font-medium">{pushToTalkLabel}</span>
-                <span className="inline-flex items-center gap-1 text-fg-faint">
-                  <Pencil size={12} /> Rebind
-                </span>
-              </button>
+              <HoverTip label="Rebind in the Hotkeys settings">
+                <button
+                  type="button"
+                  onClick={onOpenHotkeys}
+                  data-testid="dictation-rebind-cta"
+                  className="inline-flex flex-shrink-0 items-center gap-2 whitespace-nowrap rounded border border-edge-input bg-surface-control px-2 py-1 text-xs text-fg-secondary transition-colors hover:border-accent hover:text-fg"
+                >
+                  <span className="font-medium">{pushToTalkLabel}</span>
+                  <span className="inline-flex items-center gap-1 text-fg-faint">
+                    <Pencil size={12} /> Rebind
+                  </span>
+                </button>
+              </HoverTip>
             </CardTile>
             <CardRow {...settingProps('dictation.releaseBufferMs')}>
               <div className="flex items-center gap-3">

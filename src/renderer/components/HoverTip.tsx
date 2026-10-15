@@ -1,6 +1,6 @@
 /**
- * The one tooltip. Every explanatory hover text in the renderer is a HoverTip; a native `title`
- * survives only for the full value of text the layout cuts short (`.claude/rules/one-tooltip.md`).
+ * The one tooltip. Every hover text in the renderer is a HoverTip, the full value of text the layout
+ * cuts short included; the renderer has no native `title` (`.claude/rules/one-tooltip.md`).
  *
  * Two shapes:
  *  - A LABEL: a word or a sentence, inverted (`bg-fg` on `text-surface`) so it reads like the
@@ -18,8 +18,9 @@
  *  - Opens at once on keyboard focus (`:focus-visible`, and not the focus a press gave it), and at
  *    once while another tip shows or for HOVER_TIP_WARM_MS after one closed.
  *  - Closes on pointer leave (a tip keyboard focus opened stays until blur), blur, a press or
- *    click of the trigger, Escape, a scroll of anything holding the trigger, a window resize, and
- *    the window losing focus.
+ *    click of the trigger, Enter or Space on the trigger (a `role="button"` grip acts on the key
+ *    with no click), Escape, a scroll of anything holding the trigger, a window resize, and the
+ *    window losing focus.
  *  - A hover arms the tip once per visit. Once it has, a close while the pointer stays on the
  *    trigger (Escape, a scroll, a resize, the window losing focus, another tip taking its place)
  *    keeps it shut until the pointer leaves and comes back, as a press always does. Two cases arm
@@ -66,6 +67,7 @@ import {
   useState,
   type ElementType,
   type FocusEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
@@ -129,6 +131,7 @@ interface TriggerProps {
   onPointerLeave?: (event: ReactPointerEvent<Element>) => void;
   onPointerDown?: (event: ReactPointerEvent<Element>) => void;
   onClick?: (event: ReactMouseEvent<Element>) => void;
+  onKeyDown?: (event: ReactKeyboardEvent<Element>) => void;
   onFocus?: (event: FocusEvent<Element>) => void;
   onBlur?: (event: FocusEvent<Element>) => void;
   'aria-description'?: string;
@@ -286,6 +289,14 @@ export function HoverTip(props: HoverTipProps): ReactElement {
     layerRef.current?.hide(false);
   }, [clearDwell]);
 
+  const handleKeyDown = useCallback((event: ReactKeyboardEvent<Element>): void => {
+    // Enter or Space on the trigger itself is a press even where no click follows: a
+    // `role="button"` div such as a drag grip acts on the keydown. Left up, the tip would take
+    // the Escape that cancels what the key started.
+    if (event.target !== event.currentTarget) return;
+    if (event.key === 'Enter' || event.key === ' ') handleClick();
+  }, [handleClick]);
+
   const handleFocus = useCallback((event: FocusEvent<Element>): void => {
     const target = event.target;
     if (!enabledRef.current) return;
@@ -363,7 +374,8 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   // A component with no click of its own gets none: Pill renders a <button> once it has an
   // `onClick`. The press handler already closes the tip; only a keyboard Enter or Space, which
   // such a child does not answer, goes without the close.
-  const chainClick = typeof child.type === 'string' || childProps.onClick !== undefined;
+  const intrinsic = typeof child.type === 'string';
+  const chainClick = intrinsic || childProps.onClick !== undefined;
   const clickProps = chainClick
     ? {
         onClick: (event: ReactMouseEvent<Element>) => {
@@ -372,11 +384,22 @@ export function HoverTip(props: HoverTipProps): ReactElement {
         },
       }
     : {};
+  // The same rule for a key handler: never handed to a component that did not ask for one.
+  const chainKeyDown = intrinsic || childProps.onKeyDown !== undefined;
+  const keyDownProps = chainKeyDown
+    ? {
+        onKeyDown: (event: ReactKeyboardEvent<Element>) => {
+          childProps.onKeyDown?.(event);
+          handleKeyDown(event);
+        },
+      }
+    : {};
   return (
     <>
       <Trigger
         {...child.props}
         {...clickProps}
+        {...keyDownProps}
         onPointerEnter={(event: ReactPointerEvent<Element>) => {
           childProps.onPointerEnter?.(event);
           handlePointerEnter(event);
@@ -566,7 +589,7 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
           {header !== undefined && (
             <div data-hover-tip-part="header" className="flex items-center gap-2 border-b border-edge bg-surface-hover/40 px-3 py-2">
               {header.icon !== undefined && (
-                <span aria-hidden="true" className="flex shrink-0 text-fg-muted [&>svg]:size-[13px]">{header.icon}</span>
+                <span aria-hidden="true" className="flex shrink-0 text-tip-rich-muted [&>svg]:size-[13px]">{header.icon}</span>
               )}
               <span className="font-semibold">{header.title}</span>
             </div>
@@ -575,7 +598,7 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
             <div data-hover-tip-part="body" className="px-3 py-2.5">{content}</div>
           )}
           {footer !== undefined && (
-            <div data-hover-tip-part="footer" className="border-t border-edge px-3 py-1.5 text-fg-muted">{footer}</div>
+            <div data-hover-tip-part="footer" className="border-t border-edge px-3 py-1.5 text-tip-rich-muted">{footer}</div>
           )}
         </>
       ) : (

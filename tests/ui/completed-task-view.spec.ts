@@ -373,7 +373,7 @@ test.describe('Completed task view', () => {
     // The guard for the overflow test below: it sets up the same narrow strip and
     // fails loudly if the fixture, the shrink, or the metrics are not what that
     // test assumes. Under 640px the strip drops Started and Ended and keeps the
-    // span in Elapsed's title.
+    // span in Elapsed's hover tip.
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
     try {
       const strip = await narrowStrip(page);
@@ -383,7 +383,7 @@ test.describe('Completed task view', () => {
       }
       await expect(strip.locator('[data-testid="completed-metric-started"]')).toBeHidden();
       await expect(strip.locator('[data-testid="completed-metric-ended"]')).toBeHidden();
-      await expect(strip.locator('[data-testid="completed-metric-elapsed"]')).toHaveAttribute('title', / to /);
+      await expect(strip.locator('[data-testid="completed-metric-elapsed"]')).toHaveAccessibleDescription(/ to /);
       await expect(page.locator('[data-testid="completed-status"]')).toBeVisible();
     } finally {
       await browser.close();
@@ -985,18 +985,18 @@ test.describe('Completed task view', () => {
       // A title call has no automation, so its Outcome cell is a dash and carries no pill.
       await expect(rows.nth(0).locator('[data-testid="completed-call-outcome"]')).toHaveCount(0);
       await expect(rows.nth(1)).toContainText('Apply findings');
-      await expect(rows.nth(1).locator('span[title="Condition: The final message lists findings."]')).toHaveCount(1);
+      await expect(rows.nth(1).locator('[data-testid="completed-call-label"]')).toHaveAccessibleDescription('Condition: The final message lists findings.');
       const outcomes = card.locator('[data-testid="completed-call-outcome"]');
       await expect(outcomes).toHaveCount(3);
       await expect(outcomes.nth(0)).toHaveText('Ran');
       await expect(outcomes.nth(0)).toHaveAttribute('data-outcome', 'ran');
-      await expect(outcomes.nth(0)).toHaveAttribute('title', 'Ran: The reply lists two findings.');
+      await expect(outcomes.nth(0)).toHaveAccessibleDescription('Ran: The reply lists two findings.');
       await expect(outcomes.nth(1)).toHaveText('Skipped');
       await expect(outcomes.nth(1)).toHaveAttribute('data-outcome', 'skipped');
-      await expect(outcomes.nth(1)).toHaveAttribute('title', 'Skipped: The reply still lists findings to apply.');
+      await expect(outcomes.nth(1)).toHaveAccessibleDescription('Skipped: The reply still lists findings to apply.');
       await expect(outcomes.nth(2)).toHaveText('Error');
       await expect(outcomes.nth(2)).toHaveAttribute('data-outcome', 'error');
-      await expect(outcomes.nth(2)).toHaveAttribute('title', 'Error: The Automation agent could not check the condition: timed out');
+      await expect(outcomes.nth(2)).toHaveAccessibleDescription('Error: The Automation agent could not check the condition: timed out');
       // The report's total, 25,900 tokens: 2.1k + 14.8k + 9k, the shared call once.
       await expect(card.locator('[data-testid="completed-background-calls-total"]')).toContainText('25.9k');
       await expect(card.locator('[data-testid="completed-background-calls-toggle"]')).toHaveCount(0);
@@ -1022,8 +1022,9 @@ test.describe('Completed task view', () => {
       await openUsageTab(page);
       const rows = page.locator('[data-testid="completed-background-call-row"]');
       await expect(rows).toHaveCount(10);
-      // A pill with no reason names its outcome alone, with no trailing colon.
-      await expect(rows.nth(0).locator('[data-testid="completed-call-outcome"]')).toHaveAttribute('title', 'Skipped');
+      // A pill with no reason names its outcome alone, with no trailing colon. That
+      // tip only repeats the pill's own text, so it adds no description.
+      await expect(rows.nth(0).locator('[data-testid="completed-call-outcome"]')).toHaveAccessibleDescription('');
       await page.locator('[data-testid="completed-background-calls-toggle"]').click();
       await expect(rows).toHaveCount(12);
     } finally {

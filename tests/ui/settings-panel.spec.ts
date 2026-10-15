@@ -1071,6 +1071,13 @@ test.describe('Settings Panel', () => {
     await fontFamilyInput.press('ArrowDown');
     await expect(firstOption).toBeFocused();
 
+    // Keyboard focus opened the option's tip, which takes the first Escape alone.
+    const tip = page.locator('[data-hover-tip]');
+    await expect(tip).toBeVisible();
+    await firstOption.press('Escape');
+    await expect(tip).toHaveCount(0);
+    await expect(firstOption).toBeVisible();
+
     await firstOption.press('Escape');
     await expect(firstOption).toHaveCount(0);
 
@@ -1223,8 +1230,11 @@ test.describe('Settings Panel', () => {
   test('CLI path status indicator appears after panel opens', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Agent', exact: true }).click();
-    // The mock returns { found: true }, so the refresh button has a "Re-detect agent" title
-    await expect(page.locator('[title="Re-detect agent"]')).toBeVisible();
+    // The mock returns { found: true }, so the refresh button's tip only repeats
+    // its name and adds no "not found" description.
+    const reDetectButton = page.getByRole('button', { name: 'Re-detect agent', exact: true });
+    await expect(reDetectButton).toBeVisible();
+    await expect(reDetectButton).toHaveAccessibleDescription('');
     await closeSettings();
   });
 

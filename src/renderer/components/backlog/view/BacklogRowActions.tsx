@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { SquareArrowRight, Trash2, Pencil } from 'lucide-react';
 import { PromotePopover } from '../PromotePopover';
+import { HoverTip } from '../../HoverTip';
 import type { useBoardStore } from '../../../stores/board-store';
 
 /**
@@ -27,17 +28,18 @@ export function BacklogRowActions({
   return (
     <div className="flex items-center justify-end gap-1 relative" onClick={(event) => event.stopPropagation()}>
       <div className="relative">
-        <button
-          ref={moveButtonRef}
-          type="button"
-          onClick={() => setShowPicker(!showPicker)}
-          className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
-          aria-label="Move to board"
-          title="Move to board"
-          data-testid="move-to-board-btn"
-        >
-          <SquareArrowRight size={15} />
-        </button>
+        <HoverTip label="Move to board" enabled={!showPicker}>
+          <button
+            ref={moveButtonRef}
+            type="button"
+            onClick={() => setShowPicker(!showPicker)}
+            className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
+            aria-label="Move to board"
+            data-testid="move-to-board-btn"
+          >
+            <SquareArrowRight size={15} />
+          </button>
+        </HoverTip>
         {showPicker && (
           <PromotePopover
             triggerRef={moveButtonRef}
@@ -50,26 +52,28 @@ export function BacklogRowActions({
           />
         )}
       </div>
-      <button
-        type="button"
-        onClick={() => onEdit(itemId)}
-        className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
-        aria-label="Edit item"
-        title="Edit item"
-        data-testid="edit-item-btn"
-      >
-        <Pencil size={14} />
-      </button>
-      <button
-        type="button"
-        onClick={() => onDelete(itemId)}
-        className="p-1.5 text-fg-disabled hover:text-red-400 hover:bg-surface-hover/40 rounded transition-colors"
-        aria-label="Delete item"
-        title="Delete item"
-        data-testid="delete-item-btn"
-      >
-        <Trash2 size={15} />
-      </button>
+      <HoverTip label="Edit item">
+        <button
+          type="button"
+          onClick={() => onEdit(itemId)}
+          className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
+          aria-label="Edit item"
+          data-testid="edit-item-btn"
+        >
+          <Pencil size={14} />
+        </button>
+      </HoverTip>
+      <HoverTip label="Delete item">
+        <button
+          type="button"
+          onClick={() => onDelete(itemId)}
+          className="p-1.5 text-fg-disabled hover:text-red-400 hover:bg-surface-hover/40 rounded transition-colors"
+          aria-label="Delete item"
+          data-testid="delete-item-btn"
+        >
+          <Trash2 size={15} />
+        </button>
+      </HoverTip>
     </div>
   );
 }

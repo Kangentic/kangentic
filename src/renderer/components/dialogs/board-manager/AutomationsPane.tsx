@@ -487,17 +487,22 @@ function AutomationRow({
               so a long name truncates before they do. The Add automation
               picker's copy rows draw the same component. */}
           <AutomationMarks marks={marks} />
-          {isDirty(draft) && <span title="Unsaved" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
+          {isDirty(draft) && (
+            <HoverTip label="Unsaved">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+            </HoverTip>
+          )}
         </span>
         {/* A long value ends where the row ends, and a multi-line one shows its
-            first line. The tooltip holds all of it, every line. */}
-        <span
-          data-testid="column-automation-row-sentence"
-          title={sentence.tooltip}
-          className={`block truncate ${sentence.code ? AUTOMATION_ROW_SENTENCE_CODE_CLASS : AUTOMATION_ROW_SENTENCE_CLASS}`}
-        >
-          {sentence.text}
-        </span>
+            first line. The tip holds all of it, every line. */}
+        <HoverTip label={sentence.tooltip}>
+          <span
+            data-testid="column-automation-row-sentence"
+            className={`block truncate ${sentence.code ? AUTOMATION_ROW_SENTENCE_CODE_CLASS : AUTOMATION_ROW_SENTENCE_CLASS}`}
+          >
+            {sentence.text}
+          </span>
+        </HoverTip>
         {/* No last-run line. One used to print under the description once a row
             had run, so rows in one list differed in height by their history,
             and nobody found the history valuable here: a failure reaches the

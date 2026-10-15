@@ -35,6 +35,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Filter, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { Select } from '../settings/shared';
+import { HoverTip } from '../HoverTip';
 import type { KnowledgeGraphColorMode } from './KnowledgeGraphCanvas';
 import { clusterHue } from './knowledge-graph-scene';
 import type {
@@ -269,27 +270,28 @@ function RegionRow({
   onToggle: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      role="switch"
-      aria-checked={on}
-      className={`flex w-full items-center gap-2 rounded px-1.5 py-1 text-left transition-colors cursor-pointer hover:bg-surface-hover ${on ? '' : 'opacity-45'}`}
-      data-testid="knowledge-graph-region-row"
-      data-region-on={on}
-      title={on ? `Hide ${label}` : `Show ${label}`}
-    >
-      <span
-        className="h-2.5 w-2.5 flex-shrink-0 rounded-full border"
-        style={{
-          backgroundColor: on ? `hsl(${hue} 68% 62%)` : 'transparent',
-          borderColor: `hsl(${hue} 68% 62%)`,
-        }}
-        aria-hidden
-      />
-      <span className="min-w-0 flex-1 truncate text-[11px] text-fg">{label}</span>
-      <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint">{count}</span>
-    </button>
+    <HoverTip label={on ? `Hide ${label}` : `Show ${label}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        role="switch"
+        aria-checked={on}
+        className={`flex w-full items-center gap-2 rounded px-1.5 py-1 text-left transition-colors cursor-pointer hover:bg-surface-hover ${on ? '' : 'opacity-45'}`}
+        data-testid="knowledge-graph-region-row"
+        data-region-on={on}
+      >
+        <span
+          className="h-2.5 w-2.5 flex-shrink-0 rounded-full border"
+          style={{
+            backgroundColor: on ? `hsl(${hue} 68% 62%)` : 'transparent',
+            borderColor: `hsl(${hue} 68% 62%)`,
+          }}
+          aria-hidden
+        />
+        <span className="min-w-0 flex-1 truncate text-[11px] text-fg">{label}</span>
+        <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint">{count}</span>
+      </button>
+    </HoverTip>
   );
 }
 

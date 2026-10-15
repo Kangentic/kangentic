@@ -778,11 +778,11 @@ test.describe('Task Activity Indicators', () => {
         await expect(usageBar).not.toContainText('Starting agent...');
         await expect(usageBar).not.toContainText('Resuming agent...');
 
-        // Tooltip contains the "Run /cost or /context" hint
-        const pill = usageBar.locator('span[title]');
-        const titleAttr = await pill.first().getAttribute('title');
-        expect(titleAttr).toBeTruthy();
-        expect(titleAttr).toMatch(/\/cost|\/context/);
+        // The pill's tip, read as its description, carries the "Run /cost or /context" hint
+        const pill = usageBar.locator('span[aria-description]');
+        const description = await pill.first().getAttribute('aria-description');
+        expect(description).toBeTruthy();
+        expect(description).toMatch(/\/cost|\/context/);
       } finally {
         await browser.close();
       }
@@ -886,10 +886,10 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('pill tooltip title contains "Resets " text for a reset time more than 24 h in the future', async () => {
+    test('pill description contains "Resets " text for a reset time more than 24 h in the future', async () => {
       // sevenDay.resetsAt is set to Date.now()/1000 + 5 days in makePreConfig withRateLimits:true.
-      // formatResetTime returns `Resets ${formatDateTime(...)}` when ms > 24 h.
-      // We assert the pill title contains "Resets " (from the sevenDay line) followed by
+      // formatResetTime returns `Resets ${formatMonthDayTime(...)}` when ms > 24 h.
+      // We assert the pill description contains "Resets " (from the sevenDay window) followed by
       // non-empty text -- we deliberately do NOT assert exact locale output since that
       // is covered by the unit tier datetime.test.ts tests.
       const { browser, page } = await launchWithState(
@@ -907,11 +907,11 @@ test.describe('Task Activity Indicators', () => {
         const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
         await expect(pill).toBeVisible();
 
-        const titleAttr = await pill.getAttribute('title');
-        expect(titleAttr).toBeTruthy();
-        // The title is "5h session: <reset>\n7d weekly: <reset>".
-        // sevenDay resets in 5 days so its line uses "Resets <formatted date>".
-        expect(titleAttr).toMatch(/Resets [^\s]/);
+        const description = await pill.getAttribute('aria-description');
+        expect(description).toBeTruthy();
+        // The description is "5h session N%. <reset>. 7d weekly N%. <reset>".
+        // sevenDay resets in 5 days so its part uses "Resets <formatted date>".
+        expect(description).toMatch(/Resets [^\s]/);
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -1038,8 +1038,8 @@ test.describe('Task Activity Indicators', () => {
                 { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 20, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
               ],
               capturedAt: Date.now(),
-              // This session ID has no matching task in the board store, so
-              // sourceAgent resolves to undefined and the "via" suffix is omitted.
+              // This session ID has no matching task in the board store. The pill
+              // never names a source, so this pins that nothing here adds one.
               sourceSessionId: 'orphan-session-with-no-task',
             },
           });
@@ -1054,12 +1054,11 @@ test.describe('Task Activity Indicators', () => {
         const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
         await expect(pill).toBeVisible();
 
-        const titleAttr = await pill.getAttribute('title');
-        expect(titleAttr).toBeTruthy();
-        // Must NOT contain "via" because sourceAgent resolves to undefined when
-        // the task row for sourceSessionId is absent. Both old code (no suffix at
-        // all) and new code (suffix without "via") satisfy this invariant.
-        expect(titleAttr).not.toContain(' via ');
+        const description = await pill.getAttribute('aria-description');
+        expect(description).toBeTruthy();
+        // The numbers are account-wide, so the pill never names the session or
+        // agent that reported them, whether or not that session has a task row.
+        expect(description).not.toContain(' via ');
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -1130,11 +1129,11 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('tooltip title contains window label prefixes ("5h session:" and "7d weekly:")', async () => {
-      // Regression guard: the tooltip body is built as
-      // `${limitWindow.label}: ${formatResetTime(limitWindow.resetsAt)}` per line.
-      // Dropping the label prefix would silently break the tooltip without failing
-      // the percentage-rendering or pill-visibility assertions.
+    test('pill description names each window ("5h session" and "7d weekly")', async () => {
+      // Regression guard: the description is built as
+      // `${limitWindow.label} ${percent}%. ${formatResetTime(limitWindow.resetsAt)}` per window.
+      // Dropping the label would silently break what a screen reader hears without
+      // failing the percentage-rendering or pill-visibility assertions.
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
       );
@@ -1150,10 +1149,10 @@ test.describe('Task Activity Indicators', () => {
         const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
         await expect(pill).toBeVisible();
 
-        const titleAttr = await pill.getAttribute('title');
-        expect(titleAttr).toBeTruthy();
-        expect(titleAttr).toContain('5h session:');
-        expect(titleAttr).toContain('7d weekly:');
+        const description = await pill.getAttribute('aria-description');
+        expect(description).toBeTruthy();
+        expect(description).toContain('5h session');
+        expect(description).toContain('7d weekly');
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -1180,12 +1179,12 @@ test.describe('Task Activity Indicators', () => {
         const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
         await expect(pill).toBeVisible();
 
-        const titleAttr = await pill.getAttribute('title');
-        expect(titleAttr).toBeTruthy();
-        // Both windows reset in the past, so both lines should contain "Resets now".
-        // We check that the tooltip contains "Resets now" at all - two occurrences
+        const description = await pill.getAttribute('aria-description');
+        expect(description).toBeTruthy();
+        // Both windows reset in the past, so both parts should contain "Resets now".
+        // We check that the description contains "Resets now" at all - two occurrences
         // would require splitting, but one is sufficient to confirm the branch fires.
-        expect(titleAttr).toContain('Resets now');
+        expect(description).toContain('Resets now');
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -1212,9 +1211,9 @@ test.describe('Task Activity Indicators', () => {
         const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
         await expect(pill).toBeVisible();
 
-        const titleAttr = await pill.getAttribute('title');
-        expect(titleAttr).toBeTruthy();
-        expect(titleAttr).toContain('Resets in ');
+        const description = await pill.getAttribute('aria-description');
+        expect(description).toBeTruthy();
+        expect(description).toContain('Resets in ');
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });

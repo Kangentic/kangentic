@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } fro
 import { GitBranch, Search, Loader2, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
+import { HoverTip } from '../HoverTip';
 import { Pill } from '../Pill';
 import { fetchGitBranches } from '../../utils/git-branches';
 
@@ -188,29 +189,32 @@ export function BranchPicker({
   // it, and `cursor-pointer`. The cursor is not optional - Tailwind v4's
   // preflight gives `button` `cursor: default`, and the `Pill` this replaced was
   // adding `cursor-pointer` for us.
+  // The tip names the field and the full branch the segment's width may cut
+  // short. Shut while the menu is open, which already lists it.
   const segmentButton = (
-    <button
-      type="button"
-      onClick={() => setOpen(!open)}
-      // An INSET focus ring, not the default outline: the field shell is
-      // `overflow-hidden` (for its rounded corners) and this button is flush to
-      // its edge, so an outline is clipped on every side. Without the ring the
-      // shell's `focus-within:border-accent` lights up identically for the name
-      // input and this button alike, so a keyboard user cannot tell which has
-      // focus.
-      className={`flex w-full max-w-[170px] shrink-0 cursor-pointer items-center gap-1.5 bg-surface-control/40 px-3 text-xs transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-        open ? 'text-accent-fg' : 'text-fg-secondary'
-      }`}
-      title={`Base branch: ${displayBranch}`}
-      data-testid="branch-picker-chip"
-    >
-      <GitBranch size={14} className="shrink-0" />
-      <span className="truncate">{displayBranch}</span>
-      <ChevronDown
-        size={12}
-        className={`shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
-      />
-    </button>
+    <HoverTip label={`Base branch: ${displayBranch}`} enabled={!open}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        // An INSET focus ring, not the default outline: the field shell is
+        // `overflow-hidden` (for its rounded corners) and this button is flush to
+        // its edge, so an outline is clipped on every side. Without the ring the
+        // shell's `focus-within:border-accent` lights up identically for the name
+        // input and this button alike, so a keyboard user cannot tell which has
+        // focus.
+        className={`flex w-full max-w-[170px] shrink-0 cursor-pointer items-center gap-1.5 bg-surface-control/40 px-3 text-xs transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+          open ? 'text-accent-fg' : 'text-fg-secondary'
+        }`}
+        data-testid="branch-picker-chip"
+      >
+        <GitBranch size={14} className="shrink-0" />
+        <span className="truncate">{displayBranch}</span>
+        <ChevronDown
+          size={12}
+          className={`shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+    </HoverTip>
   );
 
   const inputButton = (

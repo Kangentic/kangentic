@@ -32,7 +32,7 @@ test.describe('Ghost Columns', () => {
     await expect(ghostColumn).toHaveClass(/border-dashed/);
 
     // Verify tooltip
-    await expect(ghostColumn).toHaveAttribute('title', 'Removed from team config. Move tasks to continue.');
+    await expect(ghostColumn).toHaveAccessibleDescription('Removed from team config. Move tasks to continue.');
 
     await browser.close();
   });

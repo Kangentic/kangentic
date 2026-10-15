@@ -787,7 +787,7 @@ test('Command Terminal: in a short window the command palette caps itself to the
     // by about 90px), which changes the room under the kebab after it was sized.
     const maximizeButton = commandWindow.getByTestId('command-bar-maximize');
     await maximizeButton.click();
-    await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+    await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
     const kebabButton = commandWindow.locator('button[aria-label="Actions"]');
     // The palette anchors to the wrapper around the kebab button, not the button.
     const kebabAnchor = commandWindow.locator('div:has(> div > button[aria-label="Actions"])');

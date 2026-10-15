@@ -73,21 +73,22 @@ function ColumnDisc({ column }: { column: Pick<TaskReportColumn, 'color' | 'icon
 
 /**
  * A column in a table cell: its disc and name. Inside a `@container` narrower
- * than 860px the name drops and the disc carries it as its title and label, so
- * a run that spanned two columns still fits a default-size window.
+ * than 860px the name drops and the disc carries it as its hover tip and label,
+ * so a run that spanned two columns still fits a default-size window.
  */
 export function ColumnLabel({ column }: { column: TaskReportColumn }) {
   return (
-    <span
-      className="inline-flex min-w-0 items-center gap-[7px] font-medium text-fg"
-      role="img"
-      title={column.name}
-      aria-label={column.name}
-      data-testid="report-column-label"
-    >
-      <ColumnDisc column={column} />
-      <span className="hidden truncate @[860px]:inline" aria-hidden="true">{column.name}</span>
-    </span>
+    <HoverTip label={column.name}>
+      <span
+        className="inline-flex min-w-0 items-center gap-[7px] font-medium text-fg"
+        role="img"
+        aria-label={column.name}
+        data-testid="report-column-label"
+      >
+        <ColumnDisc column={column} />
+        <span className="hidden truncate @[860px]:inline" aria-hidden="true">{column.name}</span>
+      </span>
+    </HoverTip>
   );
 }
 

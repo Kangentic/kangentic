@@ -6,6 +6,8 @@ import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { ActivityMark } from '../ActivityMark';
+import { HoverTip } from '../HoverTip';
+import { tipLabel } from '../../utils/hover-tip';
 import { OverlayPopover } from '../OverlayPopover';
 import { ToggleSwitch } from '../settings/shared';
 import { useTaskCardViewModel } from '../board/task-card-view';
@@ -55,8 +57,20 @@ function tint(color: string, percent: number): string {
 /** The card's own Active / Idle mark: a status, not a button. */
 function TaskActivityMark({ task, size }: { task: Task; size: number }) {
   const view = useTaskCardViewModel(task);
-  if (view.isThinking) return <span className="inline-flex shrink-0 text-active" title="Active"><ActivityMark mark="agent-working" size={size} /></span>;
-  if (view.isIdle) return <span className="inline-flex shrink-0 text-attention" title="Idle"><ActivityMark mark="agent-idle" size={size} /></span>;
+  if (view.isThinking) {
+    return (
+      <HoverTip label="Active">
+        <span className="inline-flex shrink-0 text-active" role="img" aria-label="Active"><ActivityMark mark="agent-working" size={size} /></span>
+      </HoverTip>
+    );
+  }
+  if (view.isIdle) {
+    return (
+      <HoverTip label="Idle">
+        <span className="inline-flex shrink-0 text-attention" role="img" aria-label="Idle"><ActivityMark mark="agent-idle" size={size} /></span>
+      </HoverTip>
+    );
+  }
   return null;
 }
 
@@ -200,9 +214,11 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
             <ColumnGlyph column={{ icon: step.icon, role: null }} size={14} color={on ? color : 'var(--color-fg-disabled)'} />
             <span className={`flex-1 min-w-0 truncate ${on ? 'text-fg-secondary' : 'text-fg-faint line-through decoration-fg-faint decoration-[1.5px]'}`}>{step.name}</span>
             {finished && (
-              <span className="shrink-0 text-xs text-fg-faint whitespace-nowrap" title={formatDateTime(step.finishedAt!)}>
-                {formatRelativeTime(step.finishedAt!)}
-              </span>
+              <HoverTip label={formatDateTime(step.finishedAt!)}>
+                <span className="shrink-0 text-xs text-fg-faint whitespace-nowrap">
+                  {formatRelativeTime(step.finishedAt!)}
+                </span>
+              </HoverTip>
             )}
             <span onClick={(event) => event.stopPropagation()}>
               <ToggleSwitch
@@ -274,17 +290,18 @@ function LinkRow({ linked, projectName, removeRefusal, onSelect, onRemove }: {
           </>
         )}
       </button>
-      <button
-        type="button"
-        onClick={onRemove}
-        disabled={removeRefusal !== null}
-        title={removeRefusal ?? 'Remove link'}
-        aria-label="Remove link"
-        className="w-9 shrink-0 flex items-center justify-center border-l border-edge/60 text-fg-muted enabled:hover:text-fg enabled:hover:bg-surface-hover/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        data-testid="workflow-unlink"
-      >
-        <X size={14} />
-      </button>
+      <HoverTip label={tipLabel({ disabled: removeRefusal !== null, disabledReason: removeRefusal, tip: 'Remove link' })}>
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={removeRefusal !== null}
+          aria-label="Remove link"
+          className="w-9 shrink-0 flex items-center justify-center border-l border-edge/60 text-fg-muted enabled:hover:text-fg enabled:hover:bg-surface-hover/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          data-testid="workflow-unlink"
+        >
+          <X size={14} />
+        </button>
+      </HoverTip>
     </div>
   );
 }
@@ -325,17 +342,18 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        disabled={refusal !== null}
-        title={refusal ?? 'Make this task wait for another'}
-        className="flex items-center justify-center gap-1.5 w-full h-[30px] mt-2 rounded border border-dashed border-edge text-xs text-fg-faint enabled:hover:text-fg-muted enabled:hover:border-edge-input disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
-        data-testid="workflow-add-blocker"
-      >
-        <Plus size={13} />Add blocker
-      </button>
+      <HoverTip label={tipLabel({ disabled: refusal !== null, disabledReason: refusal, tip: 'Make this task wait for another' })} enabled={!open}>
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          disabled={refusal !== null}
+          className="flex items-center justify-center gap-1.5 w-full h-[30px] mt-2 rounded border border-dashed border-edge text-xs text-fg-faint enabled:hover:text-fg-muted enabled:hover:border-edge-input disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
+          data-testid="workflow-add-blocker"
+        >
+          <Plus size={13} />Add blocker
+        </button>
+      </HoverTip>
       <OverlayPopover
         open={open}
         popoverRef={menuRef}
@@ -415,7 +433,12 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
 
 function RunOrderRowMark({ task }: { task: Task }) {
   const view = useTaskCardViewModel(task);
-  return view.isIdle ? <span className="inline-flex shrink-0 text-attention" title="Waiting for you"><ActivityMark mark="agent-idle" size={14} /></span> : null;
+  if (!view.isIdle) return null;
+  return (
+    <HoverTip label="Waiting for you">
+      <span className="inline-flex shrink-0 text-attention" role="img" aria-label="Waiting for you"><ActivityMark mark="agent-idle" size={14} /></span>
+    </HoverTip>
+  );
 }
 
 function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorProps) {
@@ -442,18 +465,18 @@ function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorP
             </div>
             <div className="flex-1 min-w-0">
               {group.map((task) => (
-                <button
-                  key={task.key}
-                  type="button"
-                  onClick={() => onSelectTask(task.key)}
-                  title="Select this task"
-                  className="flex items-center gap-2.5 w-full h-[30px] px-2 rounded-md text-left hover:bg-surface-hover/50 transition-colors"
-                  data-testid="workflow-run-order-row"
-                  data-task-key={task.key}
-                >
-                  <span className="flex-1 min-w-0 truncate text-[13px] text-fg-secondary">{task.title}</span>
-                  {task.task && <RunOrderRowMark task={task.task} />}
-                </button>
+                <HoverTip key={task.key} label="Select this task">
+                  <button
+                    type="button"
+                    onClick={() => onSelectTask(task.key)}
+                    className="flex items-center gap-2.5 w-full h-[30px] px-2 rounded-md text-left hover:bg-surface-hover/50 transition-colors"
+                    data-testid="workflow-run-order-row"
+                    data-task-key={task.key}
+                  >
+                    <span className="flex-1 min-w-0 truncate text-[13px] text-fg-secondary">{task.title}</span>
+                    {task.task && <RunOrderRowMark task={task.task} />}
+                  </button>
+                </HoverTip>
               ))}
             </div>
           </div>
@@ -506,14 +529,18 @@ function TaskPanel({
       {variant === 'canvas' && (
         <div className="flex items-center gap-2.5 h-[54px] shrink-0 px-4 border-b border-edge/60" data-testid="workflow-inspector-title">
           {task.task && <TaskActivityMark task={task.task} size={16} />}
-          <span className="flex-1 min-w-0 truncate text-base font-semibold text-fg" title={task.title}>{task.title}</span>
+          <HoverTip label={task.title}>
+            <span className="flex-1 min-w-0 truncate text-base font-semibold text-fg">{task.title}</span>
+          </HoverTip>
           {task.displayId ? <span className="shrink-0 text-[13px] text-fg-muted tabular-nums">#{task.displayId}</span> : null}
         </div>
       )}
       {variant === 'taskDetail' && (
         <div className="flex items-center gap-2 h-11 shrink-0 px-4 border-b border-edge/60" data-testid="workflow-panel-workflow">
           <WorkflowIcon size={16} className="shrink-0" style={{ color: workflowColor(detail.workflow.color_slot) }} />
-          <span className="flex-1 min-w-0 truncate text-sm font-semibold text-fg" title={detail.workflow.title}>{detail.workflow.title}</span>
+          <HoverTip label={detail.workflow.title}>
+            <span className="flex-1 min-w-0 truncate text-sm font-semibold text-fg">{detail.workflow.title}</span>
+          </HoverTip>
           <WorkflowStateChip state={detail.workflow.state} />
         </div>
       )}
@@ -521,13 +548,14 @@ function TaskPanel({
         <section className="px-4 py-3.5 border-b border-edge/60">
           <SectionHeading
             trailing={acrossBoards ? (
-              <span
-                className="ml-auto inline-flex items-center gap-1 text-xs font-medium normal-case tracking-normal text-fg-muted"
-                title={detail.projectNames[task.projectId] ? `Columns on the ${detail.projectNames[task.projectId]} board` : 'Columns on its board'}
-                data-testid="workflow-route-board"
-              >
-                <Folder size={12} />{detail.projectNames[task.projectId] ?? ''}
-              </span>
+              <HoverTip label={detail.projectNames[task.projectId] ? `Columns on the ${detail.projectNames[task.projectId]} board` : 'Columns on its board'}>
+                <span
+                  className="ml-auto inline-flex items-center gap-1 text-xs font-medium normal-case tracking-normal text-fg-muted"
+                  data-testid="workflow-route-board"
+                >
+                  <Folder size={12} />{detail.projectNames[task.projectId] ?? ''}
+                </span>
+              </HoverTip>
             ) : undefined}
           >
             Route
@@ -572,29 +600,34 @@ function TaskPanel({
         )}
       </div>
       <div className="grid grid-cols-2 gap-2 shrink-0 px-4 py-3.5 whitespace-nowrap" data-testid="workflow-inspector-footer">
-        <button
-          type="button"
-          onClick={() => onRequestRemove(task.key)}
-          disabled={removeReason !== null}
-          title={removeReason ?? 'Take this task out of the workflow'}
-          className="inline-flex items-center justify-center gap-1.5 py-2 rounded border border-edge-input text-[13px] text-fg-secondary enabled:hover:bg-surface-hover/40 disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
-          data-testid="workflow-remove-task"
-        >
-          <X size={14} />Remove
-        </button>
-        <button
-          type="button"
-          onClick={() => (variant === 'taskDetail' ? onOpenWorkflow?.() : onOpenTask(task.key))}
-          disabled={openRefusal !== null}
-          title={openRefusal ?? openLabel}
-          // The panel's main action wears the accent tint (as Add task does on
-          // the canvas), not a fill: the view's one filled button is Start or Resume.
-          className="inline-flex items-center justify-center gap-1.5 min-w-0 py-2 rounded border border-accent/40 bg-accent/20 enabled:hover:bg-accent/30 text-accent-fg text-[13px] disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
-          data-testid="workflow-open-task"
-        >
-          {variant === 'taskDetail' ? <WorkflowIcon size={14} className="shrink-0" /> : <SquareTerminal size={14} className="shrink-0" />}
-          <span className="truncate">{openLabel}</span>
-        </button>
+        <HoverTip label={tipLabel({ disabled: removeReason !== null, disabledReason: removeReason, tip: 'Take this task out of the workflow' })}>
+          <button
+            type="button"
+            onClick={() => onRequestRemove(task.key)}
+            disabled={removeReason !== null}
+            className="inline-flex items-center justify-center gap-1.5 py-2 rounded border border-edge-input text-[13px] text-fg-secondary enabled:hover:bg-surface-hover/40 disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
+            data-testid="workflow-remove-task"
+          >
+            <X size={14} />Remove
+          </button>
+        </HoverTip>
+        {/* The tip is the full label, which the button can cut short, or the
+            reason it is off. Only the reason is read, since the label is
+            already the button's name. */}
+        <HoverTip label={tipLabel({ disabled: openRefusal !== null, disabledReason: openRefusal, tip: openLabel })} describe={openRefusal !== null}>
+          <button
+            type="button"
+            onClick={() => (variant === 'taskDetail' ? onOpenWorkflow?.() : onOpenTask(task.key))}
+            disabled={openRefusal !== null}
+            // The panel's main action wears the accent tint (as Add task does on
+            // the canvas), not a fill: the view's one filled button is Start or Resume.
+            className="inline-flex items-center justify-center gap-1.5 min-w-0 py-2 rounded border border-accent/40 bg-accent/20 enabled:hover:bg-accent/30 text-accent-fg text-[13px] disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
+            data-testid="workflow-open-task"
+          >
+            {variant === 'taskDetail' ? <WorkflowIcon size={14} className="shrink-0" /> : <SquareTerminal size={14} className="shrink-0" />}
+            <span className="truncate">{openLabel}</span>
+          </button>
+        </HoverTip>
       </div>
     </>
   );

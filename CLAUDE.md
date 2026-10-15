@@ -249,7 +249,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `task-lifecycle-lock.md` - wrap per-task async mutation in `withTaskLock`.
 - `hmr-patterns.md` - dev-mode HMR parity patterns A through D.
 - `ui-conventions.md` - shared primitives, font floor, no hover-only controls, the 900x600 floor, brief copy.
-- `one-tooltip.md` - hover text is `HoverTip`; a native `title` survives only for the full value of cut-short text, marked `native-title-ok`.
+- `one-tooltip.md` - every tooltip is `HoverTip`; no native `title` anywhere in the renderer, truncated values included.
 - `popover-escapes-clipping.md` - a menu popover portals to `document.body` with `strategy: 'fixed'`; `z-index` never escapes an overflow clip.
 - `light-dismiss-denylist.md` - clicking outside a task window closes it; overlays mount outside the `data-dismiss-layer` subtree.
 - `synchronous-shutdown.md` - the `before-quit` path is synchronous; only the bounded PTY exit drain may `preventDefault`.

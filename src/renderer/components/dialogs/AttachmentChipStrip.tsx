@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import { HoverTip } from '../HoverTip';
 import { isImageMediaType, getFileTypeIcon } from './attachment-utils';
 
 /**
@@ -60,37 +61,41 @@ export function AttachmentChipStrip<TAttachment extends AttachmentChipItem>({
             className="inline-flex max-w-[220px] items-center gap-1.5 rounded border border-edge-input bg-surface-input py-0.5 pl-1 pr-0.5 text-[11px] text-fg-tertiary"
             data-testid="attachment-chip"
           >
-            <button
-              type="button"
-              onClick={() => onOpen(attachment)}
-              className="flex min-w-0 items-center gap-1.5 rounded-sm text-left hover:text-fg"
-              title={attachment.filename}
-              data-testid="attachment-open"
-            >
-              {isImage && attachment.previewUrl ? (
-                <img
-                  src={attachment.previewUrl}
-                  alt={attachment.filename}
-                  className="h-5 w-5 flex-shrink-0 rounded-sm object-cover"
-                />
-              ) : (
-                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm bg-surface-secondary">
-                  <FileTypeIcon size={12} className="text-fg-muted" />
-                </span>
-              )}
-              <span className="truncate">{attachment.filename}</span>
-            </button>
-            {onRemove && (
+            {/* The full filename the chip's width may cut short. Not read as a
+                description: the button's own text already names the file. */}
+            <HoverTip label={attachment.filename} describe={false}>
               <button
                 type="button"
-                onClick={() => onRemove(attachment.id)}
-                className="flex-shrink-0 rounded p-0.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
-                title={`Remove ${attachment.filename}`}
-                aria-label={`Remove ${attachment.filename}`}
-                data-testid="attachment-remove"
+                onClick={() => onOpen(attachment)}
+                className="flex min-w-0 items-center gap-1.5 rounded-sm text-left hover:text-fg"
+                data-testid="attachment-open"
               >
-                <X size={12} />
+                {isImage && attachment.previewUrl ? (
+                  <img
+                    src={attachment.previewUrl}
+                    alt={attachment.filename}
+                    className="h-5 w-5 flex-shrink-0 rounded-sm object-cover"
+                  />
+                ) : (
+                  <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm bg-surface-secondary">
+                    <FileTypeIcon size={12} className="text-fg-muted" />
+                  </span>
+                )}
+                <span className="truncate">{attachment.filename}</span>
               </button>
+            </HoverTip>
+            {onRemove && (
+              <HoverTip label={`Remove ${attachment.filename}`}>
+                <button
+                  type="button"
+                  onClick={() => onRemove(attachment.id)}
+                  className="flex-shrink-0 rounded p-0.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
+                  aria-label={`Remove ${attachment.filename}`}
+                  data-testid="attachment-remove"
+                >
+                  <X size={12} />
+                </button>
+              </HoverTip>
             )}
           </span>
         );

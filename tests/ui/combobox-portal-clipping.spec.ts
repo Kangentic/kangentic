@@ -182,7 +182,7 @@ test('model dropdown escapes the task-detail edit form and stays within the view
     // The reported symptom was the LAST rows being cut off while the first two
     // stayed visible, so assert on a row that was previously below the fold
     // rather than on the menu box alone.
-    const lastLatestOption = page.locator('[data-model-option][title="claude-opus-4-8"]');
+    const lastLatestOption = page.locator('[data-model-option][data-model-id="claude-opus-4-8"]');
     await expect(lastLatestOption).toBeVisible();
     const optionBox = await lastLatestOption.boundingBox();
     expect(optionBox).not.toBeNull();
@@ -280,7 +280,7 @@ test('clicking a portaled option commits the model and closes the menu', async (
     await modelInput.click();
     await expect(page.locator(MODEL_MENU)).toBeVisible({ timeout: 3000 });
 
-    await page.locator('[data-model-option][title="claude-opus-4-8"]').click();
+    await page.locator('[data-model-option][data-model-id="claude-opus-4-8"]').click();
 
     await expect(modelInput).toHaveValue('Opus 4.8');
     await expect(page.locator(MODEL_MENU)).not.toBeVisible({ timeout: 3000 });

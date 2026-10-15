@@ -146,7 +146,7 @@ test.describe('Changes panel: viewed marks', () => {
     // cannot afford it inline), checkbox unpressed, no progress fill.
     const viewedCount = fileTree.locator('[data-testid="changes-viewed-count"]');
     await expect(viewedCount).toContainText('0/2');
-    await expect(viewedCount).toHaveAttribute('title', /files viewed/);
+    await expect(viewedCount).toHaveAccessibleDescription(/files viewed/);
     await expect(toggleA).toHaveAttribute('aria-pressed', 'false');
     await expect(fileTree.locator('[data-testid="changes-viewed-progress"]')).toHaveCount(0);
 

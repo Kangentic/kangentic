@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Globe, ArrowRight } from 'lucide-react';
 import { normalizeUrl } from './BrowserEmptyState.utils';
 import { focusIsInTypingSurface } from '../../utils/terminal-arrival-focus';
+import { HoverTip } from '../HoverTip';
 
 interface BrowserEmptyStateProps {
   onSubmit: (url: string) => void;
@@ -117,21 +118,21 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
           </span>
           <div className="grid grid-cols-2 gap-1.5">
             {QUICK_PICKS.map((pick) => (
-              <button
-                key={pick.url}
-                type="button"
-                onClick={() => submit(pick.url)}
-                className="flex flex-col items-start gap-0.5 px-3 py-2 rounded border border-edge-input bg-surface-input/50 hover:bg-surface-hover hover:border-accent/40 text-left transition-colors group"
-                data-testid={`browser-quick-pick-${pick.label}`}
-                title={`Open ${pick.url}`}
-              >
-                <span className="text-xs font-mono text-fg group-hover:text-fg">
-                  {pick.label}
-                </span>
-                <span className="text-[11px] text-fg-muted truncate w-full">
-                  {pick.hint}
-                </span>
-              </button>
+              <HoverTip key={pick.url} label={`Open ${pick.url}`}>
+                <button
+                  type="button"
+                  onClick={() => submit(pick.url)}
+                  className="flex flex-col items-start gap-0.5 px-3 py-2 rounded border border-edge-input bg-surface-input/50 hover:bg-surface-hover hover:border-accent/40 text-left transition-colors group"
+                  data-testid={`browser-quick-pick-${pick.label}`}
+                >
+                  <span className="text-xs font-mono text-fg group-hover:text-fg">
+                    {pick.label}
+                  </span>
+                  <span className="text-[11px] text-fg-muted truncate w-full">
+                    {pick.hint}
+                  </span>
+                </button>
+              </HoverTip>
             ))}
           </div>
         </div>

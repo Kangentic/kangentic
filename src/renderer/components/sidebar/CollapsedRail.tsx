@@ -6,8 +6,8 @@ import {
   selectCommandTerminalSummary,
   type CommandTerminalTone,
 } from '../../stores/session-store/transient-session-slice';
-import { useFormattedCombo } from '../../hooks/useKeybinding';
 import { useAddProject } from '../../hooks/useAddProject';
+import { HoverTip } from '../HoverTip';
 import type { Project } from '../../../shared/types';
 
 interface CollapsedRailProps {
@@ -55,7 +55,6 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
   const projects = useProjectStore((s) => s.projects);
   const currentProject = useProjectStore((s) => s.currentProject);
   const openProject = useProjectStore((s) => s.openProject);
-  const sidebarCombo = useFormattedCombo('view.toggleSidebar');
   const { startAddProject } = useAddProject();
 
   // Command Terminal presence per project, for the corner dot below. One
@@ -74,15 +73,16 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
 
   return (
     <div className="h-full flex flex-col items-center pt-3 pb-2 px-1 bg-surface-raised">
-      <button
-        onClick={onExpandSidebar}
-        className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors mb-2"
-        aria-label="Show sidebar"
-        title={`Show sidebar (${sidebarCombo})`}
-        data-testid="sidebar-expand-button"
-      >
-        <PanelLeft size={18} />
-      </button>
+      <HoverTip label="Show sidebar" keys="view.toggleSidebar">
+        <button
+          onClick={onExpandSidebar}
+          className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors mb-2"
+          aria-label="Show sidebar"
+          data-testid="sidebar-expand-button"
+        >
+          <PanelLeft size={18} />
+        </button>
+      </HoverTip>
 
       <div className="flex-1 flex flex-col items-center gap-1 overflow-y-auto w-full">
         {projects.map((project) => {
@@ -91,50 +91,51 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
           const terminalTone = terminalSummaries[project.id];
 
           return (
-            <button
-              key={project.id}
-              onClick={() => openProject(project.id)}
-              title={project.name}
-              // `title` stays the bare project name (a test pins that exactly), so the
-              // terminal state rides on aria-label instead. aria-label REPLACES the
-              // computed accessible name, so it has to restate the project name; when
-              // there are no terminals it is omitted entirely and the name is unchanged.
-              aria-label={terminalTone ? `${project.name}, ${RAIL_TERMINAL_LABEL[terminalTone]}` : undefined}
-              data-testid={`rail-project-${project.id}`}
-              className={`relative w-7 h-7 rounded flex items-center justify-center text-xs font-semibold transition-colors ${
-                isActive
-                  ? 'bg-accent/20 text-accent-fg'
-                  : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
-              } ${label.length > 1 ? 'tracking-tight' : ''}`}
-            >
-              {label}
-              {/* A plain dot, NOT the Command Terminal glyph. At 28px the button is
-                  already full of the project initials; the previous attempt at a rail
-                  activity icon was removed because a partial-arc glyph reads as a broken
-                  icon overflowing the initial. A dot has no arc, so it carries the tone
-                  in the space actually available. */}
-              {terminalTone && (
-                <span
-                  className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${RAIL_DOT_CLASS[terminalTone]}`}
-                  data-testid={`rail-project-terminals-${project.id}`}
-                  data-activity={terminalTone}
-                  aria-hidden
-                />
-              )}
-            </button>
+            // The tip stays the bare project name (a test pins that exactly), so the
+            // terminal state rides on aria-label instead. aria-label REPLACES the
+            // computed accessible name, so it has to restate the project name; when
+            // there are no terminals it is omitted entirely and the name is unchanged.
+            <HoverTip key={project.id} label={project.name}>
+              <button
+                onClick={() => openProject(project.id)}
+                aria-label={terminalTone ? `${project.name}, ${RAIL_TERMINAL_LABEL[terminalTone]}` : undefined}
+                data-testid={`rail-project-${project.id}`}
+                className={`relative w-7 h-7 rounded flex items-center justify-center text-xs font-semibold transition-colors ${
+                  isActive
+                    ? 'bg-accent/20 text-accent-fg'
+                    : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
+                } ${label.length > 1 ? 'tracking-tight' : ''}`}
+              >
+                {label}
+                {/* A plain dot, NOT the Command Terminal glyph. At 28px the button is
+                    already full of the project initials; the previous attempt at a rail
+                    activity icon was removed because a partial-arc glyph reads as a broken
+                    icon overflowing the initial. A dot has no arc, so it carries the tone
+                    in the space actually available. */}
+                {terminalTone && (
+                  <span
+                    className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${RAIL_DOT_CLASS[terminalTone]}`}
+                    data-testid={`rail-project-terminals-${project.id}`}
+                    data-activity={terminalTone}
+                    aria-hidden
+                  />
+                )}
+              </button>
+            </HoverTip>
           );
         })}
       </div>
 
-      <button
-        onClick={startAddProject}
-        className="p-1.5 mt-2 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
-        aria-label="New project"
-        title="New project"
-        data-testid="rail-new-project-button"
-      >
-        <FolderPlus size={18} />
-      </button>
+      <HoverTip label="New project">
+        <button
+          onClick={startAddProject}
+          className="p-1.5 mt-2 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
+          aria-label="New project"
+          data-testid="rail-new-project-button"
+        >
+          <FolderPlus size={18} />
+        </button>
+      </HoverTip>
     </div>
   );
 }

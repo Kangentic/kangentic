@@ -60,7 +60,7 @@ stated here and held by the components.
   `CardChoiceRow`, whose control ends on the switches' right edge; inside a custom tile's form it
   is `SegmentedControl` with `quiet`. Keep the labels to a word or two and let the card or row
   supply the context ("Desktop", not "Desktop only"). When one-word labels need more meaning,
-  put it in each option's `title` (Close on outside click and Card preview do). Only a set whose
+  put it in each option's `tip` (Close on outside click and Card preview do). Only a set whose
   labels will not shorten to fit keeps its `Select`, and says why with
   `// choice-select-ok: <reason>`; no settings tab has one today. A `Select` whose options come from a list is exempt, since it can grow.
 - **Depth lifts, never recesses.** The card is clear and each tile is lighter than the panel

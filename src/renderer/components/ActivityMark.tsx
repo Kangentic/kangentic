@@ -185,9 +185,9 @@ export interface ActivityMarkProps extends React.SVGProps<SVGSVGElement> {
  * That shape is load-bearing and must not be "simplified" into `BrandMark`'s wrapper-`<span>` +
  * `dangerouslySetInnerHTML` form:
  *
- *  1. React forbids `children` alongside `dangerouslySetInnerHTML` on the same element, and
- *     `TaskCard` passes a `<title>` child for its native hover tooltip. On a sibling `<g>`,
- *     children stay free.
+ *  1. React forbids `children` alongside `dangerouslySetInnerHTML` on the same element. On a
+ *     sibling `<g>`, children stay free, and the root takes the props a wrapping `HoverTip`
+ *     chains onto it (`TaskCard`'s mark has one) like any other DOM element.
  *  2. The packaged files carry a hardcoded `width="24" height="24"`; a React-authored root
  *     overrides them directly instead of needing a `[&>svg]:h-full` neutralisation wrapper.
  *  3. A wrapper `<span>` carrying the tone class would break the sidebar specs, which assert
@@ -209,7 +209,7 @@ export interface ActivityMarkProps extends React.SVGProps<SVGSVGElement> {
  * covers the exact centre, which is where people click.
  *
  * Two shapes that look equivalent and are not. `pointer-events: none` must NOT move up to the
- * `<svg>` root, which has to stay hit-testable for `TaskCard`'s native `<title>` tooltip; and the
+ * `<svg>` root, which has to stay hit-testable for the `HoverTip` around `TaskCard`'s mark; and the
  * `<g>` must NOT get `key={mark}`, which replaces the `<g>` itself (the same teardown one level
  * up) and discards the `anchorMarkMotionToTimeline` phase anchor. An inline style rather than a
  * Tailwind class because the packaged `activity.css` arrives unlayered and outranks utilities.
@@ -225,8 +225,8 @@ export function ActivityMark({
   children,
   ...rest
 }: ActivityMarkProps): React.ReactNode {
-  // Decorative by default; a call site that names the mark (aria-label) or supplies a <title>
-  // child is exposing it to assistive tech, so it must not also be aria-hidden.
+  // Decorative by default; a call site that names the mark (aria-label) or passes children is
+  // exposing it to assistive tech, so it must not also be aria-hidden.
   const isLabelled = rest['aria-label'] !== undefined || children !== undefined;
 
   const markGroupRef = React.useRef<SVGGElement>(null);

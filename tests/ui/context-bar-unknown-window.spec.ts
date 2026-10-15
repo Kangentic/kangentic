@@ -186,14 +186,14 @@ test.describe('ContextBar context-window render gate', () => {
       // The over-budget pairing is a known window (200k, not the unknown
       // sentinel), so the segment still renders - clamped to a full 100%
       // critical bar rather than the impossible 325%. Assert structurally
-      // (the bar track carries a "cached (system)" title, the percent label
-      // an "N% remaining" title) rather than by raw text, because the
+      // (the bar track is described by its "cached (system)" tip, the percent
+      // label by its "N% remaining" tip) rather than by raw text, because the
       // SEPARATE tokens pill legitimately still shows the used-token count
       // ("650.4k") - that cell is not the context-window bar.
       await expect(contextBar).not.toContainText('325');
       await expect(contextBar.locator('[data-context-window="unknown"]')).toHaveCount(0);
-      await expect(contextBar.locator('[title*="cached (system)"]')).toHaveCount(1);
-      await expect(contextBar.locator('[title*="remaining"]')).toHaveCount(1);
+      await expect(contextBar.locator('[aria-description*="cached (system)"]')).toHaveCount(1);
+      await expect(contextBar.locator('[aria-description*="remaining"]')).toHaveCount(1);
       await expect.poll(async () => contextBar.textContent(), { timeout: 5000 }).toMatch(/100%/);
     } finally {
       await browser.close();
@@ -224,10 +224,10 @@ test.describe('ContextBar context-window render gate', () => {
 
       await expect.poll(async () => contextBar.textContent(), { timeout: 5000 }).toMatch(/65%/);
 
-      // The progress-bar track carries the cache/conversation breakdown as
-      // its title - a stable, semantic way to assert the bar rendered
-      // without depending on Tailwind class churn.
-      await expect(contextBar.locator('[title*="cached (system)"]')).toHaveCount(1);
+      // The progress-bar track is described by the cache/conversation
+      // breakdown in its tip - a stable, semantic way to assert the bar
+      // rendered without depending on Tailwind class churn.
+      await expect(contextBar.locator('[aria-description*="cached (system)"]')).toHaveCount(1);
       await expect(contextBar.locator('[data-context-window="unknown"]')).toHaveCount(0);
     } finally {
       await browser.close();

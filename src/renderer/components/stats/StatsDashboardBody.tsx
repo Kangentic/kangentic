@@ -5,6 +5,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { ChartCard } from './ChartCard';
+import { HoverTip } from '../HoverTip';
 import { KpiTiles } from './KpiTiles';
 import { BackgroundCard } from './BackgroundCard';
 import { BackgroundHistoryCard } from './BackgroundHistoryCard';
@@ -411,20 +412,23 @@ export function StatsDashboardBody() {
 
         {/* First-read caveats collapsed behind an info affordance (visual
             subtraction): the full explanation lives in the hover tooltip. */}
-        <p
-          className="flex items-center gap-1.5 text-[11px] text-fg-faint w-fit cursor-help"
-          title={
+        <HoverTip
+          label={
             'Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0.\n' +
             'Cost covers finalized sessions plus any currently running, refreshed live as they progress.\n' +
             'Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it.\n' +
             'Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count.\n' +
             'Background calls are headless agent calls Kangentic makes for you, such as Condition checks and task titles. None is a session, so none is in the session figures.'
           }
-          data-testid="stats-about-numbers"
         >
-          <Info size={12} aria-hidden />
-          About these numbers
-        </p>
+          <p
+            className="flex items-center gap-1.5 text-[11px] text-fg-faint w-fit cursor-help"
+            data-testid="stats-about-numbers"
+          >
+            <Info size={12} aria-hidden />
+            About these numbers
+          </p>
+        </HoverTip>
       </div>
     </>
   );

@@ -13,6 +13,7 @@ import { SettingsCard, CardTile, CardGroupTile } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { ExternalLinkButton } from '../../ExternalLinkButton';
+import { HoverTip } from '../../HoverTip';
 
 /** What turning the server on does, behind the card's info icon. */
 const HOW_IT_WORKS = 'Each agent session gets a local MCP server and discovers these tools on its own. '
@@ -84,15 +85,16 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
                 <ul className="grid grid-cols-3 gap-1">
                   {tools.map((tool) => (
                     <li key={tool.name} className="min-w-0">
-                      <button
-                        type="button"
-                        data-testid="mcp-tool-cell"
-                        title={`${tool.label} - ${tool.blurb}. Opens the docs page.`}
-                        onClick={() => void window.electronAPI.shell.openExternal(mcpToolDocsUrl(tool.name))}
-                        className="block w-full cursor-pointer truncate rounded bg-edge-input/35 px-1.5 py-1 text-left text-xs text-fg-secondary transition-colors hover:bg-edge-input/70 hover:text-fg"
-                      >
-                        {tool.label}
-                      </button>
+                      <HoverTip label={tool.label} detail={`${tool.blurb}. Opens the docs page.`}>
+                        <button
+                          type="button"
+                          data-testid="mcp-tool-cell"
+                          onClick={() => void window.electronAPI.shell.openExternal(mcpToolDocsUrl(tool.name))}
+                          className="block w-full cursor-pointer truncate rounded bg-edge-input/35 px-1.5 py-1 text-left text-xs text-fg-secondary transition-colors hover:bg-edge-input/70 hover:text-fg"
+                        >
+                          {tool.label}
+                        </button>
+                      </HoverTip>
                     </li>
                   ))}
                 </ul>

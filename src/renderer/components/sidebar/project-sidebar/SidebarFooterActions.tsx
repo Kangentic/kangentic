@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { FolderPlus, FolderTree, ChevronUp } from 'lucide-react';
 import { OverlayPopover } from '../../OverlayPopover';
+import { HoverTip } from '../../HoverTip';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 
 export interface SidebarFooterActionsProps {
@@ -64,36 +65,38 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
         ref={containerRef}
         className="flex items-stretch rounded-md border border-edge/60 overflow-hidden focus-within:border-edge"
       >
-        <button
-          type="button"
-          // Closes the caret menu too: this button is inside `containerRef`, so
-          // the outside-click handler reads a click on it as "inside" and would
-          // leave the menu floating behind the folder picker.
-          onClick={() => {
-            setMenuOpen(false);
-            onAddProject();
-          }}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium cursor-pointer text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
-          title="Open folder as project"
-          data-testid="sidebar-new-project-button"
-        >
-          <FolderPlus size={14} />
-          Add project
-        </button>
-        <button
-          ref={caretRef}
-          type="button"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => setMenuOpen((open) => !open)}
-          className="flex-shrink-0 inline-flex items-center justify-center w-7 border-l border-edge/60 cursor-pointer text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
-          title="More project actions"
-          aria-label="More project actions"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          data-testid="sidebar-footer-more-button"
-        >
-          <ChevronUp size={14} />
-        </button>
+        <HoverTip label="Open folder as project">
+          <button
+            type="button"
+            // Closes the caret menu too: this button is inside `containerRef`, so
+            // the outside-click handler reads a click on it as "inside" and would
+            // leave the menu floating behind the folder picker.
+            onClick={() => {
+              setMenuOpen(false);
+              onAddProject();
+            }}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium cursor-pointer text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
+            data-testid="sidebar-new-project-button"
+          >
+            <FolderPlus size={14} />
+            Add project
+          </button>
+        </HoverTip>
+        <HoverTip label="More project actions" enabled={!menuOpen}>
+          <button
+            ref={caretRef}
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setMenuOpen((open) => !open)}
+            className="flex-shrink-0 inline-flex items-center justify-center w-7 border-l border-edge/60 cursor-pointer text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
+            aria-label="More project actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            data-testid="sidebar-footer-more-button"
+          >
+            <ChevronUp size={14} />
+          </button>
+        </HoverTip>
       </div>
 
       <OverlayPopover
@@ -106,21 +109,22 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
         data-testid="sidebar-footer-menu"
         className="fixed z-[2147483646] min-w-[170px] bg-surface-raised border border-edge-input rounded-md shadow-xl py-1"
       >
-        <button
-          type="button"
-          role="menuitem"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            setMenuOpen(false);
-            onNewGroup();
-          }}
-          className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
-          title="New group"
-          data-testid="sidebar-new-group-button"
-        >
-          <FolderTree size={14} className="text-fg-faint" />
-          New group
-        </button>
+        <HoverTip label="New group">
+          <button
+            type="button"
+            role="menuitem"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setMenuOpen(false);
+              onNewGroup();
+            }}
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
+            data-testid="sidebar-new-group-button"
+          >
+            <FolderTree size={14} className="text-fg-faint" />
+            New group
+          </button>
+        </HoverTip>
       </OverlayPopover>
     </div>
   );

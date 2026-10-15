@@ -13,7 +13,7 @@
  * 7. Discard confirm bullet rendering (1 dirty = 1 li, 3 dirty = 3 li each
  *    with the column name; untitled new drafts render as "Untitled column").
  * 8. The removal names its target - the footer's Remove column button carries
- *    `Remove column "<column name>"` as its aria-label/title, and the confirm
+ *    `Remove column "<column name>"` as its aria-label and tip, and the confirm
  *    it opens draws the column (icon, name, position) as its body under the
  *    plain "Remove column" title.
  */
@@ -437,18 +437,18 @@ test.describe('BoardManagerDialog extended', () => {
   // ── Gap 8: the removal names its target ───────────────────────────────────
   //
   // The footer's Remove column button reads "Remove column" with no name, so
-  // its aria-label/title carry `Remove column "<column name>"`, and the
+  // its aria-label and tip carry `Remove column "<column name>"`, and the
   // ConfirmDialog it opens draws the column itself as its body (icon, name,
   // position), the way its rail row does. The confirm's title is the plain
   // action; the body line is what says which column.
 
-  test('remove control aria-label/title name the column; confirm body shows the column', async () => {
+  test('remove control aria-label and tip name the column; confirm body shows the column', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
     const deleteButton = dialog.locator('[data-testid="board-manager-delete"]');
     await expect(deleteButton).toHaveAttribute('aria-label', 'Remove column "Code Review"');
-    await expect(deleteButton).toHaveAttribute('title', 'Remove column "Code Review"');
+    await expect(deleteButton).toHaveAccessibleName('Remove column "Code Review"');
 
     await deleteButton.click();
     const confirmTitle = page.locator('h3', { hasText: 'Remove column' });
@@ -488,7 +488,7 @@ test.describe('BoardManagerDialog extended', () => {
   // A column's name can be cleared to whitespace in the General card without
   // saving (Save blocks an empty name, but nothing stops the user from
   // opening Remove column while the field sits blank). The footer control's
-  // aria-label/title and the confirm's body both fall back to "Untitled",
+  // aria-label and tip and the confirm's body all fall back to "Untitled",
   // the same fallback the identity header already uses.
 
   test('the removal control falls back to "Untitled" when the column name is blank', async () => {
@@ -499,7 +499,7 @@ test.describe('BoardManagerDialog extended', () => {
 
     const deleteButton = dialog.locator('[data-testid="board-manager-delete"]');
     await expect(deleteButton).toHaveAttribute('aria-label', 'Remove column "Untitled"');
-    await expect(deleteButton).toHaveAttribute('title', 'Remove column "Untitled"');
+    await expect(deleteButton).toHaveAccessibleName('Remove column "Untitled"');
 
     await deleteButton.click();
     const confirmTitle = page.locator('h3', { hasText: 'Remove column' });
@@ -720,7 +720,7 @@ test.describe('BoardManagerDialog extended', () => {
       await page.locator('[data-testid="column-agent-override-option-codex"]').click();
       const modelInput = dialog.locator('input[data-testid="column-model-override"]');
       await modelInput.click();
-      await page.locator('[data-model-option][title="gpt-5.5"]').click();
+      await page.locator('[data-model-option][data-model-id="gpt-5.5"]').click();
       await expect(modelInput).toHaveValue('gpt-5.5');
       const permissionInput = dialog.locator('input[data-testid="column-permission-mode"]');
       await permissionInput.click();
@@ -733,12 +733,12 @@ test.describe('BoardManagerDialog extended', () => {
       await expect(cells.nth(2)).toHaveText('Codex CLI');
       await expect(cells.nth(3)).toHaveText('gpt-5.5');
       // Effort is never set here, so its cell stays unchanged and reads 'Default'. An unchanged
-      // value carries its full text in `title` too, the same as the changed Permissions value below.
+      // value carries its full text in its tip too, the same as the changed Permissions value below.
       const effort = cells.nth(4).locator('[data-state="unchanged"]');
       await expect(effort).toHaveText('Default');
-      await expect(effort).toHaveAttribute('title', 'Default');
+      await expect(effort).toHaveAccessibleDescription('Default');
       const permission = cells.nth(5).locator('[data-state="changed"]');
-      await expect(permission).toHaveAttribute('title', 'Automatically Edit, Ask for Untrusted');
+      await expect(permission).toHaveAccessibleDescription('Automatically Edit, Ask for Untrusted');
       const label = await permission.locator('span').evaluate((element) => ({
         textOverflow: getComputedStyle(element).textOverflow,
         clipped: element.scrollWidth > element.clientWidth,

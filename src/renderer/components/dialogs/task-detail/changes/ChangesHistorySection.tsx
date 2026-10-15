@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronRight } from 'lucide-react';
 import { CountBadge } from '../../../CountBadge';
+import { HoverTip } from '../../../HoverTip';
 
 /** Height (px) of the always-visible section header row. Shared with
  *  ChangesPanel's history resize math (the drag measures from the rail bottom,
@@ -41,34 +42,38 @@ interface ChangesHistorySectionProps {
 export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount, truncated, pinnedShortHash, animateHeight, children }: ChangesHistorySectionProps) {
   return (
     <div className="flex flex-col min-h-0 flex-shrink border-t border-edge" data-testid="changes-history-section">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        title={open ? 'Collapse history' : 'Expand history'}
-        className="flex w-full flex-shrink-0 items-center gap-1.5 px-2 text-left text-fg-secondary hover:bg-surface-hover hover:text-fg transition-colors"
-        style={{ height: HISTORY_SECTION_HEADER_PX }}
-        data-testid="changes-history-toggle"
-      >
-        <ChevronRight size={14} className={`flex-shrink-0 text-fg-muted transition-transform ${open ? 'rotate-90' : ''}`} />
-        <span className="text-xs font-medium">History</span>
-        {commitCount !== null && (
-          // xs widens into a pill past one digit, so the graph's 200-commit cap
-          // renders without clipping (sm/md are fixed circles).
-          <span className="inline-flex" title={truncated ? `Showing the latest ${commitCount} commits` : `${commitCount} commits on this branch`}>
-            <CountBadge count={commitCount} variant="muted" size="xs" />
-          </span>
-        )}
-        {!open && pinnedShortHash && (
-          <span
-            className="ml-auto flex-shrink-0 rounded border border-edge-subtle px-1 py-px font-mono text-[11px] leading-none text-fg-muted"
-            title="Reviewing this commit (expand to see it in the list)"
-            data-testid="changes-history-pinned-chip"
-          >
-            {pinnedShortHash}
-          </span>
-        )}
-      </button>
+      <HoverTip label={open ? 'Collapse history' : 'Expand history'}>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="flex w-full flex-shrink-0 items-center gap-1.5 px-2 text-left text-fg-secondary hover:bg-surface-hover hover:text-fg transition-colors"
+          style={{ height: HISTORY_SECTION_HEADER_PX }}
+          data-testid="changes-history-toggle"
+        >
+          <ChevronRight size={14} className={`flex-shrink-0 text-fg-muted transition-transform ${open ? 'rotate-90' : ''}`} />
+          <span className="text-xs font-medium">History</span>
+          {commitCount !== null && (
+            // xs widens into a pill past one digit, so the graph's 200-commit cap
+            // renders without clipping (sm/md are fixed circles).
+            <HoverTip label={truncated ? `Showing the latest ${commitCount} commits` : `${commitCount} commits on this branch`}>
+              <span className="inline-flex">
+                <CountBadge count={commitCount} variant="muted" size="xs" />
+              </span>
+            </HoverTip>
+          )}
+          {!open && pinnedShortHash && (
+            <HoverTip label="Reviewing this commit" detail="Expand to see it in the list">
+              <span
+                className="ml-auto flex-shrink-0 rounded border border-edge-subtle px-1 py-px font-mono text-[11px] leading-none text-fg-muted"
+                data-testid="changes-history-pinned-chip"
+              >
+                {pinnedShortHash}
+              </span>
+            </HoverTip>
+          )}
+        </button>
+      </HoverTip>
       {/* Mounted while collapsed, clipped to height 0 (see the children prop
           doc). The height transition fires only on the open/close CHANGE, so a
           hydrated-open restore paints at its final height with no replay, and

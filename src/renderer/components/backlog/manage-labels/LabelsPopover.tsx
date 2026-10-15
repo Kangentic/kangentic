@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { Tags, Trash2, Plus, Pencil } from 'lucide-react';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
+import { HoverTip } from '../../HoverTip';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useBoardStore } from '../../../stores/board-store';
 import { useConfigStore } from '../../../stores/config-store';
@@ -118,22 +119,23 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
 
   return (
     <div className="relative shrink-0">
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen(!open)}
-        title="Labels"
-        aria-label="Labels"
-        className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${collapse ? collapse.button : 'px-3'} ${
-          open
-            ? 'text-fg border-accent/50 bg-surface-control/40'
-            : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
-        }`}
-        data-testid="manage-labels-btn"
-      >
-        <Tags size={14} className="shrink-0" />
-        <span className={collapse?.label}>Labels</span>
-      </button>
+      <HoverTip label="Labels" enabled={!open}>
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-label="Labels"
+          className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${collapse ? collapse.button : 'px-3'} ${
+            open
+              ? 'text-fg border-accent/50 bg-surface-control/40'
+              : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
+          }`}
+          data-testid="manage-labels-btn"
+        >
+          <Tags size={14} className="shrink-0" />
+          <span className={collapse?.label}>Labels</span>
+        </button>
+      </HoverTip>
 
       <PopoverShell open={open} popoverRef={popoverRef}>
         <div>
@@ -272,28 +274,29 @@ function LabelRow({
   return (
     <div className="flex items-center gap-2 h-9 px-1.5 rounded hover:bg-surface-hover/30">
       <div className="relative flex-shrink-0">
-        <button
-          ref={colorButtonRef}
-          type="button"
-          onClick={() => setShowColorPicker(!showColorPicker)}
-          aria-label="Change color"
-          title="Change color"
-        >
-          {editing ? (
-            <span
-              className="w-4 h-4 rounded-full border border-edge-input hover:border-fg-faint transition-colors block"
-              style={{ backgroundColor: effectiveColor }}
-            />
-          ) : (
-            <Pill
-              size="sm"
-              className="font-medium border cursor-pointer"
-              style={{ color: effectiveColor, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
-            >
-              {name}
-            </Pill>
-          )}
-        </button>
+        <HoverTip label="Change color" enabled={!showColorPicker}>
+          <button
+            ref={colorButtonRef}
+            type="button"
+            onClick={() => setShowColorPicker(!showColorPicker)}
+            aria-label="Change color"
+          >
+            {editing ? (
+              <span
+                className="w-4 h-4 rounded-full border border-edge-input hover:border-fg-faint transition-colors block"
+                style={{ backgroundColor: effectiveColor }}
+              />
+            ) : (
+              <Pill
+                size="sm"
+                className="font-medium border cursor-pointer"
+                style={{ color: effectiveColor, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
+              >
+                {name}
+              </Pill>
+            )}
+          </button>
+        </HoverTip>
         {showColorPicker && (
           <ColorPickerPopover
             color={effectiveColor}
@@ -323,25 +326,27 @@ function LabelRow({
 
       {!editing && <div className="flex-1" />}
 
-      <button
-        type="button"
-        onClick={startEditing}
-        className="p-1 text-fg-disabled hover:text-fg-muted rounded transition-colors flex-shrink-0"
-        aria-label="Rename"
-        title="Rename"
-      >
-        <Pencil size={12} />
-      </button>
+      <HoverTip label="Rename">
+        <button
+          type="button"
+          onClick={startEditing}
+          className="p-1 text-fg-disabled hover:text-fg-muted rounded transition-colors flex-shrink-0"
+          aria-label="Rename"
+        >
+          <Pencil size={12} />
+        </button>
+      </HoverTip>
 
-      <button
-        type="button"
-        onClick={onDelete}
-        className="p-1 text-fg-disabled hover:text-red-400 rounded transition-colors flex-shrink-0"
-        aria-label="Delete label"
-        title="Delete label"
-      >
-        <Trash2 size={13} />
-      </button>
+      <HoverTip label="Delete label">
+        <button
+          type="button"
+          onClick={onDelete}
+          className="p-1 text-fg-disabled hover:text-red-400 rounded transition-colors flex-shrink-0"
+          aria-label="Delete label"
+        >
+          <Trash2 size={13} />
+        </button>
+      </HoverTip>
     </div>
   );
 }

@@ -88,8 +88,8 @@ async function namelessControls(page: Page): Promise<string[]> {
 }
 
 async function expectAllControlsNamed(page: Page, surface: string): Promise<void> {
-  // The surface renders native titles (see the native-title BASELINE), so none surviving is
-  // what shows the strip reached React's own writes.
+  // The renderer writes no native title (tests/unit/native-title.test.ts), and the strip catches
+  // any a library or a dev overlay writes, so a title surviving here means the strip broke.
   expect(await page.locator('[title]').count(), `${surface}: a native title survived the strip`).toBe(0);
   const offenders = await namelessControls(page);
   expect(offenders, `${surface}: controls with no accessible name once title is gone`).toEqual([]);

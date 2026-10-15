@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../../OverlayPopover';
+import { HoverTip } from '../../HoverTip';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationType } from '../../../../shared/types';
@@ -121,24 +122,25 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
             const isLegacy = entry.status === 'legacy';
             const isSelected = type === value;
             return (
-              <button
-                key={type}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                disabled={isLegacy}
-                data-testid={`${testId}-option`}
-                data-type={type}
-                title={isLegacy ? 'This type is retired and cannot be chosen.' : undefined}
-                onClick={() => { if (!isLegacy) { onChange(type); setOpen(false); } }}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${
-                  isLegacy ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:bg-surface-hover'
-                }`}
-              >
-                <AutomationIcon name={entry.icon} size={14} className="shrink-0 text-fg-muted" />
-                <span className="min-w-0 flex-1 truncate text-fg">{entry.label}</span>
-                {isSelected && <Check size={14} className="shrink-0 text-accent" />}
-              </button>
+              // Only a retired type has a tip: the reason it cannot be chosen.
+              <HoverTip key={type} label={isLegacy ? 'This type is retired and cannot be chosen.' : ''}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  disabled={isLegacy}
+                  data-testid={`${testId}-option`}
+                  data-type={type}
+                  onClick={() => { if (!isLegacy) { onChange(type); setOpen(false); } }}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${
+                    isLegacy ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:bg-surface-hover'
+                  }`}
+                >
+                  <AutomationIcon name={entry.icon} size={14} className="shrink-0 text-fg-muted" />
+                  <span className="min-w-0 flex-1 truncate text-fg">{entry.label}</span>
+                  {isSelected && <Check size={14} className="shrink-0 text-accent" />}
+                </button>
+              </HoverTip>
             );
           })}
         </div>

@@ -255,7 +255,10 @@ test.describe('Project Session Scope', () => {
       // Project Alpha (active) should show the amber idle mail icon
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
       await expect(alphaRow.locator('svg.text-attention').first()).toBeVisible();
-      await expect(alphaRow).toHaveAttribute('title', /1 thinking, 1 idle|0 thinking, 1 idle/);
+      // The row's tip text. Read off the attribute rather than as the accessible
+      // description: dnd-kit gives the sortable row its own aria-describedby, which
+      // outranks aria-description.
+      await expect(alphaRow).toHaveAttribute('aria-description', /1 thinking, 1 idle|0 thinking, 1 idle/);
 
       // Project Beta (non-active) should also show the amber idle mail icon
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
@@ -368,11 +371,11 @@ test.describe('Project Session Scope', () => {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project Alpha shows both idle and thinking indicators with their counts;
-      // the row title surfaces both counts for screen-reader parity.
+      // the row's tip surfaces both counts too.
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
       await expect(alphaRow.locator('svg.text-active').first()).toBeVisible();
       await expect(alphaRow.locator('svg.text-attention').first()).toBeVisible();
-      await expect(alphaRow).toHaveAttribute('title', /1 thinking, 1 idle/);
+      await expect(alphaRow).toHaveAttribute('aria-description', /1 thinking, 1 idle/);
     } finally {
       await browser.close();
     }

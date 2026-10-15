@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { Eye, RotateCcw, Trash2 } from 'lucide-react';
 import type { Swimlane } from '../../../../shared/types';
+import { HoverTip } from '../../HoverTip';
 import { RestorePopover } from './RestorePopover';
 
 /**
@@ -34,28 +35,31 @@ export function RowActions({
 
   return (
     <div className="flex items-center justify-end gap-1.5 relative" onClick={(event) => event.stopPropagation()}>
-      <button
-        type="button"
-        onClick={() => onViewDetail(taskId)}
-        className="p-2 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
-        aria-label="View details"
-        title="View details"
-        data-testid="view-task-btn"
-      >
-        <Eye size={16} />
-      </button>
-      <div className="relative">
+      <HoverTip label="View details">
         <button
-          ref={restoreButtonRef}
           type="button"
-          onClick={() => onToggleRestore(taskId)}
+          onClick={() => onViewDetail(taskId)}
           className="p-2 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
-          aria-label="Restore to board"
-          title="Restore to board"
-          data-testid="restore-task-btn"
+          aria-label="View details"
+          data-testid="view-task-btn"
         >
-          <RotateCcw size={16} />
+          <Eye size={16} />
         </button>
+      </HoverTip>
+      <div className="relative">
+        {/* Shut while its own column menu is open. */}
+        <HoverTip label="Restore to board" enabled={!isOpen}>
+          <button
+            ref={restoreButtonRef}
+            type="button"
+            onClick={() => onToggleRestore(taskId)}
+            className="p-2 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
+            aria-label="Restore to board"
+            data-testid="restore-task-btn"
+          >
+            <RotateCcw size={16} />
+          </button>
+        </HoverTip>
         {isOpen && (
           <RestorePopover
             triggerRef={restoreButtonRef}
@@ -65,16 +69,17 @@ export function RowActions({
           />
         )}
       </div>
-      <button
-        type="button"
-        onClick={() => onDelete(taskId)}
-        className="p-2 text-fg-disabled hover:text-red-400 hover:bg-surface-hover/40 rounded transition-colors"
-        aria-label="Delete task"
-        title="Delete task"
-        data-testid="delete-task-btn"
-      >
-        <Trash2 size={16} />
-      </button>
+      <HoverTip label="Delete task">
+        <button
+          type="button"
+          onClick={() => onDelete(taskId)}
+          className="p-2 text-fg-disabled hover:text-red-400 hover:bg-surface-hover/40 rounded transition-colors"
+          aria-label="Delete task"
+          data-testid="delete-task-btn"
+        >
+          <Trash2 size={16} />
+        </button>
+      </HoverTip>
     </div>
   );
 }

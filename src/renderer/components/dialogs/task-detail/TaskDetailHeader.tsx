@@ -270,47 +270,49 @@ export function TaskDetailHeader({
       <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
-        <button
-          onClick={onToggle}
-          disabled={toggling}
-          data-testid="header-toggle-session-btn"
-          data-session-state={toggling ? 'toggling' : isQueued ? 'queued' : isSessionActive ? 'active' : 'suspended'}
-          className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
-            toggling
-              ? 'text-fg-muted'
-              : isQueued
-                ? 'text-fg-muted hover:bg-surface-hover'
-                : isSessionActive
-                  ? 'text-active hover:bg-surface-hover'
-                  : 'text-fg-faint hover:bg-surface-hover hover:text-fg-tertiary'
-          }`}
-          aria-label={isSessionActive || isQueued ? 'Pause session' : 'Resume session'}
-          title={toggling ? 'Working...' : isQueued ? 'Queued (click to pause)' : isSessionActive ? 'Pause session' : 'Resume session'}
-        >
-          <PauseButtonIcon
-            toggling={toggling}
-            isQueued={isQueued}
-            isThinking={isThinking}
-            isIdle={isIdle}
-            isSessionActive={isSessionActive}
-          />
-        </button>
+        <HoverTip label={toggling ? 'Working...' : isQueued ? 'Queued' : isSessionActive ? 'Pause session' : 'Resume session'}>
+          <button
+            onClick={onToggle}
+            disabled={toggling}
+            data-testid="header-toggle-session-btn"
+            data-session-state={toggling ? 'toggling' : isQueued ? 'queued' : isSessionActive ? 'active' : 'suspended'}
+            className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
+              toggling
+                ? 'text-fg-muted'
+                : isQueued
+                  ? 'text-fg-muted hover:bg-surface-hover'
+                  : isSessionActive
+                    ? 'text-active hover:bg-surface-hover'
+                    : 'text-fg-faint hover:bg-surface-hover hover:text-fg-tertiary'
+            }`}
+            aria-label={isSessionActive || isQueued ? 'Pause session' : 'Resume session'}
+          >
+            <PauseButtonIcon
+              toggling={toggling}
+              isQueued={isQueued}
+              isThinking={isThinking}
+              isIdle={isIdle}
+              isSessionActive={isSessionActive}
+            />
+          </button>
+        </HoverTip>
       )}
 
       {/* Display ID - clickable to copy */}
-      <button
-        type="button"
-        className="group/copyid flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors flex-shrink-0"
-        title={`Click to copy: ${task.display_id}`}
-        data-testid="task-display-id"
-        onClick={copyDisplayId}
-      >
-        {displayIdCopied
-          ? <Check size={12} className="text-green-400" />
-          : <Copy size={12} className="text-fg-disabled group-hover/copyid:text-fg-secondary transition-colors" />
-        }
-        #{task.display_id}
-      </button>
+      <HoverTip label="Copy task ID">
+        <button
+          type="button"
+          className="group/copyid flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors flex-shrink-0"
+          data-testid="task-display-id"
+          onClick={copyDisplayId}
+        >
+          {displayIdCopied
+            ? <Check size={12} className="text-green-400" />
+            : <Copy size={12} className="text-fg-disabled group-hover/copyid:text-fg-secondary transition-colors" />
+          }
+          #{task.display_id}
+        </button>
+      </HoverTip>
 
       {/* Priority badge (hidden when priority is 0) */}
       <PriorityBadge priority={task.priority ?? 0} />
@@ -322,22 +324,21 @@ export function TaskDetailHeader({
           truncates toward the floor once the pills need the room. The hard
           min-w-[64px] keeps it from fully vanishing in a tiny tiled pane. The
           inner span is content-sized, so its scrollWidth is the title's natural
-          width (read by useHeaderPillOverflow). */}
-      <h2
-        className="text-base font-semibold text-fg truncate flex-1 min-w-[64px] flex items-center gap-2"
-        title={task.title}
-      >
-        <span ref={titleSpanRef} className="truncate" data-testid="task-title-text">{task.title}</span>
-        {isArchived && (
-          <span
-            className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-disabled bg-surface-hover/60 border border-edge/40 rounded px-1.5 py-0.5"
-            title="This task is archived. It does not appear on the board."
-          >
-            Archived
-          </span>
-        )}
-        {isIsolated && <IsolatedBadge data-testid="task-detail-isolated-badge" />}
-      </h2>
+          width (read by useHeaderPillOverflow). The tip carries the full title;
+          the heading already reads it, so the tip is not read a second time. */}
+      <HoverTip label={task.title} describe={false}>
+        <h2 className="text-base font-semibold text-fg truncate flex-1 min-w-[64px] flex items-center gap-2">
+          <span ref={titleSpanRef} className="truncate" data-testid="task-title-text">{task.title}</span>
+          {isArchived && (
+            <HoverTip label="This task is archived. It does not appear on the board.">
+              <span className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-disabled bg-surface-hover/60 border border-edge/40 rounded px-1.5 py-0.5">
+                Archived
+              </span>
+            </HoverTip>
+          )}
+          {isIsolated && <IsolatedBadge data-testid="task-detail-isolated-badge" />}
+        </h2>
+      </HoverTip>
 
       {/* Quick-access pills - progressively fold into the kebab as the window
           narrows (useHeaderPillOverflow). Hidden for archived tasks; the title then

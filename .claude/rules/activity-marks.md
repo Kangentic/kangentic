@@ -26,9 +26,9 @@ measurements, and the upstream geometry history live in
 - **Never hand-author a mark.** Marks come from `@kangentic/branding`. `ActivityMark` imports
   each with `?raw`, strips the packaged `<svg>` wrapper, and injects the inner markup into a
   `<g>` under a React-authored root. That root shape is load-bearing and must not become
-  `BrandMark`'s wrapper-`<span>` form: React forbids `children` next to
-  `dangerouslySetInnerHTML` on one element, and `TaskCard` passes a `<title>` child for its
-  hover tooltip.
+  `BrandMark`'s wrapper-`<span>` form: the root `<svg>` is the element a caller's HoverTip
+  wraps (`TaskCard` shows the activity reason that way), so it must take the tip's pointer and
+  focus handlers itself, which `ActivityMark` passes through with its other props.
 - **Motion is always on a composited property.** Chromium composites only `transform` and
   `opacity`. Anything else stops producing frames for exactly as long as the main thread is
   blocked. Which primitive a mark gets is decided by its geometry, not by taste: a circle's
@@ -49,7 +49,7 @@ measurements, and the upstream geometry history live in
 - **The injected `<g>` is `pointer-events: none`, and stays there.** Re-assigning its `innerHTML`
   on a `mark` change destroys the node the cursor is over, and Chromium then drops the click.
   Hits must land on the React-authored `<svg>`, which survives a `mark` change. So the `none`
-  never moves up to the root, which `TaskCard`'s `<title>` tooltip needs hit-testable, and the
+  never moves up to the root, which `TaskCard`'s HoverTip needs hit-testable, and the
   `<g>` never gets `key={mark}`.
 - **An icon that changes ELEMENT TYPE between states goes through `IconSlot`.** A branch that is
   lucide at rest and `ActivityMark` when active unmounts the `<svg>` too, which no change inside
@@ -57,7 +57,7 @@ measurements, and the upstream geometry history live in
   share, so React reconciles the one span in place across the swap and the span absorbs the
   pointer. Wrap ONCE around the icon the branching produced, never per branch, so a future
   branch cannot silently opt out. A slot neutralizes the element it wraps, so a mark inside one
-  labels itself with `aria-label`; a native `<title>` child would be inert.
+  labels itself with `aria-label`, and its HoverTip goes on the slot's button, never on the mark.
 - **There is no `-rest` mark.** Rest is the `-idle` geometry in a muted tone. `data-rest` on the
   root is the reduced-motion strategy (`static` / `keep-dash` / `drop-dash`), NOT a tone. Test
   selectors key off `data-mark`.
@@ -88,5 +88,5 @@ Renderer code that renders an activity mark. `IconSlot` has been adopted at `Sto
 `PauseButtonIcon`, and `MonitorCard`'s `StateGlyph`. That is what has been ADOPTED, not where the
 hazard exists: `MonitorTable`'s `StateCell` (inside `DataTable`'s clickable `<tr>`) and
 `TerminalPanel`'s session-tab glyph have the same element-type swap and are still unwrapped.
-`TaskCard` is a mark flip only and carries a `<title>` tooltip, so it is deliberately not a slot
-candidate. Does not govern lucide icons, which stay everywhere else.
+`TaskCard` is a mark flip only, with its reason in a HoverTip around the mark, so it is
+deliberately not a slot candidate. Does not govern lucide icons, which stay everywhere else.

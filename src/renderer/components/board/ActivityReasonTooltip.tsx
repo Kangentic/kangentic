@@ -5,9 +5,9 @@ import { formatDurationBetween } from '../../lib/datetime';
 import type { ActivityReason } from '../../../shared/types';
 
 /**
- * Plain-text summary of an `ActivityReason`. Used as a `title` attribute
- * on TaskCard's activity icon so users get a native browser tooltip
- * explaining why the spinner is on (or why an idle session is paused).
+ * Plain-text summary of an `ActivityReason`. TaskCard's activity mark takes it
+ * as its name and its HoverTip, explaining why the spinner is on (or why an idle
+ * session is paused).
  *
  * Same priority ladder as the engine: permission > tool > subagent >
  * background-shell > turn-active > idle.
@@ -33,6 +33,25 @@ export function formatActivityReasonText(reason: ActivityReason): string {
       return `${reason.count} background shell${reason.count === 1 ? '' : 's'}${idsHint}`;
     }
     case 'turn-active': return 'Thinking';
+  }
+}
+
+/**
+ * The glyph for a reason's kind, the one `ActivityReasonTooltip` below draws, with no colour
+ * class: it takes the colour of the text it leads. TaskCard's HoverTip opens with it.
+ */
+export function activityReasonIcon(reason: ActivityReason): ReactNode {
+  switch (reason.kind) {
+    case 'idle': return <ActivityMark mark="agent-idle" size={12} />;
+    case 'permission': return <Lock size={12} />;
+    case 'tool': return <Wrench size={12} />;
+    case 'subagent': return <Users size={12} />;
+    case 'background-shell': return <Terminal size={12} />;
+    case 'turn-active': return <ActivityMark mark="agent-working" size={12} />;
+    default: {
+      const exhaustive: never = reason;
+      return exhaustive;
+    }
   }
 }
 

@@ -34,6 +34,7 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { KebabMenu, KebabMenuItem } from '../../components/KebabMenu';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
+import { HoverTip } from '../../components/HoverTip';
 import { ConversationView, type InitialPosition } from '../../components/conversation/ConversationView';
 import { reconcileDisplayRows } from '../../components/conversation/display-rows';
 import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor';
@@ -470,32 +471,34 @@ export function ConversationWindow({
 
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
           {isTiled && (
-            <button
-              type="button"
-              onClick={handleUndock}
-              aria-label="Pop out"
-              title="Pop out (float this window out of the tiled layout)"
-              data-testid={`conversation-undock-${managedWindow.id}`}
-              className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-            >
-              <PictureInPicture2 size={16} />
-            </button>
+            <HoverTip label="Pop out">
+              <button
+                type="button"
+                onClick={handleUndock}
+                aria-label="Pop out"
+                data-testid={`conversation-undock-${managedWindow.id}`}
+                className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+              >
+                <PictureInPicture2 size={16} />
+              </button>
+            </HoverTip>
           )}
           <MaximizeToggleButton
             isMaximized={isMaximized}
             onToggle={handleToggleMaximized}
             testId={`conversation-maximize-${managedWindow.id}`}
           />
-          <button
-            type="button"
-            onClick={requestClose}
-            title="Close"
-            aria-label="Close window"
-            data-testid="conversation-close"
-            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-          >
-            <X size={16} />
-          </button>
+          <HoverTip label="Close window" keys="panel.close">
+            <button
+              type="button"
+              onClick={requestClose}
+              aria-label="Close window"
+              data-testid="conversation-close"
+              className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+            >
+              <X size={16} />
+            </button>
+          </HoverTip>
         </div>
       </div>
 

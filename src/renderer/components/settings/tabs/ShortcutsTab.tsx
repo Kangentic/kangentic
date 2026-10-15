@@ -13,6 +13,7 @@ import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { INPUT_CLASS } from '../shared';
 import { SettingsCard, CardTile } from '../settings-card';
 import { Pill } from '../../Pill';
+import { HoverTip } from '../../HoverTip';
 import { SegmentedControl } from '../../SegmentedControl';
 import { OverlayPopover } from '../../OverlayPopover';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
@@ -141,19 +142,15 @@ function SortableActionItem({
         </div>
         <RegistryIcon name={action.icon ?? 'zap'} fallback={Zap} size={16} className="text-fg-muted flex-shrink-0" />
         <span className="text-sm text-fg font-medium truncate flex-1">{action.label}</span>
-        <span
-          className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${action.source === 'team' ? 'bg-accent/15 text-accent border border-accent/25' : 'bg-fg-disabled/15 text-fg-muted border border-fg-disabled/25'}`}
-          title={action.source === 'team' ? 'Shared with team via kangentic.json' : 'Personal shortcut in kangentic.local.json'}
-        >
-          {action.source === 'team' ? 'Team' : 'Personal'}
-        </span>
-        <span
-          className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${
-            action.display === 'both' || !action.display
-              ? 'bg-blue-500/15 text-blue-400 border-blue-500/25'
-              : 'bg-surface-hover/80 text-fg-faint border-edge-input/50'
-          }`}
-          title={
+        <HoverTip label={action.source === 'team' ? 'Shared with team via kangentic.json' : 'Personal shortcut in kangentic.local.json'}>
+          <span
+            className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${action.source === 'team' ? 'bg-accent/15 text-accent border border-accent/25' : 'bg-fg-disabled/15 text-fg-muted border border-fg-disabled/25'}`}
+          >
+            {action.source === 'team' ? 'Team' : 'Personal'}
+          </span>
+        </HoverTip>
+        <HoverTip
+          label={
             !action.display || action.display === 'menu'
               ? 'Appears in the task detail kebab menu only'
               : action.display === 'both'
@@ -161,16 +158,25 @@ function SortableActionItem({
                 : 'Appears in the task detail header bar only'
           }
         >
-          {!action.display || action.display === 'menu' ? 'Menu' : action.display === 'both' ? 'Both' : 'Header'}
-        </span>
-        <button
-          onClick={(event) => { event.stopPropagation(); onRemove(); }}
-          className="p-1 text-fg-disabled hover:text-red-400 transition-colors"
-          aria-label="Remove"
-          title="Remove"
-        >
-          <Trash2 size={14} />
-        </button>
+          <span
+            className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${
+              action.display === 'both' || !action.display
+                ? 'bg-blue-500/15 text-blue-400 border-blue-500/25'
+                : 'bg-surface-hover/80 text-fg-faint border-edge-input/50'
+            }`}
+          >
+            {!action.display || action.display === 'menu' ? 'Menu' : action.display === 'both' ? 'Both' : 'Header'}
+          </span>
+        </HoverTip>
+        <HoverTip label="Remove">
+          <button
+            onClick={(event) => { event.stopPropagation(); onRemove(); }}
+            className="p-1 text-fg-disabled hover:text-red-400 transition-colors"
+            aria-label="Remove"
+          >
+            <Trash2 size={14} />
+          </button>
+        </HoverTip>
       </div>
 
       {/* Edit form */}

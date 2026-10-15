@@ -17,6 +17,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
+import { HoverTip } from '../../HoverTip';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
@@ -158,22 +159,23 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
 
   return (
     <div className="relative shrink-0">
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen(!open)}
-        title="Priorities"
-        aria-label="Priorities"
-        className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${collapse ? collapse.button : 'px-3'} ${
-          open
-            ? 'text-fg border-accent/50 bg-surface-control/40'
-            : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
-        }`}
-        data-testid="manage-priorities-btn"
-      >
-        <Flag size={14} className="shrink-0" />
-        <span className={collapse?.label}>Priorities</span>
-      </button>
+      <HoverTip label="Priorities" enabled={!open}>
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-label="Priorities"
+          className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${collapse ? collapse.button : 'px-3'} ${
+            open
+              ? 'text-fg border-accent/50 bg-surface-control/40'
+              : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
+          }`}
+          data-testid="manage-priorities-btn"
+        >
+          <Flag size={14} className="shrink-0" />
+          <span className={collapse?.label}>Priorities</span>
+        </button>
+      </HoverTip>
 
       <PopoverShell open={open} popoverRef={popoverRef}>
         <div>
@@ -320,28 +322,29 @@ function PriorityRow({
       )}
 
       <div className="relative flex-shrink-0">
-        <button
-          ref={colorButtonRef}
-          type="button"
-          onClick={() => setShowColorPicker(!showColorPicker)}
-          aria-label="Change color"
-          title="Change color"
-        >
-          {editing ? (
-            <span
-              className="w-4 h-4 rounded-full border border-edge-input hover:border-fg-faint transition-colors block"
-              style={{ backgroundColor: color }}
-            />
-          ) : (
-            <Pill
-              size="sm"
-              className="font-medium border cursor-pointer"
-              style={{ color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
-            >
-              {label}
-            </Pill>
-          )}
-        </button>
+        <HoverTip label="Change color" enabled={!showColorPicker}>
+          <button
+            ref={colorButtonRef}
+            type="button"
+            onClick={() => setShowColorPicker(!showColorPicker)}
+            aria-label="Change color"
+          >
+            {editing ? (
+              <span
+                className="w-4 h-4 rounded-full border border-edge-input hover:border-fg-faint transition-colors block"
+                style={{ backgroundColor: color }}
+              />
+            ) : (
+              <Pill
+                size="sm"
+                className="font-medium border cursor-pointer"
+                style={{ color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
+              >
+                {label}
+              </Pill>
+            )}
+          </button>
+        </HoverTip>
         {showColorPicker && (
           <ColorPickerPopover
             color={color}
@@ -371,26 +374,28 @@ function PriorityRow({
 
       {!editing && <div className="flex-1" />}
 
-      <button
-        type="button"
-        onClick={startEditing}
-        className="p-1 text-fg-disabled hover:text-fg-muted rounded transition-colors flex-shrink-0"
-        aria-label="Rename"
-        title="Rename"
-      >
-        <Pencil size={12} />
-      </button>
-
-      {!isLocked ? (
+      <HoverTip label="Rename">
         <button
           type="button"
-          onClick={onDelete}
-          className="p-1 text-fg-disabled hover:text-red-400 rounded transition-colors flex-shrink-0"
-          aria-label="Delete priority"
-          title="Delete priority"
+          onClick={startEditing}
+          className="p-1 text-fg-disabled hover:text-fg-muted rounded transition-colors flex-shrink-0"
+          aria-label="Rename"
         >
-          <Trash2 size={13} />
+          <Pencil size={12} />
         </button>
+      </HoverTip>
+
+      {!isLocked ? (
+        <HoverTip label="Delete priority">
+          <button
+            type="button"
+            onClick={onDelete}
+            className="p-1 text-fg-disabled hover:text-red-400 rounded transition-colors flex-shrink-0"
+            aria-label="Delete priority"
+          >
+            <Trash2 size={13} />
+          </button>
+        </HoverTip>
       ) : (
         <div className="w-[21px] flex-shrink-0" />
       )}

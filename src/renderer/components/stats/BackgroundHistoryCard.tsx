@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../DataTable';
+import { HoverTip } from '../HoverTip';
 import type { BackgroundDayUsage } from '../../../shared/types';
 import { BACKGROUND_CALL_JOB_LABELS, BACKGROUND_CALL_JOBS } from '../../../shared/background-call-jobs';
 import { formatTokenCount } from '../../utils/format-tokens';
@@ -60,7 +61,12 @@ const COLUMNS: DataTableColumn<BackgroundDayUsage, HistoryColumnKey>[] = [
     sortValue: (row) => backgroundModelLine(row.models).toLowerCase(),
     render: (row) => {
       const line = backgroundModelLine(row.models);
-      return <span className="text-fg-secondary truncate block" title={line}>{line}</span>;
+      // The full line on hover: the column cuts it short.
+      return (
+        <HoverTip label={line}>
+          <span className="text-fg-secondary truncate block">{line}</span>
+        </HoverTip>
+      );
     },
   },
   {
@@ -69,7 +75,11 @@ const COLUMNS: DataTableColumn<BackgroundDayUsage, HistoryColumnKey>[] = [
     align: 'right',
     width: 'w-[70px]',
     sortValue: (row) => row.calls,
-    render: (row) => <span className="tabular-nums" title={backgroundCallsTitle(row, row.models)}>{row.calls.toLocaleString()}</span>,
+    render: (row) => (
+      <HoverTip label={backgroundCallsTitle(row, row.models)}>
+        <span className="tabular-nums">{row.calls.toLocaleString()}</span>
+      </HoverTip>
+    ),
   },
   {
     key: 'failed',

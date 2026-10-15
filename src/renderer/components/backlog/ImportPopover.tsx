@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Download, Plus, Trash2, ChevronRight, ArrowLeft, Loader2, X } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
+import { HoverTip } from '../HoverTip';
 import { PROVIDERS, getSourceLabel, getSourceIcon } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
 import type { ImportSource } from '../../../shared/types';
@@ -221,20 +222,21 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
 
   return (
     <div className="relative shrink-0">
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen(!open)}
-        title="Import Tasks"
-        aria-label="Import Tasks"
-        className={`flex items-center gap-1.5 py-1.5 text-sm text-fg-muted hover:text-fg border border-edge/50 hover:bg-surface-hover/40 rounded transition-colors ${
-          collapse ? collapse.button : 'px-3'
-        }`}
-        data-testid="import-sources-btn"
-      >
-        <Download size={14} className="shrink-0" />
-        <span className={collapse?.label}>Import Tasks</span>
-      </button>
+      <HoverTip label="Import Tasks" enabled={!open}>
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-label="Import Tasks"
+          className={`flex items-center gap-1.5 py-1.5 text-sm text-fg-muted hover:text-fg border border-edge/50 hover:bg-surface-hover/40 rounded transition-colors ${
+            collapse ? collapse.button : 'px-3'
+          }`}
+          data-testid="import-sources-btn"
+        >
+          <Download size={14} className="shrink-0" />
+          <span className={collapse?.label}>Import Tasks</span>
+        </button>
+      </HoverTip>
 
       <OverlayPopover
         open={open}

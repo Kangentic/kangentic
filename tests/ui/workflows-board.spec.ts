@@ -359,10 +359,10 @@ test.describe('Workflow tasks on the board', () => {
       for (const row of await moveRows.all()) await expect(row).toHaveAttribute('aria-disabled', 'true');
       // While it runs, every row says the lock, To Do included (boards 6 and 1d).
       for (const name of ['To Do', 'Planning', 'Code Review', 'Testing', 'Merge']) {
-        await expect(moveRows.filter({ hasText: name })).toHaveAttribute('title', LOCKED);
+        await expect(moveRows.filter({ hasText: name })).toHaveAccessibleDescription(LOCKED);
       }
       for (const testId of ['context-send-to-backlog', 'context-archive-task']) {
-        await expect(menu.locator(`[data-testid="${testId}"]`)).toHaveAttribute('title', LOCKED);
+        await expect(menu.locator(`[data-testid="${testId}"]`)).toHaveAccessibleDescription(LOCKED);
       }
       // A disabled row dims whole, with the not-allowed cursor; a live row does neither.
       for (const disabledRow of [moveRows.filter({ hasText: 'Code Review' }), menu.locator('[data-testid="context-archive-task"]')]) {
@@ -392,9 +392,9 @@ test.describe('Workflow tasks on the board', () => {
       await openMenu(page, 't414');
       const menu = byTestId(page, 'task-context-menu');
       await expect(menu.locator('[data-testid="context-move-to"]').filter({ hasText: 'To Do' }))
-        .toHaveAttribute('title', '#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+        .toHaveAccessibleDescription('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
       await expect(menu.locator('[data-testid="context-move-to"]').filter({ hasText: 'Code Review' })).not.toHaveAttribute('aria-disabled', 'true');
-      await expect(menu.locator('[data-testid="context-send-to-backlog"]')).toHaveAttribute('title', 'Remove #414 from Usage budgets first.');
+      await expect(menu.locator('[data-testid="context-send-to-backlog"]')).toHaveAccessibleDescription('Remove #414 from Usage budgets first.');
     } finally {
       await browser.close();
     }
@@ -407,7 +407,7 @@ test.describe('Workflow tasks on the board', () => {
       await openMenu(page, 't414');
       const rows = byTestId(page, 'task-context-menu').locator('[data-testid="context-move-to"]');
       await expect(rows.filter({ hasText: 'Testing' })).not.toHaveAttribute('aria-disabled', 'true');
-      await expect(rows.filter({ hasText: 'Executing' })).toHaveAttribute('title', LOCKED);
+      await expect(rows.filter({ hasText: 'Executing' })).toHaveAccessibleDescription(LOCKED);
     } finally {
       await browser.close();
     }

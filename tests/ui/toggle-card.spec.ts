@@ -19,7 +19,7 @@
  * 8. BrowserAutomationTab master-switch gating - the dependent switches show
  *    only while the master switch is on.
  * 9. Info icon variant (BoardManagerDialog Handoff toggle) - the optional
- *    `info` prop renders an aria-hidden Info icon with a title tooltip beside
+ *    `info` prop renders an aria-hidden Info icon with a hover tip beside
  *    the label, a ToggleCard without `info` renders no such icon, and
  *    clicking the icon does not flip the switch (stopPropagation).
  *
@@ -633,7 +633,8 @@ test.describe('BrowserAutomationTab master-switch gating', () => {
 // ── Gap 9: Info icon variant (BoardManagerDialog Handoff toggle) ─────────────
 //
 // ToggleCard's optional `info` prop renders an aria-hidden Info icon beside the
-// label, with the info text as its `title` tooltip. Clicking the icon must NOT
+// label, with the info text as its hover tip and as the switch's accessible
+// description. Clicking the icon must NOT
 // flip the switch (the icon's onClick calls stopPropagation). The Board
 // Manager's "Hand off context when the agent changes" toggle (Handoff section) is the
 // sole current usage; "Auto-spawn" in the same dialog has no `info` and is the
@@ -658,18 +659,18 @@ test.describe('ToggleCard info icon', () => {
     await dialog.waitFor({ state: 'detached', timeout: 2000 });
   }
 
-  test('a ToggleCard with `info` renders an Info icon with the expected title', async () => {
+  test('a ToggleCard with `info` renders an Info icon and describes the switch with it', async () => {
     await openManagerByHeader('Code Review'); // auto_spawn=true, so Handoff renders inline
 
     const handoffSwitch = page.getByRole('switch', { name: 'Hand off context when the agent changes' });
     await expect(handoffSwitch).toBeVisible();
 
-    // ToggleIndicator is also an aria-hidden span but carries no `title`, so
-    // span[title] uniquely selects the info icon within the switch button.
-    const infoSpan = handoffSwitch.locator('span[title]');
+    const infoSpan = handoffSwitch.locator('[data-testid="toggle-card-info"]');
     await expect(infoSpan).toHaveCount(1);
-    await expect(infoSpan).toHaveAttribute('title', /Kangentic injects the previous session's transcript as the first message/);
     await expect(infoSpan.locator('svg')).toBeVisible();
+    // The icon is aria-hidden and pointer-only, so the switch itself carries the
+    // text for a keyboard or screen-reader user.
+    await expect(handoffSwitch).toHaveAccessibleDescription(/Kangentic injects the previous session's transcript as the first message/);
 
     await closeManager();
   });
@@ -679,7 +680,8 @@ test.describe('ToggleCard info icon', () => {
 
     const autoSpawnSwitch = page.getByRole('switch', { name: 'Start an agent here' });
     await expect(autoSpawnSwitch).toBeVisible();
-    await expect(autoSpawnSwitch.locator('span[title]')).toHaveCount(0);
+    await expect(autoSpawnSwitch.locator('[data-testid="toggle-card-info"]')).toHaveCount(0);
+    await expect(autoSpawnSwitch).toHaveAccessibleDescription('');
 
     await closeManager();
   });
@@ -690,7 +692,7 @@ test.describe('ToggleCard info icon', () => {
     const handoffSwitch = page.getByRole('switch', { name: 'Hand off context when the agent changes' });
     await expect(handoffSwitch).toHaveAttribute('aria-checked', 'false');
 
-    await handoffSwitch.locator('span[title]').click();
+    await handoffSwitch.locator('[data-testid="toggle-card-info"]').click();
 
     // stopPropagation on the icon's onClick must prevent the click from
     // bubbling to the parent switch button.

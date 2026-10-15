@@ -591,7 +591,7 @@ test.describe('ContextBar tool-call breakdown popover', () => {
 
     const trigger = page.locator('[data-testid="context-bar-tool-calls-trigger"]');
     await expect(trigger).toContainText('51');
-    await expect(trigger).toHaveAttribute('title', 'Tool calls across every run of this session - click for the per-tool breakdown');
+    await expect(trigger).toHaveAccessibleDescription('Tool calls across every run of this session');
     await trigger.click();
 
     const table = page.locator('[data-testid="session-summary-by-tool"]');

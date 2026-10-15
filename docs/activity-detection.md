@@ -136,7 +136,7 @@ read an `activity` emit as a real transition.
 needs-user state. It spans both `idle` and `permission` - a `permission <-> idle` crossing keeps
 the original park time rather than resetting it - and is cleared only on returning to `thinking`.
 The renderer uses it to show elapsed wait time ("Idle for 12m") in the TaskCard hover tooltip
-(`formatActivityReasonText` / `ActivityReasonTooltip` in
+(`formatActivityReasonText` and `activityReasonIcon` in
 `src/renderer/components/board/ActivityReasonTooltip.tsx`).
 
 The renderer uses `reason.kind` to pick an icon and inline label for the TaskCard hover tooltip. The
@@ -630,7 +630,7 @@ The resume path now adopts nothing. Any surviving shell-like descendants are ins
 
 ### TaskCard hover tooltip
 
-The activity icon on each task card is wrapped in a tooltip rendering `ActivityReasonTooltip`. Hover reveals an icon + inline label per reason kind: "Running Bash", "2 subagents active", "1 background shell", "Awaiting permission", etc.
+The activity mark on each task card is wrapped in the app's HoverTip. Its label is `formatActivityReasonText` and it leads with `activityReasonIcon`, one glyph per reason kind: "Running Bash", "2 subagents active", "1 background shell", "Awaiting permission", etc. The mark's `aria-label` is the same text, so a screen reader hears the reason once, without hovering.
 
 ### Activity Engine Debug Overlay (Developer settings tab)
 

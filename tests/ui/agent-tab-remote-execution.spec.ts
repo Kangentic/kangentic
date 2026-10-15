@@ -242,7 +242,7 @@ test.describe('AgentTab - Remote Execution fields', () => {
 
     const unreachablePill = page.locator('text=Unreachable');
     await expect(unreachablePill).toBeVisible();
-    await expect(unreachablePill).toHaveAttribute('title', 'Authentication failed - check the username and password');
+    await expect(unreachablePill).toHaveAccessibleDescription('Authentication failed - check the username and password');
 
     await closeSettings(page);
   });

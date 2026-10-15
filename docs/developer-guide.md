@@ -324,6 +324,13 @@ npx playwright test --project=ui
 - **No build needed** -- runs against Vite dev server (auto-started by Playwright)
 - **Mock:** `tests/ui/mock-electron-api.js` injects a full in-memory mock of `window.electronAPI` via `addInitScript()`. Supports full CRUD for projects, tasks, swimlanes, actions, sessions, config, attachments.
 - **Pre-configure:** `window.__mockPreConfigure(fn)` lets tests set up mock state before React mounts
+- **Asserting a tip:** every tooltip is a `HoverTip`, and the renderer has no native `title`
+  attributes (`.claude/rules/one-tooltip.md`), so never select by `[title=...]`. Find a control by
+  its role and name or a `data-testid`. A tip that adds to the control's name is its accessible
+  description, so assert it with `toHaveAccessibleDescription(...)` without hovering. To check what
+  the tip draws, hover and read `[data-hover-tip]` (its `data-hover-tip-part` children for a rich
+  tip). It opens after 400ms of pointer movement, so wait for it to be visible. Never assert "no
+  tip" right after a hover: that passes during the delay without testing anything.
 
 ### E2E Tests (`tests/e2e/`)
 
@@ -436,7 +443,9 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 1. Add to appropriate `src/renderer/components/` subdirectory
 2. Use `data-testid` attributes for test selectors
 3. Use Lucide React for icons (no inline SVGs)
-4. Dialogs: use `useEffect` Escape key listener
+4. Hover text is a `HoverTip` (`src/renderer/components/HoverTip.tsx`), never a `title` attribute.
+   An icon-only control also carries an `aria-label`
+5. Dialogs: use `useEffect` Escape key listener
 
 ### New Test
 

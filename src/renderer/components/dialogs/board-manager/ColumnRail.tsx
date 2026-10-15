@@ -15,6 +15,7 @@ import {
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { HoverTip } from '../../HoverTip';
 import { RegistryIcon, getSwimlaneIconName } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
@@ -104,16 +105,20 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
         /* light-dismiss-ok: the board manager is a BaseDialog, which stamps
            `data-dismissable-layer` on its backdrop, and light dismiss abandons any press made
            while a dismissable layer is open. So this `cursor-grab` handle cannot close a task
-           window behind the dialog even though its cursor is not `pointer`. */
-        <div
-          {...attributes}
-          {...listeners}
-          data-drag-handle
-          title="Drag to reorder"
-          className="flex items-center px-0.5 cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted flex-shrink-0"
-        >
-          <GripVertical size={13} />
-        </div>
+           window behind the dialog even though its cursor is not `pointer`.
+           The tip is shut while the row is lifted: a Tab-placed focus opens it at once, and
+           an open tip would take the Escape that cancels a keyboard drag. */
+        <HoverTip label="Drag to reorder" enabled={!isDragging}>
+          <div
+            {...attributes}
+            {...listeners}
+            data-drag-handle
+            aria-label="Drag to reorder"
+            className="flex items-center px-0.5 cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted flex-shrink-0"
+          >
+            <GripVertical size={13} />
+          </div>
+        </HoverTip>
       ) : (
         <div className="w-[17px] flex-shrink-0" />
       )}
@@ -140,23 +145,28 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
         {/* `text-fg-muted`, one step up from the faint the hints used to share:
             at 12px on the row's own fill, faint was reported as hard to see. */}
         {row.agentOverrideLabel && (
-          <span title={`Agent: ${row.agentOverrideLabel}`} className="flex-shrink-0 text-fg-muted">
-            <Bot size={12} strokeWidth={2} />
-          </span>
+          <HoverTip label={`Agent: ${row.agentOverrideLabel}`}>
+            <span className="flex-shrink-0 text-fg-muted">
+              <Bot size={12} strokeWidth={2} />
+            </span>
+          </HoverTip>
         )}
         {row.isolated && (
-          <span title="Isolated session" className="flex-shrink-0 text-fg-muted">
-            <Split size={12} strokeWidth={2} />
-          </span>
+          <HoverTip label="Isolated session">
+            <span className="flex-shrink-0 text-fg-muted">
+              <Split size={12} strokeWidth={2} />
+            </span>
+          </HoverTip>
         )}
         {row.automationCount > 0 && (
-          <span
-            data-testid="board-manager-tab-automation"
-            title={row.automationCount === 1 ? '1 automation runs here' : `${row.automationCount} automations run here`}
-            className="flex-shrink-0 text-fg-muted"
-          >
-            <Columns3Cog size={12} strokeWidth={2} />
-          </span>
+          <HoverTip label={row.automationCount === 1 ? '1 automation runs here' : `${row.automationCount} automations run here`}>
+            <span
+              data-testid="board-manager-tab-automation"
+              className="flex-shrink-0 text-fg-muted"
+            >
+              <Columns3Cog size={12} strokeWidth={2} />
+            </span>
+          </HoverTip>
         )}
         {row.dirty && (
           <span
@@ -245,22 +255,23 @@ export function ColumnRail({
           so it sits below the selector and above the list. */}
       <div className="flex-shrink-0 border-b border-edge/50 px-2 pt-3 pb-2">
         <div className="px-2 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint">Overview</div>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={overviewSelected}
-          onClick={onSelectOverview}
-          data-testid="board-manager-tab-all"
-          title="Compare every column's settings side by side"
-          className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs transition-colors ${
-            overviewSelected
-              ? 'bg-surface-hover text-fg'
-              : 'text-fg-muted hover:text-fg hover:bg-surface-hover/60'
-          }`}
-        >
-          <LayoutGrid size={14} className="flex-shrink-0" />
-          All columns
-        </button>
+        <HoverTip label="Compare every column's settings side by side">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={overviewSelected}
+            onClick={onSelectOverview}
+            data-testid="board-manager-tab-all"
+            className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs transition-colors ${
+              overviewSelected
+                ? 'bg-surface-hover text-fg'
+                : 'text-fg-muted hover:text-fg hover:bg-surface-hover/60'
+            }`}
+          >
+            <LayoutGrid size={14} className="flex-shrink-0" />
+            All columns
+          </button>
+        </HoverTip>
       </div>
 
       <div className="pl-4 pr-2 pt-3 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint flex-shrink-0">

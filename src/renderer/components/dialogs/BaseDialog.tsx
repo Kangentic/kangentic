@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
-import { useFormattedCombo } from '../../hooks/useKeybinding';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
+import { HoverTip } from '../HoverTip';
 import { MaximizeOnDoubleClick } from './MaximizeOnDoubleClick';
 
 const FOCUSABLE_SELECTOR = [
@@ -46,7 +46,7 @@ interface BaseDialogProps {
   // Keybinding action id whose combo is shown on the standard-header X button
   // tooltip (e.g. 'panel.close'). The consumer must bind that action itself.
   // Escape always closes the dialog (the hidden `dialog.dismiss` action) and is
-  // deliberately not advertised here. When omitted, the tooltip is just 'Close'.
+  // deliberately not advertised here. When omitted, the tooltip has no key chips.
   closeHotkeyActionId?: string;
 
   // Behavior
@@ -143,11 +143,6 @@ export function BaseDialog({
     contentClassName: contentAnimClass,
     onAnimationEnd,
   } = useOverlayPhase(onClose, { variant: 'dialog' });
-
-  // Show the consumer's bound close hotkey (e.g. panel.close = Ctrl+Shift+W) on
-  // the standard-header X tooltip. Empty id resolves to '' so the tooltip falls
-  // back to plain 'Close'. Escape (the hidden universal closer) is never shown.
-  const closeCombo = useFormattedCombo(closeHotkeyActionId ?? '');
 
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -275,15 +270,18 @@ export function BaseDialog({
               <h3 className="text-sm font-semibold text-fg flex-1 min-w-0">{title}</h3>
             )}
             {headerRight}
-            <button
-              type="button"
-              onClick={requestCloseViaGuard}
-              title={closeCombo ? `Close (${closeCombo})` : 'Close'}
-              aria-label="Close dialog"
-              className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-            >
-              <X size={16} />
-            </button>
+            {/* The consumer's bound close hotkey (e.g. panel.close) shows as key chips. An
+                omitted id draws none. Escape, the hidden universal closer, is never shown. */}
+            <HoverTip label="Close dialog" keys={closeHotkeyActionId}>
+              <button
+                type="button"
+                onClick={requestCloseViaGuard}
+                aria-label="Close dialog"
+                className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </HoverTip>
           </MaximizeOnDoubleClick>
         )}
 

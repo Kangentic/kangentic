@@ -21,6 +21,7 @@ import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
 import type { KnowledgeGraphChatTurn } from '../../stores/knowledge-graph-store';
 import { KnowledgeGraphChatText, stripProtocolLine, ticketRef } from './KnowledgeGraphChatText';
 import { KnowledgeGraphSourceRows } from './KnowledgeGraphSourceRows';
+import { HoverTip } from '../HoverTip';
 
 function Avatar() {
   return (
@@ -223,16 +224,17 @@ export function KnowledgeGraphChat({
           carries it once rather than the panel stamping it again above them. */}
       <div className="flex items-center gap-2 border-b border-edge py-2.5 pl-3.5 pr-2.5">
         <span className="min-w-0 flex-1 truncate text-xs font-semibold text-fg" data-testid="knowledge-graph-chat-title">Chat</span>
-        <button
-          type="button"
-          onClick={onEnd}
-          aria-label="End the chat"
-          title="End the chat"
-          className="flex h-6 w-6 items-center justify-center rounded-md text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
-          data-testid="knowledge-graph-chat-end"
-        >
-          <X size={14} />
-        </button>
+        <HoverTip label="End the chat">
+          <button
+            type="button"
+            onClick={onEnd}
+            aria-label="End the chat"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
+            data-testid="knowledge-graph-chat-end"
+          >
+            <X size={14} />
+          </button>
+        </HoverTip>
       </div>
 
       <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto p-3.5" data-testid="knowledge-graph-chat-thread">

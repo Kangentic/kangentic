@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip, matchByDataKey } from 'recharts';
 import type { DonutSlice } from '../useStatsData';
 import { ChartTooltip } from './ChartTooltip';
+import { HoverTip } from '../../HoverTip';
 
 interface KngDonutProps {
   slices: DonutSlice[];
@@ -89,8 +90,11 @@ export const KngDonut = memo(function KngDonut({
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
         <span className="text-fg font-semibold text-sm tabular-nums">{centerValue}</span>
         {/* Bounded so a long entity name (model ids, "(default)") stays
-            inside the donut hole. */}
-        <span className="text-fg-faint text-[11px] max-w-[70%] truncate" title={centerLabel}>{centerLabel}</span>
+            inside the donut hole. Its tip is the full name, so the name alone
+            takes the pointer back from the overlay's `pointer-events-none`. */}
+        <HoverTip label={centerLabel}>
+          <span className="text-fg-faint text-[11px] max-w-[70%] truncate pointer-events-auto">{centerLabel}</span>
+        </HoverTip>
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { layoutCommitGraph } from '../../../../lib/commit-graph-layout';
 import { CommitGraphSvg, ROW_HEIGHT_PX, laneColor } from './CommitGraphSvg';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { CountBadge } from '../../../CountBadge';
+import { HoverTip } from '../../../HoverTip';
 import type { GitCommitGraphCommit, GitCommitGraphResult, Task } from '../../../../../shared/types';
 
 interface CommitGraphPanelProps {
@@ -217,60 +218,62 @@ export function CommitGraphPanel({
               const isSelected = commit.hash === selectedCommit;
               const isBase = commit.hash === baseHash;
               const isPr = prHash !== null && commit.hash === prHash && task.pr_number != null;
-              // Compact rows put the full metadata in the tooltip, since the
-              // base / PR refs render as bare dots there.
-              const compactTitle = compact
-                ? `${commit.shortHash} ${commit.subject}\n${commit.authorName}${isBase ? `\nBase: ${baseBranch}` : ''}${isPr ? `\nPR #${task.pr_number}` : ''}`
+              // Compact rows put the full metadata in the hover tip, since the
+              // base / PR refs render as bare dots there: the subject as the
+              // label, the author and refs under it.
+              const compactTipLabel = compact ? `${commit.shortHash} ${commit.subject}` : '';
+              const compactTipDetail = compact
+                ? `${commit.authorName}${isBase ? `\nBase: ${baseBranch}` : ''}${isPr ? `\nPR #${task.pr_number}` : ''}`
                 : undefined;
               return (
-                <button
-                  key={commit.hash}
-                  type="button"
-                  onClick={() => onSelectCommit(commit)}
-                  aria-pressed={isSelected}
-                  title={compactTitle}
-                  data-testid="commit-graph-row"
-                  data-selected={isSelected || undefined}
-                  className={`flex w-full flex-col justify-center gap-0.5 border-b border-edge-subtle ${rowPadding} text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-                    isSelected ? 'bg-accent/10' : 'hover:bg-surface-hover'
-                  }`}
-                  style={{ height: ROW_HEIGHT_PX }}
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0 font-mono text-[11px]" style={{ color }}>
-                      {commit.shortHash}
-                    </span>
-                    <span className="truncate text-xs text-fg">{commit.subject}</span>
-                    {commit.hash === tipHash && <RefBadge label="HEAD" tone="tip" />}
-                    {isBase && (compact ? (
-                      <span
-                        aria-hidden
-                        data-testid="commit-ref-dot-base"
-                        className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-fg-faint"
-                      />
-                    ) : (
-                      <RefBadge label={baseBranch} tone="base" />
-                    ))}
-                    {isPr && (compact ? (
-                      <span
-                        aria-hidden
-                        data-testid="commit-ref-dot-pr"
-                        className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-                      />
-                    ) : (
-                      <RefBadge label={`PR #${task.pr_number}`} tone="pr" />
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-fg-faint">
-                    <span className="truncate">{commit.authorName}</span>
-                    {commit.authorTimestamp && (
-                      <>
-                        <span aria-hidden>&middot;</span>
-                        <span className="shrink-0">{formatRelativeTime(commit.authorTimestamp)}</span>
-                      </>
-                    )}
-                  </div>
-                </button>
+                <HoverTip key={commit.hash} label={compactTipLabel} detail={compactTipDetail}>
+                  <button
+                    type="button"
+                    onClick={() => onSelectCommit(commit)}
+                    aria-pressed={isSelected}
+                    data-testid="commit-graph-row"
+                    data-selected={isSelected || undefined}
+                    className={`flex w-full flex-col justify-center gap-0.5 border-b border-edge-subtle ${rowPadding} text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+                      isSelected ? 'bg-accent/10' : 'hover:bg-surface-hover'
+                    }`}
+                    style={{ height: ROW_HEIGHT_PX }}
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="shrink-0 font-mono text-[11px]" style={{ color }}>
+                        {commit.shortHash}
+                      </span>
+                      <span className="truncate text-xs text-fg">{commit.subject}</span>
+                      {commit.hash === tipHash && <RefBadge label="HEAD" tone="tip" />}
+                      {isBase && (compact ? (
+                        <span
+                          aria-hidden
+                          data-testid="commit-ref-dot-base"
+                          className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-fg-faint"
+                        />
+                      ) : (
+                        <RefBadge label={baseBranch} tone="base" />
+                      ))}
+                      {isPr && (compact ? (
+                        <span
+                          aria-hidden
+                          data-testid="commit-ref-dot-pr"
+                          className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                        />
+                      ) : (
+                        <RefBadge label={`PR #${task.pr_number}`} tone="pr" />
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-fg-faint">
+                      <span className="truncate">{commit.authorName}</span>
+                      {commit.authorTimestamp && (
+                        <>
+                          <span aria-hidden>&middot;</span>
+                          <span className="shrink-0">{formatRelativeTime(commit.authorTimestamp)}</span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                </HoverTip>
               );
             })}
           </div>
