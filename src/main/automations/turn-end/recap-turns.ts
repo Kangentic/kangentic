@@ -10,7 +10,10 @@
  * its turn's start at the spawn, so the recap's turn began before the session
  * first went idle. A Ctrl+C ends a turn with no turn end, so an interrupted
  * recap leaves its mark behind, and the turn the user then starts with a prompt
- * runs its rows as usual.
+ * runs its rows as usual once the session went idle in between. A Ctrl+C
+ * between tool calls fires no hook, and the engine idles the session only
+ * after its interrupt settle (about 3 s). A prompt typed inside that window
+ * still belongs to the recap's turn, so that turn runs no rows.
  *
  * The first idle alone does not end the recap's turn. An idle no Stop caused
  * (the stale-thinking watchdog, PTY silence) can land mid-turn, and the engine

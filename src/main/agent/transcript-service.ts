@@ -190,8 +190,9 @@ function findTranscriptRecord(db: Database.Database, anyId: string): { record: S
 
 /**
  * Resolve a session's structured conversation for the viewer. Live-parse
- * primary (freshest, full block structure), indexed-chunk fallback when the
- * native history has been pruned, `source: 'none'` when neither is available.
+ * primary (freshest, full block structure). When the native history is gone,
+ * Kangentic's archived copy, then the index's text-only chunks
+ * (`readSavedConversation`). `source: 'none'` when none of them holds it.
  * Returns null only when the session id resolves to no record.
  *
  * No agent-name branching: the structured-parse capability is read from the
@@ -244,8 +245,9 @@ export async function resolveSessionTranscript(
       // Already truncated inside the cache.
       return { ...base, source: 'live', sourcePath, entries, degraded: false };
     }
-    // Native file gone or empty: Kangentic's archived copy keeps the structure,
-    // so it is not degraded; the index's chunks keep the text only.
+    // Native file gone or empty: the archived copy first, which keeps the
+    // structure and is not degraded, then the index's chunks, which keep the
+    // text only and are.
     const saved = await readSavedConversation(db, agentSessionId);
     if (saved) {
       return { ...base, source: saved.source, sourcePath, entries: saved.entries, degraded: saved.source === 'index' };

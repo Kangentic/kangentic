@@ -2,29 +2,27 @@
  * Pins for fixes a review pass made to the structured transcript archive
  * (`src/main/retrieval/archive/transcript-archive.ts`). The main behavior tests
  * live in `transcript-archive.test.ts`; these hold the edges that file leaves
- * open, each with the real window parser, real Brotli and real better-sqlite3:
+ * open, each with the real window parser, real Brotli and real better-sqlite3.
+ * In the order of the describe blocks below:
  *
- * 1. A whole-file walk that found no entries records the file as seen, so the
- *    next call does not walk it again, and the archived entries stay readable.
- * 2. A walk that throws after it began replacing rows bumps the revision, so a
- *    read cached before the failure is not served again.
- * 3. The read cache is keyed by database AND conversation, and a purge drops a
- *    purged conversation's entry, so a re-archive that starts again at
- *    revision 1 is not answered with the old content.
- * 4. A row that decodes to something other than a list is skipped, and an
- *    element without a string `kind` is left out of a list.
- *
- * Four more edges came out of a later review pass:
- *
- * 5. The read of the file after the walk, and the state write that follows it,
- *    sit inside the guard that bumps the revision, so a file the agent deletes
- *    right after the walk replaced rows cannot leave a stale cached read.
- * 6. A purge deletes a conversation's rows in capped batches and still removes
- *    every one, and only that conversation's.
- * 7. An adapter with no window parser is 'unsupported', and its file is never
- *    looked up.
- * 8. A row whose stored pieces do not match its piece count is left out of a
- *    read, and the rows around it are kept.
+ * - A whole-file walk that found no entries records the file as seen, so the
+ *   next call does not walk it again, and the archived entries stay readable.
+ * - A walk that throws after it began replacing rows bumps the revision, so a
+ *   read cached before the failure is not served again.
+ * - The read of the file after the walk, and the state write that follows it,
+ *   sit inside the guard that bumps the revision, so a file the agent deletes
+ *   right after the walk replaced rows cannot leave a stale cached read.
+ * - The read cache is keyed by database AND conversation, and a purge drops a
+ *   purged conversation's entry, so a re-archive that starts again at
+ *   revision 1 is not answered with the old content.
+ * - A row that decodes to something other than a list is skipped, and an
+ *   element without a string `kind` is left out of a list.
+ * - A purge deletes a conversation's rows in capped batches and still removes
+ *   every one, and only that conversation's.
+ * - An adapter with no window parser is 'unsupported', and its file is never
+ *   looked up.
+ * - A row whose stored pieces do not match its piece count is left out of a
+ *   read, and the rows around it are kept.
  */
 import fs from 'node:fs';
 import os from 'node:os';

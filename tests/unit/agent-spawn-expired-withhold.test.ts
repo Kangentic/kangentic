@@ -53,13 +53,17 @@
  * and the third fails. Change `if (handoffRecapOnly && effectiveAutoCommand?.trim())`
  * to `if (false && ...)` in the handoff branch and the two withheld handoff
  * tests fail; key `handoffRecapOnly` on `startOver` and the not-recap-only
- * handoff test fails. Delete the `if (takesPromptSlot && outcome?.resumePromptUnsent)`
- * block and every "delivers ... after the spawn" test fails, while the paired
+ * handoff test fails. Drop the `|| outcome?.resumePromptUnsent` half of the
+ * restore's condition and every "delivers ... after the spawn" test fails, while the paired
  * "resume carried it" tests keep passing (that pair is the pre-change
  * behavior). Drop only its `pendingTaskOverride = overrideBeforeTake` line and
  * the task-command tests fail with the column's text delivered in its place.
  * Drop the `legacyStartReport` assignment in `legacySpawnAgent` and the
  * recap-only legacy test fails; key it on `startOver` and the isolated one does.
+ * Delete the no-row fallback's `if (pendingTaskOverride !== null) await deliverToAgent(...)`
+ * line and the first two "no row that needs the agent" tests fail with nothing
+ * delivered; delete the `if (outcome?.recapOnly) return ...` line and the
+ * recap-only-with-resume-prompt-unsent test there fails with the command delivered.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentStartReport } from '../../src/main/automations/automation-runner';
@@ -570,7 +574,13 @@ const freshDestinationRepo = {
  */
 async function runEnterGroup(scenario: EnterGroupScenario): Promise<{ rows: RunLogRow[] }> {
   let agentStarted = false;
-  mockResumeSuspendedSession.mockResolvedValue(scenario.resumeOutcome ?? outcomeOf());
+  // The engine's resume is what gives the task its session, so it reads back
+  // with one from there on. That holds for the fallback start after the
+  // automations too, where no row's `startAgent` wrapper below is involved.
+  mockResumeSuspendedSession.mockImplementation(async () => {
+    agentStarted = true;
+    return scenario.resumeOutcome ?? outcomeOf();
+  });
   mockRunLegacySpawnAgent.mockImplementation(async () => {
     agentStarted = true;
     return scenario.legacyOutcome ?? outcomeOf();
@@ -733,8 +743,8 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
       expect(deliveredMessages()).toEqual(['Then summarize']);
     });
 
-    // Red-green: `if (!takesPromptSlot) pendingTaskOverride = overrideBeforeTake`
-    // in `startAgent`. Without it the slot check consumed the command, and the
+    // Red-green: the `!takesPromptSlot ||` half of the restore's condition in
+    // `startAgent`. Without it the slot check consumed the command, and the
     // column's text went out in its place.
     it('delivers the task\'s command after a fresh spawn the message could not ride', async () => {
       await runEnterGroup({
@@ -756,6 +766,105 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
       expect(mockResumeSuspendedSession.mock.calls[0][3]).toBeUndefined();
       expect(deliveredMessages()).toEqual([COLUMN_TEXT]);
     });
+  });
+});
+
+// A column that has no enter row needing the agent starts it from the fallback
+// at the end of `spawnAgent`, with no row's message to send. The only message
+// left is the task's own `auto_command`, and docs/mcp-server.md promises it runs
+// once the agent spawns for the task. These tests run that fallback: `rows` is
+// empty, so the runner never asks `startAgent` and the task's command is the
+// one thing that can still go out.
+describe('spawnAgent: the task\'s own auto_command in a column with no row that needs the agent', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+  });
+
+  // Red-green: delete the fallback's `if (pendingTaskOverride !== null) await deliverToAgent('', 'immediate');`
+  // and this test and the next fail with nothing delivered.
+  it('delivers the command once after the spawn when it took the prompt slot and the engine reports the resume prompt unsent', async () => {
+    await runEnterGroup({
+      rows: [],
+      taskFields: { auto_command: TASK_COMMAND },
+      resumeOutcome: outcomeOf({ startOver: 'never-started', resumePromptUnsent: true }),
+    });
+
+    // The enter group ran and started nothing, so the engine call below is the
+    // fallback's, and the command it carried as the resume prompt never went out.
+    expect(mockExecuteTransition).toHaveBeenCalledTimes(1);
+    expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(TASK_COMMAND);
+    expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+    expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ taskId: TASK_ID, sessionId: 'session-new', message: TASK_COMMAND, mode: 'immediate', freshlySpawned: true }),
+    );
+  });
+
+  it('delivers the command once after a plain fresh spawn, whose prompt is the task template and not the command', async () => {
+    await runEnterGroup({
+      rows: [],
+      taskFields: { auto_command: TASK_COMMAND },
+      noResumableDestination: true,
+    });
+
+    // No conversation to resume and no `skipPromptTemplate`, so the command
+    // could not take the prompt slot: the engine got no resume prompt at all.
+    expect(mockExecuteTransition).toHaveBeenCalledTimes(1);
+    expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBeUndefined();
+    expect(deliveredMessages()).toEqual([TASK_COMMAND]);
+    expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ taskId: TASK_ID, sessionId: 'session-new', message: TASK_COMMAND, mode: 'immediate', freshlySpawned: true }),
+    );
+  });
+
+  it('delivers nothing when the spawn was recap-only, because the recap is the session\'s whole prompt', async () => {
+    await runEnterGroup({
+      rows: [],
+      taskFields: { auto_command: TASK_COMMAND },
+      resumeOutcome: outcomeOf({ startOver: 'expired', recapOnly: true }),
+    });
+
+    // The command took the slot but the recap replaced it, and a recap-only
+    // start never gives the command back to the fallback.
+    expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(TASK_COMMAND);
+    expect(deliveredMessages()).toEqual([]);
+  });
+
+  // The engine never reports both (`resumePromptUnsent` is false whenever
+  // `recapOnly` is true), so this is not a state a spawn reaches. It pins the
+  // order inside `startAgent`: the recap-only return comes before the restore
+  // of the command, so the restore cannot be what lets a command through.
+  it('delivers nothing for a recap-only outcome even if it also claimed the resume prompt unsent', async () => {
+    await runEnterGroup({
+      rows: [],
+      taskFields: { auto_command: TASK_COMMAND },
+      resumeOutcome: outcomeOf({ startOver: 'expired', recapOnly: true, resumePromptUnsent: true }),
+    });
+
+    expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(deliveredMessages()).toEqual([]);
+  });
+
+  it('does not deliver the command a second time when the resume carried it as its prompt', async () => {
+    await runEnterGroup({
+      rows: [],
+      taskFields: { auto_command: TASK_COMMAND },
+      resumeOutcome: outcomeOf({ startOver: null, resumePromptUnsent: false }),
+    });
+
+    expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(TASK_COMMAND);
+    expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
   });
 });
 

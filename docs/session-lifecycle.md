@@ -384,7 +384,9 @@ that wait once.
   spawn, before the session first went idle, and it lasts until the agent receives a prompt after
   that idle: an idle no Stop caused (the stale-thinking watchdog) can land mid-turn, and the engine
   re-stamps the turn's start when thinking resumes. A turn the user starts with a prompt after an
-  interrupted recap runs its rows. Startup recovery's recap is the whole prompt on every session,
+  interrupted recap runs its rows, unless the prompt lands inside the engine's interrupt settle
+  (about 3 s after a Ctrl+C between tool calls, which fires no hook), where it still counts as the
+  recap's turn. Startup recovery's recap is the whole prompt on every session,
   so its first turn is skipped the same way. That pass therefore starts each expired task working:
   one summary turn per task, paid in model tokens with nobody watching, which is the price of the
   task saying where it stands when the user next opens it.
