@@ -7,6 +7,7 @@ import { TaskMoveRepository } from '../db/repositories/task-move-repository';
 import { AutomationRepository } from '../db/repositories/automation-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { buildBriefXml, escapeXml } from '../agent/shared/prompt-xml';
+import { INLINE_PROMPT_BUDGET } from '../agent/shared/prompt-budget';
 import { interpolateTaskTemplate } from '../agent/shared/template-utils';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { resolveProjectRoot } from '../../shared/git-utils';
@@ -173,7 +174,7 @@ export async function buildWorkflowAgentContinueMessage(
   // many columns or a long custom template fills much of that line by itself.
   // Past the budget the agent reads the plan itself; `kangentic_get_workflow`
   // answers with its own workflow's.
-  if (firstMessage.length + savedPlan.length > CONTINUE_MESSAGE_INLINE_BUDGET) {
+  if (firstMessage.length + savedPlan.length > INLINE_PROMPT_BUDGET) {
     return [
       firstMessage,
       '',
@@ -189,10 +190,3 @@ export async function buildWorkflowAgentContinueMessage(
     `This workflow already has the plan in <saved_plan>, from an earlier conversation that could not be resumed. ${toBuildOn}`,
   ].join('\n');
 }
-
-/**
- * The longest first message plus saved plan sent inline. The whole command has
- * to fit cmd.exe's 8,191 characters, and the rest of it (the CLI path, its
- * flags, the MCP URL and the closing lines) takes up to about 1,000 of them.
- */
-const CONTINUE_MESSAGE_INLINE_BUDGET = 7_000;

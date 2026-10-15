@@ -29,8 +29,10 @@ import { buildCommandInjectionVerifier } from '../../transition-engine/injection
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
 import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
+import type { AgentStartReport } from '../../automations/automation-runner';
 import { emitSpawnProgress, createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
-import { ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked } from './task-git';
+import { ensureTaskWorktree, ensureTaskBranchCheckout, notifyConversationExpired, notifySpawnBlocked } from './task-git';
+import { createExpiredRecapSources } from '../../transition-engine/expired-recap-sources';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { registerResumeController, releaseResumeController } from '../handlers/session-resume-controllers';
@@ -93,6 +95,9 @@ export function resolveSpawnOverrides(
   };
 }
 
+/** The run log's reason for a column message not sent because the task's conversation expired. */
+const EXPIRED_CONVERSATION_SKIP_REASON = 'Not sent. The agent\'s conversation had expired, so it started a new one from a recap and is waiting for you.';
+
 /** Create a TransitionEngine wired to explicit project context (not singletons). */
 export function createTransitionEngine(
   context: IpcContext,
@@ -135,7 +140,11 @@ export function createTransitionEngine(
     attachments,
     automations,
     automationRuns,
-    { checkConditions: (input, limits, call) => checkAutomationConditions(conditionCheckDeps(context), input, limits, call) },
+    {
+      checkConditions: (input, limits, call) => checkAutomationConditions(conditionCheckDeps(context), input, limits, call),
+      recapSources: createExpiredRecapSources(projectId),
+      onConversationExpired: (notice) => notifyConversationExpired(context, notice),
+    },
   );
 }
 
@@ -395,13 +404,18 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
 
     emitSpawnProgress(context.mainWindow, task.id, 'detecting-agent');
 
+    let handoffRecapOnly: boolean;
     try {
-      await engine.resumeSuspendedSession(
+      const handoffOutcome = await engine.resumeSuspendedSession(
         task, toLane.permission_mode, skipPromptTemplate, undefined, signal,
         targetAgent,
         handoffPromptPrefix,
         resolveSpawnOverrides(task, toLane, project),
       );
+      // The target agent's own earlier conversation was resumed, and the agent
+      // had deleted it: the new session opened on a recap that asks it to
+      // summarize and wait, so the column's message below is not sent.
+      handoffRecapOnly = handoffOutcome?.recapOnly ?? false;
     } catch (error) {
       if (isAbortError(error)) throw error;
       console.error('[spawnAgent] Failed to start handoff session:', error);
@@ -439,7 +453,9 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       }
       const taskOverride = currentTask.auto_command?.trim();
       const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, columnMessage?.message);
-      if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
+      if (handoffRecapOnly && effectiveAutoCommand?.trim()) {
+        console.log(`[spawnAgent] Handoff for task ${task.id.slice(0, 8)}: the conversation had expired and the agent is waiting on its recap, so the column's message is not sent.`);
+      } else if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
         // Which interpolator depends on which tier won, and the two genuinely
         // differ. A task's `auto_command` keeps DROP-AND-COLLAPSE, which is the
         // rule `task-template-vars-parity.md` states for it. A column's message
@@ -526,7 +542,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     }
   };
 
-  const startAgent = async (pendingPrompt?: string): Promise<void> => {
+  const startAgent = async (pendingPrompt?: string): Promise<AgentStartReport | void> => {
     const beforeSpawn = tasks.getById(task.id);
     if (!beforeSpawn || beforeSpawn.session_id) return;
 
@@ -568,12 +584,17 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     try {
       // Always pass targetAgent so the column's agent_override is respected.
       // Without it a first-time spawn would fall through to the project default.
-      await engine.resumeSuspendedSession(
+      const outcome = await engine.resumeSuspendedSession(
         beforeSpawn, toLane.permission_mode, skipPromptTemplate, resumePrompt, signal,
         targetAgent,
         undefined,
         resolveSpawnOverrides(beforeSpawn, toLane, project),
       );
+      // The agent deleted the conversation this move would have resumed, so
+      // the task started over from a recap that asks the agent to summarize and
+      // wait. The column's messages, the one in the prompt slot included, are
+      // not sent; the runner records each as skipped with this reason.
+      if (outcome?.recapOnly) return { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
     } catch (error) {
       if (isAbortError(error)) throw error;
       // This used to be the deepest silent failure on the board path. The
@@ -657,6 +678,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   if (!afterAutomations || afterAutomations.session_id) return;
 
   try {
+    // No row asked for the agent, so there is no message for an expired
+    // conversation's start-over to withhold.
     await startAgent();
   } catch (error) {
     if (isAbortError(error)) throw error;

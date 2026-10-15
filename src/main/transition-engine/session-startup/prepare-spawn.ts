@@ -12,8 +12,12 @@ import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsA
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
 import { reconcileResumeAgentSessionId } from '../resume-id-reconcile';
-import { isResumeConversationAbsent } from '../resume-conversation-guard';
+import { assessResumeConversation, resolveResumeLineage, type StartOverReason } from '../resume-conversation-guard';
 import type { SessionRepository } from '../../db/repositories/session-repository';
+import {
+  buildExpiredConversationRecap,
+  type ExpiredConversationRecapSources,
+} from '../../agent/shared/expired-conversation-recap';
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
@@ -52,6 +56,17 @@ export interface PreparedSpawn {
    */
   appliedModel: string | null;
   appliedEffort: string | null;
+  /** Whether the command resumes the agent's conversation (`--resume`). */
+  resumed: boolean;
+  /**
+   * The command's opening prompt. Null on every startup spawn but one: a
+   * resume whose conversation the agent deleted starts fresh with a recap.
+   */
+  prompt: string | null;
+  /** Why a requested resume became a fresh spawn; null when it did not. */
+  startOver: StartOverReason | null;
+  /** When the deleted conversation last ran (UTC ISO), for an `expired` start-over's notice. */
+  expiredLastActiveAt: string | null;
 }
 
 export type PrepareResult =
@@ -104,8 +119,20 @@ export async function prepareAgentSpawn(input: {
    * differs from the spawn `cwd` (falls back to the spawn cwd).
    */
   resume: { agentSessionId: string; recordId?: string; recordCwd?: string } | null;
-  /** Persists a reconciled agent session id. Only consulted when `resume.recordId` is set. */
-  sessionRepo?: Pick<SessionRepository, 'updateAgentSessionId'>;
+  /**
+   * Persists a reconciled agent session id (only consulted when
+   * `resume.recordId` is set), and lists the task's records so the
+   * conversation check reads the whole lineage.
+   */
+  sessionRepo?: Pick<SessionRepository, 'updateAgentSessionId'> & Partial<Pick<SessionRepository, 'listForTaskNewestFirst'>>;
+  /** Where an expired conversation's recap reads its optional parts. Absent, it carries the task alone. */
+  recapSources?: ExpiredConversationRecapSources;
+  /**
+   * The team-shared default base branch (`kangentic.json`), ahead of the
+   * config's, as the board path resolves `{{baseBranch}}`
+   * (`resolveDefaultBaseBranch`). The recap lists the branch's commits past it.
+   */
+  boardDefaultBaseBranch?: string | null;
   /**
    * Whether any session row exists for the task. First-ever-spawn detection
    * for the override lock: recovery resumes pass `true` (a record is in hand,
@@ -169,61 +196,96 @@ export async function prepareAgentSpawn(input: {
 
   await adapter.ensureTrust(cwd);
 
-  // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head
-  // under a PowerShell or Git Bash host is swapped for the sibling shim that
-  // shell can run. This path never carries a prompt, but a crash-recovered
-  // session must launch through the same head the board spawn used.
-  const launch = await resolveShimLaunch({
-    agentPath: detection.path,
-    shell: input.resolvedShell,
-    prompt: undefined,
-  });
-
   // "Plan always wins, else task -> lane -> global" - the rule lives in
   // resolveEffectivePermissionMode (spawn-preamble.ts).
   const permissionMode = resolveEffectivePermissionMode(
     task.permission_mode, swimlane?.permission_mode, config.agent.permissionMode,
   );
 
-  let agentSessionId: string | null;
-  // Same downgrade the board spawn path applies: a record whose conversation
-  // the agent never persisted (session ended before its first turn) must not be
-  // recovered with `--resume`, or startup hands the user a dead CLI. Returns
-  // false on every uncertainty, so a real conversation is never discarded.
+  // Reconcile the resumed id against the retiring record's own status.json:
+  // a mid-session fork (Claude /clear) in the final seconds before suspend
+  // can leave the DB one id behind. Best-effort; missing file or recordId
+  // keeps the stored id unchanged. Before the conversation check, which needs
+  // the id actually being resumed.
+  const resumedAgentSessionId = input.resume
+    ? await reconcileResumeAgentSessionId({
+        adapter,
+        recordId: input.resume.recordId ?? null,
+        storedAgentSessionId: input.resume.agentSessionId,
+        cwd: input.resume.recordCwd ?? cwd,
+        projectPath,
+        sessionRepo: input.sessionRepo,
+      })
+    : null;
+
+  // Same check the board spawn path runs (resume-conversation-guard.ts): a
+  // conversation that never had a turn, or one the agent deleted, must not be
+  // recovered with `--resume`, or startup hands the user a dead CLI. Anything
+  // the check cannot prove resumes as before.
   let canResume = input.resume !== null;
-  if (canResume && await isResumeConversationAbsent({
-    adapter,
-    // Startup recovery holds only the record it is recovering; unlike the board
-    // path it has no repository handle to walk the conversation's lineage. A
-    // record recovered here ran until the crash, so it normally has its own
-    // status report.
-    recordIds: [input.resume!.recordId ?? null],
-    projectPath,
-  })) {
-    console.log(
-      `[SESSION_RECOVERY] Resume downgraded to fresh for task ${task.id.slice(0, 8)}:`
-      + ` agent session ${input.resume!.agentSessionId.slice(0, 8)} never wrote a conversation`,
-    );
-    canResume = false;
-  }
-  if (canResume) {
-    // Reconcile the resumed id against the retiring record's own status.json:
-    // a mid-session fork (Claude /clear) in the final seconds before suspend
-    // can leave the DB one id behind. Best-effort; missing file or recordId
-    // keeps the stored id unchanged.
-    agentSessionId = await reconcileResumeAgentSessionId({
-      adapter,
-      recordId: input.resume!.recordId ?? null,
-      storedAgentSessionId: input.resume!.agentSessionId,
-      cwd: input.resume!.recordCwd ?? cwd,
-      projectPath,
-      sessionRepo: input.sessionRepo,
+  let startOver: PreparedSpawn['startOver'] = null;
+  let prompt: string | null = null;
+  let expiredLastActiveAt: string | null = null;
+  if (input.resume && resumedAgentSessionId) {
+    // With no repository to list from, the recovered record is read by its
+    // folder alone (it ran until the crash, so it normally has its own status
+    // report).
+    const { lineage, lastActiveAt } = resolveResumeLineage({
+      taskRecords: input.sessionRepo?.listForTaskNewestFirst?.(task.id) ?? [],
+      retiringRecordId: input.resume.recordId ?? null,
+      resumedAgentSessionId,
     });
-  } else {
-    // Only Claude accepts caller-specified session IDs. Others capture
-    // their real ID from hooks / PTY output later and come back here as null.
-    agentSessionId = adapter.supportsCallerSessionId ? randomUUID() : null;
+    const verdict = await assessResumeConversation({
+      adapter,
+      agentSessionId: resumedAgentSessionId,
+      records: lineage,
+      cwd,
+      projectPath,
+    });
+    if (verdict === 'never-started') {
+      console.log(
+        `[SESSION_RECOVERY] Resume downgraded to fresh for task ${task.id.slice(0, 8)}:`
+        + ` agent session ${resumedAgentSessionId.slice(0, 8)} never wrote a conversation`,
+      );
+      canResume = false;
+      startOver = 'never-started';
+    } else if (verdict === 'expired') {
+      canResume = false;
+      startOver = 'expired';
+      expiredLastActiveAt = lastActiveAt;
+      console.log(
+        `[SESSION_RECOVERY] Resume replaced by a fresh session for task ${task.id.slice(0, 8)}:`
+        + ` agent session ${resumedAgentSessionId.slice(0, 8)} was deleted by ${adapter.displayName}`,
+      );
+      // Startup carries no column message and no task template on any
+      // session, main or isolated, so the recap is the whole prompt for both:
+      // there is nothing else for the agent to act on.
+      prompt = await buildExpiredConversationRecap({
+        task,
+        agentDisplayName: adapter.displayName,
+        previousAgentSessionId: resumedAgentSessionId,
+        lastActiveAt: expiredLastActiveAt,
+        cwd,
+        baseBranch: task.base_branch || input.boardDefaultBaseBranch || config.git?.defaultBaseBranch || 'main',
+        mode: 'whole-prompt',
+      }, input.recapSources);
+    }
   }
+  // Only Claude accepts caller-specified session IDs. Others capture their
+  // real ID from hooks / PTY output later and come back here as null.
+  const agentSessionId = canResume
+    ? resumedAgentSessionId
+    : (adapter.supportsCallerSessionId ? randomUUID() : null);
+
+  // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head
+  // under a PowerShell or Git Bash host is swapped for the sibling shim that
+  // shell can run, or the prompt is flattened. After the check, since an
+  // expired conversation's recap is the one prompt this path ever carries.
+  const launch = await resolveShimLaunch({
+    agentPath: detection.path,
+    shell: input.resolvedShell,
+    prompt: prompt ?? undefined,
+  });
 
   const sessionRecordId = randomUUID();
   const sessionDir = path.join(projectPath, '.kangentic', 'sessions', sessionRecordId);
@@ -240,7 +302,7 @@ export async function prepareAgentSpawn(input: {
   const commandOptions = {
     agentPath: launch.agentPath,
     taskId: task.id,
-    prompt: undefined,
+    prompt: launch.prompt,
     cwd,
     permissionMode,
     projectRoot: projectPath,
@@ -301,6 +363,10 @@ export async function prepareAgentSpawn(input: {
       extraEnv,
       appliedModel: commandOptions.model ?? null,
       appliedEffort: commandOptions.effort ?? null,
+      resumed: canResume,
+      prompt,
+      startOver,
+      expiredLastActiveAt,
     },
   };
 }

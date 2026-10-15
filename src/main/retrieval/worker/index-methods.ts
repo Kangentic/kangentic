@@ -172,7 +172,11 @@ function indexerFor(context: WorkerContext): ConversationIndexer {
   return indexer;
 }
 
-async function runJob<Result>(jobId: string | undefined, job: (shouldContinue: () => boolean) => Promise<Result>): Promise<Result> {
+/**
+ * Run a long job `job.cancel` can stop between its steps. Shared with the
+ * archive sweep (`archive-methods.ts`), so one cancel reaches either.
+ */
+export async function runJob<Result>(jobId: string | undefined, job: (shouldContinue: () => boolean) => Promise<Result>): Promise<Result> {
   if (!jobId) return job(() => true);
   runningJobs.add(jobId);
   try {

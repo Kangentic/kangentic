@@ -1,31 +1,38 @@
 /**
- * Guard against resuming a conversation the agent never persisted.
+ * The resume check: what a `--resume` would find, decided before the spawn.
  *
- * Reproduced on a real board in seconds: drag a task out of Done (the recovery
- * move spawns command-free, so the agent boots idle with nothing to do), drag it
- * back before typing, then drag it out again. Kangentic pre-specifies
- * `--session-id` and persists it AT SPAWN TIME, so the never-used id looks
- * resumable forever. Every later entry into an auto-spawn column issued
- * `--resume <id>`, the CLI answered "No conversation found with session ID", and
- * the user landed on a bare shell with the record still reading `running`.
+ * Two dead ends it exists for, both reproduced on real boards:
  *
- * The status fixtures below are trimmed from the real captured file of that
- * session (Claude Code 2.1.233): `current_usage: null`, zero totals, and a
- * `transcript_path` naming a file the CLI never wrote.
+ *  - `never-started`: drag a task out of Done (the recovery move spawns
+ *    command-free, so the agent boots idle with nothing to do), drag it back
+ *    before typing, then drag it out again. Kangentic pre-specifies
+ *    `--session-id` and persists it AT SPAWN TIME, so the never-used id looks
+ *    resumable forever. The status fixtures below are trimmed from the real
+ *    captured file of that session (Claude Code 2.1.233): `current_usage: null`,
+ *    zero totals, and a `transcript_path` naming a file the CLI never wrote.
+ *  - `expired`: Claude Code deletes transcripts older than `cleanupPeriodDays`.
+ *    A task idle 59 days resumed `--resume <id>`, Claude printed "No
+ *    conversation found", and the user sat on a bare shell. Its project folder
+ *    was gone too, so the immediate parent of the reported path is not required.
  *
- * The predicate has to stay narrower than the `canResumeSession` guard that was
+ * The check has to stay narrower than the `canResumeSession` guard that was
  * built and deliberately reverted in #255, whose false misses silently
- * destroyed real conversations. These tests pin the three properties that keep
- * it narrow: the path comes from the agent's own report, a conversation with
- * turns is NEVER downgraded, and absence of evidence always degrades to today's
- * resume behavior.
+ * destroyed real conversations. These tests pin what keeps it narrow: the paths
+ * come from the agent's own reports, `expired` needs the adapter's proof that
+ * the file is gone from every place it could be, only ENOENT counts as gone,
+ * and absence of evidence always degrades to today's resume.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isResumeConversationAbsent } from '../../src/main/transition-engine/resume-conversation-guard';
+import {
+  assessResumeConversation,
+  folderOnlyRecord,
+  type ResumeLineageRecord,
+} from '../../src/main/transition-engine/resume-conversation-guard';
+import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 
@@ -33,19 +40,35 @@ const RECORD_ID = '6fc5d715-77ca-47d6-9c50-8f27ad05e4a7';
 const AGENT_SESSION_ID = '935a5611-0f79-4f34-a5ea-62f2a4bd7894';
 
 let projectPath: string;
+/** Stands in for `~/.claude/projects`: one folder per project slug. */
+let projectsRoot: string;
 let transcriptPath: string;
+/** A cwd whose locator path (under the real home) never exists. */
+let cwd: string;
 
 beforeEach(() => {
   projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-resume-guard-'));
-  transcriptPath = path.join(projectPath, 'history', `${AGENT_SESSION_ID}.jsonl`);
+  projectsRoot = path.join(projectPath, 'claude-projects');
+  fs.mkdirSync(projectsRoot, { recursive: true });
+  transcriptPath = path.join(projectsRoot, '-work-project', `${AGENT_SESSION_ID}.jsonl`);
+  cwd = path.join(projectPath, 'never-a-claude-project');
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(projectPath, { recursive: true, force: true });
 });
 
-/** An adapter shaped like Claude's: a status pipeline that parses real status JSON. */
-function adapterWithStatusPipeline(): AgentAdapter {
+/** An adapter shaped like Claude's: a status pipeline that parses real status JSON, and Claude's proof. */
+function claudeShapedAdapter(): AgentAdapter {
+  return {
+    runtime: { statusFile: { parseStatus: ClaudeStatusParser.parseStatus } },
+    proveConversationGone: proveClaudeConversationGone,
+  } as unknown as AgentAdapter;
+}
+
+/** A status pipeline but no way to prove a file gone: never `expired`. */
+function adapterWithoutProof(): AgentAdapter {
   return {
     runtime: { statusFile: { parseStatus: ClaudeStatusParser.parseStatus } },
   } as unknown as AgentAdapter;
@@ -56,18 +79,24 @@ function adapterWithoutStatusPipeline(): AgentAdapter {
   return { runtime: {} } as unknown as AgentAdapter;
 }
 
+function folderRecord(id: string = RECORD_ID): ResumeLineageRecord {
+  return folderOnlyRecord(id);
+}
+
 function writeStatusFile(options: {
+  recordId?: string;
   includeTranscriptPath?: boolean;
+  reportedPath?: string;
   usedPercentage?: number | null;
   currentUsage?: Record<string, number> | null;
   totalCostUsd?: number;
   raw?: string;
 }): void {
-  const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+  const sessionDir = path.join(projectPath, '.kangentic', 'sessions', options.recordId ?? RECORD_ID);
   fs.mkdirSync(sessionDir, { recursive: true });
   const contents = options.raw ?? JSON.stringify({
     session_id: AGENT_SESSION_ID,
-    ...(options.includeTranscriptPath === false ? {} : { transcript_path: transcriptPath }),
+    ...(options.includeTranscriptPath === false ? {} : { transcript_path: options.reportedPath ?? transcriptPath }),
     model: { id: 'claude-haiku-4-5-20251001', display_name: 'Haiku 4.5' },
     cost: { total_cost_usd: options.totalCostUsd ?? 0, total_duration_ms: 1388, total_api_duration_ms: 0 },
     context_window: {
@@ -81,33 +110,49 @@ function writeStatusFile(options: {
   fs.writeFileSync(path.join(sessionDir, 'status.json'), contents, 'utf8');
 }
 
-describe('isResumeConversationAbsent - downgrades only a provably empty conversation', () => {
-  it('reports absent when the agent recorded no turns and never wrote the transcript it named', async () => {
+const TURN_USAGE = { input_tokens: 4200, output_tokens: 130, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+
+function assess(options: {
+  adapter?: AgentAdapter;
+  records?: ReadonlyArray<ResumeLineageRecord | null>;
+  agentSessionId?: string;
+  projectPath?: string | null;
+}) {
+  return assessResumeConversation({
+    adapter: options.adapter ?? claudeShapedAdapter(),
+    agentSessionId: options.agentSessionId ?? AGENT_SESSION_ID,
+    records: options.records ?? [folderRecord()],
+    cwd,
+    projectPath: options.projectPath === undefined ? projectPath : options.projectPath,
+  });
+}
+
+describe('assessResumeConversation - never-started', () => {
+  it('reports never-started when the agent recorded no turns and never wrote the transcript it named', async () => {
     // The exact reported state: booted, zero turns, transcript path named but no file.
     writeStatusFile({});
     expect(fs.existsSync(transcriptPath)).toBe(false);
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(true);
+    await expect(assess({})).resolves.toBe('never-started');
   });
 
   it('resumes when the named transcript exists, even with no turns recorded yet', async () => {
     writeStatusFile({});
     fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
     fs.writeFileSync(transcriptPath, '{"type":"user"}\n', 'utf8');
+    await expect(assess({})).resolves.toBe('unknown');
+  });
 
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+  it('never reads zero totals on a row as no turns', async () => {
+    // The path is written on the first status tick, before any metrics
+    // capture, so a row with a path and zero totals proves nothing. Without the
+    // agent's own report, the answer is unknown, never never-started.
+    await expect(assess({
+      records: [{ id: RECORD_ID, transcript_path: transcriptPath, total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 }],
+    })).resolves.toBe('unknown');
   });
 });
 
-describe('isResumeConversationAbsent - falls back to the SessionStart hook', () => {
+describe('assessResumeConversation - falls back to the SessionStart hook', () => {
   // The status line only runs once the TUI is up, so a CLI killed in its first
   // second leaves none and used to blind the whole lineage. The SessionStart
   // hook fires far earlier and carries the same `transcript_path`. Lines below
@@ -129,219 +174,197 @@ describe('isResumeConversationAbsent - falls back to the SessionStart hook', () 
     }),
   });
 
-  it('reports absent from a start/end-only events file with no transcript on disk', () => {
+  it('reports never-started from a start/end-only events file with no transcript on disk', async () => {
     writeEventsFile([sessionStartLine(), JSON.stringify({ ts: 1786997738763, type: 'session_end' })]);
-
-    return expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(true);
+    await expect(assess({})).resolves.toBe('never-started');
   });
 
-  it('resumes when the events file shows any real turn', async () => {
-    // Anything beyond the two lifecycle markers counts as a turn, so a prompt,
-    // a tool call, or an idle all keep today's behavior.
+  it('is never never-started when the events file shows any real turn', async () => {
+    // Anything beyond the two lifecycle markers counts as a turn. With the
+    // file gone everywhere, a conversation with turns is expired, never
+    // never-started.
     for (const turnEvent of ['user_prompt', 'tool_start', 'idle']) {
       writeEventsFile([sessionStartLine(), JSON.stringify({ ts: 1786997737000, type: turnEvent })]);
-      await expect(isResumeConversationAbsent({
-        adapter: adapterWithStatusPipeline(),
-        recordIds: [RECORD_ID],
-        projectPath,
-      })).resolves.toBe(false);
+      await expect(assess({})).resolves.toBe('expired');
     }
   });
 
   it('resumes when the events file carries no SessionStart payload (the mocked-CLI shape)', async () => {
     // mock-claude writes activity events with no session_start hook payload.
     writeEventsFile([JSON.stringify({ ts: 1786997737000, type: 'session_start' })]);
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+    await expect(assess({})).resolves.toBe('unknown');
   });
 
   it('prefers the status line when both reports exist', async () => {
     // Status says the conversation had turns; the events file alone would have
-    // said otherwise. The richer report wins and the conversation is kept.
+    // said otherwise. The conversation is not treated as never started.
     writeEventsFile([sessionStartLine(), JSON.stringify({ ts: 1786997738763, type: 'session_end' })]);
-    writeStatusFile({ currentUsage: { input_tokens: 4200, output_tokens: 130, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } });
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+    writeStatusFile({ currentUsage: TURN_USAGE });
+    await expect(assess({ adapter: adapterWithoutProof() })).resolves.toBe('unknown');
   });
 
   it('tolerates a torn final line', async () => {
     writeEventsFile([sessionStartLine(), '{"ts":1786997738763,"type":"sess']);
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(true);
+    await expect(assess({})).resolves.toBe('never-started');
   });
 });
 
-describe('isResumeConversationAbsent - heals an already-poisoned lineage', () => {
+describe('assessResumeConversation - heals an already-poisoned lineage', () => {
   // A failed resume is self-perpetuating: the CLI dies before its status line
   // runs, so THAT record has no status file, and the next spawn retires it and
   // finds no evidence either. The observed board had three records sharing one
-  // agent_session_id, and only the first (the original empty session) carried a
-  // status report. Probing the retiring record alone leaves such a task stuck
-  // forever, which is why the guard walks the whole conversation.
+  // agent_session_id, and only the first carried a status report.
   const DEAD_RESUME_RECORD_ID = '2fec0dab-99d2-407a-8782-2a748dfc935e';
 
-  it('finds the proof on an older record when the retiring one wrote no status file', async () => {
+  it('finds the evidence on an older record when the retiring one wrote no status file', async () => {
     writeStatusFile({});
-    // The newest record's session dir exists but holds no status.json, exactly
-    // as the failed resumes left it.
     fs.mkdirSync(path.join(projectPath, '.kangentic', 'sessions', DEAD_RESUME_RECORD_ID), { recursive: true });
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [DEAD_RESUME_RECORD_ID, RECORD_ID],
-      projectPath,
-    })).resolves.toBe(true);
+    await expect(assess({ records: [folderRecord(DEAD_RESUME_RECORD_ID), folderRecord()] })).resolves.toBe('never-started');
   });
 
-  it('still resumes when no record in the lineage has a status file', async () => {
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [DEAD_RESUME_RECORD_ID, RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+  it('still resumes when no record in the lineage has any evidence', async () => {
+    await expect(assess({ records: [folderRecord(DEAD_RESUME_RECORD_ID), folderRecord()] })).resolves.toBe('unknown');
   });
 });
 
-describe('isResumeConversationAbsent - never discards a conversation that had turns', () => {
-  // This is the #255 failure mode. A session with turns keeps today's resume
-  // behavior no matter what the file check would say, because its transcript
-  // may simply have moved (a worktree rename migrates the per-cwd history, so
-  // an older status report can name a stale path).
-  it('resumes when token usage was recorded, even though the named transcript is missing', async () => {
-    writeStatusFile({ currentUsage: { input_tokens: 4200, output_tokens: 130, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } });
-    expect(fs.existsSync(transcriptPath)).toBe(false);
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+describe('assessResumeConversation - expired', () => {
+  it('reports expired when a conversation with turns is gone from every project folder', async () => {
+    // The real case: the reported file and its project folder are both gone.
+    writeStatusFile({ currentUsage: TURN_USAGE });
+    expect(fs.existsSync(path.dirname(transcriptPath))).toBe(false);
+    await expect(assess({})).resolves.toBe('expired');
   });
 
-  it('resumes when cost was recorded but current_usage has already been cleared', async () => {
+  it('decides from the session row once the session folder is gone', async () => {
+    // A quit or a removal deletes the session folder, which left most old
+    // conversations with no evidence. The row keeps the path and the totals.
+    await expect(assess({
+      records: [{ id: RECORD_ID, transcript_path: transcriptPath, total_input_tokens: 9100, total_output_tokens: 300, total_cost_usd: 0.4 }],
+    })).resolves.toBe('expired');
+  });
+
+  it('resumes when another project folder still holds the file', async () => {
+    // A renamed or sibling worktree's folder: Claude may find it there, so the
+    // check does not need to know whether it would.
+    writeStatusFile({ currentUsage: TURN_USAGE });
+    const elsewhere = path.join(projectsRoot, '-work-project-renamed', `${AGENT_SESSION_ID}.jsonl`);
+    fs.mkdirSync(path.dirname(elsewhere), { recursive: true });
+    fs.writeFileSync(elsewhere, '{"type":"user"}\n', 'utf8');
+    await expect(assess({})).resolves.toBe('unknown');
+  });
+
+  it('resumes when the reported file still exists', async () => {
+    writeStatusFile({ currentUsage: TURN_USAGE });
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.writeFileSync(transcriptPath, '{"type":"user"}\n', 'utf8');
+    await expect(assess({})).resolves.toBe('unknown');
+  });
+
+  it('resumes when every reported path names another conversation (a record from before a /clear fork)', async () => {
+    const otherConversation = path.join(projectsRoot, '-work-project', 'aaaaaaaa-0000-4000-8000-000000000000.jsonl');
+    writeStatusFile({ currentUsage: TURN_USAGE, reportedPath: otherConversation });
+    await expect(assess({})).resolves.toBe('unknown');
+  });
+
+  it('resumes when the projects folder above the reported path does not exist (a WSL path seen from Windows)', async () => {
+    const linuxStylePath = path.join(projectPath, 'no-such-home', '.claude', 'projects', '-home-dev-app', `${AGENT_SESSION_ID}.jsonl`);
+    writeStatusFile({ currentUsage: TURN_USAGE, reportedPath: linuxStylePath });
+    await expect(assess({})).resolves.toBe('unknown');
+  });
+
+  it('resumes when the file cannot be read for any reason but ENOENT', async () => {
+    // fs.existsSync, which the old guard used, also returns false on a
+    // permission or lock error. Only a missing file is proof.
+    writeStatusFile({ currentUsage: TURN_USAGE });
+    const realStat = fs.promises.stat;
+    vi.spyOn(fs.promises, 'stat').mockImplementation(async (target, ...rest) => {
+      if (String(target) === transcriptPath) {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      }
+      return realStat(target, ...rest);
+    });
+    await expect(assess({})).resolves.toBe('unknown');
+  });
+
+  it('never reports expired for an adapter that cannot prove a file gone', async () => {
+    writeStatusFile({ currentUsage: TURN_USAGE });
+    await expect(assess({ adapter: adapterWithoutProof() })).resolves.toBe('unknown');
+  });
+
+  it('counts cost or used_percentage as turns, as it counts tokens', async () => {
     writeStatusFile({ totalCostUsd: 0.42 });
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
-  });
-
-  it('resumes when only used_percentage survives (no current_usage block)', async () => {
-    // parseStatus estimates usedTokens from used_percentage when current_usage
-    // is absent, which is the shape of a very early status update mid-turn.
+    await expect(assess({})).resolves.toBe('expired');
     writeStatusFile({ usedPercentage: 12 });
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+    await expect(assess({})).resolves.toBe('expired');
   });
 });
 
-describe('isResumeConversationAbsent - absence of evidence is never evidence', () => {
+describe('assessResumeConversation - absence of evidence is never evidence', () => {
   it('resumes when no status file was ever written (the mocked-CLI path)', async () => {
     // mock-claude writes no status.json. This is exactly the case that broke
     // ten session-resume E2E specs when #255 gated on a computed path instead.
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+    await expect(assess({})).resolves.toBe('unknown');
   });
 
   it('resumes when the adapter has no status pipeline at all', async () => {
     writeStatusFile({});
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithoutStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+    await expect(assess({ adapter: adapterWithoutStatusPipeline() })).resolves.toBe('unknown');
   });
 
   it('resumes when the status file is malformed', async () => {
     writeStatusFile({ raw: 'not json {' });
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+    await expect(assess({})).resolves.toBe('unknown');
   });
 
   it('resumes when the status report carries no transcript path', async () => {
-    writeStatusFile({ includeTranscriptPath: false });
-
-    await expect(isResumeConversationAbsent({
-      adapter: adapterWithStatusPipeline(),
-      recordIds: [RECORD_ID],
-      projectPath,
-    })).resolves.toBe(false);
+    writeStatusFile({ includeTranscriptPath: false, currentUsage: TURN_USAGE });
+    await expect(assess({})).resolves.toBe('unknown');
   });
 
-  it('resumes when the record id or project path is unknown', async () => {
-    const adapter = adapterWithStatusPipeline();
-    await expect(isResumeConversationAbsent({ adapter, recordIds: [null], projectPath })).resolves.toBe(false);
-    await expect(isResumeConversationAbsent({ adapter, recordIds: [RECORD_ID], projectPath: null })).resolves.toBe(false);
+  it('resumes when there is no record or no project path', async () => {
+    await expect(assess({ records: [null] })).resolves.toBe('unknown');
+    await expect(assess({ projectPath: null })).resolves.toBe('unknown');
   });
 });
 
-describe('both spawn chokepoints apply the downgrade', () => {
-  // The board path (transition-engine) is where the reported bug fired; startup
-  // recovery reaches the same dead --resume after a crash. A guard on only one
-  // of them is the drift this check exists to stop.
+describe('both spawn chokepoints run the check after the reconcile and the migration', () => {
+  // The board path (transition-engine) is where the reported bugs fired;
+  // startup recovery reaches the same dead --resume after a crash. A check on
+  // only one of them is the drift this exists to stop. The order matters: the
+  // check needs the id actually being resumed, and a migrated file is where the
+  // locator finds it.
   const repoRoot = path.resolve(__dirname, '../..');
+  const read = (relativePath: string) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 
-  it.each([
-    ['src/main/transition-engine/transition-engine.ts'],
-    ['src/main/transition-engine/session-startup/prepare-spawn.ts'],
-  ])('%s calls isResumeConversationAbsent', (relativePath) => {
-    const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
-    expect(source).toContain('isResumeConversationAbsent(');
+  it('the board path reconciles, migrates, then checks', () => {
+    const source = read('src/main/transition-engine/transition-engine.ts');
+    const reconcileAt = source.indexOf('await reconcileResumeAgentSessionId(');
+    const migrateAt = source.indexOf('await migrateResumeCwdIfRenamed(');
+    const checkAt = source.indexOf('await assessResumeConversation(');
+    expect(reconcileAt).toBeGreaterThan(-1);
+    expect(migrateAt).toBeGreaterThan(reconcileAt);
+    expect(checkAt).toBeGreaterThan(migrateAt);
   });
 
   it('the board path re-resolves the intent instead of clearing a flag', () => {
-    // A `let canResume` that the guard flips to false is NOT enough, and asserting
-    // only that the `let` exists cannot tell the difference: the declaration alone
-    // satisfies it, so deleting the downgrade passed. Worse, flipping the flag
-    // leaves `intent.prompt` on the RESUME branch's value (`resumePrompt`,
-    // undefined for an ordinary task spawn), so the fresh spawn it produces comes
-    // up with no task prompt - itself a zero-turn conversation, which is exactly
-    // what this guard downgrades. Only re-running the resolver forceFresh takes
-    // the fresh branch's interpolated promptTemplate with it.
-    const source = fs.readFileSync(
-      path.join(repoRoot, 'src/main/transition-engine/transition-engine.ts'), 'utf8',
-    );
+    // Flipping a flag would leave `intent.prompt` on the RESUME branch's value
+    // (`resumePrompt`, undefined for an ordinary task spawn), so the fresh spawn
+    // it produces comes up with no task prompt - itself a zero-turn
+    // conversation. Only re-running the resolver forceFresh takes the fresh
+    // branch's interpolated promptTemplate, and retires the old record.
+    const source = read('src/main/transition-engine/transition-engine.ts');
     expect(source).toMatch(/resolveSpawnIntent\(\{ \.\.\.spawnIntentOptions, forceFresh: true \}\)/);
-    // And the decision is then READ from the re-resolved intent, not a stale flag.
     expect(source).toMatch(/const canResume = intent\.mode === 'resume'/);
   });
 
-  it('startup recovery is structurally promptless, so it only needs the flag', () => {
-    // prepare-spawn.ts passes `prompt: undefined` unconditionally - a recovered
-    // session never carries one - so there is no fresh-branch prompt for a
-    // downgrade to lose there. If that ever changes, this file's board-path
-    // re-resolve has to be mirrored into it.
-    const source = fs.readFileSync(
-      path.join(repoRoot, 'src/main/transition-engine/session-startup/prepare-spawn.ts'), 'utf8',
-    );
-    expect(source).toMatch(/prompt: undefined/);
+  it('startup recovery reconciles, checks, then resolves the shim with the recap prompt', () => {
+    const source = read('src/main/transition-engine/session-startup/prepare-spawn.ts');
+    const reconcileAt = source.indexOf('await reconcileResumeAgentSessionId(');
+    const checkAt = source.indexOf('await assessResumeConversation(');
+    const shimAt = source.indexOf('await resolveShimLaunch(');
+    expect(reconcileAt).toBeGreaterThan(-1);
+    expect(checkAt).toBeGreaterThan(reconcileAt);
+    expect(shimAt).toBeGreaterThan(checkAt);
+    expect(source).toMatch(/prompt: prompt \?\? undefined/);
   });
 });

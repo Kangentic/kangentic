@@ -7,7 +7,9 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { ConfigManager } from '../../config/config-manager';
-import type { BoardProfile, SessionRecord, Task } from '../../../shared/types';
+import type { BoardProfile, ConversationExpiredNotice, SessionRecord, Task } from '../../../shared/types';
+import { createExpiredRecapSources } from '../expired-recap-sources';
+import { markRecapSession } from '../../automations/turn-end/recap-turns';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { RESUME_HIDDEN_ROLES } from '../../../shared/session-resume-eligibility';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -20,6 +22,29 @@ import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
+
+/** The optional parts of a recovery pass (`resumeSuspendedSessions`). */
+export interface ResumeSuspendedOptions {
+  /**
+   * Recover these session records and nothing else: the pty host's crash
+   * path, mid-run, where the gather below would also find sessions the host
+   * never held (an agent that exited non-zero on its own, one suspended
+   * earlier this run) and wake them. Startup omits it.
+   */
+  onlySessionIds?: ReadonlySet<string>;
+  /**
+   * Told once a recovered session has started fresh because the agent deleted
+   * its conversation, so the user hears about a task that started over with
+   * nobody watching.
+   */
+  onConversationExpired?: (notice: ConversationExpiredNotice) => void;
+  /**
+   * The project's team-shared default base branch (`kangentic.json`), for an
+   * expired conversation's recap. Read for this project's path, never the
+   * active project's: recovery also runs for projects not on screen.
+   */
+  boardDefaultBaseBranch?: string | null;
+}
 
 /**
  * Recover suspended and orphaned agent sessions on project open.
@@ -56,14 +81,9 @@ export async function resumeSuspendedSessions(
   projectDefaultEffort?: string | null,
   /** Board Board Profiles, so a profiled task resumes on the same rung it spawned under. */
   boardProfiles?: ReadonlyArray<BoardProfile>,
-  /**
-   * Recover these session records and nothing else: the pty host's crash
-   * path, mid-run, where the gather below would also find sessions the host
-   * never held (an agent that exited non-zero on its own, one suspended
-   * earlier this run) and wake them. Startup omits it.
-   */
-  onlySessionIds?: ReadonlySet<string>,
+  options: ResumeSuspendedOptions = {},
 ): Promise<void> {
+  const { onlySessionIds, onConversationExpired, boardDefaultBaseBranch } = options;
   if (isShuttingDown()) return;
 
   const done = startStartupTimer('resumeSuspendedSessions', projectId, 'resumed');
@@ -367,6 +387,8 @@ export async function resumeSuspendedSessions(
 
   const config = configManager.getEffectiveConfig(projectPath);
   const resolvedShell = await sessionManager.getShell();
+  // Read only when a recovered conversation turns out to be deleted.
+  const recapSources = createExpiredRecapSources(projectId);
 
   // --- Preparation pass: build spawn inputs per-task ---
   const spawnInputs: Array<PreparedSpawn & { record: SessionRecord; task: Task }> = [];
@@ -435,6 +457,8 @@ export async function resumeSuspendedSessions(
         mcpServerHandle,
         resume,
         sessionRepo,
+        recapSources,
+        boardDefaultBaseBranch,
         // A session record is literally in hand on this path, so the lock's
         // hasSessionRecord clause alone already no-ops it. Its OTHER clause -
         // the task departing a todo-role lane - cannot fire here either: the
@@ -544,13 +568,15 @@ export async function resumeSuspendedSessions(
           agentSessionId: input.agentSessionId,
           isolatedSwimlaneId: input.record.isolated_swimlane_id,
           permissionMode: input.permissionMode,
-          // Recovery spawns carry no initial prompt (prompt: undefined in
-          // prepare-spawn), so the agent comes up waiting for the user: a resume
-          // sits at a quiet prompt, a fresh spawn at a blank one. Mark resuming so
-          // the activity engine seeds idle, not 'thinking' (the documented
-          // orphan-recovery contract). The command is already built, so this flag
-          // does not alter it - it only drives the seed and the resume overlay.
-          resuming: true,
+          // Recovery spawns carry no initial prompt, so the agent comes up
+          // waiting for the user: a resume sits at a quiet prompt, a fresh spawn
+          // at a blank one. Mark resuming so the activity engine seeds idle, not
+          // 'thinking' (the documented orphan-recovery contract). The one
+          // exception is a conversation the agent deleted: that spawn opens on
+          // the recap and works on it, so it seeds as a prompted spawn. The
+          // command is already built, so this flag does not alter it - it only
+          // drives the seed and the resume overlay.
+          resuming: !input.prompt,
           exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
           ...(restoredGrid ? { restoredGrid } : {}),
         });
@@ -566,7 +592,7 @@ export async function resumeSuspendedSessions(
           command: input.command,
           cwd: input.cwd,
           permission_mode: input.permissionMode,
-          prompt: null,
+          prompt: input.prompt ?? null,
           status: 'running',
           exit_code: null,
           started_at: now,
@@ -582,6 +608,19 @@ export async function resumeSuspendedSessions(
         });
 
         taskRepo.update({ id: input.task.id, session_id: newSession.id });
+        if (input.startOver === 'expired') {
+          // The recap is this session's whole prompt, main or isolated, so its
+          // first turn is a summary for the user and runs no turn-end rows.
+          markRecapSession(newSession.id);
+          onConversationExpired?.({
+            projectId,
+            taskId: input.task.id,
+            taskTitle: input.task.title,
+            lastActiveAt: input.expiredLastActiveAt,
+            // Recovery carries no message, so there is none to drop.
+            messageDropped: false,
+          });
+        }
         return newSession;
       } finally {
         if (!handedToSpawn) releaseCommandHold(input.adapter, input.cwd, input.sessionRecordId);

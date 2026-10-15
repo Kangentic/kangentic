@@ -511,6 +511,7 @@ export function ConversationWindow({
           source={response.source}
           unavailableReason={response.unavailableReason}
           agentName={agentName}
+          archivedAgentName={response.archivedAgentName ?? null}
           scrollToTurnUuid={activeScrollUuid}
           onConsumedScroll={consumeScroll}
           autoFollowNewMessages={autoFollowNewMessages}

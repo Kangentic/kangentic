@@ -8,10 +8,11 @@ import { writeTransaction } from '../transaction';
  * to unify the DB record key with the SessionManager/TranscriptWriter key.
  * Excludes metric columns (set via updateMetrics), the applied model/effort
  * (set via updateAppliedSettings, mirroring how metrics are maintained), and
- * the PTY grid (set via updatePtyGrid from the session manager's grid events).
+ * the PTY grid (set via updatePtyGrid from the session manager's grid events),
+ * and the reported transcript path (set via setTranscriptPath from usage updates).
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path'
 >;
 
 export interface SessionMetricsInput {
@@ -190,6 +191,7 @@ export class SessionRepository {
       last_pty_cols: null,
       last_pty_rows: null,
       result_tokens_read_at: null,
+      transcript_path: null,
     };
   }
 
@@ -241,6 +243,16 @@ export class SessionRepository {
   /** Update the agent_session_id for a session record (stale ID recovery). */
   updateAgentSessionId(id: string, agentSessionId: string): void {
     this.db.prepare('UPDATE sessions SET agent_session_id = ? WHERE id = ?').run(agentSessionId, id);
+  }
+
+  /**
+   * Record the transcript path the agent reported for a session. The resume
+   * check reads it once the session's own folder (status.json, events.jsonl)
+   * has been deleted by a quit or a removal. A no-op for an id with no row
+   * (a transient Command Terminal session). Returns whether a row was written.
+   */
+  setTranscriptPath(id: string, transcriptPath: string): boolean {
+    return this.db.prepare('UPDATE sessions SET transcript_path = ? WHERE id = ?').run(transcriptPath, id).changes > 0;
   }
 
   /** Get suspended agent sessions that can be resumed */

@@ -1630,6 +1630,24 @@
           if (index !== -1) listeners.splice(index, 1);
         };
       },
+      onConversationExpired: function (callback) {
+        // Tests fire this via window.__mockFireConversationExpired(notice), where
+        // `notice` is a ConversationExpiredNotice.
+        if (!window.__mockConversationExpiredListeners) window.__mockConversationExpiredListeners = [];
+        window.__mockConversationExpiredListeners.push(callback);
+        if (!window.__mockFireConversationExpired) {
+          window.__mockFireConversationExpired = function (notice) {
+            var listeners = (window.__mockConversationExpiredListeners || []).slice();
+            listeners.forEach(function (listener) { listener(notice); });
+          };
+        }
+        // A REAL unsubscribe, for the same reason onSpawnBlocked returns one.
+        return function () {
+          var listeners = window.__mockConversationExpiredListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
       onCreatedByAgent: function (callback) {
         // Tests can fire this via window.__mockFireTaskCreatedByAgent(taskId, title, column, projectId).
         if (!window.__mockTaskCreatedListeners) window.__mockTaskCreatedListeners = [];

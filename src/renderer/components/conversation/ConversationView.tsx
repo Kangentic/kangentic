@@ -30,7 +30,7 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check } from 'lucide-react';
+import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check, Archive } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { HeaderActionButton } from '../HeaderActionButton';
@@ -70,6 +70,9 @@ interface ConversationViewProps {
   /** Agent CLI display name (e.g. "Claude Code") shown as each agent turn's role
    *  pill; falls back to "Agent" when unknown. */
   agentName?: string;
+  /** The agent of a session read from Kangentic's saved copy because the agent
+   *  deleted its own file, or null when none was: the calm archive banner. */
+  archivedAgentName?: string | null;
   /** One-shot: scroll to (and highlight) the row with this uuid, then clear. */
   scrollToTurnUuid: string | null;
   /** Called once the scroll-to signal has been consumed (found or not). */
@@ -236,6 +239,7 @@ export function ConversationView({
   source,
   unavailableReason,
   agentName,
+  archivedAgentName,
   scrollToTurnUuid,
   onConsumedScroll,
   autoFollowNewMessages,
@@ -508,6 +512,17 @@ export function ConversationView({
         >
           <MessageSquareWarning size={14} className="flex-shrink-0" />
           <span>Original transcript file is gone - showing indexed text.</span>
+        </div>
+      )}
+      {!degraded && archivedAgentName && (
+        // Calm, not a warning: an archived read renders exactly like a live
+        // one. It says why a resume started a new conversation.
+        <div
+          className="flex items-center gap-2 px-4 py-2 text-xs text-fg-muted bg-surface-raised border-b border-edge"
+          data-testid="conversation-archive-banner"
+        >
+          <Archive size={14} className="flex-shrink-0" />
+          <span>{archivedAgentName} deleted the original file. Showing Kangentic&apos;s saved copy.</span>
         </div>
       )}
       <ConversationSearchBar ref={searchBarRef} rows={rows} onNavigate={navigateToUuidFromSearch} />

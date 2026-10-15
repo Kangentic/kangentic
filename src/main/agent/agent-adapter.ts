@@ -618,6 +618,29 @@ export interface AgentAdapter {
   locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null>;
 
   /**
+   * Optional: prove that a conversation's history file no longer exists, so a
+   * resume of it would fail ("No conversation found") and the spawn can start
+   * fresh instead (`assessResumeConversation`, resume-conversation-guard.ts).
+   *
+   * `reportedPaths` are transcript paths the AGENT reported for this
+   * conversation's sessions (its status line, its SessionStart hook), newest
+   * first; they are never paths Kangentic derived. Return true only on proof:
+   * the adapter knows its own layout, and anything it cannot rule out (a
+   * permission error, a path from another filesystem, a file under some other
+   * project folder) returns false, which resumes exactly as before. A wrong
+   * true costs a new conversation in place of the resume, never data: the old
+   * record and anything left on disk are kept.
+   *
+   * Omitted, the check never reports a conversation gone, and the agent
+   * resumes as it always did.
+   */
+  proveConversationGone?(params: {
+    agentSessionId: string;
+    reportedPaths: ReadonlyArray<string>;
+    cwd: string;
+  }): Promise<boolean>;
+
+  /**
    * Optional: parse the agent's native session history into agent-agnostic
    * `TranscriptEntry[]` for the MCP `get_transcript` structured format. The
    * adapter owns ALL format and location knowledge (which JSONL/JSON/SQLite
@@ -876,12 +899,16 @@ export interface AgentAdapter {
    * The case this exists for is Claude's `--resume <id>` of a conversation it
    * can no longer find (its transcript cleaned up, or the project folder
    * moved): the CLI prints "No conversation found with session ID" and exits
-   * about a second in, the card goes quiet, and nothing said why. This is
-   * deliberately NOT a pre-spawn guard that downgrades the resume: that was
-   * built and reverted in #255, because a path Kangentic computes can be wrong
-   * while the conversation is fine, and a silent downgrade loses it. Here the
+   * about a second in, the card goes quiet, and nothing said why. Here the
    * evidence is the CLI's own verdict after it looked, and the response is a
    * notice, not a decision.
+   *
+   * Most of these never reach the CLI now: `proveConversationGone` decides
+   * before the spawn and starts fresh with a recap. That check is not the
+   * guard reverted in #255, which computed a path from the cwd and downgraded
+   * on a miss, so a wrong path lost a live conversation. It uses only paths the
+   * agent reported and needs proof of absence, and anything it cannot prove
+   * resumes and lands here as before.
    *
    * An agent-specific string in an adapter, surfaced through this generic
    * shape, per `agent-adapters-boundary`.

@@ -9,6 +9,12 @@ import {
   type TranscriptView,
 } from '../../../shared/transcript-format';
 import type { CommandResponse } from './types';
+import type { TranscriptEntry } from '../../../shared/types';
+
+/** Reads what Kangentic kept of a conversation once its own file is gone. */
+export type SavedConversationReader = (
+  agentSessionId: string,
+) => Promise<{ entries: TranscriptEntry[]; source: 'archive' | 'index' } | null>;
 
 /** The session a structured read is of, and how to shape it. */
 export interface StructuredTranscriptRequest {
@@ -27,7 +33,16 @@ export interface StructuredTranscriptRequest {
  * in the retrieval worker (`transcript.structured`), so main parses no
  * transcript; the handler resolves which session and passes it here.
  */
-export async function renderStructuredTranscript(request: StructuredTranscriptRequest): Promise<CommandResponse> {
+export async function renderStructuredTranscript(
+  request: StructuredTranscriptRequest,
+  /**
+   * Read when the agent's own file is gone (Claude deletes transcripts older
+   * than its `cleanupPeriodDays`): Kangentic's archive, else the index. A
+   * session that started over from a recap points its agent here for the old
+   * conversation, so this must not answer "not found".
+   */
+  readSavedConversation?: SavedConversationReader,
+): Promise<CommandResponse> {
   const { record, view, tail, charBudget, search, aroundUuid, contextTurns } = request;
   const adapter = agentRegistry.getBySessionType(record.sessionType);
   if (!adapter?.parseTranscript) {
@@ -38,7 +53,17 @@ export async function renderStructuredTranscript(request: StructuredTranscriptRe
     };
   }
 
-  const { entries, sourcePath } = await adapter.parseTranscript(record.agentSessionId, record.cwd);
+  const parsed = await adapter.parseTranscript(record.agentSessionId, record.cwd);
+  const { sourcePath } = parsed;
+  let entries = parsed.entries;
+  let savedSource: 'archive' | 'index' | null = null;
+  if (entries.length === 0 && readSavedConversation) {
+    const saved = await readSavedConversation(record.agentSessionId);
+    if (saved) {
+      entries = saved.entries;
+      savedSource = saved.source;
+    }
+  }
 
   if (entries.length === 0) {
     const where = sourcePath ? ` at ${sourcePath}` : '';
@@ -82,6 +107,8 @@ export async function renderStructuredTranscript(request: StructuredTranscriptRe
     view === 'result' ? budgeted.markdown.replace(/^## Assistant(?: \([^)]*\))?\n+/, '') : budgeted.markdown;
 
   const headerParts = [`Session: ${record.id.slice(0, 8)}...`, 'Format: structured', `View: ${view}`];
+  if (savedSource === 'archive') headerParts.push('Source: Kangentic\'s saved copy (the agent deleted its own file)');
+  if (savedSource === 'index') headerParts.push('Source: indexed text only (the agent deleted its own file; tool calls are flattened)');
   if (search) headerParts.push(`Search: "${search}"`);
   headerParts.push(`Entries: ${budgeted.renderedEntries}/${totalParsed}`);
   let header = headerParts.join(' | ');

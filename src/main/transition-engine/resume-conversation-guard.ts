@@ -1,116 +1,198 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
-import type { SessionUsage } from '../../shared/types';
+import { isConfirmedMissing } from '../agent/shared/confirmed-missing';
+import type { SessionRecord, SessionUsage } from '../../shared/types';
 import { sessionOutputPaths } from './session-paths';
 
 /**
- * Detect a `--resume` that would target a conversation the agent never
- * persisted, so the spawn can be downgraded to fresh instead.
+ * What a `--resume` would find, decided before the spawn.
  *
- * Kangentic pre-specifies `--session-id` for Claude and persists that id on the
- * session record AT SPAWN TIME, before the agent has done anything. A session
- * that ends before its first turn therefore leaves a resumable-looking record
- * pointing at a conversation that does not exist: the agent CLI writes its
- * transcript on the first turn, not at boot.
+ * - `never-started`: the conversation never had a turn, so the agent never
+ *   wrote it. Start fresh with the spawn's own prompt; there is nothing to lose
+ *   and nothing to carry.
+ * - `expired`: the conversation had turns and its file is proven gone (Claude
+ *   deletes transcripts older than `cleanupPeriodDays`). Start fresh with a
+ *   recap of what the task holds.
+ * - `unknown`: anything else. Resume exactly as before.
+ */
+export type ResumeConversationVerdict = 'never-started' | 'expired' | 'unknown';
+
+/** Why a requested resume became a fresh spawn: every verdict but `unknown`. */
+export type StartOverReason = Exclude<ResumeConversationVerdict, 'unknown'>;
+
+/** The fields of a session record the verdict reads. */
+export type ResumeLineageRecord = Pick<
+  SessionRecord,
+  'id' | 'transcript_path' | 'total_input_tokens' | 'total_output_tokens' | 'total_cost_usd'
+>;
+
+/** A record known only by its id: the verdict reads its session folder and nothing else. */
+export function folderOnlyRecord(id: string): ResumeLineageRecord {
+  return { id, transcript_path: null, total_input_tokens: null, total_output_tokens: null, total_cost_usd: null };
+}
+
+/**
+ * The records the check reads for one resume, shared by both spawn
+ * chokepoints (transition-engine.ts, prepare-spawn.ts) so the board and
+ * startup paths never disagree about a conversation's lineage.
  *
- * That is reachable in a few seconds of ordinary board use. Drag a task out of
- * Done and the recovery move spawns it command-free (`skipPromptTemplate`), so
- * the agent comes up idle with nothing to do; drag it back before typing and
- * the record is suspended with its id intact. Every later entry into an
- * auto-spawn column then resolves to `--resume <id>`, the CLI answers "No
- * conversation found with session ID", and the user lands on a bare shell with
- * the agent gone - while the session record still reads `running`, because the
- * shell PTY outlived the CLI.
+ * The lineage is the retiring record, then every other record of the task
+ * that ran the same conversation, newest first. A record whose CLI died on a
+ * failed resume wrote no status file, so the evidence can only be on an older
+ * one. Keyed on the RECONCILED id: after a /clear fork, the older records with
+ * the stored id belong to another conversation. The retiring record is read
+ * by its folder alone when the task's list does not hold it: its status file
+ * is still evidence.
+ *
+ * `lastActiveAt` is when the retiring record's conversation last ran, for an
+ * `expired` notice; null when the list does not hold that record.
+ */
+export function resolveResumeLineage(params: {
+  taskRecords: ReadonlyArray<SessionRecord>;
+  retiringRecordId: string | null;
+  resumedAgentSessionId: string;
+}): { lineage: Array<ResumeLineageRecord | null>; lastActiveAt: string | null } {
+  const { taskRecords, retiringRecordId, resumedAgentSessionId } = params;
+  const retiringRecord = taskRecords.find((record) => record.id === retiringRecordId) ?? null;
+  return {
+    lineage: [
+      retiringRecord ?? (retiringRecordId ? folderOnlyRecord(retiringRecordId) : null),
+      ...taskRecords.filter((record) => record.id !== retiringRecordId && record.agent_session_id === resumedAgentSessionId),
+    ],
+    lastActiveAt: retiringRecord
+      ? (retiringRecord.suspended_at ?? retiringRecord.exited_at ?? retiringRecord.started_at)
+      : null,
+  };
+}
+
+/**
+ * Decide what a `--resume` of `agentSessionId` would find, so the spawn can
+ * start fresh instead of handing the user a CLI that prints "No conversation
+ * found" and exits.
+ *
+ * Two cases reach that dead end:
+ *
+ *  1. A conversation that ended before its first turn. Kangentic pre-specifies
+ *     `--session-id` for Claude and persists that id at spawn time, but the
+ *     CLI writes its transcript on the first turn. Drag a task out of Done
+ *     (the recovery move spawns it command-free) and back before typing, and
+ *     the record is resumable with nothing behind it.
+ *  2. A conversation the agent deleted. Claude Code removes transcripts older
+ *     than `cleanupPeriodDays` (30 by default), so any task idle that long hits
+ *     it on its next resume.
  *
  * ## Why this is not the guard that was reverted in #255
  *
- * The `canResumeSession` transcript-presence guard (see
- * docs/adapter-session-history.md) gated EVERY resume on `fs.accessSync` of a
- * path Kangentic COMPUTED by slugifying the cwd. Its failure mode is fatal and
- * silent: a false miss (a mocked CLI, or one of the more fragile per-agent
- * locators) discards a real conversation. This is a different predicate on
- * three counts, and all three have to hold before anything is downgraded:
+ * The `canResumeSession` guard (see docs/adapter-session-history.md) gated
+ * EVERY resume on a path Kangentic COMPUTED by slugifying the cwd, and a false
+ * miss discarded a real conversation. This one differs on every count:
  *
- *  1. The path is the one the AGENT reported in its own status file
- *     (`transcript_path`), never one we derived. No locator heuristics.
- *  2. The same status report must independently say the conversation never
- *     started (no tokens, no cost). Downgrading a zero-turn conversation cannot
- *     lose anything, because there is nothing in it. A session that had turns is
- *     never downgraded, even if its transcript has moved.
- *  3. Absence of evidence is never evidence: a missing session dir, missing or
- *     malformed status file, an adapter with no status pipeline, or a status
- *     report carrying no transcript path all return false and leave today's
- *     behavior exactly as it was. Mocked E2E resumes hit that path structurally
- *     (mock-claude writes no status.json), which is what broke the ten
- *     session-resume specs the first time around.
+ *  - The path is one the AGENT reported (its status line, its SessionStart
+ *    hook, or the copy of it kept on the session record), never one derived
+ *    here.
+ *  - `never-started` additionally needs the agent's own report that nothing
+ *    ever happened. `expired` needs the adapter's proof that the file is gone
+ *    from every place it could be (`proveConversationGone`), which only an
+ *    adapter that knows its layout can give.
+ *  - Absence of evidence is never evidence. A missing session folder, a
+ *    malformed report, an adapter with no status pipeline, or no reported path
+ *    all give `unknown`. Mocked E2E resumes hit that structurally (mock-claude
+ *    writes no status file), which is what broke the ten session-resume specs
+ *    the first time around.
  *
- * Both the read and the decision stay inside Kangentic's own session directory
- * plus one existence check of a path the agent handed us.
+ * A wrong `expired` costs a new conversation in place of the resume and
+ * deletes nothing: the caller retires and keeps the old record.
+ *
+ * Call it AFTER the resume-time id reconcile and the cwd migration: the id is
+ * the one actually being resumed, and a migrated file is where the locator and
+ * the folder scan find it.
  */
-export async function isResumeConversationAbsent(params: {
+export async function assessResumeConversation(params: {
   adapter: AgentAdapter;
+  /** The conversation being resumed, after the reconcile. */
+  agentSessionId: string;
   /**
-   * Every record that has run this conversation, NEWEST FIRST (each id is its
-   * `.kangentic/sessions/` dir name). The first one carrying a usable status
-   * report decides.
+   * Every record that ran this conversation, NEWEST FIRST: the retiring record,
+   * then the rest of its lineage (each id is its `.kangentic/sessions/` folder
+   * name).
    *
    * A list rather than just the retiring record, because a failed resume is
    * self-perpetuating otherwise: the CLI dies before its status line runs, so
    * that record has no status file, and the next spawn retires IT and finds no
-   * evidence either. The proof of emptiness stays on the first record of the
-   * lineage, so an already-poisoned task heals on its next spawn instead of
-   * being stuck forever.
+   * evidence either. The evidence stays on an older record of the lineage, so
+   * an already-poisoned task heals on its next spawn.
    */
-  recordIds: ReadonlyArray<string | null | undefined>;
+  records: ReadonlyArray<ResumeLineageRecord | null | undefined>;
+  /** The cwd the spawn runs in. */
+  cwd: string;
   projectPath: string | null | undefined;
-}): Promise<boolean> {
-  const { adapter, recordIds, projectPath } = params;
-  if (!projectPath) return false;
+}): Promise<ResumeConversationVerdict> {
+  const { adapter, agentSessionId, records, cwd, projectPath } = params;
+  if (!projectPath) return 'unknown';
 
-  // Adapters with no status-file pipeline never report a transcript path, so
-  // there is nothing to check: structural no-op, same as the resume-time id
-  // reconcile. Optional-chained because a partially-shaped adapter stub may
-  // lack `runtime` entirely.
-  const statusFileHook = adapter.runtime?.statusFile;
-  if (!statusFileHook) return false;
+  // Adapters with no status-file pipeline never report a transcript path.
+  // Optional-chained because a partially-shaped adapter stub may lack `runtime`.
+  const parseStatus = adapter.runtime?.statusFile?.parseStatus;
 
-  for (const recordId of recordIds) {
-    if (!recordId) continue;
+  let hadTurns = false;
+  /** The first record whose folder holds the agent's own report decides `never-started`. */
+  let firstAgentReport: ConversationEvidence | null = null;
+  const reportedPaths: string[] = [];
+  const addReportedPath = (candidate: string | null | undefined): void => {
+    if (candidate && !reportedPaths.includes(candidate)) reportedPaths.push(candidate);
+  };
+
+  for (const record of records) {
+    if (!record) continue;
+    // Token totals on the row prove turns. Zero totals prove nothing: the
+    // path is written on the first status tick, before any metrics capture.
+    if (rowHadTurns(record)) hadTurns = true;
+    addReportedPath(record.transcript_path);
+    if (!parseStatus) continue;
     try {
-      const sessionDir = path.join(projectPath, '.kangentic', 'sessions', recordId);
-      // Two independent reports, both agent-written and both Kangentic-owned.
-      // The status line is preferred (richest usage), but it only runs once the
-      // TUI is up: a CLI killed in its first second leaves none, which used to
-      // blind the whole lineage. The SessionStart hook fires far earlier and
-      // carries the same `transcript_path`, so it covers that window.
-      const evidence = readStatusEvidence(sessionDir, statusFileHook.parseStatus)
-        ?? readSessionStartEvidence(sessionDir);
-      // Nothing usable here (mocked CLI, pruned dir, or the agent died before
-      // writing anything at all). Try an older record of the same conversation.
+      const sessionDir = path.join(projectPath, '.kangentic', 'sessions', record.id);
+      // Two independent reports, both agent-written. The status line is
+      // preferred (richest usage), but it only runs once the TUI is up: a CLI
+      // killed in its first second leaves none. The SessionStart hook fires
+      // far earlier and carries the same `transcript_path`.
+      const evidence = readStatusEvidence(sessionDir, parseStatus) ?? readSessionStartEvidence(sessionDir);
       if (!evidence) continue;
-
-      // Signal 2: the agent's own report says nothing ever happened. A
-      // conversation that had turns keeps today's behavior no matter what the
-      // file check below would say.
-      if (evidence.hadTurns) return false;
-
-      // Signal 1: the transcript the agent named is not on disk. Checked last so
-      // a conversation with turns never pays for the stat.
-      return !fs.existsSync(evidence.transcriptPath);
+      if (evidence.hadTurns) hadTurns = true;
+      addReportedPath(evidence.transcriptPath);
+      if (!firstAgentReport) firstAgentReport = evidence;
     } catch (error) {
-      console.warn(`[SESSION_LIFECYCLE] Resume conversation probe failed for record ${recordId.slice(0, 8)}:`, error);
-      return false;
+      console.warn(`[SESSION_LIFECYCLE] Resume conversation probe failed for record ${record.id.slice(0, 8)}:`, error);
     }
   }
 
-  // No record produced a usable report: unknown, so resume exactly as before.
-  return false;
+  if (!hadTurns) {
+    // The agent's own report says nothing ever happened, and the transcript it
+    // named is not on disk.
+    if (firstAgentReport && firstAgentReport.transcriptPath && await isConfirmedMissing(firstAgentReport.transcriptPath)) {
+      return 'never-started';
+    }
+    return 'unknown';
+  }
+
+  if (!adapter.proveConversationGone || reportedPaths.length === 0) return 'unknown';
+  try {
+    return await adapter.proveConversationGone({ agentSessionId, reportedPaths, cwd }) ? 'expired' : 'unknown';
+  } catch (error) {
+    console.warn(`[SESSION_LIFECYCLE] Conversation-gone probe failed for ${agentSessionId.slice(0, 8)}:`, error);
+    return 'unknown';
+  }
+}
+
+function rowHadTurns(record: ResumeLineageRecord): boolean {
+  return (record.total_input_tokens ?? 0) > 0
+    || (record.total_output_tokens ?? 0) > 0
+    || (record.total_cost_usd ?? 0) > 0;
 }
 
 /** What one record's on-disk reports say about its conversation. */
 interface ConversationEvidence {
-  /** The transcript path the AGENT reported, never one Kangentic derived. */
+  /** The transcript path the AGENT reported, never one Kangentic derived. Empty when unknown. */
   transcriptPath: string;
   /** Whether anything beyond starting and stopping ever happened. */
   hadTurns: boolean;
@@ -150,12 +232,13 @@ function readStatusEvidence(
  * the same `transcript_path` the status line would have. Turn detection is by
  * elimination: a conversation that ran has prompt / tool / idle events, so
  * anything beyond the two lifecycle markers counts as a turn. Erring that way
- * is the safe direction, since "had turns" always means "resume as before".
+ * is the safe direction for `never-started`, and a turn alone never makes a
+ * conversation `expired`: that still needs the adapter's proof.
  *
  * Mocked CLIs stay structurally clear of this: `mock-claude` writes an events
  * file only under an opt-in env flag, and even then writes activity events with
  * no `session_start` hook payload, so this returns null for them exactly as the
- * status-file reader does.
+ * status-file reader does, or a turn with no path, which proves nothing.
  */
 function readSessionStartEvidence(sessionDir: string): ConversationEvidence | null {
   const { eventsOutputPath } = sessionOutputPaths(sessionDir);
@@ -183,7 +266,7 @@ function readSessionStartEvidence(sessionDir: string): ConversationEvidence | nu
     const type = typeof event.type === 'string' ? event.type : '';
     if (!LIFECYCLE_ONLY.has(type)) {
       hadTurns = true;
-      // A turn is decisive on its own; the path is only needed when there is none.
+      // The path comes before any turn: the hook fires at session start.
       break;
     }
     if (type === 'session_start' && typeof event.hookContext === 'string' && !transcriptPath) {

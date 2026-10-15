@@ -197,6 +197,9 @@ export async function handleGetTranscript(
           aroundUuid,
           contextTurns,
         },
+        // A conversation whose file the agent deleted reads from this
+        // project's archive, else its index.
+        projectId: context.projectId,
         remoteTargets: collectRemoteTargets(agentRegistry),
       });
     }

@@ -95,7 +95,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
     expect(message!.length).toBeLessThan(1_000);
   });
 
-  // The inline budget (CONTINUE_MESSAGE_INLINE_BUDGET, not exported) counts the
+  // The inline budget (INLINE_PROMPT_BUDGET, agent/shared/prompt-budget.ts) counts the
   // first message and the saved plan together, because both ride the same command
   // line. A board with many columns or a long custom template fills much of that
   // line before the plan is added, so a short plan can still push the whole

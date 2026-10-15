@@ -145,10 +145,14 @@ describe('retrieval out-of-process boundary', () => {
       'renderStructuredTranscript',
       'readTrail',
       'sliceTranscriptWindow',
+      // The structured transcript archive's reads and the recap's tail.
+      'readArchivedConversation',
+      'readSavedConversation',
+      'formatConversationTail',
     ];
     // Class methods cannot be found by name, so the classes that own the
     // index's reads and writes are checked whole.
-    const workerOnlyClasses = ['RetrievalStore', 'ConversationIndexer', 'SummaryStore', 'ConversationUsageStore', 'TranscriptSync'];
+    const workerOnlyClasses = ['RetrievalStore', 'ConversationIndexer', 'SummaryStore', 'ConversationUsageStore', 'TranscriptSync', 'TranscriptArchive'];
     for (const devBuild of [false, true]) {
       const text = await bundledText('src/main/index.ts', devBuild);
       const shipped = [
