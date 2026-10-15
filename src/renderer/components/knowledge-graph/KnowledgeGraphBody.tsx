@@ -789,15 +789,13 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
                 data-testid="knowledge-graph-search-input"
                 className="min-w-0 flex-1 bg-transparent text-sm text-fg placeholder:text-fg-muted outline-none"
               />
-              {/* Who answers stays STATED, as a tip on the submit glyph rather
-                  than a second control. Enter is the button; the glyph is for
-                  discoverability and for the mouse. Before an agent is chosen,
-                  the tip says where the choice is made instead. */}
+              {/* Who answers stays STATED, as the submit glyph's name and tip
+                  rather than a second control. Enter is the button; the glyph is
+                  for discoverability and for the mouse. Before an agent is
+                  chosen, the tip says where the choice is made instead. */}
               {queryText.trim() ? (
                 <HoverTip
-                  label={setupGap
-                    ? 'Choose an agent and model in Settings > Knowledge Graph.'
-                    : `Ask ${askAgentLabel}. It reads the related work and can search your conversations.`}
+                  label={setupGap ? 'Choose an agent and model in Settings > Knowledge Graph.' : `Ask ${askAgentLabel}`}
                   testId="knowledge-graph-ask-tip"
                 >
                   <button

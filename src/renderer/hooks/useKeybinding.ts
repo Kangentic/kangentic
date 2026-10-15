@@ -5,16 +5,26 @@ import { matchesCombo, formatCombo } from '../utils/keybindings';
 import { isRebindCaptureActive } from '../utils/rebind-state';
 
 /**
- * The current effective combo for an action, formatted for display (tooltips,
- * hints). Reads the user override or the registry default and updates reactively
- * when the user rebinds, so callers never hard-code a combo string. Returns '' for
- * an unknown id.
+ * The current effective combo for an action in canonical form (`Mod+Shift+W`):
+ * the user override or the registry default, updating reactively when the user
+ * rebinds. `HoverTip` draws its key chips from it. Returns '' for an unknown id,
+ * and for no id at all, so a caller with nothing to resolve can still call it.
  */
-export function useFormattedCombo(actionId: string): string {
-  const override = useConfigStore((state) => state.globalConfig.hotkeyOverrides?.[actionId]);
+export function useEffectiveCombo(actionId: string | undefined): string {
   // Subscribe to just this action's override (not the whole map) for render
   // efficiency, then resolve through the shared effectiveCombo helper.
-  const combo = effectiveCombo(actionId, override ? { [actionId]: override } : undefined);
+  const override = useConfigStore((state) => (actionId === undefined ? undefined : state.globalConfig.hotkeyOverrides?.[actionId]));
+  if (actionId === undefined) return '';
+  return effectiveCombo(actionId, override ? { [actionId]: override } : undefined);
+}
+
+/**
+ * The current effective combo for an action, formatted for display (hints,
+ * aria text), so callers never hard-code a combo string. Returns '' for an
+ * unknown id.
+ */
+export function useFormattedCombo(actionId: string): string {
+  const combo = useEffectiveCombo(actionId);
   return combo ? formatCombo(combo) : '';
 }
 

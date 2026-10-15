@@ -429,6 +429,14 @@
   --color-chart-4: var(--kng-chart-4);
   --color-chart-5: var(--kng-chart-5);
   --color-chart-6: var(--kng-chart-6);
+
+  /* HoverTip (components/HoverTip.tsx). A label tip inverts to bg-fg with text-surface, so
+     its key chips and muted line are mixed from that same pair and stay readable in every
+     theme without a token of their own per theme. */
+  --color-tip-chip: color-mix(in srgb, var(--kng-fg) 86%, var(--kng-surface));
+  --color-tip-chip-edge: color-mix(in srgb, var(--kng-fg) 66%, var(--kng-surface));
+  --color-tip-muted: color-mix(in srgb, var(--kng-surface) 62%, var(--kng-fg));
+  --shadow-tip: 0 8px 24px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.35);
 }
 
 /* Custom scrollbar */

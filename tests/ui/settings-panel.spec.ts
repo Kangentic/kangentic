@@ -1083,7 +1083,7 @@ test.describe('Settings Panel', () => {
     await expect(page.getByRole('heading', { name: 'Context bar', exact: true })).toBeVisible();
     await expect(page.getByRole('switch', { name: 'Rate limits', exact: true })).toBeVisible();
     // The row's description sits behind its info icon.
-    await expect(page.getByRole('button', { name: 'About Rate limits: Claude 5h / weekly quota bars' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'About Rate limits', exact: true })).toHaveAccessibleDescription(/^Claude 5h \/ weekly quota bars/);
     await closeSettings();
   });
 
@@ -1419,7 +1419,7 @@ test.describe('Settings Panel', () => {
     });
 
     // "How it works" is the card header's info tooltip now, not a section.
-    await expect(page.getByRole('button', { name: /^About MCP server: Each agent session gets a local MCP server/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'About MCP server', exact: true })).toHaveAccessibleDescription(/^Each agent session gets a local MCP server/);
 
     await closeSettings();
   });

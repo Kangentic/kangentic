@@ -1,0 +1,394 @@
+/**
+ * HoverTip, the one tooltip (src/renderer/components/HoverTip.tsx), through its live adopters:
+ * the settings InfoTip (a label that wraps), the task window's header (icon buttons with keys, a
+ * disabled pill with its reason), and the Edit automation dialog's wildcard examples (the rich
+ * shape).
+ *
+ * Timing is read IN the page, never from the test's own clock: a MutationObserver stamps each
+ * tip's mount and unmount with `performance.now()`, and capture listeners stamp the pointer and
+ * focus events that start them. A negative window ("nothing opened") waits on the page clock
+ * against the component's own constants, so the spec runs on the numbers the component uses.
+ *
+ * Each test owns its page (mode: 'parallel').
+ */
+import { test, expect, chromium, type Browser, type Page, type Locator } from '@playwright/test';
+import path from 'node:path';
+import { waitForViteReady, gotoVite, launchPage, createProject } from './helpers';
+import { HOVER_TIP_DWELL_MS, HOVER_TIP_WARM_MS, VIEWPORT_PADDING } from '../../src/renderer/utils/hover-tip';
+
+test.describe.configure({ mode: 'parallel' });
+
+const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
+const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
+
+const PROJECT_ID = 'proj-hover-tip';
+const TASK_ID = 'task-hover-tip';
+const SETTINGS_PANEL = '[data-testid="settings-panel"]';
+const TIP = '[data-hover-tip]';
+
+/** A project with one Code Review task that has no session, so its pill is disabled. */
+const PRE_CONFIG = `
+  window.__mockPreConfigure(function (state) {
+    var ts = new Date().toISOString();
+    state.projects.push({
+      id: '${PROJECT_ID}', name: 'Hover Tip', path: '/mock/hover-tip',
+      github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+    });
+    var laneIds = {};
+    state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
+      var id = 'lane-hover-tip-' + index;
+      laneIds[swimlane.name] = id;
+      state.swimlanes.push(Object.assign({}, swimlane, { id: id, position: index, created_at: ts }));
+    });
+    state.tasks.push({
+      id: '${TASK_ID}', title: 'Hover tip task', description: '',
+      swimlane_id: laneIds['Code Review'], position: 0, agent: null, session_id: null,
+      worktree_path: null, branch_name: null, pr_number: null, pr_url: null,
+      base_branch: null, archived_at: null, created_at: ts, updated_at: ts,
+    });
+    return { currentProjectId: '${PROJECT_ID}' };
+  });
+`;
+
+async function launchWithTask(configOverrides?: Record<string, unknown>): Promise<{ browser: Browser; page: Page }> {
+  await waitForViteReady(VITE_URL);
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const page = await context.newPage();
+  if (configOverrides) {
+    await page.addInitScript((overrides) => {
+      (window as unknown as { __mockConfigOverrides: Record<string, unknown> }).__mockConfigOverrides = overrides;
+    }, configOverrides);
+  }
+  await page.addInitScript({ path: MOCK_SCRIPT });
+  await page.addInitScript(PRE_CONFIG);
+  await gotoVite(page, VITE_URL);
+  await page.waitForLoadState('load');
+  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+  await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+  await installTipLog(page);
+  return { browser, page };
+}
+
+/** The task window, opened through the store so the pointer stays where the test left it. */
+async function openTaskDetail(page: Page): Promise<Locator> {
+  await page.evaluate((id) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session: { getState: () => { setDetailTaskId: (taskId: string) => void } } };
+    }).__zustandStores;
+    stores?.session.getState().setDetailTaskId(id);
+  }, TASK_ID);
+  const dialog = page.locator('[data-testid="task-detail-dialog"]');
+  await dialog.waitFor({ state: 'visible', timeout: 5000 });
+  return dialog;
+}
+
+interface TipLogEvent {
+  type: 'over' | 'focus' | 'open' | 'close';
+  at: number;
+}
+
+/** Stamp tip mounts and unmounts, and the pointer and focus events that start them. */
+async function installTipLog(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const events: TipLogEvent[] = [];
+    (window as unknown as { __tipLog: TipLogEvent[] }).__tipLog = events;
+    const isTip = (node: Node): boolean => node instanceof Element && node.hasAttribute('data-hover-tip');
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) if (isTip(node)) events.push({ type: 'open', at: performance.now() });
+        for (const node of record.removedNodes) if (isTip(node)) events.push({ type: 'close', at: performance.now() });
+      }
+    }).observe(document.body, { childList: true });
+    document.addEventListener('pointerover', () => events.push({ type: 'over', at: performance.now() }), true);
+    document.addEventListener('focusin', () => events.push({ type: 'focus', at: performance.now() }), true);
+  });
+}
+
+async function readTipLog(page: Page): Promise<TipLogEvent[]> {
+  return page.evaluate(() => (window as unknown as { __tipLog: TipLogEvent[] }).__tipLog.slice());
+}
+
+async function clearTipLog(page: Page): Promise<void> {
+  await page.evaluate(() => { (window as unknown as { __tipLog: TipLogEvent[] }).__tipLog.length = 0; });
+}
+
+/** How long after the last `cause` event before it the first tip opened. */
+function delayBeforeOpen(events: TipLogEvent[], cause: 'over' | 'focus'): number {
+  const openIndex = events.findIndex((event) => event.type === 'open');
+  if (openIndex < 0) throw new Error(`no tip opened: ${JSON.stringify(events)}`);
+  const causes = events.slice(0, openIndex).filter((event) => event.type === cause);
+  if (causes.length === 0) throw new Error(`no ${cause} before the tip opened: ${JSON.stringify(events)}`);
+  return events[openIndex].at - causes[causes.length - 1].at;
+}
+
+/** Wait on the PAGE's clock, for a window in which something must not happen. */
+async function waitPageMs(page: Page, milliseconds: number): Promise<void> {
+  const until = await page.evaluate((span) => performance.now() + span, milliseconds);
+  await page.waitForFunction((deadline) => performance.now() >= deadline, until);
+}
+
+/** Let a cold tip's entrance (a scale from 0.96) finish, so its box is its final size. */
+async function settleTip(tip: Locator): Promise<void> {
+  await tip.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+}
+
+/** Park the pointer on dead space, away from every trigger. */
+async function parkPointer(page: Page): Promise<void> {
+  await page.mouse.move(960, 1060);
+}
+
+async function openSettingsTab(page: Page, tabId: string): Promise<Locator> {
+  await page.locator('[data-testid="settings-button"]').click();
+  await page.locator(`[data-testid="settings-tab-${tabId}"]`).click();
+  const panel = page.locator(SETTINGS_PANEL);
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+async function launchOnSettingsInfoTips(): Promise<{ browser: Browser; page: Page; infoTips: Locator }> {
+  const { browser, page } = await launchPage();
+  await createProject(page, `Hover tip ${Date.now()}`);
+  await installTipLog(page);
+  const panel = await openSettingsTab(page, 'task');
+  const infoTips = panel.getByRole('button', { name: /^About / });
+  await expect(infoTips.nth(1)).toBeVisible();
+  await parkPointer(page);
+  return { browser, page, infoTips };
+}
+
+test('a label tip opens after the dwell, wraps its prose, and opens no overlay', async () => {
+  const { browser, page, infoTips } = await launchOnSettingsInfoTips();
+  try {
+    const trigger = infoTips.first();
+    const layersBefore = await page.locator('[data-dismissable-layer]').count();
+    await clearTipLog(page);
+    await trigger.hover();
+    const tip = page.locator(TIP);
+    await expect(tip).toBeVisible();
+    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(HOVER_TIP_DWELL_MS - 5);
+
+    await expect(tip).toHaveAttribute('role', 'tooltip');
+    await expect(tip).toHaveAttribute('data-shape', 'label');
+    expect(await tip.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
+    await settleTip(tip);
+    const box = await tip.boundingBox();
+    expect(box?.width ?? 0).toBeLessThanOrEqual(281);
+    // The tip says what the button's description says, and the button keeps its own name.
+    const description = (await tip.textContent()) ?? '';
+    await expect(trigger).toHaveAccessibleDescription(description);
+    await expect(trigger).toHaveAccessibleName(/^About /);
+    expect(await page.locator('[data-dismissable-layer]').count()).toBe(layersBefore);
+
+    await parkPointer(page);
+    await expect(tip).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('keyboard focus opens a tip at once, and a mouse click does not', async () => {
+  const { browser, page, infoTips } = await launchOnSettingsInfoTips();
+  try {
+    const trigger = infoTips.first();
+    const tip = page.locator(TIP);
+    await clearTipLog(page);
+    // A key first, so the focus that follows is keyboard focus (`:focus-visible`).
+    await page.keyboard.press('Shift');
+    await trigger.focus();
+    await expect(trigger).toBeFocused();
+    await expect(tip).toBeVisible();
+    expect(delayBeforeOpen(await readTipLog(page), 'focus')).toBeLessThan(150);
+    await trigger.blur();
+    await expect(tip).toHaveCount(0);
+
+    const other = infoTips.nth(1);
+    await clearTipLog(page);
+    await other.click();
+    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Escape closes only the tip, and the next Escape closes the settings panel', async () => {
+  const { browser, page, infoTips } = await launchOnSettingsInfoTips();
+  try {
+    await infoTips.first().hover();
+    const tip = page.locator(TIP);
+    await expect(tip).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(tip).toHaveCount(0);
+    const panel = page.locator(SETTINGS_PANEL);
+    await expect(panel).toBeVisible();
+    await expect(panel).not.toHaveClass(/overlay-panel-out/);
+
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden({ timeout: 3000 });
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Escape closes only the tip in a task window, and the next Escape closes the window', async () => {
+  const { browser, page } = await launchWithTask();
+  try {
+    const dialog = await openTaskDetail(page);
+    await page.getByTestId('task-detail-close').hover();
+    const tip = page.locator(TIP);
+    await expect(tip).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(tip).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+
+    await parkPointer(page);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden({ timeout: 3000 });
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a tip at the window edge is clamped inside it, and its keys follow the user binding', async () => {
+  const { browser, page } = await launchWithTask({ hotkeyOverrides: { 'panel.close': 'Mod+Alt+K' } });
+  try {
+    await openTaskDetail(page);
+    await page.getByTestId('task-detail-maximize').click();
+    const close = page.getByTestId('task-detail-close');
+    await close.hover();
+    const tip = page.locator(TIP);
+    await expect(tip).toBeVisible();
+    await settleTip(tip);
+
+    const viewport = page.viewportSize();
+    const tipBox = await tip.boundingBox();
+    const closeBox = await close.boundingBox();
+    if (!viewport || !tipBox || !closeBox) throw new Error('no geometry');
+    // The close button sits at the right edge, so a centred tip would cross it.
+    expect(Math.abs(tipBox.x + tipBox.width - (viewport.width - VIEWPORT_PADDING))).toBeLessThanOrEqual(1);
+    const roomAbove = closeBox.y - 8 - tipBox.height >= VIEWPORT_PADDING;
+    await expect(tip).toHaveAttribute('data-side', roomAbove ? 'above' : 'below');
+
+    const chips = await tip.locator('kbd').allTextContents();
+    expect(chips[chips.length - 1]).toBe('K');
+    const joined = chips[0] === '⌘' ? chips.join('') : chips.join('+');
+    await expect(close).toHaveAccessibleName('Close');
+    await expect(close).toHaveAccessibleDescription(joined);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the rich shape draws a header band over its body', async () => {
+  const { browser, page } = await launchPage();
+  try {
+    await createProject(page, `Hover tip rich ${Date.now()}`);
+    const column = page.locator('[data-swimlane-name="Executing"]');
+    await column.locator('text=Executing').click();
+    const manager = page.locator('[data-testid="board-manager-dialog"]');
+    await expect(manager).toBeVisible({ timeout: 3000 });
+    await manager.locator('[data-testid="column-automation-add"][data-trigger="turn_end"]').click();
+    await page.locator('[data-testid="column-automation-picker-type"][data-type="notify"]').click();
+    const info = page.locator('[data-testid="edit-automation-wildcard-info"]');
+    await expect(info).toBeVisible();
+
+    await info.hover();
+    const tip = page.locator('[data-testid="edit-automation-wildcard-tip"]');
+    await expect(tip).toBeVisible();
+    await expect(tip).toHaveAttribute('data-shape', 'rich');
+    await expect(tip.locator('[data-hover-tip-part="header"]')).toHaveText('Wildcard examples');
+    await expect(tip.locator('[data-hover-tip-part="body"] code')).toHaveCount(4);
+    await expect(info).toHaveAccessibleName('Wildcard examples');
+    await expect(info).toHaveAccessibleDescription(/^Wildcard examples\. Ready for review: exactly this line/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the next tip opens at once while one shows, and waits its dwell again after the warm window', async () => {
+  const { browser, page } = await launchWithTask();
+  try {
+    await openTaskDetail(page);
+    const first = page.getByTestId('branch-pill');
+    const second = page.getByTestId('conversation-pill');
+    const tip = page.locator(TIP);
+
+    await first.hover();
+    await expect(tip).toBeVisible();
+    await clearTipLog(page);
+    await second.hover();
+    await expect(tip).toHaveText('No conversation history for this task yet');
+    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeLessThan(150);
+
+    await parkPointer(page);
+    await expect(tip).toHaveCount(0);
+    await waitPageMs(page, HOVER_TIP_WARM_MS + 50);
+    await clearTipLog(page);
+    await first.hover();
+    await expect(tip).toBeVisible();
+    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeGreaterThanOrEqual(HOVER_TIP_DWELL_MS - 5);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a press closes the tip and keeps it shut until the pointer leaves', async () => {
+  const { browser, page, infoTips } = await launchOnSettingsInfoTips();
+  try {
+    await infoTips.first().hover();
+    const tip = page.locator(TIP);
+    await expect(tip).toBeVisible();
+
+    await page.mouse.down();
+    await expect(tip).toHaveCount(0);
+    await page.mouse.up();
+    await clearTipLog(page);
+    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a disabled control still shows why it is off', async () => {
+  const { browser, page } = await launchWithTask();
+  try {
+    await openTaskDetail(page);
+    const pill = page.getByTestId('conversation-pill');
+    await expect(pill).toBeDisabled();
+    await pill.hover();
+    const tip = page.locator(TIP);
+    await expect(tip).toHaveText('No conversation history for this task yet');
+    await expect(pill).toHaveAccessibleName('View conversation');
+    await expect(pill).toHaveAccessibleDescription('No conversation history for this task yet');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a trigger that appears under a resting pointer opens nothing, so Escape reaches its window', async () => {
+  const { browser, page } = await launchWithTask();
+  try {
+    // Where the window's close button lands, measured once with the window open.
+    const dialog = await openTaskDetail(page);
+    const closeBox = await page.getByTestId('task-detail-close').boundingBox();
+    if (!closeBox) throw new Error('no close button');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden({ timeout: 3000 });
+
+    // Rest the pointer there with the window gone, then bring the window back under it.
+    await page.mouse.move(closeBox.x + closeBox.width / 2, closeBox.y + closeBox.height / 2);
+    await openTaskDetail(page);
+    await clearTipLog(page);
+    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden({ timeout: 3000 });
+  } finally {
+    await browser.close();
+  }
+});

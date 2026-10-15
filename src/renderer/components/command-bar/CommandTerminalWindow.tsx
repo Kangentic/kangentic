@@ -534,8 +534,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
               <HeaderActionButton
                 icon={FolderGit}
                 onClick={() => window.electronAPI.shell.openPath(projectPath)}
-                title="Project"
-                ariaLabel="Open project folder"
+                tip="Open project folder"
                 testId="command-bar-folder-button"
               />
             </div>
@@ -547,7 +546,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
                 icon={GitCompare}
                 onClick={handleToggleChanges}
                 active={changesOpen}
-                title={changesOpen ? 'Hide changes' : 'Show changes'}
+                tip={changesOpen ? 'Hide changes' : 'Show changes'}
                 ariaLabel="Toggle changes"
                 testId="command-bar-changes-toggle"
               />
@@ -573,7 +572,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
                 <HeaderActionButton
                   icon={ActionIcon}
                   onClick={() => handleShortcutExecute(action)}
-                  title={action.command}
+                  tip={action.command}
                   label={action.label}
                   testId={`command-bar-shortcut-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
                 />

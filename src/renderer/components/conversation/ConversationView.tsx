@@ -767,8 +767,7 @@ function CopyIconButton({ text }: { text: string }) {
       icon={copied ? MessageCopiedCheckIcon : Copy}
       onClick={handleCopy}
       size="small"
-      title="Copy message"
-      ariaLabel="Copy message"
+      tip="Copy message"
       testId="conversation-message-copy"
       // HeaderActionButton's rest background (bg-surface-hover/50) barely
       // differs from a message row's own background (bg-surface-hover/30),

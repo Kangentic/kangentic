@@ -1078,6 +1078,9 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await editDialog().locator('[data-testid="edit-automation-name"]').hover();
     await expect(tip).toHaveCount(0);
 
+    // Keyboard focus opens it. A key first, so the focus that follows reads as
+    // keyboard focus (`:focus-visible`); a mouse-driven focus opens nothing.
+    await page.keyboard.press('Shift');
     await info.focus();
     await expect(tip).toBeVisible();
     await info.blur();
@@ -1252,7 +1255,9 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
 
     // Short notes behind info icons, the manifest's for Message and Delivery.
     for (const label of ['Type', 'Message', 'Delivery']) {
-      await expect(card('action').getByRole('button', { name: new RegExp(`^About ${label}: \\S`) })).toBeVisible();
+      const info = card('action').getByRole('button', { name: `About ${label}`, exact: true });
+      await expect(info).toBeVisible();
+      await expect(info).toHaveAccessibleDescription(/\S/);
     }
 
     // Delivery is a choice row: its label and its control share one row.

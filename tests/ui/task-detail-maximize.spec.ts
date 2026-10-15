@@ -226,15 +226,15 @@ test.describe('Task Detail: maximize / restore', () => {
 
     // Browser pane is closed initially - the pill shows "Show browser" title
     // (now suffixed with the live hotkey combo).
-    await expect(browserToggle).toHaveAttribute('title', /^Show browser/);
+    await expect(browserToggle).toHaveAccessibleDescription(/^Show browser/);
 
     // Ctrl+Shift+B opens the browser pane.
     await page.keyboard.press('Control+Shift+B');
-    await expect(browserToggle).toHaveAttribute('title', /^Hide browser/);
+    await expect(browserToggle).toHaveAccessibleDescription(/^Hide browser/);
 
     // Ctrl+Shift+B again closes the browser pane.
     await page.keyboard.press('Control+Shift+B');
-    await expect(browserToggle).toHaveAttribute('title', /^Show browser/);
+    await expect(browserToggle).toHaveAccessibleDescription(/^Show browser/);
 
     // Close the dialog so subsequent tests start clean.
     //

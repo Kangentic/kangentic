@@ -104,7 +104,8 @@ test.describe('Conversation pill disabled state', () => {
       const pill = page.getByTestId('conversation-pill');
       await expect(pill).toBeVisible();
       await expect(pill).toBeDisabled();
-      await expect(pill).toHaveAttribute('title', 'No conversation history for this task yet');
+      await expect(pill).toHaveAccessibleName('View conversation');
+      await expect(pill).toHaveAccessibleDescription('No conversation history for this task yet');
 
       await page.locator('[data-testid="task-detail-dialog"] [aria-label="Actions"]').click();
       const kebabItem = page.getByTestId('view-conversation-btn');
@@ -123,7 +124,8 @@ test.describe('Conversation pill disabled state', () => {
       const pill = page.getByTestId('conversation-pill');
       await expect(pill).toBeVisible();
       await expect(pill).toBeEnabled();
-      await expect(pill).toHaveAttribute('title', 'View conversation');
+      await expect(pill).toHaveAccessibleName('View conversation');
+      await expect(pill).toHaveAccessibleDescription('');
     } finally {
       await browser.close();
     }

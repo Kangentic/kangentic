@@ -190,7 +190,7 @@ test.describe('DictationTab: a long download error stays behind its line\'s info
 
     const line = page.getByTestId('dictation-live-model-line');
     await expect(page.getByTestId('dictation-live-model-line-value')).toHaveText('Download failed, Streaming Zipformer');
-    await expect(line.getByRole('button', { name: /^About Live model/ })).toHaveAttribute('title', LONG_ERROR);
+    await expect(line.getByRole('button', { name: 'About Live model', exact: true })).toHaveAccessibleDescription(LONG_ERROR);
 
     // Polled: the panel slides in, and the assertion is on layout once it settles.
     await expect.poll(async () => page.evaluate((tolerance) => {

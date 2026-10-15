@@ -4,6 +4,7 @@ import { Check, ChevronDown, ExternalLink, Info, TriangleAlert } from 'lucide-re
 import { useAnySettingVisible, useSettingVisible } from './settings-search';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 import { CountBadge } from '../CountBadge';
+import { HoverTip } from '../HoverTip';
 import { ToggleSwitch } from './shared';
 import { SegmentedControl } from '../SegmentedControl';
 import type { SegmentedControlOption } from '../SegmentedControl';
@@ -240,20 +241,22 @@ export function SettingsCard({
 }
 
 /**
- * An info icon whose tooltip carries a row's description. A real button, so a
- * keyboard or screen-reader user reaches the text too: a bare `title` on a
- * span is hover-only and invisible to both.
+ * An info icon whose tip carries a row's description, as a label that wraps. A
+ * real button, so a keyboard user opens the tip by focus, and it stays a button
+ * for `OWN_CLICK_SELECTOR`: a click on it never flips the row's switch. Its name
+ * says what it is about; the text is its description, read without hovering.
  */
 export function InfoTip({ label, text }: { label: string; text: string }) {
   return (
-    <button
-      type="button"
-      title={text}
-      aria-label={`About ${label}: ${text}`}
-      className="flex flex-shrink-0 rounded text-fg-faint hover:text-fg-tertiary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent cursor-help"
-    >
-      <Info size={13} aria-hidden="true" />
-    </button>
+    <HoverTip label={text}>
+      <button
+        type="button"
+        aria-label={`About ${label}`}
+        className="flex flex-shrink-0 rounded text-fg-faint hover:text-fg-tertiary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent cursor-help"
+      >
+        <Info size={13} aria-hidden="true" />
+      </button>
+    </HoverTip>
   );
 }
 

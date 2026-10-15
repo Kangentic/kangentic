@@ -161,7 +161,7 @@ test.describe('Task detail folder controls', () => {
       const sharedFrame = page.locator(`[data-testid="window-frame-${sharedWindowId}"]`);
       await sharedFrame.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
       await expect(sharedFrame.locator('[data-testid="task-title-text"]')).toHaveText(SHARED_TASK_TITLE);
-      await expect(sharedFrame.locator('[data-testid="branch-pill"]')).toHaveAttribute('title', 'Open Folder');
+      await expect(sharedFrame.locator('[data-testid="branch-pill"]')).toHaveAccessibleDescription('Open Folder');
 
       await openKebab(page, sharedWindowId);
       await expect(page.locator('[role="menu"] button', { hasText: 'Open project folder' })).toHaveCount(1);
@@ -172,7 +172,7 @@ test.describe('Task detail folder controls', () => {
       const isolatedFrame = page.locator(`[data-testid="window-frame-${isolatedWindowId}"]`);
       await isolatedFrame.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
       await expect(isolatedFrame.locator('[data-testid="task-title-text"]')).toHaveText(ISOLATED_TASK_TITLE);
-      await expect(isolatedFrame.locator('[data-testid="branch-pill"]')).toHaveAttribute('title', 'Open Worktree');
+      await expect(isolatedFrame.locator('[data-testid="branch-pill"]')).toHaveAccessibleDescription('Open Worktree');
 
       await openKebab(page, isolatedWindowId);
       await expect(page.locator('[role="menu"] button', { hasText: 'Open worktree' })).toHaveCount(1);

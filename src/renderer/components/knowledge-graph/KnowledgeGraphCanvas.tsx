@@ -1658,10 +1658,9 @@ const KeyCap = ({ children }: { children: string }) => (
 /**
  * One binding: its keys, and the verb in a tooltip above them.
  *
- * Hover state is pure CSS. Routing it through React would re-render the whole
- * canvas component on every pointer crossing, which is exactly the kind of work
- * this surface keeps off the main thread - and there is nothing here React needs
- * to know about.
+ * The open state lives in HoverTip's own layer, so a pointer crossing re-renders
+ * that layer and never this canvas component, which keeps its work off the main
+ * thread.
  *
  * The KEYS capture the pointer, not the card. The card sits over a canvas whose
  * drag IS the camera, so anything that swallows a pointerdown is a patch you
@@ -1669,6 +1668,10 @@ const KeyCap = ({ children }: { children: string }) => (
  * only the key boxes take events, which keeps the dead area to a handful of
  * 19px targets. The tooltip itself never takes events, so it cannot flicker by
  * stealing the hover it was opened by.
+ *
+ * The verb is also legend CONTENT, `sr-only` inside the group, so it reads with
+ * no pointer at all. It names the keys rather than describing a control, so the
+ * tip does not repeat it as a description (`describe={false}`).
  */
 const LegendGroup = ({
   binding,
@@ -1680,17 +1683,10 @@ const LegendGroup = ({
   label: string;
   children: ReactNode;
 }) => (
-  <HoverTip
-    label={label}
-    testId="knowledge-graph-camera-tip"
-    // The KEYS capture the pointer, not the card. The card sits over a canvas
-    // whose drag IS the camera, so anything that swallows a pointerdown is a
-    // patch you cannot start an orbit from; the background stays
-    // `pointer-events-none` and only these boxes take events.
-    className="pointer-events-auto flex cursor-help flex-col items-center gap-[3px]"
-  >
-    <span data-binding={binding} className="flex flex-col items-center gap-[3px]">
+  <HoverTip label={label} testId="knowledge-graph-camera-tip" describe={false}>
+    <span data-binding={binding} className="pointer-events-auto flex cursor-help flex-col items-center gap-[3px]">
       {children}
+      <span className="sr-only">{label}</span>
     </span>
   </HoverTip>
 );

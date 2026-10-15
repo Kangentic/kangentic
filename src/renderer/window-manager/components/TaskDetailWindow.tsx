@@ -827,7 +827,7 @@ export function TaskDetailWindow({
             icon={WorkflowIcon}
             onClick={handleToggleWorkflow}
             active={workflowPanelOpen}
-            title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
+            tip={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
             ariaLabel="Toggle workflow"
             testId="workflow-toggle"
           />

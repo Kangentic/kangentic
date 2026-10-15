@@ -1,21 +1,28 @@
 import type { ComponentType } from 'react';
 import { Pill } from './Pill';
+import { HoverTip } from './HoverTip';
 
 interface HeaderActionButtonProps {
   /** Icon component rendered at the shared header size. Accepts Lucide icons and
    *  the shortcut icon-registry components (both take a `size` prop). */
   icon: ComponentType<{ size?: number }>;
   onClick: () => void;
-  /** Native tooltip text. */
-  title: string;
-  /** Accessible label for icon-only buttons; omit when `label` is shown. */
+  /** The tip: the action's name, which is also an icon-only button's accessible name unless
+   *  `ariaLabel` says otherwise. No explanation in parentheses and no typed combo. */
+  tip: string;
+  /** A KEYBINDINGS id. Its live combo shows in the tip as chips. */
+  keys?: string;
+  /** Why a disabled button does nothing. It replaces the tip while disabled, and it is read as
+   *  the button's description. */
+  disabledReason?: string;
+  /** Accessible name when it should differ from `tip`; omit when `label` is shown. */
   ariaLabel?: string;
   /** Optional trailing text (shortcut buttons render icon + label). */
   label?: string;
   /** Toggle buttons (changes / browser): accent styling when on. */
   active?: boolean;
   /** Muted, non-interactive styling for when the action has nothing to act on
-   *  (e.g. no conversation history yet). `title` should still explain why. */
+   *  (e.g. no conversation history yet). Pair it with `disabledReason`. */
   disabled?: boolean;
   testId?: string;
   /** 'normal' (default) is the header action row's usual size (16px icon,
@@ -55,7 +62,9 @@ const DISABLED = 'bg-surface-hover/20 text-fg-faint/50 border-transparent cursor
 export function HeaderActionButton({
   icon: Icon,
   onClick,
-  title,
+  tip,
+  keys,
+  disabledReason,
   ariaLabel,
   label,
   active,
@@ -77,19 +86,22 @@ export function HeaderActionButton({
   // default, which is what text wants.
   const squareUpIconOnly = label ? '' : size === 'small' ? '!px-[5px]' : '!min-w-0 !px-[9px]';
 
+  const showReason = disabled === true && disabledReason !== undefined;
+
   return (
-    <Pill
-      shape="square"
-      size={size === 'small' ? 'xs' : 'md'}
-      onClick={onClick}
-      disabled={disabled}
-      className={`flex-shrink-0 border transition-colors ${disabled ? DISABLED : active ? ACTIVE : REST} ${squareUpIconOnly} ${className ?? ''}`}
-      title={title}
-      aria-label={ariaLabel}
-      data-testid={testId}
-    >
-      <Icon size={size === 'small' ? ICON_SIZE_SMALL : ICON_SIZE_NORMAL} />
-      {label}
-    </Pill>
+    <HoverTip label={showReason ? disabledReason : tip} keys={showReason ? undefined : keys}>
+      <Pill
+        shape="square"
+        size={size === 'small' ? 'xs' : 'md'}
+        onClick={onClick}
+        disabled={disabled}
+        className={`flex-shrink-0 border transition-colors ${disabled ? DISABLED : active ? ACTIVE : REST} ${squareUpIconOnly} ${className ?? ''}`}
+        aria-label={ariaLabel ?? (label === undefined ? tip : undefined)}
+        data-testid={testId}
+      >
+        <Icon size={size === 'small' ? ICON_SIZE_SMALL : ICON_SIZE_NORMAL} />
+        {label}
+      </Pill>
+    </HoverTip>
   );
 }
