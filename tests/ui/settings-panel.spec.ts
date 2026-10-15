@@ -1071,13 +1071,6 @@ test.describe('Settings Panel', () => {
     await fontFamilyInput.press('ArrowDown');
     await expect(firstOption).toBeFocused();
 
-    // Keyboard focus opened the option's tip, which takes the first Escape alone.
-    const tip = page.locator('[data-hover-tip]');
-    await expect(tip).toBeVisible();
-    await firstOption.press('Escape');
-    await expect(tip).toHaveCount(0);
-    await expect(firstOption).toBeVisible();
-
     await firstOption.press('Escape');
     await expect(firstOption).toHaveCount(0);
 

@@ -187,15 +187,27 @@ test('a label tip opens after the dwell, wraps its prose, and opens no overlay',
   }
 });
 
-test('keyboard focus opens a tip at once, and a mouse click does not', async () => {
+test('Tab focus opens a tip at once, and a script focus after a key and a mouse click do not', async () => {
   const { browser, page, infoTips } = await launchOnSettingsInfoTips();
   try {
     const trigger = infoTips.first();
     const tip = page.locator(TIP);
+
+    // A script's focus right after a key is `:focus-visible` to Chromium, which is how a confirm
+    // focusing its close button used to pop that button's tip and take the next Escape. Only a
+    // Tab move opens one.
     await clearTipLog(page);
-    // A key first, so the focus that follows is keyboard focus (`:focus-visible`).
     await page.keyboard.press('Shift');
     await trigger.focus();
+    await expect(trigger).toBeFocused();
+    await waitPageMs(page, 150);
+    expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
+
+    // Step off with Shift+Tab and back with Tab: that last move is Tab's own.
+    await page.keyboard.press('Shift+Tab');
+    await expect(trigger).not.toBeFocused();
+    await clearTipLog(page);
+    await page.keyboard.press('Tab');
     await expect(trigger).toBeFocused();
     await expect(tip).toBeVisible();
     expect(delayBeforeOpen(await readTipLog(page), 'focus')).toBeLessThan(150);

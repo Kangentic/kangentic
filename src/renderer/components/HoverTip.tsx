@@ -15,8 +15,12 @@
  *    not on the enter alone: a control that appears under a resting pointer (a button in a
  *    dialog that just opened) only gets boundary events, so it shows nothing until the pointer
  *    moves, and a stray tip cannot eat the Escape meant for that dialog.
- *  - Opens at once on keyboard focus (`:focus-visible`, and not the focus a press gave it), and at
- *    once while another tip shows or for HOVER_TIP_WARM_MS after one closed.
+ *  - Opens at once when Tab or Shift+Tab moves focus to the trigger (`utils/tab-focus.ts`), and at
+ *    once while another tip shows or for HOVER_TIP_WARM_MS after one closed. A script's focus and
+ *    arrowing inside a menu or a radio group open nothing: the next Escape there belongs to the
+ *    dialog or the widget, and a tip would take it.
+ *  - Only events inside the trigger's own element count, so a menu it portals out does not arm
+ *    its tip through React's bubbling.
  *  - Closes on pointer leave (a tip keyboard focus opened stays until blur), blur, a press or
  *    click of the trigger, Enter or Space on the trigger (a `role="button"` grip acts on the key
  *    with no click), Escape, a scroll of anything holding the trigger, a window resize, and the
@@ -78,6 +82,7 @@ import { createPortal } from 'react-dom';
 import { useEffectiveCombo } from '../hooks/useKeybinding';
 import { formatCombo, formatComboSegments } from '../utils/keybindings';
 import { isRebindCaptureActive } from '../utils/rebind-state';
+import { focusCameFromTab, installTabFocusTracker } from '../utils/tab-focus';
 import {
   HOVER_TIP_DWELL_MS,
   claimTip,
@@ -172,6 +177,16 @@ function isUsablePointer(event: ReactPointerEvent<Element>): boolean {
   return event.pointerType !== 'touch' && event.buttons === 0;
 }
 
+/**
+ * Whether the event happened inside the trigger's own element. React bubbles events through a
+ * portal to its React parent, so a menu a trigger renders into `document.body` would otherwise
+ * arm the trigger's tip from the menu's rows.
+ */
+function isOwnEvent(event: { target: EventTarget; currentTarget: Element }): boolean {
+  // A pointer or focus event on an element always targets a node.
+  return event.currentTarget.contains(event.target as Node);
+}
+
 /** Dev-only checks on a trigger, run once when it is first touched. */
 function warnAboutTrigger(element: Element): void {
   const where = element.outerHTML.slice(0, 120);
@@ -222,7 +237,7 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   }, []);
 
   const handlePointerEnter = useCallback((event: ReactPointerEvent<Element>): void => {
-    if (!isUsablePointer(event)) return;
+    if (!isUsablePointer(event) || !isOwnEvent(event)) return;
     hoveredRef.current = true;
     // A fresh enter is a new hover. A keyboard click made while the pointer was elsewhere must
     // not keep this one shut; a press made inside is cleared by the leave that ends it.
@@ -231,7 +246,7 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   }, [takeTrigger]);
 
   const handlePointerMove = useCallback((event: ReactPointerEvent<Element>): void => {
-    if (!isUsablePointer(event)) return;
+    if (!isUsablePointer(event) || !isOwnEvent(event)) return;
     hoveredRef.current = true;
     // A tip held shut lets the move pass to the trigger around it, so a badge with nothing to say
     // does not silence the pill it sits in.
@@ -298,11 +313,14 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   }, [handleClick]);
 
   const handleFocus = useCallback((event: FocusEvent<Element>): void => {
-    const target = event.target;
     if (!enabledRef.current) return;
+    if (!isOwnEvent(event)) return;
     if (!answerFirst(event.nativeEvent)) return;
     if (pressFocusRef.current) return;
-    if (!(target instanceof Element) || !target.matches(':focus-visible')) return;
+    // Only the user stepping here with Tab opens a tip: not a script's focus after some other key
+    // (a confirm focusing its close button), and not arrowing inside a menu or a radio group,
+    // where the next Escape belongs to that widget.
+    if (!focusCameFromTab()) return;
     takeTrigger(event.currentTarget);
     focusOpenedRef.current = true;
     clearDwell();
@@ -341,6 +359,10 @@ export function HoverTip(props: HoverTipProps): ReactElement {
   }, [active, clearDwell]);
 
   useEffect(() => clearDwell, [clearDwell]);
+
+  useEffect(() => {
+    installTabFocusTracker();
+  }, []);
 
   useEffect(() => {
     if (__KANGENTIC_DEV__ && childIsFragment) {

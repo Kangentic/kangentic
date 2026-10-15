@@ -404,14 +404,32 @@ describe('HoverTip with an empty label', () => {
     const captured = captureTriggerProps(tipProps, {});
     const startTimer = vi.fn(() => 1);
     vi.stubGlobal('window', { setTimeout: startTimer, clearTimeout: vi.fn() });
+    const target = {};
     (captured.onPointerMove as (event: unknown) => void)({
       pointerType: 'mouse',
       buttons: 0,
       nativeEvent: {},
-      currentTarget: {},
+      target,
+      // The move lands on the trigger itself, not on a menu it portals out.
+      currentTarget: { contains: (node: unknown) => node === target },
     });
     return startTimer.mock.calls.length;
   }
+
+  it('arms no dwell for a move that bubbled up through a portal from outside the trigger', () => {
+    resetTipStateForTests();
+    const captured = captureTriggerProps({ label: 'Has text' }, {});
+    const startTimer = vi.fn(() => 1);
+    vi.stubGlobal('window', { setTimeout: startTimer, clearTimeout: vi.fn() });
+    (captured.onPointerMove as (event: unknown) => void)({
+      pointerType: 'mouse',
+      buttons: 0,
+      nativeEvent: {},
+      target: {},
+      currentTarget: { contains: () => false },
+    });
+    expect(startTimer).not.toHaveBeenCalled();
+  });
 
   it('arms the dwell for a tip with text, so the harness can tell the cases apart', () => {
     expect(dwellTimersArmedByOneMove({ label: 'Has text' })).toBe(1);

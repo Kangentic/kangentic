@@ -1084,10 +1084,13 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await editDialog().locator('[data-testid="edit-automation-name"]').hover();
     await expect(tip).toHaveCount(0);
 
-    // Keyboard focus opens it. A key first, so the focus that follows reads as
-    // keyboard focus (`:focus-visible`); a mouse-driven focus opens nothing.
-    await page.keyboard.press('Shift');
+    // Tab focus opens it. Step off with Shift+Tab and back with Tab, so the
+    // last move is Tab's own; a script or mouse focus opens nothing.
     await info.focus();
+    await page.keyboard.press('Shift+Tab');
+    await expect(info).not.toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(info).toBeFocused();
     await expect(tip).toBeVisible();
     await info.blur();
     await expect(tip).toHaveCount(0);

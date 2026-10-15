@@ -59,14 +59,13 @@ async function expectEscapeClosesOnlyTheMenu(page: Page, testId: string): Promis
 }
 
 /**
- * An option that keyboard focus lands on opens its tip at once (HoverTip), and a
- * tip takes the first Escape alone: the tip goes, and the menu stays open.
+ * An option the arrow keys focus opens no tip: HoverTip opens on Tab focus only, so the menu's
+ * own Escape is never taken by a tip. A focus-opened tip shows within a frame, so a short wait is
+ * enough to tell; there is nothing to poll for when the thing under test is that nothing appears.
  */
-async function expectEscapeClosesOnlyTheTip(page: Page, testId: string): Promise<void> {
-  const tip = page.locator('[data-hover-tip]');
-  await expect(tip).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(tip).toHaveCount(0);
+async function expectNoTipFromArrowFocus(page: Page, testId: string): Promise<void> {
+  await page.waitForTimeout(150);
+  await expect(page.locator('[data-hover-tip]')).toHaveCount(0);
   await expect(page.locator(`[data-testid="${testId}-menu"]`)).toBeVisible();
 }
 
@@ -88,7 +87,7 @@ test('Settings > Agent: Escape closes the agent menu, not the panel, from the in
     await openMenu(page, 'project-default-agent');
     await page.keyboard.press('ArrowDown');
     await expect(page.locator('[data-testid="project-default-agent-option-claude"]')).toBeFocused();
-    await expectEscapeClosesOnlyTheTip(page, 'project-default-agent');
+    await expectNoTipFromArrowFocus(page, 'project-default-agent');
     await expectEscapeClosesOnlyTheMenu(page, 'project-default-agent');
     await expect(input).toBeFocused();
 
@@ -167,7 +166,7 @@ test('Settings > Agent: Escape closes the model menu, not the panel, from the in
     await page.keyboard.press('ArrowDown');
     const firstOption = page.locator('[data-testid="project-default-model-menu"] [data-model-option]').first();
     await expect(firstOption).toBeFocused();
-    await expectEscapeClosesOnlyTheTip(page, 'project-default-model');
+    await expectNoTipFromArrowFocus(page, 'project-default-model');
     const countBeforeEscape = await readRescanModelsCallCount(page);
 
     // Escape there hands focus back to the input WITHOUT the focus handler
@@ -211,7 +210,7 @@ test('Settings > Terminal: Escape closes the font menu, not the panel, from the 
     await page.keyboard.press('ArrowDown');
     const firstFontOption = page.locator('[data-testid="terminal-font-family-menu"] [data-font-option]').first();
     await expect(firstFontOption).toBeFocused();
-    await expectEscapeClosesOnlyTheTip(page, 'terminal-font-family');
+    await expectNoTipFromArrowFocus(page, 'terminal-font-family');
     await expectEscapeClosesOnlyTheMenu(page, 'terminal-font-family');
     await expect(input).toBeFocused();
 
