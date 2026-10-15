@@ -88,22 +88,31 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
 const VITE_GOTO_ATTEMPTS = 3;
 
 /**
- * `page.goto` against the Vite dev server, retrying only a refused TCP connect.
+ * `page.goto` against the Vite dev server, retrying only a navigation that never reached it.
  *
  * Seen in a full 3-worker UI run: waitForViteReady's fetch probe got its 200, then Chromium's
  * navigation a moment later failed with `net::ERR_CONNECTION_REFUSED`, while the same server went
  * on serving every other test with no restart or reload in its log. A refused connect is what
- * waitForViteReady already exists to absorb, so it gets the same treatment here. No assertion is
- * ever retried: any other navigation error, and a refusal on the last attempt, is rethrown.
+ * waitForViteReady already exists to absorb, so it gets the same treatment here.
+ *
+ * The same failed connect can also reach Playwright as the navigation being "interrupted by
+ * another navigation to chrome-error://chromewebdata/": Chromium committed its network error page
+ * before goto saw the error. The v0.46.0 release run hit that form in project-move.spec.ts's
+ * beforeAll, with nothing in the server log and the spec passing alone, so it is retried too.
+ *
+ * No assertion is ever retried: neither form means the app loaded. Any other navigation error, and
+ * either form on the last attempt, is rethrown.
  */
+const VITE_UNREACHED_MARKERS = ['net::ERR_CONNECTION_REFUSED', 'chrome-error://chromewebdata/'];
+
 export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       await page.goto(url);
       return;
     } catch (error) {
-      const refused = error instanceof Error && error.message.includes('net::ERR_CONNECTION_REFUSED');
-      if (!refused || attempt >= VITE_GOTO_ATTEMPTS) throw error;
+      const unreached = error instanceof Error && VITE_UNREACHED_MARKERS.some((marker) => error.message.includes(marker));
+      if (!unreached || attempt >= VITE_GOTO_ATTEMPTS) throw error;
       await waitForViteReady(url);
     }
   }
