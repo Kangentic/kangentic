@@ -238,7 +238,7 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{fromColumn}}` | The column the task moved out of (empty for a task born into a column). Automations only |
 | `{{toColumn}}` | The column the task moved into. Automations only |
 | `{{trigger}}` | When this automation runs: `enter`, `turn_end` or `exit`. Automations only |
-| `{{agentReply}}` | The agent's reply at the end of its last turn in this column: the final message, full text with its line breaks. Empty on task enter, and for an agent whose transcript Kangentic cannot read. Automations only |
+| `{{agentReply}}` | The agent's reply at the end of its last turn in this column: the final message, full text with its line breaks. Empty on task enter, and for an agent whose transcript Kangentic cannot read. A Claude turn that wrote no text of its own is empty too (see the note below the table). Automations only |
 | `{{columns}}` | One line per column between To Do and Done, in board order: what it runs (an agent, plan mode, its own session, a slash command), its enabled automations, and how many of the last 10 finished tasks went through it (from `task_moves`; left out until a task has finished). Names escaped. Workflow agent only |
 | `{{brief_xml}}` | What the workflow was made from: a `<brief>` block with the source task's `<source_task>#N</source_task>`, `<title>` and `<description>`, laid out and escaped like `{{task_xml}}`. Empty, and dropped, for a workflow made from nothing. Workflow agent only |
 
@@ -249,13 +249,17 @@ and the picker does not offer them in that context. A flat list that offered
 everything everywhere would be lying about five of its entries.
 
 `{{agentReply}}` is read from the session whose turn just ended, which for an
-isolated column is that column's own session, not the task's main one. It is
-the same final answer `kangentic_get_transcript` returns for `view: "result"`,
-uncut: the newest assistant message after the last user prompt, its text blocks
-joined. At a turn end it is read from where that turn began
-(`transcriptAnchor`), so a turn that wrote no text of its own has an empty
-reply rather than the one an earlier turn ended on. It is what carries a
-review's findings to the column a Move to column row sends the task to.
+isolated column is that column's own session, not the task's main one. Without
+an anchor it is the same final answer `kangentic_get_transcript` returns for
+`view: "result"`, uncut: the newest assistant message after the last user
+prompt, its text blocks joined. `kangentic_get_transcript` takes no anchor, so
+with one the two can differ on a turn that wrote no text. At a turn end it is
+read from where that turn began (`transcriptAnchor`), so a Claude turn that
+wrote no text of its own has an empty reply rather than the one an earlier turn
+ended on. Claude is the only agent with the window read that honors an anchor;
+the other agents with a transcript reader read the newest reply in it, which can
+be an earlier turn's. It is what carries a review's findings to the column a
+Move to column row sends the task to.
 
 Drop-and-collapse preserves newlines: only runs of spaces and tabs collapse,
 and only in the template's own text, never inside a substituted value. That is

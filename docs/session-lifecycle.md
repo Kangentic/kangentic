@@ -273,7 +273,8 @@ A resumed agent comes back idle and reports no turn end, so `SessionManager` ann
 itself. Every task session spawned with `resuming: true` and reaching `running` (a Resume, a
 workflow's Resume, launch recovery, recovery after a pty host crash) emits `'session-resumed'`
 with the session, task and project ids, the conversation it resumed, and its work serial as it
-came back. The turn-end runner uses it to give a workflow task the step check a Pause or a quit
+came back. A resume begins no turn, so the payload carries neither a turn start nor a transcript
+anchor. The turn-end runner uses it to give a workflow task the step check a Pause or a quit
 cut short (see [Transition Engine](transition-engine.md), "A resume catches up the workflow step").
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, a separate event
 from `'activity'`; see [Activity Detection](activity-detection.md), "Turn ends".
