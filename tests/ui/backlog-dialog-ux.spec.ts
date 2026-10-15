@@ -689,7 +689,7 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     await expect(dialog).not.toBeVisible();
   });
 
-  test('header uses a plain external-link icon and "Open in <source>" title for a non-GitHub source', async () => {
+  test('header uses a plain external-link icon and "Open in <source>" name for a non-GitHub source', async () => {
     await seedBacklogEditItem(page, 'Jira item', {
       external_source: 'jira',
       external_url: 'https://example.atlassian.net/browse/ISSUE-1',
@@ -697,18 +697,18 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     const link = dialog.locator('[data-testid="backlog-task-external-link"]');
     await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('title', 'Open in jira');
+    await expect(link).toHaveAccessibleName('Open in jira');
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();
 
-    // The GitHub case, for contrast - the title differs.
+    // The GitHub case, for contrast - the name differs.
     await seedBacklogEditItem(page, 'GitHub title check item', {
       external_source: 'github_issues',
       external_url: 'https://github.com/kangentic/kangentic/issues/7',
     });
     const githubDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     const githubLink = githubDialog.locator('[data-testid="backlog-task-external-link"]');
-    await expect(githubLink).toHaveAttribute('title', 'Open in GitHub');
+    await expect(githubLink).toHaveAccessibleName('Open in GitHub');
     await page.keyboard.press('Escape');
     await expect(githubDialog).not.toBeVisible();
   });

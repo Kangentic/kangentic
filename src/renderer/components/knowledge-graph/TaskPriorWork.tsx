@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { History, ChevronDown, ChevronRight } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import type { KnowledgeGraphQueryHit } from '../../../shared/types';
+import { HoverTip } from '../HoverTip';
 
 export interface TaskPriorWorkProps {
   taskId: string;
@@ -75,21 +76,22 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
         <ul className="px-1.5 pb-1.5">
           {hits.map((hit) => (
             <li key={hit.sessionId}>
-              <button
-                type="button"
-                onClick={() => useSessionStore.getState().setConversationSessionId(hit.sessionId)}
-                className="w-full text-left rounded px-2 py-1.5 hover:bg-surface-hover cursor-pointer"
-                data-testid="task-prior-work-item"
-                title="Open this conversation"
-              >
-                {/* Title only, deliberately. In the Knowledge Graph's search
-                    results a snippet earns its place by showing WHY a
-                    conversation matched the query. Here there is no query, so
-                    the snippet is just an arbitrary chunk - in practice often
-                    raw tool-call JSON, which reads as noise and buries the one
-                    line that is actually useful. */}
-                <div className="text-xs text-fg truncate">{hit.taskTitle ?? 'Untitled conversation'}</div>
-              </button>
+              <HoverTip label="Open this conversation">
+                <button
+                  type="button"
+                  onClick={() => useSessionStore.getState().setConversationSessionId(hit.sessionId)}
+                  className="w-full text-left rounded px-2 py-1.5 hover:bg-surface-hover cursor-pointer"
+                  data-testid="task-prior-work-item"
+                >
+                  {/* Title only, deliberately. In the Knowledge Graph's search
+                      results a snippet earns its place by showing WHY a
+                      conversation matched the query. Here there is no query, so
+                      the snippet is just an arbitrary chunk - in practice often
+                      raw tool-call JSON, which reads as noise and buries the one
+                      line that is actually useful. */}
+                  <div className="text-xs text-fg truncate">{hit.taskTitle ?? 'Untitled conversation'}</div>
+                </button>
+              </HoverTip>
             </li>
           ))}
         </ul>

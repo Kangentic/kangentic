@@ -14,26 +14,29 @@
  */
 
 import { Info } from 'lucide-react';
+import { HoverTip } from '../HoverTip';
 
 /**
- * A hint behind an icon rather than a paragraph in the layout.
+ * A hint behind an icon rather than a paragraph in the layout. Prose in the
+ * layout was the alternative, and it reflowed the panel every time a selection
+ * changed.
  *
- * Native `title` deliberately: it needs no portal, cannot be clipped by the
- * panel, and costs nothing. `popover-escapes-clipping` governs choice-presenting
- * popovers, not hints, so a custom floating layer would be new machinery for no
- * gain here. Prose in the layout was the alternative and it reflowed the panel
- * every time a selection changed.
+ * The same info button as the settings cards' `InfoTip`: a real button, so a
+ * keyboard user opens the hint by focus, named for what it is about, with the
+ * hint as its tip and its description, read without hovering. HoverTip portals
+ * the tip to the body, so the panel cannot clip it.
  */
-export function InfoHint({ text }: { text: string }) {
+export function InfoHint({ about, text }: { about: string; text: string }) {
   return (
-    <span
-      className="inline-flex cursor-help text-fg-faint hover:text-fg-muted transition-colors"
-      title={text}
-      aria-label={text}
-      role="img"
-    >
-      <Info size={11} aria-hidden />
-    </span>
+    <HoverTip label={text}>
+      <button
+        type="button"
+        aria-label={`About ${about}`}
+        className="inline-flex flex-shrink-0 rounded text-fg-faint hover:text-fg-muted transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent cursor-help"
+      >
+        <Info size={11} aria-hidden="true" />
+      </button>
+    </HoverTip>
   );
 }
 
@@ -55,7 +58,7 @@ export function PanelRow({ label, value, tone = 'neutral', hint, numeric = false
     <div className="flex items-baseline justify-between gap-3 py-1">
       <dt className="flex flex-shrink-0 items-center gap-1.5 text-[11px] text-fg-muted">
         <span>{label}</span>
-        {hint ? <InfoHint text={hint} /> : null}
+        {hint ? <InfoHint about={label} text={hint} /> : null}
       </dt>
       <dd className={`min-w-0 truncate text-right text-xs font-medium ${numeric ? 'tabular-nums' : ''} ${toneClass}`}>
         {value}

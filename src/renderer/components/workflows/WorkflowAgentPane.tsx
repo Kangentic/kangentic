@@ -14,6 +14,8 @@ import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
 import { ActivityMark } from '../ActivityMark';
+import { HoverTip } from '../HoverTip';
+import { tipLabel } from '../../utils/hover-tip';
 import { PauseButtonIcon } from '../dialogs/task-detail/TaskDetailHeader';
 import { INSPECTOR_WIDTH } from './WorkflowInspector';
 import { startPanelDrag } from '../../hooks/panel-drag';
@@ -242,6 +244,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   }, [toggling, live, pauseAgent, resumeAgent]);
 
   if (collapsed) {
+    const stripMarkLabel = working ? 'Workflow agent is working' : 'Workflow agent is waiting for you';
     return (
       <div
         className="flex flex-shrink-0 flex-col items-center gap-2 border-r border-edge bg-surface py-2"
@@ -249,24 +252,27 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         data-testid="workflow-agent-pane"
         data-collapsed="true"
       >
-        <button
-          type="button"
-          onClick={() => setCollapsed(false)}
-          className="rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
-          title="Show the workflow agent"
-          aria-label="Show the workflow agent"
-          data-testid="workflow-agent-pane-expand"
-        >
-          <PanelLeftOpen size={16} />
-        </button>
+        <HoverTip label="Show the workflow agent">
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
+            aria-label="Show the workflow agent"
+            data-testid="workflow-agent-pane-expand"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        </HoverTip>
         {running && (
-          <span title={working ? 'Workflow agent is working' : 'Workflow agent is waiting for you'}>
-            <ActivityMark
-              mark={working ? 'agent-working' : 'agent-idle'}
-              size={16}
-              className={working ? 'text-active' : 'text-attention'}
-            />
-          </span>
+          <HoverTip label={stripMarkLabel}>
+            <span role="img" aria-label={stripMarkLabel}>
+              <ActivityMark
+                mark={working ? 'agent-working' : 'agent-idle'}
+                size={16}
+                className={working ? 'text-active' : 'text-attention'}
+              />
+            </span>
+          </HoverTip>
         )}
       </div>
     );
@@ -274,6 +280,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
 
   // A Resume while the setting is not complete is one main would refuse.
   const canToggle = unavailable === null && session !== null && !showSetup;
+  const toggleLabel = toggling ? 'Working' : live ? 'Pause session' : 'Resume session';
 
   const pane = (
     <div
@@ -287,50 +294,53 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
     >
       <div className="flex h-10 flex-shrink-0 items-center gap-2 border-b border-edge bg-surface-raised px-3" data-testid="workflow-agent-pane-header">
         {canToggle && (
-          <button
-            type="button"
-            onClick={toggle}
-            disabled={toggling}
-            data-testid="workflow-agent-toggle"
-            className={`inline-flex flex-shrink-0 items-center justify-center rounded-full p-1 transition-colors disabled:cursor-not-allowed ${
-              toggling ? 'text-fg-muted' : live ? 'text-active hover:bg-surface-hover' : 'text-fg-faint hover:bg-surface-hover hover:text-fg-tertiary'
-            }`}
-            title={toggling ? 'Working...' : live ? 'Pause session' : 'Resume session'}
-            aria-label={toggling ? 'Working' : live ? 'Pause session' : 'Resume session'}
-          >
-            <PauseButtonIcon
-              toggling={toggling}
-              isQueued={queued}
-              isThinking={working}
-              isIdle={waiting}
-              isSessionActive={live}
-            />
-          </button>
+          <HoverTip label={toggleLabel}>
+            <button
+              type="button"
+              onClick={toggle}
+              disabled={toggling}
+              data-testid="workflow-agent-toggle"
+              className={`inline-flex flex-shrink-0 items-center justify-center rounded-full p-1 transition-colors disabled:cursor-not-allowed ${
+                toggling ? 'text-fg-muted' : live ? 'text-active hover:bg-surface-hover' : 'text-fg-faint hover:bg-surface-hover hover:text-fg-tertiary'
+              }`}
+              aria-label={toggleLabel}
+            >
+              <PauseButtonIcon
+                toggling={toggling}
+                isQueued={queued}
+                isThinking={working}
+                isIdle={waiting}
+                isSessionActive={live}
+              />
+            </button>
+          </HoverTip>
         )}
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">Workflow agent</span>
         {/* Task detail's own Conversation control: the transcript viewer, on the
             conversation the workflow keeps, so it opens with the agent paused too. */}
-        <button
-          type="button"
-          onClick={() => { if (conversationId) useSessionStore.getState().setConversationSessionId(conversationId); }}
-          disabled={!conversationId}
-          className="flex-shrink-0 rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-          title={conversationId ? 'View conversation' : 'No conversation yet'}
-          aria-label="View conversation"
-          data-testid="workflow-agent-conversation"
-        >
-          <MessageSquare size={16} />
-        </button>
-        <button
-          type="button"
-          onClick={() => setCollapsed(true)}
-          className="flex-shrink-0 rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
-          title="Collapse agent"
-          aria-label="Collapse agent"
-          data-testid="workflow-agent-pane-collapse"
-        >
-          <PanelLeftClose size={16} />
-        </button>
+        <HoverTip label={tipLabel({ disabled: !conversationId, disabledReason: 'No conversation yet', tip: 'View conversation' })}>
+          <button
+            type="button"
+            onClick={() => { if (conversationId) useSessionStore.getState().setConversationSessionId(conversationId); }}
+            disabled={!conversationId}
+            className="flex-shrink-0 rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            aria-label="View conversation"
+            data-testid="workflow-agent-conversation"
+          >
+            <MessageSquare size={16} />
+          </button>
+        </HoverTip>
+        <HoverTip label="Collapse agent">
+          <button
+            type="button"
+            onClick={() => setCollapsed(true)}
+            className="flex-shrink-0 rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
+            aria-label="Collapse agent"
+            data-testid="workflow-agent-pane-collapse"
+          >
+            <PanelLeftClose size={16} />
+          </button>
+        </HoverTip>
       </div>
 
       {/* The agent's conversation could not be resumed, so main started a new
@@ -345,16 +355,17 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           <span className="min-w-0 flex-1 text-[13px] text-fg-secondary">
             The earlier conversation could not be resumed, so the agent started a new one.
           </span>
-          <button
-            type="button"
-            onClick={dismissStartedOver}
-            className="flex-shrink-0 rounded p-0.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg-secondary"
-            title="Dismiss"
-            aria-label="Dismiss"
-            data-testid="workflow-agent-started-over-dismiss"
-          >
-            <X size={14} />
-          </button>
+          <HoverTip label="Dismiss">
+            <button
+              type="button"
+              onClick={dismissStartedOver}
+              className="flex-shrink-0 rounded p-0.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg-secondary"
+              aria-label="Dismiss"
+              data-testid="workflow-agent-started-over-dismiss"
+            >
+              <X size={14} />
+            </button>
+          </HoverTip>
         </div>
       )}
 
@@ -394,17 +405,18 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         )}
       </div>
       {/* The edge: drag to widen or narrow the pane; the width is kept. */}
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize the workflow agent"
-        aria-valuenow={width}
-        title="Drag to resize"
-        onMouseDown={startResize}
-        data-no-dismiss
-        data-testid="workflow-agent-pane-resize"
-        className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize select-none transition-colors hover:bg-accent/30"
-      />
+      <HoverTip label="Drag to resize">
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the workflow agent"
+          aria-valuenow={width}
+          onMouseDown={startResize}
+          data-no-dismiss
+          data-testid="workflow-agent-pane-resize"
+          className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize select-none transition-colors hover:bg-accent/30"
+        />
+      </HoverTip>
     </div>
   );
 

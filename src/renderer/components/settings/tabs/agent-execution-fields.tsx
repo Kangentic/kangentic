@@ -5,6 +5,7 @@ import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { CardRow, CardTile, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { OptionalTag } from '../../OptionalTag';
+import { HoverTip } from '../../HoverTip';
 
 const DEFAULT_SERVER: AgentExecutionServer = { url: null, auth: { kind: 'none' } };
 const DEFAULT_USAGE: AgentProjectExecution = { mode: 'local', workingDirectory: null };
@@ -83,9 +84,11 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                     <Check size={13} />{probeResult.version ? `v${probeResult.version}` : 'Reachable'}
                   </span>
                 ) : (
-                  <span className="text-xs flex items-center gap-1 text-attention" title={probeResult.reason}>
-                    <CircleAlert size={13} />Unreachable
-                  </span>
+                  <HoverTip label={probeResult.reason}>
+                    <span className="text-xs flex items-center gap-1 text-attention">
+                      <CircleAlert size={13} />Unreachable
+                    </span>
+                  </HoverTip>
                 )
               ) : undefined
             }

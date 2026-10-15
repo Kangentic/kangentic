@@ -1,5 +1,6 @@
 import { Bot, CircleArrowUp, Columns3Cog, MessageSquare } from 'lucide-react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../DataTable';
+import { HoverTip } from '../../HoverTip';
 import { Pill } from '../../Pill';
 import { ToggleSwitch } from '../../settings/shared';
 import { ICON_REGISTRY, ROLE_DEFAULTS } from '../../../utils/swimlane-icons';
@@ -16,7 +17,7 @@ import type { SwimlaneRole } from '../../../../shared/types';
  *
  *   - changed on this column: the value in a low-contrast chip
  *   - still what the column came with: the same word, muted, no chip
- *   - does not apply here: a muted dash with the reason in its `title`
+ *   - does not apply here: a muted dash with the reason in its tip
  *
  * The word is always the actual value, never a stand-in. Agent, Model, Effort
  * and Permissions read "Default" because that is literally the option their
@@ -39,10 +40,10 @@ export interface OverviewValue {
   changed: boolean;
   /** False when the setting does not exist for this column at all. */
   applicable: boolean;
-  /** Why it does not apply. Required when `applicable` is false; becomes the cell's `title`. */
+  /** Why it does not apply. Required when `applicable` is false; becomes the cell's tip. */
   reason?: string;
   /** Hover text when it should say more than `label` (a floating model alias names the version it runs). */
-  title?: string;
+  tip?: string;
   /** A newer version of the value is known, e.g. "Sonnet 5.5" for a column pinned to Sonnet 5. */
   newer?: string;
 }
@@ -86,7 +87,7 @@ interface ColumnsOverviewProps {
  * by column. `data-state` is what a spec asserts against.
  *
  * A value that does not fit its column ends in an ellipsis and keeps its whole
- * text in `title`. The cell is `overflow-hidden`, so without the truncate a long
+ * text in its tip. The cell is `overflow-hidden`, so without the truncate a long
  * value (a permission label, an agent name) was cut mid-glyph with nothing to
  * say anything was missing.
  */
@@ -95,32 +96,36 @@ function OverviewCell({ value }: { value: OverviewValue }) {
     // A dash, not an empty cell: an empty cell is indistinguishable from a value
     // that failed to load, and there would be nothing to hover for the reason.
     return (
-      <span data-state="not-applicable" title={value.reason} className="text-fg-disabled">
-        -
-      </span>
+      <HoverTip label={value.reason ?? ''}>
+        <span data-state="not-applicable" className="text-fg-disabled">
+          -
+        </span>
+      </HoverTip>
     );
   }
   if (value.changed) {
     return (
-      <span
-        data-state="changed"
-        title={value.title ?? value.label}
-        className="inline-flex h-[22px] max-w-full min-w-0 items-center whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg"
-      >
-        <span className="truncate">{value.label}</span>
-        <NewerMark newer={value.newer} />
-      </span>
+      <HoverTip label={value.tip ?? value.label}>
+        <span
+          data-state="changed"
+          className="inline-flex h-[22px] max-w-full min-w-0 items-center whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg"
+        >
+          <span className="truncate">{value.label}</span>
+          <NewerMark newer={value.newer} />
+        </span>
+      </HoverTip>
     );
   }
   return (
-    <span
-      data-state="unchanged"
-      title={value.title ?? value.label}
-      className="inline-block max-w-full truncate align-middle text-fg-faint"
-    >
-      {value.label}
-      <NewerMark newer={value.newer} />
-    </span>
+    <HoverTip label={value.tip ?? value.label}>
+      <span
+        data-state="unchanged"
+        className="inline-block max-w-full truncate align-middle text-fg-faint"
+      >
+        {value.label}
+        <NewerMark newer={value.newer} />
+      </span>
+    </HoverTip>
   );
 }
 
@@ -132,15 +137,16 @@ function OverviewCell({ value }: { value: OverviewValue }) {
 function NewerMark({ newer }: { newer?: string }) {
   if (!newer) return null;
   return (
-    <span
-      data-overview-newer
-      role="img"
-      title={`${newer} available`}
-      aria-label={`${newer} available`}
-      className="ml-1 inline-flex flex-shrink-0 align-middle text-fg-faint"
-    >
-      <CircleArrowUp size={12} />
-    </span>
+    <HoverTip label={`${newer} available`}>
+      <span
+        data-overview-newer
+        role="img"
+        aria-label={`${newer} available`}
+        className="ml-1 inline-flex flex-shrink-0 align-middle text-fg-faint"
+      >
+        <CircleArrowUp size={12} />
+      </span>
+    </HoverTip>
   );
 }
 
@@ -148,9 +154,11 @@ function NewerMark({ newer }: { newer?: string }) {
 function OverviewToggle({ flag }: { flag: OverviewFlag }) {
   if (!flag.applicable) {
     return (
-      <span data-state="not-applicable" title={flag.reason} className="text-fg-disabled">
-        -
-      </span>
+      <HoverTip label={flag.reason ?? ''}>
+        <span data-state="not-applicable" className="text-fg-disabled">
+          -
+        </span>
+      </HoverTip>
     );
   }
   return (

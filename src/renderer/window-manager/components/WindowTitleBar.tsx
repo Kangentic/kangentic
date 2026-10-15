@@ -7,6 +7,7 @@
 
 import { X } from 'lucide-react';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
+import { HoverTip } from '../../components/HoverTip';
 import { useLayerStore } from '../context';
 
 interface WindowTitleBarProps {
@@ -48,15 +49,16 @@ export function WindowTitleBar({
           onToggle={() => toggleMaximizeWindow(windowId)}
           testId={`window-maximize-${windowId}`}
         />
-        <button
-          type="button"
-          onClick={onRequestClose}
-          aria-label="Close window"
-          title="Close"
-          className={CONTROL_CLASS}
-        >
-          <X size={16} />
-        </button>
+        <HoverTip label="Close window">
+          <button
+            type="button"
+            onClick={onRequestClose}
+            aria-label="Close window"
+            className={CONTROL_CLASS}
+          >
+            <X size={16} />
+          </button>
+        </HoverTip>
       </div>
     </div>
   );

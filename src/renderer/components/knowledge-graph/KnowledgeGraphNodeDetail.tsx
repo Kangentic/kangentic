@@ -17,13 +17,15 @@
  * puts more than 98% of top-10 pairs above 0.8 cosine, so raw cosine compresses
  * into a band a percentage cannot resolve, and six rows of "99%" told the user
  * nothing while looking like precision. The ORDER carries the real signal, so the
- * list is ordered and the number is gone (kept on the row's title for anyone who
+ * list is ordered and the number is gone (kept in the row's tip for anyone who
  * wants it).
  */
 
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ChevronRight, Compass, MessageSquareText } from 'lucide-react';
 import { PanelRow } from './PanelRow';
+import { HoverTip } from '../HoverTip';
+import { tipLabel } from '../../utils/hover-tip';
 import { humanizeModelId } from '../../../shared/model-id';
 import { useToastStore } from '../../stores/toast-store';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
@@ -197,33 +199,43 @@ export function KnowledgeGraphNodeDetail({
         </dl>
 
         <div className="mt-3 space-y-1.5">
-          <button
-            type="button"
-            onClick={() => openConversationForNode(node, nodeProjectId)}
-            disabled={!node.sessionId}
-            className={ACTION_CLASS}
-            data-testid="knowledge-graph-open-conversation"
-            title={node.sessionId ? 'Open the full transcript' : 'No session record for this conversation'}
+          <HoverTip
+            label={tipLabel({
+              disabled: !node.sessionId,
+              disabledReason: 'No session record for this conversation',
+              tip: 'Open the full transcript',
+            })}
           >
-            <MessageSquareText size={13} />
-            Open conversation
-          </button>
-          {onExploreFrom ? (
             <button
               type="button"
-              onClick={onExploreFrom}
-              disabled={neighbors.length === 0}
+              onClick={() => openConversationForNode(node, nodeProjectId)}
+              disabled={!node.sessionId}
               className={ACTION_CLASS}
-              data-testid="knowledge-graph-explore-from"
-              title={
-                neighbors.length > 0
-                  ? 'Narrow the map to this conversation and everything it links to'
-                  : 'This conversation links to nothing else in the index'
-              }
+              data-testid="knowledge-graph-open-conversation"
             >
-              <Compass size={13} />
-              Explore from here
+              <MessageSquareText size={13} />
+              Open conversation
             </button>
+          </HoverTip>
+          {onExploreFrom ? (
+            <HoverTip
+              label={tipLabel({
+                disabled: neighbors.length === 0,
+                disabledReason: 'This conversation links to nothing else in the index',
+                tip: 'Narrow the map to this conversation and everything it links to',
+              })}
+            >
+              <button
+                type="button"
+                onClick={onExploreFrom}
+                disabled={neighbors.length === 0}
+                className={ACTION_CLASS}
+                data-testid="knowledge-graph-explore-from"
+              >
+                <Compass size={13} />
+                Explore from here
+              </button>
+            </HoverTip>
           ) : null}
         </div>
       </div>
@@ -248,38 +260,40 @@ export function KnowledgeGraphNodeDetail({
                       main navigation and they read as plain text until you happen
                       to hover them (`ui-conventions`). Border, chevron and a
                       pointer cursor say "this goes somewhere" at rest. */}
-                  <button
-                    type="button"
-                    onClick={() => onSelectNeighbor(neighbor.index)}
-                    className="group flex w-full items-center gap-2 rounded-md border border-edge bg-surface-control px-2.5 py-2 text-left hover:border-fg-faint hover:bg-surface-hover cursor-pointer transition-colors"
-                    data-testid="knowledge-graph-neighbor"
-                    // The raw value, for anyone who wants it, without putting a
-                    // number on screen that reads the same on every row.
-                    title={`Cosine similarity ${neighbor.similarity.toFixed(4)}`}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs text-fg">
-                        {neighbor.node.title ?? 'Untitled conversation'}
+                  {/* The tip holds the raw value, for anyone who wants it,
+                      without putting a number on screen that reads the same
+                      on every row. */}
+                  <HoverTip label={`Cosine similarity ${neighbor.similarity.toFixed(4)}`}>
+                    <button
+                      type="button"
+                      onClick={() => onSelectNeighbor(neighbor.index)}
+                      className="group flex w-full items-center gap-2 rounded-md border border-edge bg-surface-control px-2.5 py-2 text-left hover:border-fg-faint hover:bg-surface-hover cursor-pointer transition-colors"
+                      data-testid="knowledge-graph-neighbor"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs text-fg">
+                          {neighbor.node.title ?? 'Untitled conversation'}
+                        </span>
+                        <span className="mt-0.5 flex items-center gap-2 text-[11px] text-fg-muted">
+                          {/* The date disambiguates rows that share a title, which
+                              happens whenever one TASK accumulated several
+                              conversations - they are different sessions, and
+                              without this they read as duplicates or as the row
+                              pointing at itself. */}
+                          {neighbor.node.lastActivityMs ? (
+                            <span className="tabular-nums">
+                              {new Date(neighbor.node.lastActivityMs).toLocaleDateString()}
+                            </span>
+                          ) : null}
+                        </span>
                       </span>
-                      <span className="mt-0.5 flex items-center gap-2 text-[11px] text-fg-muted">
-                        {/* The date disambiguates rows that share a title, which
-                            happens whenever one TASK accumulated several
-                            conversations - they are different sessions, and
-                            without this they read as duplicates or as the row
-                            pointing at itself. */}
-                        {neighbor.node.lastActivityMs ? (
-                          <span className="tabular-nums">
-                            {new Date(neighbor.node.lastActivityMs).toLocaleDateString()}
-                          </span>
-                        ) : null}
-                      </span>
-                    </span>
-                    <ChevronRight
-                      size={13}
-                      aria-hidden
-                      className="flex-shrink-0 text-fg-faint group-hover:text-fg-muted"
-                    />
-                  </button>
+                      <ChevronRight
+                        size={13}
+                        aria-hidden
+                        className="flex-shrink-0 text-fg-faint group-hover:text-fg-muted"
+                      />
+                    </button>
+                  </HoverTip>
                 </li>
               );
             })}

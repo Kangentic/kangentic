@@ -1,5 +1,5 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
-import { useFormattedCombo } from '../../hooks/useKeybinding';
+import { HoverTip } from '../HoverTip';
 
 /**
  * Shared layout + toggle button for maximizable surfaces (#184).
@@ -60,17 +60,18 @@ interface MaximizeToggleButtonProps {
 
 /** Header maximize/restore button shared by the dialogs above. */
 export function MaximizeToggleButton({ isMaximized, onToggle, testId = 'dialog-maximize' }: MaximizeToggleButtonProps) {
-  const maximizeCombo = useFormattedCombo('panel.maximize');
+  const label = isMaximized ? 'Restore dialog' : 'Maximize dialog';
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      data-testid={testId}
-      aria-label={isMaximized ? 'Restore dialog' : 'Maximize dialog'}
-      title={`${isMaximized ? 'Restore' : 'Maximize'} (${maximizeCombo})`}
-      className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-    >
-      {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-    </button>
+    <HoverTip label={label} keys="panel.maximize">
+      <button
+        type="button"
+        onClick={onToggle}
+        data-testid={testId}
+        aria-label={label}
+        className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+      >
+        {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+      </button>
+    </HoverTip>
   );
 }

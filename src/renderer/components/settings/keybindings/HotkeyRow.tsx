@@ -1,6 +1,8 @@
 import { AlertTriangle, Lock, RotateCcw } from 'lucide-react';
 import type { KeybindingDefinition } from '../../../../shared/keybindings';
 import { Pill } from '../../Pill';
+import { HoverTip } from '../../HoverTip';
+import { tipLabel } from '../../../utils/hover-tip';
 import { CardTile, InfoTip } from '../settings-card';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { KeyCombo } from './KeyCombo';
@@ -75,30 +77,30 @@ export function HotkeyRow({
       </div>
 
       {readOnly ? (
-        <div
-          className="flex items-center gap-2 flex-shrink-0"
-          title="This hotkey is fixed and cannot be rebound"
-        >
-          <KeyCombo combo={effective} />
-          {/* Spacer matching the Rebind button so the lock aligns with the reset column. */}
-          <span className="w-16" aria-hidden="true" />
-          <span className="w-7 h-7 flex items-center justify-center">
-            <Lock size={13} className="text-fg-disabled" />
-          </span>
-        </div>
+        <HoverTip label="This hotkey is fixed and cannot be rebound">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <KeyCombo combo={effective} />
+            {/* Spacer matching the Rebind button so the lock aligns with the reset column. */}
+            <span className="w-16" aria-hidden="true" />
+            <span className="w-7 h-7 flex items-center justify-center">
+              <Lock size={13} className="text-fg-disabled" />
+            </span>
+          </div>
+        </HoverTip>
       ) : (
         <div className="flex items-center gap-2 flex-shrink-0">
           <KeyCaptureInput combo={effective} onCommit={onCommit} />
-          <button
-            onClick={onReset}
-            disabled={!isCustom}
-            aria-label="Reset to default"
-            title={isCustom ? 'Reset to default' : 'Already default'}
-            data-testid={`hotkey-reset-${definition.id}`}
-            className="w-7 h-7 flex items-center justify-center rounded text-fg-faint hover:text-fg-secondary hover:bg-surface-hover disabled:opacity-30 disabled:cursor-default transition-colors"
-          >
-            <RotateCcw size={14} />
-          </button>
+          <HoverTip label={tipLabel({ disabled: !isCustom, disabledReason: 'Already default', tip: 'Reset to default' })}>
+            <button
+              onClick={onReset}
+              disabled={!isCustom}
+              aria-label="Reset to default"
+              data-testid={`hotkey-reset-${definition.id}`}
+              className="w-7 h-7 flex items-center justify-center rounded text-fg-faint hover:text-fg-secondary hover:bg-surface-hover disabled:opacity-30 disabled:cursor-default transition-colors"
+            >
+              <RotateCcw size={14} />
+            </button>
+          </HoverTip>
         </div>
       )}
     </CardTile>

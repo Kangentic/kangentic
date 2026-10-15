@@ -9,6 +9,7 @@ import { aliasRowView, modelContextBadgeLabel, modelRowLabel } from '../../utils
 import { resolveEffortDisplay, resolveModelDisplay } from '../../utils/pill-provenance';
 import { ContextBarPopover } from './ContextBarPopover';
 import { pillForProvenance } from './context-bar-pill';
+import { HoverTip } from '../HoverTip';
 
 /**
  * Where a model/effort selection is applied:
@@ -259,24 +260,28 @@ export function ModelEffortPicker({
     <>
       {showModelTrigger ? (
         <span className="relative inline-flex">
-          <button
-            ref={modelTriggerRef}
-            type="button"
-            onClick={() => {
-              const opening = openPopover !== 'model';
-              setOpenPopover(opening ? 'model' : null);
-              // Opening: kick off an on-demand rescan so a newly shipped model
-              // appears without a restart (non-blocking, throttled in the store).
-              if (opening) useConfigStore.getState().rescanModels();
-            }}
-            className={`${pillForProvenance(modelConfirmed)} ${triggerBase} ${interactiveBase}`}
-            data-testid="context-bar-model-trigger"
-            data-model-source={modelSource}
-            title={modelConfirmed ? 'Click to change model' : `${modelProvisionalTitle} Click to change.`}
+          <HoverTip
+            label={modelConfirmed ? 'Click to change model' : `${modelProvisionalTitle} Click to change.`}
+            enabled={openPopover !== 'model'}
           >
-            {modelLabel}
-            <ChevronDown size={11} className="text-fg-faint flex-shrink-0" />
-          </button>
+            <button
+              ref={modelTriggerRef}
+              type="button"
+              onClick={() => {
+                const opening = openPopover !== 'model';
+                setOpenPopover(opening ? 'model' : null);
+                // Opening: kick off an on-demand rescan so a newly shipped model
+                // appears without a restart (non-blocking, throttled in the store).
+                if (opening) useConfigStore.getState().rescanModels();
+              }}
+              className={`${pillForProvenance(modelConfirmed)} ${triggerBase} ${interactiveBase}`}
+              data-testid="context-bar-model-trigger"
+              data-model-source={modelSource}
+            >
+              {modelLabel}
+              <ChevronDown size={11} className="text-fg-faint flex-shrink-0" />
+            </button>
+          </HoverTip>
           {openPopover === 'model' && (
             <ContextBarPopover
               triggerRef={modelTriggerRef}
@@ -298,32 +303,39 @@ export function ModelEffortPicker({
         </span>
       ) : (
         liveModelName && (
-          <span
-            className={`${pillForProvenance(modelConfirmed)} text-fg-muted`}
-            data-testid="context-bar-model-static"
-            data-model-source={modelSource}
-            title={modelConfirmed
+          <HoverTip
+            label={modelConfirmed
               ? 'This agent does not support changing the model from Kangentic'
               : `${modelProvisionalTitle} This agent does not support changing it from Kangentic.`}
           >
-            {liveModelName}
-          </span>
+            <span
+              className={`${pillForProvenance(modelConfirmed)} text-fg-muted`}
+              data-testid="context-bar-model-static"
+              data-model-source={modelSource}
+            >
+              {liveModelName}
+            </span>
+          </HoverTip>
         )
       )}
       {showEffortTrigger ? (
         <span className="relative inline-flex">
-          <button
-            ref={effortTriggerRef}
-            type="button"
-            onClick={() => setOpenPopover((previous) => (previous === 'effort' ? null : 'effort'))}
-            className={`${pillForProvenance(effortConfirmed)} ${triggerBase} ${interactiveBase} text-fg-faint`}
-            data-testid="context-bar-effort-trigger"
-            data-effort-source={effortSource}
-            title={effortConfirmed ? 'Click to change effort' : `${effortProvisionalTitle} Click to change.`}
+          <HoverTip
+            label={effortConfirmed ? 'Click to change effort' : `${effortProvisionalTitle} Click to change.`}
+            enabled={openPopover !== 'effort'}
           >
-            {effortLabel}
-            <ChevronDown size={11} className="flex-shrink-0" />
-          </button>
+            <button
+              ref={effortTriggerRef}
+              type="button"
+              onClick={() => setOpenPopover((previous) => (previous === 'effort' ? null : 'effort'))}
+              className={`${pillForProvenance(effortConfirmed)} ${triggerBase} ${interactiveBase} text-fg-faint`}
+              data-testid="context-bar-effort-trigger"
+              data-effort-source={effortSource}
+            >
+              {effortLabel}
+              <ChevronDown size={11} className="flex-shrink-0" />
+            </button>
+          </HoverTip>
           {openPopover === 'effort' && (
             <ContextBarPopover
               triggerRef={effortTriggerRef}
@@ -339,16 +351,19 @@ export function ModelEffortPicker({
         </span>
       ) : (
         !agentReportsNoEffort && effectiveEffort && (
-          <span
-            className={`${pillForProvenance(effortConfirmed)} text-fg-faint`}
-            data-testid="context-bar-effort-static"
-            data-effort-source={effortSource}
-            title={effortConfirmed
+          <HoverTip
+            label={effortConfirmed
               ? 'This agent does not support changing the effort level from Kangentic'
               : `${effortProvisionalTitle} This agent does not support changing it from Kangentic.`}
           >
-            {effectiveEffort}
-          </span>
+            <span
+              className={`${pillForProvenance(effortConfirmed)} text-fg-faint`}
+              data-testid="context-bar-effort-static"
+              data-effort-source={effortSource}
+            >
+              {effectiveEffort}
+            </span>
+          </HoverTip>
         )
       )}
     </>

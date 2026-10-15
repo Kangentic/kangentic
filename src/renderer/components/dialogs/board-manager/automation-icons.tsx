@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { LucideProps } from 'lucide-react';
 import type { AutomationRowMark, AutomationRowMarkKind } from '../../../../shared/automation-describe';
+import { HoverTip } from '../../HoverTip';
 
 /**
  * Resolve an automation type's kebab-case icon NAME to a lucide component.
@@ -75,30 +76,31 @@ const MARK_ICONS: Record<AutomationRowMarkKind, ReactElement> = {
 
 /**
  * The marks after a row's name (`describeAutomationMarks`): every option that
- * is on, in the editor's card order, one tone for all of them, each tooltip
- * naming its card and value. Shared by the column panel's rows and the Add
- * automation picker's copy rows, so a row reads the same in both. The marks
- * never shrink, so a long name truncates before they do.
+ * is on, in the editor's card order, one tone for all of them, each tip naming
+ * its card and value. Shared by the column panel's rows and the Add automation
+ * picker's copy rows, so a row reads the same in both. The marks never shrink,
+ * so a long name truncates before they do. The tip keeps a multi-line value's
+ * line breaks; the name it repeats is the mark's `aria-label`.
  */
 export function AutomationMarks({ marks }: { marks: readonly AutomationRowMark[] }): ReactElement {
   return (
     <>
       {marks.map((mark) => (
-        <span
-          key={mark.kind}
-          data-testid={`column-automation-${mark.kind}-mark`}
-          role="img"
-          aria-label={mark.label}
-          title={mark.label}
-          className="flex shrink-0 items-center gap-0.5 text-fg-muted"
-        >
-          {MARK_ICONS[mark.kind]}
-          {mark.count !== undefined && (
-            <span data-testid="column-automation-frequency-count" className="text-xs tabular-nums">
-              {mark.count}
-            </span>
-          )}
-        </span>
+        <HoverTip key={mark.kind} label={mark.label}>
+          <span
+            data-testid={`column-automation-${mark.kind}-mark`}
+            role="img"
+            aria-label={mark.label}
+            className="flex shrink-0 items-center gap-0.5 text-fg-muted"
+          >
+            {MARK_ICONS[mark.kind]}
+            {mark.count !== undefined && (
+              <span data-testid="column-automation-frequency-count" className="text-xs tabular-nums">
+                {mark.count}
+              </span>
+            )}
+          </span>
+        </HoverTip>
       ))}
     </>
   );

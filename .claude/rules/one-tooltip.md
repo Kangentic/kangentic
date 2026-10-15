@@ -16,9 +16,10 @@ opens on hover and on keyboard focus, draws live key chips, and gives its text t
   `<HoverTip label="..."><button ... /></HoverTip>`. HoverTip adds no element around it. The child
   must pass pointer, focus and click handlers and `aria-description` through to a DOM node. A plain
   element does; a component must forward them.
-- **A native `title` survives in one case:** the full value of text the layout cuts short (a
-  truncated path or branch name), where the value IS the text. Mark it
-  `// native-title-ok: full value of <the thing>`. The reason has to start with "full value of".
+- **There is no native `title` anywhere in the renderer.** That includes the full value of text the
+  layout cuts short (a truncated path, branch name or model id): it is a HoverTip with the whole
+  value, so every tooltip in the app has one look. A native tip is square and OS-styled beside the
+  rounded HoverTip, and a user sees the two side by side. There is no opt-out marker.
 - **A tip never names its trigger.** An icon-only control carries its own `aria-label`, and the tip
   only describes it. A label that repeats the name is not read twice.
 - **An optional tip passes straight through.** An empty label holds the tip shut, so
@@ -32,10 +33,10 @@ opens on hover and on keyboard focus, draws live key chips, and gives its text t
 
 ## Enforcement (self-maintaining)
 
-- **Test:** `tests/unit/native-title.test.ts` parses every renderer `.tsx` and fails on an unmarked
-  native `title` beyond a per-file BASELINE, and on a marker whose reason does not start with "full
-  value of". The BASELINE is exact, so a file whose count drops must lower its entry too.
-  `src/renderer/components/debug/` is exempt. Runs in CI via `npm run test:unit`.
+- **Test:** `tests/unit/native-title.test.ts` parses every renderer `.tsx` and fails on any native
+  `title` attribute, SVG `<title>`, or object spread carrying `title`, naming each site.
+  `src/renderer/components/debug/` (dev-only, built out of production) is the one exemption. Runs
+  in CI via `npm run test:unit`.
 - **Test:** `tests/ui/controls-have-names.spec.ts` strips every `title` before React renders and
   fails on a control with no accessible name, which is what a migrated control that leaned on its
   title becomes. `tests/ui/hover-tip.spec.ts` pins the timing, placement, Escape and description.

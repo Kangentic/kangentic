@@ -68,29 +68,36 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
       {stops.map((stop) => {
         const color = stop.color ?? UNCOLORED;
         if (stop.state === 'current' && currentStep === 'marker') return <StepMarker key={stop.swimlaneId} stop={stop} color={color} />;
+        // Each bar is named by its text, as the marker is, and the same text is its tip.
         if (stop.state === 'current') {
+          const currentLabel = `${stop.name}: now`;
           return (
-            <i
-              key={stop.swimlaneId}
-              title={`${stop.name}: now`}
-              data-step-state="current"
-              data-step-end={stop.end ?? undefined}
-              className="block w-[15px] h-[6px] rounded-[3px]"
-              style={{ background: color, boxShadow: `0 0 0 2px color-mix(in srgb, ${color} 18%, transparent)` }}
-            />
+            <HoverTip key={stop.swimlaneId} label={currentLabel}>
+              <i
+                role="img"
+                aria-label={currentLabel}
+                data-step-state="current"
+                data-step-end={stop.end ?? undefined}
+                className="block w-[15px] h-[6px] rounded-[3px]"
+                style={{ background: color, boxShadow: `0 0 0 2px color-mix(in srgb, ${color} 18%, transparent)` }}
+              />
+            </HoverTip>
           );
         }
+        const stopLabel = `${stop.name}: ${stop.state === 'done' ? 'done' : 'next'}`;
         return (
-          <i
-            key={stop.swimlaneId}
-            title={`${stop.name}: ${stop.state === 'done' ? 'done' : 'next'}`}
-            data-step-state={stop.state}
-            data-step-end={stop.end ?? undefined}
-            className="block w-[11px] h-[4px] rounded-[2px]"
-            style={stop.state === 'done'
-              ? { background: UNCOLORED, opacity: 0.55 }
-              : { background: `color-mix(in srgb, ${color} 45%, transparent)` }}
-          />
+          <HoverTip key={stop.swimlaneId} label={stopLabel}>
+            <i
+              role="img"
+              aria-label={stopLabel}
+              data-step-state={stop.state}
+              data-step-end={stop.end ?? undefined}
+              className="block w-[11px] h-[4px] rounded-[2px]"
+              style={stop.state === 'done'
+                ? { background: UNCOLORED, opacity: 0.55 }
+                : { background: `color-mix(in srgb, ${color} 45%, transparent)` }}
+            />
+          </HoverTip>
         );
       })}
     </span>
@@ -110,7 +117,9 @@ export function WorkflowStripLabel({ icon, label, labelTrailing, className, test
   return (
     <span className={`inline-flex items-center text-xs min-w-0 ${className}`} data-testid={testId}>
       <span className="inline-flex shrink-0">{icon}</span>
-      <span className="truncate" title={label}>{label}</span>
+      <HoverTip label={label}>
+        <span className="truncate">{label}</span>
+      </HoverTip>
       {labelTrailing && <span className="inline-flex shrink-0">{labelTrailing}</span>}
     </span>
   );

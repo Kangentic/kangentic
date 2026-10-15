@@ -37,6 +37,7 @@ import {
   spliceAtRange,
   splitTemplateSegments,
 } from './dialogs/board-manager/automation-drafts';
+import { HoverTip } from './HoverTip';
 
 /**
  * Every property that decides where a character lands, set once for both
@@ -417,9 +418,11 @@ export function TemplateTextField({
                 }`}
               >
                 <span className="font-mono text-xs text-fg">{info.chip}</span>
-                <span className="line-clamp-1 text-[11px] text-fg-faint" title={info.description}>
-                  {info.description}
-                </span>
+                <HoverTip label={info.description}>
+                  <span className="line-clamp-1 text-[11px] text-fg-faint">
+                    {info.description}
+                  </span>
+                </HoverTip>
               </button>
             ))}
           </div>

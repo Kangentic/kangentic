@@ -8,12 +8,12 @@ import { TerminalTab } from './TerminalTab';
 import { ActivityLog } from './ActivityLog';
 import { ContextBar } from './ContextBar';
 import { IsolatedBadge } from '../IsolatedBadge';
+import { HoverTip } from '../HoverTip';
 import { slugify } from '../../utils/slugify';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { derivePanelSessions } from '../../utils/panel-sessions';
 import { derivePanelSessionId } from '../../utils/focused-sessions';
 import { isEveryPanelSessionDetached } from '../../utils/terminal-force-collapse';
-import { useFormattedCombo } from '../../hooks/useKeybinding';
 import { ACTIVITY_TAB } from '../../../shared/types';
 import type { ActivityState } from '../../../shared/types';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
@@ -25,7 +25,6 @@ interface TerminalPanelProps {
 }
 
 export function TerminalPanel({ collapsed = false, showContent = true, onToggleCollapse }: TerminalPanelProps) {
-  const terminalPanelCombo = useFormattedCombo('view.toggleTerminalPanel');
   const allSessions = useSessionStore((s) => s.sessions);
   const currentProjectId = useProjectStore((s) => s.currentProject?.id ?? null);
   // Fallback agent for default-agent tasks (task.agent null) so the ContextBar
@@ -207,33 +206,37 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             // separate, context-isolated session for that column.
             const isIsolated = session.isolatedSwimlaneId != null;
             return (
-              <button
+              <HoverTip
                 key={session.id}
-                data-testid="terminal-session-tab"
-                data-session-id={session.id}
-                onClick={() => selectActiveSession(session.id)}
-                onDoubleClick={() => setDetailTaskId(session.taskId)}
-                title={`${label} (${shellDisplayName(session.shell)})${isIsolated ? ' - Isolated session' : ''}`}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-edge transition-colors whitespace-nowrap ${
-                  effectiveActiveId === session.id
-                    ? 'bg-surface-raised text-fg'
-                    : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-raised/50'
-                }`}
+                label={`${label} (${shellDisplayName(session.shell)})`}
+                detail={isIsolated ? 'Isolated session' : undefined}
               >
-                {session.status === 'running' && isActive(sessionActivity[session.id]) ? (
-                  <Loader2 size={8} className="text-active animate-spin" />
-                ) : session.status === 'running' && requiresUserInteraction(sessionActivity[session.id]) ? (
-                  <div className={`w-1.5 h-1.5 rounded-full bg-attention${
-                    effectiveActiveId !== session.id && !seenIdleSessions[session.id] ? ' animate-pulse' : ''
-                  }`} />
-                ) : (
-                  <div className={`w-1.5 h-1.5 rounded-full ${
-                    session.status === 'running' ? 'bg-active' : 'bg-fg-faint'
-                  }`} />
-                )}
-                {label}
-                {isIsolated && <IsolatedBadge data-testid="terminal-tab-isolated-badge" />}
-              </button>
+                <button
+                  data-testid="terminal-session-tab"
+                  data-session-id={session.id}
+                  onClick={() => selectActiveSession(session.id)}
+                  onDoubleClick={() => setDetailTaskId(session.taskId)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-edge transition-colors whitespace-nowrap ${
+                    effectiveActiveId === session.id
+                      ? 'bg-surface-raised text-fg'
+                      : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-raised/50'
+                  }`}
+                >
+                  {session.status === 'running' && isActive(sessionActivity[session.id]) ? (
+                    <Loader2 size={8} className="text-active animate-spin" />
+                  ) : session.status === 'running' && requiresUserInteraction(sessionActivity[session.id]) ? (
+                    <div className={`w-1.5 h-1.5 rounded-full bg-attention${
+                      effectiveActiveId !== session.id && !seenIdleSessions[session.id] ? ' animate-pulse' : ''
+                    }`} />
+                  ) : (
+                    <div className={`w-1.5 h-1.5 rounded-full ${
+                      session.status === 'running' ? 'bg-active' : 'bg-fg-faint'
+                    }`} />
+                  )}
+                  {label}
+                  {isIsolated && <IsolatedBadge data-testid="terminal-tab-isolated-badge" />}
+                </button>
+              </HoverTip>
             );
           })}
         </div>
@@ -245,20 +248,20 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             role="presentation"
             className="flex-1 self-stretch cursor-pointer hover:bg-surface-raised/30 transition-colors"
             onClick={onToggleCollapse}
-            title={`${collapsed ? 'Expand' : 'Collapse'} terminal panel (${terminalPanelCombo})`}
           />
         )}
 
         {/* Collapse / expand toggle */}
         {onToggleCollapse && (
-          <button
-            onClick={onToggleCollapse}
-            className="flex items-center justify-center px-2 py-1.5 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
-            aria-label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`}
-            title={`${collapsed ? 'Expand' : 'Collapse'} terminal panel (${terminalPanelCombo})`}
-          >
-            {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
+          <HoverTip label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`} keys="view.toggleTerminalPanel">
+            <button
+              onClick={onToggleCollapse}
+              className="flex items-center justify-center px-2 py-1.5 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
+              aria-label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`}
+            >
+              {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+          </HoverTip>
         )}
       </div>
 

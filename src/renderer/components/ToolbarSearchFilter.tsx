@@ -3,6 +3,7 @@ import { Search, Filter, X } from 'lucide-react';
 import { CountBadge } from './CountBadge';
 import { FilterPopover } from './FilterPopover';
 import { OverlayPopover } from './OverlayPopover';
+import { HoverTip } from './HoverTip';
 import type { ToolbarControlCollapse } from './board/toolbar-collapse';
 
 interface ToolbarSearchFilterProps {
@@ -108,29 +109,30 @@ export function ToolbarSearchFilter({
       </div>
 
       <div className="relative shrink-0">
-        <button
-          ref={filterButtonRef}
-          type="button"
-          onClick={() => setShowFilterPopover(!showFilterPopover)}
-          title="Filter"
-          aria-label="Filter"
-          className={`relative flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${filterCollapse ? filterCollapse.button : 'px-3'} ${
-            hasActiveFilters
-              ? 'text-accent-fg border-accent/50 bg-accent-bg/10'
-              : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
-          }`}
-          data-testid={filterTestId}
-        >
-          <Filter size={14} className="shrink-0" />
-          <span className={filterCollapse?.label}>Filter</span>
-          {hasActiveFilters && (
-            <CountBadge
-              count={priorityFilters.size + labelFilters.size}
-              variant="solid"
-              className="absolute -top-2 -right-2"
-            />
-          )}
-        </button>
+        <HoverTip label="Filter" enabled={!showFilterPopover}>
+          <button
+            ref={filterButtonRef}
+            type="button"
+            onClick={() => setShowFilterPopover(!showFilterPopover)}
+            aria-label="Filter"
+            className={`relative flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${filterCollapse ? filterCollapse.button : 'px-3'} ${
+              hasActiveFilters
+                ? 'text-accent-fg border-accent/50 bg-accent-bg/10'
+                : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
+            }`}
+            data-testid={filterTestId}
+          >
+            <Filter size={14} className="shrink-0" />
+            <span className={filterCollapse?.label}>Filter</span>
+            {hasActiveFilters && (
+              <CountBadge
+                count={priorityFilters.size + labelFilters.size}
+                variant="solid"
+                className="absolute -top-2 -right-2"
+              />
+            )}
+          </button>
+        </HoverTip>
 
         <OverlayPopover
           open={showFilterPopover}

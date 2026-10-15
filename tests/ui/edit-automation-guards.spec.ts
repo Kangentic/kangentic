@@ -255,11 +255,15 @@ function markOf(name: string, kind: 'delivery' | 'message'): Locator {
   return titleLine(name).locator(`[data-testid="column-automation-${kind}-mark"]`);
 }
 
-/** A mark says its guard in its aria-label and its tooltip, and the two agree. */
+/**
+ * A mark says its guard in its aria-label, which is also its accessible name. Its tip is the
+ * same text, so it is not read a second time as a description.
+ */
 async function expectMarkSays(mark: Locator, sentence: string): Promise<void> {
   await expect(mark).toHaveAttribute('role', 'img');
   await expect(mark).toHaveAttribute('aria-label', sentence);
-  await expect(mark).toHaveAttribute('title', sentence);
+  await expect(mark).toHaveAccessibleName(sentence);
+  await expect(mark).toHaveAccessibleDescription('');
   await expect(mark.locator('svg')).toHaveCount(1);
 }
 
@@ -737,7 +741,9 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     const expected = `Sends "${message}"`;
     // The whole value is in the text: no fixed character cut, no "...".
     await expect(sentence).toHaveText(expected);
-    await expect(sentence).toHaveAttribute('title', expected);
+    // The tip is the same text, so it is not read as a description; hovering shows it whole.
+    await sentence.hover();
+    await expect(page.locator('[data-hover-tip]')).toHaveText(expected);
     // CSS ends it instead: the line overflows its box and draws an ellipsis.
     const overflow = await sentence.evaluate((node) => ({
       overflows: node.scrollWidth > node.clientWidth,
@@ -761,7 +767,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
 
     await expectTwoLines('Review on arrival', 'Sends "Review the diff."');
     await expect(row('Review on arrival').locator('[data-testid="column-automation-row-sentence"]'))
-      .toHaveAttribute('title', 'Sends "Review the diff.\nThen run the tests\nand report back."');
+      .toHaveAccessibleDescription('Sends "Review the diff.\nThen run the tests\nand report back."');
     await expectMarkSays(conditionMark('Review on arrival'), 'Condition: only if the plan is approved\nand CI is green.');
   });
 
@@ -1322,7 +1328,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(glyph).toHaveAttribute('data-enter', '0');
     await expect(glyph).toHaveAttribute('data-exit', '0');
     await expect(glyph).toHaveText('1');
-    await expect(glyph).toHaveAttribute('title', /1 at a turn end/);
+    await expect(glyph).toHaveAccessibleName(/1 at a turn end/);
   });
 
   test('the glyph adds turn-end rows to the other two counts, and skips a column no agent works in', async () => {

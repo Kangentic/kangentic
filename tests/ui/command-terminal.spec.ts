@@ -991,17 +991,17 @@ test.describe('Command Terminal', () => {
         await expect(windowContent).toBeVisible();
 
         // The window-manager engine owns geometry now; maximize is a window-store
-        // toggle reflected by the button's title (Maximize <-> Restore).
+        // toggle reflected by the button's accessible name (Maximize <-> Restore).
         const maximizeButton = sharedPage.getByTestId('command-bar-maximize');
         await expect(maximizeButton).toBeVisible();
-        await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+        await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
 
         await maximizeButton.click();
-        await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+        await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
 
         // Ctrl+Shift+M restores (terminal-safe combo).
         await sharedPage.keyboard.press('Control+Shift+M');
-        await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+        await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
 
         // Ctrl+Shift+W hides the layer; the transient session stays alive.
         await sharedPage.keyboard.press('Control+Shift+W');
@@ -2639,18 +2639,18 @@ test.describe('Command Terminal', () => {
 
         const maximizeButton = page.getByTestId('command-bar-maximize');
         await expect(maximizeButton).toBeVisible();
-        await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+        await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
 
         // Click maximize - button takes DOM focus (this is the pre-fix broken state:
         // without the effect the textarea would remain unfocused after this).
         await maximizeButton.click();
-        await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+        await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
 
         // Use Ctrl+Shift+M (panel.maximize keybinding) to restore. This exercises
         // the keybinding path (not just another button click) so the next toggle
         // does not land focus on the button at all.
         await page.keyboard.press('Control+Shift+M');
-        await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+        await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
 
         // The fix: the useEffect([isMaximized, focus]) must have called focus(),
         // returning DOM focus to the xterm textarea.

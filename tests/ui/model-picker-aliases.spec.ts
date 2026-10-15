@@ -216,26 +216,26 @@ test.describe('Model combobox with floating aliases', () => {
     await expect(toggle).toHaveText(/Specific versions \(7\)/);
 
     await toggle.click();
-    await expect(menu().locator('[data-model-option][title="claude-opus-5-5"]')).toBeVisible();
-    await expect(menu().locator('[data-model-option][title="claude-sonnet-5-5"]')).toBeVisible();
+    await expect(menu().locator('[data-model-option][data-model-id="claude-opus-5-5"]')).toBeVisible();
+    await expect(menu().locator('[data-model-option][data-model-id="claude-sonnet-5-5"]')).toBeVisible();
     // The version rows keep their 1M chip.
-    await expect(menu().locator('[data-model-1m][title="claude-opus-5-5[1m]"]')).toHaveCount(1);
+    await expect(menu().locator('[data-model-1m][data-model-id="claude-opus-5-5[1m]"]')).toHaveCount(1);
     // The learned bare `sonnet` folds into the Sonnet alias row, but its
     // `sonnet[1m]` form is a different value and is listed as a version.
-    await expect(menu().locator('[data-model-option][title="sonnet"]')).toHaveCount(0);
-    await expect(menu().locator('[data-model-option][title="sonnet[1m]"]')).toHaveText(/Sonnet \(1M\)/);
+    await expect(menu().locator('[data-model-option][data-model-id="sonnet"]')).toHaveCount(0);
+    await expect(menu().locator('[data-model-option][data-model-id="sonnet[1m]"]')).toHaveText(/Sonnet \(1M\)/);
 
     await discardDialog();
   });
 
-  test('picking an alias stores it, and the closed field reads the family name with its target in the title', async () => {
+  test('picking an alias stores it, and the closed field reads the family name with its target in the tip', async () => {
     await openAdvanced();
     await page.locator('input[placeholder="Task title"]').fill('Alias Task');
 
     await modelInput().click();
     await page.locator('button[data-model-alias="sonnet"]').click();
     await expect(modelInput()).toHaveValue('Sonnet');
-    await expect(modelInput()).toHaveAttribute('title', 'Latest Sonnet, currently Sonnet 5.5');
+    await expect(modelInput()).toHaveAccessibleDescription('Latest Sonnet, currently Sonnet 5.5');
 
     await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -282,8 +282,8 @@ test.describe('Model combobox with floating aliases', () => {
 
     await modelInput().fill('Opus');
     // Typed text is stored as typed until something commits it: the input's
-    // title names an alias only once the stored value is `opus`.
-    await expect(modelInput()).not.toHaveAttribute('title');
+    // tip names an alias only once the stored value is `opus`.
+    await expect(modelInput()).toHaveAccessibleDescription('');
 
     await page.keyboard.press('Shift+Tab');
     const focusLeftField = await modelInput().evaluate((input) => {
@@ -293,7 +293,7 @@ test.describe('Model combobox with floating aliases', () => {
     });
     expect(focusLeftField).toBe(true);
 
-    await expect(modelInput()).toHaveAttribute('title', 'Latest Opus, currently Opus 5.5');
+    await expect(modelInput()).toHaveAccessibleDescription('Latest Opus, currently Opus 5.5');
     await discardDialog();
   });
 
@@ -304,7 +304,7 @@ test.describe('Model combobox with floating aliases', () => {
     await page.locator('input[placeholder="Task title"]').fill('Tabbed Alias Task');
 
     await modelInput().fill('Opus');
-    await expect(modelInput()).not.toHaveAttribute('title');
+    await expect(modelInput()).toHaveAccessibleDescription('');
 
     const focusIsInField = () =>
       modelInput().evaluate((input) => {
@@ -317,7 +317,7 @@ test.describe('Model combobox with floating aliases', () => {
     }
     expect(await focusIsInField()).toBe(false);
 
-    await expect(modelInput()).toHaveAttribute('title', 'Latest Opus, currently Opus 5.5');
+    await expect(modelInput()).toHaveAccessibleDescription('Latest Opus, currently Opus 5.5');
     await discardDialog();
   });
 
@@ -333,11 +333,11 @@ test.describe('Model combobox with floating aliases', () => {
 
     await modelInput().fill('Opus');
     await expect(menu()).toBeVisible();
-    await expect(modelInput()).not.toHaveAttribute('title');
+    await expect(modelInput()).toHaveAccessibleDescription('');
 
     await titleInput.dispatchEvent('mousedown');
     await expect(menu()).toBeHidden({ timeout: 3000 });
-    await expect(modelInput()).toHaveAttribute('title', 'Latest Opus, currently Opus 5.5');
+    await expect(modelInput()).toHaveAccessibleDescription('Latest Opus, currently Opus 5.5');
     // Proves the blur route was not the one that committed.
     await expect(modelInput()).toBeFocused();
 
@@ -349,13 +349,13 @@ test.describe('Model combobox with floating aliases', () => {
 
     await modelInput().click();
     await menu().locator('[data-model-pinned-toggle]').click();
-    await menu().locator('[data-model-option][title="claude-sonnet-5"]').click();
+    await menu().locator('[data-model-option][data-model-id="claude-sonnet-5"]').click();
     await expect(modelInput()).toHaveValue('Sonnet 5');
-    // A pinned value carries no alias title.
-    await expect(modelInput()).not.toHaveAttribute('title');
+    // A pinned value carries no alias tip.
+    await expect(modelInput()).toHaveAccessibleDescription('');
 
     await modelInput().click();
-    await expect(menu().locator('[data-model-option][title="claude-sonnet-5"]')).toBeVisible();
+    await expect(menu().locator('[data-model-option][data-model-id="claude-sonnet-5"]')).toBeVisible();
     await expect(menu().locator('[data-model-newer]')).toHaveText('Sonnet 5.5 available');
 
     await discardDialog();
@@ -365,7 +365,7 @@ test.describe('Model combobox with floating aliases', () => {
     await openAdvanced();
 
     await modelInput().fill('4.8');
-    await expect(menu().locator('[data-model-option][title="claude-opus-4-8"]')).toBeVisible();
+    await expect(menu().locator('[data-model-option][data-model-id="claude-opus-4-8"]')).toBeVisible();
     await expect(menu().locator('[data-model-pinned-toggle]')).toHaveCount(0);
     await expect(menu().locator('button[data-model-alias]')).toHaveCount(0);
 
@@ -400,13 +400,13 @@ test.describe('Model combobox typed-text commit close paths (New Task, Advanced)
       await openNewTaskAdvanced(page);
       await modelInput(page).fill('Opus');
       await expect(menu(page)).toBeVisible();
-      // Stored as typed until something commits it: no alias title yet.
-      await expect(modelInput(page)).not.toHaveAttribute('title');
+      // Stored as typed until something commits it: no alias tip yet.
+      await expect(modelInput(page)).toHaveAccessibleDescription('');
 
       // Focus stays in the input, so Escape is the only close path that can commit.
       await page.keyboard.press('Escape');
       await expect(menu(page)).toBeHidden({ timeout: 3000 });
-      await expect(modelInput(page)).toHaveAttribute('title', OPUS_TITLE);
+      await expect(modelInput(page)).toHaveAccessibleDescription(OPUS_TITLE);
       // The first Escape closes the menu only; the New Task dialog is still up.
       await expect(page.locator('input[placeholder="Task title"]')).toBeVisible();
     });
@@ -416,13 +416,13 @@ test.describe('Model combobox typed-text commit close paths (New Task, Advanced)
     await withAliasPage(async (page) => {
       await openNewTaskAdvanced(page);
       await modelInput(page).fill('Opus');
-      await expect(modelInput(page)).not.toHaveAttribute('title');
+      await expect(modelInput(page)).toHaveAccessibleDescription('');
 
       // Pressing the chevron only moves focus within the field, so this click
       // handler is the sole commit path.
       await fieldControl(page, 'button[aria-label="Close dropdown"]').click();
       await expect(menu(page)).toBeHidden({ timeout: 3000 });
-      await expect(modelInput(page)).toHaveAttribute('title', OPUS_TITLE);
+      await expect(modelInput(page)).toHaveAccessibleDescription(OPUS_TITLE);
     });
   });
 
@@ -434,13 +434,13 @@ test.describe('Model combobox typed-text commit close paths (New Task, Advanced)
     await withAliasPage(async (page) => {
       await openNewTaskAdvanced(page);
       await modelInput(page).fill('Sonnet');
-      await expect(modelInput(page)).not.toHaveAttribute('title');
+      await expect(modelInput(page)).toHaveAccessibleDescription('');
       await menu(page).locator('[data-model-pinned-toggle]').click();
-      await menu(page).locator('[data-model-option][title="claude-sonnet-5"]').click();
+      await menu(page).locator('[data-model-option][data-model-id="claude-sonnet-5"]').click();
       await expect(menu(page)).toBeHidden({ timeout: 3000 });
       await expect(modelInput(page)).toHaveValue('Sonnet 5');
-      // A pinned version carries no alias title.
-      await expect(modelInput(page)).not.toHaveAttribute('title');
+      // A pinned version carries no alias tip.
+      await expect(modelInput(page)).toHaveAccessibleDescription('');
 
       // Reopen without typing, then leave the field. Any typing left over from
       // before the pick would be committed here and rewrite the pick to `sonnet`.
@@ -450,7 +450,7 @@ test.describe('Model combobox typed-text commit close paths (New Task, Advanced)
       expect(await focusIsOutsideField(page)).toBe(true);
 
       await expect(modelInput(page)).toHaveValue('Sonnet 5');
-      await expect(modelInput(page)).not.toHaveAttribute('title');
+      await expect(modelInput(page)).toHaveAccessibleDescription('');
     });
   });
 
@@ -467,7 +467,7 @@ test.describe('Model combobox typed-text commit close paths (New Task, Advanced)
       expect(await focusIsOutsideField(page)).toBe(true);
 
       await expect(modelInput(page)).toHaveValue('');
-      await expect(modelInput(page)).not.toHaveAttribute('title');
+      await expect(modelInput(page)).toHaveAccessibleDescription('');
     });
   });
 });
@@ -904,7 +904,7 @@ test.describe('Column Manager overview newer-version mark from discovered models
         .locator('td')
         .nth(3);
       await expect(modelCell.locator('[data-state="changed"]')).toHaveText('Sonnet 5');
-      await expect(modelCell.locator('[data-overview-newer]')).toHaveAttribute('title', 'Sonnet 5.5 available');
+      await expect(modelCell.locator('[data-overview-newer]')).toHaveAccessibleName('Sonnet 5.5 available');
     } finally {
       await browser.close();
     }
@@ -955,7 +955,7 @@ test.describe('Column Manager overview reads saved overrides by the column\'s ow
       .locator('td')
       .nth(3);
 
-  test('a saved older pin shows its newer-version mark and an alias pin its target in the title', async () => {
+  test('a saved older pin shows its newer-version mark and an alias pin its target in the tip', async () => {
     await withAliasPage(async (page) => {
       await seedSavedLaneOverrides(page, {
         'Code Review': { agent: null, model: 'claude-sonnet-5' },
@@ -965,14 +965,13 @@ test.describe('Column Manager overview reads saved overrides by the column\'s ow
 
       const olderPin = modelCell(page, 'Code Review').locator('[data-state]');
       await expect(olderPin).toHaveText('Sonnet 5');
-      await expect(modelCell(page, 'Code Review').locator('[data-overview-newer]')).toHaveAttribute(
-        'title',
+      await expect(modelCell(page, 'Code Review').locator('[data-overview-newer]')).toHaveAccessibleName(
         'Sonnet 5.5 available',
       );
 
       const aliasPin = modelCell(page, 'Executing').locator('[data-state]');
       await expect(aliasPin).toHaveText('Opus');
-      await expect(aliasPin).toHaveAttribute('title', 'Latest Opus, currently Opus 5.5');
+      await expect(aliasPin).toHaveAccessibleDescription('Latest Opus, currently Opus 5.5');
       await expect(modelCell(page, 'Executing').locator('[data-overview-newer]')).toHaveCount(0);
     });
   });
@@ -998,7 +997,7 @@ test.describe('Column Manager overview reads saved overrides by the column\'s ow
     });
   });
 
-  test('a lane on another agent shows neither the alias title nor the newer-version mark', async () => {
+  test('a lane on another agent shows neither the alias tip nor the newer-version mark', async () => {
     await withAliasPage(async (page) => {
       await setAgentListOverrides(page, { ...CLAUDE_WITH_ALIASES, codex: { found: true } });
       await seedSavedLaneOverrides(page, {
@@ -1012,8 +1011,7 @@ test.describe('Column Manager overview reads saved overrides by the column\'s ow
       await openOverview(page);
 
       await expect(modelCell(page, 'Code Review').locator('[data-overview-newer]')).toHaveCount(1);
-      await expect(modelCell(page, 'Executing').locator('[data-state]')).toHaveAttribute(
-        'title',
+      await expect(modelCell(page, 'Executing').locator('[data-state]')).toHaveAccessibleDescription(
         'Latest Opus, currently Opus 5.5',
       );
 
@@ -1024,7 +1022,7 @@ test.describe('Column Manager overview reads saved overrides by the column\'s ow
 
       const codexAlias = modelCell(page, 'Merge').locator('[data-state="changed"]');
       await expect(codexAlias).toBeVisible();
-      await expect(codexAlias).not.toHaveAttribute('title', /Latest/);
+      await expect(codexAlias).not.toHaveAccessibleDescription(/Latest/);
       await expect(modelCell(page, 'Merge').locator('[data-overview-newer]')).toHaveCount(0);
     });
   });
@@ -1160,7 +1158,7 @@ test.describe('Answer-agent model pickers with floating aliases', () => {
 
         await menu.locator('button[data-model-alias="sonnet"]').click();
         await expect(input).toHaveValue('Sonnet');
-        await expect(input).toHaveAttribute('title', 'Latest Sonnet, currently Sonnet 5.5');
+        await expect(input).toHaveAccessibleDescription('Latest Sonnet, currently Sonnet 5.5');
         // The CLI's own selector is what the run passes to `--model`.
         await expect.poll(() => readGlobalModel(page, picker.section)).toBe('sonnet');
       });
@@ -1177,13 +1175,13 @@ test.describe('Answer-agent model pickers with floating aliases', () => {
         await openSettingsTab(page, picker.tabId, input);
 
         await expect(input).toHaveValue('Sonnet 5.5');
-        await expect(input).not.toHaveAttribute('title');
+        await expect(input).toHaveAccessibleDescription('');
 
         await input.click();
         const menu = page.locator(`[data-testid="${picker.testIdPrefix}-model-menu"]`);
         await expect(menu).toBeVisible({ timeout: 3000 });
         await expect(menu.locator('button[data-model-alias]')).toHaveCount(3);
-        await expect(menu.locator('[data-model-option][title="claude-sonnet-5-5"]')).toBeVisible();
+        await expect(menu.locator('[data-model-option][data-model-id="claude-sonnet-5-5"]')).toBeVisible();
       });
     });
   }
@@ -1222,19 +1220,19 @@ test.describe('Column Manager overview with floating aliases', () => {
     // An older pinned version: the cell shows it with the upgrade mark.
     await modelInput.click();
     await page.locator('[data-testid="column-model-override-menu"] [data-model-pinned-toggle]').click();
-    await page.locator('[data-model-option][title="claude-sonnet-5"]').click();
+    await page.locator('[data-model-option][data-model-id="claude-sonnet-5"]').click();
     await dialog.locator('[data-testid="board-manager-tab-all"]').click();
     await expect(modelCell().locator('[data-state="changed"]')).toHaveText('Sonnet 5');
-    await expect(modelCell().locator('[data-overview-newer]')).toHaveAttribute('title', 'Sonnet 5.5 available');
+    await expect(modelCell().locator('[data-overview-newer]')).toHaveAccessibleName('Sonnet 5.5 available');
 
-    // An alias: the family name, with the version it runs in the title and no mark.
+    // An alias: the family name, with the version it runs in the tip and no mark.
     await dialog.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' }).click();
     await modelInput.click();
     await page.locator('button[data-model-alias="opus"]').click();
     await dialog.locator('[data-testid="board-manager-tab-all"]').click();
     const aliasValue = modelCell().locator('[data-state="changed"]');
     await expect(aliasValue).toHaveText('Opus');
-    await expect(aliasValue).toHaveAttribute('title', 'Latest Opus, currently Opus 5.5');
+    await expect(aliasValue).toHaveAccessibleDescription('Latest Opus, currently Opus 5.5');
     await expect(modelCell().locator('[data-overview-newer]')).toHaveCount(0);
   });
 });

@@ -15,8 +15,9 @@ import { usePopOut } from '../../pop-out/usePopOut';
 import { selectCommandTerminalSummary } from '../../stores/session-store/transient-session-slice';
 import { CommandTerminalIcon } from '../command-bar/CommandTerminalIcon';
 import { isWorktreePath } from '../../../shared/git-utils';
-import { useFormattedCombo } from '../../hooks/useKeybinding';
 import { BrandMark } from '../BrandMark';
+import { HoverTip } from '../HoverTip';
+import { tipLabel } from '../../utils/hover-tip';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
@@ -57,14 +58,6 @@ export function TitleBar({
   const transientActivityTone = useSessionStore(
     (state) => selectCommandTerminalSummary(state.sessions, state.sessionActivity, currentProject?.id ?? null).tone,
   );
-
-  // Tooltips read the live effective combo so they update when the user rebinds.
-  const quickFindCombo = useFormattedCombo('search.togglePalette');
-  const commandTerminalCombo = useFormattedCombo('commandBar.toggle');
-  const settingsCombo = useFormattedCombo('settings.toggle');
-  const statsCombo = useFormattedCombo('stats.toggle');
-  const monitorCombo = useFormattedCombo('monitor.toggle');
-  const knowledgeGraphCombo = useFormattedCombo('knowledgeGraph.toggle');
 
   // Store-direct like the Settings gear (statsOpen is dashboard-store state).
   const statsOpen = useUsageDashboardStore((state) => state.statsOpen);
@@ -156,12 +149,13 @@ export function TitleBar({
           truthiness gates the render.
         */}
         {__KANGENTIC_DEV__ && window.electronAPI.dev?.previewTaskTitle && (
-          <span
-            className="ml-1 px-2.5 py-0.5 rounded-full bg-surface-raised border border-edge text-fg-secondary text-sm font-semibold whitespace-nowrap"
-            title={window.electronAPI.dev.previewTaskTitle}
-          >
-            {window.electronAPI.dev.previewTaskTitle}
-          </span>
+          <HoverTip label={window.electronAPI.dev.previewTaskTitle}>
+            <span
+              className="ml-1 px-2.5 py-0.5 rounded-full bg-surface-raised border border-edge text-fg-secondary text-sm font-semibold whitespace-nowrap"
+            >
+              {window.electronAPI.dev.previewTaskTitle}
+            </span>
+          </HoverTip>
         )}
       </div>
 
@@ -185,9 +179,11 @@ export function TitleBar({
       <div className="flex-1 min-w-0 flex items-center justify-center gap-2 px-3">
         {currentProject && (
           <div className="min-w-0 flex items-center gap-2" data-testid="titlebar-project-name">
-            <span className="text-base font-semibold text-fg truncate" title={currentProject.name}>
-              {currentProject.name}
-            </span>
+            <HoverTip label={currentProject.name}>
+              <span className="text-base font-semibold text-fg truncate">
+                {currentProject.name}
+              </span>
+            </HoverTip>
             {isWorktree && (
               <span className="text-xs text-amber-500/70 flex-shrink-0">(worktree)</span>
             )}
@@ -210,20 +206,27 @@ export function TitleBar({
             Command Terminal" and not a generic add action. */}
         {currentProject && commandBarOpen && onSpawnAdditionalTerminal && (
           <>
-            <button
-              onClick={onSpawnAdditionalTerminal}
-              disabled={!canSpawnMoreTerminals}
-              className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-not-allowed"
-              title={canSpawnMoreTerminals ? 'New Command Terminal' : 'Command Terminal limit reached'}
-              aria-label="New Command Terminal"
-              data-testid="quick-session-new-terminal"
+            <HoverTip
+              label={tipLabel({
+                disabled: !canSpawnMoreTerminals,
+                disabledReason: 'Command Terminal limit reached',
+                tip: 'New Command Terminal',
+              })}
             >
-              {/* Uncolored/unanimated on purpose: the activity glyph communicates
-                  "an existing terminal needs you", which doesn't apply to a fresh
-                  terminal that doesn't exist yet. Only the toggle button carries
-                  the aggregate activity tone. */}
-              <CommandTerminalIcon tone="rest" showPlus testId="quick-session-new-terminal-icon" />
-            </button>
+              <button
+                onClick={onSpawnAdditionalTerminal}
+                disabled={!canSpawnMoreTerminals}
+                className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-not-allowed"
+                aria-label="New Command Terminal"
+                data-testid="quick-session-new-terminal"
+              >
+                {/* Uncolored/unanimated on purpose: the activity glyph communicates
+                    "an existing terminal needs you", which doesn't apply to a fresh
+                    terminal that doesn't exist yet. Only the toggle button carries
+                    the aggregate activity tone. */}
+                <CommandTerminalIcon tone="rest" showPlus testId="quick-session-new-terminal-icon" />
+              </button>
+            </HoverTip>
             {/* Separates the transient "New terminal" action from the permanent
                 icon cluster to its right (mounts/unmounts together with the
                 button above, so it never leaves an orphan divider). */}
@@ -231,17 +234,21 @@ export function TitleBar({
           </>
         )}
         {currentProject && onQuickSession && (
-          <button
-            onClick={onQuickSession}
-            className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-            title={commandBarOpen ? 'Hide Command Terminal' : `Command Terminal (${commandTerminalCombo})`}
-            aria-label={commandBarOpen ? 'Hide Command Terminal' : 'Command Terminal'}
-            data-testid="quick-session-button"
+          <HoverTip
+            label={commandBarOpen ? 'Hide Command Terminal' : 'Command Terminal'}
+            keys={commandBarOpen ? undefined : 'commandBar.toggle'}
           >
-            {/* The activity color lives IN the glyph (stroke color = aggregate
-                activity), so there is no separate corner badge to clash or clutter. */}
-            <CommandTerminalIcon tone={transientActivityTone} />
-          </button>
+            <button
+              onClick={onQuickSession}
+              className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+              aria-label={commandBarOpen ? 'Hide Command Terminal' : 'Command Terminal'}
+              data-testid="quick-session-button"
+            >
+              {/* The activity color lives IN the glyph (stroke color = aggregate
+                  activity), so there is no separate corner badge to clash or clutter. */}
+              <CommandTerminalIcon tone={transientActivityTone} />
+            </button>
+          </HoverTip>
         )}
         {/* Agent Monitor, deliberately ADJACENT to the Command Terminal toggle: both
             open a surface full of running agents, so they belong together.
@@ -257,61 +264,74 @@ export function TitleBar({
             Renders unconditionally (like the stats button) because the monitor is
             machine-global: it spans every registered project and is useful with no
             project open at all. */}
-        <button
-          onClick={() => (monitorPopOut.isOpen ? monitorPopOut.focus() : toggleMonitor())}
-          className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
-            monitorOpen || monitorPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
-          }`}
-          title={monitorPopOut.isOpen ? 'Focus agent monitor window' : `Agent Monitor (${monitorCombo})`}
-          aria-label="Agent Monitor"
-          data-testid="agent-monitor-button"
+        <HoverTip
+          label={monitorPopOut.isOpen ? 'Focus agent monitor window' : 'Agent Monitor'}
+          keys={monitorPopOut.isOpen ? undefined : 'monitor.toggle'}
         >
-          <SquareActivity size={20} />
-        </button>
+          <button
+            onClick={() => (monitorPopOut.isOpen ? monitorPopOut.focus() : toggleMonitor())}
+            className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
+              monitorOpen || monitorPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+            }`}
+            aria-label="Agent Monitor"
+            data-testid="agent-monitor-button"
+          >
+            <SquareActivity size={20} />
+          </button>
+        </HoverTip>
         {/* Placed INSIDE the monitor/stats cluster rather than after it. This
             row is right-anchored, so an element's distance from the window edge
             is fixed by whatever comes AFTER it: appending here instead would
             shift Quick Find, settings, and the OS window controls. */}
-        <button
-          onClick={() => (knowledgeGraphPopOut.isOpen ? knowledgeGraphPopOut.focus() : toggleKnowledgeGraph(currentProject?.id ?? null))}
-          onMouseEnter={handleKnowledgeGraphHover}
-          className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
-            knowledgeGraphOpen || knowledgeGraphPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
-          }`}
-          title={knowledgeGraphPopOut.isOpen ? 'Focus Knowledge Graph window' : `Knowledge Graph (${knowledgeGraphCombo})`}
-          aria-label="Knowledge Graph"
-          data-testid="knowledge-graph-button"
+        <HoverTip
+          label={knowledgeGraphPopOut.isOpen ? 'Focus Knowledge Graph window' : 'Knowledge Graph'}
+          keys={knowledgeGraphPopOut.isOpen ? undefined : 'knowledgeGraph.toggle'}
         >
-          <Brain size={20} />
-        </button>
-        <button
-          onClick={() => (statsPopOut.isOpen ? statsPopOut.focus() : toggleStats())}
-          onMouseEnter={handleStatsHover}
-          className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
-            statsOpen || statsPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
-          }`}
-          title={statsPopOut.isOpen ? 'Focus usage stats window' : `Usage Stats (${statsCombo})`}
-          aria-label="Usage Stats"
-          data-testid="usage-stats-button"
+          <button
+            onClick={() => (knowledgeGraphPopOut.isOpen ? knowledgeGraphPopOut.focus() : toggleKnowledgeGraph(currentProject?.id ?? null))}
+            onMouseEnter={handleKnowledgeGraphHover}
+            className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
+              knowledgeGraphOpen || knowledgeGraphPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+            }`}
+            aria-label="Knowledge Graph"
+            data-testid="knowledge-graph-button"
+          >
+            <Brain size={20} />
+          </button>
+        </HoverTip>
+        <HoverTip
+          label={statsPopOut.isOpen ? 'Focus usage stats window' : 'Usage Stats'}
+          keys={statsPopOut.isOpen ? undefined : 'stats.toggle'}
         >
-          <ChartColumn size={20} />
-        </button>
+          <button
+            onClick={() => (statsPopOut.isOpen ? statsPopOut.focus() : toggleStats())}
+            onMouseEnter={handleStatsHover}
+            className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
+              statsOpen || statsPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+            }`}
+            aria-label="Usage Stats"
+            data-testid="usage-stats-button"
+          >
+            <ChartColumn size={20} />
+          </button>
+        </HoverTip>
         {/* Quick Find sits to the RIGHT of Usage Stats: it is the one control here
             that opens a transient overlay the user dismisses immediately, so it
             reads as the step out of the running-work cluster, while the monitor
             and stats buttons (both surfaces over running work) stay adjacent to
             each other. */}
         {onOpenSearch && (
-          <button
-            onClick={onOpenSearch}
-            className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-            title={`Quick Find (${quickFindCombo})`}
-            aria-label="Quick Find"
-            // testid kept as "open-search" for selector stability; UI label is "Quick Find"
-            data-testid="open-search-button"
-          >
-            <Command size={20} />
-          </button>
+          <HoverTip label="Quick Find" keys="search.togglePalette">
+            <button
+              onClick={onOpenSearch}
+              className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+              aria-label="Quick Find"
+              // testid kept as "open-search" for selector stability; UI label is "Quick Find"
+              data-testid="open-search-button"
+            >
+              <Command size={20} />
+            </button>
+          </HoverTip>
         )}
         {/* The two "news from upstream" controls, grouped at the right end just
             before Settings: announcements (what the team is saying) and an
@@ -330,39 +350,41 @@ export function TitleBar({
             itself with no badge, but neither of those has a COUNT to state: a
             tone can say "something is unread", it cannot say how many. Ship
             the badge and tone the glyph too, muted at zero. */}
-        <button
-          onClick={() => (announcementsOpen ? closeAnnouncements() : openAnnouncements())}
-          className={`relative p-1.5 hover:bg-surface-hover rounded transition-colors ${
-            announcementsOpen
-              ? 'text-fg bg-surface-hover'
-              : unreadAnnouncements > 0
-                ? 'text-attention hover:text-fg'
-                : 'text-fg-muted hover:text-fg'
-          }`}
-          title={unreadAnnouncements > 0
-            ? `Announcements (${unreadAnnouncements} unread)`
-            : 'Announcements'}
-          aria-label="Announcements"
-          data-testid="announcements-button"
+        <HoverTip
+          label="Announcements"
+          detail={unreadAnnouncements > 0 ? `${unreadAnnouncements} unread` : undefined}
         >
-          <Megaphone size={20} />
-          {unreadAnnouncements > 0 && (
-            // Sized and offset so the megaphone stays readable underneath. The
-            // glyph is 20px inside a 32px button, so barely any corner sits
-            // outside it and an 18px badge at a token offset buried the horn.
-            // The offsets are bounded on both axes and are not free to grow:
-            // the button sits 3.5px below the title bar's top edge, and the
-            // row's gap to its neighbour is 4px, so a larger pull clips
-            // off-screen or lands on that neighbour. `flex` shrink-wraps the
-            // badge, since a plain inline span's line box is taller than it.
-            <span
-              className="absolute -top-0.5 -right-1 flex pointer-events-none"
-              data-testid="announcements-unread-badge"
-            >
-              <CountBadge count={unreadAnnouncements} variant="solid" size="xs" />
-            </span>
-          )}
-        </button>
+          <button
+            onClick={() => (announcementsOpen ? closeAnnouncements() : openAnnouncements())}
+            className={`relative p-1.5 hover:bg-surface-hover rounded transition-colors ${
+              announcementsOpen
+                ? 'text-fg bg-surface-hover'
+                : unreadAnnouncements > 0
+                  ? 'text-attention hover:text-fg'
+                  : 'text-fg-muted hover:text-fg'
+            }`}
+            aria-label="Announcements"
+            data-testid="announcements-button"
+          >
+            <Megaphone size={20} />
+            {unreadAnnouncements > 0 && (
+              // Sized and offset so the megaphone stays readable underneath. The
+              // glyph is 20px inside a 32px button, so barely any corner sits
+              // outside it and an 18px badge at a token offset buried the horn.
+              // The offsets are bounded on both axes and are not free to grow:
+              // the button sits 3.5px below the title bar's top edge, and the
+              // row's gap to its neighbour is 4px, so a larger pull clips
+              // off-screen or lands on that neighbour. `flex` shrink-wraps the
+              // badge, since a plain inline span's line box is taller than it.
+              <span
+                className="absolute -top-0.5 -right-1 flex pointer-events-none"
+                data-testid="announcements-unread-badge"
+              >
+                <CountBadge count={unreadAnnouncements} variant="solid" size="xs" />
+              </span>
+            )}
+          </button>
+        </HoverTip>
         {/* Deliberately NOT left-most, unlike every other conditional control in
             this row, because it belongs beside announcements. The row is
             right-anchored, so a conditional mount shifts everything BEFORE it
@@ -371,56 +393,61 @@ export function TitleBar({
             left by one slot. That is the accepted price of the grouping, and it
             is a once-per-release event. */}
         {pendingUpdate && (
-          <button
-            onClick={openUpdateModal}
-            className="p-1.5 hover:bg-surface-hover rounded text-attention transition-colors"
-            title={`Version ${pendingUpdate.version} is ready to install`}
-            aria-label="Update available"
-            data-testid="update-available-button"
-          >
-            <CloudDownload size={20} />
-          </button>
+          <HoverTip label={`Version ${pendingUpdate.version} is ready to install`}>
+            <button
+              onClick={openUpdateModal}
+              className="p-1.5 hover:bg-surface-hover rounded text-attention transition-colors"
+              aria-label="Update available"
+              data-testid="update-available-button"
+            >
+              <CloudDownload size={20} />
+            </button>
+          </HoverTip>
         )}
-        <button
-          onClick={handleGearClick}
-          className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
-            settingsOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
-          }`}
-          aria-label="Settings"
-          title={`Settings (${settingsCombo})`}
-          data-testid="settings-button"
-        >
-          <Settings size={20} />
-        </button>
+        <HoverTip label="Settings" keys="settings.toggle">
+          <button
+            onClick={handleGearClick}
+            className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
+              settingsOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+            }`}
+            aria-label="Settings"
+            data-testid="settings-button"
+          >
+            <Settings size={20} />
+          </button>
+        </HoverTip>
         {!isMac && (
           // `contents` keeps the three buttons and their divider direct flex items of the row;
           // the wrapper exists only to give the cluster one selector.
           <div className="contents" data-testid="window-controls">
             <div className="w-px h-4 bg-edge mx-1" />
-            <button
-              onClick={() => window.electronAPI.window.minimize()}
-              className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              aria-label="Minimize"
-              title="Minimize"
-            >
-              <Minus size={16} />
-            </button>
-            <button
-              onClick={() => window.electronAPI.window.maximize()}
-              className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              aria-label="Maximize"
-              title="Maximize"
-            >
-              <Square size={14} />
-            </button>
-            <button
-              onClick={() => window.electronAPI.window.close()}
-              className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
-              aria-label="Close"
-              title="Close"
-            >
-              <X size={16} />
-            </button>
+            <HoverTip label="Minimize">
+              <button
+                onClick={() => window.electronAPI.window.minimize()}
+                className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+                aria-label="Minimize"
+              >
+                <Minus size={16} />
+              </button>
+            </HoverTip>
+            <HoverTip label="Maximize">
+              <button
+                onClick={() => window.electronAPI.window.maximize()}
+                className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+                aria-label="Maximize"
+              >
+                <Square size={14} />
+              </button>
+            </HoverTip>
+            <HoverTip label="Close">
+              <button
+                onClick={() => window.electronAPI.window.close()}
+                className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </HoverTip>
           </div>
         )}
       </div>

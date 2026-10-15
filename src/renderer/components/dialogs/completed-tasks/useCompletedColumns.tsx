@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { formatRelativeTime } from '../../../lib/datetime';
 import type { DataTableColumn } from '../../DataTable';
+import { HoverTip } from '../../HoverTip';
 import { formatCost, formatSpan } from '../../../utils/format-session';
 import { formatTokenCount } from '../../../utils/format-tokens';
 import type { Task, Swimlane, SessionSummary } from '../../../../shared/types';
@@ -154,9 +155,11 @@ export function useCompletedColumns(input: {
           return <span className="text-fg-disabled">-</span>;
         }
         return (
-          <span className="tabular-nums text-fg-secondary" title={buildToolsTooltip(row.summary)}>
-            {row.summary.toolCallCount}
-          </span>
+          <HoverTip label={buildToolsTooltip(row.summary)}>
+            <span className="tabular-nums text-fg-secondary">
+              {row.summary.toolCallCount}
+            </span>
+          </HoverTip>
         );
       },
     },

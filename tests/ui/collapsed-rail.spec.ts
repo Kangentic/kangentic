@@ -374,12 +374,12 @@ test.describe('CollapsedRail - thinking session, no icon and plain title', () =>
     await expect(alphaButton.locator('svg.text-active')).toHaveCount(0);
   });
 
-  test('title is plain project name even when a thinking session is active', async () => {
+  test('tip is plain project name even when a thinking session is active', async () => {
     // Guards against regression where compound tooltip e.g. "Alpha - 1 thinking, 0 idle"
-    // is re-introduced alongside a badge. The title must stay plain project.name only.
+    // is re-introduced alongside a badge. The tip must stay plain project.name only.
     const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
     await alphaButton.waitFor({ state: 'attached', timeout: 5000 });
 
-    await expect(alphaButton).toHaveAttribute('title', 'Alpha');
+    await expect(alphaButton).toHaveAccessibleDescription('Alpha');
   });
 });

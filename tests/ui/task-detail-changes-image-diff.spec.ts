@@ -324,7 +324,7 @@ test.describe('Changes panel image view', () => {
     // The 40 x 20 strip only After covers is changed by definition: 800.
     // 1,040 / 3,200 = 32.5%. Hard-edged blocks have no anti-aliased pixels to drop.
     await expect(stat).toHaveText('32.5% of pixels changed');
-    await expect(stat).toHaveAttribute('title', /^1,?040 of 3,?200 pixels differ$/);
+    await expect(stat).toHaveAccessibleDescription(/^1,?040 of 3,?200 pixels differ$/);
     await expect(page.locator('[data-testid="diff-image-diff-mask"]')).toBeVisible();
     await expect(page.locator('[data-testid="diff-image-stage"] [data-testid="diff-image-pixel-stat"]')).toHaveCount(0);
 
@@ -523,13 +523,13 @@ test.describe('Changes panel image view', () => {
     const toggle = page.locator('[data-testid="diff-svg-preview"]');
     await expect(toggle).toBeVisible({ timeout: 8000 });
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
-    await expect(toggle).toHaveAttribute('title', 'Preview image');
+    await expect(toggle).toHaveAccessibleName('Preview image');
     await expect(page.locator('[data-testid="diff-prev-change"]')).toBeVisible();
     await expect(page.locator('[data-testid="diff-image-view"]')).toHaveCount(0);
 
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    await expect(toggle).toHaveAttribute('title', 'Show text diff');
+    await expect(toggle).toHaveAccessibleName('Show text diff');
     await expect(page.locator('[data-testid="diff-image-before"] img')).toBeVisible({ timeout: 8000 });
     await expect(page.locator('[data-testid="diff-image-after"] img')).toBeVisible();
     await expect(page.locator('[data-testid="diff-image-info-after-dimensions"]')).toHaveText('64 x 64');
@@ -566,7 +566,7 @@ test.describe('Changes panel image view', () => {
     const sideBySide = page.locator('[data-testid="diff-image-mode-side-by-side"]');
     await expect(sideBySide.locator('span')).toBeHidden();
     await expect(sideBySide).toHaveAttribute('aria-label', 'Side by side');
-    await expect(sideBySide).toHaveAttribute('title', 'Side by side');
+    await expect(sideBySide).toHaveAccessibleName('Side by side');
 
     const layout = async () => page.evaluate(() => {
       const box = (testId: string) => document.querySelector(`[data-testid="${testId}"]`)!.getBoundingClientRect();
@@ -1164,7 +1164,7 @@ test.describe('Changes panel image view: Diff mode outcomes and copy', () => {
     await diffModeButton().click();
     await expect(pixelStat()).toHaveAttribute('data-status', 'done', { timeout: 10000 });
     await expect(pixelStat()).toHaveText('Under 0.1% of pixels changed');
-    await expect(pixelStat()).toHaveAttribute('title', /^4 of 10,?000 pixels differ$/);
+    await expect(pixelStat()).toHaveAccessibleDescription(/^4 of 10,?000 pixels differ$/);
     await expect(page.locator('[data-testid="diff-image-diff-mask"]')).toBeVisible();
 
     await closeChanges();
@@ -1200,9 +1200,9 @@ test.describe('Changes panel image view: Diff mode outcomes and copy', () => {
 
     await diffModeButton().click();
     await expect(pixelStat()).toHaveAttribute('data-status', 'done', { timeout: 10000 });
-    const title = await pixelStat().getAttribute('title');
-    const match = /^([\d,]+) of 1,?048,?576 pixels differ$/.exec(title ?? '');
-    expect(match, `pixel stat title was ${title}`).not.toBeNull();
+    const pixelCounts = await pixelStat().getAttribute('aria-description');
+    const match = /^([\d,]+) of 1,?048,?576 pixels differ$/.exec(pixelCounts ?? '');
+    expect(match, `pixel stat description was ${pixelCounts}`).not.toBeNull();
     const changedPixels = Number(match![1].replace(/,/g, ''));
     expect(changedPixels).toBeGreaterThan(35000);
     expect(changedPixels).toBeLessThan(42000);
@@ -1249,7 +1249,7 @@ test.describe('Changes panel image view: Diff mode outcomes and copy', () => {
 
       // Diff mode stays on across files, so the SVG is compared as soon as it shows.
       await selectFile(vectorPath);
-      await expect(pixelStat()).toHaveAttribute('title', /of 1,?048,?576 pixels differ$/, { timeout: 10000 });
+      await expect(pixelStat()).toHaveAccessibleDescription(/of 1,?048,?576 pixels differ$/, { timeout: 10000 });
       expect(await postedSources()).toEqual(['png data URL', 'png data URL', 'bitmap', 'bitmap']);
     } finally {
       await page.evaluate(() => (window as unknown as { __restoreSourcesPostMessage: () => void }).__restoreSourcesPostMessage());

@@ -7,13 +7,14 @@
 import type React from 'react';
 import { ChevronDown, ChevronRight, Settings } from 'lucide-react';
 import { InfoHint } from './PanelRow';
+import { HoverTip } from '../HoverTip';
 
 /** A group's small caps label inside a card, its help behind an info hint. */
-export function GroupLabel({ children, hint }: { children: React.ReactNode; hint?: string }) {
+export function GroupLabel({ children, hint }: { children: string; hint?: string }) {
   return (
     <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
       <span>{children}</span>
-      {hint ? <InfoHint text={hint} /> : null}
+      {hint ? <InfoHint about={children} text={hint} /> : null}
     </div>
   );
 }
@@ -25,16 +26,17 @@ export function GroupLabel({ children, hint }: { children: React.ReactNode; hint
  */
 export function OpenSettingsButton({ onClick, testId }: { onClick: () => void; testId: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph"
-      className="flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-edge-input bg-surface-control text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg cursor-pointer"
-      data-testid={testId}
-    >
-      <Settings size={13} aria-hidden />
-      Open Settings
-    </button>
+    <HoverTip label="Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-edge-input bg-surface-control text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg cursor-pointer"
+        data-testid={testId}
+      >
+        <Settings size={13} aria-hidden />
+        Open Settings
+      </button>
+    </HoverTip>
   );
 }
 

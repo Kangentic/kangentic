@@ -3895,7 +3895,7 @@ test.describe('knowledge graph', () => {
     // rounding accident: anisotropy puts >98% of top-10 pairs above 0.8 cosine,
     // so a percentage cannot resolve them and six identical numbers looked like
     // precision while saying nothing. The ORDER carries the signal; the raw value
-    // stays on the row's title for anyone who wants it.
+    // stays in the row's tip for anyone who wants it.
     const { browser, page } = await launchWithState(conversationFixture());
     try {
       await openKnowledgeGraph(page);
@@ -3904,7 +3904,7 @@ test.describe('knowledge graph', () => {
       const neighbor = page.locator('[data-testid="knowledge-graph-neighbor"]').first();
       await expect(neighbor).toBeVisible();
       await expect(neighbor).not.toContainText('%');
-      await expect(neighbor).toHaveAttribute('title', /Cosine similarity 0\.\d+/);
+      await expect(neighbor).toHaveAccessibleDescription(/Cosine similarity 0\.\d+/);
       // The section carries no subtitle. It used to read "Strongest first.
       // Exact, not read off the map.", which defended an implementation detail
       // the reader never asked about.

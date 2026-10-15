@@ -6,6 +6,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { agentInstallUrl, agentLoginCommand, RECOMMENDED_AGENT_ORDER } from '../../utils/agent-display-name';
 import { useAddProject } from '../../hooks/useAddProject';
 import { Pill } from '../Pill';
+import { HoverTip } from '../HoverTip';
 import { OverseerMascot } from '../onboarding/OverseerMascot';
 // The full-color mark (rust disc, amber card) rather than the theme-tinted
 // BrandMark the title bar uses. This is the app's identity moment and the
@@ -81,16 +82,17 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
                 {loginCommand && (
                   <>
                     <span className="text-xs text-fg-faint">-</span>
-                    <button
-                      className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
-                      onClick={handleCopy}
-                      aria-label={`Copy "${loginCommand}" to clipboard`}
-                      title={`Copy "${loginCommand}" to clipboard`}
-                      data-testid={testId ? `${testId}-copy-login` : undefined}
-                    >
-                      {copied ? 'Copied!' : <>Copy <code className="font-mono">{loginCommand}</code></>}
-                      {!copied && <Copy size={10} />}
-                    </button>
+                    <HoverTip label={`Copy "${loginCommand}" to clipboard`}>
+                      <button
+                        className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
+                        onClick={handleCopy}
+                        aria-label={`Copy "${loginCommand}" to clipboard`}
+                        data-testid={testId ? `${testId}-copy-login` : undefined}
+                      >
+                        {copied ? 'Copied!' : <>Copy <code className="font-mono">{loginCommand}</code></>}
+                        {!copied && <Copy size={10} />}
+                      </button>
+                    </HoverTip>
                   </>
                 )}
               </div>
@@ -337,16 +339,17 @@ export function WelcomeScreen() {
                   among fourteen agents where it reads as just another one. */}
               <div className="flex items-center justify-between">
                 <div className="text-xs text-fg-faint uppercase tracking-wider">Core</div>
-                <button
-                  onClick={handleRefresh}
-                  disabled={refreshing}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs text-fg-muted bg-surface-raised hover:bg-surface-hover hover:text-fg cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  data-testid="welcome-refresh"
-                  title="Check again for git and agent CLIs"
-                >
-                  <RefreshCw size={12} />
-                  Refresh
-                </button>
+                <HoverTip label="Check again for git and agent CLIs">
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs text-fg-muted bg-surface-raised hover:bg-surface-hover hover:text-fg cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    data-testid="welcome-refresh"
+                  >
+                    <RefreshCw size={12} />
+                    Refresh
+                  </button>
+                </HoverTip>
               </div>
               <div className="grid grid-cols-3 gap-2 text-left">
                 {gitInfo === null ? (
@@ -458,26 +461,28 @@ export function WelcomeScreen() {
         </div>
 
         <div className="mt-6 mb-8 flex items-center justify-center gap-4 text-sm">
-          <button
-            type="button"
-            onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.gettingStarted)}
-            className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
-            title={DOCS_URLS.gettingStarted}
-            data-testid="welcome-setup-guide"
-          >
-            Read the setup guide
-            <ExternalLink size={12} />
-          </button>
-          <button
-            type="button"
-            onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.mobilePairing)}
-            className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
-            title={DOCS_URLS.mobilePairing}
-            data-testid="welcome-pair-phone"
-          >
-            Pair a phone
-            <ExternalLink size={12} />
-          </button>
+          <HoverTip label={DOCS_URLS.gettingStarted}>
+            <button
+              type="button"
+              onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.gettingStarted)}
+              className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
+              data-testid="welcome-setup-guide"
+            >
+              Read the setup guide
+              <ExternalLink size={12} />
+            </button>
+          </HoverTip>
+          <HoverTip label={DOCS_URLS.mobilePairing}>
+            <button
+              type="button"
+              onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.mobilePairing)}
+              className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
+              data-testid="welcome-pair-phone"
+            >
+              Pair a phone
+              <ExternalLink size={12} />
+            </button>
+          </HoverTip>
         </div>
       </div>
     </div>

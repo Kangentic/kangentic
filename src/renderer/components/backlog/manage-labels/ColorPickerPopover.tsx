@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Palette } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
+import { HoverTip } from '../../HoverTip';
 
 export const PRESET_COLORS = [
   '#6b7280', '#ef4444', '#f43f5e', '#f97316',
@@ -101,22 +102,23 @@ export function ColorPickerPopover({
             style={{ backgroundColor: presetColor }}
           />
         ))}
-        <button
-          type="button"
-          onClick={() => setShowCustomPicker(!showCustomPicker)}
-          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-            isCustomColor
-              ? 'border-white/60 scale-110'
-              : showCustomPicker
-                ? 'border-white/60 bg-surface-hover'
-                : 'border-edge-input hover:border-fg-muted bg-surface-raised'
-          }`}
-          style={isCustomColor ? { backgroundColor: color } : undefined}
-          aria-label="Custom color"
-          title="Custom color"
-        >
-          <Palette size={10} className={isCustomColor ? 'text-white' : 'text-fg-muted'} />
-        </button>
+        <HoverTip label="Custom color">
+          <button
+            type="button"
+            onClick={() => setShowCustomPicker(!showCustomPicker)}
+            className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+              isCustomColor
+                ? 'border-white/60 scale-110'
+                : showCustomPicker
+                  ? 'border-white/60 bg-surface-hover'
+                  : 'border-edge-input hover:border-fg-muted bg-surface-raised'
+            }`}
+            style={isCustomColor ? { backgroundColor: color } : undefined}
+            aria-label="Custom color"
+          >
+            <Palette size={10} className={isCustomColor ? 'text-white' : 'text-fg-muted'} />
+          </button>
+        </HoverTip>
       </div>
 
       {showCustomPicker && (

@@ -12,10 +12,10 @@ import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useHmrGeneration } from '../../utils/hmr-generation';
-import { useFormattedCombo } from '../../hooks/useKeybinding';
 import { useAddProject } from '../../hooks/useAddProject';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { CountBadge } from '../CountBadge';
+import { HoverTip } from '../HoverTip';
 import type { Project, ProjectGroup } from '../../../shared/types';
 import {
   ProjectListItem,
@@ -47,7 +47,6 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const reorderGroups = useProjectStore((s) => s.reorderGroups);
   const toggleGroupCollapsed = useProjectStore((s) => s.toggleGroupCollapsed);
   const openProjectSettings = useConfigStore((state) => state.openProjectSettings);
-  const sidebarCombo = useFormattedCombo('view.toggleSidebar');
   const { startAddProject } = useAddProject();
 
   const renameProject = useProjectStore((s) => s.renameProject);
@@ -264,14 +263,15 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
       <div className="px-3 pt-3 pb-2 border-b border-edge space-y-2">
         <div className="flex items-center gap-2">
           {onToggleSidebar && (
-            <button
-              onClick={onToggleSidebar}
-              className="p-1 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              aria-label="Hide sidebar"
-              title={`Hide sidebar (${sidebarCombo})`}
-            >
-              <ChevronsLeft size={16} />
-            </button>
+            <HoverTip label="Hide sidebar" keys="view.toggleSidebar">
+              <button
+                onClick={onToggleSidebar}
+                className="p-1 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+                aria-label="Hide sidebar"
+              >
+                <ChevronsLeft size={16} />
+              </button>
+            </HoverTip>
           )}
           <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">
             Projects
@@ -297,16 +297,17 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             className="w-full h-8 bg-surface/50 border border-edge/50 rounded-md text-xs text-fg placeholder-fg-muted pl-7 pr-7 outline-none focus:border-edge-input transition-colors"
           />
           {search && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-disabled hover:text-fg-muted transition-colors"
-              data-testid="project-sidebar-search-clear"
-              aria-label="Clear search"
-              title="Clear search"
-            >
-              <X size={14} />
-            </button>
+            <HoverTip label="Clear search">
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-disabled hover:text-fg-muted transition-colors"
+                data-testid="project-sidebar-search-clear"
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            </HoverTip>
           )}
         </div>
       </div>

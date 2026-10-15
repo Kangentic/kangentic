@@ -432,10 +432,13 @@
 
   /* HoverTip (components/HoverTip.tsx). A label tip inverts to bg-fg with text-surface, so
      its key chips and muted line are mixed from that same pair and stay readable in every
-     theme without a token of their own per theme. */
+     theme without a token of their own per theme. A rich tip is the raised panel, where plain
+     fg-muted reads 4.15:1 in the forest theme, so its secondary text sits a quarter of the way
+     toward fg-tertiary. tests/unit/theme-contrast.test.ts holds all of them to 4.5:1. */
   --color-tip-chip: color-mix(in srgb, var(--kng-fg) 86%, var(--kng-surface));
   --color-tip-chip-edge: color-mix(in srgb, var(--kng-fg) 66%, var(--kng-surface));
-  --color-tip-muted: color-mix(in srgb, var(--kng-surface) 62%, var(--kng-fg));
+  --color-tip-muted: color-mix(in srgb, var(--kng-surface) 66%, var(--kng-fg));
+  --color-tip-rich-muted: color-mix(in srgb, var(--kng-fg-muted) 75%, var(--kng-fg-tertiary));
   --shadow-tip: 0 8px 24px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.35);
 }
 

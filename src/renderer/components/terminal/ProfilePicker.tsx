@@ -3,6 +3,7 @@ import { ChevronDown, Layers } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { ContextBarPopover } from './ContextBarPopover';
 import { pill } from './context-bar-pill';
+import { HoverTip } from '../HoverTip';
 
 /** Sentinel for the synthetic "Default" profile - the columns' own settings, never stored. */
 const DEFAULT_PROFILE_VALUE = '__default__';
@@ -78,18 +79,19 @@ export function ProfilePicker({ taskId }: { taskId: string }) {
 
   return (
     <span className="relative inline-flex">
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((wasOpen) => !wasOpen)}
-        className={`${pill} text-fg-muted inline-flex items-center gap-1 cursor-pointer hover:bg-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg-faint`}
-        data-testid="context-bar-profile-trigger"
-        title="Board Profile - the per-column agent, model, and effort this task follows"
-      >
-        <Layers size={11} className="text-fg-faint flex-shrink-0" />
-        {label}
-        <ChevronDown size={11} className="text-fg-faint flex-shrink-0" />
-      </button>
+      <HoverTip label="Board Profile - the per-column agent, model, and effort this task follows" enabled={!open}>
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen((wasOpen) => !wasOpen)}
+          className={`${pill} text-fg-muted inline-flex items-center gap-1 cursor-pointer hover:bg-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg-faint`}
+          data-testid="context-bar-profile-trigger"
+        >
+          <Layers size={11} className="text-fg-faint flex-shrink-0" />
+          {label}
+          <ChevronDown size={11} className="text-fg-faint flex-shrink-0" />
+        </button>
+      </HoverTip>
       {open && (
         <ContextBarPopover
           triggerRef={triggerRef}

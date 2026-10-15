@@ -306,7 +306,7 @@ test.describe('Rate limits cross-session sync', () => {
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
   });
 
-  test('pill tooltip records the snapshot source as "Updated ... via <agent>"', async () => {
+  test('the pill tip is a rich readout: one block per window with its share and reset, and when it was updated', async () => {
     await page.locator(`[data-task-id="${TASK_STALE_ID}"]`).first().click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
 
@@ -314,15 +314,33 @@ test.describe('Rate limits cross-session sync', () => {
     await expect(contextBar).toBeVisible({ timeout: 10000 });
 
     const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
-    const titleAttr = await pill.getAttribute('title');
-    expect(titleAttr).toBeTruthy();
-    expect(titleAttr).toMatch(/Updated /);
-    // The fresh task is what set the per-window maximum (sourceSessionId points
-    // at SESSION_FRESH_ID; the stale entry was rejected by the merge). Its agent
-    // is 'claude' so the "via" suffix resolves to 'Claude'. This asserts the
-    // snapshot's sourceSessionId is wired through to the tooltip.
-    expect(titleAttr).toContain('via Claude');
+    await expect(pill).not.toHaveAttribute('title');
+    // A screen reader hears each window's share and reset without hovering.
+    await expect(pill).toHaveAccessibleDescription(/5h session 73%\. Resets in .*7d weekly 41%\. Resets [A-Z]/);
 
+    await pill.hover();
+    const tip = page.locator('[data-testid="rate-limits-tip"]');
+    await expect(tip).toBeVisible();
+    await expect(tip).toHaveAttribute('data-shape', 'rich');
+    await expect(tip.locator('[data-hover-tip-part="header"]')).toHaveText('Rate limits');
+
+    // The merged snapshot's numbers, the same ones the pill draws: never the stale 18/4.
+    const windows = tip.locator('[data-testid="rate-limits-tip-window"]');
+    await expect(windows).toHaveCount(2);
+    await expect(windows.nth(0)).toContainText('5h session');
+    await expect(windows.nth(0)).toContainText('73%');
+    // An hour out reads as a countdown; five days out reads as a date and time.
+    await expect(windows.nth(0)).toContainText(/Resets in \d/);
+    await expect(windows.nth(1)).toContainText('7d weekly');
+    await expect(windows.nth(1)).toContainText('41%');
+    await expect(windows.nth(1)).toContainText(/Resets [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}/);
+
+    // When the snapshot arrived, with no "via <agent>": the numbers are account-wide.
+    await expect(tip.locator('[data-testid="rate-limits-tip-updated"]')).toHaveText(/^Updated (just now|\d+ minutes? ago)$/);
+    await expect(tip).not.toContainText('via');
+
+    await page.mouse.move(0, 0);
+    await expect(tip).toHaveCount(0);
     await page.locator('[data-testid="task-detail-close"]').click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
   });

@@ -375,7 +375,7 @@ test.describe('Column automations', () => {
     // The row marks the delivery mode beside its name, which is what the pill
     // used to do in the old Session card. The sentence is the message alone.
     const deliveryMark = target.locator('[data-testid="column-automation-delivery-mark"]');
-    await expect(deliveryMark).toHaveAttribute('title', 'Delivery: waits for the current turn to end.');
+    await expect(deliveryMark).toHaveAccessibleName('Delivery: waits for the current turn to end.');
     await expect(target.locator('[data-testid="column-automation-row-sentence"]')).toHaveText('Sends "/code-review"');
 
     // The field it replaced is gone from the settings pane entirely.
@@ -550,7 +550,7 @@ test.describe('Column automations', () => {
     // The sentence says only what is sent, so without the mark a copied Send
     // message that waits for the turn to end would read as one that does not.
     const waits = copyRow('Waits').locator('[data-testid="column-automation-picker-copy-title"] [data-testid="column-automation-delivery-mark"]');
-    await expect(waits).toHaveAttribute('title', 'Delivery: waits for the current turn to end.');
+    await expect(waits).toHaveAccessibleName('Delivery: waits for the current turn to end.');
     await expect(waits).toHaveAttribute('aria-label', 'Delivery: waits for the current turn to end.');
     await expect(copyRow('Right away').locator('[data-testid="column-automation-delivery-mark"]')).toHaveCount(0);
 
@@ -743,7 +743,7 @@ test.describe('Column automations', () => {
     // there either.
     const todo = overviewRow('To Do');
     await expect(todo.locator('[data-enter] [data-state="not-applicable"]')).toBeVisible();
-    await expect(todo.locator('[data-enter] [data-state="not-applicable"]')).toHaveAttribute('title', /.+/);
+    await expect(todo.locator('[data-enter] [data-state="not-applicable"]')).toHaveAccessibleDescription(/.+/);
     await expect(todo.locator('[data-exit] [data-state="unchanged"]')).toHaveText('0');
 
     // The two booleans render the same switch the column page uses, read-only.
@@ -784,7 +784,7 @@ test.describe('Column automations', () => {
     const mergeGlyph = railRow('Merge').locator('[data-testid="board-manager-tab-automation"]');
     await expect(mergeGlyph).toBeVisible();
     await expect(mergeGlyph).toHaveText('');
-    await expect(mergeGlyph).toHaveAttribute('title', '1 automation runs here');
+    await expect(mergeGlyph).toHaveAccessibleDescription('1 automation runs here');
     await expect(mergeGlyph.locator('svg.lucide-columns-3-cog')).toHaveCount(1);
     await expect(railRow('Testing').locator('[data-testid="board-manager-tab-automation"]')).toHaveCount(0);
 

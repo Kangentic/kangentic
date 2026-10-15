@@ -14,7 +14,8 @@ import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } 
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type { ActivityReason, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, Task } from '../../../shared/types';
-import { formatActivityReasonText } from './ActivityReasonTooltip';
+import { activityReasonIcon, formatActivityReasonText } from './ActivityReasonTooltip';
+import { HoverTip } from '../HoverTip';
 
 /**
  * What a task card shows, shared by the board's `TaskCard` and the Workflows
@@ -39,20 +40,21 @@ import { formatActivityReasonText } from './ActivityReasonTooltip';
  *
  * The track is inert here (an empty groove); only the running state fills it, via
  * `ContextUsageFooter`.
+ *
+ * `tip` is the full status label, which the bar truncates. The label is already on the
+ * span as text, so a screen reader hears it there and the tip describes nothing.
  */
 export function CardStatusBar({
-  children, testId, title,
-}: { children: React.ReactNode; testId: string; title?: string }) {
+  children, testId, tip,
+}: { children: React.ReactNode; testId: string; tip?: string }) {
   return (
     <div className="mt-2 pt-2 border-t border-edge" data-testid={testId}>
       <div className="flex items-center justify-between mb-1.5">
-        <span
-          className="text-xs text-fg-faint flex items-center gap-1 min-w-0"
-          // native-title-ok: full value of the status label the bar truncates
-          title={title}
-        >
-          {children}
-        </span>
+        <HoverTip label={tip ?? ''} describe={false}>
+          <span className="text-xs text-fg-faint flex items-center gap-1 min-w-0">
+            {children}
+          </span>
+        </HoverTip>
       </div>
       <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden" />
     </div>
@@ -70,7 +72,7 @@ export function CardStatusBar({
  */
 export function WorkflowWaitingBar({ label, paused }: { label: string; paused: boolean }) {
   return (
-    <CardStatusBar testId="workflow-status-bar" title={label}>
+    <CardStatusBar testId="workflow-status-bar" tip={label}>
       {paused ? <CirclePause size={12} className="shrink-0" /> : <Loader2 size={12} className="shrink-0" />}
       <span className="truncate">{label}</span>
     </CardStatusBar>
@@ -254,6 +256,8 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
   // what each agent is doing. Shared with the monitor card through
   // `excerptLinesFor`, so the two surfaces cannot clamp differently.
   const excerptLines = excerptLinesFor(density);
+  // Read once: the text carries an elapsed time, and the mark's name and its tip must match.
+  const reasonText = activityReason ? formatActivityReasonText(activityReason) : '';
 
   return (
     <>
@@ -266,20 +270,19 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
             That unmounted the whole <svg>, re-injected `MARK_INNER` into a fresh <g>, and
             restarted the `.kng-march` dash from zero - the indicator visibly "resetting"
             rather than marching. One slot lets React reuse the fiber, so a working->working
-            update never touches the DOM and only a genuine state change re-injects. */}
+            update never touches the DOM and only a genuine state change re-injects.
+            The engine's reason, when it has one, is both the mark's name and its tip,
+            led by the reason's own glyph. The tip repeats the name, so a screen reader
+            hears it once. */}
         {(isIdle || isThinking) && (
-          <ActivityMark
-            mark={isThinking ? 'agent-working' : 'agent-idle'}
-            size={16}
-            className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
-            aria-label={
-              activityReason
-                ? formatActivityReasonText(activityReason)
-                : isThinking ? 'Thinking' : 'Idle'
-            }
-          >
-            {activityReason && <title>{formatActivityReasonText(activityReason)}</title>}
-          </ActivityMark>
+          <HoverTip label={reasonText} icon={activityReason ? activityReasonIcon(activityReason) : undefined}>
+            <ActivityMark
+              mark={isThinking ? 'agent-working' : 'agent-idle'}
+              size={16}
+              className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
+              aria-label={reasonText !== '' ? reasonText : isThinking ? 'Thinking' : 'Idle'}
+            />
+          </HoverTip>
         )}
         <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
         <DisplayIdBadge task={task} view={view} hidden={hideDisplayId} />
@@ -303,13 +306,11 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
             target: the card's own click opens the task, where the kebab's
             "Close browser" is. */}
         {view.browserAlive && (
-          <span
-            className="text-active shrink-0 flex"
-            title="Browser running for the agent. Close it from the task menu to free memory."
-            data-testid="task-card-browser-alive"
-          >
-            <Globe size={12} aria-label="Browser running" />
-          </span>
+          <HoverTip label="Browser running for the agent. Close it from the task menu to free memory.">
+            <span className="text-active shrink-0 flex" data-testid="task-card-browser-alive">
+              <Globe size={12} aria-label="Browser running" />
+            </span>
+          </HoverTip>
         )}
       </div>
 
@@ -404,7 +405,7 @@ function TaskCardFooter({ view, idleFooter }: { view: TaskCardViewModel; idleFoo
     case 'preparing':
     case 'initializing':
       return (
-        <CardStatusBar testId="status-bar" title={displayState.label}>
+        <CardStatusBar testId="status-bar" tip={displayState.label}>
           <Loader2 size={12} className="animate-spin shrink-0" />
           <span className="truncate">{displayState.label}</span>
         </CardStatusBar>

@@ -1538,35 +1538,37 @@ export function KnowledgeGraphCanvas({
           left: `clamp(${paneInsets.left + toolbarHalfWidth}px, 50%, calc(100% - ${paneInsets.right + toolbarHalfWidth}px))`,
         }}
       >
-        <button
-          type="button"
-          onClick={handleResetView}
-          onPointerDown={(event) => event.stopPropagation()}
-          title="Fly back to the opening view"
-          data-testid="knowledge-graph-reset-view"
-          className="flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
-        >
-          <RotateCcw size={14} aria-hidden />
-          Reset view
-        </button>
+        <HoverTip label="Fly back to the opening view">
+          <button
+            type="button"
+            onClick={handleResetView}
+            onPointerDown={(event) => event.stopPropagation()}
+            data-testid="knowledge-graph-reset-view"
+            className="flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
+          >
+            <RotateCcw size={14} aria-hidden />
+            Reset view
+          </button>
+        </HoverTip>
         <span className="h-5 w-px bg-edge" aria-hidden />
-        <button
-          ref={legendButtonRef}
-          type="button"
-          onClick={() => setLegendOpen((open) => !open)}
-          onPointerDown={(event) => event.stopPropagation()}
-          title="Show the camera keys"
-          aria-label="Controls"
-          aria-expanded={legendOpen}
-          data-testid="knowledge-graph-camera-toggle"
-          className={`flex h-8 items-center gap-2 rounded-md px-3 text-xs transition-colors hover:bg-surface-hover hover:text-fg cursor-pointer ${legendOpen ? 'bg-surface-hover text-fg' : 'text-fg-muted'}`}
-        >
-          <Keyboard size={14} aria-hidden />
-          {/* Dropped on a narrow surface: at the 900px floor with the chat open,
-              the gap between the rails is about 200px, and the labelled
-              toolbar is wider than that. Reset view keeps its label. */}
-          <span className="hidden @[1100px]:inline">Controls</span>
-        </button>
+        <HoverTip label="Show the camera keys" enabled={!legendOpen}>
+          <button
+            ref={legendButtonRef}
+            type="button"
+            onClick={() => setLegendOpen((open) => !open)}
+            onPointerDown={(event) => event.stopPropagation()}
+            aria-label="Controls"
+            aria-expanded={legendOpen}
+            data-testid="knowledge-graph-camera-toggle"
+            className={`flex h-8 items-center gap-2 rounded-md px-3 text-xs transition-colors hover:bg-surface-hover hover:text-fg cursor-pointer ${legendOpen ? 'bg-surface-hover text-fg' : 'text-fg-muted'}`}
+          >
+            <Keyboard size={14} aria-hidden />
+            {/* Dropped on a narrow surface: at the 900px floor with the chat open,
+                the gap between the rails is about 200px, and the labelled
+                toolbar is wider than that. Reset view keeps its label. */}
+            <span className="hidden @[1100px]:inline">Controls</span>
+          </button>
+        </HoverTip>
 
         {/* A control LEGEND, in the shape games use: the keys, and nothing else
             until you point at one.

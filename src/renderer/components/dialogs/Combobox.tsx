@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
+import { HoverTip } from '../HoverTip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 export interface ComboboxOption {
@@ -273,30 +274,34 @@ export function Combobox({
           }`}
         />
         {allowClear && value && !disabled && (
-          <button
-            type="button"
-            onClick={handleClear}
-            className="p-1 text-fg-faint hover:text-fg-muted transition-colors flex-shrink-0"
-            title="Clear"
-            aria-label="Clear"
-          >
-            <X size={16} />
-          </button>
+          <HoverTip label="Clear">
+            <button
+              type="button"
+              onClick={handleClear}
+              className="p-1 text-fg-faint hover:text-fg-muted transition-colors flex-shrink-0"
+              aria-label="Clear"
+            >
+              <X size={16} />
+            </button>
+          </HoverTip>
         )}
         {options.length > 0 && (
-          <button
-            type="button"
-            onClick={handleToggleDropdown}
-            disabled={disabled}
-            className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input disabled:cursor-not-allowed"
-            title={isOpen ? 'Close dropdown' : 'Open dropdown'}
-            aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
-          >
-            <ChevronDown
-              size={16}
-              className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
-            />
-          </button>
+          // Shut while disabled. A host that wraps the field in its own tip says why it is
+          // off, and that tip shows instead.
+          <HoverTip label={isOpen ? 'Close dropdown' : 'Open dropdown'} enabled={!disabled}>
+            <button
+              type="button"
+              onClick={handleToggleDropdown}
+              disabled={disabled}
+              className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input disabled:cursor-not-allowed"
+              aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
+            >
+              <ChevronDown
+                size={16}
+                className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </HoverTip>
         )}
       </div>
 
@@ -315,20 +320,21 @@ export function Combobox({
       >
         {filteredOptions.length > 0 ? (
           filteredOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              data-combobox-option
-              data-testid={testId ? `${testId}-option-${option.value}` : undefined}
-              onClick={() => handleSelectOption(option.value)}
-              onKeyDown={handleOptionKeyDown}
-              title={option.label}
-              className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
-                option.value === value ? 'text-fg font-medium' : 'text-fg-muted'
-              }`}
-            >
-              {option.label}
-            </button>
+            // The full label of a row the menu's width may cut short.
+            <HoverTip key={option.value} label={option.label}>
+              <button
+                type="button"
+                data-combobox-option
+                data-testid={testId ? `${testId}-option-${option.value}` : undefined}
+                onClick={() => handleSelectOption(option.value)}
+                onKeyDown={handleOptionKeyDown}
+                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
+                  option.value === value ? 'text-fg font-medium' : 'text-fg-muted'
+                }`}
+              >
+                {option.label}
+              </button>
+            </HoverTip>
           ))
         ) : (
           <div className="px-3 py-2 text-xs text-fg-faint text-center">No matches</div>

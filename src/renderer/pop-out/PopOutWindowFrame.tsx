@@ -2,6 +2,7 @@ import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { Activity, Brain, ChartColumn, FileDiff, GitBranch, Globe, Minus, Square, X } from 'lucide-react';
 import { POP_OUT_SURFACES } from '../../shared/pop-out';
 import type { PopOutKind } from '../../shared/pop-out';
+import { HoverTip } from '../components/HoverTip';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
@@ -87,38 +88,43 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <Icon size={16} className="text-fg-muted flex-shrink-0" aria-hidden />
-          <span className="text-sm font-semibold text-fg-secondary truncate" title={displayTitle}>{displayTitle}</span>
+          <HoverTip label={displayTitle}>
+            <span className="text-sm font-semibold text-fg-secondary truncate">{displayTitle}</span>
+          </HoverTip>
         </div>
         {!isMac && (
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
-            <button
-              type="button"
-              onClick={() => window.electronAPI.window.minimize()}
-              className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              aria-label="Minimize"
-              title="Minimize"
-            >
-              <Minus size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={() => window.electronAPI.window.maximize()}
-              className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              aria-label="Maximize"
-              title="Maximize"
-            >
-              <Square size={14} />
-            </button>
-            <button
-              type="button"
-              onClick={() => window.electronAPI.window.close()}
-              className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
-              aria-label="Close"
-              title="Close"
-              data-testid="popout-close"
-            >
-              <X size={16} />
-            </button>
+            <HoverTip label="Minimize">
+              <button
+                type="button"
+                onClick={() => window.electronAPI.window.minimize()}
+                className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+                aria-label="Minimize"
+              >
+                <Minus size={16} />
+              </button>
+            </HoverTip>
+            <HoverTip label="Maximize">
+              <button
+                type="button"
+                onClick={() => window.electronAPI.window.maximize()}
+                className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+                aria-label="Maximize"
+              >
+                <Square size={14} />
+              </button>
+            </HoverTip>
+            <HoverTip label="Close">
+              <button
+                type="button"
+                onClick={() => window.electronAPI.window.close()}
+                className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
+                aria-label="Close"
+                data-testid="popout-close"
+              >
+                <X size={16} />
+              </button>
+            </HoverTip>
           </div>
         )}
       </div>

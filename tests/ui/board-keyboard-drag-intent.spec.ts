@@ -372,8 +372,14 @@ test('a column grip lifts its column from Tab-placed focus only', async () => {
     await expect(grip).not.toHaveAttribute('aria-pressed', 'true');
 
     // Tab-placed focus: Space lifts, Escape cancels, and the column has not moved.
+    // Keyboard focus opens the grip's tip at once. The Space that lifts the column
+    // is a press, so it closes the tip too, and ONE Escape is the in-gesture cancel:
+    // a tip left up would take that Escape and leave the column lifted.
     await focusByKeyboard(page, PLANNING_COLUMN_GRIP);
+    const tip = page.locator('[data-hover-tip]');
+    await expect(tip).toHaveText('Drag to reorder');
     await liftGripWithSpace(page, PLANNING_COLUMN_GRIP);
+    await expect(tip).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(grip).not.toHaveAttribute('aria-pressed', 'true', { timeout: 3000 });
     const columnNames = await page.locator('[data-testid="swimlane"]').evaluateAll((elements) =>

@@ -9,6 +9,7 @@ import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityR
 import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
+import { HoverTip } from '../../HoverTip';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
@@ -202,30 +203,32 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 placeholder={agent.found ? (agent.path ?? undefined) : 'Enter path manually'}
                 className={`${INPUT_CLASS} pr-8 placeholder-fg-muted`}
               />
-              <button
-                type="button"
-                onClick={handleRefreshAgents}
-                disabled={refreshing}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors disabled:opacity-50"
-                aria-label="Re-detect agent"
-                title={agent.found ? 'Re-detect agent' : `${agent.displayName} not found - click to re-detect`}
-              >
-                <RefreshCw size={16} className={`text-fg-faint hover:text-fg-muted ${refreshing ? 'animate-spin' : ''}`} />
-              </button>
+              <HoverTip label={agent.found ? 'Re-detect agent' : `${agent.displayName} not found - click to re-detect`}>
+                <button
+                  type="button"
+                  onClick={handleRefreshAgents}
+                  disabled={refreshing}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors disabled:opacity-50"
+                  aria-label="Re-detect agent"
+                >
+                  <RefreshCw size={16} className={`text-fg-faint hover:text-fg-muted ${refreshing ? 'animate-spin' : ''}`} />
+                </button>
+              </HoverTip>
             </div>
             {unauthenticated && loginCommand && (
               <div className="mt-1 text-xs text-amber-400/80 flex items-center gap-2">
                 <span>Run <code className="font-mono">{loginCommand}</code> in your terminal to authenticate.</span>
-                <button
-                  type="button"
-                  onClick={() => handleCopyLoginCommand(agent.name, loginCommand)}
-                  className="inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
-                  aria-label={`Copy "${loginCommand}" to clipboard`}
-                  title={`Copy "${loginCommand}" to clipboard`}
-                  data-testid={`agent-tab-copy-login-${agent.name}`}
-                >
-                  <Copy size={11} />{copiedAgent === agent.name ? 'Copied!' : 'Copy'}
-                </button>
+                <HoverTip label={`Copy "${loginCommand}" to clipboard`}>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyLoginCommand(agent.name, loginCommand)}
+                    className="inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
+                    aria-label={`Copy "${loginCommand}" to clipboard`}
+                    data-testid={`agent-tab-copy-login-${agent.name}`}
+                  >
+                    <Copy size={11} />{copiedAgent === agent.name ? 'Copied!' : 'Copy'}
+                  </button>
+                </HoverTip>
               </div>
             )}
           </CardRow>

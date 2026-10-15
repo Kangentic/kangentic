@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
+import { HoverTip } from '../HoverTip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 interface FontComboboxProps {
@@ -202,18 +203,19 @@ export function FontCombobox({
           className="flex-1 bg-transparent px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none"
         />
         {fonts.length > 0 && (
-          <button
-            type="button"
-            onClick={handleToggleDropdown}
-            className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input"
-            title={isOpen ? 'Close dropdown' : 'Open dropdown'}
-            aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
-          >
-            <ChevronDown
-              size={16}
-              className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
-            />
-          </button>
+          <HoverTip label={isOpen ? 'Close dropdown' : 'Open dropdown'}>
+            <button
+              type="button"
+              onClick={handleToggleDropdown}
+              className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input"
+              aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
+            >
+              <ChevronDown
+                size={16}
+                className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </HoverTip>
         )}
       </div>
 
@@ -231,21 +233,22 @@ export function FontCombobox({
       >
         {filteredFonts.length > 0 ? (
           filteredFonts.map((font) => (
-            <button
-              key={font}
-              type="button"
-              data-font-option
-              data-testid={`${testId}-option-${font}`}
-              onClick={() => handleSelectFont(font)}
-              onKeyDown={handleOptionKeyDown}
-              title={font}
-              style={{ fontFamily: font }}
-              className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
-                font === value ? 'text-fg font-medium' : 'text-fg-muted'
-              }`}
-            >
-              {font}
-            </button>
+            // The full name of a font the menu's width may cut short.
+            <HoverTip key={font} label={font}>
+              <button
+                type="button"
+                data-font-option
+                data-testid={`${testId}-option-${font}`}
+                onClick={() => handleSelectFont(font)}
+                onKeyDown={handleOptionKeyDown}
+                style={{ fontFamily: font }}
+                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
+                  font === value ? 'text-fg font-medium' : 'text-fg-muted'
+                }`}
+              >
+                {font}
+              </button>
+            </HoverTip>
           ))
         ) : (
           <div className="px-3 py-2 text-xs text-fg-faint text-center">No fonts match "{filterText}"</div>

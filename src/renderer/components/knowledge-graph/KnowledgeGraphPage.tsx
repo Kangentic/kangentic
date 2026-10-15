@@ -23,6 +23,7 @@ import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
 import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
+import { HoverTip } from '../HoverTip';
 import { knowledgeGraphWindowManager } from '../../window-manager';
 import { LazyKnowledgeGraph } from './LazyKnowledgeGraph';
 import { KnowledgeGraphDetailLayer } from './KnowledgeGraphDetailLayer';
@@ -69,16 +70,17 @@ export function KnowledgeGraphPage() {
           params={{}}
           className="px-4 py-2.5"
           trailing={
-            <button
-              type="button"
-              onClick={() => overlay.requestClose()}
-              className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              title="Close (Esc)"
-              aria-label="Close Knowledge Graph"
-              data-testid="knowledge-graph-close"
-            >
-              <X size={16} />
-            </button>
+            <HoverTip label="Close Knowledge Graph" keys="dialog.dismiss">
+              <button
+                type="button"
+                onClick={() => overlay.requestClose()}
+                className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+                aria-label="Close Knowledge Graph"
+                data-testid="knowledge-graph-close"
+              >
+                <X size={16} />
+              </button>
+            </HoverTip>
           }
         >
           {/* A plain lucide glyph, not a branding activity mark: those all mean

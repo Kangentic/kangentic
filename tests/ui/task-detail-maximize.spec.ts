@@ -368,8 +368,9 @@ test.describe('Task Detail: maximize / restore', () => {
 
     // The standard-header close button advertises the panel.close hotkey
     // (Escape is the hidden universal closer and is deliberately not shown).
+    // Its tip repeats its name, so what it adds to read is the shortcut alone.
     const closeButton = page.locator('[aria-label="Close dialog"]');
-    await expect(closeButton).toHaveAttribute('title', /^Close \(/);
+    await expect(closeButton).toHaveAccessibleDescription(/\S/);
 
     // Maximize via the header button.
     const maximizeButton = page.locator('[data-testid="dialog-maximize"]');

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CalendarRange, X } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
+import { HoverTip } from '../HoverTip';
 import { Select } from '../settings/shared';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import type { UsageCustomWindow } from '../../../shared/types';
@@ -134,40 +135,43 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
     <div className="relative">
       {customWindow ? (
         <span className="flex items-center rounded-full border border-accent/60 bg-accent/10 text-xs text-fg">
+          <HoverTip label="Edit the custom range" enabled={!open}>
+            <button
+              ref={triggerRef}
+              type="button"
+              onClick={openPicker}
+              className="flex items-center gap-1.5 pl-2.5 py-1 cursor-pointer hover:text-fg transition-colors"
+              data-testid="stats-custom-trigger"
+            >
+              <CalendarRange size={14} className="text-fg-muted" />
+              {customWindowLabel(customWindow)}
+            </button>
+          </HoverTip>
+          <HoverTip label="Clear custom range">
+            <button
+              type="button"
+              onClick={onClear}
+              className="pl-1.5 pr-2 py-1 cursor-pointer text-fg-muted hover:text-fg transition-colors"
+              aria-label="Clear custom range"
+              data-testid="stats-custom-clear"
+            >
+              <X size={14} />
+            </button>
+          </HoverTip>
+        </span>
+      ) : (
+        <HoverTip label="Pick a custom month range" enabled={!open}>
           <button
             ref={triggerRef}
             type="button"
             onClick={openPicker}
-            className="flex items-center gap-1.5 pl-2.5 py-1 cursor-pointer hover:text-fg transition-colors"
-            title="Edit the custom range"
+            className="flex items-center gap-1.5 rounded-full border border-edge px-2.5 py-1 text-xs text-fg-secondary cursor-pointer hover:text-fg hover:bg-surface-hover/40 transition-colors"
             data-testid="stats-custom-trigger"
           >
-            <CalendarRange size={14} className="text-fg-muted" />
-            {customWindowLabel(customWindow)}
+            <CalendarRange size={14} />
+            Custom
           </button>
-          <button
-            type="button"
-            onClick={onClear}
-            className="pl-1.5 pr-2 py-1 cursor-pointer text-fg-muted hover:text-fg transition-colors"
-            title="Back to the quick ranges"
-            aria-label="Clear custom range"
-            data-testid="stats-custom-clear"
-          >
-            <X size={14} />
-          </button>
-        </span>
-      ) : (
-        <button
-          ref={triggerRef}
-          type="button"
-          onClick={openPicker}
-          className="flex items-center gap-1.5 rounded-full border border-edge px-2.5 py-1 text-xs text-fg-secondary cursor-pointer hover:text-fg hover:bg-surface-hover/40 transition-colors"
-          title="Pick a custom month range"
-          data-testid="stats-custom-trigger"
-        >
-          <CalendarRange size={14} />
-          Custom
-        </button>
+        </HoverTip>
       )}
       <OverlayPopover
         open={open}

@@ -48,7 +48,7 @@ function WildcardExamplesGrid(): ReactElement {
           </code>
           <span className="text-xs text-fg-tertiary">
             {example.rule}
-            {example.sample !== null && <span className="text-fg-muted">, as in {example.sample}</span>}
+            {example.sample !== null && <span className="text-tip-rich-muted">, as in {example.sample}</span>}
           </span>
         </Fragment>
       ))}

@@ -1,7 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Search, Smile } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
+import { HoverTip } from '../HoverTip';
 import { ALL_ICONS } from '../../utils/swimlane-icons';
+import { tipLabel } from '../../utils/hover-tip';
+
+/** Why a used icon cannot be picked: each column's icon is its own. */
+const USED_ICON_REASON = 'Another column uses this icon';
 
 interface IconPickerDialogProps {
   onClose: () => void;
@@ -67,22 +72,23 @@ export function IconPickerDialog({
         <div className="flex flex-wrap gap-1">
           {/* None option */}
           {!hideNone && (
-            <button
-              type="button"
-              onClick={() => onSelect(null)}
-              className={`w-8 h-8 rounded flex items-center justify-center border transition-all ${
-                selectedIcon === null
-                  ? 'border-white bg-surface-hover'
-                  : 'border-transparent text-fg-muted hover:text-fg-secondary hover:bg-surface-raised'
-              }`}
-              aria-label="None"
-              title="None"
-            >
-              <div
-                className="w-2.5 h-2.5 rounded-full"
-                style={{ backgroundColor: accentColor }}
-              />
-            </button>
+            <HoverTip label="None">
+              <button
+                type="button"
+                onClick={() => onSelect(null)}
+                className={`w-8 h-8 rounded flex items-center justify-center border transition-all ${
+                  selectedIcon === null
+                    ? 'border-white bg-surface-hover'
+                    : 'border-transparent text-fg-muted hover:text-fg-secondary hover:bg-surface-raised'
+                }`}
+                aria-label="None"
+              >
+                <div
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{ backgroundColor: accentColor }}
+                />
+              </button>
+            </HoverTip>
           )}
 
           {/* Icon buttons */}
@@ -90,27 +96,30 @@ export function IconPickerDialog({
             const isUsed = usedIcons.has(entry.name);
             const isSelected = selectedIcon === entry.name;
             return (
-              <button
+              <HoverTip
                 key={entry.name}
-                type="button"
-                onClick={() => onSelect(entry.name)}
-                disabled={isUsed}
-                className={`w-8 h-8 rounded flex items-center justify-center border transition-all ${
-                  isUsed
-                    ? 'opacity-30 cursor-not-allowed border-transparent'
-                    : isSelected
-                      ? 'border-white bg-surface-hover'
-                      : 'border-transparent text-fg-muted hover:text-fg-secondary hover:bg-surface-raised'
-                }`}
-                aria-label={entry.label}
-                title={entry.label}
+                label={tipLabel({ disabled: isUsed, disabledReason: USED_ICON_REASON, tip: entry.label })}
               >
-                <entry.component
-                  size={16}
-                  strokeWidth={1.75}
-                  style={isSelected ? { color: accentColor } : undefined}
-                />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onSelect(entry.name)}
+                  disabled={isUsed}
+                  className={`w-8 h-8 rounded flex items-center justify-center border transition-all ${
+                    isUsed
+                      ? 'opacity-30 cursor-not-allowed border-transparent'
+                      : isSelected
+                        ? 'border-white bg-surface-hover'
+                        : 'border-transparent text-fg-muted hover:text-fg-secondary hover:bg-surface-raised'
+                  }`}
+                  aria-label={entry.label}
+                >
+                  <entry.component
+                    size={16}
+                    strokeWidth={1.75}
+                    style={isSelected ? { color: accentColor } : undefined}
+                  />
+                </button>
+              </HoverTip>
             );
           })}
         </div>

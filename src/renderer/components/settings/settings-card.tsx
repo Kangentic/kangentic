@@ -424,16 +424,17 @@ export function CardStatusRow({ label, value, tone = 'neutral', percent = null, 
         </span>
         {/* Shrinks and ends in an ellipsis past the tile's edge, with the whole
             value on hover: a failure's value is its error, which can carry a
-            URL far wider than the tile. */}
-        <span
-          className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[13px] tabular-nums text-fg-secondary"
-          data-testid={valueTestId ?? (testId ? `${testId}-text` : undefined)}
-          // native-title-ok: full value of the status value the tile truncates
-          title={value}
-        >
-          {tone === 'ready' ? <Check size={14} className="flex-shrink-0 text-emerald-500" aria-hidden="true" /> : null}
-          <span className="truncate">{value}</span>
-        </span>
+            URL far wider than the tile. The span's own text already reads the
+            value, so the tip adds no description. */}
+        <HoverTip label={value} describe={false}>
+          <span
+            className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[13px] tabular-nums text-fg-secondary"
+            data-testid={valueTestId ?? (testId ? `${testId}-text` : undefined)}
+          >
+            {tone === 'ready' ? <Check size={14} className="flex-shrink-0 text-emerald-500" aria-hidden="true" /> : null}
+            <span className="truncate">{value}</span>
+          </span>
+        </HoverTip>
       </div>
       {percent !== null ? <ProgressTrack percent={width} label={progressLabel} /> : null}
     </CardTile>

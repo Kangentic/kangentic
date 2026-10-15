@@ -3,6 +3,7 @@ import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowI
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
 import { placeContextMenu, type MenuPlacement } from './context-menu-placement';
+import { HoverTip } from '../HoverTip';
 
 /**
  * Inline context menu shown on right-click of a task card. Offers
@@ -170,21 +171,21 @@ export function TaskContextMenu({
           {moveTargets.map((lane) => {
             const refusal = moveRefusal?.(lane.id) ?? null;
             return (
-              <button
-                key={lane.id}
-                type="button"
-                onClick={() => { if (refusal) return; onMoveTo(lane.id); onClose(); }}
-                aria-disabled={refusal ? true : undefined}
-                title={refusal ?? undefined}
-                className={refusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
-                data-testid="context-move-to"
-              >
-                <div
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: lane.color }}
-                />
-                {lane.name}
-              </button>
+              <HoverTip key={lane.id} label={refusal ?? ''}>
+                <button
+                  type="button"
+                  onClick={() => { if (refusal) return; onMoveTo(lane.id); onClose(); }}
+                  aria-disabled={refusal ? true : undefined}
+                  className={refusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
+                  data-testid="context-move-to"
+                >
+                  <div
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: lane.color }}
+                  />
+                  {lane.name}
+                </button>
+              </HoverTip>
             );
           })}
         </>
@@ -203,28 +204,30 @@ export function TaskContextMenu({
           New workflow
         </button>
       )}
-      <button
-        type="button"
-        onClick={() => { if (sendAwayRefusal) return; onSendToBacklog(); }}
-        aria-disabled={sendAwayRefusal ? true : undefined}
-        title={sendAwayRefusal ?? undefined}
-        className={sendAwayRefusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
-        data-testid="context-send-to-backlog"
-      >
-        <Inbox size={14} className="text-fg-faint" />
-        Backlog
-      </button>
-      <button
-        type="button"
-        onClick={() => { if (sendAwayRefusal) return; onArchive(); onClose(); }}
-        aria-disabled={sendAwayRefusal ? true : undefined}
-        title={sendAwayRefusal ?? undefined}
-        className={sendAwayRefusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
-        data-testid="context-archive-task"
-      >
-        <Archive size={14} className="text-fg-faint" />
-        Archive
-      </button>
+      <HoverTip label={sendAwayRefusal ?? ''}>
+        <button
+          type="button"
+          onClick={() => { if (sendAwayRefusal) return; onSendToBacklog(); }}
+          aria-disabled={sendAwayRefusal ? true : undefined}
+          className={sendAwayRefusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
+          data-testid="context-send-to-backlog"
+        >
+          <Inbox size={14} className="text-fg-faint" />
+          Backlog
+        </button>
+      </HoverTip>
+      <HoverTip label={sendAwayRefusal ?? ''}>
+        <button
+          type="button"
+          onClick={() => { if (sendAwayRefusal) return; onArchive(); onClose(); }}
+          aria-disabled={sendAwayRefusal ? true : undefined}
+          className={sendAwayRefusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
+          data-testid="context-archive-task"
+        >
+          <Archive size={14} className="text-fg-faint" />
+          Archive
+        </button>
+      </HoverTip>
 
       <button
         type="button"

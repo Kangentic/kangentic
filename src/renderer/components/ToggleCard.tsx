@@ -1,6 +1,7 @@
 import type React from 'react';
 import { Info } from 'lucide-react';
 import { SettingText } from './SettingText';
+import { HoverTip } from './HoverTip';
 
 interface ToggleCardProps {
   label: string;
@@ -84,6 +85,9 @@ export function ToggleCard({ label, description, checked, onChange, icon, ariaLa
       aria-disabled={disabled || undefined}
       disabled={disabled}
       aria-label={ariaLabel ?? label}
+      // The info icon below is aria-hidden and pointer-only, so the switch itself
+      // carries the text for a keyboard or screen-reader user.
+      aria-description={info}
       onClick={disabled ? undefined : () => onChange(!checked)}
       className={`flex items-start justify-between gap-3 w-full text-left border rounded-md px-3.5 py-2.5 transition-colors focus:outline-none focus-visible:border-accent ${
         disabled ? `${tone.disabled} opacity-50 cursor-not-allowed` : `cursor-pointer ${tone.enabled}`
@@ -97,14 +101,18 @@ export function ToggleCard({ label, description, checked, onChange, icon, ariaLa
         labelTrailing={info && (
           // Non-interactive span (nesting a button inside the card button is
           // invalid); stopPropagation keeps a click on the icon from toggling.
-          <span
-            title={info}
-            aria-hidden="true"
-            onClick={(event) => event.stopPropagation()}
-            className="flex-shrink-0 text-fg-faint hover:text-fg-tertiary cursor-help"
-          >
-            <Info size={13} />
-          </span>
+          // The tip passes `describe={false}` because the switch already reads
+          // `info` as its own description, and this span is aria-hidden.
+          <HoverTip label={info} describe={false}>
+            <span
+              aria-hidden="true"
+              onClick={(event) => event.stopPropagation()}
+              className="flex-shrink-0 text-fg-faint hover:text-fg-tertiary cursor-help"
+              data-testid="toggle-card-info"
+            >
+              <Info size={13} />
+            </span>
+          </HoverTip>
         )}
       />
       <ToggleIndicator checked={checked} className="mt-0.5" />

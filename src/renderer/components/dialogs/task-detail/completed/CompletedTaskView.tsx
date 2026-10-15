@@ -4,6 +4,7 @@ import { MessageSquare } from 'lucide-react';
 import { Tabs, tabIds } from '../../../Tabs';
 import type { TabItem } from '../../../Tabs';
 import { openTaskConversation } from '../open-task-conversation';
+import { HoverTip } from '../../../HoverTip';
 import { CompletedHeaderStrip } from './CompletedHeaderStrip';
 import { SummaryTab } from './SummaryTab';
 import { UsageTab } from './UsageTab';
@@ -54,16 +55,17 @@ export function CompletedTaskView({
         idPrefix={ID_PREFIX}
         testId="completed-task-tabs"
         trailing={(
-          <button
-            type="button"
-            onClick={() => { void openTaskConversation(task.id, projectId); }}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-fg-secondary hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            title="View the full conversation transcript"
-            data-testid="completed-view-conversation"
-          >
-            <MessageSquare size={14} />
-            View conversation
-          </button>
+          <HoverTip label="View the full conversation transcript">
+            <button
+              type="button"
+              onClick={() => { void openTaskConversation(task.id, projectId); }}
+              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-fg-secondary hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              data-testid="completed-view-conversation"
+            >
+              <MessageSquare size={14} />
+              View conversation
+            </button>
+          </HoverTip>
         )}
       />
       <div

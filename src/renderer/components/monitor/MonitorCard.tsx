@@ -108,8 +108,8 @@ function stateGlyphContent(row: MonitorSessionRow) {
     // siblings: React reconciles siblings positionally, so an idle/working flip
     // would unmount one and mount the other, restarting the march from zero
     // (the lesson pinned for TaskCard in tests/unit/activity-mark.test.ts).
-    // Labelled with aria-label, never a <title> child: inside an IconSlot the mark's own
-    // <svg> root is not hit-testable, so a native tooltip would never appear (see IconSlot).
+    // Labelled with aria-label and given no HoverTip: inside an IconSlot the mark's own
+    // <svg> root is not hit-testable, so a tip on it would never open (see IconSlot).
     return (
       <ActivityMark
         mark={mark}
@@ -232,34 +232,35 @@ function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: M
   const activityLine = formatMonitorStatus(row);
   const handleContextMenu = useCardContextMenu(row, onContextMenu);
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpen(row)}
-      onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
-      onContextMenu={handleContextMenu}
-      className="border border-edge rounded-md bg-surface-raised px-2.5 py-1.5 min-w-0 flex items-center gap-2 hover:border-edge-input transition-colors cursor-pointer select-none text-left"
-      data-testid="monitor-card"
-      data-dense="true"
-      data-session-id={row.sessionId}
-      data-project-id={row.projectId}
-      title={`Open ${row.taskTitle}`}
-    >
-      <StateGlyph row={row} />
-      {!hideProject && (
-        <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
-      )}
-      <span className="text-sm text-fg font-medium truncate min-w-0 flex-1">{row.taskTitle}</span>
-      <span className="shrink-0 font-mono text-xs text-fg-muted select-text">
-        {row.displayId === null ? '' : `#${row.displayId}`}
-      </span>
-      <span className={`text-xs truncate min-w-0 max-w-[30ch] select-text ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
-        {activityLine}
-      </span>
-      {row.status !== 'exited' && (
-        <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
-      )}
-    </div>
+    <HoverTip label={`Open ${row.taskTitle}`}>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpen(row)}
+        onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
+        onContextMenu={handleContextMenu}
+        className="border border-edge rounded-md bg-surface-raised px-2.5 py-1.5 min-w-0 flex items-center gap-2 hover:border-edge-input transition-colors cursor-pointer select-none text-left"
+        data-testid="monitor-card"
+        data-dense="true"
+        data-session-id={row.sessionId}
+        data-project-id={row.projectId}
+      >
+        <StateGlyph row={row} />
+        {!hideProject && (
+          <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
+        )}
+        <span className="text-sm text-fg font-medium truncate min-w-0 flex-1">{row.taskTitle}</span>
+        <span className="shrink-0 font-mono text-xs text-fg-muted select-text">
+          {row.displayId === null ? '' : `#${row.displayId}`}
+        </span>
+        <span className={`text-xs truncate min-w-0 max-w-[30ch] select-text ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
+          {activityLine}
+        </span>
+        {row.status !== 'exited' && (
+          <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
+        )}
+      </div>
+    </HoverTip>
   );
 }
 
@@ -295,147 +296,148 @@ function MonitorFullCard({
   const slotKind = monitorSlotKind(row, trailMode, hasTrail);
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpen(row)}
-      onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
-      onContextMenu={handleContextMenu}
-      className={`border border-edge rounded-md bg-surface-raised ${isComfortable ? 'p-3' : 'p-2.5'} min-w-0 flex flex-col cursor-pointer select-none transition-colors hover:border-edge-input text-left`}
-      data-testid="monitor-card"
-      data-session-id={row.sessionId}
-      data-project-id={row.projectId}
-      title={`Open ${row.taskTitle}`}
-    >
-      {/* Eyebrow: the cross-project identity the board card never needs, plus the
-          live status as a right-aligned pill. The status sits up here rather than
-          at the card's foot so it lands on a consistent line across a grid of
-          cards with different description lengths - you scan one column of pills
-          instead of hunting the bottom edge of each card. */}
-      <div className="flex items-center gap-1.5 min-w-0 text-[11px] text-fg-muted mb-1" data-testid="monitor-card-origin">
-        {!hideProject && <span className="truncate min-w-0">{row.projectName}</span>}
-        {/* One slot, one question: where is this session working? A task answers
-            with its column; a Command Terminal has none, so it answers with its
-            branch. Leaving it blank put the terminal's title under an empty row,
-            which read as a rendering fault next to its neighbours. The glyph is
-            what keeps a branch called "main" from being mistaken for a column
-            called "main". */}
-        {row.isCommandTerminal ? row.commandTerminalBranch && (
-          <>
-            {!hideProject && <span className="text-fg-disabled shrink-0">/</span>}
-            <GitBranch size={11} className="shrink-0" aria-hidden />
-            <span className="truncate min-w-0" data-testid="monitor-card-branch">{row.commandTerminalBranch}</span>
-          </>
-        ) : row.columnName && (
-          <>
-            {!hideProject && <span className="text-fg-disabled shrink-0">/</span>}
-            <span className="truncate min-w-0">{row.columnName}</span>
-          </>
+    <HoverTip label={`Open ${row.taskTitle}`}>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpen(row)}
+        onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
+        onContextMenu={handleContextMenu}
+        className={`border border-edge rounded-md bg-surface-raised ${isComfortable ? 'p-3' : 'p-2.5'} min-w-0 flex flex-col cursor-pointer select-none transition-colors hover:border-edge-input text-left`}
+        data-testid="monitor-card"
+        data-session-id={row.sessionId}
+        data-project-id={row.projectId}
+      >
+        {/* Eyebrow: the cross-project identity the board card never needs, plus the
+            live status as a right-aligned pill. The status sits up here rather than
+            at the card's foot so it lands on a consistent line across a grid of
+            cards with different description lengths - you scan one column of pills
+            instead of hunting the bottom edge of each card. */}
+        <div className="flex items-center gap-1.5 min-w-0 text-[11px] text-fg-muted mb-1" data-testid="monitor-card-origin">
+          {!hideProject && <span className="truncate min-w-0">{row.projectName}</span>}
+          {/* One slot, one question: where is this session working? A task answers
+              with its column; a Command Terminal has none, so it answers with its
+              branch. Leaving it blank put the terminal's title under an empty row,
+              which read as a rendering fault next to its neighbours. The glyph is
+              what keeps a branch called "main" from being mistaken for a column
+              called "main". */}
+          {row.isCommandTerminal ? row.commandTerminalBranch && (
+            <>
+              {!hideProject && <span className="text-fg-disabled shrink-0">/</span>}
+              <GitBranch size={11} className="shrink-0" aria-hidden />
+              <span className="truncate min-w-0" data-testid="monitor-card-branch">{row.commandTerminalBranch}</span>
+            </>
+          ) : row.columnName && (
+            <>
+              {!hideProject && <span className="text-fg-disabled shrink-0">/</span>}
+              <span className="truncate min-w-0">{row.columnName}</span>
+            </>
+          )}
+          {activityLine && (
+            // The whole line on hover: the pill cuts it at 22 characters.
+            <HoverTip label={activityLine} describe={false}>
+              <Pill
+                size="xs"
+                className={`ml-auto shrink-0 max-w-[22ch] ${needsUser(row)
+                  ? 'bg-attention/10 text-attention'
+                  : 'bg-surface-hover/60 text-fg-muted'}`}
+                data-testid="monitor-card-activity"
+              >
+                <span className="truncate select-text">{activityLine}</span>
+              </Pill>
+            </HoverTip>
+          )}
+        </div>
+
+        {/* Title row - identical to TaskCard's. A Command Terminal has no task, so
+            its numbered name stands in for a title + ticket, and its terminal-shaped
+            state glyph is what marks it as not-a-task. */}
+        <div className="flex items-center gap-1.5">
+          <StateGlyph row={row} />
+          <div className="text-sm text-fg font-medium truncate flex-1 min-w-0" data-testid="monitor-card-title">
+            {row.taskTitle}
+          </div>
+          {row.displayId !== null && (
+            <span className="shrink-0 font-mono text-xs text-fg-muted select-text" data-testid="monitor-card-display-id">
+              #{row.displayId}
+            </span>
+          )}
+        </div>
+
+        {row.prUrl && (
+          <div className="flex items-center gap-2 mt-1.5">
+            <PrLink
+              prUrl={row.prUrl}
+              prNumber={row.prNumber}
+              prState={row.prState}
+              prMergeReadiness={row.prMergeReadiness}
+              testId="monitor-card-pr-link"
+            />
+          </div>
         )}
-        {activityLine && (
-          // The whole line on hover: the pill cuts it at 22 characters.
-          <HoverTip label={activityLine} describe={false}>
-            <Pill
-              size="xs"
-              className={`ml-auto shrink-0 max-w-[22ch] ${needsUser(row)
-                ? 'bg-attention/10 text-attention'
-                : 'bg-surface-hover/60 text-fg-muted'}`}
-              data-testid="monitor-card-activity"
-            >
-              <span className="truncate select-text">{activityLine}</span>
-            </Pill>
-          </HoverTip>
+
+        {/* The board card's slot, exactly: `mt-1`, the agent's output in the well,
+            a content-sized description otherwise. `monitorSlotKind` decides which,
+            and `MonitorBody` asks it the same question to name the rows main
+            should keep sampling a peek for. */}
+        {slotKind === 'trail' && trailMode && messageTrail ? (
+          // `select-text` here rather than inside CardMessageTrail: the board card
+          // renders the same component on a drag source, where selectable text is
+          // the thing the card's own `select-none` exists to stop.
+          <div className="mt-1 select-text">
+            <CardMessageTrail
+              entries={messageTrail}
+              lines={slotRows}
+              mode={trailMode}
+              lineClass="text-fg-muted"
+              terminal
+              testId="monitor-card-trail"
+            />
+          </div>
+        ) : slotKind === 'description' ? (
+          <div
+            className={`text-xs text-fg-faint mt-1 ${EXCERPT_CLAMP_CLASS[slotRows]}`}
+            data-testid="monitor-card-description"
+            data-lines={slotRows}
+          >
+            {stripMarkdown(row.description ?? '')}
+          </div>
+        ) : (
+          <OutputPeek lines={row.outputPeek} rows={slotRows} />
         )}
+
+        {row.labels.length > 0 && (
+          <div className="mt-1.5">
+            <LabelPills labels={row.labels} labelColors={labelColors} />
+          </div>
+        )}
+
+        {/* Every element above is a fixed height (titles and the eyebrow truncate
+            rather than wrap, and the peek no longer grows), so this absorbs only the
+            small residual between a labelled card and an unlabelled one and keeps
+            the footers on one line across the row. */}
+        <div className="flex-1" />
+
+        {/* The board card's own footer component, not a copy of it, and now with
+            its rule on for the same reason the board card has one. It used to be
+            off here on the grounds that the peek's well already closed the content
+            region, which stopped being a reason the moment a card could show a
+            description instead and land with nothing between its text and the
+            model line. */}
+        {/* `'-'` on an unresolved model, matching MonitorTable's Model column for the
+            same null. This slot names the MODEL; the table surfaces the agent in a
+            separate Agent column, which the card has no room for. If agent identity
+            is ever wanted here, the helper documented for a model-slot fallback is
+            `agentShortName` ("Claude"), not `agentDisplayName` ("Claude Code"). */}
+        <ContextUsageFooter
+          modelName={row.modelDisplayName ?? '-'}
+          percent={row.contextPercent ?? 0}
+          windowKnown={row.contextPercent !== null}
+          unknownLabel="-"
+          testId="monitor-card-usage"
+        />
       </div>
-
-      {/* Title row - identical to TaskCard's. A Command Terminal has no task, so
-          its numbered name stands in for a title + ticket, and its terminal-shaped
-          state glyph is what marks it as not-a-task. */}
-      <div className="flex items-center gap-1.5">
-        <StateGlyph row={row} />
-        <div className="text-sm text-fg font-medium truncate flex-1 min-w-0" data-testid="monitor-card-title">
-          {row.taskTitle}
-        </div>
-        {row.displayId !== null && (
-          <span className="shrink-0 font-mono text-xs text-fg-muted select-text" data-testid="monitor-card-display-id">
-            #{row.displayId}
-          </span>
-        )}
-      </div>
-
-      {row.prUrl && (
-        <div className="flex items-center gap-2 mt-1.5">
-          <PrLink
-            prUrl={row.prUrl}
-            prNumber={row.prNumber}
-            prState={row.prState}
-            prMergeReadiness={row.prMergeReadiness}
-            testId="monitor-card-pr-link"
-          />
-        </div>
-      )}
-
-      {/* The board card's slot, exactly: `mt-1`, the agent's output in the well,
-          a content-sized description otherwise. `monitorSlotKind` decides which,
-          and `MonitorBody` asks it the same question to name the rows main
-          should keep sampling a peek for. */}
-      {slotKind === 'trail' && trailMode && messageTrail ? (
-        // `select-text` here rather than inside CardMessageTrail: the board card
-        // renders the same component on a drag source, where selectable text is
-        // the thing the card's own `select-none` exists to stop.
-        <div className="mt-1 select-text">
-          <CardMessageTrail
-            entries={messageTrail}
-            lines={slotRows}
-            mode={trailMode}
-            lineClass="text-fg-muted"
-            terminal
-            testId="monitor-card-trail"
-          />
-        </div>
-      ) : slotKind === 'description' ? (
-        <div
-          className={`text-xs text-fg-faint mt-1 ${EXCERPT_CLAMP_CLASS[slotRows]}`}
-          data-testid="monitor-card-description"
-          data-lines={slotRows}
-        >
-          {stripMarkdown(row.description ?? '')}
-        </div>
-      ) : (
-        <OutputPeek lines={row.outputPeek} rows={slotRows} />
-      )}
-
-      {row.labels.length > 0 && (
-        <div className="mt-1.5">
-          <LabelPills labels={row.labels} labelColors={labelColors} />
-        </div>
-      )}
-
-      {/* Every element above is a fixed height (titles and the eyebrow truncate
-          rather than wrap, and the peek no longer grows), so this absorbs only the
-          small residual between a labelled card and an unlabelled one and keeps
-          the footers on one line across the row. */}
-      <div className="flex-1" />
-
-      {/* The board card's own footer component, not a copy of it, and now with
-          its rule on for the same reason the board card has one. It used to be
-          off here on the grounds that the peek's well already closed the content
-          region, which stopped being a reason the moment a card could show a
-          description instead and land with nothing between its text and the
-          model line. */}
-      {/* `'-'` on an unresolved model, matching MonitorTable's Model column for the
-          same null. This slot names the MODEL; the table surfaces the agent in a
-          separate Agent column, which the card has no room for. If agent identity
-          is ever wanted here, the helper documented for a model-slot fallback is
-          `agentShortName` ("Claude"), not `agentDisplayName` ("Claude Code"). */}
-      <ContextUsageFooter
-        modelName={row.modelDisplayName ?? '-'}
-        percent={row.contextPercent ?? 0}
-        windowKnown={row.contextPercent !== null}
-        unknownLabel="-"
-        testId="monitor-card-usage"
-      />
-    </div>
+    </HoverTip>
   );
 }
 

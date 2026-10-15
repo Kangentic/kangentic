@@ -3,6 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import { GitHubIcon } from '../../icons/GitHubIcon';
 import { formatRelativeTime } from '../../../lib/datetime';
 import type { DataTableColumn } from '../../DataTable';
+import { HoverTip } from '../../HoverTip';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { PriorityBadge } from '../PriorityBadge';
 import { stripMarkdown } from '../../../utils/strip-markdown';
@@ -85,18 +86,19 @@ export function useBacklogColumns(input: {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             {item.external_source && item.external_url && (
-              <button
-                type="button"
-                className="shrink-0 text-fg-faint hover:text-fg transition-colors"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  window.electronAPI.shell.openExternal(item.external_url!);
-                }}
-                aria-label={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}
-                title={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}
-              >
-                {item.external_source?.startsWith('github') ? <GitHubIcon size={13} /> : <ExternalLink size={13} />}
-              </button>
+              <HoverTip label={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}>
+                <button
+                  type="button"
+                  className="shrink-0 text-fg-faint hover:text-fg transition-colors"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    window.electronAPI.shell.openExternal(item.external_url!);
+                  }}
+                  aria-label={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}
+                >
+                  {item.external_source?.startsWith('github') ? <GitHubIcon size={13} /> : <ExternalLink size={13} />}
+                </button>
+              </HoverTip>
             )}
             <span className="text-fg font-medium truncate">{item.title}</span>
           </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
+import { HoverTip } from '../HoverTip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 /** Only the fields the picker renders. Widened from the full `Project` so the
@@ -88,18 +89,19 @@ export function StatsScopePicker({
 
   return (
     <div className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 bg-accent/15 border border-accent/40 rounded-full pl-3 pr-2.5 py-1 text-sm font-semibold text-fg cursor-pointer hover:bg-accent/25 focus:outline-none focus:border-accent transition-colors"
-        title="Choose which project's usage to view"
-        aria-label="Project scope"
-        data-testid={testId}
-      >
-        {label}
-        <ChevronDown size={14} className="text-fg-muted" />
-      </button>
+      <HoverTip label="Choose which project's usage to view" enabled={!open}>
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-1.5 bg-accent/15 border border-accent/40 rounded-full pl-3 pr-2.5 py-1 text-sm font-semibold text-fg cursor-pointer hover:bg-accent/25 focus:outline-none focus:border-accent transition-colors"
+          aria-label="Project scope"
+          data-testid={testId}
+        >
+          {label}
+          <ChevronDown size={14} className="text-fg-muted" />
+        </button>
+      </HoverTip>
       <OverlayPopover
         open={open}
         popoverRef={popoverRef}

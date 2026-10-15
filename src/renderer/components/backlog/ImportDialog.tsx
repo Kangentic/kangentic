@@ -6,6 +6,7 @@ import { BaseDialog } from '../dialogs/BaseDialog';
 import { Pill } from '../Pill';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
 import { ButtonGroup } from '../ButtonGroup';
+import { HoverTip } from '../HoverTip';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
@@ -522,19 +523,20 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         )}
 
         {/* Hide imported toggle */}
-        <button
-          type="button"
-          onClick={() => setHideImported(!hideImported)}
-          className={`flex items-center gap-1 px-2 py-1.5 text-xs border rounded transition-colors whitespace-nowrap ${
-            hideImported
-              ? 'text-accent-fg border-accent/50 bg-accent-bg/10'
-              : 'text-fg-muted border-edge/50 hover:text-fg hover:bg-surface-hover/40'
-          }`}
-          title={hideImported ? 'Show imported items' : 'Hide imported items'}
-        >
-          {hideImported ? <EyeOff size={10} /> : <Eye size={10} />}
-          Imported
-        </button>
+        <HoverTip label={hideImported ? 'Show imported items' : 'Hide imported items'}>
+          <button
+            type="button"
+            onClick={() => setHideImported(!hideImported)}
+            className={`flex items-center gap-1 px-2 py-1.5 text-xs border rounded transition-colors whitespace-nowrap ${
+              hideImported
+                ? 'text-accent-fg border-accent/50 bg-accent-bg/10'
+                : 'text-fg-muted border-edge/50 hover:text-fg hover:bg-surface-hover/40'
+            }`}
+          >
+            {hideImported ? <EyeOff size={10} /> : <Eye size={10} />}
+            Imported
+          </button>
+        </HoverTip>
 
       </div>
 

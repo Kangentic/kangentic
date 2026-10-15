@@ -5,6 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
 import { useBoardStore } from '../../stores/board-store';
 import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
+import { HoverTip } from '../HoverTip';
 import { LazyMonitor } from './LazyMonitor';
 import { MonitorDetailLayer } from './MonitorDetailLayer';
 
@@ -97,16 +98,17 @@ export function MonitorPage() {
           params={{}}
           className="px-4 py-2.5"
           trailing={
-            <button
-              type="button"
-              onClick={() => overlay.requestClose()}
-              className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              title="Close (Esc)"
-              aria-label="Close agent monitor"
-              data-testid="monitor-close"
-            >
-              <X size={16} />
-            </button>
+            <HoverTip label="Close agent monitor" keys="dialog.dismiss">
+              <button
+                type="button"
+                onClick={() => overlay.requestClose()}
+                className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+                aria-label="Close agent monitor"
+                data-testid="monitor-close"
+              >
+                <X size={16} />
+              </button>
+            </HoverTip>
           }
         >
           {/* The feature's identity glyph, matching the title-bar toggle. Not a

@@ -12,6 +12,7 @@ import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { WorkflowInspector } from './WorkflowInspector';
 import { RemoveTaskDialog } from './WorkflowDialogs';
 import { DONE_COLOR_FALLBACK, findTask } from './workflow-graph';
+import { HoverTip } from '../HoverTip';
 
 /**
  * Task detail's workflow panel (#732 board 9): the Workflows inspector itself,
@@ -123,16 +124,17 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
       >
         <WorkflowIcon size={15} className="text-fg-muted" />
         Workflow
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close workflow panel"
-          title="Close"
-          className="ml-auto p-1 rounded text-fg-faint hover:text-fg-secondary hover:bg-surface-hover transition-colors"
-          data-testid="task-workflow-panel-close"
-        >
-          <X size={14} />
-        </button>
+        <HoverTip label="Close workflow panel">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close workflow panel"
+            className="ml-auto p-1 rounded text-fg-faint hover:text-fg-secondary hover:bg-surface-hover transition-colors"
+            data-testid="task-workflow-panel-close"
+          >
+            <X size={14} />
+          </button>
+        </HoverTip>
       </div>
       <div className="flex-1 min-h-0 flex flex-col">{body}</div>
       {removing && detail && viewTask && homeProjectId && workflowId && (

@@ -143,12 +143,11 @@ test.describe('NewTaskDialog Advanced section', () => {
     await expect(agentInput).toBeDisabled();
     await expect(agentInput).toHaveAttribute('placeholder', 'Claude Code');
 
-    // Three-state tooltip on the field wrapper (agentFieldTitle): with exactly
+    // Three-state tooltip on the field wrapper (agentFieldTip): with exactly
     // one agent detected this must be the "install another" copy, not the
     // "none detected yet" copy the zero-agent fixture gets below - a single
     // fixed string for both non-pickable states would be silently wrong here.
-    await expect(page.locator('[data-testid="task-agent-field"]')).toHaveAttribute(
-      'title',
+    await expect(page.locator('[data-testid="task-agent-field"]')).toHaveAccessibleDescription(
       'Only one agent CLI detected - install another to choose',
     );
 
@@ -640,8 +639,7 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     await expect(agentInput).toBeEnabled();
     // The interactive branch of the three-state tooltip - distinct copy from
     // both non-pickable states (single-agent and zero-agent fixtures).
-    await expect(multiPage.locator('[data-testid="task-agent-field"]')).toHaveAttribute(
-      'title',
+    await expect(multiPage.locator('[data-testid="task-agent-field"]')).toHaveAccessibleDescription(
       'The agent CLI this task runs on',
     );
     // The edit pencil rides the same row here as it does when the field is
@@ -733,7 +731,7 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
 
 /**
  * Zero agents detected: `canPickAgent` is false the same way it is with
- * exactly one agent installed, but `agentFieldTitle`'s ternary in
+ * exactly one agent installed, but `agentFieldTip`'s ternary in
  * AdvancedOverridesSection has a THIRD branch for this case ("no agent CLI
  * detected yet" vs "only one agent CLI detected"). Own browser instance,
  * same recipe as the multi-agent block above: the override must be injected
@@ -779,8 +777,7 @@ test.describe('NewTaskDialog Advanced - Agent picker (no agent detected fixture)
     const agentInput = noAgentPage.locator('input[data-testid="task-agent-override"]');
     await expect(agentInput).toBeVisible();
     await expect(agentInput).toBeDisabled();
-    await expect(noAgentPage.locator('[data-testid="task-agent-field"]')).toHaveAttribute(
-      'title',
+    await expect(noAgentPage.locator('[data-testid="task-agent-field"]')).toHaveAccessibleDescription(
       'No agent CLI detected yet',
     );
 
@@ -884,7 +881,7 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     const olderToggle = groupedPage.locator('[data-model-pinned-toggle]');
     await expect(olderToggle).toHaveText(/Older versions \(2\)/);
     await expect(groupedPage.locator('[data-model-pinned-option]')).toHaveCount(0);
-    await expect(groupedPage.locator('[title="claude-opus-4-7"]')).toHaveCount(0);
+    await expect(groupedPage.locator('[data-model-id="claude-opus-4-7"]')).toHaveCount(0);
 
     // The open dropdown consumes the first Escape; `discardDialog` (behind
     // `closeDialog` here) presses it, then presses again for the dirty guard
@@ -920,8 +917,8 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('[data-model-pinned-toggle]').click();
     // The dated pin's row is humanized but keeps its date appended (the
     // humanizer drops the date, so it is re-appended generically); the raw
-    // id is still selectable via its title attribute.
-    const pinnedRow = groupedPage.locator('[data-model-pinned-option][title="claude-haiku-4-5-20251001"]');
+    // id is still selectable via its `data-model-id` attribute.
+    const pinnedRow = groupedPage.locator('[data-model-pinned-option][data-model-id="claude-haiku-4-5-20251001"]');
     await expect(pinnedRow).toHaveText('Haiku 4.5 · 2025-10-01');
     await pinnedRow.click();
     // Closed input shows the same humanized-with-date label as the row did,
@@ -943,7 +940,7 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('input[placeholder="Task title"]').fill('Older Generation Task');
     await groupedPage.locator('input[data-testid="task-model-override"]').click();
     await groupedPage.locator('[data-model-pinned-toggle]').click();
-    const olderOpusRow = groupedPage.locator('[data-model-option][title="claude-opus-4-7"]');
+    const olderOpusRow = groupedPage.locator('[data-model-option][data-model-id="claude-opus-4-7"]');
     await expect(olderOpusRow).toHaveText('Opus 4.7');
     await olderOpusRow.click();
     // Closed input shows the friendly label, not the raw superseded id.
@@ -994,7 +991,7 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     // No primary (current-generation) row matches, so the section auto-opens
     // and the ONLY visible option is the demoted Opus 4.7 generation.
     await expect(groupedPage.locator('[data-model-option]')).toHaveCount(1);
-    const supersededRow = groupedPage.locator('[data-model-option][title="claude-opus-4-7"]');
+    const supersededRow = groupedPage.locator('[data-model-option][data-model-id="claude-opus-4-7"]');
     await expect(supersededRow).toHaveText('Opus 4.7');
     await supersededRow.click();
     // Closed input shows the friendly label, not the raw superseded id.
@@ -1024,7 +1021,7 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     // is value-driven, not the query-driven force-open.
     await modelInput.click();
     await expect(groupedPage.locator('[data-model-pinned-toggle]')).toBeVisible();
-    await expect(groupedPage.locator('[data-model-option][title="claude-opus-4-7"]')).toBeVisible();
+    await expect(groupedPage.locator('[data-model-option][data-model-id="claude-opus-4-7"]')).toBeVisible();
 
     // Close the dropdown via an outside click, then discard the dirty form.
     await titleInput.click();
@@ -1038,7 +1035,7 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
 
     const modelInput = groupedPage.locator('input[data-testid="task-model-override"]');
     await modelInput.click();
-    await groupedPage.locator('[data-model-option][title="claude-haiku-4-5"]').click();
+    await groupedPage.locator('[data-model-option][data-model-id="claude-haiku-4-5"]').click();
     await expect(modelInput).toHaveValue('Haiku 4.5');
 
     // Reopen: filterText is empty until the user types, so the open-state
@@ -1394,7 +1391,7 @@ test.describe('NewTaskDialog Advanced - context-window badge on a demoted supers
     await expect(opus48Row.locator('[data-model-context-window]')).toHaveCount(0);
 
     // The demoted Opus 4.7 row is not rendered until "Older versions" expands.
-    await expect(demotedBadgePage.locator('[title="claude-opus-4-7"]')).toHaveCount(0);
+    await expect(demotedBadgePage.locator('[data-model-id="claude-opus-4-7"]')).toHaveCount(0);
     await demotedBadgePage.locator('[data-model-pinned-toggle]').click();
 
     const opus47Row = demotedBadgePage.locator('[data-model-row]').filter({ hasText: 'claude-opus-4-7' });

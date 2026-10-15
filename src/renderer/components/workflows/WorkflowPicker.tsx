@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, CircleCheckBig, CircleDashed, Pause, Workflow a
 import type { WorkflowState, WorkflowSummary } from '../../../shared/types';
 import { OverlayPopover } from '../OverlayPopover';
 import { ActivityMark } from '../ActivityMark';
+import { HoverTip } from '../HoverTip';
 import { Pill, TINTED_PILL_EDGE, TINTED_PILL_FILL } from '../Pill';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { workflowColor } from './workflow-graph';
@@ -87,7 +88,9 @@ function PickerRowName({ summary }: { summary: WorkflowSummary }) {
   const note = useAgentNote(summary);
   return (
     <span className="flex-1 min-w-0">
-      <span className="block truncate text-[13px] font-medium text-fg" title={summary.workflow.title}>{summary.workflow.title}</span>
+      <HoverTip label={summary.workflow.title}>
+        <span className="block truncate text-[13px] font-medium text-fg">{summary.workflow.title}</span>
+      </HoverTip>
       {note && <span className="block truncate text-[11px] text-fg-faint" data-testid="workflow-picker-note">{note}</span>}
     </span>
   );
@@ -144,30 +147,31 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        title={`${name}, ${tasksText(count)}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        data-testid="workflow-picker"
-        className={`flex items-center gap-2 h-[34px] shrink-0 px-3 rounded border bg-surface-control text-sm text-fg-tertiary transition-colors ${
-          open ? 'border-accent' : 'border-edge-input hover:border-fg-faint/60'
-        } ${controlClassName}`}
-      >
-        <WorkflowIcon size={14} className="shrink-0" style={{ color: selected ? workflowColor(selected.workflow.color_slot) : undefined }} />
-        <span className="min-w-0 truncate text-left">{name}</span>
-        <Pill
-          size="sm"
-          className={`shrink-0 border font-medium tabular-nums ${pillClassName}`}
-          style={{ backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
+      <HoverTip label={`${name}, ${tasksText(count)}`} enabled={!open}>
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          data-testid="workflow-picker"
+          className={`flex items-center gap-2 h-[34px] shrink-0 px-3 rounded border bg-surface-control text-sm text-fg-tertiary transition-colors ${
+            open ? 'border-accent' : 'border-edge-input hover:border-fg-faint/60'
+          } ${controlClassName}`}
         >
-          {tasksText(count)}
-        </Pill>
-        <span className="flex-1" />
-        <Chevron size={14} className="shrink-0 text-fg-muted" />
-      </button>
+          <WorkflowIcon size={14} className="shrink-0" style={{ color: selected ? workflowColor(selected.workflow.color_slot) : undefined }} />
+          <span className="min-w-0 truncate text-left">{name}</span>
+          <Pill
+            size="sm"
+            className={`shrink-0 border font-medium tabular-nums ${pillClassName}`}
+            style={{ backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
+          >
+            {tasksText(count)}
+          </Pill>
+          <span className="flex-1" />
+          <Chevron size={14} className="shrink-0 text-fg-muted" />
+        </button>
+      </HoverTip>
       <OverlayPopover
         open={open}
         popoverRef={menuRef}

@@ -149,8 +149,8 @@ test.describe('AgentTab - re-detect button wires forceRefresh=true', () => {
     // other elements that have "Agent" in their accessible name.
     await page.getByRole('button', { name: 'Agent', exact: true }).click();
 
-    // The RefreshCw button has title "Re-detect agent" when the agent is found.
-    const reDetectButton = page.locator('[title="Re-detect agent"]').first();
+    // The RefreshCw button is named "Re-detect agent" for every agent.
+    const reDetectButton = page.getByRole('button', { name: 'Re-detect agent', exact: true }).first();
     await reDetectButton.waitFor({ state: 'visible', timeout: 3000 });
     await reDetectButton.click();
 

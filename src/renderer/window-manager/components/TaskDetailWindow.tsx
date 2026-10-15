@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Pencil, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
+import { HoverTip } from '../../components/HoverTip';
 import { TaskWorkflowPanel } from '../../components/workflows/TaskWorkflowPanel';
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
 import { useSessionStore } from '../../stores/session-store';
@@ -802,19 +803,20 @@ export function TaskDetailWindow({
       <Pencil size={14} className="text-fg-muted flex-shrink-0" />
       <h3 className="text-sm font-semibold text-fg flex items-center gap-2 min-w-0">
         <span className="flex-shrink-0">Edit Task</span>
-        <button
-          type="button"
-          className="flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors font-normal"
-          title={`Click to copy: ${task.display_id}`}
-          data-testid="task-display-id"
-          onClick={copyDisplayId}
-        >
-          {displayIdCopied
-            ? <Check size={12} className="text-green-400" />
-            : <Copy size={12} className="text-fg-disabled" />
-          }
-          #{task.display_id}
-        </button>
+        <HoverTip label="Copy task ID">
+          <button
+            type="button"
+            className="flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors font-normal"
+            data-testid="task-display-id"
+            onClick={copyDisplayId}
+          >
+            {displayIdCopied
+              ? <Check size={12} className="text-green-400" />
+              : <Copy size={12} className="text-fg-disabled" />
+            }
+            #{task.display_id}
+          </button>
+        </HoverTip>
         <PriorityBadge priority={task.priority ?? 0} />
       </h3>
       <div className="flex-1" />
@@ -839,16 +841,17 @@ export function TaskDetailWindow({
         onToggle={handleToggleMaximized}
         testId="task-detail-maximize"
       />
-      <button
-        type="button"
-        onClick={closeWithGuard}
-        data-testid="task-detail-close"
-        aria-label="Close window"
-        title="Close"
-        className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-      >
-        <X size={16} />
-      </button>
+      <HoverTip label="Close window" keys="panel.close">
+        <button
+          type="button"
+          onClick={closeWithGuard}
+          data-testid="task-detail-close"
+          aria-label="Close window"
+          className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+        >
+          <X size={16} />
+        </button>
+      </HoverTip>
     </div>
   );
 

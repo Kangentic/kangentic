@@ -432,7 +432,7 @@ test.describe('agent input focus guard', () => {
     // Enter here is a negative: a document-level Ctrl+Enter no-op and a
     // Shift+Enter no-op, both in browser-pane-shortcuts.spec.ts.
     //
-    // It is what the Send button's "(Enter)" tooltip promises, and what
+    // It is what the Send button's tip ("Enter in the note also sends") promises, and what
     // `submitTextTarget` relies on when dictation commits the field by
     // dispatching a bare Enter with no ctrlKey or metaKey. Requiring a modifier
     // in that onKeyDown turns this red, which is the point.
@@ -451,7 +451,7 @@ test.describe('agent input focus guard', () => {
     // whole life of the feature: the tooltip read "(Ctrl/Cmd+Enter)", left over
     // from a document-level listener removed in 15076930.
     await expect(sharedPage.locator('[data-testid="browser-send"]'))
-      .toHaveAttribute('title', 'Send to agent (Enter)');
+      .toHaveAccessibleDescription(/^Send to agent\s+Enter in the note also sends$/);
 
     await sharedPage.keyboard.press('Enter');
 

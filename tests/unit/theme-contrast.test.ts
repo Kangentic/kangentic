@@ -208,6 +208,51 @@ describe('theme contrast (all themes, not just the default)', () => {
     expect(failures).toEqual([]);
   });
 
+  it('keeps every HoverTip text readable on its own ground in every theme', () => {
+    // The label tip is inverted (`bg-fg` under `text-surface`), and its key chips and muted
+    // second line are mixed from that same pair in index.css (`--color-tip-chip`,
+    // `--color-tip-muted`), so they follow each theme without a token of their own. The rich tip
+    // is the raised panel with `fg` body text, and its header icon, footer and secondary lines are
+    // `--color-tip-rich-muted`, because plain `fg-muted` fell short there in the moon and forest
+    // themes. The weights below are read from index.css, so a retune is checked as written.
+    const mix = (first: string, second: string, weight: number): string => '#' + [1, 3, 5]
+      .map((offset) => Math.round(
+        parseInt(first.slice(offset, offset + 2), 16) * weight
+        + parseInt(second.slice(offset, offset + 2), 16) * (1 - weight),
+      ).toString(16).padStart(2, '0'))
+      .join('');
+
+    // `--color-<name>: color-mix(in srgb, var(--kng-<first>) <N>%, var(--kng-<second>))`
+    const tipMix = (name: string): { first: string; weight: number; second: string } => {
+      const match = new RegExp(`--color-${name}:\\s*color-mix\\(in srgb, var\\(--kng-([a-z-]+)\\) (\\d+)%, var\\(--kng-([a-z-]+)\\)\\)`).exec(CSS);
+      if (!match) throw new Error(`index.css no longer declares --color-${name} as a two-token color-mix`);
+      return { first: match[1], weight: Number(match[2]) / 100, second: match[3] };
+    };
+    const resolve = (theme: Theme, name: string): string => {
+      const { first, weight, second } = tipMix(name);
+      return mix(theme.vars[first], theme.vars[second], weight);
+    };
+
+    const failures: string[] = [];
+    for (const theme of themes) {
+      const { fg, surface } = theme.vars;
+      const raised = theme.vars['surface-raised'];
+      if (!fg || !surface || !raised) continue;
+      const pairings: { what: string; foreground: string; background: string }[] = [
+        { what: 'label text', foreground: surface, background: fg },
+        { what: 'key chip text', foreground: surface, background: resolve(theme, 'tip-chip') },
+        { what: 'label detail line', foreground: resolve(theme, 'tip-muted'), background: fg },
+        { what: 'rich tip body', foreground: fg, background: raised },
+        { what: 'rich tip footer and secondary lines', foreground: resolve(theme, 'tip-rich-muted'), background: raised },
+      ];
+      for (const pairing of pairings) {
+        const ratio = contrastRatio(pairing.foreground, pairing.background);
+        if (ratio < AA_NORMAL_TEXT) failures.push(`${theme.name}: ${pairing.what} = ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
   it('keeps a placeholder dimmer than the value it stands in for', () => {
     // Placeholders are deliberately exempt from AA (they are transient hints,
     // and the field's own label carries the same information), but they must

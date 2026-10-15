@@ -4,6 +4,7 @@ import { useDictationStore } from '../../stores/dictation-store';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useDictationChipPosition } from '../../hooks/useDictationChipPosition';
 import { dictationPopupActions } from '../../hooks/useDictation';
+import { HoverTip } from '../HoverTip';
 
 /**
  * The `live` dictation experience: the transcript streams straight into the
@@ -147,15 +148,16 @@ function LiveDictationChipContent() {
                 while the chip holds its min width. */}
             <span className="flex-1" aria-hidden />
             <div className="w-px h-4 bg-edge mx-1" aria-hidden />
-            <button
-              type="button"
-              onClick={() => dictationPopupActions.clear()}
-              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-fg-muted hover:bg-surface-hover hover:text-fg"
-              data-testid="dictation-live-clear"
-              title="Clear and start over"
-            >
-              <RotateCcw size={12} /> Clear
-            </button>
+            <HoverTip label="Clear and start over">
+              <button
+                type="button"
+                onClick={() => dictationPopupActions.clear()}
+                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-fg-muted hover:bg-surface-hover hover:text-fg"
+                data-testid="dictation-live-clear"
+              >
+                <RotateCcw size={12} /> Clear
+              </button>
+            </HoverTip>
           </>
         )}
       </div>

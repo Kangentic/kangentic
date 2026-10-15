@@ -573,7 +573,9 @@ function RemoveColumnTarget({ column, position, total }: {
       ) : (
         <span className="block w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: column.color }} />
       )}
-      <span className="min-w-0 truncate" title={name} data-testid="board-manager-remove-target">{name}</span>
+      <HoverTip label={name}>
+        <span className="min-w-0 truncate" data-testid="board-manager-remove-target">{name}</span>
+      </HoverTip>
       <Pill size="sm" className="ml-auto bg-surface-control/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
     </div>
   );
@@ -1052,7 +1054,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           ...value(modelOverride ? modelRowLabel(modelOverride, laneDisplayNames) : 'Default', !!modelOverride),
           ...(agentApplies && modelOverride
             ? {
-                title: modelAliasTitle(modelOverride, laneAliases, laneDisplayNames) ?? undefined,
+                tip: modelAliasTitle(modelOverride, laneAliases, laneDisplayNames) ?? undefined,
                 newer: newerModel ? modelRowLabel(newerModel, laneDisplayNames) : undefined,
               }
             : {}),
@@ -1830,17 +1832,18 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           cancelTestId="board-manager-cancel"
           confirmTestId="board-manager-save"
           leading={!isOverview && draft && !isTodoOrDone && !activeProfileId ? (
-            <button
-              type="button"
-              onClick={requestRemoveColumn}
-              data-testid="board-manager-delete"
-              aria-label={`Remove column "${draft.name.trim() || 'Untitled'}"`}
-              title={`Remove column "${draft.name.trim() || 'Untitled'}"`}
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10 hover:border-danger/60 transition-colors"
-            >
-              <Trash2 size={14} />
-              Remove column
-            </button>
+            <HoverTip label={`Remove column "${draft.name.trim() || 'Untitled'}"`}>
+              <button
+                type="button"
+                onClick={requestRemoveColumn}
+                data-testid="board-manager-delete"
+                aria-label={`Remove column "${draft.name.trim() || 'Untitled'}"`}
+                className="inline-flex items-center gap-2 px-4 py-1.5 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10 hover:border-danger/60 transition-colors"
+              >
+                <Trash2 size={14} />
+                Remove column
+              </button>
+            </HoverTip>
           ) : undefined}
         />
       }
@@ -2004,22 +2007,23 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         />
                       );
                     })}
-                    <button
-                      type="button"
-                      onClick={() => setShowCustomPicker((open) => !open)}
-                      className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
-                        !PRESET_COLORS.includes(draft.color.toLowerCase())
-                          ? 'border-white/60 scale-110'
-                          : showCustomPicker
-                            ? 'border-white/60 bg-surface-control'
-                            : 'border-edge-input hover:border-fg-muted bg-surface'
-                      }`}
-                      style={!PRESET_COLORS.includes(draft.color.toLowerCase()) ? { backgroundColor: draft.color } : undefined}
-                      title="Custom color"
-                      aria-label="Custom color"
-                    >
-                      <Palette size={12} className={!PRESET_COLORS.includes(draft.color.toLowerCase()) ? 'text-white' : 'text-fg-muted'} />
-                    </button>
+                    <HoverTip label="Custom color">
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomPicker((open) => !open)}
+                        className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
+                          !PRESET_COLORS.includes(draft.color.toLowerCase())
+                            ? 'border-white/60 scale-110'
+                            : showCustomPicker
+                              ? 'border-white/60 bg-surface-control'
+                              : 'border-edge-input hover:border-fg-muted bg-surface'
+                        }`}
+                        style={!PRESET_COLORS.includes(draft.color.toLowerCase()) ? { backgroundColor: draft.color } : undefined}
+                        aria-label="Custom color"
+                      >
+                        <Palette size={12} className={!PRESET_COLORS.includes(draft.color.toLowerCase()) ? 'text-white' : 'text-fg-muted'} />
+                      </button>
+                    </HoverTip>
                   </div>
                   {showCustomPicker && (
                     <div className="mt-3 space-y-2">

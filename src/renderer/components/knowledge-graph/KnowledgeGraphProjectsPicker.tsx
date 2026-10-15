@@ -20,6 +20,7 @@ import { Check, ChevronDown, Search } from 'lucide-react';
 import type { KnowledgeGraphProjectSummary } from '../../../shared/types';
 import { isIndexedProject } from '../../../shared/index-summary';
 import { OverlayPopover } from '../OverlayPopover';
+import { HoverTip } from '../HoverTip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 export interface KnowledgeGraphProjectsPickerProps {
@@ -192,17 +193,18 @@ export function KnowledgeGraphProjectsPicker({
           >
             All
           </button>
-          <button
-            type="button"
-            // The scope is never empty, so None is the open project alone.
-            onClick={() => onChange(openProjectId ? [openProjectId] : indexed.slice(0, 1).map((project) => project.id))}
-            disabled={selectedIds.length === 1}
-            title="Just the open project"
-            className="rounded px-1.5 py-0.5 hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
-            data-testid="knowledge-graph-projects-none"
-          >
-            None
-          </button>
+          <HoverTip label="Just the open project">
+            <button
+              type="button"
+              // The scope is never empty, so None is the open project alone.
+              onClick={() => onChange(openProjectId ? [openProjectId] : indexed.slice(0, 1).map((project) => project.id))}
+              disabled={selectedIds.length === 1}
+              className="rounded px-1.5 py-0.5 hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
+              data-testid="knowledge-graph-projects-none"
+            >
+              None
+            </button>
+          </HoverTip>
         </div>
         <div
           className="min-h-0 flex-1 overflow-y-auto pb-1.5"
@@ -244,12 +246,11 @@ export function KnowledgeGraphProjectsPicker({
                 {isPending ? <span className="flex-shrink-0 text-[11px] text-fg-muted">Building</span> : null}
                 {/* The count is what the map draws; the task records it also
                     searches are named on hover. */}
-                <span
-                  className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint"
-                  title={`${project.conversations.toLocaleString()} conversations, ${project.taskRecords.toLocaleString()} task records`}
-                >
-                  {project.conversations}
-                </span>
+                <HoverTip label={`${project.conversations.toLocaleString()} conversations, ${project.taskRecords.toLocaleString()} task records`}>
+                  <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint">
+                    {project.conversations}
+                  </span>
+                </HoverTip>
               </button>
             );
           })}
@@ -259,22 +260,22 @@ export function KnowledgeGraphProjectsPicker({
                 Not indexed
               </div>
               {shownNotIndexed.map((project) => (
-                <button
-                  key={project.id}
-                  type="button"
-                  role="option"
-                  aria-selected={false}
-                  aria-disabled
-                  disabled
-                  data-picker-row
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-muted cursor-default"
-                  data-testid="knowledge-graph-projects-row-unindexed"
-                  title="Nothing indexed yet, so there is no map to draw"
-                >
-                  <span className="h-3.5 w-3.5 flex-shrink-0 rounded-[3px] border border-edge" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                  <span className="flex-shrink-0 text-[11px] tabular-nums">0</span>
-                </button>
+                <HoverTip key={project.id} label="Nothing indexed yet, so there is no map to draw">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={false}
+                    aria-disabled
+                    disabled
+                    data-picker-row
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-muted cursor-default"
+                    data-testid="knowledge-graph-projects-row-unindexed"
+                  >
+                    <span className="h-3.5 w-3.5 flex-shrink-0 rounded-[3px] border border-edge" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                    <span className="flex-shrink-0 text-[11px] tabular-nums">0</span>
+                  </button>
+                </HoverTip>
               ))}
             </>
           ) : null}

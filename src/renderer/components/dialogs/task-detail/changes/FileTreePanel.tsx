@@ -8,6 +8,8 @@ import { PrLink } from '../../../PrLink';
 import { OverlayPopover } from '../../../OverlayPopover';
 import { usePopoverPosition } from '../../../../hooks/usePopoverPosition';
 import { CountBadge } from '../../../CountBadge';
+import { HoverTip } from '../../../HoverTip';
+import { tipLabel } from '../../../../utils/hover-tip';
 
 /** Linked-PR chip data, declared once so the panel prop and the header prop cannot drift. */
 interface PrLinkData {
@@ -343,53 +345,55 @@ const FileRowView = memo(function FileRowView({
       data-path={row.file.path}
       data-selected={isSelected}
     >
-      <button
-        onClick={() => onSelect(row.file.path)}
-        // Detach this one file's diff into its own OS window. Both clicks of the
-        // double fire onSelect first - selection is idempotent, so that is fine.
-        // On the file button only, never the row div (the viewed toggle beside it
-        // must not detach).
-        onDoubleClick={onOpenInNewWindow ? () => onOpenInNewWindow(row.file.path) : undefined}
-        onContextMenu={(event) => onContextMenu(row.file, event)}
-        className={`flex items-center gap-1.5 min-w-0 flex-1 px-2 text-xs transition-opacity duration-150 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-          isSelected ? 'text-fg' : 'text-fg-secondary'
-        } ${viewed ? 'opacity-45' : ''}`}
-        style={{ paddingLeft: `${row.depth * 12 + 8}px` }}
-        title={`${statusConfig.label}: ${row.file.path}`}
-      >
-        <StatusIcon size={12} className={`flex-shrink-0 ${statusConfig.colorClass}`} />
-        <span className="truncate">{displayName}</span>
-        {!row.file.binary && (row.file.insertions > 0 || row.file.deletions > 0) && (
-          // Right-aligned into a fixed-min-width tabular column so the numbers
-          // stack scannably down the list (table feel, no table machinery).
-          <span className="ml-auto flex-shrink-0 flex items-center justify-end gap-1 min-w-[52px] text-[11px] tabular-nums">
-            {row.file.insertions > 0 && <span className="text-green-400">+{row.file.insertions}</span>}
-            {row.file.deletions > 0 && <span className="text-red-400">-{row.file.deletions}</span>}
-          </span>
-        )}
-      </button>
+      <HoverTip label={`${statusConfig.label}: ${row.file.path}`}>
+        <button
+          onClick={() => onSelect(row.file.path)}
+          // Detach this one file's diff into its own OS window. Both clicks of the
+          // double fire onSelect first - selection is idempotent, so that is fine.
+          // On the file button only, never the row div (the viewed toggle beside it
+          // must not detach).
+          onDoubleClick={onOpenInNewWindow ? () => onOpenInNewWindow(row.file.path) : undefined}
+          onContextMenu={(event) => onContextMenu(row.file, event)}
+          className={`flex items-center gap-1.5 min-w-0 flex-1 px-2 text-xs transition-opacity duration-150 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+            isSelected ? 'text-fg' : 'text-fg-secondary'
+          } ${viewed ? 'opacity-45' : ''}`}
+          style={{ paddingLeft: `${row.depth * 12 + 8}px` }}
+        >
+          <StatusIcon size={12} className={`flex-shrink-0 ${statusConfig.colorClass}`} />
+          <span className="truncate">{displayName}</span>
+          {!row.file.binary && (row.file.insertions > 0 || row.file.deletions > 0) && (
+            // Right-aligned into a fixed-min-width tabular column so the numbers
+            // stack scannably down the list (table feel, no table machinery).
+            <span className="ml-auto flex-shrink-0 flex items-center justify-end gap-1 min-w-[52px] text-[11px] tabular-nums">
+              {row.file.insertions > 0 && <span className="text-green-400">+{row.file.insertions}</span>}
+              {row.file.deletions > 0 && <span className="text-red-400">-{row.file.deletions}</span>}
+            </span>
+          )}
+        </button>
+      </HoverTip>
       {/* "Viewed" toggle: a reviewed file's row dims. Always visible (not
           hover-only) so the review state is discoverable; subtle until checked. */}
-      <button
-        type="button"
-        onClick={() => onToggleViewed(row.file.path)}
-        aria-label={viewed ? 'Mark as not viewed' : 'Mark as viewed'}
-        title={viewed ? 'Mark as not viewed' : 'Mark as viewed'}
-        aria-pressed={viewed}
-        data-testid="changes-viewed-toggle"
-        data-path={row.file.path}
-        className="flex-shrink-0 flex items-center px-2"
-      >
-        <span
-          className={`flex items-center justify-center w-3.5 h-3.5 rounded border transition-colors ${
-            viewed
-              ? 'bg-accent-emphasis border-accent-emphasis text-accent-on'
-              : 'border-edge-input text-transparent group-hover:border-fg-muted'
-          }`}
+      <HoverTip label={viewed ? 'Mark as not viewed' : 'Mark as viewed'}>
+        <button
+          type="button"
+          onClick={() => onToggleViewed(row.file.path)}
+          aria-label={viewed ? 'Mark as not viewed' : 'Mark as viewed'}
+          aria-pressed={viewed}
+          data-testid="changes-viewed-toggle"
+          data-path={row.file.path}
+          className="flex-shrink-0 flex items-center px-2"
         >
-          <Check size={10} strokeWidth={3} />
-        </span>
-      </button>
+          <span
+            className={`flex items-center justify-center w-3.5 h-3.5 rounded border transition-colors ${
+              viewed
+                ? 'bg-accent-emphasis border-accent-emphasis text-accent-on'
+                : 'border-edge-input text-transparent group-hover:border-fg-muted'
+            }`}
+          >
+            <Check size={10} strokeWidth={3} />
+          </span>
+        </button>
+      </HoverTip>
     </div>
   );
 });
@@ -784,12 +788,11 @@ function FileHistoryPopover({
       data-dismissable-layer
       data-testid="changes-file-history"
     >
-      <div
-        className="px-3 py-1.5 text-[11px] font-medium text-fg-faint truncate border-b border-edge-subtle"
-        title={file.path}
-      >
-        History: {file.path.split('/').pop() ?? file.path}
-      </div>
+      <HoverTip label={file.path}>
+        <div className="px-3 py-1.5 text-[11px] font-medium text-fg-faint truncate border-b border-edge-subtle">
+          History: {file.path.split('/').pop() ?? file.path}
+        </div>
+      </HoverTip>
       {commits === null ? (
         <div className="flex items-center justify-center py-4">
           <Loader2 size={14} className="animate-spin text-fg-faint" />
@@ -851,35 +854,40 @@ function BranchHeader({
     <div className="border-b border-edge flex-shrink-0">
       <div className="flex items-center gap-1.5 px-3 py-2 text-xs">
         <GitBranch size={12} className="text-fg-muted flex-shrink-0" />
-        <span className="text-fg-secondary font-medium truncate" title={branch ?? undefined} data-testid="changes-branch-name">
-          {branch ?? 'Detached HEAD'}
-        </span>
-        {baseLabel && (
-          <span
-            className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none truncate ${
-              baseLabelCustom ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
-            }`}
-            data-testid="changes-base-label"
-            title={baseLabelCustom ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}
-          >
-            {baseLabel}
+        <HoverTip label={branch ?? ''}>
+          <span className="text-fg-secondary font-medium truncate" data-testid="changes-branch-name">
+            {branch ?? 'Detached HEAD'}
           </span>
+        </HoverTip>
+        {baseLabel && (
+          <HoverTip label={baseLabelCustom ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}>
+            <span
+              className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none truncate ${
+                baseLabelCustom ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
+              }`}
+              data-testid="changes-base-label"
+            >
+              {baseLabel}
+            </span>
+          </HoverTip>
         )}
         {(ahead > 0 || behind > 0) && (
-          <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0" title={`${ahead} ahead, ${behind} behind base branch`}>
-            {ahead > 0 && (
-              <span className="flex items-center gap-0.5 tabular-nums">
-                <ArrowUp size={11} className="text-green-400" />
-                {ahead}
-              </span>
-            )}
-            {behind > 0 && (
-              <span className="flex items-center gap-0.5 tabular-nums">
-                <ArrowDown size={11} className="text-red-400" />
-                {behind}
-              </span>
-            )}
-          </span>
+          <HoverTip label={`${ahead} ahead, ${behind} behind base branch`}>
+            <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0">
+              {ahead > 0 && (
+                <span className="flex items-center gap-0.5 tabular-nums">
+                  <ArrowUp size={11} className="text-green-400" />
+                  {ahead}
+                </span>
+              )}
+              {behind > 0 && (
+                <span className="flex items-center gap-0.5 tabular-nums">
+                  <ArrowDown size={11} className="text-red-400" />
+                  {behind}
+                </span>
+              )}
+            </span>
+          </HoverTip>
         )}
         {prLink && (
           <PrLink
@@ -893,15 +901,16 @@ function BranchHeader({
         )}
       </div>
       {lastCommit && (
-        <div
-          className="px-3 pb-2 -mt-1 text-[11px] text-fg-muted truncate"
-          title={`${lastCommit.hash} ${lastCommit.subject}`}
-          data-testid="changes-last-commit"
-        >
-          <span className="font-mono text-fg-faint">{lastCommit.hash}</span>{' '}
-          {lastCommit.subject}
-          {lastCommit.timestamp && <span className="text-fg-faint"> {'·'} {formatRelativeTime(lastCommit.timestamp)}</span>}
-        </div>
+        <HoverTip label={`${lastCommit.hash} ${lastCommit.subject}`}>
+          <div
+            className="px-3 pb-2 -mt-1 text-[11px] text-fg-muted truncate"
+            data-testid="changes-last-commit"
+          >
+            <span className="font-mono text-fg-faint">{lastCommit.hash}</span>{' '}
+            {lastCommit.subject}
+            {lastCommit.timestamp && <span className="text-fg-faint"> {'·'} {formatRelativeTime(lastCommit.timestamp)}</span>}
+          </div>
+        </HoverTip>
       )}
     </div>
   );
@@ -1107,49 +1116,53 @@ export function FileTreePanel({
             // review-marks feature is discoverable before the first mark.
             // Bare n/m - the word lives in the tooltip; the rail cannot
             // afford it at 220px (matches the surface header's chip).
-            <span
-              className="flex items-center gap-1 whitespace-nowrap text-fg-faint tabular-nums"
-              data-testid="changes-viewed-count"
-              title={`${viewedCount} of ${files.length} files viewed`}
-            >
-              <Check
-                size={11}
-                className={
-                  viewedCount === 0
-                    ? 'text-fg-disabled' // nothing reviewed yet: the chip is a label, not a signal
-                    : viewedCount === files.length
-                      ? 'text-green-400'
-                      : 'text-accent'
-                }
-              />
-              {viewedCount}/{files.length}
-            </span>
+            <HoverTip label={`${viewedCount} of ${files.length} files viewed`}>
+              <span
+                className="flex items-center gap-1 whitespace-nowrap text-fg-faint tabular-nums"
+                data-testid="changes-viewed-count"
+              >
+                <Check
+                  size={11}
+                  className={
+                    viewedCount === 0
+                      ? 'text-fg-disabled' // nothing reviewed yet: the chip is a label, not a signal
+                      : viewedCount === files.length
+                        ? 'text-green-400'
+                        : 'text-accent'
+                  }
+                />
+                {viewedCount}/{files.length}
+              </span>
+            </HoverTip>
           )}
           <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => updateConfig({ diffFlatList: !flat })}
-              title={flat ? 'Flat list (switch to tree)' : 'Tree view (switch to flat list)'}
-              aria-label={flat ? 'Flat list' : 'Tree view'}
-              data-testid="changes-tree-flat"
-              data-flat={flat}
-              className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
-            >
-              {flat ? <List size={14} /> : <ListTree size={14} />}
-            </button>
+            {/* The name says the current view; the detail says what a click does. */}
+            <HoverTip label={flat ? 'Flat list' : 'Tree view'} detail={flat ? 'Switch to tree' : 'Switch to flat list'}>
+              <button
+                type="button"
+                onClick={() => updateConfig({ diffFlatList: !flat })}
+                aria-label={flat ? 'Flat list' : 'Tree view'}
+                data-testid="changes-tree-flat"
+                data-flat={flat}
+                className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
+              >
+                {flat ? <List size={14} /> : <ListTree size={14} />}
+              </button>
+            </HoverTip>
             {/* Always rendered (disabled in flat mode, where there are no
                 directories) so toggling tree/flat never shifts the other buttons. */}
-            <button
-              type="button"
-              onClick={toggleCollapseAll}
-              disabled={flat}
-              title={flat ? 'Collapse / expand all (tree view only)' : expansion.expand ? 'Collapse all' : 'Expand all'}
-              aria-label={expansion.expand ? 'Collapse all' : 'Expand all'}
-              data-testid="changes-collapse-all"
-              className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted"
-            >
-              {expansion.expand ? <FoldVertical size={14} /> : <UnfoldVertical size={14} />}
-            </button>
+            <HoverTip label={tipLabel({ disabled: flat, disabledReason: 'Tree view only', tip: expansion.expand ? 'Collapse all' : 'Expand all' })}>
+              <button
+                type="button"
+                onClick={toggleCollapseAll}
+                disabled={flat}
+                aria-label={expansion.expand ? 'Collapse all' : 'Expand all'}
+                data-testid="changes-collapse-all"
+                className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+              >
+                {expansion.expand ? <FoldVertical size={14} /> : <UnfoldVertical size={14} />}
+              </button>
+            </HoverTip>
           </div>
         </div>
       </div>
@@ -1166,17 +1179,21 @@ export function FileTreePanel({
             className="bg-transparent outline-none flex-1 min-w-0 text-fg placeholder:text-fg-disabled"
           />
           <div ref={sortButtonRef} className="flex-shrink-0 -mr-1">
-            <button
-              type="button"
-              onClick={() => setSortMenuOpen((open) => !open)}
-              title={`Sort: by ${SORT_OPTIONS.find((option) => option.value === sort)?.label.toLowerCase() ?? sort}`}
-              aria-label={`Sort: by ${sort}`}
-              aria-expanded={sortMenuOpen}
-              data-testid="changes-sort"
-              className={`p-1 rounded transition-colors ${sortMenuOpen ? 'bg-surface-hover text-fg' : 'text-fg-muted hover:text-fg hover:bg-surface-hover'}`}
+            <HoverTip
+              label={`Sort: by ${SORT_OPTIONS.find((option) => option.value === sort)?.label.toLowerCase() ?? sort}`}
+              enabled={!sortMenuOpen}
             >
-              <ArrowDownUp size={14} />
-            </button>
+              <button
+                type="button"
+                onClick={() => setSortMenuOpen((open) => !open)}
+                aria-label={`Sort: by ${sort}`}
+                aria-expanded={sortMenuOpen}
+                data-testid="changes-sort"
+                className={`p-1 rounded transition-colors ${sortMenuOpen ? 'bg-surface-hover text-fg' : 'text-fg-muted hover:text-fg hover:bg-surface-hover'}`}
+              >
+                <ArrowDownUp size={14} />
+              </button>
+            </HoverTip>
             <OverlayPopover
               open={sortMenuOpen}
               popoverRef={sortMenuRef}

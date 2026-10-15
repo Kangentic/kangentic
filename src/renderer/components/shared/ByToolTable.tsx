@@ -232,8 +232,11 @@ export function ByToolTable({ rows }: ByToolTableProps) {
         <tbody>
           {sortedRows.map((row) => (
             <tr key={row.toolName} className="border-t border-edge/40">
-              <td className="py-1 pr-3 last:pr-0 text-fg-secondary font-mono max-w-[180px] truncate" title={row.toolName}>
-                {row.toolName}
+              <td className="py-1 pr-3 last:pr-0 text-fg-secondary font-mono max-w-[180px] truncate">
+                {/* Inline, so the cell still truncates the name as plain text did. */}
+                <HoverTip label={row.toolName}>
+                  <span>{row.toolName}</span>
+                </HoverTip>
               </td>
               <td className={VALUE_CELL_CLASS}>{row.callCount}</td>
               {valueColumns.map((column) => (

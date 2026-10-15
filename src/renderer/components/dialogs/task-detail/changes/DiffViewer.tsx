@@ -6,7 +6,8 @@ import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye, ImageO
 import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } from './DiffViewOptionsMenu';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { shownTheme, useConfigStore } from '../../../../stores/config-store';
-import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
+import { useKeybinding } from '../../../../hooks/useKeybinding';
+import { HoverTip } from '../../../HoverTip';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
 import {
@@ -742,9 +743,6 @@ export function DiffViewer({
   const changeNavigationEnabled = isFocused && !markdownPreviewActive;
   useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: changeNavigationEnabled });
   useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: changeNavigationEnabled });
-  // Live combo strings for the nav-button tooltips ('' when unbound).
-  const nextChangeCombo = useFormattedCombo('changes.nextChange');
-  const prevChangeCombo = useFormattedCombo('changes.prevChange');
 
   // Reliable copy: Monaco's own Ctrl+C routes through the web clipboard, which
   // rejects once the document loses focus. Capture ahead of Monaco (capture
@@ -856,16 +854,17 @@ export function DiffViewer({
               shown for those; while previewing, the diff-only controls below
               are hidden since they do not apply to a rendered view. */}
           {(isMarkdown || isPreviewableSvg) && (
-            <button
-              onClick={() => setShowPreview((value) => !value)}
-              className={toolbarButtonClass(previewActive)}
-              aria-label={previewToggleLabel}
-              title={previewToggleLabel}
-              aria-pressed={previewActive}
-              data-testid={isMarkdown ? 'diff-markdown-preview' : 'diff-svg-preview'}
-            >
-              <Eye size={16} />
-            </button>
+            <HoverTip label={previewToggleLabel}>
+              <button
+                onClick={() => setShowPreview((value) => !value)}
+                className={toolbarButtonClass(previewActive)}
+                aria-label={previewToggleLabel}
+                aria-pressed={previewActive}
+                data-testid={isMarkdown ? 'diff-markdown-preview' : 'diff-svg-preview'}
+              >
+                <Eye size={16} />
+              </button>
+            </HoverTip>
           )}
 
           {/* The image view keeps only the layout toggle, and only where it
@@ -873,24 +872,26 @@ export function DiffViewer({
           {showImageLayoutToggle && (
             <>
               {isPreviewableSvg && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
-              <button
-                onClick={() => onViewModeChange('split')}
-                className={toolbarButtonClass(viewMode === 'split')}
-                aria-label="Side by side"
-                title="Side by side"
-                data-testid="diff-view-split"
-              >
-                <Columns2 size={16} />
-              </button>
-              <button
-                onClick={() => onViewModeChange('inline')}
-                className={toolbarButtonClass(viewMode === 'inline')}
-                aria-label="Stacked"
-                title="Stacked"
-                data-testid="diff-view-inline"
-              >
-                <Rows2 size={16} />
-              </button>
+              <HoverTip label="Side by side">
+                <button
+                  onClick={() => onViewModeChange('split')}
+                  className={toolbarButtonClass(viewMode === 'split')}
+                  aria-label="Side by side"
+                  data-testid="diff-view-split"
+                >
+                  <Columns2 size={16} />
+                </button>
+              </HoverTip>
+              <HoverTip label="Stacked">
+                <button
+                  onClick={() => onViewModeChange('inline')}
+                  className={toolbarButtonClass(viewMode === 'inline')}
+                  aria-label="Stacked"
+                  data-testid="diff-view-inline"
+                >
+                  <Rows2 size={16} />
+                </button>
+              </HoverTip>
             </>
           )}
 
@@ -898,27 +899,29 @@ export function DiffViewer({
             <>
               {isMarkdown && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
 
-              {/* Next / previous change navigation. Tooltips carry the LIVE
-                  combos (rebind-aware via useFormattedCombo), never hardcoded
-                  strings. */}
-              <button
-                onClick={() => navigateChange('prev')}
-                className={toolbarButtonClass(false)}
-                aria-label="Previous change"
-                title={prevChangeCombo ? `Previous change (${prevChangeCombo})` : 'Previous change'}
-                data-testid="diff-prev-change"
-              >
-                <ChevronUp size={16} />
-              </button>
-              <button
-                onClick={() => navigateChange('next')}
-                className={toolbarButtonClass(false)}
-                aria-label="Next change"
-                title={nextChangeCombo ? `Next change (${nextChangeCombo})` : 'Next change'}
-                data-testid="diff-next-change"
-              >
-                <ChevronDown size={16} />
-              </button>
+              {/* Next / previous change navigation. The tips draw the LIVE
+                  combos as key chips (rebind-aware through `keys`), never
+                  hardcoded strings. */}
+              <HoverTip label="Previous change" keys="changes.prevChange">
+                <button
+                  onClick={() => navigateChange('prev')}
+                  className={toolbarButtonClass(false)}
+                  aria-label="Previous change"
+                  data-testid="diff-prev-change"
+                >
+                  <ChevronUp size={16} />
+                </button>
+              </HoverTip>
+              <HoverTip label="Next change" keys="changes.nextChange">
+                <button
+                  onClick={() => navigateChange('next')}
+                  className={toolbarButtonClass(false)}
+                  aria-label="Next change"
+                  data-testid="diff-next-change"
+                >
+                  <ChevronDown size={16} />
+                </button>
+              </HoverTip>
 
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
 
@@ -926,30 +929,32 @@ export function DiffViewer({
                   unified is the one diff control with a settled cross-tool
                   glyph (GitHub ships this exact toggle), and it is flipped
                   often enough to earn permanent space. */}
-              <button
-                onClick={() => {
-                  // Already split but showing inline after a widening drag:
-                  // the click is the user asking for side by side, so clear
-                  // Monaco's latch (rearmSideBySide). A narrow pane stays inline.
-                  if (viewMode === 'split') rearmSideBySide();
-                  onViewModeChange('split');
-                }}
-                className={toolbarButtonClass(viewMode === 'split')}
-                aria-label="Side by side"
-                title={inlineWhenNarrow ? 'Side by side (a narrow pane renders inline)' : 'Side by side'}
-                data-testid="diff-view-split"
-              >
-                <Columns2 size={16} />
-              </button>
-              <button
-                onClick={() => onViewModeChange('inline')}
-                className={toolbarButtonClass(viewMode === 'inline')}
-                aria-label="Inline"
-                title="Inline"
-                data-testid="diff-view-inline"
-              >
-                <Rows2 size={16} />
-              </button>
+              <HoverTip label="Side by side" detail={inlineWhenNarrow ? 'A narrow pane renders inline' : undefined}>
+                <button
+                  onClick={() => {
+                    // Already split but showing inline after a widening drag:
+                    // the click is the user asking for side by side, so clear
+                    // Monaco's latch (rearmSideBySide). A narrow pane stays inline.
+                    if (viewMode === 'split') rearmSideBySide();
+                    onViewModeChange('split');
+                  }}
+                  className={toolbarButtonClass(viewMode === 'split')}
+                  aria-label="Side by side"
+                  data-testid="diff-view-split"
+                >
+                  <Columns2 size={16} />
+                </button>
+              </HoverTip>
+              <HoverTip label="Inline">
+                <button
+                  onClick={() => onViewModeChange('inline')}
+                  className={toolbarButtonClass(viewMode === 'inline')}
+                  aria-label="Inline"
+                  data-testid="diff-view-inline"
+                >
+                  <Rows2 size={16} />
+                </button>
+              </HoverTip>
 
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
 

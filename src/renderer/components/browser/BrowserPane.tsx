@@ -16,6 +16,8 @@ import { registerBrowserNavigationTarget } from '../../utils/browser-navigation-
 import { useAgentDriveStore } from '../../stores/agent-drive-store';
 import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
 import { PopOutButton } from '../../pop-out/PopOutButton';
+import { HoverTip } from '../HoverTip';
+import { tipLabel } from '../../utils/hover-tip';
 import { browserPartitionForTask } from '../../../shared/browser-partition';
 import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverride } from '../../../shared/types';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
@@ -757,6 +759,10 @@ function BrowserPaneActive({
     void window.electronAPI?.browser?.clearViewportOverride?.(guestId);
   }, []);
 
+  const atMinZoom = zoomFactor <= MIN_ZOOM + 1e-6;
+  const atMaxZoom = zoomFactor >= MAX_ZOOM - 1e-6;
+  const nothingDrawn = strokes.length === 0;
+
   return (
     <div
       ref={paneRef}
@@ -826,50 +832,54 @@ function BrowserPaneActive({
             both. The pop-out's OS close button already unmounts the pane, which
             unregisters the guest properly. */}
         {!window.electronAPI.popOut?.descriptor && (
-        <button
-          type="button"
-          onClick={handleCloseBrowser}
-          className="flex items-center gap-1.5 px-2 py-1 rounded border border-red-400/30 bg-red-400/10 text-xs text-red-300 hover:bg-red-400/20 hover:text-red-200 transition-colors flex-shrink-0 whitespace-nowrap"
-          title="Close the browser and free its memory. Show reopens the page."
-          aria-label="Close browser"
-          data-testid="browser-close"
-        >
-          <CircleStop size={18} />
-          Close browser
-        </button>
+        <HoverTip label="Close the browser and free its memory. Show reopens the page.">
+          <button
+            type="button"
+            onClick={handleCloseBrowser}
+            className="flex items-center gap-1.5 px-2 py-1 rounded border border-red-400/30 bg-red-400/10 text-xs text-red-300 hover:bg-red-400/20 hover:text-red-200 transition-colors flex-shrink-0 whitespace-nowrap"
+            aria-label="Close browser"
+            data-testid="browser-close"
+          >
+            <CircleStop size={18} />
+            Close browser
+          </button>
+        </HoverTip>
         )}
         {!window.electronAPI.popOut?.descriptor && (
           <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
         )}
-        <button
-          type="button"
-          onClick={() => webviewRef.current?.goBack()}
-          disabled={!canGoBack}
-          className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
-          aria-label="Back"
-          title={canGoBack ? 'Back' : 'No earlier page'}
-        >
-          <ArrowLeft size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={() => webviewRef.current?.goForward()}
-          disabled={!canGoForward}
-          className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
-          aria-label="Forward"
-          title={canGoForward ? 'Forward' : 'No forward page'}
-        >
-          <ArrowRight size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={() => webviewRef.current?.reload()}
-          className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors"
-          aria-label="Reload"
-          title="Reload (F5 / Ctrl+R)"
-        >
-          <RotateCcw size={14} />
-        </button>
+        <HoverTip label={tipLabel({ disabled: !canGoBack, disabledReason: 'No earlier page', tip: 'Back' })}>
+          <button
+            type="button"
+            onClick={() => webviewRef.current?.goBack()}
+            disabled={!canGoBack}
+            className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
+            aria-label="Back"
+          >
+            <ArrowLeft size={14} />
+          </button>
+        </HoverTip>
+        <HoverTip label={tipLabel({ disabled: !canGoForward, disabledReason: 'No forward page', tip: 'Forward' })}>
+          <button
+            type="button"
+            onClick={() => webviewRef.current?.goForward()}
+            disabled={!canGoForward}
+            className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
+            aria-label="Forward"
+          >
+            <ArrowRight size={14} />
+          </button>
+        </HoverTip>
+        <HoverTip label="Reload" keys="browser.reload">
+          <button
+            type="button"
+            onClick={() => webviewRef.current?.reload()}
+            className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors"
+            aria-label="Reload"
+          >
+            <RotateCcw size={14} />
+          </button>
+        </HoverTip>
         {/* The drive cue is NOT in this row. It lives over the page, in the
             overlay container below, for three reasons that were all reported
             from real use: an inline child here is ~110px the URL field pays
@@ -888,27 +898,30 @@ function BrowserPaneActive({
         />
         {/* Pressing Enter inside the URL input submits the form -- no Go button needed. */}
         <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
-        <button
-          type="button"
-          onClick={handleSaveAsProjectDefault}
-          disabled={matchesProjectDefault || pinning}
-          className={`flex items-center justify-center self-stretch aspect-square rounded border transition-colors flex-shrink-0 ${
-            matchesProjectDefault
-              ? 'bg-accent/15 border-accent/40 text-accent-fg cursor-default'
-              : 'bg-surface-input border-edge-input text-fg-muted hover:text-fg hover:bg-surface-hover hover:border-accent/50'
-          }`}
-          title={matchesProjectDefault
+        <HoverTip
+          label={matchesProjectDefault
             ? 'This URL is the project default'
             : 'Save as project default for all tasks'}
-          aria-label={matchesProjectDefault
-            ? 'This URL is the project default'
-            : 'Save as project default'}
-          data-testid="browser-pin-project"
         >
-          {pinning
-            ? <Loader2 size={14} className="animate-spin" />
-            : <Pin size={14} strokeWidth={matchesProjectDefault ? 2 : 1.75} fill={matchesProjectDefault ? 'currentColor' : 'none'} />}
-        </button>
+          <button
+            type="button"
+            onClick={handleSaveAsProjectDefault}
+            disabled={matchesProjectDefault || pinning}
+            className={`flex items-center justify-center self-stretch aspect-square rounded border transition-colors flex-shrink-0 ${
+              matchesProjectDefault
+                ? 'bg-accent/15 border-accent/40 text-accent-fg cursor-default'
+                : 'bg-surface-input border-edge-input text-fg-muted hover:text-fg hover:bg-surface-hover hover:border-accent/50'
+            }`}
+            aria-label={matchesProjectDefault
+              ? 'This URL is the project default'
+              : 'Save as project default'}
+            data-testid="browser-pin-project"
+          >
+            {pinning
+              ? <Loader2 size={14} className="animate-spin" />
+              : <Pin size={14} strokeWidth={matchesProjectDefault ? 2 : 1.75} fill={matchesProjectDefault ? 'currentColor' : 'none'} />}
+          </button>
+        </HoverTip>
         {/* An agent set the viewport this page lays out against. Nothing else
             on screen can say so: the guest's own element never changes size, so
             without this the page simply renders at a width the user cannot
@@ -958,30 +971,30 @@ function BrowserPaneActive({
               className="flex items-stretch h-7 bg-surface-input border border-edge-input rounded overflow-hidden flex-shrink-0"
               data-testid="browser-viewport-chip"
             >
-              <span
-                className="flex items-center gap-1 px-2 text-[11px] text-accent whitespace-nowrap tabular-nums"
-                title={`An agent set this page to render at ${viewportOverride.measured.width} x ${viewportOverride.measured.height} CSS pixels. Reset to use the pane's own size again.`}
-              >
-                <Monitor size={11} />
-                {viewportOverride.measured.width} x {viewportOverride.measured.height}
-                {/* The scale, only when there is one. A fitted pane renders the
-                    layout smaller than life, and that is the fact the zoom pill
-                    would have carried; a real window resize is 1:1 and the
-                    suffix would be noise. */}
-                {Math.abs(zoomFactor - 1) > 0.005 && (
-                  <span className="text-accent/70">at {Math.round(zoomFactor * 100)}%</span>
-                )}
-              </span>
-              <button
-                type="button"
-                onClick={handleClearViewport}
-                className="px-2 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors border-l border-edge-input"
-                title="Reset this page to the pane's own size"
-                aria-label="Reset viewport"
-                data-testid="browser-viewport-reset"
-              >
-                Reset
-              </button>
+              <HoverTip label={`An agent set this page to render at ${viewportOverride.measured.width} x ${viewportOverride.measured.height} CSS pixels. Reset to use the pane's own size again.`}>
+                <span className="flex items-center gap-1 px-2 text-[11px] text-accent whitespace-nowrap tabular-nums">
+                  <Monitor size={11} />
+                  {viewportOverride.measured.width} x {viewportOverride.measured.height}
+                  {/* The scale, only when there is one. A fitted pane renders the
+                      layout smaller than life, and that is the fact the zoom pill
+                      would have carried; a real window resize is 1:1 and the
+                      suffix would be noise. */}
+                  {Math.abs(zoomFactor - 1) > 0.005 && (
+                    <span className="text-accent/70">at {Math.round(zoomFactor * 100)}%</span>
+                  )}
+                </span>
+              </HoverTip>
+              <HoverTip label="Reset this page to the pane's own size">
+                <button
+                  type="button"
+                  onClick={handleClearViewport}
+                  className="px-2 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors border-l border-edge-input"
+                  aria-label="Reset viewport"
+                  data-testid="browser-viewport-reset"
+                >
+                  Reset
+                </button>
+              </HoverTip>
             </div>
           </>
         )}
@@ -1006,38 +1019,47 @@ function BrowserPaneActive({
           className="flex items-stretch h-7 bg-surface-input border border-edge-input rounded overflow-hidden"
           data-testid="browser-zoom-pill"
         >
-          <button
-            type="button"
-            onClick={zoomOut}
-            disabled={zoomFactor <= MIN_ZOOM + 1e-6}
-            className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
-            title="Zoom out (Ctrl+- or Ctrl+scroll wheel)"
-            aria-label="Zoom out"
-            data-testid="browser-zoom-out"
+          <HoverTip
+            label={tipLabel({ disabled: atMinZoom, disabledReason: 'Already at the smallest zoom', tip: 'Zoom out' })}
+            keys={atMinZoom ? undefined : 'browser.zoomOut'}
           >
-            <ZoomOut size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={resetZoom}
-            className="px-1.5 py-1 text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors tabular-nums min-w-[3.25rem]"
-            title="Reset zoom to 100% (Ctrl+0)"
-            aria-label={`Reset zoom (current ${Math.round(zoomFactor * 100)}%)`}
-            data-testid="browser-zoom-reset"
+            <button
+              type="button"
+              onClick={zoomOut}
+              disabled={atMinZoom}
+              className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
+              aria-label="Zoom out"
+              data-testid="browser-zoom-out"
+            >
+              <ZoomOut size={14} />
+            </button>
+          </HoverTip>
+          <HoverTip label="Reset zoom to 100%" keys="browser.zoomReset">
+            <button
+              type="button"
+              onClick={resetZoom}
+              className="px-1.5 py-1 text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors tabular-nums min-w-[3.25rem]"
+              aria-label={`Reset zoom (current ${Math.round(zoomFactor * 100)}%)`}
+              data-testid="browser-zoom-reset"
+            >
+              {Math.round(zoomFactor * 100)}%
+            </button>
+          </HoverTip>
+          <HoverTip
+            label={tipLabel({ disabled: atMaxZoom, disabledReason: 'Already at the largest zoom', tip: 'Zoom in' })}
+            keys={atMaxZoom ? undefined : 'browser.zoomIn'}
           >
-            {Math.round(zoomFactor * 100)}%
-          </button>
-          <button
-            type="button"
-            onClick={zoomIn}
-            disabled={zoomFactor >= MAX_ZOOM - 1e-6}
-            className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
-            title="Zoom in (Ctrl+= or Ctrl+scroll wheel)"
-            aria-label="Zoom in"
-            data-testid="browser-zoom-in"
-          >
-            <ZoomIn size={14} />
-          </button>
+            <button
+              type="button"
+              onClick={zoomIn}
+              disabled={atMaxZoom}
+              className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
+              aria-label="Zoom in"
+              data-testid="browser-zoom-in"
+            >
+              <ZoomIn size={14} />
+            </button>
+          </HoverTip>
         </div>
         </>
         )}
@@ -1231,63 +1253,67 @@ function BrowserPaneActive({
       {/* Toolbar: capture zone (left) | flex spacer | compose zone (right) */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-t border-edge flex-shrink-0">
         {/* Capture zone: Draw + its stroke sub-actions, then Inspect. */}
-        <button
-          type="button"
-          onClick={() => {
-            setDrawMode((previous) => {
-              // Drawing and inspecting both want pointer events; only one
-              // at a time. Aborting Inspect's loop is what actually stops
-              // the script from intercepting clicks in the webview.
-              if (!previous) cancelInspect();
-              return !previous;
-            });
-          }}
-          className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-            drawMode
-              ? 'bg-accent/20 text-accent-fg border border-accent/40'
-              : 'text-fg-muted hover:text-fg hover:bg-surface-hover border border-transparent'
-          }`}
-          title="Toggle draw mode (Ctrl/Cmd+D)"
-          data-testid="browser-draw-toggle"
-        >
-          <Pencil size={12} />
-          Draw
-        </button>
-        <button
-          type="button"
-          onClick={undo}
-          disabled={strokes.length === 0}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
-          title="Undo last stroke"
-        >
-          <Undo2 size={12} />
-          Undo
-        </button>
-        <button
-          type="button"
-          onClick={clear}
-          disabled={strokes.length === 0}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
-          title="Clear all strokes"
-        >
-          <Eraser size={12} />
-          Clear
-        </button>
+        <HoverTip label="Toggle draw mode" keys="browser.draw">
+          <button
+            type="button"
+            onClick={() => {
+              setDrawMode((previous) => {
+                // Drawing and inspecting both want pointer events; only one
+                // at a time. Aborting Inspect's loop is what actually stops
+                // the script from intercepting clicks in the webview.
+                if (!previous) cancelInspect();
+                return !previous;
+              });
+            }}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+              drawMode
+                ? 'bg-accent/20 text-accent-fg border border-accent/40'
+                : 'text-fg-muted hover:text-fg hover:bg-surface-hover border border-transparent'
+            }`}
+            data-testid="browser-draw-toggle"
+          >
+            <Pencil size={12} />
+            Draw
+          </button>
+        </HoverTip>
+        <HoverTip label={tipLabel({ disabled: nothingDrawn, disabledReason: 'Nothing drawn yet', tip: 'Undo last stroke' })}>
+          <button
+            type="button"
+            onClick={undo}
+            disabled={nothingDrawn}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            <Undo2 size={12} />
+            Undo
+          </button>
+        </HoverTip>
+        <HoverTip label={tipLabel({ disabled: nothingDrawn, disabledReason: 'Nothing drawn yet', tip: 'Clear all strokes' })}>
+          <button
+            type="button"
+            onClick={clear}
+            disabled={nothingDrawn}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            <Eraser size={12} />
+            Clear
+          </button>
+        </HoverTip>
         <div className="w-px h-4 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
-        <button
-          type="button"
-          onClick={() => void startInspect()}
-          className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-            inspectActive
-              ? 'bg-accent/20 text-accent-fg border border-accent/40'
-              : 'text-fg-muted hover:text-fg hover:bg-surface-hover border border-transparent'
-          }`}
-          title="Click elements to capture their identity (Ctrl/Cmd+I, Esc to exit)"
-          data-testid="browser-inspect-toggle"
-        >
-          <Crosshair size={12} />
-          Inspect
-        </button>
+        <HoverTip label="Click elements to capture their identity" keys="browser.inspect" detail="Esc stops inspecting">
+          <button
+            type="button"
+            onClick={() => void startInspect()}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+              inspectActive
+                ? 'bg-accent/20 text-accent-fg border border-accent/40'
+                : 'text-fg-muted hover:text-fg hover:bg-surface-hover border border-transparent'
+            }`}
+            data-testid="browser-inspect-toggle"
+          >
+            <Crosshair size={12} />
+            Inspect
+          </button>
+        </HoverTip>
 
         {/* Compose zone. A bare Enter sends, and the absent modifier check is
             deliberate: `submitTextTarget` commits a dictation target by
@@ -1310,17 +1336,18 @@ function BrowserPaneActive({
           spellCheck={true}
           data-testid="browser-note-input"
         />
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={sending}
-          className="flex items-center gap-1 px-3 py-1 text-xs text-accent-on bg-accent-emphasis hover:bg-accent rounded transition-colors disabled:opacity-50"
-          title="Send to agent (Enter)"
-          data-testid="browser-send"
-        >
-          {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-          Send
-        </button>
+        <HoverTip label="Send to agent" detail="Enter in the note also sends">
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={sending}
+            className="flex items-center gap-1 px-3 py-1 text-xs text-accent-on bg-accent-emphasis hover:bg-accent rounded transition-colors disabled:opacity-50"
+            data-testid="browser-send"
+          >
+            {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+            Send
+          </button>
+        </HoverTip>
       </div>
 
       {error && (

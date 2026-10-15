@@ -449,10 +449,10 @@ test.describe('Commit graph PR-head ref badge', () => {
     await prBadgePage.locator('[data-testid="commit-graph-svg"]').waitFor({ state: 'visible', timeout: 10000 });
 
     // Compact (rail) rendering: the PR ref is a tone dot with its label in the
-    // row tooltip, not a text badge.
+    // row's hover tip, not a text badge.
     const headCommitRow = prBadgePage.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'PR head commit' });
     await expect(headCommitRow.locator('[data-testid="commit-ref-dot-pr"]')).toBeVisible();
-    await expect(headCommitRow).toHaveAttribute('title', /PR #42/);
+    await expect(headCommitRow).toHaveAccessibleDescription(/PR #42/);
 
     // The base commit row must NOT carry the PR dot (its own ref is the base dot).
     const baseCommitRow = prBadgePage.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'PR base commit' });

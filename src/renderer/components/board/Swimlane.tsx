@@ -9,6 +9,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
 import { AutomationGlyph } from './AutomationGlyph';
+import { HoverTip } from '../HoverTip';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
 export interface SwimlaneProps {
@@ -47,132 +48,138 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
   );
 
   return (
-    <div
-      data-testid="swimlane"
-      data-swimlane-name={swimlane.name}
-      data-swimlane-id={swimlane.id}
-      className={`flex-shrink-0 ${widthClass} h-full flex flex-col rounded-lg ${
-        isGhost ? 'opacity-50 border-2 border-dashed border-fg-disabled' : ''
-      } ${
-        isSystemColumn ? 'ring-1 ring-edge/50' : ''
-      } ${isSystemColumn ? 'bg-surface-raised/70' : 'bg-surface-raised/50'}`}
-      style={dropColorStyle}
-      title={isGhost ? 'Removed from team config. Move tasks to continue.' : undefined}
-    >
-      {/* Accent bar */}
+    // A ghost column says why it is greyed out wherever the pointer rests on it.
+    <HoverTip label={isGhost ? 'Removed from team config. Move tasks to continue.' : ''}>
       <div
-        className="h-0.5 rounded-t-lg"
-        style={{ backgroundColor: swimlane.color }}
-      />
-
-      {/* Column header. `data-no-dismiss`: the whole strip opens the board manager
-          on click, so it is an action, not dead board space. The header itself has
-          `cursor-pointer` (already excluded by the cursor check), but the marker is
-          load-bearing for its drag-handle child, whose `cursor-grab` would otherwise
-          slip past that check and let a click light-dismiss a window. */}
-      <div
-        className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors cursor-pointer select-none"
-        onClick={() => openBoardManager(swimlane.id)}
-        title={swimlane.description ?? undefined}
-        data-no-dismiss
+        data-testid="swimlane"
+        data-swimlane-name={swimlane.name}
+        data-swimlane-id={swimlane.id}
+        className={`flex-shrink-0 ${widthClass} h-full flex flex-col rounded-lg ${
+          isGhost ? 'opacity-50 border-2 border-dashed border-fg-disabled' : ''
+        } ${
+          isSystemColumn ? 'ring-1 ring-edge/50' : ''
+        } ${isSystemColumn ? 'bg-surface-raised/70' : 'bg-surface-raised/50'}`}
+        style={dropColorStyle}
       >
-        {/* Drag handle for custom columns */}
-        {isDraggable && (
-          // `dragHandleProps` carries dnd-kit's attributes too (tabindex, role,
-          // aria-*), so this is the column's one focus stop and the shared
-          // keyboard sensor lifts the column from here. It draws no text, so it
-          // names itself.
-          // select-none-ok: the handle draws a grip icon and no text, and it
-          // inherits the header's `select-none` anyway.
+        {/* Accent bar */}
+        <div
+          className="h-0.5 rounded-t-lg"
+          style={{ backgroundColor: swimlane.color }}
+        />
+
+        {/* Column header. `data-no-dismiss`: the whole strip opens the board manager
+            on click, so it is an action, not dead board space. The header itself has
+            `cursor-pointer` (already excluded by the cursor check), but the marker is
+            load-bearing for its drag-handle child, whose `cursor-grab` would otherwise
+            slip past that check and let a click light-dismiss a window. The column's
+            description, when it has one, is the strip's tip. */}
+        <HoverTip label={swimlane.description ?? ''}>
           <div
-            {...dragHandleProps}
-            onClick={(e: React.MouseEvent) => e.stopPropagation()}
-            aria-label={`Reorder ${swimlane.name} column`}
-            title="Drag to reorder"
-            data-testid="column-drag-handle"
-            className="text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing transition-colors -ml-1"
+            className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors cursor-pointer select-none"
+            onClick={() => openBoardManager(swimlane.id)}
+            data-no-dismiss
           >
-            <GripVertical size={14} />
+            {/* Drag handle for custom columns */}
+            {isDraggable && (
+              // `dragHandleProps` carries dnd-kit's attributes too (tabindex, role,
+              // aria-*), so this is the column's one focus stop and the shared
+              // keyboard sensor lifts the column from here. It draws no text, so it
+              // names itself. HoverTip chains its own pointer handlers after
+              // dnd-kit's, so the press that starts a drag still reaches the sensor.
+              <HoverTip label="Drag to reorder">
+                {/* select-none-ok: the handle draws a grip icon and no text, and it
+                    inherits the header's `select-none` anyway. */}
+                <div
+                  {...dragHandleProps}
+                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  aria-label={`Reorder ${swimlane.name} column`}
+                  data-testid="column-drag-handle"
+                  className="text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing transition-colors -ml-1"
+                >
+                  <GripVertical size={14} />
+                </div>
+              </HoverTip>
+            )}
+
+            {/* Role icon or color dot */}
+            {(() => {
+              const Icon = getSwimlaneIcon(swimlane);
+              return Icon ? (
+                <span style={{ color: swimlane.color }}><Icon size={16} strokeWidth={1.75} /></span>
+              ) : (
+                <div
+                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: swimlane.color }}
+                />
+              );
+            })()}
+
+            {/* Column name */}
+            <span className={`text-sm font-medium truncate flex-1 min-w-0 ${
+              isSystemColumn ? 'text-fg' : 'text-fg-secondary'
+            }`}>
+              {swimlane.name}
+            </span>
+
+            <CountBadge count={tasks.length} />
+
+            <AutomationGlyph swimlaneId={swimlane.id} />
+
+            <button
+              type="button"
+              data-testid="edit-column-btn"
+              aria-label={`Edit ${swimlane.name} column`}
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                openBoardManager(swimlane.id);
+              }}
+              className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"
+            >
+              <Pencil size={12} />
+            </button>
+          </div>
+        </HoverTip>
+
+        {/* Task list */}
+        <div
+          ref={setNodeRef}
+          data-swimlane-task-list={swimlane.id}
+          className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[100px] transition-colors"
+        >
+          <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+            {tasks.map((task) => (
+              <TaskCard key={task.id} task={task} />
+            ))}
+          </SortableContext>
+        </div>
+
+        {/* Add task button (To Do only, hidden for ghost columns) */}
+        {!isGhost && swimlane.role === 'todo' && (
+          <button
+            type="button"
+            onClick={() => setShowNewTask(true)}
+            className="flex items-center gap-1.5 px-3 py-2.5 border-t border-dashed border-edge/40 text-sm text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover/30 transition-colors w-full text-left cursor-pointer"
+            data-testid="swimlane-add-task"
+          >
+            <ClipboardPlus size={16} />
+            Add task
+          </button>
+        )}
+        {isGhost && (
+          <div className="px-3 py-2 border-t border-edge/50">
+            <span className="text-xs text-fg-disabled italic">
+              Removed from team config
+            </span>
           </div>
         )}
 
-        {/* Role icon or color dot */}
-        {(() => {
-          const Icon = getSwimlaneIcon(swimlane);
-          return Icon ? (
-            <span style={{ color: swimlane.color }}><Icon size={16} strokeWidth={1.75} /></span>
-          ) : (
-            <div
-              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-              style={{ backgroundColor: swimlane.color }}
-            />
-          );
-        })()}
-
-        {/* Column name */}
-        <span className={`text-sm font-medium truncate flex-1 min-w-0 ${
-          isSystemColumn ? 'text-fg' : 'text-fg-secondary'
-        }`}>
-          {swimlane.name}
-        </span>
-
-        <CountBadge count={tasks.length} />
-
-        <AutomationGlyph swimlaneId={swimlane.id} />
-
-        <button
-          type="button"
-          data-testid="edit-column-btn"
-          aria-label={`Edit ${swimlane.name} column`}
-          onClick={(e: React.MouseEvent) => {
-            e.stopPropagation();
-            openBoardManager(swimlane.id);
-          }}
-          className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"
-        >
-          <Pencil size={12} />
-        </button>
+        {showNewTask && (
+          <NewTaskDialog
+            swimlaneId={swimlane.id}
+            onClose={() => setShowNewTask(false)}
+          />
+        )}
       </div>
-
-      {/* Task list */}
-      <div
-        ref={setNodeRef}
-        data-swimlane-task-list={swimlane.id}
-        className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[100px] transition-colors"
-      >
-        <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
-          {tasks.map((task) => (
-            <TaskCard key={task.id} task={task} />
-          ))}
-        </SortableContext>
-      </div>
-
-      {/* Add task button (To Do only, hidden for ghost columns) */}
-      {!isGhost && swimlane.role === 'todo' && (
-        <button
-          type="button"
-          onClick={() => setShowNewTask(true)}
-          className="flex items-center gap-1.5 px-3 py-2.5 border-t border-dashed border-edge/40 text-sm text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover/30 transition-colors w-full text-left cursor-pointer"
-          data-testid="swimlane-add-task"
-        >
-          <ClipboardPlus size={16} />
-          Add task
-        </button>
-      )}
-      {isGhost && (
-        <div className="px-3 py-2 border-t border-edge/50">
-          <span className="text-xs text-fg-disabled italic">
-            Removed from team config
-          </span>
-        </div>
-      )}
-
-      {showNewTask && (
-        <NewTaskDialog
-          swimlaneId={swimlane.id}
-          onClose={() => setShowNewTask(false)}
-        />
-      )}
-    </div>
+    </HoverTip>
   );
 });

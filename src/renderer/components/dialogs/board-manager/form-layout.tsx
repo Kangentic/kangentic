@@ -1,5 +1,6 @@
 import React from 'react';
 import { Info, type LucideIcon } from 'lucide-react';
+import { HoverTip } from '../../HoverTip';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 
 /**
@@ -61,17 +62,20 @@ export function SectionCard({ id, label, icon: SectionIcon, info, actions, child
         <SectionIcon size={15} strokeWidth={1.75} className="text-fg-faint shrink-0" />
         <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">{label}</span>
         {info ? (
-          // Same markup as ToggleCard's info affordance, so the two read as one
-          // thing. `aria-hidden` with a `title`: the text is a hint, not a label
-          // the section needs announced.
-          <span
-            data-testid={`board-manager-section-${id}-info`}
-            title={info}
-            aria-hidden="true"
-            className="shrink-0 cursor-help text-fg-faint hover:text-fg-tertiary"
-          >
-            <Info size={13} />
-          </span>
+          // The settings cards' `InfoTip` shape (settings-card.tsx), so the two
+          // read as one thing. A real button, so a keyboard user opens the tip
+          // by focus. Its name says what it is about; the text is its
+          // description, read without hovering.
+          <HoverTip label={info}>
+            <button
+              type="button"
+              data-testid={`board-manager-section-${id}-info`}
+              aria-label={`About ${label}`}
+              className="flex shrink-0 rounded text-fg-faint hover:text-fg-tertiary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent cursor-help"
+            >
+              <Info size={13} aria-hidden="true" />
+            </button>
+          </HoverTip>
         ) : null}
         {actions ? <div className="ml-auto flex items-center gap-2">{actions}</div> : null}
       </header>

@@ -21,6 +21,7 @@ import { useLiveUsageAggregate } from '../../hooks/useLiveUsageAggregate';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { CompactTile } from './CompactTile';
+import { HoverTip } from '../HoverTip';
 import { agentShortName } from '../../utils/agent-display-name';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
@@ -83,7 +84,8 @@ interface HeroTileProps {
   /** Muted unit/suffix rendered after the value (e.g. '/hr'). */
   valueSuffix?: string;
   sub?: string;
-  title?: string;
+  /** What the tile measures, as its hover tip. */
+  tip?: string;
   delta: number | null;
   deltaBaseline: string;
   spark: TimePoint[];
@@ -101,7 +103,7 @@ function HeroTile({
   value,
   valueSuffix,
   sub,
-  title,
+  tip,
   delta,
   deltaBaseline,
   spark,
@@ -112,20 +114,22 @@ function HeroTile({
 }: HeroTileProps) {
   const pulseRef = useValuePulse(value, { resetKey });
   return (
-    <div className="bg-surface-raised border border-edge rounded-lg px-4 pt-3 pb-2 flex flex-col" data-testid={testId} title={title}>
-      <div className="flex items-center gap-1.5 text-fg-muted">
-        <span className="flex-shrink-0" aria-hidden>{icon}</span>
-        <span className="text-[11px] uppercase tracking-wider">{label}</span>
+    <HoverTip label={tip ?? ''}>
+      <div className="bg-surface-raised border border-edge rounded-lg px-4 pt-3 pb-2 flex flex-col" data-testid={testId}>
+        <div className="flex items-center gap-1.5 text-fg-muted">
+          <span className="flex-shrink-0" aria-hidden>{icon}</span>
+          <span className="text-[11px] uppercase tracking-wider">{label}</span>
+        </div>
+        <div className="flex items-baseline gap-1 mt-1">
+          <span ref={pulseRef} className="text-3xl font-semibold text-fg tabular-nums" data-testid={`${testId}-value`}>{value}</span>
+          {valueSuffix && <span className="text-sm text-fg-muted">{valueSuffix}</span>}
+        </div>
+        <HeroContextLine sub={sub} delta={delta} baseline={deltaBaseline} />
+        <div className="flex-1 min-h-8 mt-1.5">
+          <KngSparkline points={spark} colorVar={sparkColorVar} className="h-full w-full" animate={animate} />
+        </div>
       </div>
-      <div className="flex items-baseline gap-1 mt-1">
-        <span ref={pulseRef} className="text-3xl font-semibold text-fg tabular-nums" data-testid={`${testId}-value`}>{value}</span>
-        {valueSuffix && <span className="text-sm text-fg-muted">{valueSuffix}</span>}
-      </div>
-      <HeroContextLine sub={sub} delta={delta} baseline={deltaBaseline} />
-      <div className="flex-1 min-h-8 mt-1.5">
-        <KngSparkline points={spark} colorVar={sparkColorVar} className="h-full w-full" animate={animate} />
-      </div>
-    </div>
+    </HoverTip>
   );
 }
 
@@ -240,7 +244,7 @@ export function KpiTiles({
   const tokensPartialFrom = earliestTurnMs !== null && payload && payload.rangeStartMs < earliestTurnMs
     ? earliestTurnMs
     : null;
-  const tokensTitle = !hasTokens
+  const tokensTip = !hasTokens
     ? 'No per-turn token data recorded in this range'
     : [
         `Fresh input and output on the main thread. ${formatTokenCount(cacheCreationTokens)} cache write and ${formatTokenCount(cacheReadTokens)} cache read are counted separately and priced differently.`,
@@ -318,7 +322,7 @@ export function KpiTiles({
   // One agent takes a singular verb. The list is short (there are three agents
   // that could appear), so this is agreement, not i18n.
   const blindVerb = blindAgents.length === 1 ? 'does not' : 'do not';
-  const subagentTitle = hasSubagentTurns
+  const subagentTip = hasSubagentTurns
     ? [
         `Fresh input and output from ${kpis!.subagentTurnCount.toLocaleString()} subagent turn(s). The Tokens tile is main-thread only, so these are on top of it; the session's reported Cost already covers them.`,
         `${formatTokenCount(kpis!.subagentCacheReadTokens)} cache read.`,
@@ -360,7 +364,7 @@ export function KpiTiles({
           sub={hasTokens
             ? `${formatTokenCount(freshInputTokens)} in / ${formatTokenCount(outputTokens)} out`
             : undefined}
-          title={tokensTitle}
+          tip={tokensTip}
           delta={tokenDelta}
           deltaBaseline={deltaBaseline}
           spark={tokenSparkline}
@@ -374,7 +378,7 @@ export function KpiTiles({
           icon={<CircleDollarSign size={14} />}
           value={formatCost(displayCost)}
           sub={costKnown ? 'API-equivalent' : undefined}
-          title={costKnown
+          tip={costKnown
             ? 'Priced at API list rates from the tokens each agent reported. Not what a subscription was billed.'
             : 'No cost reported by agents in this range'}
           delta={costDelta}
@@ -391,7 +395,7 @@ export function KpiTiles({
           value={burnValue}
           valueSuffix={burnValueSuffix}
           sub={burnSub}
-          title="Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
+          tip="Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
           delta={burnDelta}
           deltaBaseline={deltaBaseline}
           spark={burnSparkline}
@@ -415,7 +419,7 @@ export function KpiTiles({
           // uses, but it means the count is not a count of distinct pieces of
           // work: 277 of this project's 2,434 legs did nothing at all. Without
           // saying so the number reads as "tasks worked on".
-          title="CLI invocations, counting each resume of a conversation separately"
+          tip="CLI invocations, counting each resume of a conversation separately"
           delta={sessionsDelta}
           deltaBaseline={deltaBaseline}
           resetKey={resetKey}
@@ -463,7 +467,7 @@ export function KpiTiles({
           // 99% is a share of a number nothing else on the screen shows, and
           // cache read is the largest token bucket by an order of magnitude.
           sub={cacheReadShare != null ? `${formatTokenCount(cacheReadTokens)} read` : undefined}
-          title={cacheReadShare != null
+          tip={cacheReadShare != null
             ? `Cache read as a share of all input: ${formatTokenCount(cacheReadTokens)} read against ${formatTokenCount(cacheCreationTokens)} written and ${formatTokenCount(freshInputTokens)} fresh.`
             : 'Not reported by these agents in this range'}
           resetKey={resetKey}
@@ -474,7 +478,7 @@ export function KpiTiles({
           icon={<GitFork size={14} />}
           value={hasSubagentTurns ? formatTokenCount(subagentTokens) : '-'}
           sub={subagentSub}
-          title={subagentTitle}
+          tip={subagentTip}
           delta={hasSubagentTurns ? subagentDelta : null}
           deltaBaseline={deltaBaseline}
           resetKey={resetKey}
@@ -484,7 +488,7 @@ export function KpiTiles({
           label="Compactions"
           icon={<Layers size={14} />}
           value={kpis && kpis.compactionCount > 0 ? String(kpis.compactionCount) : '-'}
-          title={kpis && kpis.compactionCount > 0
+          tip={kpis && kpis.compactionCount > 0
             ? 'Context compactions across the range'
             : 'None reported by these agents in this range'}
           delta={kpis && kpis.compactionCount > 0 ? compactionsDelta : null}
@@ -500,7 +504,7 @@ export function KpiTiles({
           // tooltip: it is a different population from the Sessions tile two
           // cards to the left, and a reader comparing them deserves to see why.
           sub={avgActiveMs !== null ? `over ${formatTokenCount(activeCoveredSessions)} sessions` : undefined}
-          title={avgActiveMs !== null
+          tip={avgActiveMs !== null
             ? `Time the agent was working, per session, excluding idle. Covers the ${activeCoveredSessions.toLocaleString()} session(s) with activity tracking in this range, which is fewer than the Sessions tile counts.`
             : 'No activity tracking recorded in this range'}
           // Gated like the subagent and compaction tiles above: with no

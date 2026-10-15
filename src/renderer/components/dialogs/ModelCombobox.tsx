@@ -12,6 +12,7 @@ import {
   modelVersionSectionLabel,
 } from '../../utils/format-tokens';
 import { OverlayPopover } from '../OverlayPopover';
+import { HoverTip } from '../HoverTip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 interface ModelComboboxProps {
@@ -408,22 +409,25 @@ export function ModelCombobox({
     const row = aliasRowView(alias, modelAliases, modelDisplayNames);
     return (
       <div key={alias.id} data-model-row className="flex items-center hover:bg-surface-hover transition-colors">
-        <button
-          type="button"
-          data-model-option
-          data-model-alias={alias.id}
-          onClick={() => handleSelectModel(alias.id)}
-          onKeyDown={handleOptionKeyDown}
-          title={row.title}
-          className="flex-1 min-w-0 flex items-center gap-3 text-left px-3 py-1.5 text-sm text-fg focus:bg-surface-hover focus:outline-none"
-        >
-          <span className="min-w-16 truncate">{row.label}</span>
-          {row.target !== null && (
-            <span data-model-alias-target className="text-xs text-fg-faint truncate">
-              {row.target}
-            </span>
-          )}
-        </button>
+        {/* No `data-model-id` here: an alias row is selected by `data-model-alias`, so a spec
+            asking for "no option with id `sonnet`" is not answered by the Sonnet alias row. */}
+        <HoverTip label={row.title}>
+          <button
+            type="button"
+            data-model-option
+            data-model-alias={alias.id}
+            onClick={() => handleSelectModel(alias.id)}
+            onKeyDown={handleOptionKeyDown}
+            className="flex-1 min-w-0 flex items-center gap-3 text-left px-3 py-1.5 text-sm text-fg focus:bg-surface-hover focus:outline-none"
+          >
+            <span className="min-w-16 truncate">{row.label}</span>
+            {row.target !== null && (
+              <span data-model-alias-target className="text-xs text-fg-faint truncate">
+                {row.target}
+              </span>
+            )}
+          </button>
+        </HoverTip>
       </div>
     );
   };
@@ -441,39 +445,44 @@ export function ModelCombobox({
     const contextLabel = modelContextBadgeLabel(group, contextWindows);
     return (
       <div key={group.primaryId} data-model-row className="flex items-center hover:bg-surface-hover transition-colors">
-        <button
-          type="button"
-          data-model-option
-          onClick={() => handleSelectModel(group.primaryId)}
-          onKeyDown={handleOptionKeyDown}
-          title={group.primaryId}
-          className={`flex-1 min-w-0 flex items-center text-left py-1.5 text-sm focus:bg-surface-hover focus:outline-none ${
-            indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg'
-          }`}
-        >
-          <span className="truncate">{modelRowLabel(group.primaryId, modelDisplayNames)}</span>
-          {renderNewerHint([group.primaryId, oneMillionId])}
-        </button>
-        {contextLabel && (
-          <span
-            data-model-context-window
-            title={`${contextLabel} context window`}
-            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-faint flex-shrink-0"
-          >
-            {contextLabel}
-          </span>
-        )}
-        {oneMillionId !== null && (
+        <HoverTip label={group.primaryId}>
           <button
             type="button"
-            data-model-1m
-            onClick={() => handleSelectModel(oneMillionId)}
-            onKeyDown={handleChipKeyDown}
-            title={oneMillionId}
-            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-muted hover:text-fg hover:border-fg-faint focus:outline focus:outline-1 focus:outline-fg-faint transition-colors flex-shrink-0"
+            data-model-option
+            data-model-id={group.primaryId}
+            onClick={() => handleSelectModel(group.primaryId)}
+            onKeyDown={handleOptionKeyDown}
+            className={`flex-1 min-w-0 flex items-center text-left py-1.5 text-sm focus:bg-surface-hover focus:outline-none ${
+              indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg'
+            }`}
           >
-            1M
+            <span className="truncate">{modelRowLabel(group.primaryId, modelDisplayNames)}</span>
+            {renderNewerHint([group.primaryId, oneMillionId])}
           </button>
+        </HoverTip>
+        {contextLabel && (
+          <HoverTip label={`${contextLabel} context window`}>
+            <span
+              data-model-context-window
+              className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-faint flex-shrink-0"
+            >
+              {contextLabel}
+            </span>
+          </HoverTip>
+        )}
+        {oneMillionId !== null && (
+          <HoverTip label={oneMillionId}>
+            <button
+              type="button"
+              data-model-1m
+              data-model-id={oneMillionId}
+              onClick={() => handleSelectModel(oneMillionId)}
+              onKeyDown={handleChipKeyDown}
+              className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-muted hover:text-fg hover:border-fg-faint focus:outline focus:outline-1 focus:outline-fg-faint transition-colors flex-shrink-0"
+            >
+              1M
+            </button>
+          </HoverTip>
         )}
       </div>
     );
@@ -484,44 +493,50 @@ export function ModelCombobox({
   return (
     <div ref={containerRef} className={`relative ${className}`} onBlur={handleFieldBlur}>
       <div className="flex items-center gap-0 border border-edge-input rounded bg-surface-control">
-        <input
-          ref={inputRef}
-          type="text"
-          value={displayValue}
-          onChange={(e) => handleInputChange(e.target.value)}
-          onFocus={handleInputFocus}
-          onKeyDown={handleInputKeyDown}
-          placeholder={placeholder}
-          title={valueTitle ?? undefined}
-          data-testid={testId}
-          className={`flex-1 bg-transparent px-3 py-1.5 text-sm text-fg focus:outline-none ${
-            placeholderVariant === 'muted' ? 'placeholder-fg-faint' : 'placeholder-fg'
-          }`}
-        />
+        {/* An empty label (a value that is not an alias) holds the tip shut. Shut while the
+            menu shows too: the chevron focuses the input as it opens the menu, and a tip
+            opened by that focus would take the Escape meant for the menu. */}
+        <HoverTip label={valueTitle ?? ''} enabled={!showSuggestions}>
+          <input
+            ref={inputRef}
+            type="text"
+            value={displayValue}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onFocus={handleInputFocus}
+            onKeyDown={handleInputKeyDown}
+            placeholder={placeholder}
+            data-testid={testId}
+            className={`flex-1 bg-transparent px-3 py-1.5 text-sm text-fg focus:outline-none ${
+              placeholderVariant === 'muted' ? 'placeholder-fg-faint' : 'placeholder-fg'
+            }`}
+          />
+        </HoverTip>
         {displayValue && (
-          <button
-            type="button"
-            onClick={handleClear}
-            className="p-1 text-fg-faint hover:text-fg-muted transition-colors flex-shrink-0"
-            title="Clear"
-            aria-label="Clear"
-          >
-            <X size={16} />
-          </button>
+          <HoverTip label="Clear">
+            <button
+              type="button"
+              onClick={handleClear}
+              className="p-1 text-fg-faint hover:text-fg-muted transition-colors flex-shrink-0"
+              aria-label="Clear"
+            >
+              <X size={16} />
+            </button>
+          </HoverTip>
         )}
         {hasOptions && (
-          <button
-            type="button"
-            onClick={handleToggleDropdown}
-            className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input"
-            title={isOpen ? 'Close dropdown' : 'Open dropdown'}
-            aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
-          >
-            <ChevronDown
-              size={16}
-              className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
-            />
-          </button>
+          <HoverTip label={isOpen ? 'Close dropdown' : 'Open dropdown'}>
+            <button
+              type="button"
+              onClick={handleToggleDropdown}
+              className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input"
+              aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
+            >
+              <ChevronDown
+                size={16}
+                className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </HoverTip>
         )}
       </div>
 
@@ -576,19 +591,20 @@ export function ModelCombobox({
                     row.kind === 'group' ? (
                       renderGroupRow(row.group, true)
                     ) : (
-                      <button
-                        key={row.id}
-                        type="button"
-                        data-model-option
-                        data-model-pinned-option
-                        onClick={() => handleSelectModel(row.id)}
-                        onKeyDown={handleOptionKeyDown}
-                        title={row.id}
-                        className="w-full flex items-center text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors"
-                      >
-                        <span className="truncate">{modelRowLabel(row.id, modelDisplayNames)}</span>
-                        {renderNewerHint([row.id])}
-                      </button>
+                      <HoverTip key={row.id} label={row.id}>
+                        <button
+                          type="button"
+                          data-model-option
+                          data-model-pinned-option
+                          data-model-id={row.id}
+                          onClick={() => handleSelectModel(row.id)}
+                          onKeyDown={handleOptionKeyDown}
+                          className="w-full flex items-center text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors"
+                        >
+                          <span className="truncate">{modelRowLabel(row.id, modelDisplayNames)}</span>
+                          {renderNewerHint([row.id])}
+                        </button>
+                      </HoverTip>
                     ),
                   )}
               </div>

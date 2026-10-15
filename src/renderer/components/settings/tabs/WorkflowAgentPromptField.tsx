@@ -4,6 +4,7 @@ import { Maximize2, RotateCcw, Workflow as WorkflowIcon } from 'lucide-react';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import { TemplateVariablePicker } from '../../TemplateVariablePicker';
 import { Pill } from '../../Pill';
+import { HoverTip } from '../../HoverTip';
 import { BaseDialog, DialogFooterActions } from '../../dialogs/BaseDialog';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { maximizedDialogLayout, MaximizeToggleButton } from '../../dialogs/dialog-maximize';
@@ -116,16 +117,17 @@ export function WorkflowAgentPromptSetting({ stored, onSave }: { stored: string;
 /** The card header's Expand: the same prompt, larger. */
 export function WorkflowAgentPromptExpandButton({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-testid="workflow-agent-prompt-expand"
-      title="Expand the prompt"
-      className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-edge-input bg-surface-control px-2.5 py-1 text-xs text-fg-secondary transition-colors hover:border-accent/50 hover:text-fg"
-    >
-      <Maximize2 size={13} aria-hidden="true" />
-      Expand
-    </button>
+    <HoverTip label="Expand the prompt">
+      <button
+        type="button"
+        onClick={onClick}
+        data-testid="workflow-agent-prompt-expand"
+        className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-edge-input bg-surface-control px-2.5 py-1 text-xs text-fg-secondary transition-colors hover:border-accent/50 hover:text-fg"
+      >
+        <Maximize2 size={13} aria-hidden="true" />
+        Expand
+      </button>
+    </HoverTip>
   );
 }
 
