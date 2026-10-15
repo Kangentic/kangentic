@@ -1228,8 +1228,7 @@ test.describe('Per-tool table on a completed task', () => {
     try {
       await openTotalBreakdown(page);
       const table = page.locator('[data-testid="session-summary-by-tool"]');
-      await expect(page.locator('[data-testid="by-tool-sort-time"]')).toHaveAttribute(
-        'title',
+      await expect(page.locator('[data-testid="by-tool-sort-time"]')).toHaveAccessibleDescription(
         'How long each tool ran. Leaves out the 3 calls that waited for your answer or approval.',
       );
       const askRow = table.locator('tbody tr', { hasText: 'AskUserQuestion' });
@@ -1238,6 +1237,38 @@ test.describe('Per-tool table on a completed task', () => {
       const bashRow = table.locator('tbody tr', { hasText: 'Bash' });
       await expect(bashRow.locator('td').nth(2)).toHaveText('4.2s');
       await expect(bashRow.locator('td').nth(3)).toHaveText('2.1s');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Time, Avg and Tokens headers explain themselves, and a header with nothing to add has no description', async () => {
+    // Every column present at once: durations (Time, Avg), result tokens and cost.
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Bash', callCount: 4, totalDurationMs: 4_200, interruptedCount: 0, resultTokens: 2_300, costUsd: 0.04 },
+        { toolName: 'Read', callCount: 9, totalDurationMs: 850, interruptedCount: 0, resultTokens: 41_000, costUsd: 0.01 },
+      ],
+    }));
+    try {
+      await openTotalBreakdown(page);
+      const sortButton = (columnKey: string) => page.locator(`[data-testid="by-tool-sort-${columnKey}"]`);
+
+      // Nothing waited on the user, so Time names no left-out calls.
+      await expect(sortButton('time')).toHaveAccessibleDescription('How long each tool ran.');
+      await expect(sortButton('avg')).toHaveAccessibleDescription('Average run time of the calls Time counts.');
+      await expect(sortButton('tokens')).toHaveAccessibleDescription(
+        'Estimated tokens this tool\'s output added to the main conversation. Not billed tokens; subagent calls are not counted.',
+      );
+      // The description is extra: the header keeps its own name.
+      await expect(sortButton('tokens')).toHaveAccessibleName('Tokens');
+
+      // Cost, Calls and Tool have nothing to add to their names, so they carry no description.
+      await expect(sortButton('cost')).toHaveAccessibleName('Cost');
+      await expect(sortButton('cost')).toHaveAccessibleDescription('');
+      await expect(sortButton('calls')).toHaveAccessibleDescription('');
+      await expect(sortButton('tool')).toHaveAccessibleDescription('');
     } finally {
       await browser.close();
     }

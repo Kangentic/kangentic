@@ -281,6 +281,45 @@ test.describe('usage dashboard', () => {
     }
   });
 
+  // DataTable puts its column tip on the <th> itself (HoverTip adds no wrapper), so the header
+  // keeps its table layout, its click handler, and its own name. The tip says what the column is,
+  // and a sortable column gets the sort gestures appended on a second line.
+  test('a sortable per-project header describes its column and the sort gestures, and a click on it still sorts', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      await page.locator('[data-testid="stats-scope-trigger"]').click();
+      await page.locator('[data-testid="stats-scope-option-all"]').click();
+      await expect(page.locator('[data-testid="per-project-table"]')).toBeVisible({ timeout: 10000 });
+
+      const tokensInHeader = page.locator('[data-testid="per-project-table"] th').filter({ hasText: 'Tokens In' });
+      const firstRow = page.locator('[data-testid="per-project-row"]').first();
+      const columnTip = 'Fresh input tokens across the turns in this range (cache reads counted separately)';
+      const sortLine = 'Click to sort - Shift+Click adds a secondary sort';
+
+      // The accessible description collapses the tip's line break to a space.
+      await expect(tokensInHeader).toHaveAccessibleDescription(`${columnTip} ${sortLine}`);
+      await expect(tokensInHeader).toHaveAccessibleName('Tokens In');
+
+      // The same two lines show on hover.
+      await tokensInHeader.hover();
+      await expect(page.locator('[data-hover-tip]')).toHaveText(`${columnTip} ${sortLine}`);
+
+      // The header still sorts: the press closes the tip, and the click reaches the cell's own
+      // handler. Numeric columns start descending, so the second click is the one that moves the
+      // top row (Mock Project has the most input tokens), and its arrow flips with it.
+      await tokensInHeader.click();
+      await expect(tokensInHeader.locator('svg.lucide-arrow-down')).toBeVisible();
+      await expect(firstRow).toContainText('Mock Project');
+      await tokensInHeader.click();
+      await expect(tokensInHeader.locator('svg.lucide-arrow-up')).toBeVisible();
+      await expect(firstRow).toContainText('Other Project');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('per-project table Files column renders each project\'s summed filesChanged value', async () => {
     // Bug #2 of the usage-dashboard fix: per-project filesChanged was never
     // summed/displayed. The default fixture's cost-sort keeps "Mock Project"
@@ -1324,6 +1363,9 @@ test.describe('usage dashboard', () => {
 
       const popOutButton = page.locator('[data-testid="pop-out-button-stats"]');
       await expect(popOutButton).toBeVisible();
+      // The closed name. The detached name ("Focus detached window") cannot be read from a page:
+      // AppLayout unmounts this surface in the same commit that reports it detached, so it is
+      // pinned in tests/unit/pop-out-button.test.ts instead.
       await expect(popOutButton).toHaveAccessibleName('Open in new window');
       await popOutButton.click();
 

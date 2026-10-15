@@ -39,6 +39,8 @@ import { HeaderActionButton } from '../../src/renderer/components/HeaderActionBu
 import { KebabMenuCheckItem } from '../../src/renderer/components/KebabMenu';
 import { SegmentedControl, type SegmentedControlOption } from '../../src/renderer/components/SegmentedControl';
 import { ToggleSwitch } from '../../src/renderer/components/settings/shared';
+import { ButtonGroup } from '../../src/renderer/components/ButtonGroup';
+import { IsolatedBadge } from '../../src/renderer/components/IsolatedBadge';
 
 const VIEWPORT = { width: 1000, height: 800 };
 
@@ -133,10 +135,15 @@ describe('the warm window', () => {
       firstClosed = true;
       releaseTip(closeFirst, true, 1000);
     };
+    const closeSecond = (): void => {};
     claimTip(closeFirst);
-    claimTip(() => {});
+    claimTip(closeSecond);
     expect(firstClosed).toBe(true);
+    // The second tip closes cold, so a warm window can only come from the first tip's release,
+    // which counts only if the claim closed it while it still held the slot.
+    releaseTip(closeSecond, false, 1000);
     expect(isTipWarm(1000)).toBe(true);
+    expect(isTipWarm(1000 + HOVER_TIP_WARM_MS)).toBe(false);
   });
 
   it('ignores a release from a tip that no longer holds the slot', () => {
@@ -528,6 +535,81 @@ describe('HeaderActionButton tip', () => {
     const markup = headerButton({ testId: 'header-action' });
     expect(markup.startsWith('<button')).toBe(true);
     expect(markup).toContain('data-testid="header-action"');
+  });
+});
+
+describe('ButtonGroup icon tip', () => {
+  const options = [
+    { value: 'status', label: 'Status' },
+    { value: 'project', label: 'Project' },
+  ];
+
+  const group = (props: Record<string, unknown> = {}): string =>
+    renderToStaticMarkup(createElement(ButtonGroup, { options, value: 'status', onChange: noop, ...props }));
+
+  /** The opening tag of the leading icon, the one span with `pl-2` that is hidden from assistive tech. */
+  const iconTag = (markup: string): string => {
+    const found = (markup.match(/<span[^>]*>/g) ?? []).find((tag) => tag.includes('pl-2'));
+    if (found === undefined) throw new Error(`No icon span in: ${markup}`);
+    return found;
+  };
+
+  it('reads no description on the icon, because the group already carries the name', () => {
+    // The icon is aria-hidden and the group's aria-label is the label. Without describe={false} the
+    // label differs from the span's (absent) name, so it would be read as a description on a node
+    // that assistive tech skips, and again as the group's name.
+    const markup = group({ icon: createElement(GlyphIcon), label: 'Group by' });
+    const tag = iconTag(markup);
+    expect(tag).toContain('aria-hidden="true"');
+    expect(descriptionIn(tag)).toBeNull();
+    expect(rootTag(markup)).toContain('aria-label="Group by"');
+  });
+
+  it('names the group by ariaLabel when both are given, and still reads nothing on the icon', () => {
+    const markup = group({ icon: createElement(GlyphIcon), label: 'Group by', ariaLabel: 'Board grouping' });
+    expect(rootTag(markup)).toContain('aria-label="Board grouping"');
+    expect(descriptionIn(iconTag(markup))).toBeNull();
+  });
+
+  it('reads nothing on the icon with no label either, which holds its tip shut', () => {
+    const markup = group({ icon: createElement(GlyphIcon) });
+    expect(descriptionIn(iconTag(markup))).toBeNull();
+    expect(rootTag(markup)).not.toContain('aria-label');
+  });
+
+  it('renders no icon, and so no tip, without an icon prop', () => {
+    const markup = group({ label: 'Group by' });
+    expect(markup).not.toContain('pl-2');
+    expect(markup).not.toContain('aria-description');
+  });
+});
+
+describe('IsolatedBadge tip', () => {
+  const TIP_TEXT = 'Its own context, separate from the main conversation';
+
+  it('is a span that describes itself with its tip', () => {
+    const markup = renderToStaticMarkup(createElement(IsolatedBadge));
+    expect(markup.startsWith('<span')).toBe(true);
+    expect(markup).toContain('>Isolated</span>');
+    expect(rootDescription(markup)).toBe(TIP_TEXT);
+  });
+
+  it('merges a passed className onto its own classes', () => {
+    const markup = renderToStaticMarkup(createElement(IsolatedBadge, { className: 'ml-2 extra-class' }));
+    const classes = /\sclass="([^"]*)"/.exec(rootTag(markup))?.[1] ?? '';
+    expect(classes).toContain('inline-flex');
+    expect(classes).toContain('text-accent-fg');
+    expect(classes).toContain('ml-2');
+    expect(classes).toContain('extra-class');
+  });
+
+  it('carries no native title, so only the HoverTip explains it', () => {
+    // The badge takes the span's attributes (minus title) and spreads them, so the testid lands on the root.
+    const passedProps = { 'data-testid': 'isolated-badge' };
+    const markup = renderToStaticMarkup(createElement(IsolatedBadge, passedProps));
+    expect(rootTag(markup)).not.toMatch(/\stitle=/);
+    expect(rootTag(markup)).toContain('data-testid="isolated-badge"');
+    expect(rootDescription(markup)).toBe(TIP_TEXT);
   });
 });
 

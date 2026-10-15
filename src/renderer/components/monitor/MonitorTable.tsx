@@ -74,7 +74,7 @@ export function MonitorTable({
       width: 'w-[40px]',
       sortValue: (row) => BUCKET_LABELS[bucketOf(row)],
       render: (row) => <StateCell row={row} />,
-      headerTitle: 'Whether the agent is working, waiting on you, paused, or finished',
+      headerTip: 'Whether the agent is working, waiting on you, paused, or finished',
     },
     ...(hideProjectColumn ? [] : [{
       key: 'project',
@@ -118,14 +118,14 @@ export function MonitorTable({
       label: 'Effort',
       sortValue: (row) => row.effort ?? '',
       render: (row) => <span className="truncate block text-fg-muted">{row.effort ?? '-'}</span>,
-      headerTitle: 'Reasoning effort the session is running with',
+      headerTip: 'Reasoning effort the session is running with',
     },
     {
       key: 'permission',
       label: 'Permission',
       sortValue: (row) => row.permissionMode ?? '',
       render: (row) => <span className="truncate block text-fg-muted">{row.permissionMode ?? '-'}</span>,
-      headerTitle: 'Permission mode the session was spawned under',
+      headerTip: 'Permission mode the session was spawned under',
     },
     {
       key: 'runtime',

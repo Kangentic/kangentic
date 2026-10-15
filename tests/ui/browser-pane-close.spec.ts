@@ -227,8 +227,15 @@ test.describe('Close browser', () => {
   test('hiding with the pill shows the alive dot and reports hidden; the kebab closes a pane the user cannot see', async () => {
     await openRegisteredPane(sharedPage);
 
-    await sharedPage.locator('[data-testid="browser-toggle"]').click();
+    // The pill's tip says what a hide does to the page. Open, the page outlives the hide; hidden
+    // with a guest behind it, the page is kept. The detail is the tip's second line, which the
+    // accessible description joins to the first with a space.
+    const toggle = sharedPage.locator('[data-testid="browser-toggle"]');
+    await expect(toggle).toHaveAccessibleDescription(/^Hide browser.*Kept alive until you close it$/);
+
+    await toggle.click();
     await sharedPage.locator('[data-testid="task-detail-browser-held"]').waitFor({ state: 'attached', timeout: 5000 });
+    await expect(toggle).toHaveAccessibleDescription(/^Show browser.*Page kept$/);
     // The running dot stays while the guest is kept behind the toggle; no
     // agent is driving it in this fixture.
     const dot = sharedPage.locator('[data-testid="browser-toggle-alive"]');

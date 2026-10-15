@@ -185,6 +185,39 @@ test.describe('Backlog View', () => {
     await browser.close();
   });
 
+  // The backlog is the one DataTable surface with row reordering (`sortableEnabled` while no column
+  // sort is active). Its sortable headers describe the sort gestures, a header with nothing to say
+  // has no description, and the drag handle is named for its action.
+  test('headers describe the sort gestures and each row has a named drag handle', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await createProject(page, 'backlog-test');
+
+      await page.locator('[data-testid="view-toggle-backlog"]').click();
+      await page.locator('[data-testid="new-backlog-task-btn"]').click();
+      await page.locator('[data-testid="backlog-task-title"]').fill('Reorderable item');
+      await page.locator('[data-testid="create-backlog-task-btn"]').click();
+      await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+
+      // Priority is sortable and has no tip of its own, so its description is the sort line alone.
+      const table = page.locator('[data-testid="backlog-view"]');
+      await expect(table.locator('th').filter({ hasText: 'Priority' }))
+        .toHaveAccessibleDescription('Click to sort - Shift+Click adds a secondary sort');
+      // Labels is not sortable and has no tip, so there is nothing to describe.
+      await expect(table.locator('th').filter({ hasText: 'Labels' })).toHaveAccessibleDescription('');
+
+      // The handle's name is its action. Its tip repeats that name, so it is not read twice, and it
+      // still shows on hover over dnd-kit's own pointer handlers.
+      const handle = page.locator('[data-testid="row-drag-handle"]');
+      await expect(handle).toHaveCount(1);
+      await expect(handle).toHaveAccessibleName('Drag to reorder');
+      await handle.hover();
+      await expect(page.locator('[data-hover-tip]')).toHaveText('Drag to reorder');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('toolbar shows Labels and Priorities buttons', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
