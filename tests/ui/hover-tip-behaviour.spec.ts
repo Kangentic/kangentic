@@ -381,8 +381,10 @@ test('a tip closed by Escape with focus still on the trigger does not keep the n
     await deadSpace.hover();
     await expect(tip).toHaveCount(0);
     await expect(trigger).toBeFocused();
-    // Closed for good, not a flicker that reopens: the dead space has no tip to claim the warm window.
-    expect((await readTipLog(page)).filter((event) => event.type === 'open')).toEqual([]);
+    // Closed for good, not a flicker that reopens: the dead space has no tip to claim the warm
+    // window. Read after more than a dwell, so a late reopen is in the log.
+    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await expectNoTipOpened(page);
   } finally {
     await browser.close();
   }
@@ -449,6 +451,9 @@ test('a tip that goes from shut to open under a resting pointer opens on the nex
     await setMergeReadiness(page, BLOCKED_TASK_ID, 'blocked');
     await expect(badge).toHaveText('blocked');
     await expect(badge).toHaveAttribute('aria-description', /^Merge blocked/);
+    await clearTipLog(page);
+    await waitPageMs(page, HOVER_TIP_DWELL_MS + 200);
+    await expectNoTipOpened(page);
     const box = await badge.boundingBox();
     if (!box) throw new Error('no badge box');
     await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
