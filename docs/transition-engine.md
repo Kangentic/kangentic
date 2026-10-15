@@ -304,6 +304,7 @@ When a task moves to a column whose On enter group holds a `send_message` automa
 **Resumed sessions** (priority 3 suspend-and-resume, or priority 4 resume from suspended):
 - The message is interpolated and passed as the resume prompt to `claude --resume <id>`
 - This is deterministic: the message is the first thing the agent sees on resume
+- Two cases do not send the message as the resume prompt. If the agent deleted the conversation on a task's main session, the spawn starts fresh with a recap of the task, and the message is withheld and recorded as skipped "Not sent". If the conversation never started, the spawn is fresh and the message goes out after it. See [Session Lifecycle](session-lifecycle.md#a-resume-the-cli-cannot-serve-starts-fresh-instead).
 
 **Fresh spawns** (priority 4, no suspended session to resume):
 - `TerminalSubmitScheduler.scheduleKeystrokes` schedules the message for deferred PTY injection

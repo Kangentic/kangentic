@@ -31,6 +31,9 @@ with a crash policy and stderr capture:
   write of the Knowledge Graph index (the `memory_*`, vec0 and FTS tables, the turn-usage ledger,
   spawn links, task summaries), the map pass, searches, Ask preparation, storage upkeep, the
   parse and stitch of agent transcripts for the Conversation window, the phone and MCP, the
+  structured transcript archive (`archive.session` on a settled turn, a suspend or an exit, and the
+  project-open `archive.sweep`, written whether or not `knowledgeGraph.indexingEnabled` is on), the
+  recap tail a resume of a deleted conversation reads (`transcript.recapTail`), the
   per-tool call counts and result-token estimates read from a transcript, and the event-log replay
   behind the one-time tool duration repair. It opens
   the project database on its own connection, after main has migrated it, and runs the WAL's
@@ -123,7 +126,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (31 channels)
+### Tasks (32 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -573,7 +576,7 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 Read-only structured-transcript access for the conversation viewer. Prefer the explicit `projectId`, falling back to the ambient current project.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session's whole task. Powers the conversation viewer. The retrieval worker parses and stitches it (`transcript.task`) and answers as JSON main relays without parsing (the preload parses it): the whole response, `{ unchanged, revision }` when the caller's `knownRevision` is current, or a `TranscriptDeltaResponse` carrying only the entries changed since a revision the worker still keeps. |
+| `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session's whole task. Powers the conversation viewer. The retrieval worker parses and stitches it (`transcript.task`) and answers as JSON main relays without parsing (the preload parses it): the whole response, `{ unchanged, revision }` when the caller's `knownRevision` is current, or a `TranscriptDeltaResponse` carrying only the entries changed since a revision the worker still keeps. When the agent deleted its own file, the read falls back to Kangentic's structured transcript archive, then to the index's text-only chunks; the response's `archivedAgentName` names the agent when the newest session came from the archive. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
 ### Knowledge Graph (14 channels)
@@ -652,12 +655,13 @@ Created on project open. Stored in the global config directory (not inside the p
 - **workflows** - A set of linked tasks that runs on its own, in the project it was made in. Fields: id, title, brief, source_task_id, state (`draft`/`running`/`paused`/`done`), draft_json (the plan until Start), color_slot, revision, created_at, started_at, finished_at, paused_at, plus the workflow agent's conversation, grid and read access (agent_name, agent_session_id, agent_cwd, agent_read_project_ids, agent_pty_cols, agent_pty_rows). See [Workflows](#workflows) and [database.md](database.md)
 - **task_links** - "This task waits for that one to reach Done", kept in the workflow's home database. Fields: id, workflow_id, blocker_project_id, blocker_task_id, blocked_project_id, blocked_task_id, created_at. No foreign key to `tasks`, since an end can sit in another project's database
 - **actions**, **swimlane_transitions** -- Retired by the migration that created `column_automations`. Left on disk only so an older build can still read the file; nothing reads them after the migration. See [database.md](database.md)
-- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, isolated_swimlane_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, started_at, suspended_at, exited_at, suspended_by, total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, applied_model, applied_effort, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed, tool_breakdown, compaction_count, last_pty_cols, last_pty_rows, result_tokens_read_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
+- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, isolated_swimlane_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, started_at, suspended_at, exited_at, suspended_by, total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, applied_model, applied_effort, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed, tool_breakdown, compaction_count, last_pty_cols, last_pty_rows, result_tokens_read_at, transcript_path (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
 - **backlog_tasks** -- Staging area tasks (Backlog View). Pre-board tasks with priority, labels, and optional external source tracking.
 - **backlog_attachments** -- File attachments for backlog tasks, mirroring `task_attachments`. Copied to `task_attachments` on promote.
 - **session_transcript_chunks** -- ANSI-stripped PTY output per session, one row per flush. Written by `TranscriptWriter` with a 30s debounced flush (early-flushed at 64KB pending) to the session's own project database. Used for cross-agent handoff context and raw `kangentic_get_transcript`. No FK and no delete trigger: a transcript outlives its session row. The legacy `session_transcripts` table (one value per session, rewritten whole on each flush) is read until the retrieval worker converts its rows.
 - **memory_\*, conversation_turn_usage, turn_spawn_links, session_activity_intervals** -- The retrieval index (chunks, full-text and vector tables, per-document state and sums, task summaries) and the durable usage, subagent-spawn and activity ledgers. The index is read and written only by the retrieval worker. Their column tables live in [database.md](database.md).
+- **transcript_archive_state, transcript_archive_rows** -- The structured transcript archive: each conversation's parsed entries, Brotli-compressed, kept after the agent deletes its own file. Read and written only by the retrieval worker, whatever the Knowledge Graph indexing switch says. See [database.md](database.md).
 - **handoffs** -- Cross-agent handoff records. Tracks from/to agents and sessions, stores serialized `ContextPacket` (transcript excluded). FK on task_id with CASCADE delete.
 - **usage_history** -- Append-only ledger of finalized session usage (cost, tokens, duration, tool count, git stats, model, agent). No FK to `tasks` or `sessions`, so rows survive task deletion, bulk-archive cleanup, and revert-to-backlog. Backs the usage dashboard's period totals, cost-per-day series, and by-model / by-agent breakdowns (Live/Today/Week/Month/All Time) via `usage:getDashboardStats` and the `kangentic_get_usage_stats` MCP tool. Written by `captureSessionMetrics` (UPSERT on `session_record_id`) and `captureGitChurn` (`src/main/ipc/handlers/git-stats-capture.ts`, fired on every session finalization - suspend, move, handoff, respawn, natural exit - not just move-to-Done; writes to exactly one record per task lineage via `setTaskGitStats` to avoid double-counting branch-cumulative churn across `--resume` records, and writes nothing once the task's PR is merged or the task is archived with a capture stored). The dashboard's SESSIONS KPI and Live view additionally merge in-flight sessions from the live `SessionManager` (deduped by `session_record_id` against the ledger) so running sessions are not undercounted before they finalize.
 
