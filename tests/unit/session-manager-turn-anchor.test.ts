@@ -14,7 +14,9 @@
  * One refinement: the read a Stop starts can land after the commit to idle, so
  * a copy taken while a read is pending keeps settling. Each read that lands
  * (`transcriptReadLanded`) moves it until none is pending, and from then on it
- * is fixed.
+ * is fixed. A turn stamped before that read landed follows the read that was
+ * running at the stamp to where it lands, once; a read only armed at the stamp
+ * starts after the turn began and moves nothing.
  *
  * Driven through the real SessionManager and its real telemetry and engine,
  * with events ingested the way the status file reader hands them over.
@@ -70,7 +72,7 @@ function getTurnEdgeCallbacks(manager: SessionManager): TurnEdgeCallbacks {
 /** The manager's private anchor maps, which a forgotten entry leaves no other trace in. */
 interface AnchorMaps {
   idleTranscriptAnchors: Map<string, { anchor: TranscriptAnchor | null; settling: boolean }>;
-  turnTranscriptAnchors: Map<string, { turnStartedAt: number; anchor: TranscriptAnchor | null }>;
+  turnTranscriptAnchors: Map<string, { turnStartedAt: number; anchor: TranscriptAnchor | null; followsReadInFlight: boolean }>;
 }
 
 function getAnchorMaps(manager: SessionManager): AnchorMaps {
@@ -86,6 +88,7 @@ describe('SessionManager turn-end transcript anchor', () => {
   let sessionId: string;
   let position: TranscriptAnchor | null;
   let pending: boolean;
+  let readInFlight: boolean;
   let turnEnds: TurnEndedPayload[];
   let clock: number;
   let trailTracker: MessageTrailTracker | null;
@@ -113,11 +116,16 @@ describe('SessionManager turn-end transcript anchor', () => {
     sessionId = session.id;
     position = null;
     pending = false;
+    readInFlight = false;
     clock = Date.now();
     turnEnds = [];
     trailTracker = null;
     manager.on('turn-ended', (payload: TurnEndedPayload) => turnEnds.push(payload));
-    manager.setTranscriptPositionSource({ transcriptPosition: () => position, hasPendingRead: () => pending });
+    manager.setTranscriptPositionSource({
+      transcriptPosition: () => position,
+      hasPendingRead: () => pending,
+      hasReadInFlight: () => readInFlight,
+    });
   });
 
   afterEach(() => {
@@ -167,6 +175,30 @@ describe('SessionManager turn-end transcript anchor', () => {
     expect(anchors()).toEqual([at(700)]);
   });
 
+  it('moves a plan approval\'s anchor to where the read running at the approval lands, once', () => {
+    // The user approves before the read that reaches the plan has landed.
+    position = at(100);
+    getTelemetry(manager).initSession(sessionId);
+    send(EventType.Prompt);
+    send(EventType.ToolStart, { tool: 'ExitPlanMode', toolId: 'plan' });
+    send(EventType.Idle, { detail: IdleReason.Permission });
+    position = at(500);
+    readInFlight = true;
+    send(EventType.ToolEnd, { tool: 'ExitPlanMode', toolId: 'plan' });
+
+    position = at(700);
+    readInFlight = false;
+    manager.transcriptReadLanded(sessionId);
+
+    // The implementation's own reads move it no further.
+    position = at(1200);
+    manager.transcriptReadLanded(sessionId);
+    send(EventType.ToolStart, { tool: 'Edit', toolId: 'edit' });
+    send(EventType.ToolEnd, { tool: 'Edit', toolId: 'edit' });
+    send(EventType.Idle);
+    expect(anchors()).toEqual([at(700)]);
+  });
+
   it('gives a fresh spawn\'s first turn no anchor, since its prompt rides the command line', () => {
     position = at(300);
     getTelemetry(manager).initSession(sessionId, undefined, true);
@@ -193,6 +225,7 @@ describe('SessionManager turn-end transcript anchor', () => {
         throw new Error('The trail is gone.');
       },
       hasPendingRead: () => false,
+      hasReadInFlight: () => false,
     });
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     getTelemetry(manager).initSession(sessionId);
@@ -267,6 +300,78 @@ describe('SessionManager turn-end transcript anchor', () => {
       expect(anchors()).toEqual([at(80)]);
     });
 
+    it('moves the anchor of a turn stamped before that read landed, when the read was running at the stamp', () => {
+      // The Stop's read is still running when a background job's notification
+      // opens the next turn: reading stood at 100, and the closing text the
+      // read is about to reach ends at 250.
+      position = at(100);
+      pending = true;
+      readInFlight = true;
+      getTelemetry(manager).initSession(sessionId);
+      send(EventType.Prompt);
+
+      position = at(250);
+      pending = false;
+      readInFlight = false;
+      manager.transcriptReadLanded(sessionId);
+
+      // Only the read that was running at the stamp counts. This one started
+      // after the turn began and may already cover the turn's own text.
+      position = at(600);
+      manager.transcriptReadLanded(sessionId);
+
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(250)]);
+    });
+
+    it('keeps the anchor of a turn stamped while that read was only armed, since it starts after the turn began', () => {
+      position = at(100);
+      pending = true;
+      readInFlight = false;
+      getTelemetry(manager).initSession(sessionId);
+      send(EventType.Prompt);
+
+      position = at(250);
+      pending = false;
+      manager.transcriptReadLanded(sessionId);
+
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(100)]);
+    });
+
+    it('does not follow a running read when the idle copy was already fixed', () => {
+      // Nothing was pending at idle, so the copy is final; a read some idle-time
+      // event started is running when the turn begins.
+      position = at(100);
+      pending = false;
+      getTelemetry(manager).initSession(sessionId);
+      readInFlight = true;
+      send(EventType.Prompt);
+
+      position = at(300);
+      readInFlight = false;
+      manager.transcriptReadLanded(sessionId);
+
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(100)]);
+    });
+
+    it('keeps a turn\'s anchor when the read it follows lands with no position to report', () => {
+      // A /clear fork discards the read's cursor, so the trail knows no position.
+      position = at(100);
+      pending = true;
+      readInFlight = true;
+      getTelemetry(manager).initSession(sessionId);
+      send(EventType.Prompt);
+
+      position = null;
+      readInFlight = false;
+      manager.transcriptReadLanded(sessionId);
+
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(100)]);
+    });
+
     it('ignores a landing for a session that holds no idle copy', () => {
       // Mid-turn there is no copy: a landing must not make one, or the next
       // turn would be anchored at wherever this read happened to reach.
@@ -323,7 +428,7 @@ describe('SessionManager turn-end transcript anchor', () => {
     function seedAnchors(forSessionId: string): void {
       const maps = getAnchorMaps(manager);
       maps.idleTranscriptAnchors.set(forSessionId, { anchor: at(10), settling: false });
-      maps.turnTranscriptAnchors.set(forSessionId, { turnStartedAt: 5, anchor: at(10) });
+      maps.turnTranscriptAnchors.set(forSessionId, { turnStartedAt: 5, anchor: at(10), followsReadInFlight: false });
     }
 
     function held(forSessionId: string): { idle: boolean; turn: boolean } {
@@ -450,6 +555,59 @@ describe('SessionManager turn-end transcript anchor', () => {
       // the landing notice it would be anchored at the 100 the Stop saw.
       trailNow += 1_000;
       send(EventType.Prompt);
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(100), at(400)]);
+    });
+
+    it('anchors a turn that begins while the Stop\'s read is still out where that read lands', async () => {
+      // As above, but a background job's notification opens the next turn
+      // before the Stop's read has landed, so the idle copy is consumed while
+      // it still sits at the 100 the Stop saw.
+      const reads: Array<{ resolve: (cursor: number) => void }> = [];
+      let trailNow = 1_000_000;
+      let landed = 0;
+      const tracker = new MessageTrailTracker({
+        sessionManager: manager,
+        resolveSessionFacts: () => ({ sessionType: 'fake-agent', agentSessionId: 'agent-session-1', cwd: '/mock/cwd' }),
+        readTrail: () => new Promise<TrailRead>((resolve) => {
+          reads.push({ resolve: (cursor) => resolve({ previews: [], cursor, usedFallback: false }) });
+        }),
+        now: () => trailNow,
+        minIntervalMs: 10,
+        fallbackMinIntervalMs: 10,
+      });
+      trailTracker = tracker;
+
+      async function landNextRead(cursor: number): Promise<void> {
+        await vi.waitFor(() => expect(reads.length).toBeGreaterThan(landed), { timeout: 5000 });
+        reads[landed].resolve(cursor);
+        landed += 1;
+      }
+
+      tracker.schedule(sessionId);
+      await landNextRead(100);
+      await landNextRead(100);
+      await vi.waitFor(() => expect(tracker.hasPendingRead(sessionId)).toBe(false), { timeout: 5000 });
+
+      trailNow += 1_000;
+      getTelemetry(manager).initSession(sessionId);
+      send(EventType.Prompt);
+      trailNow += 1_000;
+      send(EventType.Idle);
+      expect(anchors()).toEqual([at(100)]);
+
+      // The next turn is stamped with the Stop's read still running.
+      expect(tracker.hasReadInFlight(sessionId)).toBe(true);
+      send(EventType.Prompt);
+
+      // That read lands at the closing text's 400. The trailing read it arms
+      // starts after the turn began, so where it lands (650, past the turn's
+      // first text) must not move the anchor.
+      await landNextRead(400);
+      await landNextRead(650);
+      await vi.waitFor(() => expect(tracker.hasPendingRead(sessionId)).toBe(false), { timeout: 5000 });
+      expect(tracker.transcriptPosition(sessionId)).toEqual(at(650));
+
       send(EventType.Idle);
       expect(anchors()).toEqual([at(100), at(400)]);
     });

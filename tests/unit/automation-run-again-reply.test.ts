@@ -17,14 +17,24 @@ const hoisted = vi.hoisted(() => ({
   taskReads: 0,
   reply: { text: 'The review is done.\n\nVerdict: Ready', uuid: 'reply-1', ts: 0 } as { text: string; uuid: string; ts: number } | null,
   readFinalReply: vi.fn(),
+  /** The retrieval worker call the REAL reader makes, for the one test that lets it run. */
+  retrievalCall: vi.fn(),
   executeSingleAutomation: vi.fn(),
 }));
 
 vi.mock('../../src/main/automations/turn-end/final-reply-reader', () => ({
   readSessionFinalReply: hoisted.readFinalReply,
 }));
+// What the real reader reaches when a test lets it run (see the `since` test below).
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: hoisted.retrievalCall } }));
+vi.mock('../../src/main/retrieval/remote-targets', () => ({ collectRemoteTargets: vi.fn(() => []) }));
+vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: vi.fn(), list: vi.fn(() => []) } }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
-vi.mock('../../src/main/db/repositories/session-repository', () => ({ SessionRepository: class {} }));
+vi.mock('../../src/main/db/repositories/session-repository', () => ({
+  SessionRepository: class {
+    findByAnyId = vi.fn(() => ({ session_type: 'claude_agent', agent_session_id: 'agent-session-live-1', cwd: '/mock/worktree' }));
+  },
+}));
 vi.mock('../../src/main/ipc/handlers/system', () => ({ showDesktopNotification: vi.fn() }));
 vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
   createProgressCallback: vi.fn(() => vi.fn()),
@@ -90,6 +100,7 @@ describe('runAutomationAgain: the reply a turn-end row is judged against', () =>
     hoisted.taskReads = 0;
     hoisted.reply = { text: 'The review is done.\n\nVerdict: Ready', uuid: 'reply-1', ts: 0 };
     hoisted.readFinalReply.mockImplementation(async () => hoisted.reply);
+    hoisted.retrievalCall.mockImplementation(async () => hoisted.reply);
     hoisted.executeSingleAutomation.mockImplementation(async () => ({
       outcomes: [{ runId: 'run-1', name: 'On to Testing', columnName: 'Code Review', status: 'succeeded', detail: 'Moved.' }],
     }));
@@ -100,6 +111,29 @@ describe('runAutomationAgain: the reply a turn-end row is judged against', () =>
 
     expect(result.ok).toBe(true);
     expect(hoisted.readFinalReply).toHaveBeenCalledWith({ sessionId: 'session-live-1' }, expect.anything());
+    expect(agentReplyPassed()).toBe('The review is done.\n\nVerdict: Ready');
+  });
+
+  it('asks the retrieval worker for the latest reply with no anchor, since a re-run is no turn to start from', async () => {
+    // The tests above stub the reader whole, so none of them reaches the worker
+    // call. Let the real reader run for this one: the anchor a turn end reads
+    // from is the turn's own, and a re-run judges the latest reply whatever
+    // turn wrote it, so `since` must reach the worker as null.
+    const finalReplyReader = await vi.importActual<typeof import('../../src/main/automations/turn-end/final-reply-reader')>(
+      '../../src/main/automations/turn-end/final-reply-reader',
+    );
+    hoisted.readFinalReply.mockImplementation(finalReplyReader.readSessionFinalReply);
+
+    const result = await runAutomationAgain(makeContext() as never, 'proj-test', 'task-rerun-0002', 'row-move');
+
+    expect(result.ok).toBe(true);
+    expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
+    expect(hoisted.retrievalCall).toHaveBeenCalledWith(
+      'transcript.finalReply',
+      expect.objectContaining({ since: null }),
+      expect.anything(),
+    );
+    // The reply that worker call returned is the one the row is judged against.
     expect(agentReplyPassed()).toBe('The review is done.\n\nVerdict: Ready');
   });
 

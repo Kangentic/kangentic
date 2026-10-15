@@ -21,10 +21,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseClaudeTranscriptWindow } from '../../src/main/agent/adapters/claude/transcript-parser';
-import { readFinalReply, readTrail, type MessageTrailAdapter } from '../../src/main/agent/message-trail-read';
+import { readFinalReply, type MessageTrailAdapter } from '../../src/main/agent/message-trail-read';
 import { MESSAGE_TRAIL_WINDOW_BYTES } from '../../src/main/agent/message-trail-tracker';
 import type { TranscriptAnchor } from '../../src/main/agent/shared/transcript-anchor';
-import { claudeTranscriptLines, claudeWindowAdapter } from './helpers/claude-transcript-fixture';
+import { claudeTranscriptLines, claudeWindowAdapter, trailAnchorAfterRead } from './helpers/claude-transcript-fixture';
 
 const AGENT_SESSION_ID = 'agent-session-1';
 const FACTS = { sessionType: 'claude_agent', agentSessionId: AGENT_SESSION_ID, cwd: '/mock/project' };
@@ -56,9 +56,7 @@ describe('readFinalReply from where the turn began', () => {
   /** Write what came before the turn, and read the anchor the trail would hold when the turn began. */
   async function beginTurnAfter(before: string): Promise<TranscriptAnchor> {
     fs.writeFileSync(file, before);
-    const read = await readTrail(adapter, FACTS, null);
-    expect(read.cursor).not.toBeNull();
-    return { agentSessionId: AGENT_SESSION_ID, byteOffset: read.cursor ?? 0 };
+    return trailAnchorAfterRead(file, FACTS);
   }
 
   const PREVIOUS_TURN = humanPrompt('p1', 'Apply the findings and end on the line.')
@@ -156,6 +154,33 @@ describe('readFinalReply from where the turn began', () => {
     const pastEnd = { agentSessionId: AGENT_SESSION_ID, byteOffset: fs.statSync(file).size + 100 };
 
     expect((await readFinalReply(adapter, FACTS, pastEnd))?.text).toBe('Applied all three.\n\nFindings: applied');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('past the end');
+  });
+
+  it('reads from an anchor exactly at the end of the file as anchored, giving no reply and no warning', async () => {
+    // The turn began at the end of the file and nothing was written since. That
+    // is not a replaced file (the past-end case above): it is the anchor doing
+    // its job, so the read covers nothing and the tail's earlier turn stays out.
+    // The offset is the file's real size, not the trail cursor, which rests on
+    // the last record's closing newline (size - 1).
+    fs.writeFileSync(file, PREVIOUS_TURN);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const atEnd = { agentSessionId: AGENT_SESSION_ID, byteOffset: fs.statSync(file).size };
+
+    // The control: the tail does hold an earlier turn's reply, so the null
+    // below is the anchor at work and not an empty file.
+    expect((await readFinalReply(adapter, FACTS))?.text).toBe('Applied all three.\n\nFindings: applied');
+    expect(await readFinalReply(adapter, FACTS, atEnd)).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns and reads the tail for an anchor one byte past the end of the file, the other side of the at-end boundary', async () => {
+    fs.writeFileSync(file, PREVIOUS_TURN);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const onePastEnd = { agentSessionId: AGENT_SESSION_ID, byteOffset: fs.statSync(file).size + 1 };
+
+    expect((await readFinalReply(adapter, FACTS, onePastEnd))?.text).toBe('Applied all three.\n\nFindings: applied');
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain('past the end');
   });

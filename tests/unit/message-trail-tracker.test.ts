@@ -10,6 +10,7 @@ import {
   MESSAGE_TRAIL_MAX_SESSIONS,
   MESSAGE_TRAIL_TAIL_BYTES,
   MessageTrailTracker,
+  type MessageTrailSessionFacts,
   type TrailRead,
 } from '../../src/main/agent/message-trail-tracker';
 import { localTrailReader, type MessageTrailAdapter } from '../../src/main/agent/message-trail-read';
@@ -367,6 +368,33 @@ describe('MessageTrailTracker', () => {
       expect(trailTracker.transcriptPosition('s1')).toBeNull();
     });
 
+    // An agent that reports its session id after spawn (Codex, Gemini) has a
+    // session row with no id yet. The tracker holds state for the session from
+    // its first trigger, but there is no history file to be positioned in.
+    it.each([
+      ['no facts at all', null],
+      ['facts with no agent session id', { sessionType: 'fake-agent', agentSessionId: null, cwd: '/mock/project' }],
+    ] as Array<[string, MessageTrailSessionFacts | null]>)('reports none while the session row gives %s, and reads nothing', async (_description, facts) => {
+      const readTrail = vi.fn(async (): Promise<TrailRead> => ({ previews: [], cursor: 100, usedFallback: false }));
+      const transcriptReadLanded = vi.fn();
+      Object.assign(manager, { transcriptReadLanded });
+      const trailTracker = new MessageTrailTracker({
+        sessionManager: manager,
+        resolveSessionFacts: () => facts,
+        readTrail,
+        minIntervalMs: MIN_INTERVAL_MS,
+        fallbackMinIntervalMs: MIN_INTERVAL_MS,
+      });
+      tracker = trailTracker;
+
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      // The tracker holds state for s1 once its read has run and announced its landing.
+      await waitUntil(() => transcriptReadLanded.mock.calls.length >= 1);
+
+      expect(readTrail).not.toHaveBeenCalled();
+      expect(trailTracker.transcriptPosition('s1')).toBeNull();
+    });
+
     it('never reports an offset from a file the session has left, even when that file\'s read lands after the switch', async () => {
       const reads: Array<{ agentSessionId: string; resolve: (read: { previews: AssistantMessageTrailEntry[]; cursor: number | null; usedFallback: boolean }) => void }> = [];
       const trailTracker = new MessageTrailTracker({
@@ -405,19 +433,22 @@ describe('MessageTrailTracker', () => {
 
     /**
      * A tracker whose reads resolve when the test says so, and a session
-     * manager that records whether a read was still pending at the moment the
-     * tracker announced a landing.
+     * manager that records whether a read was still pending, and whether one
+     * was still running, at the moment the tracker announced a landing.
      */
     function startHeldTracker(): {
       heldTracker: MessageTrailTracker;
       reads: HeldRead[];
       pendingAtLanding: boolean[];
+      inFlightAtLanding: boolean[];
       transcriptReadLanded: ReturnType<typeof vi.fn>;
     } {
       const reads: HeldRead[] = [];
       const pendingAtLanding: boolean[] = [];
+      const inFlightAtLanding: boolean[] = [];
       const transcriptReadLanded = vi.fn((sessionId: string) => {
         pendingAtLanding.push(heldTracker.hasPendingRead(sessionId));
+        inFlightAtLanding.push(heldTracker.hasReadInFlight(sessionId));
       });
       Object.assign(manager, { transcriptReadLanded });
       const heldTracker = new MessageTrailTracker({
@@ -430,7 +461,7 @@ describe('MessageTrailTracker', () => {
         fallbackMinIntervalMs: MIN_INTERVAL_MS,
       });
       tracker = heldTracker;
-      return { heldTracker, reads, pendingAtLanding, transcriptReadLanded };
+      return { heldTracker, reads, pendingAtLanding, inFlightAtLanding, transcriptReadLanded };
     }
 
     it('has no pending read for a session it is not tracking', () => {
@@ -481,6 +512,38 @@ describe('MessageTrailTracker', () => {
       expect(heldTracker.hasPendingRead('s1')).toBe(false);
       expect(transcriptReadLanded).toHaveBeenCalledTimes(2);
       expect(transcriptReadLanded).toHaveBeenCalledWith('s1');
+    });
+
+    it('has a read in flight only while one is running, never on an armed trailing read alone', async () => {
+      const { heldTracker, reads, pendingAtLanding, inFlightAtLanding } = startHeldTracker();
+      // A session it is not tracking, and one it has not been told about yet.
+      expect(heldTracker.hasReadInFlight('never-seen')).toBe(false);
+      expect(heldTracker.hasReadInFlight('s1')).toBe(false);
+
+      manager.emit('event', 's1', { ts: 1, type: 'idle' });
+      await waitUntil(() => reads.length === 1);
+      expect(heldTracker.hasReadInFlight('s1')).toBe(true);
+      expect(heldTracker.hasPendingRead('s1')).toBe(true);
+
+      reads[0].resolve(100);
+      await waitUntil(() => inFlightAtLanding.length === 1);
+      // Sampled inside the landing announcement, where the in-flight flag is
+      // already clear and the trailing read is armed. A check after a poll
+      // could land after that timer fires and starts the second read. This is
+      // the case that tells the two apart: pending, with nothing running.
+      expect(pendingAtLanding).toEqual([true]);
+      expect(inFlightAtLanding).toEqual([false]);
+
+      // The armed trailing read fires and starts the second read.
+      await waitUntil(() => reads.length === 2);
+      expect(heldTracker.hasReadInFlight('s1')).toBe(true);
+
+      reads[1].resolve(100);
+      await waitUntil(() => inFlightAtLanding.length === 2);
+      expect(pendingAtLanding).toEqual([true, false]);
+      expect(inFlightAtLanding).toEqual([false, false]);
+      expect(heldTracker.hasReadInFlight('s1')).toBe(false);
+      expect(heldTracker.hasPendingRead('s1')).toBe(false);
     });
 
     it('announces a landed read only after re-arming the trailing read an event during it asked for', async () => {

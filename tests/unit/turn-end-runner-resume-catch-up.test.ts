@@ -206,6 +206,25 @@ describe('a resumed workflow task and its unjudged reply', () => {
     expect(hoisted.hasWorkflowStepSince).toHaveBeenCalledWith(taskId, 'lane-executing', new Date(REPLY.ts).toISOString());
   });
 
+  it('reads the reply from the whole transcript tail, since a resume begins no turn to anchor to', async () => {
+    // A resume ends no turn, so there is no point in the transcript where "the
+    // turn began": the read must send no anchor to the retrieval worker. The
+    // payload below carries a stray one, as a spread of a turn-end payload
+    // would, to pin that the catch-up clears it rather than relying on the
+    // resume payload never having one.
+    const strayAnchor = { agentSessionId: 'agent-session-1', byteOffset: 4096 };
+    const resumedWithStrayAnchor = { ...resumed(), transcriptAnchor: strayAnchor };
+
+    await catchUpAfterResume(context, resumedWithStrayAnchor);
+
+    expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
+    expect(hoisted.retrievalCall).toHaveBeenCalledWith(
+      'transcript.finalReply',
+      expect.objectContaining({ since: null }),
+      expect.anything(),
+    );
+  });
+
   it('runs none of the column\'s turn-end rows: a resume ends no turn', async () => {
     await catchUpAfterResume(context, resumed());
 

@@ -27,4 +27,10 @@ export interface TranscriptPositionSource {
   transcriptPosition(sessionId: string): TranscriptAnchor | null;
   /** Whether a read of the session's transcript is running or scheduled. */
   hasPendingRead(sessionId: string): boolean;
+  /**
+   * Whether a read of the session's transcript is running now. One runs at a
+   * time per session, so a read running when a turn is stamped started before
+   * the stamp, and the next read to land is that one.
+   */
+  hasReadInFlight(sessionId: string): boolean;
 }

@@ -224,7 +224,9 @@ export class MessageTrailTracker extends EventEmitter implements TranscriptPosit
    * taken while the session sits idle can only cover what was on disk then.
    * Keep it that way. The read a Stop starts can land after that copy, so the
    * manager is told when each read lands (`transcriptReadLanded`) and asks
-   * `hasPendingRead` whether more of that burst is still to come.
+   * `hasPendingRead` whether more of that burst is still to come, and
+   * `hasReadInFlight` whether a read running as a turn is stamped can still
+   * move that turn's anchor.
    */
   transcriptPosition(sessionId: string): TranscriptAnchor | null {
     const state = this.states.get(sessionId);
@@ -237,6 +239,11 @@ export class MessageTrailTracker extends EventEmitter implements TranscriptPosit
   hasPendingRead(sessionId: string): boolean {
     const state = this.states.get(sessionId);
     return state !== undefined && (state.readInFlight || state.trailingTimer !== null);
+  }
+
+  /** Whether a read of the session is running now. `read` lets one run at a time per session. */
+  hasReadInFlight(sessionId: string): boolean {
+    return this.states.get(sessionId)?.readInFlight === true;
   }
 
   /** Coalesced entry point for every trigger. Safe to call for any session id. */

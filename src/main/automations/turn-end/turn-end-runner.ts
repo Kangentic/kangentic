@@ -292,9 +292,10 @@ async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promi
     //
     // Both checks below compare the CLI's transcript clock with the app's, the
     // comparison the turn end avoids with its anchor. A resume begins no turn,
-    // so it has no anchor to read from. They stay for now: a search of the
-    // transcript locators under src/main/agent and src/main/retrieval found
-    // none that reads a WSL guest's home, where that drift would show.
+    // so it has no anchor to read from. The comparison holds while the CLI
+    // writes its transcript on the app's own clock. A transcript locator that
+    // reads a WSL guest's home, whose clock can drift minutes, needs these two
+    // checks replaced.
     const visitStartedAt = subject.repos.taskMoves.visitStartedAt(task.id, column.id);
     if (visitStartedAt && reply.ts < Date.parse(visitStartedAt)) return;
     if (subject.repos.automationRuns.hasWorkflowStepSince(task.id, column.id, new Date(reply.ts).toISOString())) return;
