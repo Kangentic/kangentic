@@ -17,6 +17,12 @@ import type { RendererErrorContexts } from './error-reporting';
  * diff state and the call-site stack, and does not attempt a fix. How to read
  * those reports: .claude/skills/sentry/SKILL.md, the `mechanism` bullet.
  *
+ * The trigger those reports identified, new text flushed into a mounted diff's
+ * live models while the original editor was still laid out for the old text,
+ * is gone: DiffViewer swaps content into a detached editor, and
+ * tests/ui/monaco-error-funnel.spec.ts reproduces the old path. The funnel
+ * stays for any other route to the same throw.
+ *
  * What a user loses was read from monaco 0.56.0's source, not measured. The
  * throw aborts the rest of that listener, not one call. The scroll position is
  * already committed, but for that tick the tokenizer's visible-lines hint, the

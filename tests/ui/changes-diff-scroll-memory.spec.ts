@@ -13,8 +13,16 @@
  * The third test covers the asymmetric case, on the ORIGINAL side: after a
  * refold on a diff whose original half is shorter than its modified half, the
  * original editor's viewport must still resolve inside its own model. It is a
- * guard, not a reproduction of Sentry DESKTOP-19; the comment above the test
- * says what was measured and why.
+ * guard, not a reproduction of Sentry DESKTOP-19, which
+ * monaco-error-funnel.spec.ts reproduces; the comment above the test says what
+ * was measured and why.
+ *
+ * The last three guard the scroll memory across DiffViewer's detached content
+ * swap: a deep position survives a revisit, on a file with no view zone on its
+ * modified side and on one whose deleted block sits above the position, and a
+ * same-file refresh keeps the first visible line while the new diff computes.
+ * One more covers a first visit to a file whose text is identical to the one
+ * just left, which the swap must still treat as a change of file.
  *
  * Monaco virtualizes lines: only visible lines exist as `.view-line` DOM nodes,
  * so DOM presence of a token is a proxy for "scrolled to that region". The diff
@@ -24,7 +32,14 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, collectPageErrors, gotoVite } from './helpers';
+import {
+  waitForViteReady,
+  collectPageErrors,
+  gotoVite,
+  readModifiedFirstChangeLine,
+  scrollModifiedToBottom,
+  waitForDiffToSettle,
+} from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -76,9 +91,34 @@ const GAMMA_CHANGE_LINE = GAMMA_INSERT_AFTER_LINE + 1;
 // visits to gamma.ts, and its distinct line identifies beta's own diff result.
 const BETA_CHANGE_LINE = 2;
 
-// How long the diff editor must go without a diff update before
-// waitForDiffToSettle trusts that no compute is still on its way.
-const DIFF_QUIET_MS = 500;
+// epsilon.ts deletes one large block from the middle of a long file. Rendered
+// inline, the deleted lines are a view zone in the MODIFIED editor, so the
+// modified side is taller with its diff computed than without, by the whole
+// block. That is the layout a revisit restores a deep position against. A pure
+// deletion reports the line before the block as its modified start, which is
+// distinct from every other file's first change.
+const EPSILON_TOTAL_LINES = 2000;
+const EPSILON_DELETE_FROM_LINE = 801;
+const EPSILON_DELETED_LINES = 300;
+const EPSILON_CHANGE_LINE = EPSILON_DELETE_FROM_LINE - 1;
+// A modified-side line below epsilon.ts's deleted block, so the block's view
+// zone sits above it.
+const EPSILON_ANCHOR_LINE = 1200;
+
+// twin-one.ts and twin-two.ts hold IDENTICAL original and modified text. That is
+// the point. A switch between them changes the file and nothing else, so the
+// content swap has no text difference to act on. They are the one exception to
+// "each fixture file's first change sits on a line no other file uses"
+// (helpers.ts, readModifiedFirstChangeLine), and the exception is deliberate, so
+// only the wait for the FIRST twin may rely on it. Their change sits mid-file and
+// the files are long, so neither the top nor the bottom of the file shows it.
+const TWIN_FIRST_FILE = 'twin-one.ts';
+const TWIN_SECOND_FILE = 'twin-two.ts';
+const TWIN_TOTAL_LINES = 1500;
+const TWIN_CHANGE_LINE = 650;
+
+// DiffViewer pins Monaco's lineHeight at 18.
+const LINE_HEIGHT_PX = 18;
 
 // Build a long file whose only change sits deep in the middle (line 100), with a
 // recognizable token on line 1 so we can tell whether the viewport is at the top.
@@ -121,12 +161,32 @@ function buildFixtureScript(): string {
       var gammaOriginal = gammaOriginalLines.join('\\n');
       var gammaModified = gammaModifiedLines.join('\\n');
 
+      var epsilonOriginalLines = [];
+      for (var epsilonLineNumber = 1; epsilonLineNumber <= ${EPSILON_TOTAL_LINES}; epsilonLineNumber++) {
+        epsilonOriginalLines.push('// epsilon line ' + epsilonLineNumber);
+      }
+      var epsilonModifiedLines = epsilonOriginalLines
+        .slice(0, ${EPSILON_DELETE_FROM_LINE - 1})
+        .concat(epsilonOriginalLines.slice(${EPSILON_DELETE_FROM_LINE - 1 + EPSILON_DELETED_LINES}));
+
+      var twinOriginalLines = [];
+      for (var twinLineNumber = 1; twinLineNumber <= ${TWIN_TOTAL_LINES}; twinLineNumber++) {
+        twinOriginalLines.push('// twin line ' + twinLineNumber);
+      }
+      var twinModifiedLines = twinOriginalLines.slice();
+      twinModifiedLines[${TWIN_CHANGE_LINE} - 1] = 'const twinChanged = true;';
+      var twinOriginal = twinOriginalLines.join('\\n');
+      var twinModified = twinModifiedLines.join('\\n');
+
       window.__mockGitDiff = {
         files: [
           { path: 'alpha.ts', status: 'M', insertions: 1, deletions: 1, original: original, modified: modified, language: 'typescript' },
           { path: 'beta.ts', status: 'M', insertions: 1, deletions: 0, original: 'const a = 1;', modified: 'const a = 1;\\nconst b = 2;', language: 'typescript' },
           { path: 'delta.ts', status: 'M', insertions: 1, deletions: 1, original: deltaOriginal, modified: deltaModified, language: 'typescript' },
           { path: 'gamma.ts', status: 'M', insertions: ${GAMMA_INSERTED_LINES}, deletions: 0, original: gammaOriginal, modified: gammaModified, language: 'typescript' },
+          { path: 'epsilon.ts', status: 'M', insertions: 0, deletions: ${EPSILON_DELETED_LINES}, original: epsilonOriginalLines.join('\\n'), modified: epsilonModifiedLines.join('\\n'), language: 'typescript' },
+          { path: '${TWIN_FIRST_FILE}', status: 'M', insertions: 1, deletions: 1, original: twinOriginal, modified: twinModified, language: 'typescript' },
+          { path: '${TWIN_SECOND_FILE}', status: 'M', insertions: 1, deletions: 1, original: twinOriginal, modified: twinModified, language: 'typescript' },
         ],
       };
     })();
@@ -138,6 +198,10 @@ interface ModifiedEditorHandle {
   getScrollHeight: () => number;
   getLayoutInfo: () => { height: number };
   setScrollTop: (scrollTop: number) => void;
+  getModel: () => { getLineCount: () => number } | null;
+  getTopForLineNumber: (lineNumber: number) => number;
+  getVisibleRanges: () => { startLineNumber: number; endLineNumber: number }[];
+  onDidChangeModel: (listener: () => void) => unknown;
 }
 
 interface OriginalEditorHandle {
@@ -145,22 +209,17 @@ interface OriginalEditorHandle {
   getVisibleRanges: () => { endLineNumber: number }[];
 }
 
-interface MonacoTestHandle {
-  editor: {
-    getDiffEditors: () => {
-      getModifiedEditor: () => ModifiedEditorHandle;
-      getOriginalEditor: () => OriginalEditorHandle;
-      getLineChanges: () => { modifiedStartLineNumber: number }[] | null;
-      onDidUpdateDiff: (listener: () => void) => unknown;
-      waitForDiff: () => Promise<void>;
-    }[];
-  };
+interface DiffEditorHandle {
+  getModifiedEditor: () => ModifiedEditorHandle;
+  getOriginalEditor: () => OriginalEditorHandle;
+  getLineChanges: () => unknown[] | null;
+  onDidUpdateDiff: (listener: () => void) => unknown;
 }
 
-/** Per-page record of the last diff update waitForDiffToSettle has seen, keyed to the editor it watches. */
-interface DiffSettleTracker {
-  editor: unknown;
-  lastActivityAt: number;
+interface MonacoTestHandle {
+  editor: {
+    getDiffEditors: () => DiffEditorHandle[];
+  };
 }
 
 interface ModifiedScrollState {
@@ -188,85 +247,37 @@ async function readModifiedScrollState(target: Page): Promise<ModifiedScrollStat
   });
 }
 
-/**
- * The modified-side line of the diff editor's FIRST computed line change, or
- * -1 with no editor mounted or no change computed.
- *
- * A wait on this must name the line it expects, never just "non-empty".
- * Switching files swaps the model's content in place and Monaco recomputes
- * the diff asynchronously, so between the swap and the result landing
- * `getLineChanges()` still returns the PREVIOUS file's changes. Measured on
- * this fixture: 1 ms after the delta.ts click the model was already delta's
- * 3000 lines while the changes still read alpha's line 100, and delta's own
- * result (line 5) landed 154 ms later. A "length > 0" poll passes inside
- * that window. Every fixture file here has exactly one change at a distinct
- * line (alpha 100, beta 2, delta 5, gamma 11), so the line identifies whose
- * diff it is.
- */
-async function readModifiedFirstChangeLine(target: Page): Promise<number> {
+/** The modified editor's first visible line, or -1 with no diff editor mounted. */
+async function readFirstVisibleLine(target: Page): Promise<number> {
   return target.evaluate(() => {
     const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
     const diffEditors = monaco?.editor.getDiffEditors() ?? [];
     if (diffEditors.length === 0) return -1;
-    return diffEditors[0].getLineChanges()?.[0]?.modifiedStartLineNumber ?? -1;
+    return diffEditors[0].getModifiedEditor().getVisibleRanges()[0]?.startLineNumber ?? -1;
   });
 }
 
-/**
- * Wait until the diff editor has no diff computation left to deliver. Call it
- * before leaving a file whose diff you waited for, and before the final
- * page-error assertion.
- *
- * `readModifiedFirstChangeLine` proves ONE result for the file landed, not
- * that the last one did. Monaco can have a second compute for the same content
- * pending or in flight (measured: an option update or a debounced content
- * change right after the first result, and under CI load two computes started
- * together). Its stale-result guard is a single token that only cancels on
- * dispose, so a result for the OLD file that lands after the models were
- * swapped to the next file is applied against the new line counts and
- * `UnchangedRegion.fromDiffs` throws "startLineNumber 11 cannot be after
- * endLineNumberExclusive 2" (gamma's insertion line against beta's one line).
- * That surfaces as an unhandled rejection, which collectPageErrors reports.
- *
- * Two signals, because neither is enough alone. `waitForDiff()` resolves once
- * the editor's diff is up to date, which covers a compute that has started.
- * It cannot see one that has not been posted yet, so the editor must also go
- * DIFF_QUIET_MS without a diff update, longer than Monaco's 200ms content
- * debounce plus a compute on a loaded runner. The quiet clock is a page-side
- * `onDidUpdateDiff` listener, installed on first use and kept per editor.
- */
-async function waitForDiffToSettle(target: Page): Promise<void> {
-  await expect
-    .poll(
-      async () =>
-        target.evaluate(async (requiredQuietMs) => {
-          const pageWindow = window as unknown as {
-            __monaco?: MonacoTestHandle;
-            __diffSettleTracker?: DiffSettleTracker;
-          };
-          const diffEditors = pageWindow.__monaco?.editor.getDiffEditors() ?? [];
-          if (diffEditors.length === 0) return false;
-          const diffEditor = diffEditors[0];
-          if (pageWindow.__diffSettleTracker?.editor !== diffEditor) {
-            const freshTracker: DiffSettleTracker = { editor: diffEditor, lastActivityAt: performance.now() };
-            diffEditor.onDidUpdateDiff(() => {
-              freshTracker.lastActivityAt = performance.now();
-            });
-            pageWindow.__diffSettleTracker = freshTracker;
-          }
-          const tracker = pageWindow.__diffSettleTracker as DiffSettleTracker;
-          // A compute that never lands must not hang the poll: give up on this
-          // read after 2s and let the poll try again.
-          const upToDate = await Promise.race([
-            diffEditor.waitForDiff().then(() => true),
-            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
-          ]);
-          if (!upToDate) return false;
-          return performance.now() - tracker.lastActivityAt >= requiredQuietMs;
-        }, DIFF_QUIET_MS),
-      { timeout: 15000, intervals: [100, 200, 400] },
-    )
-    .toBe(true);
+/** Whether the modified editor's viewport currently contains the line (false with no diff editor). */
+async function isLineInModifiedViewport(target: Page, lineNumber: number): Promise<boolean> {
+  return target.evaluate((line) => {
+    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) return false;
+    return diffEditors[0]
+      .getModifiedEditor()
+      .getVisibleRanges()
+      .some((range) => range.startLineNumber <= line && line <= range.endLineNumber);
+  }, lineNumber);
+}
+
+/** The modified model's line count, or -1 with no diff editor or model. */
+async function readModifiedLineCount(target: Page): Promise<number> {
+  return target.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) return -1;
+    return diffEditors[0].getModifiedEditor().getModel()?.getLineCount() ?? -1;
+  });
 }
 
 /**
@@ -309,21 +320,6 @@ async function readOriginalViewportState(
     } catch {
       return { lineCount: -1, maxVisibleLine: -1, visibleRangeCount: -1, threw: true };
     }
-  });
-}
-
-/**
- * Drive the modified side to its bottom. Programmatic rather than Ctrl+End
- * because a click to focus could land in either pane, and Monaco saturates an
- * over-large offset at the real maximum for the current layout.
- */
-async function scrollModifiedToBottom(target: Page): Promise<void> {
-  await target.evaluate(() => {
-    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
-    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
-    if (diffEditors.length === 0) return;
-    const modifiedEditor = diffEditors[0].getModifiedEditor();
-    modifiedEditor.setScrollTop(modifiedEditor.getScrollHeight());
   });
 }
 
@@ -653,11 +649,13 @@ test.describe('Changes view: diff scroll memory', () => {
   //
   // Sentry DESKTOP-19 ("Illegal value for lineNumber", the recurrence that
   // survived the clamp) throws on the ORIGINAL editor, from a scrollTop Monaco
-  // mirrors onto it rather than one any app code sets. Its stack resolves to
-  // Monaco reading a viewport line past the original model's end while
-  // `hideUnchangedRegions` rebuilds hidden areas - a window that exists because
-  // ViewModel.setHiddenAreas shrinks the view-line projections several
-  // statements before it updates the layout's line count.
+  // mirrors onto it rather than one any app code sets. This test was written
+  // when its stack was read as the `hideUnchangedRegions` refold, a window
+  // that exists because ViewModel.setHiddenAreas shrinks the view-line
+  // projections several statements before it updates the layout's line count.
+  // The 0.45.0 events' fuller stacks showed a different trigger, with collapse
+  // off: a content flush into the live models while the original was still
+  // laid out for the old text. monaco-error-funnel.spec.ts reproduces that one.
   //
   // This test does NOT reproduce that throw, and it is not a coin flip away
   // from doing so. It was attempted and measured: on this fixture the original
@@ -785,5 +783,278 @@ test.describe('Changes view: diff scroll memory', () => {
     }
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  /** Open the task window with the Changes panel showing, whatever state a sibling left it in. */
+  async function openDiffScrollTask(): Promise<void> {
+    await page.locator('[data-swimlane-name="Code Review"]').locator('text=Diff Scroll Task').first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+    const diffArea = page.locator('[data-testid="diff-editor-area"]');
+    try {
+      await diffArea.waitFor({ state: 'visible', timeout: 3000 });
+    } catch {
+      await page.locator('[data-testid="changes-toggle"]').click();
+      await diffArea.waitFor({ state: 'visible', timeout: 10000 });
+    }
+    await page.locator('.view-line').first().waitFor({ state: 'visible', timeout: 10000 });
+  }
+
+  /**
+   * Leave a file at the bottom of its diff, go to beta.ts, and come back.
+   * Returns the modified scrollTop the file was left at and the one the
+   * revisit restored, each read once that file's own diff has settled. The
+   * return click finds the file's content cached, so the selection and the
+   * content change in one commit: the case where a reattached editor's scroll
+   * event could be recorded under the wrong file.
+   */
+  async function revisitFromBottom(filePath: string, changeLine: number): Promise<{ leftAt: number; restoredTo: number }> {
+    await page.locator('button', { hasText: filePath }).click();
+    await expect.poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 }).toBe(changeLine);
+    await waitForDiffToSettle(page);
+    await scrollModifiedToBottom(page);
+    await expect.poll(async () => (await readModifiedScrollState(page)).scrollTop, { timeout: 10000 }).toBeGreaterThan(1000);
+    const leftAt = (await readModifiedScrollState(page)).scrollTop;
+
+    await page.locator('button', { hasText: 'beta.ts' }).click();
+    await expect.poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 }).toBe(BETA_CHANGE_LINE);
+    await waitForDiffToSettle(page);
+
+    await page.locator('button', { hasText: filePath }).click();
+    await expect.poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 }).toBe(changeLine);
+    await waitForDiffToSettle(page);
+    return { leftAt, restoredTo: (await readModifiedScrollState(page)).scrollTop };
+  }
+
+  // Guards the scroll-memory bookkeeping across a content swap. gamma.ts is a
+  // pure insertion, so its inline modified side has no view zone and the
+  // position it was left at is reachable whether or not its diff has landed.
+  // Anything else means the outgoing save or the incoming restore lost track
+  // of which file a scroll event belonged to.
+  test('revisiting a file restores the deep position it was left at', async () => {
+    test.slow();
+    const getPageErrors = collectPageErrors(page);
+    await openDiffScrollTask();
+
+    const { leftAt, restoredTo } = await revisitFromBottom('gamma.ts', GAMMA_CHANGE_LINE);
+    // One line of slack (cross-platform-parity.md).
+    expect(Math.abs(restoredTo - leftAt)).toBeLessThanOrEqual(20);
+    expect(getPageErrors()).toHaveLength(0);
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // epsilon.ts's deleted block is a view zone in the inline modified editor,
+  // above the bottom. A restore applied before the diff lands sees a layout
+  // shorter by the whole block, so a position saved at the bottom is out of
+  // its reach then and back in reach once the zone exists.
+  test('revisiting a file whose deleted block sits above the saved position restores that position', async () => {
+    test.slow();
+    const getPageErrors = collectPageErrors(page);
+    await openDiffScrollTask();
+
+    const { leftAt, restoredTo } = await revisitFromBottom('epsilon.ts', EPSILON_CHANGE_LINE);
+    expect(leftAt).toBeGreaterThan((EPSILON_TOTAL_LINES - EPSILON_DELETED_LINES) * LINE_HEIGHT_PX);
+    expect(Math.abs(restoredTo - leftAt)).toBeLessThanOrEqual(20);
+    expect(getPageErrors()).toHaveLength(0);
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // A same-file refresh rebuilds the editor's view models, so until the new
+  // diff lands the layout has no zone for epsilon.ts's deleted block. A pixel
+  // restore of the modified editor alone is wrong there: a preview measured
+  // line 660 instead of 600 below a 60-line block, and against this fixture
+  // this test read line 1. A frame paints that for the length of the diff
+  // compute. DiffViewer restores the view state instead, anchored on each
+  // editor's first visible line. The read runs in a microtask queued from the
+  // reattach: after the swap's layout effect has finished, before the diff
+  // worker's result, which arrives as a later task. That is the state a frame
+  // would paint.
+  test('a same-file refresh keeps the first visible line while the new diff computes', async () => {
+    test.slow();
+    const getPageErrors = collectPageErrors(page);
+    await openDiffScrollTask();
+    await page.locator('button', { hasText: 'epsilon.ts' }).click();
+    await expect.poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 }).toBe(EPSILON_CHANGE_LINE);
+    await waitForDiffToSettle(page);
+
+    await page.evaluate((line) => {
+      const pageWindow = window as unknown as {
+        __monaco: MonacoTestHandle;
+        __firstLineAfterSwap?: number;
+        __diffResultsAfterSwap: number;
+      };
+      const diffEditor = pageWindow.__monaco.editor.getDiffEditors()[0];
+      const modifiedEditor = diffEditor.getModifiedEditor();
+      modifiedEditor.setScrollTop(modifiedEditor.getTopForLineNumber(line));
+      pageWindow.__diffResultsAfterSwap = 0;
+      modifiedEditor.onDidChangeModel(() => {
+        if (modifiedEditor.getModel() === null || pageWindow.__firstLineAfterSwap !== undefined) return;
+        queueMicrotask(() => {
+          pageWindow.__firstLineAfterSwap = modifiedEditor.getVisibleRanges()[0]?.startLineNumber ?? -1;
+        });
+      });
+      diffEditor.onDidUpdateDiff(() => {
+        if (pageWindow.__firstLineAfterSwap !== undefined && diffEditor.getLineChanges() !== null) {
+          pageWindow.__diffResultsAfterSwap++;
+        }
+      });
+    }, EPSILON_ANCHOR_LINE);
+    // Deep scroll positions settle a tick late; read the anchor from the editor.
+    await expect.poll(() => readFirstVisibleLine(page), { timeout: 5000 }).toBe(EPSILON_ANCHOR_LINE);
+
+    await page.evaluate(() => {
+      const pageWindow = window as unknown as {
+        __mockGitDiff: { files: Array<{ path: string; modified: string }> };
+        __mockFireDiffChanged: () => void;
+      };
+      const entry = pageWindow.__mockGitDiff.files.find((file) => file.path === 'epsilon.ts');
+      if (!entry) throw new Error('no fixture entry for epsilon.ts');
+      entry.modified = `${entry.modified}\n// refreshed below the viewport`;
+      pageWindow.__mockFireDiffChanged();
+    });
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __firstLineAfterSwap?: number }).__firstLineAfterSwap ?? null), { timeout: 10000 })
+      .toBe(EPSILON_ANCHOR_LINE);
+    await waitForDiffToSettle(page);
+    await expect.poll(() => readFirstVisibleLine(page), { timeout: 5000 }).toBe(EPSILON_ANCHOR_LINE);
+    // One diff compute per refresh. While @monaco-editor/react still received
+    // the new text as props, it flushed the models again after the swap and
+    // its debounced recompute delivered a second, identical result.
+    expect(await page.evaluate(() => (window as unknown as { __diffResultsAfterSwap: number }).__diffResultsAfterSwap)).toBe(1);
+    expect(getPageErrors()).toHaveLength(0);
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // Lines a reader opened inside a folded unchanged region ("show more") live
+  // on monaco's diff view model, and a same-file refresh replaces that view
+  // model. Before the content swap they were lost too. The in-place flush
+  // wiped the decorations monaco tracks them by and the fold closed again.
+  // The revealed lines add height to the modified side, so the scroll height
+  // is the public read of whether they survived.
+  test('a same-file refresh keeps the lines opened in a folded region', async () => {
+    test.slow();
+    const getPageErrors = collectPageErrors(page);
+    await openDiffScrollTask();
+    await page.locator('button', { hasText: 'epsilon.ts' }).click();
+    await expect.poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 }).toBe(EPSILON_CHANGE_LINE);
+    await waitForDiffToSettle(page);
+
+    try {
+      await setCollapseUnchanged(page, true);
+      await expect.poll(async () => page.locator('.monaco-diff-editor .diff-hidden-lines').count(), { timeout: 10000 }).toBeGreaterThan(0);
+      await waitForDiffToSettle(page);
+      const foldedHeight = (await readModifiedScrollState(page)).scrollHeight;
+
+      // A plain click (no drag) on a fold's lower edge reveals monaco's default
+      // 20 lines. Monaco scrolls its own viewport, so a fold widget outside it
+      // cannot be scrolled into view by Playwright. Go to the top, where the
+      // first fold is, and click the lower edge of one inside the editor's box.
+      await page.evaluate(() => {
+        const monaco = (window as unknown as { __monaco: MonacoTestHandle }).__monaco;
+        monaco.editor.getDiffEditors()[0].getModifiedEditor().setScrollTop(0);
+      });
+      let foldEdge: { x: number; y: number } | null = null;
+      await expect
+        .poll(
+          async () => {
+            foldEdge = await page.evaluate(() => {
+              const editorBox = document.querySelector('.monaco-diff-editor .editor.modified')?.getBoundingClientRect();
+              if (!editorBox) return null;
+              for (const edge of document.querySelectorAll('.monaco-diff-editor .diff-hidden-lines .bottom')) {
+                const box = edge.getBoundingClientRect();
+                const centerY = box.top + box.height / 2;
+                if (box.width > 0 && box.height > 0 && centerY > editorBox.top && centerY < editorBox.bottom) {
+                  return { x: box.left + box.width / 2, y: centerY };
+                }
+              }
+              return null;
+            });
+            return foldEdge !== null;
+          },
+          { timeout: 5000 },
+        )
+        .toBe(true);
+      const edge = foldEdge as unknown as { x: number; y: number };
+      await page.mouse.click(edge.x, edge.y);
+      await expect
+        .poll(async () => (await readModifiedScrollState(page)).scrollHeight, { timeout: 5000 })
+        .toBeGreaterThan(foldedHeight + 10 * LINE_HEIGHT_PX);
+      const revealedHeight = (await readModifiedScrollState(page)).scrollHeight;
+
+      const lineCountBefore = await readModifiedLineCount(page);
+      await page.evaluate(() => {
+        const pageWindow = window as unknown as {
+          __mockGitDiff: { files: Array<{ path: string; modified: string }> };
+          __mockFireDiffChanged: () => void;
+        };
+        const entry = pageWindow.__mockGitDiff.files.find((file) => file.path === 'epsilon.ts');
+        if (!entry) throw new Error('no fixture entry for epsilon.ts');
+        entry.modified = `${entry.modified}\n// refreshed again`;
+        pageWindow.__mockFireDiffChanged();
+      });
+      await expect.poll(() => readModifiedLineCount(page), { timeout: 10000 }).toBe(lineCountBefore + 1);
+      await waitForDiffToSettle(page);
+
+      // The appended line sits inside the folded tail, so it adds no height.
+      // One line of slack (cross-platform-parity.md).
+      await expect
+        .poll(async () => Math.abs((await readModifiedScrollState(page)).scrollHeight - revealedHeight), { timeout: 5000 })
+        .toBeLessThanOrEqual(20);
+      expect(getPageErrors()).toHaveLength(0);
+    } finally {
+      await setCollapseUnchanged(page, false);
+    }
+    await page.keyboard.press('Control+Shift+W');
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // A switch between two files with identical text has no text difference for
+  // the content swap to act on, and before the file key counted as a change it
+  // returned early. Nothing detached the models, so the incoming file got no
+  // diff result of its own and never ran its first-visit reveal. It stayed
+  // wherever the outgoing file was left. The reveal is what puts a first visit
+  // on its first change, so the second twin must land there, not at the first
+  // twin's bottom.
+  //
+  // The wait for the switch to land avoids readModifiedFirstChangeLine and
+  // waitForDiffToSettle on purpose. The twins' diffs are identical, so both pass
+  // at once on the first twin's still-mounted result, with or without a swap.
+  // The position is the observable, and it can only move once the swap has run.
+  // The settle wait comes after the position is reached.
+  test('switching to a file with identical text still reveals its own first change', async () => {
+    test.slow();
+    const getPageErrors = collectPageErrors(page);
+    await openDiffScrollTask();
+
+    // The first twin. Its change line is unique to the twins, so this wait is
+    // its own diff and its own first-visit reveal. Then leave it at the bottom.
+    await page.locator('button', { hasText: TWIN_FIRST_FILE }).click();
+    await expect.poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 }).toBe(TWIN_CHANGE_LINE);
+    await waitForDiffToSettle(page);
+    await scrollModifiedToBottom(page);
+    await expect
+      .poll(async () => (await readModifiedScrollState(page)).scrollTop, { timeout: 10000 })
+      .toBeGreaterThan((TWIN_CHANGE_LINE + 200) * LINE_HEIGHT_PX);
+    expect(await isLineInModifiedViewport(page, TWIN_CHANGE_LINE)).toBe(false);
+
+    // The second twin is a first visit with no saved position.
+    await page.locator('button', { hasText: TWIN_SECOND_FILE }).click();
+    await expect
+      .poll(() => isLineInModifiedViewport(page, TWIN_CHANGE_LINE), {
+        message: 'the second twin must be positioned on its own first change, not left at the first twin\'s bottom',
+        timeout: 10000,
+      })
+      .toBe(true);
+    await waitForDiffToSettle(page);
+    expect(await isLineInModifiedViewport(page, TWIN_CHANGE_LINE)).toBe(true);
+    expect(getPageErrors()).toHaveLength(0);
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).not.toBeVisible({ timeout: 8000 });
   });
 });

@@ -233,9 +233,15 @@ handled forwards), release, environment, and the anonymous install id under `use
   locations are bare bundle file names, so resolve them against the release's uploaded sourcemaps
   by hand. The funnel sends at most one report per 30 seconds, so the event count understates
   the throws: `funnel.suppressed_since_last_report` is how many it absorbed before that report.
-- **A default-off setting can be the missing precondition.** When an issue hits very few installs,
-  check whether the code path needs a non-default setting before concluding it is unreproducible.
-  DESKTOP-19 needs "Collapse Unchanged Regions" on, which defaults to off.
+- **A default-off setting can be the missing precondition, so check it, then check the events.**
+  When an issue hits very few installs, see whether the code path needs a non-default setting
+  before concluding it is unreproducible, and then confirm it against the events' own context.
+  DESKTOP-19 was blamed on "Collapse Unchanged Regions" (default off), but both 0.45.0 events had it
+  off and covered both view modes. The real preconditions were narrower and had nothing to do with a
+  setting: shorter text swapped into a mounted diff that renders inline (a Side by side selection
+  does too, below Monaco's 900px breakpoint), scrolled down, on a file long enough that its first
+  background tokenization was still running when its diff landed. Fixed by DiffViewer's detached
+  content swap; `tests/ui/monaco-error-funnel.spec.ts` reproduces the old path.
 - **Cross-reference locally:** the same failure usually has a local trail - `.kangentic/logs/`
   (crash JSONs, main console), `kangentic_tail_logs`, and the Aptabase `app_error` /
   `spawn_failed` counts are the volume view of the same signal.

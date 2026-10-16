@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
-import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
+import type { DiffEditorProps, DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye, ImageOff } from 'lucide-react';
 import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } from './DiffViewOptionsMenu';
@@ -99,6 +99,48 @@ interface TrackedScroll {
   key: string;
   scrollTop: number;
   scrollLeft: number;
+}
+
+/** The text and language the diff editor's two models hold, and whose file it is. */
+interface DiffEditorContent {
+  original: string;
+  modified: string;
+  language: string;
+  /** makeDiffScrollKey(scrollKey, contentFilePath), or null before any content arrived. */
+  contentKey: string | null;
+}
+
+interface MountContentDiffEditorProps extends Omit<DiffEditorProps, 'original' | 'modified' | 'language' | 'onMount'> {
+  content: DiffEditorContent;
+  onMount: (diffEditor: MonacoDiffEditor, monacoInstance: Monaco, mountContent: DiffEditorContent) => void;
+}
+
+/**
+ * @monaco-editor/react's DiffEditor, handed only the content it builds its two
+ * models from at creation. The library applies every later `original`,
+ * `modified` and `language` change itself, by flushing the live models, which
+ * is the path DiffViewer's detached content swap replaces (Sentry DESKTOP-19).
+ * Holding those props at their mount values keeps the library out of it: no
+ * second flush after each swap, and no second diff recompute. Content that
+ * arrives while monaco is still loading reaches onMount as the difference
+ * between `mountContent` and the current content, and DiffViewer swaps it in
+ * there.
+ */
+function MountContentDiffEditor({ content, onMount, ...diffEditorProps }: MountContentDiffEditorProps) {
+  const [mountContent] = useState(content);
+  const handleMount: DiffOnMount = useCallback(
+    (diffEditor, monacoInstance) => onMount(diffEditor, monacoInstance, mountContent),
+    [onMount, mountContent],
+  );
+  return (
+    <DiffEditor
+      {...diffEditorProps}
+      original={mountContent.original}
+      modified={mountContent.modified}
+      language={mountContent.language}
+      onMount={handleMount}
+    />
+  );
 }
 
 export function DiffViewer({
@@ -261,11 +303,11 @@ export function DiffViewer({
   const viewModeRef = useRef(viewMode);
   const languageRef = useRef(language);
   // Written on commit, in a layout effect, never during render (which the
-  // compiler rules forbid). The ordering the listeners need still holds: every
-  // layout effect of a commit runs before any passive effect of it, and
-  // @monaco-editor/react flushes new model content (firing onDidUpdateDiff and
-  // scroll events synchronously) from a passive effect, so these are current
-  // by the time that flush happens.
+  // compiler rules forbid). The ordering the listeners need still holds. New
+  // content reaches the editor in the content-swap layout effect further
+  // down, and a component's layout effects run in declaration order. The swap
+  // fires onDidUpdateDiff and scroll events synchronously, so these are
+  // current by then.
   useLayoutEffect(() => {
     collapseUnchangedRef.current = collapseUnchanged;
     onCrossFileRef.current = onCrossFile;
@@ -287,8 +329,8 @@ export function DiffViewer({
   // Apply (or clear) the blame gutter as `before`-content decorations on the
   // modified editor: a fixed-width column at the start of each line reading
   // "<shortHash>  <author>", with the full hash/author/date on hover. Re-run
-  // on every diff update (a file switch swaps Monaco's model in place) and
-  // whenever blame data or the toggle changes.
+  // on every diff update (a content swap rewrites the models, which clears
+  // their decorations) and whenever blame data or the toggle changes.
   const applyBlameDecorations = useCallback(() => {
     const diffEditor = diffEditorRef.current;
     const monacoInstance = monacoRef.current;
@@ -343,12 +385,29 @@ export function DiffViewer({
   // reaches monaco's error funnel synchronously, so the error-funnel snapshot
   // reads this to tell "inside the fold re-enable" apart from "pending".
   const foldReenableInProgressRef = useRef(false);
+  // The unchanged-region reveals a same-file refresh carries over (lines the
+  // reader opened with "show more"). Monaco keeps them on the diff view model
+  // (`modelState` in its view state), the content swap builds a new view
+  // model, and a new one only has regions once its diff lands, so they go
+  // back once the fold is in place. Before the content swap they were lost
+  // too. A flush wipes the decorations monaco tracks them by, and the
+  // unfolded result was then refolded.
+  const pendingRegionStateRef = useRef<{ modelState: unknown } | null>(null);
+  const restorePendingRegionState = useCallback((diffEditor: MonacoDiffEditor) => {
+    const pending = pendingRegionStateRef.current;
+    if (pending === null) return;
+    pendingRegionStateRef.current = null;
+    const viewState = diffEditor.saveViewState();
+    if (viewState === null) return;
+    diffEditor.restoreViewState({ ...viewState, modelState: pending.modelState });
+  }, []);
   const applyCollapseFold = useCallback(() => {
     const diffEditor = diffEditorRef.current;
     if (diffEditor === null) return;
     if (collapseTimerRef.current !== null) clearTimeout(collapseTimerRef.current);
     // Collapse off: ensure regions are shown.
     if (!collapseUnchangedRef.current) {
+      pendingRegionStateRef.current = null;
       diffEditor.updateOptions({ hideUnchangedRegions: { enabled: false } });
       return;
     }
@@ -365,20 +424,25 @@ export function DiffViewer({
     // here. When the root is unknown, treat as not-folded and apply the
     // transition rather than skip it.
     const alreadyFolded = diffRoot ? diffRoot.querySelectorAll('.diff-hidden-lines').length > 0 : false;
-    if (alreadyFolded) return;
+    if (alreadyFolded) {
+      restorePendingRegionState(diffEditor);
+      return;
+    }
     diffEditor.updateOptions({ hideUnchangedRegions: { enabled: false } });
     collapseTimerRef.current = setTimeout(() => {
       collapseTimerRef.current = null;
-      if (collapseUnchangedRef.current) {
+      const liveEditor = diffEditorRef.current;
+      if (collapseUnchangedRef.current && liveEditor !== null) {
         foldReenableInProgressRef.current = true;
         try {
-          diffEditorRef.current?.updateOptions({ hideUnchangedRegions: { enabled: true } });
+          liveEditor.updateOptions({ hideUnchangedRegions: { enabled: true } });
         } finally {
           foldReenableInProgressRef.current = false;
         }
+        restorePendingRegionState(liveEditor);
       }
     }, 0);
-  }, []);
+  }, [restorePendingRegionState]);
 
   // Index of the change region the next/prev navigation last revealed, reset on
   // file change so navigation restarts from the top of each new file.
@@ -435,22 +499,132 @@ export function DiffViewer({
   }, [revealChangeLine]);
 
   // Refs the once-subscribed Monaco event handlers read for the current file's
-  // values, even for scroll events the child DiffEditor fires synchronously
-  // while flushing new model content. Written in a layout effect, which runs
-  // before that flush (a passive effect in @monaco-editor/react) on every
-  // commit; see the nav refs above.
+  // values, even for scroll events the editor fires synchronously while new
+  // content goes in. Written in a layout effect declared ahead of the
+  // content swap below, so they are current when it runs; see the nav refs
+  // above.
   const scrollMemoryKey = makeDiffScrollKey(scrollKey, filePath);
   const scrollMemoryKeyRef = useRef(scrollMemoryKey);
   const contentMatches = contentFilePath !== null && contentFilePath === filePath && !diffEditorHidden;
   const contentMatchesRef = useRef(contentMatches);
+  const contentKey = contentFilePath === null ? null : makeDiffScrollKey(scrollKey, contentFilePath);
+  const displayedContentRef = useRef<DiffEditorContent>({ original, modified, language, contentKey });
   useLayoutEffect(() => {
     scrollMemoryKeyRef.current = scrollMemoryKey;
     contentMatchesRef.current = contentMatches;
+    displayedContentRef.current = { original, modified, language, contentKey };
   });
 
   const lastScrollRef = useRef<TrackedScroll | null>(null);
   // Memory key still awaiting its initial positioning; null once consumed.
   const pendingRevealRef = useRef<string | null>(scrollMemoryKey);
+
+  // What the mounted editor's models hold, seeded in handleEditorMount and
+  // advanced by every swap. Tagged with the editor so a remount (leaving a
+  // preview) never compares against the previous editor's text.
+  const appliedContentRef = useRef<(DiffEditorContent & { editor: MonacoDiffEditor }) | null>(null);
+  // True only while the swap below detaches and reattaches the models. The
+  // editor's scroll and diff events in that window describe a model-less or
+  // freshly built editor, never the reader's position or a real diff.
+  const contentSwapInProgressRef = useRef(false);
+
+  // Put new content into the mounted editor DETACHED (Sentry DESKTOP-19).
+  //
+  // Flushing new text into the live models (`setValue`, which is how
+  // @monaco-editor/react applies `original` and `modified`) runs the model's
+  // tokenization before any view model hears of it, and fires
+  // onDidChangeTokens for the attached views' visible lines (monaco 0.57
+  // textModel.js `_emitContentChangedEvent`, tokenizerSyntaxTokenBackend.js
+  // `refreshAllVisibleLineTokens`). Inline, the diff editor's view zones
+  // re-run on that event against the stale diff, the modified editor shrinks
+  // and clamps, "update scroll original" mirrors the clamp, and the original
+  // editor, still laid out for the OLD text, walks lines past the new text's
+  // end: "Illegal value for lineNumber". tests/ui/monaco-error-funnel.spec.ts
+  // reproduces it.
+  //
+  // Detaching first means no view exists while the models flush, so nothing
+  // is laid out for the old text and no token event reaches a view.
+  // Reattaching builds both view models fresh for the new text. The library
+  // never sees the change: MountContentDiffEditor holds its content props at
+  // their mount values. This runs from a layout effect for every change while
+  // the editor is mounted, and from handleEditorMount for content that
+  // arrived while monaco was still loading.
+  //
+  // This does not reopen the disposal problem described where the DiffEditor
+  // renders: the library creates both models, the swap creates and disposes
+  // none, and unmount disposes the same two models in the library's order.
+  //
+  // Reattaching also resets both editors to the top and drops the alignment
+  // zones until the new diff lands. A file switch is positioned by the
+  // pending reveal as before. A same-file refresh (the panel refetches the
+  // open file on every fs.watch push) keeps the reader's place. The pixel
+  // position is saved and re-armed for the restore once the diff lands, and
+  // the view state goes back right away. It anchors each editor on its first
+  // visible LINE, because a pixel offset on the zone-less layout shows lines
+  // further down by the height of every deleted block above (measured: line
+  // 660 instead of 600 below a 60-line block, for the whole diff compute).
+  // The region reveals in that view state wait for the new diff (see
+  // pendingRegionStateRef).
+  const swapDiffContent = useCallback(() => {
+    const diffEditor = diffEditorRef.current;
+    const monacoInstance = monacoRef.current;
+    const applied = appliedContentRef.current;
+    if (diffEditor === null || monacoInstance === null || applied === null || applied.editor !== diffEditor) return;
+    const next = displayedContentRef.current;
+    // A file switch swaps even when the incoming text matches the outgoing
+    // text (two added empty files). The reattach is what resets monaco's
+    // side-by-side latch and gives the incoming file a diff result of its own
+    // for the pending reveal.
+    const fileChanged = applied.contentKey !== next.contentKey;
+    const originalChanged = applied.original !== next.original;
+    const modifiedChanged = applied.modified !== next.modified;
+    if (!fileChanged && !originalChanged && !modifiedChanged && applied.language === next.language) return;
+    const models = diffEditor.getModel();
+    if (models === null) return;
+    // Read from the refs, not the render scope: this callback is created once.
+    const memoryKey = scrollMemoryKeyRef.current;
+    const displayedContentMatches = contentMatchesRef.current;
+    const modifiedEditor = diffEditor.getModifiedEditor();
+    let keptViewState: MonacoEditorNamespace.IDiffEditorViewState | null = null;
+    if (fileChanged) {
+      // A file switch. Usually armed already by the per-file effect one commit
+      // earlier, but a cached revisit changes the selection and the content in
+      // one commit, and then this runs before that effect. Arming here keeps
+      // the reattach's scroll events from being recorded under the incoming
+      // key, so the outgoing file's position is still saved.
+      if (displayedContentMatches) pendingRevealRef.current = memoryKey;
+      // Region reveals still waiting from a refresh belong to the outgoing file.
+      pendingRegionStateRef.current = null;
+    } else if (displayedContentMatches && pendingRevealRef.current !== memoryKey) {
+      saveDiffScroll(memoryKey, { scrollTop: modifiedEditor.getScrollTop(), scrollLeft: modifiedEditor.getScrollLeft() });
+      pendingRevealRef.current = memoryKey;
+      keptViewState = diffEditor.saveViewState();
+    }
+    contentSwapInProgressRef.current = true;
+    try {
+      diffEditor.setModel(null);
+      // A refresh usually changes the modified side alone, so the original
+      // keeps its text and its tokens.
+      if (originalChanged) models.original.setValue(next.original);
+      if (modifiedChanged) models.modified.setValue(next.modified);
+      monacoInstance.editor.setModelLanguage(models.original, next.language);
+      monacoInstance.editor.setModelLanguage(models.modified, next.language);
+      diffEditor.setModel(models);
+    } finally {
+      contentSwapInProgressRef.current = false;
+    }
+    appliedContentRef.current = { ...next, editor: diffEditor };
+    if (keptViewState !== null) {
+      diffEditor.restoreViewState(keptViewState);
+      pendingRegionStateRef.current = { modelState: keptViewState.modelState };
+    }
+  }, []);
+
+  // Every change while the editor is mounted. Declared after the ref mirror
+  // above, so the swap reads this commit's content.
+  useLayoutEffect(() => {
+    swapDiffContent();
+  }, [original, modified, language, contentKey, swapDiffContent]);
 
   // Applies the saved-scroll restore or first-change reveal for the pending
   // key, once the editor exists and the displayed content matches the file.
@@ -527,9 +701,12 @@ export function DiffViewer({
     return positioned;
   }, [navigateToChange]);
 
-  const handleEditorMount: DiffOnMount = useCallback((diffEditor, monacoInstance) => {
+  const handleEditorMount = useCallback((diffEditor: MonacoDiffEditor, monacoInstance: Monaco, mountContent: DiffEditorContent) => {
     diffEditorRef.current = diffEditor;
     monacoRef.current = monacoInstance;
+    // The library built the models from the content MountContentDiffEditor
+    // held at its mount, which is what the swap compares against.
+    appliedContentRef.current = { ...mountContent, editor: diffEditor };
     // Keep the ORIGINAL editor wrappable. Monaco force-sets BOTH wordWrap overrides to
     // 'off' on it whenever the diff renders inline ("never wrap hidden editor"), but its
     // side-by-side branch restores only wordWrapOverride1, and override2 outranks
@@ -552,8 +729,10 @@ export function DiffViewer({
 
     const modifiedEditor = diffEditor.getModifiedEditor();
     modifiedEditor.onDidScrollChange(() => {
-      // Ignore clamp noise: events fired while the displayed content belongs to
-      // another file, or before this file has been positioned.
+      // Ignore clamp noise: events fired while the content swap detaches and
+      // reattaches the models, while the displayed content belongs to another
+      // file, or before this file has been positioned.
+      if (contentSwapInProgressRef.current) return;
       if (!contentMatchesRef.current) return;
       if (pendingRevealRef.current === scrollMemoryKeyRef.current) return;
       lastScrollRef.current = {
@@ -563,11 +742,12 @@ export function DiffViewer({
       };
     });
     // Diff recomputes asynchronously; reveal the first change only once it has
-    // finished. Known imperfection: two file switches within one sub-second
-    // recompute window can consume a reveal against the previous content's line
-    // changes (the diff API offers no way to attribute a result to a content
-    // version). It self-corrects on revisit.
+    // finished. The content swap builds a fresh diff view model, whose line
+    // changes stay null until its own diff lands, so a reveal can no longer
+    // read the previous content's changes.
     diffEditor.onDidUpdateDiff(() => {
+      // Detaching the models clears the diff, which fires this with no model.
+      if (contentSwapInProgressRef.current) return;
       // A cross-file roll-in jumps to the first/last change; otherwise restore
       // the saved scroll / first-change reveal.
       if (!consumePendingChangeFocus()) consumePendingReveal(true);
@@ -577,11 +757,14 @@ export function DiffViewer({
       // Re-target the blame gutter at the freshly swapped model.
       applyBlameDecorations();
     });
+    // Content that arrived while monaco was loading goes in now, detached like
+    // any other change.
+    swapDiffContent();
     // The diff may have finished before onMount attached these listeners.
     if (!consumePendingChangeFocus()) consumePendingReveal(true);
     applyCollapseFold();
     applyBlameDecorations();
-  }, [consumePendingReveal, consumePendingChangeFocus, applyCollapseFold, applyBlameDecorations]);
+  }, [swapDiffContent, consumePendingReveal, consumePendingChangeFocus, applyCollapseFold, applyBlameDecorations]);
 
   // Arm on entering a file; on leaving, commit the tracked scroll under the
   // outgoing key. One cleanup path covers file switch, panel close, dialog
@@ -685,23 +868,19 @@ export function DiffViewer({
   // pointer is driving (a splitter drag, an OS window-edge drag) widens it past
   // the breakpoint, so the view does not flip mid-drag. The latch resets only when
   // the width drops back to the breakpoint or below, when an option's VALUE
-  // changes, or when the diff gets new model objects. This viewer reuses its two
-  // models across files (setValue) and re-sends identical options on every
-  // render, so none of those ever happened: a widened diff stayed inline, the
-  // Side by side button stayed pressed and did nothing, and switching files kept
-  // it inline too. Moving the breakpoint by one pixel and back is a value change
-  // that resets the latch without flipping the render mode in between.
+  // changes, or when the diff gets new model objects. Every new file resets it:
+  // the content swap detaches and reattaches the models, and the widget's
+  // setDiffModel resets the latch whenever the models it holds change. But the
+  // viewer re-sends identical options on every render, so pressing Side by side
+  // on a latched diff changed nothing and the button did nothing. Moving the
+  // breakpoint by one pixel and back is a value change that resets the latch
+  // without flipping the render mode in between.
   const rearmSideBySide = useCallback(() => {
     const editor = diffEditorRef.current;
     if (!editor) return;
     editor.updateOptions({ renderSideBySideInlineBreakpoint: DIFF_INLINE_BREAKPOINT_PX + 1 });
     editor.updateOptions({ renderSideBySideInlineBreakpoint: DIFF_INLINE_BREAKPOINT_PX });
   }, []);
-
-  // A new file is where Monaco would reset on its own (new models), so do it here.
-  useEffect(() => {
-    rearmSideBySide();
-  }, [contentFilePath, rearmSideBySide]);
 
   // Re-apply the fold whenever collapse is toggled. The diff is already loaded
   // here, so applyCollapseFold's disable -> enable is the transition Monaco honors.
@@ -1035,12 +1214,13 @@ export function DiffViewer({
           // list in src/shared/benign-renderer-errors.ts) so it no longer renders
           // red in the console, and the test harness filters the same message.
           // Upstream: https://github.com/suren-atoyan/monaco-react/issues/647
+          // The content swap (see "Put new content into the mounted editor
+          // DETACHED" above) keeps this intact, because it reuses these same two
+          // models and never creates or disposes one.
           <div ref={editorContainerRef} className="h-full w-full">
-            <DiffEditor
+            <MountContentDiffEditor
               height="100%"
-              language={language}
-              original={original}
-              modified={modified}
+              content={{ original, modified, language, contentKey }}
               theme={monacoTheme}
               // Set the theme BEFORE the editor is created. Without this, Monaco
               // creates the editor under its default light theme and only swaps to
