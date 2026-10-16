@@ -26,6 +26,7 @@ import type { TaskRepository } from '../../src/main/db/repositories/task-reposit
 import type { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
+import type { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
 import type { SessionManager } from '../../src/main/pty/session-manager';
 import type { LeftoverProcessEntry } from '../../src/main/pty/process-tag/tagged-reap';
 
@@ -85,6 +86,7 @@ function makeAsyncTail() {
       list,
       listAllInSwimlane,
     } as unknown as TaskRepository,
+    taskMoveRepo: { currentVisit: vi.fn(() => null) } as unknown as TaskMoveRepository,
     swimlaneRepo: {
       list: vi.fn(() => [
         { id: 'lane-todo', role: 'todo' },
@@ -244,7 +246,7 @@ describe('cleanupStaleResourcesAsync: the sweep comes first', () => {
     const tail = makeAsyncTail();
 
     await cleanupStaleResourcesAsync(
-      PROJECT_PATH, tail.taskRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
+      PROJECT_PATH, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
     );
 
     expect(tail.reapTaskProcesses).toHaveBeenCalledTimes(1);
@@ -269,7 +271,7 @@ describe('cleanupStaleResourcesAsync: the sweep comes first', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await expect(cleanupStaleResourcesAsync(
-      PROJECT_PATH, tail.taskRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
+      PROJECT_PATH, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
     )).resolves.toBeUndefined();
 
     expect(tail.listAllInSwimlane).toHaveBeenCalled();
@@ -283,7 +285,7 @@ describe('cleanupStaleResources without its leftovers argument', () => {
   it('never reaps: the default is stopping off, so a caller that forgot the setting kills nothing', async () => {
     const tail = makeAsyncTail();
 
-    await cleanupStaleResources(PROJECT_PATH, tail.taskRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo);
+    await cleanupStaleResources(PROJECT_PATH, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo);
 
     // The async tail did run (and an archived task was there to sweep), so the
     // missing reap is the default's doing and not a fixture that never got that far.
@@ -295,7 +297,7 @@ describe('cleanupStaleResources without its leftovers argument', () => {
     const tail = makeAsyncTail();
     const options = leftovers(true);
 
-    await cleanupStaleResources(PROJECT_PATH, tail.taskRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, options);
+    await cleanupStaleResources(PROJECT_PATH, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, options);
 
     expect(tail.reapTaskProcesses).toHaveBeenCalledTimes(1);
   });

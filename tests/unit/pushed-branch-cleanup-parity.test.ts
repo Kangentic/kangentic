@@ -214,6 +214,12 @@ describe('checkout-identity columns are cleared wherever branch_name is cleared'
  * checked) can then never link it again, because the commit that would have
  * proven the work is gone with the branch name.
  *
+ * The Backlog sweep reads the tip only for a row that still holds a PR
+ * identity. A row with none is one whose PR a To Do move forgot, and its
+ * leftover branch is the old work's. The spread stays in its literal either
+ * way, so this scan still sees the site, and `resource-cleanup.test.ts` pins
+ * the gate.
+ *
  * Same scanning approach as the `resolved_base_branch` guard above, reusing
  * `findBranchClearingWrites()`: brace-match out to the enclosing object
  * literal and check what it contains, rather than matching the call's shape.

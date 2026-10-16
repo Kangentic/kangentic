@@ -494,6 +494,24 @@ export async function handleTaskMove(
         console.log(`[TASK_MOVE] Unarchived task ${input.taskId.slice(0, 8)} (moved out of Done)`);
       }
 
+      // A To Do move forgets the task's PR in the same tick as tasks.move, for
+      // the archive's reason. The To Do branch below awaits the exit automations
+      // and a cleanup that takes seconds on Windows (awaitExit, the reap, the
+      // worktree removal), and a quit, crash or hang there used to leave the old
+      // chip on a To Do card, its `merged` state blocking the next run's link.
+      // Before the commit-time emit, so a paired phone's snapshot never carries
+      // the old chip. `task` is the pre-move row, so the own-work gate reads the
+      // task as it was; the exit automations get that same object, so their
+      // `{{prUrl}}` is unchanged. Wrapped so a throw cannot skip the announce.
+      const isCrossColumnToTodo = toLane?.role === 'todo' && fromSwimlaneId !== input.targetSwimlaneId;
+      if (isCrossColumnToTodo) {
+        try {
+          forgetPRLinkOnTodoReset(context, tasks, task, resolvedProjectId);
+        } catch (forgetError) {
+          console.error(`[TASK_MOVE] Forgetting the PR link failed for task ${input.taskId.slice(0, 8)}:`, forgetError);
+        }
+      }
+
       // The board row has changed on disk from here on, so it must be announced
       // even if everything downstream fails. See the announce block after the
       // try/catch for why "the move threw" does not imply "nothing changed".
@@ -797,13 +815,14 @@ export async function handleTaskMove(
         try {
           await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
         } finally {
-          // The next run starts from base, so the PR the old work opened is no
-          // longer this task's. It runs after the cleanup, which writes a
-          // captured head_sha this has to overwrite. It runs in a finally
-          // because the task is already in To Do, and a cleanup that throws
-          // must not leave the old link on it. Gated on the pre-cleanup snapshot.
-          // Wrapped because a throw here would replace the cleanup error the
-          // finally is already propagating.
+          // The link went when the move committed. This second pass clears the
+          // head_sha the cleanup just captured from the old checkout, which
+          // Tier 3 would otherwise resolve the old PR from on a run with no
+          // worktree. It pushes nothing, since no link is left to draw. In a
+          // finally so that, when the commit-time pass threw, this one retries
+          // the whole clear even if the cleanup threw too. Gated on the
+          // pre-cleanup snapshot. Wrapped because a throw here would replace the
+          // cleanup error the finally is already propagating.
           try {
             forgetPRLinkOnTodoReset(context, tasks, task, resolvedProjectId);
           } catch (forgetError) {

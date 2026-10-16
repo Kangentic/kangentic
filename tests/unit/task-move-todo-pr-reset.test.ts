@@ -9,8 +9,11 @@
  *
  * The tasks repository here is STATEFUL, and the mocked `cleanupTaskResources`
  * does what the real one does to the row (nulls the checkout, writes a captured
- * `head_sha`). So a clear placed before the cleanup, which the cleanup's
- * `head_sha` write would then undo, fails the first test instead of passing.
+ * `head_sha`). The move clears twice: once in the tick that commits the To Do
+ * lane, so a quit or crash during the cleanup cannot strand the link, and once
+ * after the cleanup, for the `head_sha` it captured. A move that cleared only
+ * before the cleanup fails the head_sha tests, and one that cleared only after
+ * it fails the commit-point tests.
  *
  * Harness mirrors task-move-stale-branch-cleanup.test.ts.
  */
@@ -401,13 +404,15 @@ describe('handleTaskMove to To Do: the PR link', () => {
 
   // The own-work gate reads four columns of the pre-cleanup snapshot. Each case
   // sets ONE of them next to a PR link, so a gate that dropped any one anchor
-  // leaves that case's link on the row.
+  // leaves that case's link on the row. The re-poll cancel runs once per write:
+  // at the commit, and again after the cleanup only when the mocked cleanup
+  // captured a head_sha, which it does for the task with a worktree.
   it.each([
-    ['worktree_path', { worktree_path: '/mock/todo-pr-reset-project/.kangentic/worktrees/7' }],
-    ['branch_name', { branch_name: 'cut-the-release-7' }],
-    ['pushed_branch', { pushed_branch: OLD_PUSHED_BRANCH }],
-    ['head_sha', { head_sha: 'old-sha' }],
-  ] as Array<[string, Partial<Task>]>)('forgets the link of a task whose only own work is its %s', async (_anchorName, anchorColumns) => {
+    ['worktree_path', { worktree_path: '/mock/todo-pr-reset-project/.kangentic/worktrees/7' }, 2],
+    ['branch_name', { branch_name: 'cut-the-release-7' }, 1],
+    ['pushed_branch', { pushed_branch: OLD_PUSHED_BRANCH }, 1],
+    ['head_sha', { head_sha: 'old-sha' }, 1],
+  ] as Array<[string, Partial<Task>, number]>)('forgets the link of a task whose only own work is its %s', async (_anchorName, anchorColumns, expectedCancelCount) => {
     const { row, context } = await moveToTodo(makeTask({
       ...anchorColumns,
       pr_url: OLD_PR_URL,
@@ -420,7 +425,7 @@ describe('handleTaskMove to To Do: the PR link', () => {
       expect(after[column], column).toBeNull();
     }
     expect(prLinkChangedPushes(context)).toEqual([[IPC.TASK_PR_LINK_CHANGED, PROJECT_ID]]);
-    expect(mockCancelVerdictRepollsForTask).toHaveBeenCalledTimes(1);
+    expect(mockCancelVerdictRepollsForTask).toHaveBeenCalledTimes(expectedCancelCount);
     expect(mockCancelVerdictRepollsForTask).toHaveBeenCalledWith(TASK_ID);
   });
 
@@ -514,6 +519,150 @@ describe('handleTaskMove to To Do: the PR link', () => {
     expect(after.swimlane_id).toBe(TODO_LANE_ID);
     expect(prLinkChangedPushes(context)).toEqual([[IPC.TASK_PR_LINK_CHANGED, PROJECT_ID]]);
     expect(mockCancelVerdictRepollsForTask).toHaveBeenCalledWith(TASK_ID);
+  });
+
+  it('clears the link in the tick that commits the To Do lane, before the cleanup starts', async () => {
+    // The cleanup takes seconds on Windows (awaitExit, the reap, the worktree
+    // removal). A quit or crash inside it used to leave the old link on the To
+    // Do card, so the row the cleanup is handed has to be clear already,
+    // head_sha included.
+    const rowsAtCleanup: Task[] = [];
+    mockCleanupTaskResources.mockImplementation(async (
+      _context: unknown,
+      task: { id: string },
+      tasks: TasksFake,
+    ) => {
+      rowsAtCleanup.push(tasks.getById(task.id));
+    });
+    const { context } = await moveToTodo(makeTask({
+      worktree_path: '/mock/todo-pr-reset-project/.kangentic/worktrees/7',
+      branch_name: 'cut-the-release-7',
+      resolved_base_branch: 'main',
+      pushed_branch: OLD_PUSHED_BRANCH,
+      head_sha: 'old-sha',
+      pr_url: OLD_PR_URL,
+      pr_number: 574,
+      pr_state: 'merged',
+      pr_merge_readiness: 'ready',
+    }));
+
+    expect(rowsAtCleanup).toHaveLength(1);
+    for (const column of PR_IDENTITY_COLUMNS) {
+      expect(rowsAtCleanup[0][column], column).toBeNull();
+    }
+    // The card heard about it before the cleanup started, not after it.
+    const sendMock = context.mainWindow.webContents.send;
+    const pushIndex = sendMock.mock.calls.findIndex((call: unknown[]) => call[0] === IPC.TASK_PR_LINK_CHANGED);
+    expect(pushIndex).toBeGreaterThanOrEqual(0);
+    expect(sendMock.mock.invocationCallOrder[pushIndex]).toBeLessThan(mockCleanupTaskResources.mock.invocationCallOrder[0]);
+  });
+
+  it('clears the link before the commit-time board event, so a paired phone never sees the old chip', async () => {
+    const { row, context, run } = prepareMoveToTodo(makeTask({
+      worktree_path: '/mock/todo-pr-reset-project/.kangentic/worktrees/7',
+      branch_name: 'cut-the-release-7',
+      pr_url: OLD_PR_URL,
+      pr_number: 574,
+      pr_state: 'merged',
+    }));
+    const rowsAtBoardEvent: Task[] = [];
+    context.boardEvents.emitBoardChanged.mockImplementation(() => {
+      rowsAtBoardEvent.push({ ...row() });
+    });
+
+    await run();
+
+    expect(rowsAtBoardEvent.length).toBeGreaterThan(0);
+    expect(rowsAtBoardEvent[0].swimlane_id).toBe(TODO_LANE_ID);
+    expect(rowsAtBoardEvent[0].pr_url).toBeNull();
+    expect(rowsAtBoardEvent[0].pr_state).toBeNull();
+  });
+
+  it('still announces the move, runs the cleanup and finishes the clear when the commit-time pass throws', async () => {
+    // The commit-time pass sits in its own try/catch so a throw (a locked
+    // database, say) cannot skip the announce or the To Do branch behind it.
+    // The pass in the finally after the cleanup re-reads the row and does the
+    // whole clear, so the link still goes even though the first write never
+    // landed.
+    const { row, tasks, context, run } = prepareMoveToTodo(makeTask({
+      worktree_path: '/mock/todo-pr-reset-project/.kangentic/worktrees/7',
+      branch_name: 'cut-the-release-7',
+      resolved_base_branch: 'main',
+      pushed_branch: OLD_PUSHED_BRANCH,
+      head_sha: 'old-sha',
+      pr_url: OLD_PR_URL,
+      pr_number: 574,
+      pr_state: 'merged',
+      pr_merge_readiness: 'ready',
+    }));
+    const landingUpdate = tasks.update.getMockImplementation();
+    if (!landingUpdate) throw new Error('The stateful tasks fake has no update implementation to fall back to');
+    const writeFailure = new Error('database is locked');
+    let cleanupCallsWhenWriteThrew = -1;
+    tasks.update.mockImplementation((patch: Partial<Task>) => {
+      if (cleanupCallsWhenWriteThrew === -1 && 'pr_number' in patch) {
+        cleanupCallsWhenWriteThrew = mockCleanupTaskResources.mock.calls.length;
+        throw writeFailure;
+      }
+      return landingUpdate(patch);
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await expect(run()).resolves.toBeUndefined();
+
+      // The premise: the write that threw was the commit-time one, before the cleanup started.
+      expect(cleanupCallsWhenWriteThrew).toBe(0);
+      const forgetFailureLogs = consoleErrorSpy.mock.calls.filter(
+        (call: unknown[]) => typeof call[0] === 'string' && call[0].includes('Forgetting the PR link failed'),
+      );
+      expect(forgetFailureLogs).toEqual([[expect.stringContaining('Forgetting the PR link failed for task'), writeFailure]]);
+
+      // The announce and the To Do branch both still ran, in that order.
+      expect(context.boardEvents.emitBoardChanged).toHaveBeenCalled();
+      expect(mockCleanupTaskResources).toHaveBeenCalledTimes(1);
+      expect(context.boardEvents.emitBoardChanged.mock.invocationCallOrder[0])
+        .toBeLessThan(mockCleanupTaskResources.mock.invocationCallOrder[0]);
+
+      // The retry in the finally cleared everything the failed pass left.
+      const after = row();
+      for (const column of PR_IDENTITY_COLUMNS) {
+        expect(after[column], column).toBeNull();
+      }
+      expect(after.swimlane_id).toBe(TODO_LANE_ID);
+      const prClearingWrites = tasks.update.mock.calls.filter(([patch]: [Partial<Task>]) => 'pr_number' in patch);
+      expect(prClearingWrites).toHaveLength(2);
+      // The retry still held a link to forget, so the card hears about it.
+      expect(prLinkChangedPushes(context)).toEqual([[IPC.TASK_PR_LINK_CHANGED, PROJECT_ID]]);
+      expect(mockCancelVerdictRepollsForTask).toHaveBeenCalledWith(TASK_ID);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('leaves the link alone when a task is only reordered within To Do', async () => {
+    // A row already in To Do with its own work and a link is one a move made
+    // before the clear existed. A reorder is not a reset, so it keeps the link.
+    const { row, tasks, context } = await moveToTodo(makeTask({
+      swimlane_id: TODO_LANE_ID,
+      branch_name: 'cut-the-release-7',
+      pushed_branch: OLD_PUSHED_BRANCH,
+      head_sha: 'old-sha',
+      pr_url: OLD_PR_URL,
+      pr_number: 574,
+      pr_state: 'merged',
+    }));
+
+    const after = row();
+    expect(after.pr_url).toBe(OLD_PR_URL);
+    expect(after.pr_number).toBe(574);
+    expect(after.pushed_branch).toBe(OLD_PUSHED_BRANCH);
+    expect(after.head_sha).toBe('old-sha');
+    const prClearingWrites = tasks.update.mock.calls.filter(([patch]: [Partial<Task>]) => 'pr_number' in patch);
+    expect(prClearingWrites).toEqual([]);
+    expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+    expect(prLinkChangedPushes(context)).toEqual([]);
+    expect(mockCancelVerdictRepollsForTask).not.toHaveBeenCalled();
   });
 
   it('tells the card with the project the move named, not the ambient current project', async () => {

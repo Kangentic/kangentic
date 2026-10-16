@@ -4,12 +4,14 @@ import { execFileAsync } from '../utility-process/off-main-exec';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
+import type { TaskMoveRepository } from '../db/repositories/task-move-repository';
 import { SessionManager } from '../pty/session-manager';
 import { candidateWorktreePathsFor, legacyAutoBranchNameFor } from '../git/task-worktree-folder';
 import { removeNodeModulesPath } from '../git/node-modules-link';
 import { removeWithRetry } from '../git/rm-with-retry';
 import { WorktreeManager, GitQueuePriority } from '../git/worktree-manager';
 import { readLocalBranchSha } from '../git/worktree-head';
+import { holdsPRIdentity } from '../pr/pr-identity';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import type { AutomationRunRepository } from '../db/repositories/automation-run-repository';
 import type { LeftoverProcessEntry } from '../pty/process-tag/tagged-reap';
@@ -49,6 +51,7 @@ const PROCESS_STARTED_AT = new Date().toISOString();
 export async function cleanupStaleResources(
   projectPath: string,
   taskRepo: TaskRepository,
+  taskMoveRepo: Pick<TaskMoveRepository, 'currentVisit'>,
   swimlaneRepo: SwimlaneRepository,
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
@@ -58,9 +61,9 @@ export async function cleanupStaleResources(
   // ignore it. The production path calls cleanupStaleResourcesAsync instead.
   leftovers: LeftoverSweepOptions = { stoppingEnabled: () => false, onReport: () => {} },
 ): Promise<void> {
-  await pruneOrphanedWorktreeTasks(projectPath, taskRepo, sessionRepo, sessionManager);
+  await pruneOrphanedWorktreeTasks(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
   await cleanupStaleResourcesAsync(
-    projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager, automationRunRepo, onRunsInterrupted, leftovers,
+    projectPath, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, sessionManager, automationRunRepo, onRunsInterrupted, leftovers,
   );
 }
 
@@ -74,6 +77,12 @@ export async function cleanupStaleResources(
 export async function cleanupStaleResourcesAsync(
   projectPath: string,
   taskRepo: TaskRepository,
+  /**
+   * How each To Do task arrived, so the To Do sweep leaves alone the checkout
+   * of one restored from Done. Required for the reason `automationRunRepo` is:
+   * a caller that dropped it would quietly delete those branches again.
+   */
+  taskMoveRepo: Pick<TaskMoveRepository, 'currentVisit'>,
   swimlaneRepo: SwimlaneRepository,
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
@@ -91,7 +100,7 @@ export async function cleanupStaleResourcesAsync(
   // First: a leftover process holding a worktree as its cwd is what makes the
   // removals in the next two passes fail on Windows.
   await sweepTerminalTaskLeftovers(projectPath, taskRepo, swimlaneRepo, sessionManager, leftovers);
-  await cleanBacklogTaskResources(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
+  await cleanBacklogTaskResources(projectPath, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, sessionManager);
   await retryFailedDoneCleanups(projectPath, taskRepo, swimlaneRepo);
   await pruneOrphanedDirectories(projectPath, taskRepo, sessionRepo, sessionManager);
   const interrupted = sweepAutomationRuns(automationRunRepo);
@@ -243,6 +252,14 @@ function pathExists(targetPath: string): Promise<boolean> {
  *
  * Never prunes tasks without a worktree_path or tasks with an active PTY.
  *
+ * Never prunes a task in To Do either. A To Do move removes the task's
+ * worktree and only then clears `worktree_path`, so a quit between the two
+ * leaves this exact row: a To Do task pointing at a directory that is gone.
+ * Deleting the task for it would lose the card the user just reset. The To Do
+ * sweep ({@link cleanupStaleResourcesAsync}) clears the stale fields instead.
+ * Done needs no such guard, since a Done move archives the task before it
+ * removes anything and `list()` leaves archived tasks out.
+ *
  * Async, with an ordering contract: startup callers MUST `await` this before
  * `resumeSuspendedSessions` so recovery reads a clean DB. The slow passes 2-3
  * ({@link cleanupStaleResourcesAsync}) may then be fired without awaiting.
@@ -253,14 +270,16 @@ function pathExists(targetPath: string): Promise<boolean> {
 export async function pruneOrphanedWorktreeTasks(
   projectPath: string,
   taskRepo: TaskRepository,
+  swimlaneRepo: SwimlaneRepository,
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
 ): Promise<number> {
   const worktreesDir = path.join(projectPath, '.kangentic', 'worktrees');
   if (!(await pathExists(worktreesDir))) return 0;
 
+  const todoLaneIds = new Set(swimlaneRepo.list().filter((lane) => lane.role === 'todo').map((lane) => lane.id));
   const candidates = taskRepo.list().filter(
-    (task): task is typeof task & { worktree_path: string } => Boolean(task.worktree_path),
+    (task): task is typeof task & { worktree_path: string } => Boolean(task.worktree_path) && !todoLaneIds.has(task.swimlane_id),
   );
 
   const missing: typeof candidates = [];
@@ -294,6 +313,10 @@ export async function pruneOrphanedWorktreeTasks(
     // registered a session nor created the directory yet remains a residual
     // (much narrower) race.
     if (fs.existsSync(task.worktree_path)) continue;
+    // Re-read the lane after the async gap as well: a To Do move that landed
+    // while the probes ran removes this very directory as part of its reset.
+    const current = taskRepo.getById(task.id);
+    if (!current || todoLaneIds.has(current.swimlane_id)) continue;
 
     console.log(`[RESOURCE_CLEANUP] Deleting orphaned task "${task.title}" (${task.id.slice(0, 8)}) - worktree missing`);
     sessionRepo.deleteByTaskId(task.id);
@@ -311,7 +334,8 @@ export async function pruneOrphanedWorktreeTasks(
 /**
  * Remove stale worktree directories, branches, and session records for tasks
  * in the Backlog column. Backlog is the "reset everything" column - tasks
- * there should have zero resources.
+ * there should have zero resources. The exception is a task restored from
+ * Done, which keeps its checkout (see the loop).
  *
  * Checks BOTH DB fields and disk state: the core failure mode is that DB
  * fields were cleared (by the revert to backlog) but stale directories or
@@ -323,6 +347,7 @@ export async function pruneOrphanedWorktreeTasks(
 async function cleanBacklogTaskResources(
   projectPath: string,
   taskRepo: TaskRepository,
+  taskMoveRepo: Pick<TaskMoveRepository, 'currentVisit'>,
   swimlaneRepo: SwimlaneRepository,
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
@@ -336,63 +361,109 @@ async function cleanBacklogTaskResources(
   // Collect branches to delete after a single `git worktree prune`
   const branchesToDelete: string[] = [];
 
-  for (const task of backlogTasks) {
-    const shortId = task.id.slice(0, 8);
-    // A Backlog reset may already have cleared worktree_path, so probe every
-    // directory this task could own - the legacy title-derived name, its pinned
-    // folder, and the numeric name a fresh creation would choose.
-    const candidateWorktreePaths = candidateWorktreePathsFor(task, projectPath);
-    // Branches stay title-derived even though folders are numeric. Deriving this
-    // from the folder name (as it used to) would silently stop cleaning stale
-    // branches, inside a best-effort try/catch where nothing would report it.
-    const expectedBranch = legacyAutoBranchNameFor(task);
+  for (const listedTask of backlogTasks) {
+    // Each task is cleaned under its lifecycle lock, from the row as it is
+    // now, as `retryFailedDoneCleanups` does. The list was read before this
+    // loop's awaits, and this pass runs unawaited at project open, so the user
+    // can drag a listed task out to a spawning column while it runs. Cleaning
+    // from the old row would then remove the new worktree, delete the new
+    // session's records and null its `session_id`. Under the lock, a move of
+    // the same task has either finished, and the task is no longer in To Do,
+    // or waits until this task is done.
+    const outcome = await withTaskLock(listedTask.id, async (): Promise<'cleaned' | 'skipped'> => {
+      const task = taskRepo.getById(listedTask.id);
+      if (!task || task.swimlane_id !== todoLane.id) return 'skipped';
+      const shortId = task.id.slice(0, 8);
 
-    const hasStaleDbFields = task.worktree_path || task.branch_name || task.session_id;
-    const hasStaleDirectory = candidateWorktreePaths.some((candidate) => fs.existsSync(candidate));
-    const hasStaleBranch = task.branch_name || await branchExists(expectedBranch, projectPath);
+      // A task restored into To Do from Done keeps its worktree and branch on
+      // purpose. The restore resets only the session (`resetSessionForTodoRestore`
+      // in task-archive.ts) so it never force-deletes committed work without the
+      // warning a To Do drag shows, and the next run continues that branch. This
+      // sweep used to delete both on the next launch anyway. `task_moves` says how
+      // the task arrived: an `unarchive` row opened this visit. A task moved out
+      // and back in arrives by a move, which is a reset, and is cleaned below.
+      // Only the session half of a restore cut short is finished here.
+      if (taskMoveRepo.currentVisit(task.id, todoLane.id)?.origin === 'unarchive') {
+        if (!task.session_id) return 'skipped';
+        try {
+          sessionManager.remove(task.session_id);
+        } catch { /* may already be dead */ }
+        sessionRepo.deleteByTaskId(task.id);
+        taskRepo.update({ id: task.id, session_id: null });
+        console.log(`[RESOURCE_CLEANUP] Cleared the session of task "${task.title}" (${shortId}), restored to To Do with its worktree and branch kept`);
+        return 'cleaned';
+      }
+      // A Backlog reset may already have cleared worktree_path, so probe every
+      // directory this task could own - the legacy title-derived name, its pinned
+      // folder, and the numeric name a fresh creation would choose.
+      const candidateWorktreePaths = candidateWorktreePathsFor(task, projectPath);
+      // Branches stay title-derived even though folders are numeric. Deriving this
+      // from the folder name (as it used to) would silently stop cleaning stale
+      // branches, inside a best-effort try/catch where nothing would report it.
+      const expectedBranch = legacyAutoBranchNameFor(task);
 
-    if (!hasStaleDbFields && !hasStaleDirectory && !hasStaleBranch) continue;
+      const hasStaleDbFields = task.worktree_path || task.branch_name || task.session_id;
+      const hasStaleDirectory = candidateWorktreePaths.some((candidate) => fs.existsSync(candidate));
+      const hasStaleBranch = task.branch_name || await branchExists(expectedBranch, projectPath);
 
-    console.log(`[RESOURCE_CLEANUP] Cleaning stale resources for task "${task.title}" (${shortId})`);
+      if (!hasStaleDbFields && !hasStaleDirectory && !hasStaleBranch) return 'skipped';
 
-    // Kill PTY session if alive
-    if (task.session_id) {
-      try {
-        sessionManager.remove(task.session_id);
-        console.log(`[RESOURCE_CLEANUP] Removed PTY session ${task.session_id}`);
-      } catch { /* may already be dead */ }
-    }
+      console.log(`[RESOURCE_CLEANUP] Cleaning stale resources for task "${task.title}" (${shortId})`);
 
-    // Delete session DB records
-    sessionRepo.deleteByTaskId(task.id);
+      // Kill PTY session if alive
+      if (task.session_id) {
+        try {
+          sessionManager.remove(task.session_id);
+          console.log(`[RESOURCE_CLEANUP] Removed PTY session ${task.session_id}`);
+        } catch { /* may already be dead */ }
+      }
 
-    // Remove worktree directories
-    for (const worktreePath of candidateWorktreePaths) {
-      if (!fs.existsSync(worktreePath)) continue;
-      await removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
-      await removeWorktreeDirectory(worktreePath, projectPath);
-    }
+      // Delete session DB records
+      sessionRepo.deleteByTaskId(task.id);
 
-    // Collect branches to delete
-    if (task.branch_name) branchesToDelete.push(task.branch_name);
-    if (expectedBranch !== task.branch_name) branchesToDelete.push(expectedBranch);
+      // Remove worktree directories
+      for (const worktreePath of candidateWorktreePaths) {
+        if (!fs.existsSync(worktreePath)) continue;
+        await removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
+        await removeWorktreeDirectory(worktreePath, projectPath);
+      }
 
-    // Clear DB fields. The directory is already gone, so the tip is captured
-    // from the local branch ref (still present: branches are deleted after this
-    // loop) into `head_sha`, the anchor that outlives the checkout.
-    // `pushed_branch` is kept for the same reason, like `pr_number`.
-    if (hasStaleDbFields) {
-      const capturedSha = task.branch_name ? await readLocalBranchSha(projectPath, task.branch_name) : null;
-      taskRepo.update({
-        id: task.id,
-        worktree_path: null,
-        branch_name: null,
-        resolved_base_branch: null,
-        session_id: null,
-        ...(capturedSha ? { head_sha: capturedSha } : {}),
-      });
-    }
-    cleaned++;
+      // Collect branches to delete. They go after the loop, outside the lock.
+      // A run that recreates the task's worktree first holds its branch checked
+      // out, and git refuses to delete a branch a worktree has checked out.
+      if (task.branch_name) branchesToDelete.push(task.branch_name);
+      if (expectedBranch !== task.branch_name) branchesToDelete.push(expectedBranch);
+
+      // Clear DB fields. The directory is already gone, so the tip is captured
+      // from the local branch ref (still present: branches are deleted after this
+      // loop) into `head_sha`, the anchor that outlives the checkout. The PR
+      // columns and `pushed_branch` are left as they are.
+      //
+      // The tip is captured only for a row that still holds a PR identity: one of
+      // the `PR_IDENTITY_COLUMNS` that `forgetPRLinkOnTodoReset` nulls when a To
+      // Do move commits.
+      // A row with none of them is a task whose PR the move forgot (or one that
+      // never had one), and its leftover branch is the old work's: from a
+      // `head_sha` read here, Tier 3 links the old PR on the first resolve with
+      // no worktree, such as a move to a column that does not spawn. The gate
+      // only decides whether to capture, so a wrong guess costs an anchor and
+      // never clears a link. A task restored from Done never gets this far.
+      if (hasStaleDbFields) {
+        const capturedSha = task.branch_name && holdsPRIdentity(task)
+          ? await readLocalBranchSha(projectPath, task.branch_name)
+          : null;
+        taskRepo.update({
+          id: task.id,
+          worktree_path: null,
+          branch_name: null,
+          resolved_base_branch: null,
+          session_id: null,
+          ...(capturedSha ? { head_sha: capturedSha } : {}),
+        });
+      }
+      return 'cleaned';
+    });
+    if (outcome === 'cleaned') cleaned++;
   }
 
   // Single `git worktree prune` after all directories are removed,
