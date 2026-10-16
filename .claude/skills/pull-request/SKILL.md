@@ -415,7 +415,8 @@ half-finished rebase. Report concrete, learned recommendations so a human can fi
 
 The Testing column's "On to Merge" automation (`kangentic.json`) judges the last line of your final
 message each time a turn ends, and moves the task to Merge when it reads `PR: ready to merge`. So the
-line is a contract:
+line is a contract, and this section and that row change together
+(`tests/unit/board-turn-end-contracts.test.ts` fails when they drift):
 
 - `PR: ready to merge` comes only from Step 8: every check green and the Step 6b flake scan found no
   test that passed on retry.
@@ -425,8 +426,8 @@ line is a contract:
   Step 3 rebase-conflict question, and a push the lease rejects. Main repo mode, the `/merge-back`
   fallback, prints none either. It opens no PR, so Merge would have nothing to merge.
 
-The `PR:` prefix is this column's own. Code Review ends on `Verdict: Ready`, and a separate token
-keeps each column's Text match readable on its own.
+The `PR:` prefix marks a pull request outcome, shared with Merge's `PR: merged`. Code Review ends
+on `Verdict: Ready`, and a separate token keeps each column's Text match readable on its own.
 
 ## Rules
 

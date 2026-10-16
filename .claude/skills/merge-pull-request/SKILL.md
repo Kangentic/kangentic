@@ -16,6 +16,10 @@ bypass is the normal Merge path. It NEVER bypasses the CI checks - those are con
 first; the `--admin` only waives the missing review. (For a deliberate direct quick-push that skips
 the whole PR gate, use `/merge-back` instead.)
 
+A run that merged and finished ends on the line `PR: merged`, and the Merge column's "Finish"
+turn-end automation (`kangentic.json`) reads that line and moves the task to Done. See "Outcome
+line" below.
+
 **This skill merges.** By the time a task reaches Merge the decision to ship has been made, and
 this skill executes it. Red or pending CI is the only thing that may stop a run, and even then only
 until the checks resolve. Anything else it finds - a stale doc, a bad comment, a lint nit - it
@@ -53,11 +57,21 @@ to the head branch only when there is no stored number.
    - Call `kangentic_get_current_task` (it reads the worktree's task) and take its `pr_number`. If
      present, that is `<pr>` (the reliable, branch-independent path). Also record the returned
      task's ID as `<taskId>` - it is reused in Step 3 to force an immediate board refresh after the
-     merge. If no task is found, `<taskId>` stays unset and that refresh is skipped.
+     merge. If no task is found, `<taskId>` stays unset and that refresh is skipped. Note the task's
+     column too, the name in brackets after its title. Step 5 reads it.
    - If absent, fall back to the head branch: `gh pr list --head <branch> --state open --json number`
-     (covers older PRs where the local branch IS the head); `<pr>` is the first match's number.
+     (covers older PRs where the local branch IS the head); `<pr>` is the first match's number. When
+     that finds none, run `gh pr list --head <branch> --state merged --json number` once. It finds a
+     PR an earlier run already merged, which item 3 handles.
 3. Run `gh pr view <pr> --json number,url,state,mergeable,mergeStateStatus,statusCheckRollup,headRefName`.
    Record `<prHead>` = `headRefName` (the PR's REMOTE head branch - the push and merge target).
+
+   **If `state` already reads `MERGED`, an earlier turn merged it** (one that stopped in the realign
+   or in Step 4, or a re-run). Do not rebase, push or merge again: Step 2's push to `<prHead>` would
+   recreate the head branch that `--delete-branch` removed. Skip to "Refresh the board's PR status"
+   in Step 3 and continue from there, with the `<mergeMethod>` the earlier turn recorded. When no
+   turn in this conversation recorded one, use the rebase realign: it is this repo's default merge,
+   and it aborts cleanly on a conflict.
 4. If no PR resolves either way, stop and report that the Testing column should have created one (run
    `/pull-request` from the Testing column first). Do not create a PR here.
 
@@ -150,7 +164,14 @@ Run: `gh pr merge <pr> --admin --rebase --delete-branch`
 - `--rebase`: lands the individual commits on the source branch (no merge commit).
 - `--delete-branch`: deletes the remote PR head branch (`<prHead>`). The local `<branch>` has a
   different name (the slug-hex), so gh's local-branch delete is a no-op and the worktree branch
-  stays for the realign below.
+  stays for the realign below. For a local branch that IS the PR head (an older PR, or a release
+  branch), gh also tries to check out the base branch locally. That runs AFTER the merge and the
+  remote delete, and it fails with `'main' is already used by worktree`.
+
+**A non-zero exit is not proof the merge failed.** So on any `gh pr merge` error, read the state
+before deciding: `gh pr view <pr> --json state`. If it reads `MERGED`, the merge landed: carry on to
+the board refresh and the realign below with the merge method you attempted. If it does not, the
+error is real, and the two paragraphs below say what to do.
 
 **Merge-method fallback - if `--rebase` fails with "can't be rebased":** the PR history contains a
 merge commit (typically from a mid-task `git merge origin/<sourceBranch>` that integrated the base
@@ -188,11 +209,13 @@ positive. Realign the worktree branch onto the merged base, by `<mergeMethod>`:
 
 1. Confirm the worktree is clean: `git status --porcelain` (empty right after the merge). If it is
    NOT empty, skip the realign and report - never discard uncommitted work.
-2. `git fetch origin <sourceBranch>` to refresh the merged base.
+2. `git fetch origin <sourceBranch>` to refresh the merged base. If
+   `git rev-list --count origin/<sourceBranch>..HEAD` now reads 0, an earlier turn already realigned
+   the branch: skip to Step 4.
 3. Realign by merge method:
    - **rebase merge:** `git rebase origin/<sourceBranch>`. Git drops the now-merged commits (matched
      by patch-id) and replays only any genuinely-unmerged local commits, leaving the branch at the
-     merged HEAD (plus any real leftover work, which SHOULD still warn on move-to-Done).
+     merged HEAD (plus any real leftover work, which item 5 reports).
    - **squash merge:** the local commits do NOT patch-match the single squash commit, so a rebase
      would not cleanly drop them. Since step 1 confirmed the worktree is clean and every change is
      now in the squash on `<sourceBranch>`, reset the branch to the merged base instead:
@@ -200,6 +223,11 @@ positive. Realign the worktree branch onto the merged base, by `<mergeMethod>`:
      and the content is fully merged; never reset if step 1 found uncommitted work.
 4. On a rebase conflict (rare - only a genuinely-unmerged local commit can clash), abort cleanly:
    `git rebase --abort`, then report. Never leave a half-finished rebase in the worktree.
+5. Confirm nothing is left only on the local branch: `git rev-list --count
+   origin/<sourceBranch>..HEAD` must read 0. If it does not, list the leftover commits with
+   `git log --oneline origin/<sourceBranch>..HEAD` and report them. A move to Done keeps the branch
+   but archives the task, and an automated move shows none of the warnings a drag does, so this
+   work would sit in Done with nobody told.
 
 ## Step 4 - Pull back into the local main checkout
 
@@ -207,7 +235,7 @@ The project root is the dogfooding checkout (`npm start` serves the main process
 it fast-forwarded to the freshly merged `main`. This step is salvaged from `/merge-back` and handles
 divergence loudly rather than letting it compound.
 
-1. Fast-forward it: `git -C <projectRoot> pull --ff-only`. If this succeeds, you are done.
+1. Fast-forward it: `git -C <projectRoot> pull --ff-only`. If this succeeds, go to Step 5.
 2. **If it fails, do NOT just log a soft warning - that is how divergence compounds.** A
    fast-forward is impossible the moment the local source branch has even one commit the remote
    lacks. Diagnose and surface it:
@@ -229,17 +257,50 @@ is not "ignore and move on": an un-surfaced local commit will keep breaking this
 **Prevention:** the local `main` checkout should only ever fast-forward. Do not commit directly to
 it - use a worktree or feature branch.
 
+A stop in this step prints no outcome line (see "Outcome line" below). When a later turn finishes
+the reconciliation and `git -C <projectRoot> status -sb` no longer reads `behind`, end that turn
+with the Step 5 report and its outcome line.
+
 ## Step 5 - Report
 
 Summarize:
 - PR URL (with link) and the branch that was merged.
 - The source branch that received the changes and the number of commits landed.
 - Branch cleanup status: the remote PR head (`<prHead>`) deleted by `--delete-branch`; the local
-  worktree branch (`<branch>`, a different name) realigned to the merged base and removed later by
-  move-to-Done.
+  worktree branch (`<branch>`, a different name) realigned to the merged base. The move to Done
+  later removes the worktree and keeps that branch.
 - Local `main` checkout status (fast-forwarded for HMR, or the divergence you surfaced).
-- **Reminder:** move the task to Done on the board to trigger `cleanup_worktree` and remove the local
-  worktree.
+- Only for a run outside the Merge column, a reminder to move the task to Done, which removes the
+  local worktree. Step 0 noted the task's column. A column other than Merge, or no task at all, is
+  outside it. In the Merge column, leave the reminder out: the line below moves the task.
+- Then, only when "Outcome line" below allows it, the last line of the message, alone:
+  `PR: merged`. On the board that moves the task to Done.
+
+## Outcome line
+
+The Merge column's "Finish" automation (`kangentic.json`) is a Text match: each time a turn ends
+here, it reads the last line of your final message that still has a word in it, ignoring case,
+punctuation and markdown, and moves the task to Done when that line reads `PR: merged`. Done
+removes the worktree, so the line is a contract. This section and that row change together
+(`tests/unit/board-turn-end-contracts.test.ts` fails when they drift):
+
+- `PR: merged` comes only from Step 5, and only when all three hold:
+  - **The PR is merged.** `gh pr view <pr> --json state` reads `MERGED`. Read it; never infer it
+    from `gh pr merge`'s exit code (Step 3 says why).
+  - **The realign finished clean.** `git status --porcelain` is empty and
+    `git rev-list --count origin/<sourceBranch>..HEAD` reads 0. A realign skipped for uncommitted
+    work leaves work that Done's worktree removal destroys. One that aborted on a conflict, or that
+    replayed a leftover commit, would archive commits that never landed with nobody told.
+  - **Step 4 fast-forwarded the main checkout.** When Step 4 stops to report, or offers to
+    reconcile the ahead case, print no line. The row checks again at every turn end until it runs,
+    so the turn that finishes the reconciliation ends on `PR: merged` instead.
+- Every other stop prints no outcome line, and the card waits in Merge for a person: the pre-flight
+  stops (main repo mode, a detached HEAD, a failed `gh auth status`), no PR resolved in Step 0, a
+  Step 2 rebase that aborted, any check in the rollup that is red, pending or missing, a merge
+  refused for anything but the missing review, and the realign and Step 4 stops above.
+
+The `PR:` prefix marks a pull request outcome, shared with Testing's `PR: ready to merge`. Code
+Review ends on `Verdict: Ready`.
 
 ## Rules
 

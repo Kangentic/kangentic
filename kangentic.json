@@ -134,7 +134,7 @@
           {
             "name": "Finish",
             "type": "move_to_column",
-            "condition": "The pull request is merged.",
+            "finalLine": "PR: merged",
             "maxRuns": 1,
             "targetColumn": "Done"
           }
