@@ -47,8 +47,13 @@ registry, one folder per type, and a manifest the renderer reads.
 - **`describe(config)` must not throw on any input**, including `{}` and a config full of
   unsubstituted `{{variables}}`. A half-built draft renders through it: the picker adds an
   automation before it has a name or a value.
-- **`canColumnRun` is the only answer to "will this run here"**, shared by the engine and the
-  renderer, so the board and the engine can never disagree about what is about to happen.
+- **`canColumnRun` is the only answer to "will this row run in this column"**, and
+  **`canTaskRunAutomations` the only answer to "will any row run for this task"** (a task whose
+  automations the user disabled). Both live in `automation-manifest.ts` and are shared by the
+  engine and the renderer, so the board and the engine can never disagree about what is about to
+  happen. The task gate sits in `executeTransition`, the turn-end runner, and the two places a move
+  types a column message outside the runner (warm injection, the handoff); never in
+  `runAutomations`, which Run again shares and which must stay ungated.
 
 ## Enforcement (self-maintaining)
 

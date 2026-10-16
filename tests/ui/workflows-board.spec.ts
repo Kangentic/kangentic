@@ -346,7 +346,7 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  test('the menu of a running workflow card leads with the workflow and keeps its locked rows, disabled with the reason', async () => {
+  test('the menu of a running workflow card offers its workflow and keeps its locked rows, disabled with the reason', async () => {
     const { browser, page } = await launch();
     try {
       await openMenu(page, 't414');

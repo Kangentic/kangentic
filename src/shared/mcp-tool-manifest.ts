@@ -67,7 +67,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_find_task', label: 'Find Task', blurb: 'look up a task by ID, branch, title, or PR number, with its summary, linked commits, and changed files', category: 'tasks' },
   { name: 'kangentic_get_current_task', label: 'Current Task', blurb: 'resolve the task for the current directory or branch, with its branch, PR, and what the Knowledge Graph knows about it', category: 'tasks' },
   { name: 'kangentic_get_task_stats', label: 'Task Stats', blurb: 'token usage, cost, duration, lines changed, and the subagent-type breakdown per task', category: 'tasks' },
-  { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description (full, in-place find/replace, or append), PR info, agent, model, effort, permission mode, run mode, priority, labels, base branch, worktree, and attachments', category: 'tasks' },
+  { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description (full, in-place find/replace, or append), PR info, agent, model, effort, permission mode, run mode, priority, labels, base branch, worktree, attachments, and whether column automations run for it', category: 'tasks' },
   { name: 'kangentic_move_task', label: 'Move Task', blurb: 'move a task between columns and place it at a slot, running the same lifecycle as a drag', category: 'tasks' },
   { name: 'kangentic_reorder_tasks', label: 'Reorder Tasks', blurb: 'set the top-to-bottom order of tasks within one column', category: 'tasks' },
   { name: 'kangentic_move_task_to_project', label: 'Move Task to Project', blurb: 'relocate a To Do task to another project\'s board', category: 'tasks' },

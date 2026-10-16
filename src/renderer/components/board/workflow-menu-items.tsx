@@ -4,8 +4,10 @@ import { workflowColor } from '../workflows/workflow-graph';
 import type { BoardWorkflow } from '../../utils/board-workflow';
 
 /**
- * The workflow item a task's menu leads with, in `TaskContextMenu`'s
- * `leading` slot, so a task has one menu wherever it is right-clicked. Open
+ * The workflow item that closes a workflow task's top menu group, in
+ * `TaskContextMenu`'s `navigationItem` slot, so a task has one menu wherever
+ * it is right-clicked. It holds the place an ordinary task's automations row
+ * and New workflow hold. Open
  * workflow takes the workflow's icon in its color, as the picker and the card
  * strip draw it. A card's links show by resting on it (`card-links-preview.ts`),
  * so the menu offers nothing for them.

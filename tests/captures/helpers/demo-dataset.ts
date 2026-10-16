@@ -1225,6 +1225,7 @@ export function buildDemoPreConfig(options: {
             worktree_folder: task.worktree_folder, branch_name: task.branch_name,
             pr_number: task.pr_number, pr_url: task.pr_url, pr_state: task.pr_state, pr_merge_readiness: task.pr_merge_readiness, base_branch: task.base_branch,
             use_worktree: task.worktree_folder ? 1 : null, labels: task.labels, priority: task.priority,
+            automations_disabled: false,
             attachment_count: task.attachment_count, archived_at: task.archivedDaysAgo ? daysAgo(task.archivedDaysAgo) : null,
             created_at: daysAgo(task.createdDaysAgo), updated_at: minutesAgo(task.updatedMinutesAgo),
           };

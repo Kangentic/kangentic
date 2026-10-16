@@ -14,7 +14,7 @@ import { TaskContextMenu } from '../board/TaskContextMenu';
 /**
  * A canvas card's right-click menu (#732 board 1d): the board's own
  * `TaskContextMenu`, so a task has one menu wherever it is right-clicked, with
- * Open on board in its `leading` slot (the Agent Monitor's item, icon and
+ * Open on board in its `navigationItem` slot (the Agent Monitor's item, icon and
  * words). Nothing for a card's links: the canvas draws every link.
  *
  * Rendered by the view, outside React Flow. A task on this board acts through
@@ -90,7 +90,7 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
       position={position}
       task={task}
       swimlanes={swimlanes}
-      leading={(
+      navigationItem={(
         <button
           type="button"
           onClick={() => { onOpenOnBoard(viewTask); onClose(); }}

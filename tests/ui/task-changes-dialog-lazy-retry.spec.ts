@@ -1,6 +1,6 @@
 /**
  * UI test for scoped, recoverable lazy loading of the Changes panel at the
- * STANDALONE TaskChangesDialog wiring site (opened via a task card's "Changes"
+ * STANDALONE TaskChangesDialog wiring site (opened via a task card's "Show changes"
  * context-menu entry), mirroring tests/ui/changes-panel-lazy-retry.spec.ts,
  * which covers the same PanelErrorBoundary wrapper at the TaskDetailBody
  * (task-detail dialog) site.
@@ -47,7 +47,7 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 const PROJECT_ID = 'proj-changes-dialog-lazy-retry';
 const TASK_ID = 'task-changes-dialog-lazy-retry';
 
-// A task with a worktree_path is required for the context menu's "Changes"
+// A task with a worktree_path is required for the context menu's "Show changes"
 // entry to render at all (see tests/ui/task-changes-dialog.spec.ts, which
 // pins the entry HIDDEN for a task with no worktree). No session is needed:
 // TaskChangesDialog does not read session state.

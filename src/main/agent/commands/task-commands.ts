@@ -26,6 +26,7 @@ import { isGitRepo } from '../../git/git-checks';
 import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { Task, TaskUpdateInput, PermissionMode, TaskRunMode } from '../../../shared/types';
+import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
 
@@ -199,6 +200,18 @@ async function describeBranchConflict(
     + `task's work is not actually on that branch.`;
 }
 
+const AUTOMATIONS_DISABLED_PARAM_ERROR = 'automationsDisabled must be true or false.';
+
+/**
+ * The automations switch parameter, or null when omitted. Checked here rather
+ * than trusted to zod: the mobile bridge hands raw wire params straight to the
+ * handler, and a truthy string must not disable a task's automations.
+ */
+function readAutomationsDisabledParam(value: unknown): boolean | null | 'invalid' {
+  if (value === undefined || value === null) return null;
+  return typeof value === 'boolean' ? value : 'invalid';
+}
+
 export const handleCreateTask: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
@@ -223,6 +236,8 @@ export const handleCreateTask: CommandHandler = async (
   // the MCP tool layer forwards - a direct handler call passes neither.
   const prUrl = (params.prUrl as string | null | undefined) ?? null;
   const prNumber = (params.prNumber as number | null | undefined) ?? null;
+  const automationsDisabled = readAutomationsDisabledParam(params.automationsDisabled);
+  if (automationsDisabled === 'invalid') return { success: false, error: AUTOMATIONS_DISABLED_PARAM_ERROR };
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). Logs what `labels` actually reached the handler. If it is
@@ -325,6 +340,7 @@ export const handleCreateTask: CommandHandler = async (
     ...(autoCommand ? { auto_command: autoCommand } : {}),
     ...(profileId ? { profile_id: profileId } : {}),
     ...(runMode ? { run_mode: runMode } : {}),
+    ...(automationsDisabled === true ? { automations_disabled: true } : {}),
   });
 
   // A review task names the PR it is about up front, so the linker's pr_number
@@ -377,8 +393,15 @@ export const handleCreateTask: CommandHandler = async (
 
   return {
     success: true,
-    data: { taskId: createdTask.id, displayId: createdTask.display_id, title: createdTask.title, column: targetSwimlane.name },
-    message: `Created task "${createdTask.title}" in ${targetSwimlane.name} column (#${createdTask.display_id}, id: ${createdTask.id})`,
+    data: {
+      taskId: createdTask.id,
+      displayId: createdTask.display_id,
+      title: createdTask.title,
+      column: targetSwimlane.name,
+      automationsDisabled: createdTask.automations_disabled,
+    },
+    message: `Created task "${createdTask.title}" in ${targetSwimlane.name} column (#${createdTask.display_id}, id: ${createdTask.id})`
+      + (createdTask.automations_disabled ? '. Its column automations are disabled.' : ''),
   };
 };
 
@@ -411,6 +434,8 @@ export const handleUpdateTask: CommandHandler = (
   const newProfileSelector = params.profile as string | null | undefined;
   const newRunMode = params.runMode as TaskRunMode | undefined;
   const newAttachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
+  const newAutomationsDisabled = readAutomationsDisabledParam(params.automationsDisabled);
+  if (newAutomationsDisabled === 'invalid') return { success: false, error: AUTOMATIONS_DISABLED_PARAM_ERROR };
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). See the matching note in handleCreateTask.
@@ -521,6 +546,13 @@ export const handleUpdateTask: CommandHandler = (
   // "leave it alone". A pin or profile in this same write still implies a mode
   // via applyProfileExclusivity.
   if (newRunMode !== undefined) updates.run_mode = newRunMode;
+  // A workflow task has no switch; enabling is always allowed, since it is
+  // already the only state a workflow task can be in.
+  if (newAutomationsDisabled === true) {
+    const refusal = automationsSwitchRefusal(task);
+    if (refusal) return { success: false, error: `${refusal} The task was not updated.` };
+  }
+  if (newAutomationsDisabled !== null) updates.automations_disabled = newAutomationsDisabled;
 
   const hasScalarChange = Object.keys(updates).length > 1;
   let updated = hasScalarChange ? taskRepo.update(updates as unknown as TaskUpdateInput) : task;
@@ -603,6 +635,7 @@ export const handleUpdateTask: CommandHandler = (
   if (newPermissionMode !== undefined) changedFields.push('permissionMode');
   if (newProfileSelector !== undefined) changedFields.push('profile');
   if (newRunMode !== undefined) changedFields.push('runMode');
+  if (newAutomationsDisabled !== null) changedFields.push('automationsDisabled');
   if (attachmentsAdded > 0) changedFields.push('attachments');
 
   return {
@@ -633,6 +666,7 @@ export const handleUpdateTask: CommandHandler = (
       // this write can flip the mode without the caller naming it, so the
       // resulting mode has to be visible in the response.
       runMode: updated.run_mode,
+      automationsDisabled: updated.automations_disabled,
       ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };
@@ -1034,7 +1068,7 @@ export const handleReorderTasks: CommandHandler = (
 /**
  * Relocate a To Do task to a different project's board: creates an equivalent
  * task in the target project's DB (preserving title, description, labels,
- * priority, creation time, and attachments) then deletes the original from
+ * priority, creation time, attachments, and the automations switch) then deletes the original from
  * the source project's DB. Takes two `CommandContext`s (source and target)
  * because it operates on two separate per-project SQLite databases at once -
  * unlike every other command handler, which is dispatched through the
@@ -1104,6 +1138,9 @@ export function handleMoveTaskToProject(
     labels: task.labels,
     priority: task.priority,
     createdAt: task.created_at,
+    // A user setting, like the labels: a relocated task is still held. Only a
+    // To Do task moves, so this never carries a Done task's switch along.
+    automations_disabled: task.automations_disabled,
   });
 
   const sourceAttachmentRepo = new AttachmentRepository(sourceDb);

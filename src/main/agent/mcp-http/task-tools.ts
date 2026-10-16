@@ -56,6 +56,19 @@ const SESSION_SPAWN_STRATEGY_DESCRIPTION =
   + 'column) picks the conversation back up; "always_spawn_new" (the default once sessionTarget is "isolated") retires '
   + 'the previous one and starts fresh, so each entry is an independent pass. Pass it explicitly only to break that '
   + 'pairing, e.g. an isolated column that should accumulate one long side conversation.';
+/**
+ * The task-level automations switch, shared by create and update so the two
+ * cannot describe it differently. The main use is an agent holding its OWN
+ * task while it waits on something (CI, a decision), so the text says plainly
+ * that the switch restarts nothing.
+ */
+const AUTOMATIONS_DISABLED_DESCRIPTION =
+  'Disable (true) or enable (false) column automations for this task. While disabled, no On task enter, On agent '
+  + 'turn end or On task exit automation runs for it in any column, and moving it types no column message, so the '
+  + 'board stops advancing it; manual moves, the column\'s agent settings and Run again still work. Use it to hold a '
+  + 'task that is waiting on something. Setting it never restarts the session. Moving the task out of Done or adding '
+  + 'it to a workflow enables automations again. Refused for a task in a workflow (pause the workflow instead). '
+  + 'Board tasks only.';
 
 /**
  * Build the create_task routing-check refusal shown when the call
@@ -212,11 +225,12 @@ export function registerTaskTools(
         runMode: RUN_MODE_SCHEMA.optional().describe('How this task gets its agent settings. "column_settings" (the default) follows each column the task moves through. "agent_override" pins agent/model/effort/permission for the task\'s whole life; any field you leave unset is resolved dynamically until the task first spawns, which then locks all four. Pass "agent_override" on its own to pin whatever the task would resolve to today. Passing any of the four *Override fields implies "agent_override", so you only need this to choose override mode without pinning anything - and pairing a pin with "column_settings" is rejected as a contradiction. Mutually exclusive with `profile`.'),
         prUrl: z.string().url().optional().describe('Pull request URL this task is about (e.g. https://github.com/owner/repo/pull/123). Set this when filing a review task for an existing PR - it is what links the task to that PR. Writing the URL into `description` instead does NOT link it. Board tasks only - ignored for backlog.'),
         prNumber: z.number().int().positive().optional().describe('Pull request number this task is about. Pass alongside `prUrl`. Board tasks only - ignored for backlog.'),
+        automationsDisabled: z.boolean().optional().describe(AUTOMATIONS_DISABLED_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, runMode, prUrl, prNumber, project }) => withProject(resolver, project, async (ctx, resolved) => {
+    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, runMode, prUrl, prNumber, automationsDisabled, project }) => withProject(resolver, project, async (ctx, resolved) => {
       // Rejected rather than silently resolved: the repository enforces
       // exclusivity by clearing whichever side the write did not set, so
       // accepting both would quietly discard half of what the caller asked for.
@@ -318,6 +332,7 @@ export function registerTaskTools(
         runMode: runMode ?? null,
         prUrl: prUrl ?? null,
         prNumber: prNumber ?? null,
+        automationsDisabled: automationsDisabled ?? null,
       }, ctx, 'Failed to create task');
       // The create message ends with the new row's id - `(#N, id: <uuid>)` for a
       // board task, `(priority: <p>, id: <uuid>)` for a backlog item - and the
@@ -588,7 +603,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_task',
     {
-      description: 'Update an existing task. Supports title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, and attaching files. To move a task between columns, use kangentic_move_task instead. Setting model, effort, profile, or runMode on a task with a running session restarts that session onto the new settings unless it already runs at them, which ends its current turn (your own turn, if it is your task). Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
+      description: 'Update an existing task. Supports title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, disabling or enabling its column automations, and attaching files. To move a task between columns, use kangentic_move_task instead. Setting model, effort, profile, or runMode on a task with a running session restarts that session onto the new settings unless it already runs at them, which ends its current turn (your own turn, if it is your task). Setting automationsDisabled never restarts anything. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
@@ -614,17 +629,18 @@ export function registerTaskTools(
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),
         })).optional().describe('File attachments to ADD to the task. This is additive - existing attachments are kept, not replaced. Each entry needs `filePath` (absolute) and may override the display `filename`. Use kangentic_remove_task_attachment to remove one.'),
+        automationsDisabled: z.boolean().optional().describe(AUTOMATIONS_DISABLED_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, runMode, attachments, project }) => {
+    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, runMode, attachments, automationsDisabled, project }) => {
       if (
         title === undefined && description === undefined && descriptionEdits === undefined && appendDescription === undefined &&
         prUrl === undefined && prNumber === undefined &&
         agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined &&
         useWorktree === undefined && model === undefined && effort === undefined && permissionMode === undefined &&
-        profile === undefined && runMode === undefined && attachments === undefined
+        profile === undefined && runMode === undefined && attachments === undefined && automationsDisabled === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
@@ -697,6 +713,7 @@ export function registerTaskTools(
           profile: profile !== undefined ? (profile || null) : undefined,
           runMode: runMode ?? undefined,
           attachments: attachments ?? null,
+          automationsDisabled: automationsDisabled ?? null,
         }, ctx, 'Failed to update task');
         return withLabelsAbsentNotice(
           result,
@@ -761,7 +778,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_move_task_to_project',
     {
-      description: 'Relocate a task from the To Do column of one project\'s board to a different project\'s board. Only tasks in To Do can be moved (a task outside To Do may have a live session or worktree that cannot cross projects - move it to To Do first). Preserves title, description, labels, priority, creation time, and attachments; assigns a new task ID and display number in the target project. Lands in the target board\'s To Do column by default, or pass `column` to land in a different target column. `targetProject` is required - use kangentic_list_projects to find valid names. `project` optionally selects the source project (defaults to the active one) the same way it does on other tools.',
+      description: 'Relocate a task from the To Do column of one project\'s board to a different project\'s board. Only tasks in To Do can be moved (a task outside To Do may have a live session or worktree that cannot cross projects - move it to To Do first). Preserves title, description, labels, priority, creation time, attachments, and whether its column automations are disabled; assigns a new task ID and display number in the target project. Lands in the target board\'s To Do column by default, or pass `column` to land in a different target column. `targetProject` is required - use kangentic_list_projects to find valid names. `project` optionally selects the source project (defaults to the active one) the same way it does on other tools.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID) of the To Do task in the source project.'),
         targetProject: z.string().min(1, 'targetProject is required and must name a different project than the source.').describe('Destination project name (case-insensitive) or UUID. Must be a different project than the source.'),

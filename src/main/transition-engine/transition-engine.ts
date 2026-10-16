@@ -14,7 +14,8 @@ import type {
   ConversationExpiredNotice,
   NotificationInput,
 } from '../../shared/types';
-import { runAutomations, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
+import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import type { AutomationContext } from '../automations/shared/automation-adapter';
 import type { ConditionCheckCall, ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput } from '../automations/condition-check/condition-prompt';
@@ -252,7 +253,43 @@ export class TransitionEngine {
     const automations = options.onlyIds ? all.filter((row) => options.onlyIds!.has(row.id)) : all;
     if (automations.length === 0) return empty;
 
+    // The task's own switch, read fresh rather than from the caller's object:
+    // a turn end's object predates its paint wait and Condition check, and a
+    // move out of Done cleared the switch after the caller read the task.
+    const runnable = canTaskRunAutomations(this.taskRepo.getById(task.id) ?? task);
+    if (!runnable.ok) return this.recordTaskHeld(automations, task, column, runnable.reason, options.alreadyDelivered);
+
     return this.runAutomationGroup(automations, task, column, trigger, options);
+  }
+
+  /**
+   * Every row of a group skipped because the task's automations are disabled,
+   * one record each with the reason, so the run log says why the task did not
+   * move. Nothing runs and no agent starts here: a cold spawn's own fallback
+   * still starts the agent as the column's Start an agent setting says.
+   *
+   * A row the move already typed went out before the switch was thrown, so it
+   * is recorded as sent, the way the runner records it, not as skipped.
+   */
+  private recordTaskHeld(
+    automations: ColumnAutomation[],
+    task: Task,
+    column: Swimlane,
+    reason: string,
+    alreadyDelivered: ReadonlySet<string> | undefined,
+  ): AutomationRunSummary {
+    const summary: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
+    for (const automation of automations) {
+      const runId = randomUUID();
+      if (alreadyDelivered?.has(automation.id)) {
+        this.automationRunRepo?.recordDeliveredByCaller({ id: runId, automation, taskId: task.id }, SENT_WITH_THE_MOVE);
+        summary.outcomes.push({ runId, automationId: automation.id, name: automation.name, columnName: column.name, status: 'succeeded', detail: SENT_WITH_THE_MOVE });
+        continue;
+      }
+      this.automationRunRepo?.recordSkipped({ id: runId, automation, taskId: task.id }, reason);
+      summary.outcomes.push({ runId, automationId: automation.id, name: automation.name, columnName: column.name, status: 'skipped', detail: reason });
+    }
+    return summary;
   }
 
   /**

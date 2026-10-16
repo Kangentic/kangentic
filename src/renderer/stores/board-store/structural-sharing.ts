@@ -116,6 +116,9 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
     previous.profile_id !== next.profile_id ||
     previous.attachment_count !== next.attachment_count ||
     previous.run_mode !== next.run_mode ||
+    // The card's strip and its menu row read it, and the move out of Done
+    // clears it without bumping anything else the card shows.
+    previous.automations_disabled !== next.automations_disabled ||
     previous.auto_command_state !== next.auto_command_state ||
     previous.auto_command_text !== next.auto_command_text ||
     previous.auto_command_error !== next.auto_command_error ||

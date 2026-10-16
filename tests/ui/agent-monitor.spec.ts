@@ -1672,8 +1672,8 @@ test.describe('agent monitor', () => {
       await expect(menu).toBeVisible();
 
       // Full parity with the board's card menu: this IS TaskContextMenu, with
-      // "Open on board" added at the top. A thinner lookalike would drift the
-      // first time an item is added to the board's.
+      // "Open on board" in its navigation slot, which closes the top group. A
+      // thinner lookalike would drift the first time an item is added to the board's.
       await expect(page.locator('[data-testid="monitor-menu-open-on-board"]')).toBeVisible();
       await expect(page.locator('[data-testid="context-copy-task-id"]')).toBeVisible();
       await expect(page.locator('[data-testid="context-edit-task"]')).toBeVisible();

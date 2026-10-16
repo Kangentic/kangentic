@@ -53,7 +53,15 @@ vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })),
   default: vi.fn(() => ({})),
 }));
-vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
+// `getGlobalDb` is read by the dev-port ledger when a warm move resolves `{{port}}`
+// (`getDevPortForTask` -> `DevPortRepository.listForTask`, which calls
+// `.prepare(...).all(taskId)`). Left off the mock, vitest throws on the missing
+// export, the ledger degrades to no lease and prints that stack trace. An empty
+// table is the same answer the degraded read gave, so no assertion moves.
+vi.mock('../../src/main/db/database', () => ({
+  getProjectDb: vi.fn(() => ({})),
+  getGlobalDb: vi.fn(() => ({ prepare: vi.fn(() => ({ all: vi.fn(() => []) })) })),
+}));
 vi.mock('../../src/main/db/repositories/task-repository', () => ({ TaskRepository: class {} }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
@@ -150,7 +158,7 @@ vi.mock('../../src/main/transition-engine/turn-completion', () => ({
 function makeEngine() {
   return {
     executeTransition: vi.fn(async (
-      _task: Task,
+      task: Task,
       lane: Swimlane,
       trigger: 'enter' | 'exit',
       runOptions: {
@@ -160,6 +168,16 @@ function makeEngine() {
       },
     ) => {
       hoisted.engineRuns.push({ trigger, alreadyDelivered: runOptions.alreadyDelivered });
+      // Mirrors the real engine's gate (TransitionEngine.executeTransition, pinned
+      // in transition-engine-automations-disabled.test.ts): a task whose
+      // automations are disabled has every row recorded as skipped and nothing
+      // delivered. Without it the stub would type a disabled task's rows anyway,
+      // and the warm move's own part could not be told apart from the group's.
+      // Like the real gate it reads the task FRESH from the repository and falls
+      // back to the object it was handed, so a move that still holds a stale
+      // object is gated by the stored row here too.
+      const storedTask = mockGetProjectRepos().tasks.getById(task.id) ?? task;
+      if (storedTask.automations_disabled) return { outcomes: [], failures: [] };
       for (const row of hoisted.rows.get(`${lane.id}:${trigger}`) ?? []) {
         // Checked first, as the real runner does: a row named here is recorded
         // as sent and never reaches its Condition or Frequency checks.
@@ -233,7 +251,7 @@ function makeSwimlane(id: string): Swimlane {
   };
 }
 
-function makeTask(swimlaneId: string): Task {
+function makeTask(swimlaneId: string, overrides: Partial<Task> = {}): Task {
   return {
     id: TASK_ID,
     display_id: 1,
@@ -252,9 +270,11 @@ function makeTask(swimlaneId: string): Task {
     labels: [],
     priority: 0,
     attachment_count: 0,
+    automations_disabled: false,
     archived_at: null,
     created_at: '2025-01-01T00:00:00.000Z',
     updated_at: '2025-01-01T00:00:00.000Z',
+    ...overrides,
   };
 }
 
@@ -276,14 +296,31 @@ function listForColumn(laneId: string) {
   }));
 }
 
-function makeHarness(startLane: string) {
+/**
+ * `taskOverrides` shapes the task the move works with. `storedRowOverrides`, when
+ * given, shapes the STORED row every later read sees instead, which is how a
+ * case tells a fresh read from the object the move already holds: the move's own
+ * task is the first `tasks.getById` call (`reconcileTaskSessionRef`, ahead of
+ * every other read of the repository), and a read after it is a fresh one. Left
+ * out, both are the same, which is every case that does not care. The split is
+ * by call order, so a harness that sets it drives a single move.
+ */
+function makeHarness(
+  startLane: string,
+  taskOverrides: Partial<Task> = {},
+  storedRowOverrides: Partial<Task> = taskOverrides,
+) {
   // Stateful: the task stays live in whatever column the last move put it.
   let currentLane = startLane;
+  let getByIdCalls = 0;
   const taskRepo = {
-    getById: vi.fn(() => makeTask(currentLane)),
+    getById: vi.fn(() => {
+      getByIdCalls += 1;
+      return makeTask(currentLane, getByIdCalls === 1 ? taskOverrides : storedRowOverrides);
+    }),
     move: vi.fn((input: { targetSwimlaneId: string }) => { currentLane = input.targetSwimlaneId; }),
     update: vi.fn(),
-    list: vi.fn(() => [makeTask(currentLane)]),
+    list: vi.fn(() => [makeTask(currentLane, taskOverrides)]),
     archive: vi.fn(),
   };
   const lanes = new Map([LANE_A, LANE_B, LANE_C].map((id) => [id, makeSwimlane(id)]));
@@ -631,5 +668,138 @@ describe('On task enter, warm move: a first message with a Condition or a Freque
     expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
     // One burst, the injection's; the group skipped the row it carried.
     expect(scheduledBursts(context)).toEqual([['/code-review']]);
+  });
+});
+
+// A task with its automations disabled is sent no column message on a warm move
+// (task-move.ts, Priority 3): the enter group records the row as skipped with
+// the reason instead, so the message must not ride the injection burst or the
+// paste either. The task's OWN auto_command is the task's input rather than an
+// automation, and still goes out. The stub engine mirrors the real gate (see
+// makeEngine), so every "not sent" assertion below is about the warm move's own
+// part; each case has an enabled control over the same rows.
+describe('On task enter, warm move: a task with its automations disabled is sent no column message', () => {
+  const OWN_COMMAND = '/own-command';
+
+  it('does not bundle a one-line column message into the burst, and pre-delivers nothing', async () => {
+    hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: '/code-review', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A, { automations_disabled: true });
+
+    await move(context, LANE_B);
+    await settle();
+
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(enterRun()).toBeDefined();
+    expect(enterRun()?.alreadyDelivered).toBeUndefined();
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('bundles the same message into the burst for an enabled task (the control)', async () => {
+    hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: '/code-review', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A, { automations_disabled: false });
+
+    await move(context, LANE_B);
+    await settle();
+
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('/code-review');
+    expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
+    expect(scheduledBursts(context)).toEqual([['/code-review']]);
+  });
+
+  it('does not paste or wait for the turn to paste a multi-line column message', async () => {
+    hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: MULTI_LINE, mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A, { automations_disabled: true });
+
+    await move(context, LANE_B);
+    await settle();
+
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(hoisted.turnWaits).toHaveLength(0);
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  // A no-over-block case, not a gate case: the task's pin outranks the column on
+  // the burst, so the plan is the same with the switch on or off. What it pins is
+  // that the disabled check does not take the task's own input down with the
+  // column's message. The column row's absence comes from the group's gate, which
+  // the stub mirrors.
+  it('still sends the task\'s own auto_command, and not the column message beside it', async () => {
+    hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: '/code-review', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A, { automations_disabled: true, auto_command: OWN_COMMAND });
+
+    await move(context, LANE_B);
+    await settle();
+
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe(OWN_COMMAND);
+    // The burst carried the task's pin, not the column's row, so the group was
+    // not told to skip it. It is recorded as skipped instead of sent.
+    expect(enterRun()?.alreadyDelivered).toBeUndefined();
+    expect(scheduledBursts(context)).toEqual([[OWN_COMMAND]]);
+  });
+
+  it('sends the task\'s own auto_command and then the column\'s row for an enabled task (the control)', async () => {
+    hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: '/code-review', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A, { automations_disabled: false, auto_command: OWN_COMMAND });
+
+    await move(context, LANE_B);
+    await settle();
+
+    // The task's pin outranks the column on the burst, so it is the same plan as
+    // above; what the switch changes is that the group then delivers the row.
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe(OWN_COMMAND);
+    expect(scheduledBursts(context)).toEqual([[OWN_COMMAND], ['/code-review']]);
+  });
+
+  it('still sends the task\'s own auto_command into a column that has no message', async () => {
+    const { context } = makeHarness(LANE_A, { automations_disabled: true, auto_command: OWN_COMMAND });
+
+    await move(context, LANE_B);
+    await settle();
+
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe(OWN_COMMAND);
+    expect(scheduledBursts(context)).toEqual([[OWN_COMMAND]]);
+  });
+
+  // The warm move decides from a FRESH read of the stored row, not from the task
+  // object it was handed: the user can throw the switch between the move's first
+  // read and the injection (or a move out of Done can clear it), and the enter
+  // group's engine gate reads fresh too, so a stale decision here would type a
+  // message the group then records as skipped, or hold one the group sent. In
+  // both cases below the move's own task says one thing and the stored row the
+  // other.
+  describe('the decision reads the stored row, not the task the move holds', () => {
+    it('types nothing when the stored row says disabled and the task the move holds says enabled', async () => {
+      hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: '/code-review', mode: 'immediate' }]);
+      const { context } = makeHarness(LANE_A, { automations_disabled: false }, { automations_disabled: true });
+
+      await move(context, LANE_B);
+      await settle();
+
+      // Red: gating on the held task bundles '/code-review' into the burst and
+      // names the row delivered.
+      expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+      expect(enterRun()).toBeDefined();
+      expect(enterRun()?.alreadyDelivered).toBeUndefined();
+      // The group's gate reads the stored row as well, so it types nothing either.
+      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+      expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+    });
+
+    it('types the message when the stored row says enabled and the task the move holds says disabled', async () => {
+      hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: '/code-review', mode: 'immediate' }]);
+      const { context } = makeHarness(LANE_A, { automations_disabled: true }, { automations_disabled: false });
+
+      await move(context, LANE_B);
+      await settle();
+
+      // Red: gating on the held task leaves the plan empty, and the group (whose
+      // gate reads the stored row) then sends the row itself, so the message is
+      // typed by the group and not carried by the burst.
+      expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('/code-review');
+      expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
+      expect(scheduledBursts(context)).toEqual([['/code-review']]);
+    });
   });
 });

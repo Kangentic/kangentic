@@ -160,17 +160,23 @@ Changes come from git on your machine, with or without a pull request: each time
 ### Task Card Context Menu
 
 Right-click any task card on the board to open a context menu with:
-- **Open workflow** - first, on a task in a workflow (see [Workflows](#workflows))
 - **Copy Task ID** - copies the display ID (e.g., `#42`) to clipboard
 - **Edit** - opens the task detail dialog in edit mode
-- **Move to** - submenu listing all other columns as move targets
+- **Show changes** - the task's diff, when it has a worktree
+- **Disable automations** / **Enable automations** - on any task outside a workflow, whatever its
+  column or state (an archived task's menu does not offer it): holds the task out of every column's automations (see
+  [Automations](#automations))
+- **Open workflow** - on a task in a workflow (see [Workflows](#workflows))
 - **New workflow** - on a To Do task in no workflow: a new workflow with this task as its brief
+- **Move to** - submenu listing all other columns as move targets
 - **Backlog** - send the task back to the backlog (cleans up session and worktree)
 - **Archive** - move the task to Done and archive it
 - **Delete** - permanently delete the task, session, and worktree
 
-On a task in a running workflow, Move to, Backlog and Archive stay in the menu, disabled, with the
-reason as their tooltip.
+The last group holds only the actions that take a task off the active board. Everything else that
+acts on the task sits above the bottom divider, and Move to has its own section between the two
+groups. On a task in a running workflow, Move to, Backlog and
+Archive stay in the menu, disabled, with the reason as their tooltip.
 
 ### Return to To Do
 
@@ -532,6 +538,16 @@ in flight when Kangentic quit is marked interrupted the next time the project op
 
 **To Do and Done** run exit automations only. Nothing runs when a task enters them.
 
+**Holding one task.** Right-click a card and choose **Disable automations** to keep the board from
+advancing it, for example while it waits on CI. While disabled, no automation runs for that task in
+any column, on enter, turn end or exit, and a drag into a column sends it no column message. The
+column's agent settings, manual drags and **Run again** still work, and so does the task's own
+command. The card shows an **Automations disabled** strip across its top, and the run log records
+each skipped automation with "Automations are disabled for this task." Choose **Enable automations**
+to turn them back on; nothing that was skipped is replayed. Moving the task out of Done, restoring it
+from the archive, or adding it to a workflow enables them again. A task in a workflow has no such row: pause the workflow instead.
+An agent can do the same for its own task with `kangentic_update_task`'s `automationsDisabled`.
+
 **Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so
 they are shared with your team through git. The column header shows the automations mark (a
 column with a cog) and the count of automations that will run there, and **All columns** in the Column Manager shows
@@ -568,7 +584,7 @@ for you. The bottom terminal panel is hidden in this view and comes back on the 
 **On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
 (Ctrl or Cmd with the wheel zooms). Fit view and Auto layout, which puts moved cards back in the
 automatic layout, sit at the bottom left, and Add task at the bottom center. Right-click a started task's card for
-the board's own menu, with Open on board at the top. The selected card wears the accent border, and
+the board's own menu, with Open on board in its top group, below Edit and Show changes. The selected card wears the accent border, and
 its links stand out: what it waits for flows into it (green once that task is done, grey while it
 is not), what waits for it flows out in the accent, and every other link fades back. With reduced
 motion, or Animations off, the links hold still.

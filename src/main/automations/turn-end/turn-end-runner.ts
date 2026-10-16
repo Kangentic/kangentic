@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { canColumnRun } from '../../../shared/automation-manifest';
+import { canColumnRun, canTaskRunAutomations } from '../../../shared/automation-manifest';
 import type { ColumnAutomation, Swimlane, Task } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { SessionResumedPayload, TurnEndedPayload } from '../../pty/session-manager';
@@ -17,7 +17,7 @@ import { hasCondition, needsAgentReply } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget, routeOf } from '../move-target';
 import { runWorkflowStep, workflowStepApplies } from '../../workflows/workflow-step';
-import type { RunConditionAnswer } from '../../db/repositories/automation-run-repository';
+import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import { deliverMessageAfterMove, deliverMessageToSession } from './deliver-message';
 import { readSessionFinalReply } from './final-reply-reader';
 import { trackTurnEndGroup } from './turn-end-passes';
@@ -163,6 +163,21 @@ async function schedulePass(context: IpcContext, request: PassRequest): Promise<
   }
 }
 
+/**
+ * Record why a row did not run, once per visit: the same reason written at
+ * every turn end of a long chat would bury the runs that matter.
+ */
+function recordSkipOncePerVisit(
+  runs: AutomationRunRepository,
+  row: ColumnAutomation,
+  taskId: string,
+  visitStartedAt: string | null,
+  reason: string,
+): void {
+  if (runs.hasSkipSince(row.id, taskId, visitStartedAt, reason)) return;
+  runs.recordSkipped({ id: randomUUID(), automation: row, taskId }, reason);
+}
+
 /** The task and column a turn end is for, or null when it no longer applies. */
 function resolveSubject(
   context: IpcContext,
@@ -228,21 +243,30 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
 
   const facts = { autoSpawn: column.auto_spawn, role: column.role };
   const runs = repos.automationRuns;
+  // A task whose automations are disabled runs none of the column's rows. It is
+  // decided here, ahead of the Frequency records, the paint wait and the paid
+  // Condition check, so a held task never waits for the paint or pays for a check.
+  const taskRunnability = canTaskRunAutomations(task);
   // The rows still pending this visit. A row that already ran, or that the
   // column cannot run, is left out without a record: a record at every turn end
-  // of a long chat would bury the ones that matter. A row that has spent its
-  // Frequency is left out too, but says so once per visit, or a gate that
-  // stopped moving the task looks like a failure with no reason.
+  // of a long chat would bury the ones that matter. A row held by the task's
+  // switch, or that has spent its Frequency, is left out too, but says so once
+  // per visit, or a gate that stopped moving the task looks like a failure with
+  // no reason.
   const pending: ColumnAutomation[] = [];
   for (const row of rows) {
     if (automationRegistry.get(row.type) === undefined
       || !canColumnRun(row.type, facts, 'turn_end').ok
       || runs.hasRunSince(row.id, task.id, visitStartedAt)) continue;
+    if (!taskRunnability.ok) {
+      recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, taskRunnability.reason);
+      continue;
+    }
     const spent = frequencyLimitReason(row, runs, task.id);
     if (spent === null) {
       pending.push(row);
-    } else if (!runs.hasSkipSince(row.id, task.id, visitStartedAt, spent)) {
-      runs.recordSkipped({ id: randomUUID(), automation: row, taskId: task.id }, spent);
+    } else {
+      recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, spent);
     }
   }
   if (pending.length === 0 && !stepApplies) return;
@@ -359,6 +383,14 @@ async function runRows(
     context, repos.automations, repos.automationRuns, repos.tasks, sessionRepo, repos.attachments,
     payload.projectId, projectPath,
   );
+
+  // Disabled during the paint wait: decided before the paid check, not after
+  // it. The engine's own gate covers a switch thrown during the check itself.
+  const latestTaskRunnability = canTaskRunAutomations(repos.tasks.getById(task.id) ?? task);
+  if (!latestTaskRunnability.ok) {
+    for (const row of pending) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, latestTaskRunnability.reason);
+    return none;
+  }
 
   const needsReply = pending.some(needsAgentReply);
   const agentReply = needsReply ? await input.readReply() : null;

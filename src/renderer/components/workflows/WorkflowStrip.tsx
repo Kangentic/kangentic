@@ -3,6 +3,7 @@ import type { WorkflowBoardEnds, WorkflowRouteStep, WorkflowTaskPlace } from '..
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { trackStops, type TrackStop } from './workflow-track';
 import { Tooltip } from '../Tooltip';
+import { CardStrip } from '../board/CardStrip';
 
 /**
  * The strip on top of a workflow task's card: on the left whatever the card
@@ -139,12 +140,9 @@ interface WorkflowCardStripProps {
 
 export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, ends, place, currentStep = 'marker' }: WorkflowCardStripProps) {
   return (
-    <div
-      className="h-[29px] px-2.5 flex items-center justify-between gap-2 border-b border-edge bg-surface/30 shrink-0"
-      data-testid="workflow-card-strip"
-    >
+    <CardStrip data-testid="workflow-card-strip">
       {leading ?? <span aria-hidden="true" />}
       <WorkflowStepTrack steps={steps} ends={ends} place={place} currentStep={currentStep} />
-    </div>
+    </CardStrip>
   );
 });

@@ -3,9 +3,10 @@
  *
  * This is the BOARD's `TaskContextMenu`, not a second menu. A monitor row is a
  * kanban card as far as the user is concerned, so it offers the same actions in
- * the same order - copy id, Edit, Changes, Move to, Backlog, Archive, Delete -
- * plus "Open on board" in the menu's `leading` slot. Rebuilding a thinner
- * lookalike would guarantee the two drift the first time an item is added.
+ * the same order - copy id, Edit, Show changes, the automations switch, Move
+ * to, Backlog, Archive, Delete - plus "Open on board" in the menu's
+ * `navigationItem` slot. Rebuilding a thinner lookalike would guarantee the two
+ * drift the first time an item is added.
  *
  * What differs is only WHERE the actions land: every mutation carries the row's
  * own `projectId` (the monitor spans projects, so the open board is usually not
@@ -23,7 +24,11 @@ import { TaskContextMenu } from '../board/TaskContextMenu';
 import { useSessionStore } from '../../stores/session-store';
 import { useMonitorStore } from '../../stores/monitor-store';
 import { useToastStore } from '../../stores/toast-store';
+import { useBoardStore } from '../../stores/board-store';
+import { useProjectStore } from '../../stores/project-store';
 import { requestMonitorDetail } from './MonitorDetailLayer';
+import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
+import { describeIpcError } from '../../lib/ipc-error';
 
 interface MonitorRowContextMenuProps {
   row: MonitorSessionRow;
@@ -61,7 +66,7 @@ export function MonitorRowContextMenu({
    *  sees an unchanged row with no explanation. */
   const reportActionFailure = (action: string, error: unknown): void => {
     useToastStore.getState().addToast({
-      message: `Failed to ${action} "${row.taskTitle}": ${error instanceof Error ? error.message : 'Unknown error'}`,
+      message: `Failed to ${action} "${row.taskTitle}": ${describeIpcError(error)}`,
       variant: 'warning',
     });
   };
@@ -81,7 +86,7 @@ export function MonitorRowContextMenu({
   );
 
   // A Command Terminal has no task, so the task actions below are meaningless for
-  // it - only the leading item applies. Rendering the full menu would offer Edit
+  // it - only the navigation item applies. Rendering the full menu would offer Edit
   // and Delete for something that does not exist.
   if (row.isCommandTerminal) {
     return (
@@ -109,8 +114,20 @@ export function MonitorRowContextMenu({
       position={position}
       task={resolved.task}
       swimlanes={resolved.swimlanes}
-      leading={openOnBoard}
+      navigationItem={openOnBoard}
       onClose={onClose}
+      onToggleAutomations={automationsSwitchRefusal(resolved.task) === null ? () => {
+        const disable = !resolved.task.automations_disabled;
+        const input = { id: row.taskId, automations_disabled: disable };
+        // A row of the open project writes through the board store, so the card
+        // under this overlay gains or loses its strip without a board reload.
+        const write = row.projectId === useProjectStore.getState().currentProject?.id
+          ? useBoardStore.getState().updateTask(input)
+          : window.electronAPI.tasks.update(input, row.projectId);
+        void write
+          .then(refreshRows)
+          .catch((error) => reportActionFailure(disable ? 'disable automations for' : 'enable automations for', error));
+      } : undefined}
       // Opens the detail HERE, in edit mode - the same destination a plain row
       // click uses, so the menu never teleports the user somewhere else.
       onEdit={() => requestMonitorDetail(row.projectId, row.taskId, { initialEdit: true })}

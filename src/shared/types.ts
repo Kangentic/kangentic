@@ -626,6 +626,16 @@ export interface Task {
    */
   run_mode: TaskRunMode;
   /**
+   * True when the user (or an agent, over MCP) has disabled column automations
+   * for this task: no On task enter, On agent turn end or On task exit row runs
+   * for it in any column, and a move types no column message. Column settings,
+   * manual drags, Run again and the task's own `auto_command` are untouched.
+   * Moving out of Done and joining a workflow clear it; a workflow task never
+   * carries it (`automationsSwitchRefusal`). Asked only through
+   * `canTaskRunAutomations`.
+   */
+  automations_disabled: boolean;
+  /**
    * The workflow this task belongs to (`Workflow.id`), or null for an ordinary
    * task. The workflow, and its links, live in its HOME project's database,
    * `workflow_project_id`, which is this task's own project unless the
@@ -5091,6 +5101,8 @@ export interface TaskCreateInput {
   profile_id?: string | null;
   /** Which run mode the task was authored in (see `Task.run_mode`). Omitted defaults to `'column_settings'`, except that pinning any of the four Advanced fields implies `'agent_override'`. */
   run_mode?: TaskRunMode;
+  /** Create the task with column automations disabled (see `Task.automations_disabled`). Omitted means enabled. */
+  automations_disabled?: boolean;
   /** External origin carried through when promoting an imported backlog item, so import dedup survives promotion. */
   externalId?: string;
   externalSource?: string;
@@ -5149,6 +5161,8 @@ export interface TaskUpdateInput {
   profile_id?: string | null;
   /** Which run mode the task runs in (see `Task.run_mode`). `'agent_override'` clears `profile_id`; `'column_settings'` clears the four pins. Omitted leaves the stored mode alone, unless a pin or profile in the same write implies one. */
   run_mode?: TaskRunMode;
+  /** Disable or enable column automations for the task (see `Task.automations_disabled`). Refused on a workflow task. */
+  automations_disabled?: boolean;
 }
 
 /** Result of `IPC.TASK_RESOLVE_PR` - the on-demand branch->PR resolver. */

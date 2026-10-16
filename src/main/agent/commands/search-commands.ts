@@ -16,6 +16,9 @@ function taskLine(task: Task, column: string): string {
   if (task.worktree_path) parts.push(`worktree: ${task.worktree_path}`);
   if (task.pr_url) parts.push(`PR: ${task.pr_url}`);
   else if (task.pr_number) parts.push(`PR #${task.pr_number}`);
+  // Said only when set: an agent reading its own task learns the board will
+  // not advance it, and every other line stays as it was.
+  if (task.automations_disabled) parts.push('automations disabled');
   parts.push(`#${task.display_id}, id: ${task.id}`);
   return `- ${parts.join(' | ')}`;
 }
@@ -285,6 +288,7 @@ export const handleFindTask: CommandHandler = async (
         prNumber: task.pr_number,
         prUrl: task.pr_url,
         useWorktree: task.use_worktree,
+        automationsDisabled: task.automations_disabled,
         status: task.archived_at ? 'completed' : 'active',
         knowledge: knowledge.knowledgeByTask.get(task.id) ?? null,
       })),
@@ -361,6 +365,7 @@ export const handleGetCurrentTask: CommandHandler = async (
     prNumber: task.pr_number,
     prUrl: task.pr_url,
     useWorktree: task.use_worktree,
+    automationsDisabled: task.automations_disabled,
     status: task.archived_at ? 'completed' : 'active',
     // Deliberately no reserved-port field here. This serializer is a
     // per-project read and the ledger lives in the GLOBAL database, so

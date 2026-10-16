@@ -24,6 +24,7 @@ import { runSpawnPreamble, projectModelDefaultsApply } from '../../transition-en
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
+import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { loadTaskProfile } from './task-profile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
@@ -441,9 +442,11 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // enter automation rather than in `swimlanes.auto_command`. The task's own
       // MCP-set command still outranks it, which is the precedence
       // `resolveEffectiveAutoCommand` exists to keep identical on every path.
-      const resolvedColumnMessage = resolveColumnMessage(
-        getProjectRepos(context, options.projectId).automations.listForColumn(toLane.id),
-      );
+      // A task with its automations disabled is sent no column message on a
+      // handoff either; its own auto_command still goes.
+      const resolvedColumnMessage = canTaskRunAutomations(currentTask).ok
+        ? resolveColumnMessage(getProjectRepos(context, options.projectId).automations.listForColumn(toLane.id))
+        : null;
       // A handoff runs no enter group, so nothing here can check a row's
       // Condition or Frequency. Sending a guarded row would skip both; it is
       // left unsent, as the runner leaves a row it cannot check.
