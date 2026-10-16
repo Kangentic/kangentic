@@ -562,7 +562,10 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
     if (shown !== null) position();
   }, [shown, position]);
 
-  useEffect(() => {
+  // A layout effect, not a passive one: the Escape listener has to be attached in the same commit
+  // that mounts the tip. A passive effect runs after the tip is painted, and an Escape landing in
+  // that gap reached the dialog under it and closed it along with the tip.
+  useLayoutEffect(() => {
     if (shown === null) return;
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || event.isComposing) return;
