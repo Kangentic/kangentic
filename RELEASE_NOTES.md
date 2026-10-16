@@ -1,18 +1,24 @@
 ## What's New
 
-- Kangentic Mobile is live on iOS and Android. An announcement in the app links to both stores, with a QR code for each.
-- From a paired phone you can now pause a running agent and resume a paused one. A phone Resume works like the desktop's Resume button and does not re-run the column's automations. The phone also shows when an agent is starting or resuming, and its session status updates live.
-- The Changes panel shows changed images as pictures instead of a binary placeholder. Compare the two versions side by side, with a slider, as an overlay, or as a pixel diff that reports how much changed. An SVG opens on its text diff, and the eye button previews it as an image.
-- The context bar's tool-call count and its per-tool table now carry across app restarts and pause and resume, instead of starting again at 0. The Session Summary's By tool table merges every run the same way.
-- Dictation has new presets: Best, Balanced and Light, each picking models for your language. Custom adds Parakeet unified, Parakeet v2 and Cohere Transcribe. The Dictation tab lists the running models with their licenses.
-- The Knowledge Graph's local model is now IBM's Granite embedding English R2 (Best) or bge-small (Light). An index built on a model that changed is rebuilt in the background after the update, and search answers by keyword until it finishes.
+- Workflows are sets of linked tasks that run through the board on their own. Each task has a route of columns, starts when its blockers reach Done, and moves along its route as each column's work finishes. The Workflows view draws the board's cards and their links on a canvas, and a workflow agent plans with you in a side pane. Pick its agent, model and effort in Settings > Workflows. Claude, Codex, Copilot, Cursor, Grok, Kimi and OpenCode can each be the workflow agent.
+- Column automations can run when the agent finishes a turn. The On agent turn end trigger pairs with a new Move to column action, a Condition and a Frequency limit, so a column can move a task on when its work is done.
+- A Condition can now be a Text match, a pattern checked against the last line of the agent's final message, with `*` as a wildcard. It is checked in code, so it makes no Automation agent call and costs nothing.
+- A completed task opens to a new view. A header strip shows start and end times, elapsed and agent runtime, changes, the pull request, cost and status, over Summary, Usage and Description tabs. Usage lists each run with its columns, model, effort, cost and runtime, every model's tokens, and each background check with whether its automation ran, was skipped or hit an error. The Completed Tasks Duration column is now Agent runtime.
+- Background agent calls are now recorded in each project's usage ledger: condition checks, workflow step checks, Knowledge Graph summaries, task titles and Command Terminal names. The usage dashboard shows them in a Background card and a by-day table. Its Cost and Tokens toggle now switches between two separate views, and the token charts read the same per-turn data as the Tokens tile.
+- Task titles and Command Terminal names now come from the Automation agent in Settings > Workflows, on its model and effort, instead of the agent CLI's default model. With no Automation agent set, naming is off until you choose one. The Automation agent and Knowledge Graph model pickers now offer the Latest aliases.
+- When Claude Code has deleted an idle task's conversation, a resume starts a fresh one from a recap of the task instead of leaving a bare shell, and a toast says so. Kangentic keeps its own archive of each transcript, so the Conversation tab still shows a conversation after the agent deletes its file.
+- Every tooltip in the app is now the same tooltip. It opens after a short hover or at once on Tab focus, shows keyboard shortcuts as key chips, and Escape closes the tip without closing the window under it. The context bar's rate limit tip shows each window's share and reset time.
+- A paired phone can start and stop Command Terminals. A Command Terminal now ends when its agent exits, WSL terminals included.
+- New downloads for Linux on arm64 and for Intel Macs. The Knowledge Graph is unavailable on Intel Macs, because its local model runtime has no build for them.
 
 ## Bug Fixes
 
-- Changing a running task's model or effort now restarts its session with the new setting. Before, an effort change typed /effort into the agent's turn, where nothing could confirm it took.
-- The model pickers' Latest group and full version list now load on packaged Windows builds launched from the Start menu.
-- About a quarter of Claude's visible messages on Opus 5.5 were missing from board cards, the phone preview and the conversation viewer. They now show.
-- A task moved to Done no longer stops a server another task is still using over a local connection, such as an adb server or an emulator.
-- A task no longer shows as idle while a background subagent is still running after being re-prompted to hand back.
-- Phone connections are faster and steadier. The relay is dialed through Node first, which more than halved the slowest round trips, and the desktop no longer drops frames during a key rotation or when a connection hits its byte limit. A terminal too large to send whole now opens with less scrollback instead of failing to open.
-- On Linux, the Changes panel's file watcher no longer walks node_modules and .git, which used thousands of inotify watches and could exhaust the per-user limit.
+- Moving a task to To Do now clears its pull request link and pushed branch. The card drops the old PR chip, and the next run's PR links.
+- A resumed task's cost and agent runtime counted each conversation once per resume, so totals could read several times too high. Summaries now count each conversation once.
+- Turn-end automations judge the right reply. A Condition reads the reply from the turn that just ended, the implementation turn after a plan approval now counts, a check that leaves a row unanswered is asked once more, and a Frequency limit starts over when a task comes back from Done.
+- On Windows, two terminals exiting at the same moment could crash the terminal host and every terminal in it. Kangentic now ships a node-pty build with the fix.
+- Prompts and settings reach the shell intact. cmd.exe no longer expands a `%` in a prompt, a curly double quote no longer ends a PowerShell string early, a double quote in a model or effort override no longer ends the argument on Windows shells, and a prompt with an apostrophe now works in nushell and fish. Aider starts under PowerShell again.
+- A fullscreen agent no longer replays as garbled, dashed rows after its terminal was narrowed. A task window terminal resized while hidden now takes its own size again when shown.
+- The bottom terminal panel no longer leaves a blank strip above the status bar, and it and the sidebar keep the size you dragged them to. The panel's terminal shows again after you come back from the Workflows view.
+- With Stop leftover processes on, moving a task to Done now stops what it left running in a Windows Terminal tab. A leftover process that exits on its own no longer leaves a Still running row behind.
+- The usage dashboard keeps a model that has cost but no per-turn tokens in the Cost view, and the cache hit rate chart's axis fits its data.
