@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Loader2, CirclePause, Paperclip, Globe } from 'lucide-react';
+import { Loader2, CirclePause, Paperclip, Globe, Ban } from 'lucide-react';
 import { formatRelativeTime } from '../../lib/datetime';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { useSessionStore } from '../../stores/session-store';
@@ -16,6 +16,8 @@ import { PrLink } from '../PrLink';
 import type { ActivityReason, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, Task } from '../../../shared/types';
 import { activityReasonIcon, formatActivityReasonText } from './ActivityReasonTooltip';
 import { Tooltip } from '../Tooltip';
+import { CardStrip, cardStripBleedClass } from './CardStrip';
+import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 
 /**
  * What a task card shows, shared by the board's `TaskCard` and the Workflows
@@ -43,12 +45,15 @@ import { Tooltip } from '../Tooltip';
  *
  * `tip` is the full status label, which the bar truncates. The label is already on the
  * span as text, so a screen reader hears it there and the tip describes nothing.
+ *
+ * `divider` matches `ContextUsageFooter`'s, and the card passes both the same value so a
+ * footer that turns from one into the other keeps its height.
  */
 export function CardStatusBar({
-  children, testId, tip,
-}: { children: React.ReactNode; testId: string; tip?: string }) {
+  children, testId, tip, divider = true,
+}: { children: React.ReactNode; testId: string; tip?: string; divider?: boolean }) {
   return (
-    <div className="mt-2 pt-2 border-t border-edge" data-testid={testId}>
+    <div className={divider ? 'mt-2 pt-2 border-t border-edge' : 'mt-2'} data-testid={testId}>
       <div className="flex items-center justify-between mb-1.5">
         <Tooltip label={tip ?? ''} describe={false}>
           <span className="text-xs text-fg-faint flex items-center gap-1 min-w-0">
@@ -239,12 +244,39 @@ interface TaskCardBodyProps {
 
 /** The full card's content, inside whichever root the host draws. */
 export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }: TaskCardBodyProps) {
+  // The rule above the footer closes what sits over it, and the agent's output
+  // well already closes itself with its own edge. Labels and a plain
+  // description (a paused card, or the card preview turned off) keep it, or
+  // the description's grey runs straight into the footer's.
+  const footerDivider = !(view.shownTrail && view.trailMode && view.taskLabels.length === 0);
   return (
     <>
+      {!canTaskRunAutomations(task).ok && <AutomationsDisabledStrip density={density} />}
       <TaskCardBodyContent task={task} view={view} density={density} hideDisplayId={hideDisplayId} idleFooter={idleFooter} />
       {/* Bottom bar -- exhaustive switch on display state */}
-      {density !== 'compact' && <TaskCardFooter view={view} idleFooter={idleFooter} />}
+      {density !== 'compact' && <TaskCardFooter view={view} idleFooter={idleFooter} divider={footerDivider} />}
     </>
+  );
+}
+
+/**
+ * Across the top of a card whose column automations are disabled, at every
+ * density: the workflow strip's own shell, with no hue, so it competes with
+ * neither the activity mark nor a workflow's color. A workflow task never
+ * wears it: its workflow's Pause is what holds it.
+ */
+function AutomationsDisabledStrip({ density }: { density: AppConfig['cardDensity'] }) {
+  return (
+    <div className={cardStripBleedClass(density)}>
+      <Tooltip label="Column automations don't run for this task. Enable them from the card's menu.">
+        <CardStrip data-testid="task-card-automations-disabled">
+          <span className="inline-flex items-center gap-[5px] text-xs text-fg-muted min-w-0">
+            <Ban size={12} strokeWidth={2} className="shrink-0" aria-hidden="true" />
+            <span className="truncate">Automations disabled</span>
+          </span>
+        </CardStrip>
+      </Tooltip>
+    </div>
   );
 }
 
@@ -351,7 +383,7 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
   );
 }
 
-function TaskCardFooter({ view, idleFooter }: { view: TaskCardViewModel; idleFooter?: React.ReactNode }) {
+function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel; idleFooter?: React.ReactNode; divider: boolean }) {
   const { displayState, isResuming } = view;
   switch (displayState.kind) {
     case 'running': {
@@ -367,7 +399,7 @@ function TaskCardFooter({ view, idleFooter }: { view: TaskCardViewModel; idleFoo
       if (!resolvedModelName) {
         const spinnerLabel = isResuming ? 'Resuming agent...' : 'Starting agent...';
         return (
-          <CardStatusBar testId="usage-bar">
+          <CardStatusBar testId="usage-bar" divider={divider}>
             <Loader2 size={12} className="animate-spin shrink-0" />
             <span className="truncate">{spinnerLabel}</span>
           </CardStatusBar>
@@ -399,27 +431,28 @@ function TaskCardFooter({ view, idleFooter }: { view: TaskCardViewModel; idleFoo
           modelName={resolvedModelName}
           percent={pct}
           windowKnown={windowKnown}
+          divider={divider}
         />
       );
     }
     case 'preparing':
     case 'initializing':
       return (
-        <CardStatusBar testId="status-bar" tip={displayState.label}>
+        <CardStatusBar testId="status-bar" tip={displayState.label} divider={divider}>
           <Loader2 size={12} className="animate-spin shrink-0" />
           <span className="truncate">{displayState.label}</span>
         </CardStatusBar>
       );
     case 'queued':
       return (
-        <CardStatusBar testId="status-bar">
+        <CardStatusBar testId="status-bar" divider={divider}>
           <Loader2 size={12} className="animate-spin shrink-0" />
           Queued...
         </CardStatusBar>
       );
     case 'suspended':
       return (
-        <CardStatusBar testId="status-bar">
+        <CardStatusBar testId="status-bar" divider={divider}>
           <CirclePause size={12} className="shrink-0" />
           Paused
         </CardStatusBar>

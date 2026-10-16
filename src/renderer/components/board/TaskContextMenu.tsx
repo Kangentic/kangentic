@@ -1,15 +1,21 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowIcon } from 'lucide-react';
+import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowIcon, Ban, Columns3Cog } from 'lucide-react';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
 import { placeContextMenu, type MenuPlacement } from './context-menu-placement';
 import { Tooltip } from '../Tooltip';
 
 /**
- * Inline context menu shown on right-click of a task card. Offers
- * copy-id, edit, show-changes (if worktree exists), move-to (for
- * every non-archived non-ghost target lane), send-to-backlog,
- * archive, and delete.
+ * Inline context menu shown on right-click of a task card. Offers copy-id,
+ * then the top group (edit, show changes if a worktree exists, the column
+ * automations switch, and the row that takes you to the task elsewhere or
+ * starts a workflow from it), move-to (for every non-archived non-ghost target
+ * lane), and the bottom group: send-to-backlog, archive, and delete.
+ *
+ * How a row picks its group: the bottom group holds only the larger,
+ * destructive actions that take a task off the active board, ordered from
+ * easiest to undo to permanent, Delete last. Everything else that acts on the
+ * task, and leaves it on the board, goes in the top group.
  *
  * Positions itself at the click coordinates, then measures its rendered size
  * before paint and moves inside the window, 8px from each edge: a workflow
@@ -20,6 +26,8 @@ import { Tooltip } from '../Tooltip';
  * A row the task cannot take (a workflow's lock) stays in place, disabled,
  * with the reason as its tooltip: controls never come and go with state. The
  * whole row dims, its text, icon and dot together, as one unavailable item.
+ * A row that does not apply to this kind of task at all (the automations
+ * switch on a workflow task) is not passed by its host.
  */
 
 const ROW_CLASS = 'w-full px-3 py-1.5 text-sm text-left flex items-center gap-2 text-fg-secondary';
@@ -37,18 +45,21 @@ export function TaskContextMenu({
   onArchive,
   onDelete,
   onClose,
-  leading,
+  navigationItem,
   moveRefusal,
   sendAwayRefusal,
   onNewWorkflow,
+  onToggleAutomations,
   testId = 'task-context-menu',
 }: {
   /** Root `data-testid`, so each host can address its own instance. */
   testId?: string;
-  /** Extra item(s) above the copy-id row, with a divider after. The Agent Monitor
-   *  puts "Open on board" here so it can reuse this whole menu rather than
-   *  maintaining a second, thinner one that drifts from the board's. */
-  leading?: React.ReactNode;
+  /** The row that takes the user to this task somewhere else, in the top group
+   *  after the automations row and before New workflow: Open workflow on a
+   *  board card, Open on board in the Agent Monitor and on the Workflows canvas.
+   *  Lets those hosts reuse this whole menu rather than maintaining a second,
+   *  thinner one that drifts from the board's. */
+  navigationItem?: React.ReactNode;
   position: { x: number; y: number };
   task: Task;
   swimlanes: Swimlane[];
@@ -65,6 +76,12 @@ export function TaskContextMenu({
   sendAwayRefusal?: string | null;
   /** New workflow from this task, offered on a To Do card that is in no workflow. */
   onNewWorkflow?: () => void;
+  /**
+   * Flip the task's column automations switch. Passed for every task outside a
+   * workflow (`automationsSwitchRefusal` is null), whatever column or state it
+   * is in; a workflow task's host leaves it out, since its Pause holds it.
+   */
+  onToggleAutomations?: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -120,12 +137,6 @@ export function TaskContextMenu({
       data-dismissable-layer
       data-testid={testId}
     >
-      {leading && (
-        <>
-          {leading}
-          <div className="border-t border-edge my-1" />
-        </>
-      )}
       <button
         type="button"
         onClick={() => {
@@ -158,7 +169,36 @@ export function TaskContextMenu({
           data-testid="context-show-changes"
         >
           <GitCompare size={14} className="text-fg-faint" />
-          Changes
+          Show changes
+        </button>
+      )}
+
+      {onToggleAutomations && (
+        <button
+          type="button"
+          onClick={() => { onToggleAutomations(); onClose(); }}
+          className={LIVE_ROW_CLASS}
+          data-testid="context-toggle-automations"
+          data-automations-disabled={task.automations_disabled ? 'true' : 'false'}
+        >
+          {task.automations_disabled
+            ? <Columns3Cog size={14} className="text-fg-faint" />
+            : <Ban size={14} className="text-fg-faint" />}
+          {task.automations_disabled ? 'Enable automations' : 'Disable automations'}
+        </button>
+      )}
+
+      {navigationItem}
+
+      {onNewWorkflow && (
+        <button
+          type="button"
+          onClick={() => { onNewWorkflow(); onClose(); }}
+          className={LIVE_ROW_CLASS}
+          data-testid="context-new-workflow"
+        >
+          <WorkflowIcon size={14} className="text-fg-faint" />
+          New workflow
         </button>
       )}
 
@@ -193,17 +233,6 @@ export function TaskContextMenu({
 
       <div className="border-t border-edge my-1" />
 
-      {onNewWorkflow && (
-        <button
-          type="button"
-          onClick={() => { onNewWorkflow(); onClose(); }}
-          className={LIVE_ROW_CLASS}
-          data-testid="context-new-workflow"
-        >
-          <WorkflowIcon size={14} className="text-fg-faint" />
-          New workflow
-        </button>
-      )}
       <Tooltip label={sendAwayRefusal ?? ''}>
         <button
           type="button"

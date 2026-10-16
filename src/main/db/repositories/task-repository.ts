@@ -7,10 +7,11 @@ import { writeTransaction } from '../transaction';
 import { cachedStatement } from '../statement-cache';
 import { removeLinksInWorkflowHome } from './workflow-home-links';
 
-/** Raw row from SQLite - labels and skipped columns stored as JSON strings. */
-interface TaskRow extends Omit<Task, 'labels' | 'skipped_swimlane_ids'> {
+/** Raw row from SQLite - labels and skipped columns stored as JSON strings, the switch as 0/1. */
+interface TaskRow extends Omit<Task, 'labels' | 'skipped_swimlane_ids' | 'automations_disabled'> {
   labels: string;
   skipped_swimlane_ids: string | null;
+  automations_disabled: number;
 }
 
 function parseStringList(raw: string | null | undefined): string[] {
@@ -35,6 +36,7 @@ function rowToTask(row: TaskRow): Task {
     skipped_swimlane_ids: parseStringList(row.skipped_swimlane_ids),
     canvas_x: row.canvas_x ?? null,
     canvas_y: row.canvas_y ?? null,
+    automations_disabled: Boolean(row.automations_disabled),
   };
 }
 
@@ -396,6 +398,8 @@ export class TaskRepository {
       auto_command: input.auto_command ?? null,
       profile_id: exclusive.profile_id,
       run_mode: exclusive.run_mode,
+      // A workflow's own task never carries the switch: its Pause holds it.
+      automations_disabled: input.workflow ? false : (input.automations_disabled ?? false),
       workflow_id: input.workflow?.workflow_id ?? null,
       workflow_project_id: input.workflow?.workflow_project_id ?? null,
       route_start_swimlane_id: input.workflow?.route_start_swimlane_id ?? null,
@@ -417,9 +421,9 @@ export class TaskRepository {
     };
 
     this.db.prepare(`
-      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, run_mode, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.pr_merge_readiness, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.created_at, task.updated_at);
+      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, run_mode, automations_disabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.pr_merge_readiness, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.automations_disabled ? 1 : 0, task.created_at, task.updated_at);
 
     // Only a workflow's Start passes membership, so an ordinary create costs
     // no second statement.
@@ -435,9 +439,17 @@ export class TaskRepository {
    * Put a task in a workflow, or take it out (`null`), with its route. A task
    * taken out keeps nothing: it is an ordinary task again, on the auto layout.
    * Does not bump `updated_at`: membership is not an edit the board orders by.
+   * Joining enables the task's column automations again: a workflow task never
+   * carries the switch, since the workflow's Pause is what holds it.
    */
   setWorkflowMembership(taskId: string, membership: TaskWorkflowMembership | null): void {
-    this.writeWorkflowColumns(taskId, membership);
+    const join = writeTransaction(this.db, () => {
+      this.writeWorkflowColumns(taskId, membership);
+      if (membership) {
+        this.db.prepare('UPDATE tasks SET automations_disabled = 0 WHERE id = ? AND automations_disabled = 1').run(taskId);
+      }
+    });
+    join();
   }
 
   /** Change a workflow task's route. Same no-`updated_at` reasoning as membership. */
@@ -537,12 +549,18 @@ export class TaskRepository {
     // Decide exclusivity from `input` (what the caller asked to change), not
     // `merged` - otherwise pinning a model on a task that currently rides a
     // profile would see the inherited profile_id and discard the new pin.
-    const updated: Task = { ...merged, ...applyProfileExclusivity(merged, input) };
+    const updated: Task = {
+      ...merged,
+      ...applyProfileExclusivity(merged, input),
+      // The last line of the invariant the IPC and MCP refusals state: a
+      // workflow task never carries the switch, whoever writes it.
+      automations_disabled: merged.workflow_id ? false : merged.automations_disabled,
+    };
 
     this.db.prepare(`
-      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, pr_merge_readiness = ?, head_sha = ?, pushed_branch = ?, base_branch = ?, resolved_base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, updated_at = ?
+      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, pr_merge_readiness = ?, head_sha = ?, pushed_branch = ?, base_branch = ?, resolved_base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, automations_disabled = ?, updated_at = ?
       WHERE id = ?
-    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.pr_merge_readiness, updated.head_sha, updated.pushed_branch, updated.base_branch, updated.resolved_base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.updated_at, updated.id);
+    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.pr_merge_readiness, updated.head_sha, updated.pushed_branch, updated.base_branch, updated.resolved_base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.automations_disabled ? 1 : 0, updated.updated_at, updated.id);
 
     return updated;
   }
@@ -620,6 +638,7 @@ export class TaskRepository {
 
       if (task.swimlane_id !== targetSwimlaneId) {
         this.recordMove(taskId, task.swimlane_id, targetSwimlaneId, provenance);
+        this.enableAutomationsLeavingDone(taskId, task.swimlane_id, provenance);
       }
     });
     tx();
@@ -630,6 +649,21 @@ export class TaskRepository {
     this.db.prepare(
       'INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ).run(uuidv4(), taskId, fromSwimlaneId, toSwimlaneId, provenance.origin, provenance.reason ?? null, new Date().toISOString());
+  }
+
+  /**
+   * A task leaving Done runs the board's gates again: its automations switch
+   * clears at the same point its Frequency counts reset, keyed exactly as
+   * `AutomationRunRepository.countRuns` keys that reset (a move FROM a Done-role
+   * column, a rollback excepted). Called inside the transaction that made the move.
+   */
+  private enableAutomationsLeavingDone(taskId: string, fromSwimlaneId: string, provenance: TaskMoveProvenance): void {
+    if (provenance.origin === 'rollback') return;
+    this.db.prepare(`
+      UPDATE tasks SET automations_disabled = 0
+      WHERE id = ? AND automations_disabled = 1
+        AND EXISTS (SELECT 1 FROM swimlanes WHERE id = ? AND role = 'done')
+    `).run(taskId, fromSwimlaneId);
   }
 
   /**
@@ -732,7 +766,10 @@ export class TaskRepository {
       this.db.prepare('UPDATE tasks SET archived_at = NULL, swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
         .run(targetSwimlaneId, position, now, id);
       // Entering a column out of the archive is a visit like any other.
-      if (before) this.recordMove(id, before.swimlane_id, targetSwimlaneId, { origin: 'unarchive' });
+      if (before) {
+        this.recordMove(id, before.swimlane_id, targetSwimlaneId, { origin: 'unarchive' });
+        this.enableAutomationsLeavingDone(id, before.swimlane_id, { origin: 'unarchive' });
+      }
     })();
     return this.getById(id)!;
   }

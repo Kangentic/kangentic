@@ -22,7 +22,7 @@ function taskCard(title: string) {
 }
 
 test.describe('Task Changes context menu entry', () => {
-  test('Changes item is hidden for tasks without a worktree', async () => {
+  test('Show changes item is hidden for tasks without a worktree', async () => {
     await createTask(page, 'No Worktree Task');
     await taskCard('No Worktree Task').click({ button: 'right' });
 
@@ -30,7 +30,7 @@ test.describe('Task Changes context menu entry', () => {
     await expect(page.locator('[data-testid="context-edit-task"]')).toBeVisible();
     await expect(page.locator('[data-testid="context-archive-task"]')).toBeVisible();
 
-    // A fresh task has no worktree_path, so the "Changes" entry must be gated off.
+    // A fresh task has no worktree_path, so the "Show changes" entry must be gated off.
     await expect(page.locator('[data-testid="context-show-changes"]')).not.toBeVisible();
 
     await page.keyboard.press('Escape');

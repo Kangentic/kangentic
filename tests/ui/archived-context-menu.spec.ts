@@ -15,7 +15,7 @@
  *
  * Additional coverage (added 2026-05-13):
  *   - Restore-to flow on both surfaces (tasks.unarchive IPC spy).
- *   - worktree_path truthy -> Changes menu item is visible.
+ *   - worktree_path truthy -> Show changes menu item is visible.
  *   - Escape key closes the context menu (document-level dispatch, avoids xterm capture).
  */
 import { test, expect } from '@playwright/test';
@@ -226,7 +226,7 @@ test.describe('Archived task context menu', () => {
       await expect(page.locator('[data-testid="archived-context-restore-to"]').first()).toBeVisible();
       await expect(page.locator('[data-testid="archived-context-delete-task"]')).toBeVisible();
 
-      // No worktree_path -> "Changes" item must be gated off.
+      // No worktree_path -> "Show changes" item must be gated off.
       await expect(page.locator('[data-testid="archived-context-show-changes"]')).not.toBeVisible();
 
       // Click delete -> opens ConfirmDialog (skipDeleteConfirm is false by default).
@@ -400,7 +400,7 @@ test.describe('Archived task context menu', () => {
   // worktree_path truthy -> Changes item is shown
   // ---------------------------------------------------------------------------
 
-  test('worktree_path set: Changes menu item is visible in context menu', async () => {
+  test('worktree_path set: Show changes menu item is visible in context menu', async () => {
     const { browser, page } = await launchWithWorktreeArchivedTask();
     try {
       const compactCard = page.locator('[data-task-id="task-acm-worktree"]').first();

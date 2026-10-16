@@ -549,6 +549,7 @@
       // up as a failure here instead of being silently corrected.
       profile_id: input.profile_id || null,
       run_mode: input.run_mode || 'column_settings',
+      automations_disabled: !!input.automations_disabled,
       auto_command: input.auto_command || null,
       attachment_count: 0,
       archived_at: null,
@@ -1398,6 +1399,11 @@
         var idx = tasks.findIndex(function (t) {
           return t.id === input.id;
         });
+        // The desktop's TASK_UPDATE refusal (automationsSwitchRefusal): a workflow
+        // task has no automations switch, since its workflow's Pause holds it.
+        if (idx >= 0 && input.automations_disabled === true && tasks[idx].workflow_id) {
+          throw new Error('This task is in a workflow. Pause the workflow to hold it.');
+        }
         if (idx >= 0) {
           tasks[idx] = Object.assign({}, tasks[idx], input, { updated_at: now() });
           return tasks[idx];
@@ -1907,6 +1913,8 @@
           swimlane_id: input.targetSwimlaneId,
           archived_at: null,
           position: 0,
+          // Mirrors TaskRepository: leaving Done enables column automations again.
+          automations_disabled: false,
           updated_at: now(),
         });
         archivedTasks.splice(idx, 1);

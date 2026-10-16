@@ -22,6 +22,8 @@ import { OpenWorkflowMenuItem } from './workflow-menu-items';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { sendAwayRefusal, type BoardWorkflow } from '../../utils/board-workflow';
 import { boardWorkflowNow, refusedBoardMove } from '../../utils/workflow-refusal';
+import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
+import { describeIpcError } from '../../lib/ipc-error';
 
 interface TaskCardProps {
   task: Task;
@@ -157,6 +159,18 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     useWorkflowStore.getState().openWorkflow(workflow.homeProjectId, workflow.workflowId, task.id);
   };
 
+  // The card's strip appears or clears as the update lands. A refusal (only a
+  // workflow task, which never offers the row) or a lost write says why.
+  const handleToggleAutomations = () => {
+    const disable = !task.automations_disabled;
+    useBoardStore.getState().updateTask({ id: task.id, automations_disabled: disable }).catch((error: unknown) => {
+      useToastStore.getState().addToast({
+        message: `Could not ${disable ? 'disable' : 'enable'} automations for "${task.title}": ${describeIpcError(error)}`,
+        variant: 'warning',
+      });
+    });
+  };
+
   const handleNewWorkflow = async () => {
     const created = await useWorkflowStore.getState().createWorkflow(task.id);
     if (created) useBoardStore.getState().setActiveView('workflows');
@@ -241,9 +255,10 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           position={contextMenu}
           task={task}
           swimlanes={useBoardStore.getState().swimlanes}
-          leading={menuWorkflow && (
+          navigationItem={menuWorkflow && (
             <OpenWorkflowMenuItem workflow={menuWorkflow} onOpen={() => openTaskWorkflow(menuWorkflow)} onClose={() => setContextMenu(null)} />
           )}
+          onToggleAutomations={automationsSwitchRefusal(task) === null ? handleToggleAutomations : undefined}
           moveRefusal={menuWorkflow ? (laneId) => refusedBoardMove(task, laneId, useBoardStore.getState().swimlanes) : undefined}
           sendAwayRefusal={sendAwayRefusal(menuWorkflow, task)}
           onNewWorkflow={offersNewWorkflow ? handleNewWorkflow : undefined}

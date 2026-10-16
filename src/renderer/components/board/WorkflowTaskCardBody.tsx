@@ -11,6 +11,7 @@ import { workflowColor } from '../workflows/workflow-graph';
 import { WorkflowCardStrip, WorkflowStripLabel } from '../workflows/WorkflowStrip';
 import { TaskCardBody, WorkflowWaitingBar, type TaskCardViewModel } from './task-card-view';
 import { useCardLinksPreview } from './card-links-preview';
+import { cardStripBleedClass } from './CardStrip';
 
 /**
  * A workflow task's card content on the board: the workflow strip on top
@@ -67,7 +68,7 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
   if (!workflow) return null;
   return (
     <div
-      className={`${density === 'comfortable' ? '-mx-3 -mt-3' : '-mx-2.5 -mt-2.5'} mb-2 rounded-t-[5px] overflow-hidden`}
+      className={cardStripBleedClass(density)}
       data-workflow-id={workflow.workflowId}
       ref={stripRef}
     >

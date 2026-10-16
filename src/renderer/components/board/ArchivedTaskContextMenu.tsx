@@ -98,7 +98,7 @@ export function ArchivedTaskContextMenu({
           data-testid="archived-context-show-changes"
         >
           <GitCompare size={14} className="text-fg-faint" />
-          Changes
+          Show changes
         </button>
       )}
 

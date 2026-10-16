@@ -1261,7 +1261,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'card-menu',
     reach: 'driver',
     description: 'A card\'s context menu, which opens on right-click only.',
-    alt: 'A task card\'s right-click menu open over the board: Edit, a Move to list of the other columns, Backlog, Archive, and Delete.',
+    alt: 'A task card\'s right-click menu open over the board: Edit, Disable automations, New workflow, a Move to list of the other columns, then Backlog, Archive, and Delete.',
     ready: '[data-testid="task-context-menu"]',
     focus: '[data-testid="task-context-menu"]',
     steps: [{ contextmenu: `[data-task-id="${TASK_AUTH}"]`, waitFor: '[data-testid="task-context-menu"]' }],

@@ -78,6 +78,7 @@ export function plannedAsTask(viewTask: WorkflowViewTask): Task {
     auto_command: null,
     profile_id: null,
     run_mode: 'column_settings',
+    automations_disabled: false,
     workflow_id: null,
     workflow_project_id: null,
     route_start_swimlane_id: planned?.route_start_swimlane_id ?? null,

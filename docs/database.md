@@ -267,6 +267,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | auto_command_at | TEXT | | NULL |
 | profile_id | TEXT | | NULL |
 | run_mode | TEXT | NOT NULL | 'column_settings' |
+| automations_disabled | INTEGER | NOT NULL | 0 |
 | detail_view_state | TEXT | | NULL |
 | workflow_id | TEXT | | NULL |
 | workflow_project_id | TEXT | | NULL |
@@ -340,6 +341,14 @@ nulls the profile and sets `run_mode = 'agent_override'`. That exclusivity is wh
 lock never fires for it. `auto_command` is deliberately **not** in the exclusivity set:
 it is an MCP-only escape hatch, so a task may carry both a profile and its own auto-command, and it
 never implies override mode.
+
+`automations_disabled` (0/1, read as `Task.automations_disabled: boolean`) holds the task out of
+every column's automations: see [Transition Engine > Disabling automations for one
+task](transition-engine.md#disabling-automations-for-one-task). It is written by `create()` and
+`update()` and cleared on two events with no caller asking: leaving a `done` column (`move()` and `unarchive()`;
+not on a `rollback`, the same boundary the Frequency count resets on) and joining a workflow
+(`setWorkflowMembership()`). A workflow task never
+carries it: `create()` and `update()` write 0 for one whatever the input says.
 
 ### schema_meta table
 
@@ -1289,6 +1298,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 84. **`final_line` on column_automations, and `final_line_met` / `final_line_reason` on automation_runs** - the Text match kind of Condition and its result on each run (see both tables above). All `DEFAULT NULL`, so every existing row reads as having no Text match and a build from before them still inserts. Guarded `ALTER TABLE`s, one `table_info` read per table.
 85. **`transcript_path` on sessions** - `TEXT DEFAULT NULL`, the transcript path the agent reported (see the `sessions` table notes above), so the resume check can prove a conversation's file gone after the session's own folder was deleted. No backfill. A guarded `ALTER TABLE`.
 86. **`transcript_archive_state` and `transcript_archive_rows`** - the structured transcript archive (see the section below). Idempotent `CREATE TABLE IF NOT EXISTS`, both empty until the retrieval worker's first archive pass; the worker opens with migrations off, so it checks for both tables before it writes.
+87. **`automations_disabled` on tasks** - `INTEGER NOT NULL DEFAULT 0`, the per-task switch that disables column automations (see the `tasks` table notes above). 0 is every existing task's behavior, so one guarded `ALTER TABLE` and no backfill.
 
 ### Key Migrations (Global DB)
 
