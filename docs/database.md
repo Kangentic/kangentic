@@ -1422,7 +1422,7 @@ move's own transaction, so a move cannot land without its record.
 | Method | Description |
 |--------|-------------|
 | `visitStartedAt(taskId, swimlaneId)` | When the task last entered this column (the newest row, rowid breaking a same-millisecond tie), or null when no entry was recorded. The visit boundary `hasRunSince` and `hasSkipSince` count from. It is `currentVisit`'s `at`. |
-| `currentVisit(taskId, swimlaneId)` | The same newest row as `{ at, origin }`, or null. The turn-end runner reads the origin so a plan approval's `auto-move` does not drop the turn it lands in as carried in from the last column. |
+| `currentVisit(taskId, swimlaneId)` | The same newest row as `{ at, origin }`, or null. The turn-end runner reads the origin so a plan approval's `auto-move` does not drop the turn it lands in as carried in from the last column. The startup To Do sweep reads it too, and keeps the worktree and branch of a task whose visit opened with `unarchive`. |
 | `listForTask(taskId)` | Every recorded move of one task, oldest first |
 | `recentFinishedColumnVisits(doneSwimlaneId, limit)` | For the `limit` tasks that most recently entered Done, how many entered each column on the way. What `{{columns}}` tells a workflow's agent about how work moves through this board. |
 
