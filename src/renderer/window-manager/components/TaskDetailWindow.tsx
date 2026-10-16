@@ -33,6 +33,7 @@ import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { PriorityBadge } from '../../components/backlog/PriorityBadge';
 import { ConfirmDialog } from '../../components/dialogs/ConfirmDialog';
+import { SendToBacklogDialog } from '../../components/board/SendToBacklogDialog';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { DialogFooterActions } from '../../components/dialogs/DialogFooterActions';
 import {
@@ -975,14 +976,8 @@ export function TaskDetailWindow({
       {/* Overlays (fixed, above the window). Rendered as siblings, never as an
           early return, so the window body never collapses to just a confirm. */}
       {actions.confirmSendToBacklog && (
-        <ConfirmDialog
-          title="Send to Backlog"
-          message={<>
-            <p>This will move &quot;{task.title}&quot; to the backlog and clean up its session and worktree.</p>
-            <p className="text-fg-muted mt-1">You can move it back to the board later.</p>
-          </>}
-          confirmLabel="Send to Backlog"
-          showDontAskAgain
+        <SendToBacklogDialog
+          title={task.title}
           onConfirm={(dontAskAgain) => {
             if (dontAskAgain) updateConfig({ skipDeleteConfirm: true });
             actions.executeSendToBacklog();

@@ -12,6 +12,7 @@ import {
   cleanupTaskSession,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -85,7 +86,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
     return tasks.listArchivedPreview(limit);
   });
 
-  ipcMain.handle(IPC.TASK_UNARCHIVE, async (_, input: { id: string; targetSwimlaneId: string }, projectId?: string | null) => {
+  ipcMain.handle(IPC.TASK_UNARCHIVE, async (event, input: { id: string; targetSwimlaneId: string }, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     if (!resolvedProjectId) throw new Error('No project is currently open');
 
@@ -95,7 +96,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
     // lifecycle op for this task. Unarchive writes the DB row synchronously,
     // but the worktree/checkout/spawn awaits below must not race with
     // TASK_DELETE / TASK_MOVE / etc.
-    return withTaskLock(input.id, async () => {
+    const restoration = withTaskLock(input.id, async () => {
       // Determine position at end of target lane
       const laneTasks = tasks.list(input.targetSwimlaneId);
       const position = laneTasks.length;
@@ -195,96 +196,109 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         clearSpawnProgress(context.mainWindow, task.id);
       }
     });
+    // Announced however the restore settles: the row is unarchived first, so a
+    // throw in the spawn steps has still put the card back on the board.
+    try {
+      return await restoration;
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+    }
   });
 
-  ipcMain.handle(IPC.TASK_BULK_UNARCHIVE, async (_, ids: string[], targetSwimlaneId: string, projectId?: string | null) => {
+  ipcMain.handle(IPC.TASK_BULK_UNARCHIVE, async (event, ids: string[], targetSwimlaneId: string, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     if (!resolvedProjectId) throw new Error('No project is currently open');
 
     const { tasks, swimlanes, automations, automationRuns, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
     const toLane = swimlanes.getById(targetSwimlaneId);
 
-    for (const id of ids) {
-      // Per-task lock so each unarchive+spawn serializes against any
-      // in-flight session op for that task, while different tasks remain
-      // independent. Early exits inside the callback (equivalent to the
-      // previous `continue`) just complete the lock for that task and move
-      // the outer loop to the next id.
-      await withTaskLock(id, async () => {
-        const laneTasks = tasks.list(targetSwimlaneId);
-        const position = laneTasks.length;
-        const task = tasks.unarchive(id, targetSwimlaneId, position);
+    // Announced however the batch settles: each task is unarchived as the loop
+    // reaches it, so a throw partway has still put the earlier ones back.
+    try {
+      for (const id of ids) {
+        // Per-task lock so each unarchive+spawn serializes against any
+        // in-flight session op for that task, while different tasks remain
+        // independent. Early exits inside the callback (equivalent to the
+        // previous `continue`) just complete the lock for that task and move
+        // the outer loop to the next id.
+        await withTaskLock(id, async () => {
+          const laneTasks = tasks.list(targetSwimlaneId);
+          const position = laneTasks.length;
+          const task = tasks.unarchive(id, targetSwimlaneId, position);
 
-        // Per-task fold: a bulk unarchive can carry tasks on different profiles
-        // into the same column, so the auto-spawn gate is resolved per task
-        // rather than once for the shared lane.
-        const taskLane = applyProfileToLane(toLane, loadTaskProfile(context, task, resolvedProjectPath));
-        if (!taskLane?.auto_spawn) {
-          await resetSessionForTodoRestore(context, task, tasks, taskLane?.role, resolvedProjectId, resolvedProjectPath);
-          return;
-        }
-
-        // Per task, same as the single-unarchive handler above: a restore is
-        // slow enough (worktree recreate + CLI boot) that the card must show
-        // it is working rather than a stale "Paused".
-        const onProgress = createProgressCallback(context.mainWindow, task.id);
-        onProgress('resuming');
-
-        // One `finally` for the whole labelled region, as in the single-unarchive
-        // handler above. `task.id` here comes from this iteration's own
-        // `tasks.unarchive(...)` inside the per-task `withTaskLock`, so the clear
-        // can only ever retire this task's label, never a sibling's.
-        try {
-          try {
-            await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress, projectId: resolvedProjectId });
-          } catch (worktreeError) {
-            console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
-            notifySpawnBlocked(context, task, 'worktree', worktreeError, resolvedProjectId);
+          // Per-task fold: a bulk unarchive can carry tasks on different profiles
+          // into the same column, so the auto-spawn gate is resolved per task
+          // rather than once for the shared lane.
+          const taskLane = applyProfileToLane(toLane, loadTaskProfile(context, task, resolvedProjectPath));
+          if (!taskLane?.auto_spawn) {
+            await resetSessionForTodoRestore(context, task, tasks, taskLane?.role, resolvedProjectId, resolvedProjectPath);
             return;
           }
 
-          // Checkout the task's branch in the main repo (non-worktree tasks only).
-          // Catch per-task so one failure doesn't block the entire batch.
+          // Per task, same as the single-unarchive handler above: a restore is
+          // slow enough (worktree recreate + CLI boot) that the card must show
+          // it is working rather than a stale "Paused".
+          const onProgress = createProgressCallback(context.mainWindow, task.id);
+          onProgress('resuming');
+
+          // One `finally` for the whole labelled region, as in the single-unarchive
+          // handler above. `task.id` here comes from this iteration's own
+          // `tasks.unarchive(...)` inside the per-task `withTaskLock`, so the clear
+          // can only ever retire this task's label, never a sibling's.
           try {
-            await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress, projectId: resolvedProjectId });
-          } catch (checkoutError) {
-            console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
-            notifySpawnBlocked(context, task, 'checkout', checkoutError, resolvedProjectId);
-            return;
-          }
+            try {
+              await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress, projectId: resolvedProjectId });
+            } catch (worktreeError) {
+              console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
+              notifySpawnBlocked(context, task, 'worktree', worktreeError, resolvedProjectId);
+              return;
+            }
 
-          if (resolvedProjectPath) {
-            const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
-            if (doneLane) {
-              const db = getProjectDb(resolvedProjectId);
-              const sessionRepo = new SessionRepository(db);
-              const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+            // Checkout the task's branch in the main repo (non-worktree tasks only).
+            // Catch per-task so one failure doesn't block the entire batch.
+            try {
+              await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress, projectId: resolvedProjectId });
+            } catch (checkoutError) {
+              console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
+              notifySpawnBlocked(context, task, 'checkout', checkoutError, resolvedProjectId);
+              return;
+            }
 
-              // Same shared-chokepoint recovery-move contract as the single
-              // TASK_UNARCHIVE handler above: suppressAutoCommand +
-              // skipPromptTemplate, session resumes idle.
-              try {
-                await spawnAgent({
-                  context, engine, tasks, sessionRepo, task,
-                  fromSwimlaneId: doneLane.id,
-                  // The per-task folded lane, so a bulk unarchive spawns each task
-                  // on its own profile's rung rather than the column's base.
-                  toLane: taskLane,
-                  skipPromptTemplate: true,
-                  suppressAutoCommand: true,
-                  projectId: resolvedProjectId,
-                  projectPath: resolvedProjectPath,
-                  attachments: attachmentRepo,
-                });
-              } catch (error) {
-                console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
+            if (resolvedProjectPath) {
+              const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
+              if (doneLane) {
+                const db = getProjectDb(resolvedProjectId);
+                const sessionRepo = new SessionRepository(db);
+                const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+
+                // Same shared-chokepoint recovery-move contract as the single
+                // TASK_UNARCHIVE handler above: suppressAutoCommand +
+                // skipPromptTemplate, session resumes idle.
+                try {
+                  await spawnAgent({
+                    context, engine, tasks, sessionRepo, task,
+                    fromSwimlaneId: doneLane.id,
+                    // The per-task folded lane, so a bulk unarchive spawns each task
+                    // on its own profile's rung rather than the column's base.
+                    toLane: taskLane,
+                    skipPromptTemplate: true,
+                    suppressAutoCommand: true,
+                    projectId: resolvedProjectId,
+                    projectPath: resolvedProjectPath,
+                    attachments: attachmentRepo,
+                  });
+                } catch (error) {
+                  console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
+                }
               }
             }
+          } finally {
+            clearSpawnProgress(context.mainWindow, task.id);
           }
-        } finally {
-          clearSpawnProgress(context.mainWindow, task.id);
-        }
-      });
+        });
+      }
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
     }
   });
 }

@@ -14,6 +14,8 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked, spawnAgent, openAttachmentFile } from '../helpers';
 import { isAbortError } from '../../../shared/abort-utils';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
+import { resolveProjectContext } from '../helpers/project-repos';
+import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
@@ -304,22 +306,23 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return createdTasks;
   });
 
-  ipcMain.handle(IPC.BACKLOG_DEMOTE, (_, input: BacklogDemoteInput) => {
-    if (!context.currentProjectId || !context.currentProjectPath) {
+  ipcMain.handle(IPC.BACKLOG_DEMOTE, async (event, input: BacklogDemoteInput, requestedProjectId?: string | null) => {
+    // The task's own project, stamped by the caller: the Agent Monitor demotes a
+    // task of a project the board is not on (project-scoped-ipc rule).
+    const { projectId, projectPath } = resolveProjectContext(context, requestedProjectId);
+    if (!projectId || !projectPath) {
       throw new Error('No project is currently open');
     }
-    const projectId = context.currentProjectId;
-    const projectPath = context.currentProjectPath;
     const db = getProjectDb(projectId);
     const backlogRepo = new BacklogRepository(db);
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
-    const { tasks, attachments } = getProjectRepos(context);
+    const { tasks, attachments } = getProjectRepos(context, projectId);
 
     // Cancel any in-flight backlog promotion BEFORE queueing on the lock so
     // a stuck promotion can be aborted by this demote.
     abortBacklogPromotion(input.taskId);
 
-    return withTaskLock(input.taskId, async () => {
+    const demotion = withTaskLock(input.taskId, async () => {
       const task = tasks.getById(input.taskId);
       if (!task) throw new Error(`Task ${input.taskId} not found`);
       // A demote deletes the task, which would drop it from its workflow and
@@ -369,6 +372,14 @@ export function registerBacklogHandlers(context: IpcContext): void {
       // Re-fetch to get updated attachment_count
       return backlogRepo.getById(backlogTask.id) ?? backlogTask;
     });
+    // Announced however the demote settles: the cleanup and the backlog row
+    // commit before the task row is deleted, so a late failure has still
+    // changed both lists.
+    try {
+      return await demotion;
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, projectId);
+    }
   });
 
   ipcMain.handle(IPC.BACKLOG_REMAP_PRIORITIES, (_, mapping: Record<number, number>) => {

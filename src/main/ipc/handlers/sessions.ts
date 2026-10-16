@@ -15,6 +15,7 @@ import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { nextOnRoute } from '../../../shared/workflow-route';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { readTaskLastMessage, readTaskReport } from '../helpers/task-report';
+import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed, trackMilestone } from '../../analytics/usage';
@@ -816,20 +817,25 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
 
   // Manual "Link / refresh PR" - on-demand authoritative resolve for a task.
   // Works with no live session (maps by task id, resolves via the confidence ladder).
-  ipcMain.handle(IPC.TASK_RESOLVE_PR, async (_, taskId: string, projectId?: string | null): Promise<TaskResolvePrResult> => {
+  ipcMain.handle(IPC.TASK_RESOLVE_PR, async (event, taskId: string, projectId?: string | null): Promise<TaskResolvePrResult> => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
     // Not `no-anchor`: that status means the TASK has nothing to search by,
     // and the header toast says so. No project open is a different failure.
     if (!resolvedProjectId) {
       return { task: null, linked: false, reason: 'resolver-unavailable', message: 'No project is open' };
     }
-    const result = await linkPR(context, { projectId: resolvedProjectId, taskId, force: true });
-    return {
-      task: result.task,
-      linked: result.status === 'linked' || result.status === 'unchanged',
-      reason: result.status,
-      message: result.message,
-    };
+    // Announced however the resolve settles, like every other task write.
+    try {
+      const result = await linkPR(context, { projectId: resolvedProjectId, taskId, force: true });
+      return {
+        task: result.task,
+        linked: result.status === 'linked' || result.status === 'unchanged',
+        reason: result.status,
+        message: result.message,
+      };
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+    }
   });
 
   // Auto-move task once the user APPROVES the plan (ExitPlanMode completes).

@@ -1582,6 +1582,21 @@
             });
           }
         }
+
+        // Test hook: the move COMMITS, then the call rejects. Main can do this:
+        // the DB move is written, then a later step (spawning the destination
+        // column's agent, a transition action) throws, and the IPC rejects with
+        // the task already in its new column. Unlike __mockTaskMoveThrow, which
+        // rejects BEFORE touching anything, this leaves the committed move in the
+        // arrays, so a spec can prove the caller reloads the committed half
+        // however the call settles. Set window.__mockMoveRejectAfterCommit to the
+        // rejection message; it is consumed by the next move. Placed after every
+        // commit step above (the Done archive and the To Do session teardown).
+        if (typeof window !== 'undefined' && window.__mockMoveRejectAfterCommit) {
+          var rejectAfterCommitMessage = window.__mockMoveRejectAfterCommit;
+          window.__mockMoveRejectAfterCommit = null;
+          throw new Error(rejectAfterCommitMessage);
+        }
       },
       cancelSpawn: async function (taskId) {
         // Record cancellations so UI tests can assert the stall toast's Cancel
@@ -1811,6 +1826,25 @@
           var listeners = window.__mockTaskMovedByAutomationListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onChangedInOtherWindow: function (callback) {
+        // Tests can fire this via window.__mockFireTaskChangedInOtherWindow(projectId),
+        // standing in for main's push after a write from the detached Agent Monitor.
+        if (!window.__mockTaskChangedInOtherWindowListeners) window.__mockTaskChangedInOtherWindowListeners = [];
+        window.__mockTaskChangedInOtherWindowListeners.push(callback);
+        if (!window.__mockFireTaskChangedInOtherWindow) {
+          window.__mockFireTaskChangedInOtherWindow = function (projectId) {
+            var listeners = (window.__mockTaskChangedInOtherWindowListeners || []).slice();
+            for (var listenerIndex = 0; listenerIndex < listeners.length; listenerIndex++) {
+              listeners[listenerIndex](projectId);
+            }
+          };
+        }
+        return function () {
+          var listeners = window.__mockTaskChangedInOtherWindowListeners || [];
+          var listenerIndex = listeners.indexOf(callback);
+          if (listenerIndex >= 0) listeners.splice(listenerIndex, 1);
         };
       },
       onWorkflowCompleted: function (callback) {
@@ -2438,12 +2472,26 @@
       // session id, a changed mock - leaving the race unexercised and the spec
       // vacuously green. Checking the log is deterministic; watching for the
       // transient replay veil to prove the same thing is not, and fails on CI.
+      //
+      // A delay is a RACE against whatever the spec does meanwhile (open a
+      // dialog, open a panel), and it loses on a loaded runner. For an order the
+      // spec must control, set window.__mockScrollbackGate = { [sessionId]: promise }:
+      // every replay for that session also awaits the promise, so the spec
+      // releases it (resolves it) once the surface it opened is confirmed up. One
+      // promise per session, never replaced, so after the release every later
+      // call passes straight through. The log entry's `gated` flag lets a spec
+      // prove the gate really held the call. Opt-in: with no gate set, behavior
+      // is exactly the delay above.
       getScrollback: async function (sessionId) {
         var delay = (window.__mockScrollbackDelayMs || {})[sessionId] || 0;
+        var gate = (window.__mockScrollbackGate || {})[sessionId] || null;
         window.__mockScrollbackCalls = window.__mockScrollbackCalls || [];
-        window.__mockScrollbackCalls.push({ sessionId: sessionId, delay: delay });
+        window.__mockScrollbackCalls.push({ sessionId: sessionId, delay: delay, gated: gate !== null });
         if (delay > 0) {
           await new Promise(function (resolve) { setTimeout(resolve, delay); });
+        }
+        if (gate) {
+          await gate;
         }
         return '';
       },
@@ -4358,7 +4406,20 @@
         });
         return createdTasks;
       },
-      demote: async function (input) {
+      // The mock holds one task list, so the project id the desktop routes by
+      // (the Agent Monitor names a task's own project) does not pick a list. It is
+      // recorded, in call order, to window.__mockDemoteCalls as
+      // { taskId, projectId } (`undefined` normalized to null, as tasks.move does
+      // with __mockMoveProjectIds), so a spec can assert which project a demote was
+      // stamped for and that a cancelled confirm made no call at all.
+      demote: async function (input, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockDemoteCalls) window.__mockDemoteCalls = [];
+          window.__mockDemoteCalls.push({
+            taskId: input.taskId,
+            projectId: projectId === undefined ? null : projectId,
+          });
+        }
         var task = tasks.find(function (t) { return t.id === input.taskId; });
         if (!task) throw new Error('Task not found');
         var maxPos = backlogTasks.reduce(function (max, item) { return Math.max(max, item.position); }, -1);

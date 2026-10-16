@@ -3,7 +3,8 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Trash2 } from 'lucide-react';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
-import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { SendToBacklogDialog } from './SendToBacklogDialog';
+import { sendToBacklogAsksFirst } from '../../utils/send-to-backlog-confirm';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -267,13 +268,10 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           onMoveTo={handleMoveTo}
           onSendToBacklog={() => {
             setContextMenu(null);
-            // Skip confirmation when non-destructive (no session, no worktree) or user opted out
-            const hasResources = !!task.session_id || !!task.worktree_path;
-            const skipConfirm = useConfigStore.getState().config.skipDeleteConfirm;
-            if (!hasResources || skipConfirm) {
-              handleSendToBacklog();
-            } else {
+            if (sendToBacklogAsksFirst(task, useConfigStore.getState().config.skipDeleteConfirm)) {
               setConfirmSendToBacklog(true);
+            } else {
+              handleSendToBacklog();
             }
           }}
           onArchive={handleArchive}
@@ -295,14 +293,8 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       )}
 
       {confirmSendToBacklog && (
-        <ConfirmDialog
-          title="Send to Backlog"
-          message={<>
-            <p>This will move &quot;{task.title}&quot; to the backlog and clean up its session and worktree.</p>
-            <p className="text-fg-muted mt-1">You can move it back to the board later.</p>
-          </>}
-          confirmLabel="Send to Backlog"
-          showDontAskAgain
+        <SendToBacklogDialog
+          title={task.title}
           onConfirm={(dontAskAgain) => {
             if (dontAskAgain) useConfigStore.getState().updateConfig({ skipDeleteConfirm: true });
             handleSendToBacklog();

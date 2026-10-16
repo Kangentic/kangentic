@@ -301,8 +301,11 @@ interface UseTerminalOptions {
    *  identifiable in the dev trace ring. The hook stays surface-agnostic: it is
    *  labelling its OWN paths, not reading the policy. `ArrivalFocusSite` is a
    *  type-only import, erased at build, so this adds no runtime edge to the
-   *  arbiter. */
-  mayTakeArrivalFocus?: (site: ArrivalFocusSite) => boolean;
+   *  arbiter.
+   *
+   *  `terminalElement` is this terminal's xterm element, so the policy can refuse
+   *  a terminal the user cannot see (covered by a dialog or an overlay). */
+  mayTakeArrivalFocus?: (site: ArrivalFocusSite, terminalElement: HTMLElement | null) => boolean;
 }
 
 /** Restore a saved scroll position (from HMR) or pin to the bottom.
@@ -1050,7 +1053,7 @@ export function useTerminal(options: UseTerminalOptions) {
     requestAnimationFrame(() => {
       const terminal = xtermRef.current;
       if (!terminal) return;
-      if (mayTakeArrivalFocusRef.current?.(site) === false) return;
+      if (mayTakeArrivalFocusRef.current?.(site, terminal.element ?? null) === false) return;
       terminal.focus();
     });
   }, []);

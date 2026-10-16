@@ -60,7 +60,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
   // so its arrivals are arbitrated like any other. A real Ctrl+Shift+P still
   // focuses: opening the layer focuses its window, which the arbiter resolves.
   const mayFocusOnArrival = useCallback(
-    (site: ArrivalFocusSite) => mayTakeArrivalFocus(sessionId, site),
+    (site: ArrivalFocusSite, terminalElement: HTMLElement | null) => mayTakeArrivalFocus(sessionId, site, terminalElement),
     [sessionId],
   );
 
@@ -100,7 +100,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
     initTerminal,
     onInit: () => {
       fit();
-      if (mayFocusOnArrival('deferred-init')) focus();
+      if (mayFocusOnArrival('deferred-init', terminalRef.current)) focus();
     },
   });
 
@@ -139,7 +139,8 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
   }, [isMaximized, focus, initialized]);
 
   return (
-    <div className="h-full" data-testid="command-bar-terminal-pane" data-session-id={sessionId}>
+    // `data-terminal-host`: the pane the arrival-focus visibility check measures against.
+    <div className="h-full" data-testid="command-bar-terminal-pane" data-terminal-host data-session-id={sessionId}>
       <FileDropOverlay {...fileDrop} />
       <div
         ref={terminalRef}

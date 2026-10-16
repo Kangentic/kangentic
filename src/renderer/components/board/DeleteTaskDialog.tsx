@@ -3,7 +3,8 @@ import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 
 /**
  * The app's Delete task confirm, one copy for every surface that deletes a
- * task from its menu (the board card, a Workflows canvas card), so the
+ * task from its menu (the board card, a Workflows canvas card, an Agent Monitor
+ * row), so the
  * question and its Don't ask again never differ by where it was asked.
  */
 export function DeleteTaskDialog({ title, onConfirm, onCancel }: {
@@ -21,6 +22,7 @@ export function DeleteTaskDialog({ title, onConfirm, onCancel }: {
       confirmLabel="Delete"
       variant="danger"
       showDontAskAgain
+      testId="delete-task-dialog"
       onConfirm={onConfirm}
       onCancel={onCancel}
     />

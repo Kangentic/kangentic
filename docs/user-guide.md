@@ -1477,6 +1477,8 @@ You choose how it looks, and the choice is remembered (including across a restar
 
 Clicking a row opens that task's full detail - terminal included - **in the monitor**, so several agents across several projects can be watched and driven from one surface without leaving for another project's board. Right-click a row and choose **Open on board** for the old behavior. A task's detail is only ever open in one place: opening it somewhere else moves it rather than making a second copy, and its tab leaves the bottom panel while it is open.
 
+The rest of a row's right-click menu is the board card's own menu. Move to, Backlog, Archive and Delete act on the task's own project. Delete always asks first, and Backlog asks first when the task has a session or worktree to clean up. Both honor the same Don't ask again setting as the board. A change made from the monitor, or from a detail open in it, shows on the board in the main window right away, whichever monitor made it.
+
 Clicking empty space anywhere in the monitor - its list, header, summary cards, or filter bar - closes a detail open there, following your [Close on Outside Click](#behavior-settings) setting. It is scoped to the monitor, so it never reaches through to a task window open on the board underneath.
 
 The pop-out button detaches the monitor into its own window, which is the intended way to keep it on a second monitor. The detached window lays out by its own width, so it stays readable narrow while the in-app view fills a wide screen.

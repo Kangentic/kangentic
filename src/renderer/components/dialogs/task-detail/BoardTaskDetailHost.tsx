@@ -14,6 +14,7 @@
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useBoardStore } from '../../../stores/board-store';
+import { useBacklogStore } from '../../../stores/backlog-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { TaskDetailHostProvider } from './task-detail-host';
@@ -75,6 +76,10 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
     // which for the board IS the current project.
     moveTask: (input, skipConfirmation) => moveTask(input, skipConfirmation, projectId || null),
     unarchiveTask,
+    // The backlog store reloads the board itself once the demote lands.
+    sendToBacklog: async (taskId) => {
+      await useBacklogStore.getState().demoteTask({ taskId }, projectId || null);
+    },
     archiveTask,
     updateAttachmentCount,
     refresh: loadBoard,

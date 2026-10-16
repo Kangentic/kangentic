@@ -4,6 +4,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectRepos } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
@@ -158,13 +159,13 @@ export async function applyTaskSettingsToLiveSession(
 export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
   ipcMain.handle(
     IPC.TASK_SET_RUNTIME_OVERRIDE,
-    async (_, input: TaskSetRuntimeOverrideInput, projectIdArg?: string | null): Promise<TaskSetRuntimeOverrideResult> => {
+    async (event, input: TaskSetRuntimeOverrideInput, projectIdArg?: string | null): Promise<TaskSetRuntimeOverrideResult> => {
       const { projectId, projectPath } = resolveProjectContext(context, projectIdArg);
       if (!projectId || !projectPath) {
         return { ok: false, reason: 'no project is currently open' };
       }
 
-      return withTaskLock(input.taskId, async () => {
+      const override = withTaskLock(input.taskId, async (): Promise<TaskSetRuntimeOverrideResult> => {
         const { tasks } = getProjectRepos(context, projectId);
         if (!tasks.getById(input.taskId)) return { ok: false, reason: 'task not found' };
         const { task } = reconcileTaskSessionRef(context, projectId, input.taskId);
@@ -208,6 +209,14 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
           effort: input.effort !== undefined || profileDetached,
         });
       });
+      // Announced however the restart settles: the override is persisted
+      // before the live session is touched, so a failed respawn has still
+      // changed the task.
+      try {
+        return await override;
+      } finally {
+        announceTaskWriteFromOtherWindow(context, event, projectId);
+      }
     },
   );
 }

@@ -185,6 +185,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.TASK_MOVED_BY_AUTOMATION, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_MOVED_BY_AUTOMATION, handler);
     },
+    onChangedInOtherWindow: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId?: string) =>
+        callback(projectId);
+      ipcRenderer.on(IPC.TASK_CHANGED_IN_OTHER_WINDOW, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_CHANGED_IN_OTHER_WINDOW, handler);
+    },
     onWorkflowCompleted: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, completed: WorkflowCompletedEvent) => callback(completed);
       ipcRenderer.on(IPC.WORKFLOW_COMPLETED, handler);
@@ -642,7 +648,7 @@ const api: ElectronAPI = {
     reorder: (ids) => ipcRenderer.invoke(IPC.BACKLOG_REORDER, ids),
     bulkDelete: (ids) => ipcRenderer.invoke(IPC.BACKLOG_BULK_DELETE, ids),
     promote: (input) => ipcRenderer.invoke(IPC.BACKLOG_PROMOTE, input),
-    demote: (input) => ipcRenderer.invoke(IPC.BACKLOG_DEMOTE, input),
+    demote: (input, projectId) => ipcRenderer.invoke(IPC.BACKLOG_DEMOTE, input, projectId),
     renameLabel: (oldName, newName) => ipcRenderer.invoke(IPC.BACKLOG_RENAME_LABEL, oldName, newName),
     deleteLabel: (name) => ipcRenderer.invoke(IPC.BACKLOG_DELETE_LABEL, name),
     remapPriorities: (mapping) => ipcRenderer.invoke(IPC.BACKLOG_REMAP_PRIORITIES, mapping),

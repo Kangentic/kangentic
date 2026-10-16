@@ -79,10 +79,11 @@ function agentOpenedWindow(sessionId: string | null): FocusedWindowTerminal {
   return { sessionId, openedByAgent: true };
 }
 
-/** Tier 3, allowing: no claim, no focused window, focus not in a typing surface. */
+/** Tier 3, allowing: a visible terminal, no claim, no focused window, focus not in a typing surface. */
 function baseInput(overrides: Partial<ArrivalFocusInput> = {}): ArrivalFocusInput {
   return {
     sessionId: 'sess-arriving',
+    terminalVisible: true,
     claim: null,
     now: NOW,
     windowFocusFingerprint: 'board:|cmd:|mon:',
@@ -92,6 +93,46 @@ function baseInput(overrides: Partial<ArrivalFocusInput> = {}): ArrivalFocusInpu
     ...overrides,
   };
 }
+
+describe('resolveArrivalFocus - tier 0, a terminal the user cannot see', () => {
+  // Measured: the bottom panel's overlay-lift reload reached tier 3 while a
+  // Delete confirm, or the Agent Monitor overlay, covered the panel, and took
+  // focus into a terminal nobody could see. Each case below is built so the tier
+  // it names would have ALLOWED, so tier 0 is what flips it.
+
+  it('DENIES a hidden terminal that tier 3 would have allowed', () => {
+    expect(resolveArrivalFocus(baseInput())).toEqual({ allow: true, reason: 'unclaimed' });
+    expect(resolveArrivalFocus(baseInput({ terminalVisible: false }))).toEqual({ allow: false, reason: 'hidden' });
+  });
+
+  it('DENIES a hidden terminal that its focused window would have allowed', () => {
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-detail',
+      terminalVisible: false,
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
+    }));
+    expect(result).toEqual({ allow: false, reason: 'hidden' });
+  });
+
+  it('DENIES a hidden terminal even under a live claim for it', () => {
+    // A claim outlives its first grant (up to ARRIVAL_CLAIM_TTL_MS), so a later
+    // reload of a clicked tab can arrive after a dialog has opened over it.
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-clicked',
+      terminalVisible: false,
+      claim: { sessionId: 'sess-clicked', fingerprint: 'board:|cmd:|mon:', at: NOW },
+    }));
+    expect(result).toEqual({ allow: false, reason: 'hidden' });
+  });
+
+  it('leaves a visible terminal to the tiers below', () => {
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-detail',
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
+    }));
+    expect(result).toEqual({ allow: true, reason: 'window' });
+  });
+});
 
 describe('resolveArrivalFocus - tier 1, the user-gesture claim', () => {
   it('allows the claimed session', () => {

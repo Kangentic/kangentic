@@ -491,7 +491,7 @@ function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: str
   const setAgentPaneSessionId = useWorkflowStore((state) => state.setAgentPaneSessionId);
 
   const mayFocusOnArrival = useCallback(
-    (site: ArrivalFocusSite) => mayTakeArrivalFocus(sessionId, site),
+    (site: ArrivalFocusSite, terminalElement: HTMLElement | null) => mayTakeArrivalFocus(sessionId, site, terminalElement),
     [sessionId],
   );
 
@@ -519,7 +519,7 @@ function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: str
     initTerminal,
     onInit: () => {
       fit();
-      if (mayFocusOnArrival('deferred-init')) focus();
+      if (mayFocusOnArrival('deferred-init', terminalRef.current)) focus();
     },
   });
 
@@ -532,7 +532,8 @@ function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: str
   });
 
   return (
-    <div className="absolute inset-0 px-1 pt-1" data-testid="workflow-agent-terminal-pane" data-session-id={sessionId} data-agent-name={agentName ?? undefined}>
+    // `data-terminal-host`: the pane the arrival-focus visibility check measures against.
+    <div className="absolute inset-0 px-1 pt-1" data-testid="workflow-agent-terminal-pane" data-terminal-host data-session-id={sessionId} data-agent-name={agentName ?? undefined}>
       <FileDropOverlay {...fileDrop} />
       <div ref={terminalRef} className="h-full" data-testid="workflow-agent-terminal" />
     </div>
