@@ -96,7 +96,7 @@ Team board state syncs through a curated `BoardColumnConfig`, not a full passthr
 
 When a change adds or modifies a `swimlanes` column (a new field on the `Swimlane` interface in `src/shared/types.ts`):
 
-- It MUST be classified in `SWIMLANE_FIELD_SHARING` in `tests/unit/board-config-parity.test.ts` (`'team'` or `'db-only'`). The `Record<keyof Swimlane, ...>` typing makes `npm run typecheck` fail otherwise - confirm the classification is correct, not just present.
+- It MUST be classified in `SWIMLANE_FIELD_SHARING` in `tests/unit/board-config-parity.test.ts` (`'team'` or `'db-only'`). That test reads the `Swimlane` fields out of `src/shared/types.ts` at runtime and fails otherwise. Its `Record<keyof Swimlane, ...>` annotation is an editor aid only, since `npm run typecheck` never reads `tests/unit/`. Confirm the classification is correct, not just present.
 - If `'team'`: verify it round-trips end to end - a key on `BoardColumnConfig` (`src/shared/types.ts`), serialized in `build-config.ts` (with default-omission like its siblings), and threaded into BOTH the `create` and `update` calls in `apply-config.ts` (with the `(isTodo||isDone)` guard). A `'team'` field missing from any of these is the bug class to flag.
 - If `'db-only'`: confirm it is genuinely identity / ordering / runtime-state / timestamp (e.g. `id`, `position`, `is_ghost`, `created_at`) and not a user setting being silently dropped.
 - See `.claude/rules/board-config-parity.md` for the full rule.

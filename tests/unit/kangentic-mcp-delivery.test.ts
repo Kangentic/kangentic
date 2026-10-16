@@ -15,7 +15,7 @@
  *   folder (that is what the value admits to);
  * - not declared: the URL reaches nothing.
  *
- * Runtime checks over the real registry, since `tests/` is not typechecked.
+ * Runtime checks over the real registry, since `tests/unit/` is not typechecked.
  */
 import fs from 'node:fs';
 import os from 'node:os';

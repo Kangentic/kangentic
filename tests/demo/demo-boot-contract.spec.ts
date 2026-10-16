@@ -1,5 +1,5 @@
 /**
- * Three contracts of the web demo that static-demo.spec.ts does not reach:
+ * Four contracts of the web demo that static-demo.spec.ts does not reach:
  *
  *  1. demo/boot.js validateSessionPatch refuses a state= blob's session patch for five reasons.
  *     static-demo.spec.ts covers "resumes a session it also stops"; this file covers the other
@@ -10,6 +10,10 @@
  *  3. The seed's sessions.resume override (tests/captures/helpers/demo-dataset.ts) returns a
  *     task's own session when it is already running, as main's self-heal does, instead of
  *     starting a fresh one.
+ *  4. demo/boot.js pressCombo refuses a mouse combo it cannot press (`Mouse:Left`, or a chord the
+ *     registry allows) with an error naming the combo, instead of dispatching a keydown nothing
+ *     listens for. The capture rig reaches it through `__demoBoot.pressCombo` for every `Mouse:`
+ *     combo, and a listed button (`Mouse:Back`) still goes out as a pointerdown.
  *
  * The harness is a small copy of static-demo.spec.ts's (server boot, demoUrl, gotoScene,
  * encodeState, readyMessageFor). Importing that file instead would register its tests here too.
@@ -245,4 +249,70 @@ test('resuming a task whose agent is still running returns that same session, no
   ]);
 
   expect(getUnexpectedErrors()).toEqual([]);
+});
+
+// pressCombo and a mouse combo it cannot press
+
+/** The part of boot.js's `window.__demoBoot` the capture rig presses a mouse hotkey through. */
+interface DemoBootPressWindow {
+  __demoBoot: { pressCombo(combo: string): void };
+  __pressObservations?: string[];
+}
+
+function pressComboInPage(page: Page, combo: string): Promise<void> {
+  return page.evaluate((comboArg) => (window as unknown as DemoBootPressWindow).__demoBoot.pressCombo(comboArg), combo);
+}
+
+/** Mouse combos in the registry's spelling that boot.js's button table does not carry. */
+const UNPRESSABLE_MOUSE_COMBOS = [
+  { title: 'a button the table does not list', combo: 'Mouse:Left' },
+  // The registry allows a chord of mouse buttons; boot.js sends one pointerdown, so it cannot press one.
+  { title: 'a chord of two listed buttons', combo: 'Mouse:Back+Mouse:Forward' },
+] as const;
+
+for (const unpressable of UNPRESSABLE_MOUSE_COMBOS) {
+  test(`pressCombo refuses ${unpressable.title} (${unpressable.combo}) by name and dispatches nothing`, async ({ page }) => {
+    const getUnexpectedErrors = collectUnexpectedErrors(page);
+    await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+
+    // Record any keydown or pointerdown that reaches the window from here on. Without the throw the
+    // combo fell through to the keyboard branch and went out as a keydown nothing listens for.
+    await page.evaluate(() => {
+      const observations: string[] = [];
+      (window as unknown as DemoBootPressWindow).__pressObservations = observations;
+      for (const eventType of ['keydown', 'pointerdown']) {
+        window.addEventListener(eventType, (event) => { observations.push(event.type); }, true);
+      }
+    });
+
+    // The whole message, not just the combo: a missing pressCombo would also reject, with a
+    // TypeError that has none of this text.
+    await expect(pressComboInPage(page, unpressable.combo)).rejects.toThrow(
+      `Cannot press "${unpressable.combo}": a mouse hotkey here is one of Mouse:Middle, Mouse:Back, Mouse:Forward`,
+    );
+
+    const observed = await page.evaluate(() => (window as unknown as DemoBootPressWindow).__pressObservations ?? []);
+    expect(observed, `${unpressable.combo} still dispatched an event`).toEqual([]);
+    // A throw inside page.evaluate comes back to the caller. It is not an uncaught page error.
+    expect(getUnexpectedErrors()).toEqual([]);
+  });
+}
+
+test('pressCombo still presses a listed mouse button (Mouse:Back) as one pointerdown, without throwing', async ({ page }) => {
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+
+  // A capture-phase listener on window sees the event whether or not the app's own push-to-talk
+  // listener (registered earlier, on the same node) stops it from reaching the document.
+  const pressed = await page.evaluate(() => {
+    const pointerdowns: Array<{ button: number; pointerType: string }> = [];
+    window.addEventListener('pointerdown', (event) => {
+      pointerdowns.push({ button: event.button, pointerType: event.pointerType });
+    }, true);
+    (window as unknown as DemoBootPressWindow).__demoBoot.pressCombo('Mouse:Back');
+    return pointerdowns;
+  });
+
+  // Button 3 is Mouse:Back (src/shared/keybindings.ts). A pressCombo that did nothing would not
+  // throw either, so the event itself is what proves the press went out.
+  expect(pressed).toEqual([{ button: 3, pointerType: 'mouse' }]);
 });
