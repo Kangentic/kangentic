@@ -378,7 +378,8 @@ npm run test:demo
 - **What it asserts:** every bootable scene in the registry reaches its `ready` element (the
   loop iterates `SCENES`, so a new entry is covered with no test change) and, where it names a
   `focus`, that element is a real region rather than nothing, an empty box, or the whole frame; a
-  `driver` scene is refused by name, `scenes.json` is served and matches the registry, the ready
+  `driver` scene is refused by name, the capture rig's press of a driver scene's `Mouse:Back`
+  reaches the page through boot.js, `scenes.json` is served and matches the registry, the ready
   message carries a dialog scene's focus rect, Escape posts `kangentic-demo-escape` when the app
   has nothing of its own to close and stays silent when it does, a task window takes the first
   Escape even with its terminal under the pointer, Escape posts from a Command Terminal, from the
@@ -389,6 +390,12 @@ npm run test:demo
   origin
 - **Build required** before running; the `demo` CI job and the Pages deploy both run it on the
   exact bytes they ship
+- **Type check:** the root `tsconfig.json` covers only `src/` and `packages/protocol/src/`, so
+  `npm run typecheck` chains `npm run typecheck:src` (the root program) and
+  `npm run typecheck:demo`, a second program (`tsconfig.demo.json`)
+  over `tests/demo/`, `tests/captures/`, and `demo/*.ts`. CI runs the two as separate steps. The
+  rest of `tests/` is typechecked only where those files import it (`tests/ui/helpers.ts`), so
+  `tests/unit/` and the UI specs are not.
 
 ### Decision Guide
 

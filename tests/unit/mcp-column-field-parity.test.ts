@@ -21,7 +21,7 @@
  * - The field list is SCANNED out of `src/shared/types.ts` at runtime (via
  *   `helpers/shared-type-source.ts`) rather than declared here as
  *   `Record<keyof Swimlane, ...>`. `tsconfig.json` includes only `src/**` and
- *   `packages/protocol/src/**`, so `tests/` is never typechecked by
+ *   `packages/protocol/src/**`, so `tests/unit/` is never typechecked by
  *   `npm run typecheck` and a type-level guard in a test file fires in an editor
  *   and nowhere in CI. Same scanning approach as
  *   `column-strategy-parity.test.ts` and `spawn-entry-point-parity.test.ts`.

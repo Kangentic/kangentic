@@ -17,12 +17,12 @@ import path from 'node:path';
  * that call to stay in place.
  *
  * tests/captures/** has no other gate that would catch a missing or deleted
- * call: tsconfig.json's `include` only covers src/** and
- * packages/protocol/src/**, so this tree is never typechecked; `npm run
- * lint` only runs eslint against src/ and packages/protocol/src/; and
- * .github/workflows/ci.yml has no captures tier. So a bespoke-page capture
- * that forgets the call, or a deleted call in an existing one, ships a
- * marketing screenshot/video with a raw "(dev)" badge and nothing fails.
+ * call. tsconfig.demo.json typechecks this tree, but leaving a call out is
+ * still valid TypeScript. `npm run lint` only runs eslint against src/ and
+ * packages/protocol/src/, and .github/workflows/ci.yml has no captures tier.
+ * So a bespoke-page capture that forgets the call, or a deleted call in an
+ * existing one, ships a marketing screenshot/video with a raw "(dev)" badge
+ * and nothing fails.
  *
  * This test (pure source analysis, no Vite server or browser needed - runs
  * in CI via the unit tier) makes that regression unmergeable: every file

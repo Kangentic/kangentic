@@ -6,10 +6,11 @@
  * `Record<keyof Swimlane, ...>`, or `Record<SessionSpawnStrategy, true>`, whose
  * comments claim a missing member fails `npm run typecheck`. It does not.
  * `tsconfig.json` includes only `src/**` and `packages/protocol/src/**`, so
- * `tests/` is never typechecked, and those guards fire in an editor and nowhere
+ * `tests/unit/` is never typechecked, and those guards fire in an editor and nowhere
  * in CI. Both were, in effect, documentation.
  *
- * Making tsc cover `tests/` would be the better fix and is not a small one:
+ * Making tsc cover `tests/unit/` would be the better fix and is not a small one.
+ * `tsconfig.demo.json` already covers `tests/demo/` and `tests/captures/`, but
  * measured 2026-09-15, `tests/unit/**` alone produces hundreds of pre-existing
  * errors (deliberately partial mock objects, vitest `Mock` signatures, top-level
  * await under the CJS `module` setting). Until that is worth doing on its own,

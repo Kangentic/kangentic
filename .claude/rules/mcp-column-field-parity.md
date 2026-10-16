@@ -74,8 +74,8 @@ decision visible:
   `tests/unit/better-sqlite3-loads-in-vitest.test.ts` fails if they would go back to skipping.
 
   The field list is scanned at runtime rather than declared as `Record<keyof Swimlane, ...>` on
-  purpose. `tsconfig.json` includes only `src/**` and `packages/protocol/src/**`, so `tests/` is
-  never typechecked by `npm run typecheck` and a type-level guard in a test file fires in an editor
+  purpose. `tsconfig.json` includes only `src/**` and `packages/protocol/src/**`, so `tests/unit/`
+  is never typechecked by `npm run typecheck` and a type-level guard in a test file fires in an editor
   and nowhere in CI.
 - **Review:** `/code-review` flags a new column field wired to the Board Manager but not to MCP.
 
