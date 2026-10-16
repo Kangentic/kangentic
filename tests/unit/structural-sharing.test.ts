@@ -80,6 +80,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     priority: 0,
     attachment_count: 0,
     run_mode: 'column_settings',
+    automations_disabled: false,
     archived_at: null,
     created_at: '2026-04-17T00:00:00.000Z',
     updated_at: '2026-04-17T00:00:00.000Z',
@@ -158,6 +159,29 @@ describe('applyStructuralSharing', () => {
     const result = applyStructuralSharing([previous], [next]);
 
     expect(result[0]).toBe(next);
+  });
+
+  // The card's automations strip and its menu row read the switch, and the move
+  // out of Done clears it without bumping anything else the card shows. Without
+  // this comparison the card would keep the stale strip until an unrelated field
+  // changed too.
+  it('uses next reference when automations_disabled changed and nothing else did', () => {
+    const previous = makeTask({ automations_disabled: false });
+    const next = makeTask({ automations_disabled: true });
+
+    const result = applyStructuralSharing([previous], [next]);
+
+    expect(result[0]).toBe(next);
+    expect(result[0].automations_disabled).toBe(true);
+  });
+
+  it('reuses previous reference when automations_disabled is the same on both sides', () => {
+    const previous = makeTask({ automations_disabled: true });
+    const next = makeTask({ automations_disabled: true });
+
+    const result = applyStructuralSharing([previous], [next]);
+
+    expect(result[0]).toBe(previous);
   });
 
   it('uses next reference when labels array differs in length', () => {
