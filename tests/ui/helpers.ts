@@ -1,4 +1,4 @@
-import { chromium, expect, type Browser, type Locator, type Page } from '@playwright/test';
+import { chromium, errors, expect, type Browser, type Locator, type Page, type Request, type Response } from '@playwright/test';
 import path from 'node:path';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
@@ -104,8 +104,37 @@ const VITE_UNREACHED_MARKERS = ['net::ERR_CONNECTION_REFUSED', 'chrome-error://c
  *
  * No assertion is ever retried, since neither form means the app loaded. Any other navigation
  * error, and either form on the last attempt, is rethrown.
+ *
+ * A third form reaches the app but never mounts it. The v0.46.0 release's local UI run failed
+ * search-palette.spec.ts:335 on a page whose load event fired and whose #root stayed empty for 15 s,
+ * while every other test in the file booted the same way in about a second. Load fires after the
+ * entry's module graph has run or failed, so an empty root that long after load is a boot that
+ * died, most likely on a module request that failed. gotoVite reloads such a page once, after
+ * logging the requests that failed or never finished so the next occurrence names its cause. The
+ * caller's own wait for the app judges the second boot, so a boot that was only slow still passes.
  */
 export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void> {
+  const bootRequests = trackBootRequests(page);
+  try {
+    await navigateToVite(page, url);
+    if (await appMounted(page, VITE_BOOT_MOUNT_GRACE_MS)) return;
+    console.warn(
+      `[gotoVite] the app did not mount within ${VITE_BOOT_MOUNT_GRACE_MS} ms of load, reloading once. ${bootRequests.describe()}`,
+    );
+    await page.reload();
+  } finally {
+    bootRequests.dispose();
+  }
+}
+
+/**
+ * How long after load gotoVite waits for #root to gain a child before it reloads. A healthy boot
+ * mounts within a second of load even on a loaded runner. The UI project's 15 s test budget has to
+ * hold this wait, the second boot and the test's own steps.
+ */
+const VITE_BOOT_MOUNT_GRACE_MS = 5000;
+
+async function navigateToVite(page: Page, url: string): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       await page.goto(url);
@@ -116,6 +145,57 @@ export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void
       await waitForViteReady(url);
     }
   }
+}
+
+/**
+ * True once React has put anything into #root: the app, a pop-out surface, or an error boundary's
+ * fallback. Each of those counts as a boot that ran, so only a root that stays empty is retried.
+ */
+async function appMounted(page: Page, timeoutMs: number): Promise<boolean> {
+  try {
+    await page.waitForSelector('#root > *', { state: 'attached', timeout: timeoutMs });
+    return true;
+  } catch (error) {
+    if (error instanceof errors.TimeoutError) return false;
+    throw error;
+  }
+}
+
+/** Records the page's requests during a boot, so a boot that never mounts can say what it was waiting on. */
+function trackBootRequests(page: Page): { describe: () => string; dispose: () => void } {
+  const unanswered = new Set<Request>();
+  const failed: string[] = [];
+  const onRequest = (request: Request): void => {
+    unanswered.add(request);
+  };
+  const onRequestFinished = (request: Request): void => {
+    unanswered.delete(request);
+  };
+  const onRequestFailed = (request: Request): void => {
+    unanswered.delete(request);
+    failed.push(`${request.url()} (${request.failure()?.errorText ?? 'failed'})`);
+  };
+  const onResponse = (response: Response): void => {
+    if (response.status() >= 400) failed.push(`${response.url()} (HTTP ${response.status()})`);
+  };
+  page.on('request', onRequest);
+  page.on('requestfinished', onRequestFinished);
+  page.on('requestfailed', onRequestFailed);
+  page.on('response', onResponse);
+  return {
+    describe: () => {
+      const unansweredUrls = [...unanswered].map((request) => request.url());
+      return `Failed: ${failed.length > 0 ? failed.join(', ') : 'none'}. Never answered: ${
+        unansweredUrls.length > 0 ? unansweredUrls.join(', ') : 'none'
+      }.`;
+    },
+    dispose: () => {
+      page.off('request', onRequest);
+      page.off('requestfinished', onRequestFinished);
+      page.off('requestfailed', onRequestFailed);
+      page.off('response', onResponse);
+    },
+  };
 }
 
 /** What `launchWithTransientTerminal` seeds: one project, and the id every Command Terminal spawns with. */
