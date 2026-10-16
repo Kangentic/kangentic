@@ -68,14 +68,16 @@ export function saveDiffScroll(key: string, position: DiffScrollPosition): void 
  *
  * This clamp is hygiene on OUR call site, and that is all it is. It was added
  * for Sentry DESKTOP-8 ("Illegal value for lineNumber") without reproducing
- * that throw, and DESKTOP-19 is the same class recurring past it. Reading
- * DESKTOP-19's frames against monaco 0.56.0 shows why it cannot be the fix:
- * the offset that throws is set on the ORIGINAL editor by Monaco's own
- * scroll-mirroring autorun (diffEditorViewZones.js's "update scroll original"),
- * computed from the modified side rather than passed through here, and the
- * out-of-range read happens on the original's viewport. Nothing this function
- * returns can reach it. Keep the clamp, but do not treat it as coverage for
- * that crash class.
+ * that throw, and DESKTOP-19 is the same class recurring past it. The offset
+ * that throws is set on the ORIGINAL editor by Monaco's own scroll-mirroring
+ * autorun (diffEditorViewZones.js's "update scroll original"), computed from
+ * the modified side rather than passed through here, so nothing this function
+ * returns can reach it. What did reach it was the content path: flushing new
+ * text into the live models while the original editor was still laid out for
+ * the old text. DiffViewer now swaps content into a detached editor instead
+ * (its "Put new content into the mounted editor DETACHED" swap), and
+ * tests/ui/monaco-error-funnel.spec.ts reproduces the throw against the old
+ * path. Keep the clamp, but do not treat it as coverage for that crash class.
  *
  * Restoring past the end saturates at the bottom. A non-finite input (a
  * disposed or never-laid-out editor reporting NaN) degrades to the top.

@@ -737,3 +737,123 @@ export async function createTask(
   // Wait for the new task dialog to unmount (the modal backdrop disappears).
   await newTaskDialog.waitFor({ state: 'hidden', timeout: 3000 });
 }
+
+/** The slice of the dev-only `window.__monaco` handle (monacoConfig.ts) the diff helpers below read. */
+interface MonacoDiffTestHandle {
+  editor: {
+    getDiffEditors: () => {
+      getModifiedEditor: () => { getScrollHeight: () => number; setScrollTop: (scrollTop: number) => void };
+      getLineChanges: () => { modifiedStartLineNumber: number }[] | null;
+      onDidUpdateDiff: (listener: () => void) => unknown;
+      waitForDiff: () => Promise<void>;
+    }[];
+  };
+}
+
+/** Per-page record of the last diff update waitForDiffToSettle has seen, keyed to the editor it watches. */
+interface DiffSettleTracker {
+  editor: unknown;
+  lastActivityAt: number;
+}
+
+// How long the diff editor must go without a diff update before
+// waitForDiffToSettle trusts that no compute is still on its way.
+const DIFF_QUIET_MS = 500;
+
+/**
+ * The modified-side line of the first mounted diff editor's FIRST computed
+ * line change, or -1 with no editor mounted or no change computed.
+ *
+ * A wait on this must name the line it expects, never just "non-empty".
+ * Monaco recomputes the diff asynchronously after new content goes in, and an
+ * in-place flush into the live models kept `getLineChanges()` on the PREVIOUS
+ * file's changes until the new result landed (154 ms after delta.ts loaded, in
+ * changes-diff-scroll-memory.spec.ts), so a "length > 0" poll passed inside
+ * that window. DiffViewer's detached swap reads -1 there instead. Give each
+ * fixture file a first change on a line no other file uses, so the line
+ * identifies whose diff it is.
+ */
+export async function readModifiedFirstChangeLine(target: Page): Promise<number> {
+  return target.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoDiffTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) return -1;
+    return diffEditors[0].getLineChanges()?.[0]?.modifiedStartLineNumber ?? -1;
+  });
+}
+
+/**
+ * Wait until the first mounted diff editor has no diff computation left to
+ * deliver. Call it before leaving a file whose diff you waited for, and before
+ * a final page-error assertion.
+ *
+ * `readModifiedFirstChangeLine` proves ONE result for the file landed, not
+ * that the last one did. Monaco can have a second compute for the same content
+ * pending or in flight (measured: an option update or a debounced content
+ * change right after the first result, and under CI load two computes started
+ * together). Its stale-result guard is a single token that only cancels on
+ * dispose. While DiffViewer swapped content in place, a result for the OLD
+ * file that landed after the swap was applied against the new line counts and
+ * `UnchangedRegion.fromDiffs` threw "startLineNumber 11 cannot be after
+ * endLineNumberExclusive 2" (gamma's insertion line against beta's one line,
+ * in changes-diff-scroll-memory.spec.ts), an unhandled rejection that
+ * collectPageErrors reports. The detached swap disposes the old diff view
+ * model, and with it that token, but a second compute for the SAME content
+ * still lands late.
+ *
+ * Two signals, because neither is enough alone. `waitForDiff()` resolves once
+ * the editor's diff is up to date, which covers a compute that has started.
+ * It cannot see one that has not been posted yet, so the editor must also go
+ * DIFF_QUIET_MS without a diff update, longer than Monaco's 200ms content
+ * debounce plus a compute on a loaded runner. The quiet clock is a page-side
+ * `onDidUpdateDiff` listener, installed on first use and kept per editor.
+ */
+export async function waitForDiffToSettle(target: Page): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        target.evaluate(async (requiredQuietMs) => {
+          const pageWindow = window as unknown as {
+            __monaco?: MonacoDiffTestHandle;
+            __diffSettleTracker?: DiffSettleTracker;
+          };
+          const diffEditors = pageWindow.__monaco?.editor.getDiffEditors() ?? [];
+          if (diffEditors.length === 0) return false;
+          const diffEditor = diffEditors[0];
+          if (pageWindow.__diffSettleTracker?.editor !== diffEditor) {
+            const freshTracker: DiffSettleTracker = { editor: diffEditor, lastActivityAt: performance.now() };
+            diffEditor.onDidUpdateDiff(() => {
+              freshTracker.lastActivityAt = performance.now();
+            });
+            pageWindow.__diffSettleTracker = freshTracker;
+          }
+          const tracker = pageWindow.__diffSettleTracker as DiffSettleTracker;
+          // A compute that never lands must not hang the poll, so give up on
+          // this read after 2s and let the poll try again.
+          const upToDate = await Promise.race([
+            diffEditor.waitForDiff().then(() => true),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
+          ]);
+          if (!upToDate) return false;
+          return performance.now() - tracker.lastActivityAt >= requiredQuietMs;
+        }, DIFF_QUIET_MS),
+      { timeout: 15000, intervals: [100, 200, 400] },
+    )
+    .toBe(true);
+}
+
+/**
+ * Drive the first mounted diff editor's modified side to its bottom.
+ * Programmatic rather than Ctrl+End because a click to focus could land in
+ * either pane, and Monaco saturates an over-large offset at the real maximum
+ * for the current layout. The diff editor mirrors it onto the original side.
+ */
+export async function scrollModifiedToBottom(target: Page): Promise<void> {
+  await target.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoDiffTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) return;
+    const modifiedEditor = diffEditors[0].getModifiedEditor();
+    modifiedEditor.setScrollTop(modifiedEditor.getScrollHeight());
+  });
+}
