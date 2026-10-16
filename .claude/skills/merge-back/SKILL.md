@@ -138,7 +138,7 @@ Summarize:
 - Branch name that was merged
 - Source branch that received the changes
 - Number of commits landed (from `git log origin/<sourceBranch>@{1}..origin/<sourceBranch> --oneline` or similar)
-- **Worktree mode only:** Remind the user they can clean up the worktree by moving the task to Done on the board (which triggers `cleanup_worktree`) or manually
+- **Worktree mode only:** Remind the user they can remove the worktree by moving the task to Done on the board, or manually
 
 ## Step 6 - Update Local Source Branch (worktree mode only, always runs after Step 5)
 
