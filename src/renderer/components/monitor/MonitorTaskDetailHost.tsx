@@ -10,10 +10,12 @@
  * Deliberately NOT reusing the board store's actions: those apply an optimistic
  * local update to the OPEN project's task list, which for a background project's
  * task would either do nothing or corrupt the wrong board. The IPC underneath is
- * the same in both hosts (`tasks.update` / `move` / `delete` / `unarchive`, all
- * of which already take an explicit projectId per
- * .claude/rules/project-scoped-ipc.md); only the local echo differs, and here the
- * echo is a bundle refetch.
+ * the same in both hosts (`tasks.update` / `move` / `delete` / `unarchive` and
+ * `backlog.demote`, all of which take an explicit projectId per
+ * .claude/rules/project-scoped-ipc.md); only the local echo differs. Here the
+ * echo is a bundle refetch plus `resyncBoardAfterMonitorWrite`, because the
+ * board under the monitor never sees these writes: it reloads for the open
+ * project, and another project's warm snapshot is dropped.
  *
  * One bundle per open task, keyed by (projectId, taskId), refetched on the
  * monitor's own change push so a rename or column move made elsewhere lands here
@@ -27,6 +29,7 @@ import { useMonitorStore } from '../../stores/monitor-store';
 import { TaskDetailHostProvider } from '../dialogs/task-detail';
 import type { TaskDetailHostValue } from '../dialogs/task-detail';
 import type { Task, TaskDetailBundle } from '../../../shared/types';
+import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write';
 
 interface MonitorTaskDetailHostProps {
   projectId: string;
@@ -100,9 +103,19 @@ export function MonitorTaskDetailHost({
     return () => { requestGenerationRef.current += 1; };
   }, [fetchBundle, applyBundle, snapshotGeneration]);
 
+  /**
+   * What the surface calls after any write, its own seams and the writes it
+   * makes around the host (switch branch, update from base, resolve PR): the
+   * bundle refetch, and the one board resync per write.
+   */
+  const refreshAfterWrite = useCallback(async () => {
+    resyncBoardAfterMonitorWrite(projectId);
+    await refresh();
+  }, [projectId, refresh]);
+
   if (!bundle) return null;
   return (
-    <MonitorTaskDetailHostValue bundle={bundle} refresh={refresh} settingsOpen={settingsOpen}>
+    <MonitorTaskDetailHostValue bundle={bundle} refresh={refreshAfterWrite} settingsOpen={settingsOpen}>
       {children}
     </MonitorTaskDetailHostValue>
   );
@@ -142,17 +155,37 @@ function MonitorTaskDetailHostValue({
       // deliberate and correct: the repository treats it as "top of the lane",
       // which is a real position rather than a guess at the bottom.
       laneTasks: () => [],
+      // `refresh` is the host's refresh-after-write: the bundle refetch plus the
+      // board resync (see MonitorTaskDetailHost).
       updateTask: async (input) => {
         const updated = await window.electronAPI.tasks.update(input, bundle.projectId);
         await refresh();
         return updated;
       },
+      // No bundle is left to refetch for a deleted or demoted task, so these two
+      // resync the board directly.
       deleteTask: async (id) => {
-        await window.electronAPI.tasks.delete(id, bundle.projectId);
+        try {
+          await window.electronAPI.tasks.delete(id, bundle.projectId);
+        } finally {
+          resyncBoardAfterMonitorWrite(bundle.projectId);
+        }
       },
+      sendToBacklog: async (taskId) => {
+        try {
+          await window.electronAPI.backlog.demote({ taskId }, bundle.projectId);
+        } finally {
+          resyncBoardAfterMonitorWrite(bundle.projectId);
+        }
+      },
+      // Refreshed whichever way the move settles: a move can commit and then
+      // fail, and the board must still learn the committed half.
       moveTask: async (input) => {
-        await window.electronAPI.tasks.move(input, bundle.projectId);
-        await refresh();
+        try {
+          await window.electronAPI.tasks.move(input, bundle.projectId);
+        } finally {
+          await refresh();
+        }
         return { ok: true };
       },
       unarchiveTask: async (input) => {

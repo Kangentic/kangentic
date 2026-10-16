@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { PROJECT_SCOPED_MUTATION_CHANNELS } from './helpers/project-scoped-mutation-channels';
 
 // Enforces .claude/rules/project-scoped-ipc.md. Renderer-driven task-scoped and session
 // MUTATION IPC must forward an explicit projectId (captured at interaction time) so a mutation
@@ -16,27 +17,10 @@ import path from 'node:path';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const PRELOAD_PATH = path.join(REPO_ROOT, 'src/preload/preload.ts');
 
-// Mutation channels: must forward an explicit projectId. Keep in sync with the prose list in
+// Mutation channels: must forward an explicit projectId. Shared with
+// other-window-task-writes.test.ts; keep in sync with the prose list in
 // .claude/rules/project-scoped-ipc.md when the mutation set grows.
-const MUTATION_CHANNELS = new Set([
-  'TASK_CREATE',
-  'TASK_UPDATE',
-  'TASK_DELETE',
-  'TASK_MOVE',
-  'TASK_UNARCHIVE',
-  'TASK_BULK_DELETE',
-  'TASK_BULK_UNARCHIVE',
-  'TASK_SWITCH_BRANCH',
-  'TASK_UPDATE_FROM_BASE',
-  'TASK_SET_RUNTIME_OVERRIDE',
-  'TASK_RESOLVE_PR',
-  'TASK_SET_DETAIL_VIEW_STATE',
-  'SESSION_SPAWN',
-  'SESSION_SUSPEND',
-  'SESSION_RESUME',
-  'SESSION_RESET',
-  'SESSION_RECONCILE',
-]);
+const MUTATION_CHANNELS = PROJECT_SCOPED_MUTATION_CHANNELS;
 
 // Allowlisted channels: reads, by-session-id operations, or project-agnostic actions that do not
 // route a project-scoped DB mutation. They are exempt from the projectId requirement on purpose.
@@ -110,7 +94,10 @@ function extractTaskSessionInvokes(source: string): InvokeCall[] {
   // this rule is about. If a future DETAIL_*/MONITOR_* channel does mutate
   // task-scoped state, rename it into the TASK_/SESSION_ prefix so this scan claims
   // it, or add it here with a reason.
-  const pattern = /ipcRenderer\.invoke\(\s*(IPC\.(?:TASK|SESSION)_[A-Z0-9_]+)((?:,\s*[^)]*)?)\)/g;
+  //
+  // BACKLOG_DEMOTE is claimed by name rather than by prefix: it deletes a board task, so it is
+  // a task mutation, but the rest of the BACKLOG_* channels act on backlog items and are not.
+  const pattern = /ipcRenderer\.invoke\(\s*(IPC\.(?:(?:TASK|SESSION)_[A-Z0-9_]+|BACKLOG_DEMOTE))((?:,\s*[^)]*)?)\)/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(source)) !== null) {
     const channel = match[1].replace('IPC.', '');

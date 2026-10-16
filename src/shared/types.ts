@@ -7041,6 +7041,17 @@ export interface ElectronAPI {
      * workflow can move many cards an hour and the run log already records why.
      */
     onMovedByAutomation: (callback: (projectId?: string) => void) => () => void;
+    /**
+     * The user changed a task from a window other than the main one: the
+     * pop-out Agent Monitor's row menu, or a task detail it hosts. That window
+     * has its own stores, so main tells the main window, which reloads its board
+     * for the open project or invalidates the named project's warm cache.
+     *
+     * Quiet, like `onMovedByMobile`: the user made the change, in a window they
+     * are looking at. The main window sends no such push for its own writes; the
+     * in-app monitor resyncs the board itself.
+     */
+    onChangedInOtherWindow: (callback: (projectId?: string) => void) => () => void;
     /** Every task in a workflow reached Done (`WorkflowCompletedEvent`). */
     onWorkflowCompleted: (callback: (event: WorkflowCompletedEvent) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
@@ -7562,7 +7573,9 @@ export interface ElectronAPI {
     reorder: (ids: string[]) => Promise<void>;
     bulkDelete: (ids: string[]) => Promise<void>;
     promote: (input: BacklogPromoteInput) => Promise<Task[]>;
-    demote: (input: BacklogDemoteInput) => Promise<BacklogTask>;
+    /** Send a board task to the backlog. `projectId` is the task's project, which
+     *  the Agent Monitor names for a task of a project the board is not on. */
+    demote: (input: BacklogDemoteInput, projectId?: string | null) => Promise<BacklogTask>;
     renameLabel: (oldName: string, newName: string) => Promise<number>;
     deleteLabel: (name: string) => Promise<number>;
     remapPriorities: (mapping: Record<number, number>) => Promise<number>;

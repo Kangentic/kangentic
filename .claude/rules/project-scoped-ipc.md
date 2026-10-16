@@ -36,8 +36,9 @@ only for main-process internal callers (engine, auto-move, MCP command handlers)
   builds on.
 
 The mutation set today: tasks `create`/`update`/`delete`/`move`/`unarchive`/`bulkDelete`/
-`bulkUnarchive`/`switchBranch`/`updateFromBase`/`setRuntimeOverride`/`resolvePr`; sessions
-`spawn`/`suspend`/`resume`/`reset`/`reconcile`. Reads (`list`, `listArchived`, the `get*` probes) and
+`bulkUnarchive`/`switchBranch`/`updateFromBase`/`setRuntimeOverride`/`resolvePr`/
+`setDetailViewState`; backlog `demote` (it deletes a board task, and the Agent Monitor demotes a
+task of a project the board is not on); sessions `spawn`/`suspend`/`resume`/`reset`/`reconcile`. Reads (`list`, `listArchived`, the `get*` probes) and
 by-session-id / project-agnostic channels (`kill`, `write`, `resize`, `cancelSpawn`, the transient
 session channels) are NOT stamped: a read against the wrong project shows stale data for a frame
 (reconciled by the warm cache), it does not corrupt the wrong project.
@@ -46,10 +47,12 @@ session channels) are NOT stamped: a read against the wrong project shows stale 
 
 New IPC channels are added regularly, and the read-trigger gap means this rule may not be loaded
 when a new channel is created. The CI test below is the backstop: it classifies every
-`ipcRenderer.invoke(IPC.TASK_* | IPC.SESSION_*)` in `preload.ts` as either a stamped mutation or
+`ipcRenderer.invoke(IPC.TASK_* | IPC.SESSION_*)` (plus `IPC.BACKLOG_DEMOTE`, claimed by name) in
+`preload.ts` as either a stamped mutation or
 an explicit allowlist entry, and FAILS on an unclassified channel. A new mutation therefore cannot
 ship without a deliberate decision: forward `projectId`, or justify an allowlist entry. When the
-mutation set grows, update both the test's `MUTATION_CHANNELS` set and the prose list above.
+mutation set grows, update both `PROJECT_SCOPED_MUTATION_CHANNELS`
+(`tests/unit/helpers/project-scoped-mutation-channels.ts`) and the prose list above.
 
 ## Enforcement (self-maintaining)
 

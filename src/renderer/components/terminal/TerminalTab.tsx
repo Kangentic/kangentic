@@ -110,7 +110,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // surface the user is actually on - the arbiter answers that from user-intent
   // state instead. See terminal-arrival-focus.ts.
   const mayFocusOnArrival = useCallback(
-    (site: ArrivalFocusSite) => mayTakeArrivalFocus(sessionId, site),
+    (site: ArrivalFocusSite, terminalElement: HTMLElement | null) => mayTakeArrivalFocus(sessionId, site, terminalElement),
     [sessionId],
   );
 
@@ -200,7 +200,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       // `initialized` already true, so it focuses about one frame after mount -
       // well before any replay settles. Gating only the replay would therefore
       // leave the race intact, just decided earlier.
-      if (initialized.current && mayFocusOnArrival('tab-init')) {
+      if (initialized.current && mayFocusOnArrival('tab-init', terminalRef.current)) {
         focus();
       }
     });
@@ -221,7 +221,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     // `initialized` is the stable ref returned by useDeferredTerminalInit -
     // listed for exhaustive-deps (which cannot see through the hook), never
     // a re-run trigger.
-  }, [active, fit, focus, mayFocusOnArrival, scrollbackPending, initialized]);
+  }, [active, fit, focus, mayFocusOnArrival, scrollbackPending, initialized, terminalRef]);
 
   // Container refit while active: persistent gate-aware ResizeObserver plus the
   // terminal-panel-resize handling, shared with CommandTerminalWindow via
@@ -245,7 +245,9 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   const terminalBackground = resolveTerminalBackground(config.terminal.colors);
 
   return (
-    <div ref={containerRef} data-testid="terminal-tab-container" className="h-full w-full relative" style={{ backgroundColor: terminalBackground }}>
+    // `data-terminal-host`: the pane the arrival-focus visibility check measures
+    // against, so the launch overlay below counts as part of the terminal.
+    <div ref={containerRef} data-testid="terminal-tab-container" data-terminal-host className="h-full w-full relative" style={{ backgroundColor: terminalBackground }}>
       <div ref={terminalRef} className="h-full w-full" />
       <FileDropOverlay {...fileDrop} />
       {/* Replay veil: covers the mount-time replay window (first fit, chunked

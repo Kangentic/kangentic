@@ -590,3 +590,82 @@ describe('handleTaskMove shutdown protection', () => {
     ).rejects.toThrow('Worktree setup failed');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The same wrapper tells the main window about a move made from another window
+// (the detached Agent Monitor), whose own stores the main window cannot see.
+// It announces from a `finally`, so a move that committed and then failed is
+// still announced; a throw in there would replace the move's own error, which
+// is why the shutdown gate sits on it too. The helper's sender rules are pinned
+// in other-window-task-writes.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('TASK_MOVE wrapper announces a move from another window', () => {
+  const MAIN_WINDOW_WEB_CONTENTS_ID = 1;
+  const FROM_OTHER_WINDOW = { sender: { id: 2, isDestroyed: () => false } };
+  const FROM_MAIN_WINDOW = { sender: { id: MAIN_WINDOW_WEB_CONTENTS_ID, isDestroyed: () => false } };
+  let taskRepo: MockTaskRepo;
+  let swimlaneRepo: MockSwimlaneRepo;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsShuttingDown.mockReturnValue(false);
+    ipcHandlers.clear();
+    taskRepo = makeTaskRepo(makeTask({ id: 'task-aaa00001', swimlane_id: SOURCE_LANE_ID }));
+    swimlaneRepo = makeSwimlaneRepo([
+      makeSwimlane(SOURCE_LANE_ID, { role: 'todo' }),
+      makeSwimlane(TARGET_LANE_ID, { role: null, auto_spawn: true }),
+    ]);
+    mockEnsureTaskWorktree.mockReset();
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+    mockEnsureTaskBranchCheckout.mockReset();
+    mockEnsureTaskBranchCheckout.mockResolvedValue(undefined);
+    mockSpawnAgent.mockReset();
+    mockSpawnAgent.mockResolvedValue(undefined);
+  });
+
+  function registeredMoveHandler(context: MockContext): (...args: unknown[]) => Promise<unknown> {
+    Object.assign(context.mainWindow.webContents, { id: MAIN_WINDOW_WEB_CONTENTS_ID });
+    registerTaskMoveHandlers(context as never);
+    const handler = ipcHandlers.get(IPC.TASK_MOVE);
+    if (!handler) throw new Error('TASK_MOVE handler not registered');
+    return handler as (...args: unknown[]) => Promise<unknown>;
+  }
+
+  function otherWindowPushes(context: MockContext): unknown[][] {
+    return context.mainWindow.webContents.send.mock.calls
+      .filter((call: unknown[]) => call[0] === IPC.TASK_CHANGED_IN_OTHER_WINDOW);
+  }
+
+  it('pushes the move\'s project to the main window', async () => {
+    const context = makeContext(taskRepo, swimlaneRepo);
+    await registeredMoveHandler(context)(FROM_OTHER_WINDOW, MOVE_INPUT, 'proj-test');
+    expect(otherWindowPushes(context)).toEqual([[IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test']]);
+  });
+
+  it('still pushes when the move committed and then failed', async () => {
+    mockEnsureTaskWorktree.mockRejectedValue(new Error('git error: branch locked'));
+    const context = makeContext(taskRepo, swimlaneRepo);
+    await expect(registeredMoveHandler(context)(FROM_OTHER_WINDOW, MOVE_INPUT, 'proj-test'))
+      .rejects.toThrow('Worktree setup failed');
+    // The forward move was written before Phase 2 failed, so the board changed.
+    expect(taskRepo.move).toHaveBeenCalled();
+    expect(otherWindowPushes(context)).toEqual([[IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test']]);
+  });
+
+  it('sends nothing for the main window\'s own move', async () => {
+    const context = makeContext(taskRepo, swimlaneRepo);
+    await registeredMoveHandler(context)(FROM_MAIN_WINDOW, MOVE_INPUT, 'proj-test');
+    expect(otherWindowPushes(context)).toEqual([]);
+  });
+
+  it('sends nothing while the app is shutting down', async () => {
+    mockEnsureTaskWorktree.mockImplementation(async () => {
+      mockIsShuttingDown.mockReturnValue(true);
+      throw new TypeError('The database connection is not open');
+    });
+    const context = makeContext(taskRepo, swimlaneRepo);
+    await expect(registeredMoveHandler(context)(FROM_OTHER_WINDOW, MOVE_INPUT, 'proj-test')).resolves.toBeUndefined();
+    expect(otherWindowPushes(context)).toEqual([]);
+  });
+});

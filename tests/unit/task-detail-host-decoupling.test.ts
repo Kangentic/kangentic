@@ -12,8 +12,8 @@ import path from 'node:path';
 // whichever project happened to be open.
 //
 // The fix is `task-detail-host.tsx`, a context each host implements. This scan is
-// the backstop: a future edit that reaches for `useProjectStore` or `useBoardStore`
-// inside the surface compiles and passes every existing test, because the board
+// the backstop: a future edit that reaches for `useProjectStore`, `useBoardStore` or
+// `useBacklogStore` inside the surface compiles and passes every existing test, because the board
 // host makes the two agree. Only a cross-project host disagrees, and by then the
 // bug is a data-corruption bug in someone's other project.
 
@@ -34,8 +34,12 @@ const ALLOWLIST = [
   'src/renderer/components/dialogs/task-detail/BoardTaskDetailHost.tsx',
 ];
 
-/** An import of a store whose contents are scoped to the CURRENTLY OPEN project. */
-const AMBIENT_PROJECT_STORE_IMPORT = /from\s+['"][^'"]*stores\/(project-store|board-store)['"]/;
+/**
+ * An import of a store whose contents are scoped to the CURRENTLY OPEN project. The backlog
+ * store is one: its demote sent a monitor-hosted task of another project to the open board's
+ * backlog lookup, which could not find it, so the detail closed and nothing happened.
+ */
+const AMBIENT_PROJECT_STORE_IMPORT = /from\s+['"][^'"]*stores\/(project-store|board-store|backlog-store)['"]/;
 /** A direct read of the open project, even without the import (re-exported paths). */
 const AMBIENT_CURRENT_PROJECT_READ = /currentProject/;
 

@@ -140,6 +140,39 @@ describe('every arrival focus in a terminal host is arbitrated', () => {
     ).toEqual([]);
   });
 
+  it('every useTerminal host marks its pane and hands the arbiter its terminal element', () => {
+    // Tier 0 (a terminal the user cannot see never takes arrival focus) hit-tests the
+    // arriving terminal against its host pane. A host with no `data-terminal-host`
+    // is measured against the xterm element alone, so its own launch overlay reads
+    // as a cover and the terminal is refused focus while its agent starts. A host
+    // that drops the element from its arbiter call leaves tier 0 blind, and a
+    // terminal under a dialog or the Agent Monitor overlay takes focus again.
+    const offenders: string[] = [];
+    let hostsChecked = 0;
+
+    for (const filePath of collectSourceFiles(path.join(REPO_ROOT, SCAN_DIR))) {
+      const relative = toPosix(path.relative(REPO_ROOT, filePath));
+      if (relative === 'src/renderer/hooks/useTerminal.ts') continue;
+      const source = fs.readFileSync(filePath, 'utf8');
+      if (!source.includes('useTerminal(')) continue;
+      hostsChecked += 1;
+      if (!source.includes('data-terminal-host')) offenders.push(`${relative}: its pane has no data-terminal-host`);
+      if (!/mayTakeArrivalFocus\(\s*sessionId\s*,\s*site\s*,\s*terminalElement\s*\)/.test(source)) {
+        offenders.push(`${relative}: its arbiter call does not forward the terminal element`);
+      }
+    }
+
+    // TerminalTab, CommandTerminalPane, WorkflowAgentPane: an empty scan must not pass.
+    expect(hostsChecked).toBeGreaterThanOrEqual(3);
+    expect(offenders, `Arrival-focus visibility wiring is missing:\n${offenders.join('\n')}`).toEqual([]);
+
+    const hookSource = fs.readFileSync(path.join(REPO_ROOT, 'src/renderer/hooks/useTerminal.ts'), 'utf8');
+    expect(
+      hookSource.includes('mayTakeArrivalFocusRef.current?.(site, terminal.element'),
+      'useTerminal\'s arrival frame must pass its xterm element to the host policy.',
+    ).toBe(true);
+  });
+
   it('every path that ends a replay discharges the arrival obligation', () => {
     // An arrival is an obligation a replay takes on, discharged exactly once by
     // `focusOnArrival`. A path that ENDS a replay without discharging cancels the

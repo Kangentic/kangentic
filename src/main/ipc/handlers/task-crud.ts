@@ -19,6 +19,7 @@ import {
   spawnAgent,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
 import { trackEvent } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
 import { trackMilestone } from '../../analytics/usage';
@@ -106,91 +107,97 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     return timeSyncWork('ipc:task:list', () => tasks.list(swimlaneId));
   });
 
-  ipcMain.handle(IPC.TASK_CREATE, async (_, input, projectId?: string | null) => {
+  ipcMain.handle(IPC.TASK_CREATE, async (event, input, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     const { tasks, swimlanes, automations, automationRuns, attachments } = getProjectRepos(context, resolvedProjectId);
     const { pendingAttachments, ...taskInput } = input;
     const task = tasks.create(taskInput);
     trackMilestone('first_task');
 
-    // Save any pending attachments from the dialog
-    if (pendingAttachments?.length && resolvedProjectPath) {
-      for (const att of pendingAttachments) {
-        attachments.add(resolvedProjectPath, task.id, att.filename, att.data, att.media_type);
-      }
-    }
-
-    // Auto-spawn: if target column has auto_spawn, start the agent.
-    // Folded through the task's Board Profile so a profile that turns
-    // auto_spawn on (or off) for this column is honored at creation, exactly as
-    // it is on the move path.
-    const toLane = applyProfileToLane(
-      swimlanes.getById(task.swimlane_id),
-      loadTaskProfile(context, task, resolvedProjectPath),
-    );
-    if (toLane?.auto_spawn && resolvedProjectPath && resolvedProjectId) {
-      const projectPath = resolvedProjectPath;
-      const projectId = resolvedProjectId;
-      // Serialize the spawn flow against any other in-flight lifecycle op
-      // (move, suspend, kill, delete) for this freshly created task. Without
-      // the lock, a concurrent TASK_DELETE could clean up resources mid-spawn
-      // or a TASK_MOVE could race the transition engine.
-      await withTaskLock(task.id, async () => {
-        // A born-into-a-column spawn used to be progress-silent end to end,
-        // which is how #538-class failures hid; the card now shows the same
-        // fetch/branch/worktree phases the drag path does. The finally clears
-        // the label on every exit, including the notifySpawnBlocked returns.
-        const onProgress = createProgressCallback(context.mainWindow, task.id);
-        try {
-          try {
-            await ensureTaskWorktree(context, task, tasks, projectPath, { onProgress, projectId });
-          } catch (worktreeError) {
-            console.error('[TASK_CREATE] Worktree creation failed:', worktreeError);
-            notifySpawnBlocked(context, task, 'worktree', worktreeError, projectId);
-            return;
-          }
-
-          // Checkout the task's branch in the main repo (non-worktree tasks only).
-          // If checkout fails, the task is still created but no agent is spawned.
-          try {
-            await ensureTaskBranchCheckout(context, task, projectPath, { onProgress, projectId });
-          } catch (checkoutError) {
-            console.error('[TASK_CREATE] Branch checkout failed:', checkoutError);
-            notifySpawnBlocked(context, task, 'checkout', checkoutError, projectId);
-            return;
-          }
-
-          const db = getProjectDb(projectId);
-          const sessionRepo = new SessionRepository(db);
-          const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
-
-          // Route through the shared spawn chokepoint (spawn preamble: the
-          // first-spawn override lock + agent resolution, then transition
-          // actions, fallback spawn, and auto_command delivery). '*' as
-          // fromSwimlaneId - no source column on creation, matches wildcard
-          // transitions. settingsSourceLane is omitted deliberately: spawnAgent
-          // falls back to toLane, and the New Task dialog displayed inherit
-          // values against the creation column itself.
-          try {
-            await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
-          } catch (err) {
-            console.error('[TASK_CREATE] Failed to start session:', err);
-            // The resolved agent lives inside spawnAgent and is not returned;
-            // the override chain is the best available approximation here.
-            const failedAgent = task.agent_override ?? toLane.agent_override ?? 'default';
-            trackEvent('spawn_failed', { agent: failedAgent, reason: 'create_spawn' });
-            reportHandledError(err, { source: 'spawn', reason: 'create_spawn', agent: failedAgent });
-          }
-        } finally {
-          clearSpawnProgress(context.mainWindow, task.id);
+    // Announced however the rest settles: the task exists from here on, even
+    // if an attachment or the spawn below throws.
+    try {
+      // Save any pending attachments from the dialog
+      if (pendingAttachments?.length && resolvedProjectPath) {
+        for (const att of pendingAttachments) {
+          attachments.add(resolvedProjectPath, task.id, att.filename, att.data, att.media_type);
         }
-      });
-    }
+      }
 
-    return tasks.getById(task.id) ?? task;
+      // Auto-spawn: if target column has auto_spawn, start the agent.
+      // Folded through the task's Board Profile so a profile that turns
+      // auto_spawn on (or off) for this column is honored at creation, exactly as
+      // it is on the move path.
+      const toLane = applyProfileToLane(
+        swimlanes.getById(task.swimlane_id),
+        loadTaskProfile(context, task, resolvedProjectPath),
+      );
+      if (toLane?.auto_spawn && resolvedProjectPath && resolvedProjectId) {
+        const projectPath = resolvedProjectPath;
+        const projectId = resolvedProjectId;
+        // Serialize the spawn flow against any other in-flight lifecycle op
+        // (move, suspend, kill, delete) for this freshly created task. Without
+        // the lock, a concurrent TASK_DELETE could clean up resources mid-spawn
+        // or a TASK_MOVE could race the transition engine.
+        await withTaskLock(task.id, async () => {
+          // A born-into-a-column spawn used to be progress-silent end to end,
+          // which is how #538-class failures hid; the card now shows the same
+          // fetch/branch/worktree phases the drag path does. The finally clears
+          // the label on every exit, including the notifySpawnBlocked returns.
+          const onProgress = createProgressCallback(context.mainWindow, task.id);
+          try {
+            try {
+              await ensureTaskWorktree(context, task, tasks, projectPath, { onProgress, projectId });
+            } catch (worktreeError) {
+              console.error('[TASK_CREATE] Worktree creation failed:', worktreeError);
+              notifySpawnBlocked(context, task, 'worktree', worktreeError, projectId);
+              return;
+            }
+
+            // Checkout the task's branch in the main repo (non-worktree tasks only).
+            // If checkout fails, the task is still created but no agent is spawned.
+            try {
+              await ensureTaskBranchCheckout(context, task, projectPath, { onProgress, projectId });
+            } catch (checkoutError) {
+              console.error('[TASK_CREATE] Branch checkout failed:', checkoutError);
+              notifySpawnBlocked(context, task, 'checkout', checkoutError, projectId);
+              return;
+            }
+
+            const db = getProjectDb(projectId);
+            const sessionRepo = new SessionRepository(db);
+            const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
+
+            // Route through the shared spawn chokepoint (spawn preamble: the
+            // first-spawn override lock + agent resolution, then transition
+            // actions, fallback spawn, and auto_command delivery). '*' as
+            // fromSwimlaneId - no source column on creation, matches wildcard
+            // transitions. settingsSourceLane is omitted deliberately: spawnAgent
+            // falls back to toLane, and the New Task dialog displayed inherit
+            // values against the creation column itself.
+            try {
+              await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
+            } catch (err) {
+              console.error('[TASK_CREATE] Failed to start session:', err);
+              // The resolved agent lives inside spawnAgent and is not returned;
+              // the override chain is the best available approximation here.
+              const failedAgent = task.agent_override ?? toLane.agent_override ?? 'default';
+              trackEvent('spawn_failed', { agent: failedAgent, reason: 'create_spawn' });
+              reportHandledError(err, { source: 'spawn', reason: 'create_spawn', agent: failedAgent });
+            }
+          } finally {
+            clearSpawnProgress(context.mainWindow, task.id);
+          }
+        });
+      }
+
+      return tasks.getById(task.id) ?? task;
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+    }
   });
 
-  ipcMain.handle(IPC.TASK_UPDATE, async (_, input, projectId?: string | null) => {
+  ipcMain.handle(IPC.TASK_UPDATE, async (event, input, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     const { tasks } = getProjectRepos(context, resolvedProjectId);
     const existing = tasks.getById(input.id);
@@ -234,37 +241,42 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
 
     const updated = timeSyncWork('ipc:task:update', () => tasks.update(input));
 
-    // The task-detail edit form writes pr_url/pr_number with pr_state and
-    // pr_merge_readiness null on purpose (`buildPrFields`), so a stale terminal
-    // state can't freeze a re-pointed link and a stale verdict can't describe
-    // the wrong PR. Nothing else resolves promptly, which left the card
-    // showing a bare PR pill with no state chip until the background sweep or
-    // the next auto-link trigger. Resolve now so the chip lands on save.
-    //
-    // Forced: a non-force resolve inside the 60s per-task throttle is coalesced
-    // away, which is exactly the situation right after a PR-creating flow.
-    // Fire-and-forget outside any lock: `linkPRForTask` takes the task lock
-    // itself, and its `onLinked` pushes the toast-free TASK_PR_LINK_CHANGED (the
-    // user just saved this form, so a "Task updated by agent" toast would be
-    // both untrue and redundant), so awaiting would only add a `gh` round-trip
-    // to every save. Gated on SETTING a link, never on clearing one - the
-    // ladder's branch/commit tiers would re-resolve a just-cleared task and
-    // bounce the clear straight back.
-    const linksPR = (typeof input.pr_url === 'string' && input.pr_url.trim() !== '')
-      || Number.isFinite(input.pr_number);
-    if (linksPR) {
-      void linkPR(context, {
-        projectId: resolvedProjectId,
-        taskId: input.id,
-        force: true,
-        preserveLinkOnNotFound: true,
-      }).catch((error) => {
-        console.error(`[pr-linking] link-time resolve failed for task ${String(input.id).slice(0, 8)}:`, error);
-      });
+    // Announced however the rest settles: the row above is already written.
+    try {
+      // The task-detail edit form writes pr_url/pr_number with pr_state and
+      // pr_merge_readiness null on purpose (`buildPrFields`), so a stale terminal
+      // state can't freeze a re-pointed link and a stale verdict can't describe
+      // the wrong PR. Nothing else resolves promptly, which left the card
+      // showing a bare PR pill with no state chip until the background sweep or
+      // the next auto-link trigger. Resolve now so the chip lands on save.
+      //
+      // Forced: a non-force resolve inside the 60s per-task throttle is coalesced
+      // away, which is exactly the situation right after a PR-creating flow.
+      // Fire-and-forget outside any lock: `linkPRForTask` takes the task lock
+      // itself, and its `onLinked` pushes the toast-free TASK_PR_LINK_CHANGED (the
+      // user just saved this form, so a "Task updated by agent" toast would be
+      // both untrue and redundant), so awaiting would only add a `gh` round-trip
+      // to every save. Gated on SETTING a link, never on clearing one - the
+      // ladder's branch/commit tiers would re-resolve a just-cleared task and
+      // bounce the clear straight back.
+      const linksPR = (typeof input.pr_url === 'string' && input.pr_url.trim() !== '')
+        || Number.isFinite(input.pr_number);
+      if (linksPR) {
+        void linkPR(context, {
+          projectId: resolvedProjectId,
+          taskId: input.id,
+          force: true,
+          preserveLinkOnNotFound: true,
+        }).catch((error) => {
+          console.error(`[pr-linking] link-time resolve failed for task ${String(input.id).slice(0, 8)}:`, error);
+        });
+      }
+      // A workflow task's title shows on its canvas card and in the inspector.
+      notifyWorkflowOfTask(updated, resolvedProjectId);
+      return updated;
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
     }
-    // A workflow task's title shows on its canvas card and in the inspector.
-    notifyWorkflowOfTask(updated, resolvedProjectId);
-    return updated;
   });
 
   // Persist the task-detail dialog's layout blob (debounced from the renderer).
@@ -280,13 +292,13 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     tasks.setDetailViewState(taskId, state ? JSON.stringify(state) : null);
   });
 
-  ipcMain.handle(IPC.TASK_DELETE, async (_, id, projectId?: string | null) => {
+  ipcMain.handle(IPC.TASK_DELETE, async (event, id, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
     // Serialize against any in-flight session lifecycle op for this task so
     // the long awaits inside cleanup don't race with spawn/resume/etc.
     let deletedTask: Task | undefined;
-    await withTaskLock(id, async () => {
+    const deletion = withTaskLock(id, async () => {
       const task = tasks.getById(id);
       deletedTask = task;
       if (task) {
@@ -295,13 +307,20 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       }
       tasks.delete(id);
     });
-    drainAutoNameAskedIds(context, [id]);
-    // A deleted blocker's links went with it, so what waited for it may start.
-    wakeWorkflowEngine();
-    notifyWorkflowOfTask(deletedTask, resolvedProjectId);
+    // Announced however the delete settles: the attachments and the session go
+    // before the row does, so a failed cleanup has still changed the card.
+    try {
+      await deletion;
+      drainAutoNameAskedIds(context, [id]);
+      // A deleted blocker's links went with it, so what waited for it may start.
+      wakeWorkflowEngine();
+      notifyWorkflowOfTask(deletedTask, resolvedProjectId);
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+    }
   });
 
-  ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[], projectId?: string | null): Promise<TaskBulkDeleteResult> => {
+  ipcMain.handle(IPC.TASK_BULK_DELETE, async (event, ids: string[], projectId?: string | null): Promise<TaskBulkDeleteResult> => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
     const failures: TaskBulkDeleteFailure[] = [];
@@ -342,7 +361,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     const queue = new PQueue({ concurrency: BULK_DELETE_CONCURRENCY });
     emitProgress({ force: true });
 
-    await queue.addAll(
+    const deletions = queue.addAll(
       ids.map((id) => async () => {
         const shortId = id.slice(0, 8);
         const startedAt = Date.now();
@@ -414,20 +433,28 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       }),
     );
 
-    // Guarantee the renderer observes the terminal state (bypasses throttle).
-    emitProgress({ force: true });
+    // Announced however the batch settles: each task is deleted as its own
+    // worker finishes, so a throw after the first one has still changed the board.
+    try {
+      await deletions;
 
-    // Drop the deleted task IDs from the persisted "auto-name asked" set so
-    // that array does not grow unboundedly across the lifetime of a project.
-    // We drop everything we attempted; for failures the task may still exist
-    // and a future spawn would re-ask, which is the correct behavior.
-    const failedIds = new Set(failures.map((entry) => entry.id));
-    const deletedIds = ids.filter((id) => !failedIds.has(id));
-    if (deletedIds.length > 0) {
-      drainAutoNameAskedIds(context, deletedIds);
+      // Guarantee the renderer observes the terminal state (bypasses throttle).
+      emitProgress({ force: true });
+
+      // Drop the deleted task IDs from the persisted "auto-name asked" set so
+      // that array does not grow unboundedly across the lifetime of a project.
+      // We drop everything we attempted; for failures the task may still exist
+      // and a future spawn would re-ask, which is the correct behavior.
+      const failedIds = new Set(failures.map((entry) => entry.id));
+      const deletedIds = ids.filter((id) => !failedIds.has(id));
+      if (deletedIds.length > 0) {
+        drainAutoNameAskedIds(context, deletedIds);
+      }
+
+      return { deleted: total - failures.length, failures };
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
     }
-
-    return { deleted: total - failures.length, failures };
   });
 }
 

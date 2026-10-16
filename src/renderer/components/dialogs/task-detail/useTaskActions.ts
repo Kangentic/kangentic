@@ -1,14 +1,29 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { flushSync } from 'react-dom';
-import { useBacklogStore } from '../../../stores/backlog-store';
 import { useSessionStore } from '../../../stores/session-store';
 import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
+import { sendToBacklogAsksFirst } from '../../../utils/send-to-backlog-confirm';
 import type { Task, Session, AgentCommand, Swimlane, PermissionMode, TaskRunMode } from '../../../../shared/types';
 import type { useBranchConfig } from './useBranchConfig';
 import { hasSessionLifecycle } from '../../../utils/task-progress';
 import { prNumberFromUrl } from '../../../../shared/pr-url';
 import type { useTaskProgress } from '../../../utils/task-progress';
+import { describeIpcError } from '../../../lib/ipc-error';
+
+/**
+ * Surface a send-to-backlog or archive that failed. Both close the window first
+ * and then write straight to the host or the IPC, so no store rolls back and
+ * toasts for them. Without this the rejection reached only the global
+ * `unhandledrejection` listener, and the user saw the window close with no word
+ * that nothing happened.
+ */
+function reportActionFailure(action: string, taskTitle: string, error: unknown): void {
+  useToastStore.getState().addToast({
+    message: `Failed to ${action} "${taskTitle}": ${describeIpcError(error)}`,
+    variant: 'warning',
+  });
+}
 
 /**
  * Orchestration hook for the task-detail surface (TaskDetailWindow). Owns:
@@ -450,7 +465,14 @@ export function useTaskActions(input: {
     setConfirmSendToBacklog(false);
     const taskTitle = input.task.title;
     input.onClose();
-    await useBacklogStore.getState().demoteTask({ taskId: input.task.id });
+    // Through the host: the task's own project, which for a monitor-hosted
+    // detail is not necessarily the open board's.
+    try {
+      await host.sendToBacklog(input.task.id);
+    } catch (error) {
+      reportActionFailure('send to backlog', taskTitle, error);
+      return;
+    }
     useToastStore.getState().addToast({
       message: `Sent "${taskTitle}" to backlog`,
       variant: 'info',
@@ -458,11 +480,10 @@ export function useTaskActions(input: {
   };
 
   const handleSendToBacklog = () => {
-    const hasResources = !!input.task.session_id || !!input.task.worktree_path;
-    if (!hasResources || input.skipDeleteConfirm) {
-      executeSendToBacklog();
-    } else {
+    if (sendToBacklogAsksFirst(input.task, input.skipDeleteConfirm)) {
       setConfirmSendToBacklog(true);
+    } else {
+      executeSendToBacklog();
     }
   };
 
@@ -476,7 +497,17 @@ export function useTaskActions(input: {
     });
     host.archiveTask(taskId);
     const laneTasks = host.laneTasks(doneLane.id);
-    await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length }, host.projectId || null);
+    try {
+      await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length }, host.projectId || null);
+    } catch (error) {
+      reportActionFailure('archive', taskTitle, error);
+      return;
+    } finally {
+      // The board host archived optimistically, and this reconciles it either
+      // way the move settles. The monitor host has no list to echo into, so
+      // this is where the board under it learns of the archive.
+      void host.refresh().catch(() => {});
+    }
     useToastStore.getState().addToast({
       message: `Archived "${taskTitle}"`,
       variant: 'info',

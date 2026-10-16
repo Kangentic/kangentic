@@ -30,6 +30,9 @@
  *     follows a link write, or the task-detail "Link / refresh PR" control.
  *     Landing one PR used to raise three "Task updated by agent" toasts per
  *     task, two of them announcing a round trip that netted to no change.
+ * The user's own changes made away from the board are quiet too: from the phone
+ * (`onMovedByMobile`) and from the detached Agent Monitor
+ * (`onChangedInOtherWindow`).
  * (`backlog.onChangedByAgent` and `onLabelColorsChanged` are also silent, but
  * for a different reason: neither push names a subject worth announcing.)
  *
@@ -247,6 +250,31 @@ export function useAgentDrivenInvalidation(): void {
         // No toast: a Move to column automation or a workflow step moved the
         // card, and a workflow can do that many times an hour. The card moving
         // is the news, and the run log says which automation did it and why.
+      }));
+    }
+
+    if (tasks?.onChangedInOtherWindow) {
+      cleanups.push(tasks.onChangedInOtherWindow((changedProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        const matchesActiveProject = !changedProjectId || changedProjectId === activeProjectId;
+        console.debug('[agent-push] task:changedInOtherWindow received', {
+          pushProjectId: changedProjectId,
+          activeProjectId,
+          action: matchesActiveProject ? 'reload' : 'invalidate-cache',
+        });
+        if (matchesActiveProject) {
+          // The backlog too: a Backlog demote from the pop-out monitor moves a
+          // task off the board and into it.
+          scheduleBoardReload();
+          scheduleBacklogReload();
+        } else {
+          invalidateProject(changedProjectId);
+        }
+        // No toast, like onMovedByMobile: the user made this change themselves,
+        // in the detached Agent Monitor. Without the reload the board kept the
+        // card where it was, because that window has its own stores. The in-app
+        // monitor runs the same policy itself (resyncBoardAfterMonitorWrite),
+        // since main cannot tell its writes from the board's.
       }));
     }
 

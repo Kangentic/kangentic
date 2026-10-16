@@ -41,10 +41,17 @@ export function MonitorPage() {
   // Structural Escape (the documented dialog-Escape exception to the keybindings
   // registry). Bubble phase so popovers' capture-phase Escape wins first; gated
   // so a Settings drawer stacked above keeps its own.
+  //
+  // Also gated on an open dialog or menu, the check PopOutWindowFrame makes for
+  // the detached monitor. This listener registers when the overlay mounts, so it
+  // runs BEFORE a dialog opened later (a row's Delete confirm), and without the
+  // gate one Escape cancelled the dialog and closed the monitor too. The dialog
+  // is still in the DOM during this dispatch, so the query sees it.
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       if (useConfigStore.getState().settingsOpen) return;
+      if (document.querySelector('[data-dismissable-layer]')) return;
       overlay.requestClose();
     }
     document.addEventListener('keydown', handleEscape);
@@ -52,12 +59,16 @@ export function MonitorPage() {
   }, [overlay]);
 
   // Main's MONITOR_CHANGED push covers session lifecycle and AGENT-driven board
-  // edits (the BoardEventBus is agent-fed only). A USER edit - renaming a task,
-  // dragging it to another column - emits nothing on that bus, but it can only
-  // ever target the project whose board is open, which is exactly what this store
-  // holds. So the open board is the remaining signal, and subscribing to it here
-  // (the main-window-only host) closes the gap without broadcasting on every
+  // edits (the BoardEventBus is agent-fed only). A USER edit made on the board -
+  // renaming a task, dragging it to another column - emits nothing on that bus,
+  // but it targets the project whose board is open, which is exactly what this
+  // store holds. So the open board is the remaining signal, and subscribing to it
+  // here (the main-window-only host) closes the gap without broadcasting on every
   // local keystroke. Mounted with the overlay, so it costs nothing while closed.
+  //
+  // The monitor's own writes run the other way: its row menu and task details
+  // write straight to the IPC, and resyncBoardAfterMonitorWrite brings this board
+  // up to date afterwards (which then lands here and refetches the rows).
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = useBoardStore.subscribe((state, previous) => {

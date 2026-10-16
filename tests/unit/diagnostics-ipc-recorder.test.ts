@@ -296,6 +296,10 @@ describe('ipc-recorder - outbound push recording', () => {
     // linker's raw send used to have.
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:sessionResync')).toBe(true);
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:prLinkChanged')).toBe(true);
+    // The quiet re-sync after a write from the detached Agent Monitor carries
+    // only the project id, which is what a "why did the board reload" question
+    // turns on.
+    expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:changedInOtherWindow')).toBe(true);
     // The spawn-progress label is what a card and a paired phone use to tell
     // a respawn from a park (#682), so its push is recorded with its args.
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:spawnProgress')).toBe(true);

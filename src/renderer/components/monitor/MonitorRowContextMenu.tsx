@@ -6,27 +6,36 @@
  * the same order - copy id, Edit, Show changes, the automations switch, Move
  * to, Backlog, Archive, Delete - plus "Open on board" in the menu's
  * `navigationItem` slot. Rebuilding a thinner lookalike would guarantee the two
- * drift the first time an item is added.
+ * drift the first time an item is added. Delete and Backlog ask first with the
+ * board card's own dialogs, under the same Don't ask again switch.
  *
  * What differs is only WHERE the actions land: every mutation carries the row's
  * own `projectId` (the monitor spans projects, so the open board is usually not
  * the right one), and the reads come from the per-project bundle rather than the
- * board store. Both are the same seams the monitor's task-detail host uses.
+ * board store. Both are the same seams the monitor's task-detail host uses. The
+ * board never sees those writes, so each one ends in
+ * `resyncBoardAfterMonitorWrite`.
  *
  * The menu renders only once the bundle resolves, because `TaskContextMenu`
  * needs the real `Task` and that project's swimlanes for its Move-to list.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ExternalLink, SquareTerminal } from 'lucide-react';
 import type { MonitorSessionRow, Swimlane, Task } from '../../../shared/types';
 import { TaskContextMenu } from '../board/TaskContextMenu';
+import { DeleteTaskDialog } from '../board/DeleteTaskDialog';
+import { SendToBacklogDialog } from '../board/SendToBacklogDialog';
 import { useSessionStore } from '../../stores/session-store';
 import { useMonitorStore } from '../../stores/monitor-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
+import { useConfigStore } from '../../stores/config-store';
 import { requestMonitorDetail } from './MonitorDetailLayer';
+import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write';
+import { sendToBacklogAsksFirst } from '../../utils/send-to-backlog-confirm';
 import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
 import { describeIpcError } from '../../lib/ipc-error';
 
@@ -37,6 +46,9 @@ interface MonitorRowContextMenuProps {
   onClose: () => void;
 }
 
+/** A menu action that asks before it runs, as the board card's does. */
+type PendingConfirm = 'delete' | 'backlog';
+
 export function MonitorRowContextMenu({
   row,
   position,
@@ -44,6 +56,10 @@ export function MonitorRowContextMenu({
   onClose,
 }: MonitorRowContextMenuProps) {
   const [resolved, setResolved] = useState<{ task: Task; swimlanes: Swimlane[] } | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
+  // Read by the menu's own close, in the same click that set it: `TaskContextMenu`
+  // runs `onDelete(); onClose();` back to back, before the state above re-renders.
+  const pendingConfirmRef = useRef<PendingConfirm | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,9 +74,9 @@ export function MonitorRowContextMenu({
 
   const refreshRows = (): void => { void useMonitorStore.getState().loadSnapshot(); };
 
-  /** Surface a failed task mutation. These actions call `window.electronAPI.tasks.*`
-   *  directly rather than through the board store, because the row's project may not
-   *  be the open one - which also means they do not inherit the board slice's
+  /** Surface a failed task mutation. These actions call the project-stamped IPC
+   *  directly rather than through the board store, because the row's project may
+   *  not be the open one - which also means they do not inherit the board slice's
    *  rollback-and-toast handling, so each one reports for itself. Without this the
    *  rejection reaches only the global `unhandledrejection` listener and the user
    *  sees an unchanged row with no explanation. */
@@ -69,6 +85,43 @@ export function MonitorRowContextMenu({
       message: `Failed to ${action} "${row.taskTitle}": ${describeIpcError(error)}`,
       variant: 'warning',
     });
+  };
+
+  /** Run one write, then refresh the rows and bring the board up to date. The
+   *  resync runs however the write settles: a move can commit and then fail,
+   *  and the board must still learn the committed half. */
+  const runWrite = (action: string, write: Promise<unknown>): void => {
+    void write
+      .then(refreshRows)
+      .catch((error) => reportActionFailure(action, error))
+      .finally(() => resyncBoardAfterMonitorWrite(row.projectId));
+  };
+
+  const deleteTask = (): void => {
+    runWrite('delete', window.electronAPI.tasks.delete(row.taskId, row.projectId));
+  };
+
+  const sendToBacklog = (): void => {
+    runWrite('send to backlog', window.electronAPI.backlog.demote({ taskId: row.taskId }, row.projectId));
+  };
+
+  const askFirst = (confirm: PendingConfirm): void => {
+    pendingConfirmRef.current = confirm;
+    setPendingConfirm(confirm);
+  };
+
+  /** The menu's own close. While a dialog is pending the menu only gives way to
+   *  it; the host's `onClose` (which unmounts all of this) runs when the dialog
+   *  settles. */
+  const closeMenu = (): void => {
+    if (pendingConfirmRef.current === null) onClose();
+  };
+
+  const settleConfirm = (dontAskAgain: boolean, run: (() => void) | null): void => {
+    if (dontAskAgain) useConfigStore.getState().updateConfig({ skipDeleteConfirm: true });
+    pendingConfirmRef.current = null;
+    run?.();
+    onClose();
   };
 
   const openOnBoard = (
@@ -108,6 +161,30 @@ export function MonitorRowContextMenu({
 
   if (!resolved) return null;
 
+  // The board card's own dialogs, portaled to the body. Rendered in place they
+  // would sit inside the monitor overlay's stacking context (z-42), under any
+  // task detail window open in the monitor's own layer (z-43).
+  if (pendingConfirm === 'delete') {
+    return createPortal(
+      <DeleteTaskDialog
+        title={resolved.task.title}
+        onConfirm={(dontAskAgain) => settleConfirm(dontAskAgain, deleteTask)}
+        onCancel={() => settleConfirm(false, null)}
+      />,
+      document.body,
+    );
+  }
+  if (pendingConfirm === 'backlog') {
+    return createPortal(
+      <SendToBacklogDialog
+        title={resolved.task.title}
+        onConfirm={(dontAskAgain) => settleConfirm(dontAskAgain, sendToBacklog)}
+        onCancel={() => settleConfirm(false, null)}
+      />,
+      document.body,
+    );
+  }
+
   return (
     <TaskContextMenu
       testId="monitor-row-menu"
@@ -115,18 +192,22 @@ export function MonitorRowContextMenu({
       task={resolved.task}
       swimlanes={resolved.swimlanes}
       navigationItem={openOnBoard}
-      onClose={onClose}
+      onClose={closeMenu}
       onToggleAutomations={automationsSwitchRefusal(resolved.task) === null ? () => {
         const disable = !resolved.task.automations_disabled;
         const input = { id: row.taskId, automations_disabled: disable };
         // A row of the open project writes through the board store, so the card
-        // under this overlay gains or loses its strip without a board reload.
-        const write = row.projectId === useProjectStore.getState().currentProject?.id
-          ? useBoardStore.getState().updateTask(input)
-          : window.electronAPI.tasks.update(input, row.projectId);
-        void write
-          .then(refreshRows)
-          .catch((error) => reportActionFailure(disable ? 'disable automations for' : 'enable automations for', error));
+        // under this overlay gains or loses its strip without a board reload. A
+        // row of another project writes to the IPC, and the resync drops that
+        // project's warm snapshot. In the detached monitor no project is open,
+        // so every row takes the IPC, and main tells the main window.
+        if (row.projectId === useProjectStore.getState().currentProject?.id) {
+          void useBoardStore.getState().updateTask(input)
+            .then(refreshRows)
+            .catch((error) => reportActionFailure(disable ? 'disable automations for' : 'enable automations for', error));
+          return;
+        }
+        runWrite(disable ? 'disable automations for' : 'enable automations for', window.electronAPI.tasks.update(input, row.projectId));
       } : undefined}
       // Opens the detail HERE, in edit mode - the same destination a plain row
       // click uses, so the menu never teleports the user somewhere else.
@@ -138,30 +219,29 @@ export function MonitorRowContextMenu({
         requestMonitorDetail(row.projectId, row.taskId);
       }}
       onMoveTo={(targetSwimlaneId) => {
-        void window.electronAPI.tasks
-          .move({ taskId: row.taskId, targetSwimlaneId, targetPosition: 0 }, row.projectId)
-          .then(refreshRows)
-          .catch((error) => reportActionFailure('move', error));
+        runWrite('move', window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId, targetPosition: 0 }, row.projectId));
       }}
+      // The board card's rule: ask unless the task holds nothing to clean up or
+      // the user turned the question off.
       onSendToBacklog={() => {
-        void window.electronAPI.tasks
-          .delete(row.taskId, row.projectId)
-          .then(refreshRows)
-          .catch((error) => reportActionFailure('send to backlog', error));
+        if (sendToBacklogAsksFirst(resolved.task, useConfigStore.getState().config.skipDeleteConfirm)) {
+          askFirst('backlog');
+          return;
+        }
+        sendToBacklog();
+        onClose();
       }}
       onArchive={() => {
         const doneLane = resolved.swimlanes.find((lane) => lane.role === 'done');
         if (!doneLane) return;
-        void window.electronAPI.tasks
-          .move({ taskId: row.taskId, targetSwimlaneId: doneLane.id, targetPosition: 0 }, row.projectId)
-          .then(refreshRows)
-          .catch((error) => reportActionFailure('archive', error));
+        runWrite('archive', window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId: doneLane.id, targetPosition: 0 }, row.projectId));
       }}
       onDelete={() => {
-        void window.electronAPI.tasks
-          .delete(row.taskId, row.projectId)
-          .then(refreshRows)
-          .catch((error) => reportActionFailure('delete', error));
+        if (useConfigStore.getState().config.skipDeleteConfirm) {
+          deleteTask();
+          return;
+        }
+        askFirst('delete');
       }}
     />
   );

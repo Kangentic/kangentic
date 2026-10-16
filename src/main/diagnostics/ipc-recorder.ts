@@ -66,6 +66,8 @@ const SAFE_PUSH_CHANNELS = new Set<string>([
   'task:deletedByAgent',
   'task:sessionResync',
   'task:prLinkChanged',
+  // A bare project id, sent after a task write from the detached Agent Monitor.
+  'task:changedInOtherWindow',
   'swimlane:updatedByAgent',
   'backlog:changedByAgent',
   'backlog:labelColorsChanged',

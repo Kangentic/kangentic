@@ -936,7 +936,11 @@ Sessions are resumable on next launch via `--resume <agent_session_id>` from the
   main delays 150-400ms for the repaint settle, and every arrival path used to end in an
   unconditional `xterm.focus()` - so whichever replay resolved LAST won, and a user who opened a
   task and started typing could have the keystrokes land in whatever agent the panel fell back to.
-  `mayTakeArrivalFocus(sessionId, site)` decides from user-intent STATE instead, in four tiers:
+  `mayTakeArrivalFocus(sessionId, site, terminalElement)` decides from user-intent STATE instead.
+  First, a terminal the user cannot see is denied outright (`hidden`): the hook passes its xterm
+  element, and `isArrivingTerminalVisible` hit-tests a few points of it against the host pane
+  (`data-terminal-host`), so a Delete confirm or the Agent Monitor overlay over the bottom panel
+  keeps an arriving panel terminal from taking the keyboard. Then four tiers:
   a claim recorded by a gesture that named a terminal before it existed (a panel tab click, a panel
   expand - the panel is not a window, so neither moves any layer's `focusedWindowId`); else a
   window an AGENT opened or raised, which denies EVERYONE including its own terminal while it
@@ -1559,11 +1563,11 @@ phone needs and reads the rest by request.
   `focused-terminals.ts`), and `repaint-repaired` / `repaint-verified` (renderer,
   `repaint-nudge.ts`, the latter meaning the frame was already correct and the nudge cost one
   render). `arrival-focus` (renderer, `terminal-arrival-focus.ts`) joins them, carrying the
-  allow/deny plus the tier that decided it (`claim` / `claim-mismatch` / `agent-window` /
+  allow/deny plus the tier that decided it (`hidden` / `claim` / `claim-mismatch` / `agent-window` /
   `window` / `window-mismatch` / `occupied` / `burst-taken` / `unclaimed`), the `site` that asked
   (one arrival decides more than once, and they were otherwise indistinguishable), and the
-  arbiter's own INPUTS: the claimed session, both fingerprints, the claim's age, and the focused
-  window's session and `openedByAgent` stamp. The reason alone was not enough to diagnose with - it
+  arbiter's own INPUTS: whether the terminal was visible to the user, the claimed session, both
+  fingerprints, the claim's age, and the focused window's session and `openedByAgent` stamp. The reason alone was not enough to diagnose with - it
   could not separate "no claim was live" from "a claim was live and its fingerprint had moved". `claimArrivalFocus` emits
   `arrival-claim` / `arrival-claim-clear` beside it, so a claim that was never made reads as a
   positive fact rather than as a missing entry. Together they are the only record of WHY a terminal

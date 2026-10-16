@@ -12,8 +12,9 @@
  * whichever replay resolved LAST won, and the user's keystrokes went to whichever
  * agent that happened to be.
  *
- * THE INVARIANT: at most one terminal takes focus on arrival, and which one is
- * decided by user-intent STATE, never by replay order or rAF order. Each tier
+ * THE INVARIANT: at most one terminal takes focus on arrival, which one is
+ * decided by user-intent STATE, never by replay order or rAF order, and never one
+ * the user cannot see (tier 0: covered by a dialog or an overlay). Each tier
  * below is EXCLUSIVE - a tier that resolves an answer decides, allowing if it
  * matches and DENYING if it does not. It never falls through to a lower tier.
  * Non-exclusive tiers degrade straight back into a race, because two terminals
@@ -95,6 +96,7 @@ export interface ArrivalFocusClaim {
 }
 
 export type ArrivalFocusReason =
+  | 'hidden'
   | 'claim'
   | 'claim-mismatch'
   | 'agent-window'
@@ -106,6 +108,11 @@ export type ArrivalFocusReason =
 
 export interface ArrivalFocusInput {
   sessionId: string;
+  /** False when the arriving terminal is covered or has no size, so the user
+   *  cannot see it: a modal dialog's backdrop, the Agent Monitor overlay over the
+   *  bottom panel, another window. See `isArrivingTerminalVisible`. True when the
+   *  host gave no element to judge. */
+  terminalVisible: boolean;
   claim: ArrivalFocusClaim | null;
   now: number;
   windowFocusFingerprint: string;
@@ -144,6 +151,20 @@ export type ArrivalFocusSite =
  * exclusivity edge is testable directly.
  */
 export function resolveArrivalFocus(input: ArrivalFocusInput): ArrivalFocusDecision {
+  // Tier 0: a terminal the user cannot see never takes keyboard focus, whatever
+  // a lower tier would say. Measured: with a Delete confirm open on the board, and
+  // with the Agent Monitor overlay over the bottom panel, the panel terminal's
+  // overlay-lift reload reached tier 3 (no window focused, focus on a <button>,
+  // not a typing surface) and took focus out from under the dialog or the
+  // overlay. The user's next Escape then went to the agent's TUI instead of
+  // closing what they were looking at.
+  //
+  // Above the claim on purpose. A claim is not consumed on grant and lives up to
+  // ARRIVAL_CLAIM_TTL_MS, so a reload of a tab the user clicked earlier can arrive
+  // after a dialog has opened over it. Denying only ever answers for THIS
+  // terminal, so it cannot let another one win the race.
+  if (!input.terminalVisible) return { allow: false, reason: 'hidden' };
+
   // Tier 1: a user gesture named a session. Still live only while the window
   // layers have not moved focus since (a later open/focus/close changes the
   // fingerprint) and the backstop TTL has not lapsed. The TTL is deliberately far
@@ -285,6 +306,35 @@ export function focusIsInTypingSurface(): boolean {
   return active.matches('input, textarea, select, [contenteditable="true"]');
 }
 
+/** Where `isArrivingTerminalVisible` probes, as fractions of the terminal's box.
+ *  Several points, not just the center, so a small cover (a toast, an open menu)
+ *  does not read as the whole terminal being hidden. */
+const VISIBILITY_PROBES: ReadonlyArray<readonly [number, number]> = [
+  [0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75],
+];
+
+/**
+ * True when the user can see the arriving terminal: it has a size, and at least
+ * one probe point hit-tests to its own pane.
+ *
+ * Containment is checked against the host pane (`data-terminal-host`), not the
+ * xterm element alone, because a host draws its own covers over its terminal (the
+ * launch overlay while the agent starts) and those are part of the terminal as far
+ * as the user is concerned. Everything outside the pane that answers the hit test
+ * covers it: a modal dialog's backdrop, the Agent Monitor overlay, another window.
+ * Pointer-events-none layers (the replay veil, the window layers' own roots) are
+ * skipped by the hit test, so they never read as covers.
+ */
+export function isArrivingTerminalVisible(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  const pane = element.closest('[data-terminal-host]') ?? element;
+  return VISIBILITY_PROBES.some(([fractionX, fractionY]) => {
+    const hit = document.elementFromPoint(rect.left + rect.width * fractionX, rect.top + rect.height * fractionY);
+    return hit !== null && pane.contains(hit);
+  });
+}
+
 /**
  * The live gate. Hosts pass this down to `useTerminal` as a predicate, so the hook
  * itself stays surface-agnostic and holds no VALUE import of this module. It does
@@ -292,17 +342,27 @@ export function focusIsInTypingSurface(): boolean {
  * runtime edge - the hook only names which of its own arrival paths is asking, it
  * never reads the policy.
  *
+ * `terminalElement` is the arriving terminal (the hook passes its xterm element,
+ * a host's own early call passes the div xterm opens into). Null means the caller
+ * has nothing to judge, and the terminal counts as visible.
+ *
  * A null `sessionId` cannot arrive (both hosts require one before they mount a
  * terminal), so it is permitted rather than given a policy of its own.
  */
-export function mayTakeArrivalFocus(sessionId: string | null, site: ArrivalFocusSite): boolean {
+export function mayTakeArrivalFocus(
+  sessionId: string | null,
+  site: ArrivalFocusSite,
+  terminalElement: HTMLElement | null = null,
+): boolean {
   if (!sessionId) return true;
   const now = Date.now();
   const claim = arrivalClaim;
   const liveFingerprint = windowFocusFingerprint();
   const focusedWindowTerminal = resolveFocusedWindowTerminal();
+  const terminalVisible = terminalElement ? isArrivingTerminalVisible(terminalElement) : true;
   const decision = resolveArrivalFocus({
     sessionId,
+    terminalVisible,
     claim,
     now,
     windowFocusFingerprint: liveFingerprint,
@@ -323,6 +383,7 @@ export function mayTakeArrivalFocus(sessionId: string | null, site: ArrivalFocus
     allow: decision.allow,
     reason: decision.reason,
     site,
+    terminalVisible,
     claimSessionId: claim?.sessionId ?? null,
     claimFingerprint: claim?.fingerprint ?? null,
     claimAgeMs: claim ? now - claim.at : null,

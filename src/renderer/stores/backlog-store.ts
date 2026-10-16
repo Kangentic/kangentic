@@ -8,6 +8,7 @@ import type {
   Task,
 } from '../../shared/types';
 import { useBoardStore } from './board-store';
+import { useProjectStore } from './project-store';
 import { useToastStore } from './toast-store';
 
 interface BacklogState {
@@ -45,7 +46,7 @@ interface BacklogState {
   reorderItems: (ids: string[]) => Promise<void>;
   bulkDelete: (ids: string[]) => Promise<void>;
   promoteItems: (ids: string[], targetSwimlaneId: string) => Promise<Task[]>;
-  demoteTask: (input: BacklogDemoteInput) => Promise<BacklogTask>;
+  demoteTask: (input: BacklogDemoteInput, projectId?: string | null) => Promise<BacklogTask>;
   renameLabel: (oldName: string, newName: string) => Promise<void>;
   deleteLabel: (name: string) => Promise<void>;
 
@@ -197,8 +198,13 @@ const backlogStoreInitializer: StateCreator<BacklogState> = (set, get) => ({
     }
   },
 
-  demoteTask: async (input) => {
-    const backlogTask = await window.electronAPI.backlog.demote(input);
+  demoteTask: async (input, projectId) => {
+    // Stamped at the call (project-scoped-ipc rule). This store holds the OPEN
+    // project's backlog, so its callers are board surfaces and pass that id.
+    const backlogTask = await window.electronAPI.backlog.demote(
+      input,
+      projectId !== undefined ? projectId : (useProjectStore.getState().currentProject?.id ?? null),
+    );
 
     // Add to local backlog tasks
     set((state) => ({ items: [...state.items, backlogTask] }));

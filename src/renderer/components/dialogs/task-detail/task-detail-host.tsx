@@ -21,7 +21,8 @@
  *     board's behaviour is byte-for-byte what it was before this context existed;
  *   - the MONITOR host, backed by a per-project bundle fetched for the row's
  *     project, whose mutations go straight to the project-stamped IPC (the board
- *     store holds a different project, so its optimistic update would be wrong).
+ *     store holds a different project, so its optimistic update would be wrong)
+ *     and then bring the main window's board up to date.
  *
  * Enforcement: `tests/unit/task-detail-host-decoupling.test.ts` fails if any file
  * under `task-detail/` or `TaskDetailWindow.tsx` re-imports the project or board
@@ -78,6 +79,8 @@ export interface TaskDetailHostValue {
   deleteTask: (id: string) => Promise<void>;
   moveTask: (input: TaskMoveInput, skipConfirmation?: boolean) => Promise<MoveTaskResult>;
   unarchiveTask: (input: TaskUnarchiveInput) => Promise<void>;
+  /** Send the task to its project's backlog (the backlog demote). */
+  sendToBacklog: (taskId: string) => Promise<void>;
   archiveTask: (id: string) => void;
   updateAttachmentCount: (taskId: string, delta: number) => void;
   /** Re-read this host's own data after a write that bypassed it. */

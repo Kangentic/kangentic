@@ -63,6 +63,10 @@ export const IPC = {
   // end, or a workflow starting or advancing a task. Quiet: the board reloads,
   // and the run log (or the workflow) says why.
   TASK_MOVED_BY_AUTOMATION: 'task:movedByAutomation',
+  // A task write the user made from a window other than the main one (the
+  // pop-out Agent Monitor and the task details it hosts). Quiet: the main
+  // window's board reloads, or that project's warm cache is invalidated.
+  TASK_CHANGED_IN_OTHER_WINDOW: 'task:changedInOtherWindow',
   // Every task in a workflow reached Done: the Workflow Complete toast and
   // desktop notification (`WorkflowCompletedEvent`).
   WORKFLOW_COMPLETED: 'workflow:completed',

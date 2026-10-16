@@ -11,6 +11,7 @@ import {
   ensureTaskWorktree,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
 // Directly from the submodule for the same reason as resolveProjectContext:
 // it is a pure context reader, and handler tests that vi.mock the helpers
 // barrel should keep exercising the real resolution.
@@ -121,7 +122,7 @@ function assertNoActiveTaskSession(context: IpcContext, task: Task, action: stri
 }
 
 export function registerTaskBranchHandlers(context: IpcContext): void {
-  ipcMain.handle(IPC.TASK_SWITCH_BRANCH, async (_, input: TaskSwitchBranchInput, projectId?: string | null) => {
+  ipcMain.handle(IPC.TASK_SWITCH_BRANCH, async (event, input: TaskSwitchBranchInput, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     if (!resolvedProjectId) throw new Error('No project is currently open');
 
@@ -135,91 +136,98 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
     const db = getProjectDb(resolvedProjectId);
     const sessionRepo = new SessionRepository(db);
 
-    if (input.enableWorktree && !task.worktree_path) {
-      // --- Path B: Enable worktree ---
-      if (!resolvedProjectPath) throw new Error('No project path available');
+    // Announced however the switch settles: Path B writes the base branch
+    // before it creates the worktree, so a failed create has still changed
+    // the task.
+    try {
+      if (input.enableWorktree && !task.worktree_path) {
+        // --- Path B: Enable worktree ---
+        if (!resolvedProjectPath) throw new Error('No project path available');
 
-      // Update base branch and use_worktree before creating the worktree
-      tasks.update({
-        id: task.id,
-        base_branch: input.newBaseBranch || null,
-        use_worktree: 1,
-      });
-      Object.assign(task, tasks.getById(task.id));
+        // Update base branch and use_worktree before creating the worktree
+        tasks.update({
+          id: task.id,
+          base_branch: input.newBaseBranch || null,
+          use_worktree: 1,
+        });
+        Object.assign(task, tasks.getById(task.id));
 
-      // Create the worktree. The explicit projectId matters: a task-detail
-      // window can belong to a background project, and without it a failed
-      // base fetch's spawn warning would stamp the ambient (wrong) project.
-      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { projectId: resolvedProjectId });
-      const updatedTask = tasks.getById(task.id);
-      if (!updatedTask?.worktree_path) {
-        throw new Error('Failed to create worktree');
-      }
-
-      // Best-effort: carry uncommitted changes from main repo to worktree
-      try {
-        const carryResult = await carryUncommittedChanges(
-          resolvedProjectPath, updatedTask.worktree_path, task.id.slice(0, 8),
-        );
-        if (carryResult.carriedTracked || carryResult.carriedUntracked.length > 0) {
-          console.log(`[TASK_SWITCH_BRANCH] Carried uncommitted changes to worktree (tracked: ${carryResult.carriedTracked}, untracked: ${carryResult.carriedUntracked.length})`);
+        // Create the worktree. The explicit projectId matters: a task-detail
+        // window can belong to a background project, and without it a failed
+        // base fetch's spawn warning would stamp the ambient (wrong) project.
+        await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { projectId: resolvedProjectId });
+        const updatedTask = tasks.getById(task.id);
+        if (!updatedTask?.worktree_path) {
+          throw new Error('Failed to create worktree');
         }
-        if (carryResult.applyFailed) {
-          console.warn(`[TASK_SWITCH_BRANCH] Could not apply tracked changes to worktree. They remain in the main repo.`);
-        }
-        if (carryResult.failedUntracked.length > 0) {
-          console.warn(`[TASK_SWITCH_BRANCH] Could not copy ${carryResult.failedUntracked.length} untracked file(s) to worktree.`);
-        }
-      } catch {
-        // Best-effort, non-fatal
-      }
 
-      // Update session record CWD for seamless resume
-      const latestRecord = sessionRepo.getLatestForTask(task.id);
-      if (latestRecord && latestRecord.status === 'suspended') {
-        sessionRepo.updateCwd(latestRecord.id, updatedTask.worktree_path);
-        console.log(`[TASK_SWITCH_BRANCH] Updated session ${latestRecord.id.slice(0, 8)} CWD to worktree`);
-      }
-
-      // Update git config in the new worktree (best-effort)
-      if (input.newBaseBranch) {
+        // Best-effort: carry uncommitted changes from main repo to worktree
         try {
-          const worktreeGit = simpleGit(updatedTask.worktree_path);
+          const carryResult = await carryUncommittedChanges(
+            resolvedProjectPath, updatedTask.worktree_path, task.id.slice(0, 8),
+          );
+          if (carryResult.carriedTracked || carryResult.carriedUntracked.length > 0) {
+            console.log(`[TASK_SWITCH_BRANCH] Carried uncommitted changes to worktree (tracked: ${carryResult.carriedTracked}, untracked: ${carryResult.carriedUntracked.length})`);
+          }
+          if (carryResult.applyFailed) {
+            console.warn(`[TASK_SWITCH_BRANCH] Could not apply tracked changes to worktree. They remain in the main repo.`);
+          }
+          if (carryResult.failedUntracked.length > 0) {
+            console.warn(`[TASK_SWITCH_BRANCH] Could not copy ${carryResult.failedUntracked.length} untracked file(s) to worktree.`);
+          }
+        } catch {
+          // Best-effort, non-fatal
+        }
+
+        // Update session record CWD for seamless resume
+        const latestRecord = sessionRepo.getLatestForTask(task.id);
+        if (latestRecord && latestRecord.status === 'suspended') {
+          sessionRepo.updateCwd(latestRecord.id, updatedTask.worktree_path);
+          console.log(`[TASK_SWITCH_BRANCH] Updated session ${latestRecord.id.slice(0, 8)} CWD to worktree`);
+        }
+
+        // Update git config in the new worktree (best-effort)
+        if (input.newBaseBranch) {
+          try {
+            const worktreeGit = simpleGit(updatedTask.worktree_path);
+            await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
+          } catch {
+            // Non-fatal
+          }
+        }
+
+        return tasks.getById(task.id)!;
+      }
+
+      if (task.worktree_path) {
+        // --- Path A: Switch base branch (worktree exists) ---
+        if (!fs.existsSync(task.worktree_path)) {
+          throw new Error(`Worktree directory not found: ${task.worktree_path}`);
+        }
+
+        tasks.update({ id: task.id, base_branch: input.newBaseBranch || null });
+
+        // Update git config in the worktree (best-effort). This worktree's own
+        // config, so the switch cannot change any other task's base.
+        try {
+          const worktreeGit = simpleGit(task.worktree_path);
           await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
         } catch {
-          // Non-fatal
+          console.warn(`[TASK_SWITCH_BRANCH] Could not update git config in worktree`);
         }
+
+        return tasks.getById(task.id)!;
       }
 
-      return tasks.getById(task.id)!;
-    }
-
-    if (task.worktree_path) {
-      // --- Path A: Switch base branch (worktree exists) ---
-      if (!fs.existsSync(task.worktree_path)) {
-        throw new Error(`Worktree directory not found: ${task.worktree_path}`);
-      }
-
+      // --- Path C: No worktree, no enableWorktree ---
       tasks.update({ id: task.id, base_branch: input.newBaseBranch || null });
-
-      // Update git config in the worktree (best-effort). This worktree's own
-      // config, so the switch cannot change any other task's base.
-      try {
-        const worktreeGit = simpleGit(task.worktree_path);
-        await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
-      } catch {
-        console.warn(`[TASK_SWITCH_BRANCH] Could not update git config in worktree`);
-      }
-
       return tasks.getById(task.id)!;
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
     }
-
-    // --- Path C: No worktree, no enableWorktree ---
-    tasks.update({ id: task.id, base_branch: input.newBaseBranch || null });
-    return tasks.getById(task.id)!;
   });
 
-  ipcMain.handle(IPC.TASK_UPDATE_FROM_BASE, async (_, input: TaskUpdateFromBaseInput, projectId?: string | null): Promise<TaskUpdateFromBaseResult> => {
+  ipcMain.handle(IPC.TASK_UPDATE_FROM_BASE, async (event, input: TaskUpdateFromBaseInput, projectId?: string | null): Promise<TaskUpdateFromBaseResult> => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     if (!resolvedProjectId || !resolvedProjectPath) throw new Error('No project is currently open');
     const projectPath = resolvedProjectPath;
@@ -227,7 +235,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
     // withTaskLock so a concurrent move cannot spawn an agent into the tree
     // mid-merge (spawn paths take the same task lock first, then the git
     // queue - the same ordering as here, so no inversion).
-    return withTaskLock(input.taskId, async (): Promise<TaskUpdateFromBaseResult> => {
+    const update = withTaskLock(input.taskId, async (): Promise<TaskUpdateFromBaseResult> => {
       const { tasks } = getProjectRepos(context, resolvedProjectId);
       const task = tasks.getById(input.taskId);
       if (!task) throw new Error(`Task ${input.taskId} not found`);
@@ -323,5 +331,11 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
         }
       }, { label: `update-from-base:${input.taskId.slice(0, 8)}` });
     });
+    // Announced however the update settles, like every other task write here.
+    try {
+      return await update;
+    } finally {
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+    }
   });
 }

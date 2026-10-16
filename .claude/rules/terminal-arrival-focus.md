@@ -21,7 +21,7 @@ tell a programmatic focus from a user one.
 ## The rule
 
 **Arrival focus is decided by user-intent state, never by replay order or rAF order.** Route every
-programmatic focus on an arriving terminal through `mayTakeArrivalFocus(sessionId, site)`
+programmatic focus on an arriving terminal through `mayTakeArrivalFocus(sessionId, site, terminalElement)`
 (`src/renderer/utils/terminal-arrival-focus.ts`). Hosts own the policy and pass it to `useTerminal`
 as the `mayTakeArrivalFocus` option, so the hook stays surface-agnostic.
 
@@ -29,6 +29,14 @@ as the `mayTakeArrivalFocus` option, so the hook stays surface-agnostic.
   mismatch. It never falls through to a lower tier that might allow. A falling-through tier
   degrades straight back into a race, because two terminals arriving in the same frame would both
   find themselves permitted.
+- **A terminal the user cannot see never takes arrival focus** (tier 0, above the claim). The hook
+  hands its xterm element to the host policy, and `isArrivingTerminalVisible` hit-tests a few points
+  of it against the host pane, which carries `data-terminal-host` so the host's own covers (the
+  launch overlay) count as the terminal. Measured before the tier existed: the bottom panel's
+  overlay-lift reload reached tier 3 with a Delete confirm open, and again under the Agent Monitor
+  overlay, and took focus into a terminal nobody could see, so the next Escape went to the agent.
+  A new host marks its pane and forwards the element (`(site, terminalElement) =>
+  mayTakeArrivalFocus(sessionId, site, terminalElement)`), or the probe goes blind.
 - **Do not gate on `document.activeElement` alone.** Both terminals arrive with focus in the same
   place, so an "is focus orphaned" test just converts "last replay wins" into "first rAF wins", and
   it blocks the detail terminal outright whenever the clicked board card kept focus.
@@ -90,10 +98,16 @@ as the `mayTakeArrivalFocus` option, so the hook stays surface-agnostic.
   and fails on any focus call that is neither guarded by `mayTakeArrivalFocus` nor carries an
   `// arrival-focus-ok: <reason>` marker. It matches bare `focus()` as well as `.focus()`, because
   three of the real sites call a destructured `focus` with no receiver and a `\.focus\(\)` pattern
-  would skip exactly the sites the rule exists to protect. Runs in CI via `npm run test:unit`.
+  would skip exactly the sites the rule exists to protect. The same file fails a `useTerminal` host
+  whose pane lacks `data-terminal-host` or whose arbiter call drops the terminal element, and pins
+  that the hook passes its xterm element. Runs in CI via `npm run test:unit`.
 - **Test (policy):** `tests/unit/terminal-arrival-focus.test.ts` pins the tier order and, in
   particular, that a `claim-mismatch` and a `window-mismatch` both DENY rather than fall through.
-  Every mismatch case is constructed so the next tier down would have allowed it.
+  Every mismatch case is constructed so the next tier down would have allowed it, and the tier-0
+  cases deny a hidden terminal that a claim, its focused window, or tier 3 would have allowed.
+- **Test (hidden):** `tests/ui/terminal-arrival-focus-hidden.spec.ts` holds the panel terminal's
+  replays, opens a Delete confirm or the Agent Monitor over it, and asserts the reload is decided
+  `hidden` and focus stays where the user is. Red with the probe forced to report visible.
 - **Test (behavior):** `tests/ui/terminal-arrival-focus.spec.ts` drives the real race with a
   per-session replay delay and asserts focus stays in the just-opened detail, plus that a panel tab
   click still focuses its own terminal. Its fourth case is the obligation: it delays a

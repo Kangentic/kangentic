@@ -26,6 +26,7 @@ import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { forgetPRLinkOnTodoReset } from '../../pr/pr-link-reset';
 import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone } from '../../analytics/usage';
@@ -1692,19 +1693,23 @@ export async function handleTaskMove(
 }
 
 export function registerTaskMoveHandlers(context: IpcContext): void {
-  ipcMain.handle(IPC.TASK_MOVE, async (_, input, projectId?: string | null) => {
+  ipcMain.handle(IPC.TASK_MOVE, async (event, input, projectId?: string | null) => {
+    // Prefer the renderer-stamped projectId (captured at drop time) over the
+    // ambient current project, which can change if the user switches projects
+    // during the FlyingCard flight. Resolve the matching projectPath too so
+    // Phase 2/3 worktree + spawn work also targets the right project, not the
+    // ambient one. handleTaskMove keeps the ambient fallback for main-process
+    // internal callers that pass undefined.
+    let resolvedProjectId: string | null = null;
     try {
-      // Prefer the renderer-stamped projectId (captured at drop time) over the
-      // ambient current project, which can change if the user switches projects
-      // during the FlyingCard flight. Resolve the matching projectPath too so
-      // Phase 2/3 worktree + spawn work also targets the right project, not the
-      // ambient one. handleTaskMove keeps the ambient fallback for main-process
-      // internal callers that pass undefined.
-      const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
+      const resolved = resolveProjectContext(context, projectId);
+      resolvedProjectId = resolved.projectId;
       // 'renderer': the board already moved the card optimistically, so this is
-      // the one origin that sends no push. It still reaches paired phones and
-      // the Monitor via the unconditional board-changed emit inside the handler.
-      return await handleTaskMove(context, input, 'renderer', resolvedProjectId, resolvedProjectPath);
+      // the one origin that sends no origin push. It still reaches paired phones
+      // and the Monitor via the unconditional board-changed emit inside the
+      // handler, and a move from another window reaches the main window's board
+      // through the `finally` below.
+      return await handleTaskMove(context, input, 'renderer', resolved.projectId, resolved.projectPath);
     } catch (error) {
       // Shutdown closes the DB synchronously; any handler that crossed an
       // await boundary will throw "database connection is not open" or an
@@ -1712,6 +1717,11 @@ export function registerTaskMoveHandlers(context: IpcContext): void {
       // clean - the user already quit and Phase 1's DB writes are committed.
       if (isShuttingDown()) return;
       throw error;
+    } finally {
+      // Settled, not succeeded: a move can commit and then fail, which still
+      // changed the board (the announce block in handleTaskMove explains why).
+      // The helper itself stays quiet during shutdown.
+      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
     }
   });
 
