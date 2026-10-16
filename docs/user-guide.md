@@ -733,6 +733,17 @@ Applies to every project (Settings > Terminal, not a per-project override):
 | Cursor Style | Terminal cursor appearance (block, underline, or bar) |
 | Word Delete on Backspace | Backspace deletes the whole previous word instead of one character (off by default) |
 
+### Board Settings
+
+Applies to every project (Settings > Board, not a per-project override). Two cards: **Board layout** and **Config sync**.
+
+| Setting | Card | Description |
+|---------|------|-------------|
+| Column width | Board layout | Width of the board's columns: Narrow, Default or Wide |
+| Terminal panel | Board layout | Show the terminal panel below the board (on by default) |
+| Status bar | Board layout | Show the status bar at the bottom of the window (on by default) |
+| Auto-apply board config changes | Config sync | Apply a detected `kangentic.json` change at once instead of asking you to confirm it (off by default). See [Applying Changes](#applying-changes) |
+
 ### Task Settings
 
 Applies to every project (Settings > Task, not a per-project override). These describe how an individual task presents itself, not board layout or terminal cosmetics:
@@ -824,7 +835,24 @@ These are global-only settings that apply to the entire app.
 | Close on Outside Click | Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. Closing a window does not kill its session. |
 | Restore Window Position | Remember window size and position between launches |
 
-The Board tab has its own Auto-Apply Board Config Changes toggle - see [Applying Changes](#applying-changes) below.
+The Board tab has its own Auto-apply board config changes switch. See [Board Settings](#board-settings).
+
+### Dictation
+
+Applies to every project (Settings > Dictation, not a per-project override). Voice dictation is off by default. Turn it on, then hold the push-to-talk key and speak. The text goes into the field you have focused, or into the terminal when no text field has focus. A live preview streams in while you talk, and the final text is inserted when you let go. The push-to-talk key is the mouse's back button unless you rebind it in Hotkeys, and a quick tap on it still navigates an active Browser pane's history. Everything runs on this machine unless you choose a cloud refinement.
+
+| Setting | Card | Description |
+|---------|------|-------------|
+| Voice dictation | Voice dictation | The switch for the whole feature. Off hides every row below |
+| Push-to-talk | Voice dictation | Shows the current key. **Rebind** opens Hotkeys |
+| Release buffer | Voice dictation | Keeps recording up to 500 ms after you let go so the last word is not clipped (250 ms by default, 0 turns it off) |
+| Auto-submit | Voice dictation | Press Enter after inserting the text (on by default). Off leaves the text for you to review and send |
+| Language | Transcription | The language you speak. English offers every model, and another language narrows the choice to the multilingual ones |
+| Mode | Transcription | Best, Balanced and Light each pick the live and refinement models for you. Custom lets you pick both |
+| Live model | Transcription | Custom only. The preview while you speak. A streaming model is instant and a chunked one is more accurate |
+| Refinement model | Transcription | Custom only. Re-reads the clip on release for the final text, and None keeps the live text. **Cloud endpoint** sends the final clip to an OpenAI-compatible `/v1/audio/transcriptions` URL, with an optional API key and model, while the live preview stays on this machine |
+
+Under these rows the Transcription card lists the models the setup runs, whether each one is downloaded, and their licenses. [Configuration](configuration.md#dictation) lists the models behind each Mode.
 
 ### MCP Server
 
@@ -862,7 +890,7 @@ Create a `kangentic.local.json` in the project root for personal customizations 
 
 ### Applying Changes
 
-When `kangentic.json` or `kangentic.local.json` changes on disk, a reconciliation banner appears at the top of the board. Click "Apply" to reconcile the file into your database, or dismiss to ignore. Enable Auto-Apply Board Config Changes in the Board settings tab to apply changes automatically instead.
+When `kangentic.json` or `kangentic.local.json` changes on disk, a reconciliation banner appears at the top of the board. Click "Apply" to reconcile the file into your database, or dismiss to ignore. Enable Auto-apply board config changes in the Board settings tab to apply changes automatically instead.
 
 If a teammate removes a column that still has your tasks, the column becomes a "ghost" (hidden but preserved). Once you move all tasks out of the ghost column, it is automatically deleted.
 
