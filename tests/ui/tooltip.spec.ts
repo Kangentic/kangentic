@@ -267,6 +267,61 @@ test('Escape closes only the tip in a task window, and the next Escape closes th
   }
 });
 
+test('an Escape pressed the moment a tip mounts closes the tip and never reaches the window', async () => {
+  const { browser, page } = await launchWithTask();
+  try {
+    const dialog = await openTaskDetail(page);
+    // React's scheduler runs a commit's passive effects in the same macrotask unless the commit
+    // used up its 5ms slice, which a loaded CI runner does and a quiet machine does not. Inserting
+    // the tip is made to spend that slice here, so the scheduler yields after the commit and a
+    // MutationObserver callback (a microtask) runs after the tip's layout effects but before its
+    // passive ones. The Escape listener has to be attached by then, or the press lands between a
+    // visible tip and its listener and closes the window as well. Playwright's own press cannot
+    // aim at that gap, so the key is fired in page.
+    await page.evaluate((tipSelector) => {
+      const win = window as unknown as { __escapesReachingDocument: number; __escapeDispatchedAtMount: boolean };
+      win.__escapesReachingDocument = 0;
+      win.__escapeDispatchedAtMount = false;
+      const spendSlice = (node: Node): void => {
+        if (!(node instanceof Element) || !node.hasAttribute('data-tooltip')) return;
+        const until = performance.now() + 12;
+        while (performance.now() < until) { /* hold the commit past the scheduler's slice */ }
+      };
+      const insertChild = document.body.appendChild.bind(document.body);
+      const insertBefore = document.body.insertBefore.bind(document.body);
+      document.body.appendChild = <T extends Node>(node: T): T => {
+        const inserted = insertChild(node);
+        spendSlice(node);
+        return inserted;
+      };
+      document.body.insertBefore = <T extends Node>(node: T, reference: Node | null): T => {
+        const inserted = insertBefore(node, reference);
+        spendSlice(node);
+        return inserted;
+      };
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') win.__escapesReachingDocument += 1;
+      });
+      const observer = new MutationObserver(() => {
+        if (document.querySelector(tipSelector) === null) return;
+        observer.disconnect();
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        win.__escapeDispatchedAtMount = true;
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }, TIP);
+
+    await page.getByTestId('task-detail-close').hover();
+    // Without this the assertions below hold before the tip has opened, and the test proves nothing.
+    await page.waitForFunction(() => (window as unknown as { __escapeDispatchedAtMount: boolean }).__escapeDispatchedAtMount);
+    await expect(page.locator(TIP)).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { __escapesReachingDocument: number }).__escapesReachingDocument)).toBe(0);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('a tip at the window edge is clamped inside it, and its keys follow the user binding', async () => {
   const { browser, page } = await launchWithTask({ hotkeyOverrides: { 'panel.close': 'Mod+Alt+K' } });
   try {
