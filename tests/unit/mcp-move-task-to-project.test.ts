@@ -11,6 +11,8 @@
  *   - happy path: source task removed, target gets a new To Do task with
  *     preserved title/description/labels/priority/created_at, and a seeded
  *     attachment file is copied to the target project's attachments dir
+ *   - a task whose automations are disabled arrives with the switch still on;
+ *     an ordinary one arrives with it off
  *   - optional `column` lands in a named target column
  *   - unknown target column -> error, nothing mutated
  *   - source task not in a `role: 'todo'` column -> error, nothing mutated
@@ -137,6 +139,43 @@ describe('handleMoveTaskToProject', () => {
     expect(copiedAttachments).toHaveLength(1);
     expect(copiedAttachments[0].filename).toBe('handoff.txt');
     expect(fs.readFileSync(copiedAttachments[0].file_path, 'utf8')).toBe('hello');
+  });
+
+  // The switch is a user setting, like the labels: a task the user held is still
+  // held in the project it was relocated to.
+  it('carries a held task\'s automations_disabled switch to the target project', () => {
+    const sourceTaskRepo = new TaskRepository(sourceDb);
+    const created = sourceTaskRepo.create({
+      title: 'Held task',
+      description: '',
+      swimlane_id: sourceTodo.id,
+      automations_disabled: true,
+    });
+    expect(sourceTaskRepo.getById(created.id)?.automations_disabled).toBe(true);
+
+    const response = handleMoveTaskToProject({ taskId: created.id }, source, target);
+
+    expect(response.success).toBe(true);
+    const targetTasks = new TaskRepository(targetDb).list(targetTodo.id);
+    expect(targetTasks).toHaveLength(1);
+    // Red: dropping the field from the target's create call leaves it false.
+    expect(targetTasks[0].automations_disabled).toBe(true);
+  });
+
+  // The control for the test above. It stays green when the field is dropped from
+  // the create call, since false is the default; what it guards is a relocation
+  // that turns the switch ON for a task nobody held.
+  it('leaves automations enabled on the target copy of an ordinary task', () => {
+    const sourceTaskRepo = new TaskRepository(sourceDb);
+    const created = sourceTaskRepo.create({ title: 'Ordinary task', description: '', swimlane_id: sourceTodo.id });
+    expect(sourceTaskRepo.getById(created.id)?.automations_disabled).toBe(false);
+
+    const response = handleMoveTaskToProject({ taskId: created.id }, source, target);
+
+    expect(response.success).toBe(true);
+    const targetTasks = new TaskRepository(targetDb).list(targetTodo.id);
+    expect(targetTasks).toHaveLength(1);
+    expect(targetTasks[0].automations_disabled).toBe(false);
   });
 
   it('lands in an explicit target column when `column` is provided', () => {

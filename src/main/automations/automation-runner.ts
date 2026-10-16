@@ -53,6 +53,12 @@ export interface AutomationRunSummary {
   endedGroup?: boolean;
 }
 
+/**
+ * The run log's detail for a row the move typed itself (`alreadyDelivered`).
+ * Shared with the engine's held group, which records such a row the same way.
+ */
+export const SENT_WITH_THE_MOVE = 'Sent with the move.';
+
 /** What starting the agent reports back to the run. */
 export interface AgentStartReport {
   /**
@@ -268,8 +274,8 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     // move's keystrokes" either: a message with line breaks rides the move as a
     // paste, and this runner cannot tell which the move used.
     if (options.alreadyDelivered?.has(automation.id)) {
-      runs.recordDeliveredByCaller(started, "Sent with the move.");
-      record('succeeded', "Sent with the move.");
+      runs.recordDeliveredByCaller(started, SENT_WITH_THE_MOVE);
+      record('succeeded', SENT_WITH_THE_MOVE);
       continue;
     }
 
