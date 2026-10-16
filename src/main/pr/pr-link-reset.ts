@@ -1,6 +1,7 @@
 import { IPC } from '../../shared/ipc-channels';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import { cancelVerdictRepollsForTask } from './pr-linking';
+import { holdsPRIdentity, type PRIdentityColumn } from './pr-identity';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { Task } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
@@ -22,17 +23,22 @@ import type { IpcContext } from '../ipc/ipc-context';
  * the task's own checkout or push. A review task whose PR link was typed in and
  * never started has none of them and keeps its link.
  *
- * `snapshot` is the row as it was BEFORE `cleanupTaskResources`, which nulls
- * `worktree_path` and `branch_name` once the directory is removed. Call this after that cleanup, because the
- * cleanup writes a captured `head_sha` that this has to overwrite. Call it when
- * the cleanup threw too, since the task is in To Do by then and nothing retries
- * the clear. The caller holds the task lock (the To Do branch of
- * `handleTaskMove`); this never takes it, since the lock is not reentrant.
+ * `snapshot` is the row as it was BEFORE the move, which `cleanupTaskResources`
+ * changes by nulling `worktree_path` and `branch_name` once the directory is
+ * removed. `handleTaskMove` calls this twice. The first call runs in the same
+ * tick as `tasks.move`, so a quit or crash during the seconds of cleanup that
+ * follow cannot leave the old link on a To Do card. The second runs after the
+ * cleanup, in a finally, and clears the `head_sha` the cleanup captures from the
+ * old checkout. Both run under the task lock `handleTaskMove` holds; this never
+ * takes it, since the lock is not reentrant.
  *
  * The other cleanup paths (delete, the Backlog sweep, the startup fallbacks for
  * a missing worktree, Done, and an unarchive into To Do) keep `pushed_branch`:
  * the PR is still the task's work there. This module is the one cleanup write
- * that `tests/unit/pushed-branch-cleanup-parity.test.ts` allows to null it.
+ * that `tests/unit/pushed-branch-cleanup-parity.test.ts` allows to null it. The
+ * Backlog sweep reads a leftover branch's tip into `head_sha` only for a row
+ * that still holds one of the six columns this clears, so it never gives a
+ * forgotten task the old commit back.
  *
  * Returns true when it cleared anything.
  */
@@ -47,24 +53,25 @@ export function forgetPRLinkOnTodoReset(
 
   // A concurrent delete may already have removed the row.
   const current = tasks.getById(snapshot.id);
-  if (!current) return false;
+  if (!current || !holdsPRIdentity(current)) return false;
   const holdsPRLink = [
     current.pr_url,
     current.pr_number,
     current.pr_state,
     current.pr_merge_readiness,
   ].some((value) => value != null);
-  if (!holdsPRLink && current.pushed_branch == null && current.head_sha == null) return false;
 
-  tasks.update({
-    id: snapshot.id,
+  // Typed against the shared list, so a column added there and not here fails
+  // to compile instead of surviving the reset.
+  const forgottenIdentity: Record<PRIdentityColumn, null> = {
     pr_url: null,
     pr_number: null,
     pr_state: null,
     pr_merge_readiness: null,
     pushed_branch: null,
     head_sha: null,
-  });
+  };
+  tasks.update({ id: snapshot.id, ...forgottenIdentity });
   cancelVerdictRepollsForTask(snapshot.id);
   // Most hosts reload the board once their own move resolves. The Monitor's
   // task-detail host refreshes only its own copy, so a cleared link also gets

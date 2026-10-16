@@ -56,10 +56,22 @@ vi.mock('node:util', () => ({
 // ---------------------------------------------------------------------------
 
 import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks, pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
+// The REAL per-task lock, not mocked: the To Do sweep takes it for each task,
+// so a test can hold it to stand in for a move that is still running.
+import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 
 // ---------------------------------------------------------------------------
 // Mock factories
 // ---------------------------------------------------------------------------
+
+/**
+ * How each task arrived in its column. Null by default, the answer for a task
+ * whose arrival was never recorded, which the To Do sweep cleans like a reset.
+ * A test that needs a restore answers once with `mockReturnValueOnce`.
+ */
+const taskMoveRepo = {
+  currentVisit: vi.fn((_taskId?: string, _swimlaneId?: string): { at: string; origin: string } | null => null),
+};
 
 interface MockTask {
   id: string;
@@ -69,6 +81,15 @@ interface MockTask {
   worktree_folder: string | null;
   branch_name: string | null;
   session_id: string | null;
+  swimlane_id?: string;
+  // The PR identity a To Do move forgets. Absent reads as null, like a row
+  // that never linked a PR.
+  pr_url?: string | null;
+  pr_number?: number | null;
+  pr_state?: string | null;
+  pr_merge_readiness?: string | null;
+  pushed_branch?: string | null;
+  head_sha?: string | null;
 }
 
 function createMockTask(overrides: Partial<MockTask> & { id: string; title: string }): MockTask {
@@ -97,6 +118,12 @@ function createMockRepos(backlogTasks: MockTask[] = []) {
     }),
     listArchived: vi.fn(() => []),
     update: vi.fn(),
+    // The To Do sweep re-reads a restored task before it clears its session.
+    // Every task here sits in the To Do lane unless the test says otherwise.
+    getById: vi.fn((id: string) => {
+      const found = backlogTasks.find((task) => task.id === id);
+      return found ? { swimlane_id: 'lane-backlog', ...found } : undefined;
+    }),
   };
 
   const sessionRepo = {
@@ -155,6 +182,13 @@ describe('cleanupStaleResources', () => {
     mockExistsSync.mockReturnValue(false);
     mockRm.mockResolvedValue(undefined);
     mockReaddir.mockResolvedValue([]);
+    // clearAllMocks keeps implementations, so a tip one test set would reach
+    // every later test in the file.
+    mockReadLocalBranchSha.mockResolvedValue(null);
+    // clearAllMocks also keeps a `mockReturnValueOnce` queue. `taskMoveRepo` is
+    // shared across the file, so an answer one test queued and never consumed
+    // would be handed to the next test's task. Reset it to its null default.
+    taskMoveRepo.currentVisit.mockReset();
     setupExecFile(() => '');
   });
 
@@ -167,6 +201,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -191,6 +226,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -218,6 +254,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -239,8 +276,8 @@ describe('cleanupStaleResources', () => {
 
     // DB fields cleared. `pushed_branch` is absent on purpose: a remote fact
     // and a PR anchor, it outlives the checkout (see pushed-branch-cleanup-parity).
-    // The tip was probed from the branch ref before the branch delete pass.
-    expect(mockReadLocalBranchSha).toHaveBeenCalledWith(projectPath, 'fix-login-bug-bbbb2222');
+    // The row holds no PR identity, so the leftover branch's tip is not read.
+    expect(mockReadLocalBranchSha).not.toHaveBeenCalled();
     expect(taskRepo.update).toHaveBeenCalledWith({
       id: 'bbbb2222-0000-0000-0000-000000000000',
       worktree_path: null,
@@ -270,6 +307,9 @@ describe('cleanupStaleResources', () => {
    * delete pass, readLocalBranchSha would read an already-deleted ref and
    * silently return null again - the patch-shape assertion alone would not
    * catch that regression, only the ordering assertion does.
+   *
+   * The row keeps its PR, as an unarchive into To Do does, which is what lets
+   * the sweep read the tip at all (see the PR identity tests below).
    */
   it('captures a real head_sha into the update patch, read BEFORE the branch is deleted', async () => {
     const staleTask = createMockTask({
@@ -278,6 +318,7 @@ describe('cleanupStaleResources', () => {
       worktree_path: '/home/dev/my-project/.kangentic/worktrees/fix-login-bug-bbbb2222',
       branch_name: 'fix-login-bug-bbbb2222',
       session_id: 'session-123',
+      pr_number: 574,
     });
     const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([staleTask]);
 
@@ -289,6 +330,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -312,6 +354,407 @@ describe('cleanupStaleResources', () => {
     expect(mockReadLocalBranchSha.mock.invocationCallOrder[0]).toBeLessThan(branchDeleteCallOrder);
   });
 
+  /**
+   * A To Do move forgets all six PR identity columns when it commits, then its
+   * cleanup runs for seconds. A quit there, or a worktree removal that failed,
+   * leaves the old checkout for this sweep. Reading that branch's tip into
+   * head_sha would hand the task the old commit back, and Tier 3 resolves the
+   * old PR from it on the first resolve with no worktree.
+   */
+  it('does not read the old tip back for a To Do row whose PR identity a reset forgot', async () => {
+    const resetTask = createMockTask({
+      id: 'cccc3333-0000-0000-0000-000000000000',
+      title: 'Cut the release',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/7',
+      branch_name: 'cut-the-release-cccc3333',
+      session_id: 'session-456',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([resetTask]);
+
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/7');
+    mockReadLocalBranchSha.mockResolvedValue('old-work-sha');
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(mockReadLocalBranchSha).not.toHaveBeenCalled();
+    expect(taskRepo.update).toHaveBeenCalledTimes(1);
+    expect(taskRepo.update.mock.calls[0][0]).not.toHaveProperty('head_sha');
+    // The checkout itself is still cleaned, branch included.
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'git', ['branch', '-D', 'cut-the-release-cccc3333'], { cwd: projectPath }, expect.any(Function),
+    );
+  });
+
+  // One case per column, so a predicate that dropped any one of them would read
+  // that row as forgotten and stop capturing for it.
+  it.each([
+    ['pr_url', { pr_url: 'https://github.com/owner/repo/pull/574' }],
+    ['pr_number', { pr_number: 574 }],
+    ['pr_state', { pr_state: 'open' }],
+    ['pr_merge_readiness', { pr_merge_readiness: 'ready' }],
+    ['pushed_branch', { pushed_branch: 'feature/cut-the-release' }],
+    ['head_sha', { head_sha: 'earlier-sha' }],
+  ] as Array<[string, Partial<MockTask>]>)('still captures the tip for a row that holds its %s', async (_columnName, identityColumns) => {
+    const keptTask = createMockTask({
+      id: 'dddd4444-0000-0000-0000-000000000000',
+      title: 'Restore from Done',
+      branch_name: 'restore-from-done-dddd4444',
+      ...identityColumns,
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([keptTask]);
+    mockReadLocalBranchSha.mockResolvedValue('kept-tip-sha');
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(mockReadLocalBranchSha).toHaveBeenCalledWith(projectPath, 'restore-from-done-dddd4444');
+    expect(taskRepo.update).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'dddd4444-0000-0000-0000-000000000000',
+      branch_name: null,
+      head_sha: 'kept-tip-sha',
+    }));
+  });
+
+  /**
+   * An unarchive into To Do resets only the session and keeps the worktree and
+   * branch, so a restore never force-deletes committed work with no warning.
+   * The sweep used to delete both on the next launch anyway.
+   */
+  it('keeps the worktree and branch of a task restored into To Do from Done', async () => {
+    const restoredTask = createMockTask({
+      id: 'eeee5555-0000-0000-0000-000000000000',
+      title: 'Restored from Done',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/12',
+      branch_name: 'restored-from-done-eeee5555',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([restoredTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/12');
+    taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T12:00:00.000Z', origin: 'unarchive' });
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(taskMoveRepo.currentVisit).toHaveBeenCalledWith('eeee5555-0000-0000-0000-000000000000', 'lane-backlog');
+    const gitCalls = mockExecFile.mock.calls.map((call) => (call[1] as string[]).join(' '));
+    expect(gitCalls.filter((args) => args.startsWith('worktree remove') || args.startsWith('branch -D'))).toEqual([]);
+    expect(mockRm).not.toHaveBeenCalled();
+    expect(taskRepo.update).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+  });
+
+  it('finishes the session reset of a restore cut short, and still keeps its checkout', async () => {
+    const restoredTask = createMockTask({
+      id: 'ffff6666-0000-0000-0000-000000000000',
+      title: 'Restore cut short',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/13',
+      branch_name: 'restore-cut-short-ffff6666',
+      session_id: 'session-789',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([restoredTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/13');
+    taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T12:00:00.000Z', origin: 'unarchive' });
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(sessionManager.remove).toHaveBeenCalledWith('session-789');
+    expect(sessionRepo.deleteByTaskId).toHaveBeenCalledWith('ffff6666-0000-0000-0000-000000000000');
+    expect(taskRepo.update).toHaveBeenCalledTimes(1);
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'ffff6666-0000-0000-0000-000000000000', session_id: null });
+    const gitCalls = mockExecFile.mock.calls.map((call) => (call[1] as string[]).join(' '));
+    expect(gitCalls.filter((args) => args.startsWith('worktree remove') || args.startsWith('branch -D'))).toEqual([]);
+  });
+
+  /**
+   * `currentVisit` names the task's last visit to To Do even after the task has
+   * left, and the task list was taken before the loop's awaits. A restored task
+   * the user dragged out to a spawning column while the sweep ran holds a NEW
+   * session, which the sweep must not remove or clear, whichever of the lane
+   * check and the arrival record it consults first. Guards a session reset that
+   * trusts the snapshot instead of the row as it is now.
+   */
+  it('leaves the new session of a restored task that left To Do while the sweep ran', async () => {
+    const restoredTask = createMockTask({
+      id: 'f00d1111-0000-0000-0000-000000000000',
+      title: 'Restored then dragged out',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/15',
+      branch_name: 'restored-then-dragged-out-f00d1111',
+      session_id: 'session-old',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([restoredTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/15');
+    // The arrival record still says restore. The sweep may never ask for it,
+    // since the lane check on the fresh row comes first; beforeEach resets the
+    // queue, so an unasked answer does not reach the next test.
+    taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T12:00:00.000Z', origin: 'unarchive' });
+    // The row as it is now. A fresh object, so the snapshot above keeps its
+    // old session id.
+    taskRepo.getById.mockReturnValueOnce({ ...restoredTask, swimlane_id: 'lane-planning', session_id: 'session-new' });
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    // The queued row was consumed by the sweep's re-read.
+    expect(taskRepo.getById).toHaveBeenCalledWith('f00d1111-0000-0000-0000-000000000000');
+    expect(sessionManager.remove).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+    expect(taskRepo.update).not.toHaveBeenCalled();
+    const gitCalls = mockExecFile.mock.calls.map((call) => (call[1] as string[]).join(' '));
+    expect(gitCalls.filter((args) => args.startsWith('worktree remove') || args.startsWith('branch -D'))).toEqual([]);
+  });
+
+  /**
+   * A task still in To Do whose session changed since the list was taken has
+   * its CURRENT session removed, not the stale id from the snapshot. Guards a
+   * half-revert that keeps the lane check but reads `task.session_id`.
+   */
+  it('removes the current session of a restored task still in To Do, not the snapshot id', async () => {
+    const restoredTask = createMockTask({
+      id: 'f00d2222-0000-0000-0000-000000000000',
+      title: 'Restored with a newer session',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/16',
+      branch_name: 'restored-with-a-newer-session-f00d2222',
+      session_id: 'session-old',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([restoredTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/16');
+    taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T12:00:00.000Z', origin: 'unarchive' });
+    taskRepo.getById.mockReturnValueOnce({ ...restoredTask, swimlane_id: 'lane-backlog', session_id: 'session-new' });
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(taskMoveRepo.currentVisit).toHaveBeenCalledWith('f00d2222-0000-0000-0000-000000000000', 'lane-backlog');
+    expect(taskRepo.getById).toHaveBeenCalledWith('f00d2222-0000-0000-0000-000000000000');
+    expect(sessionManager.remove).toHaveBeenCalledTimes(1);
+    expect(sessionManager.remove).toHaveBeenCalledWith('session-new');
+    expect(sessionRepo.deleteByTaskId).toHaveBeenCalledWith('f00d2222-0000-0000-0000-000000000000');
+    expect(taskRepo.update).toHaveBeenCalledTimes(1);
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'f00d2222-0000-0000-0000-000000000000', session_id: null });
+    // The checkout is still kept.
+    const gitCalls = mockExecFile.mock.calls.map((call) => (call[1] as string[]).join(' '));
+    expect(gitCalls.filter((args) => args.startsWith('worktree remove') || args.startsWith('branch -D'))).toEqual([]);
+  });
+
+  /**
+   * The session was already cleared between the list and the re-read, so the
+   * reset has nothing left to finish. Guards a check on the snapshot's session
+   * id instead of the row's.
+   */
+  it('does nothing for a restored task whose session was already cleared when the sweep re-read it', async () => {
+    const restoredTask = createMockTask({
+      id: 'f00d3333-0000-0000-0000-000000000000',
+      title: 'Restored and already reset',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/17',
+      branch_name: 'restored-and-already-reset-f00d3333',
+      session_id: 'session-old',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([restoredTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/17');
+    taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T12:00:00.000Z', origin: 'unarchive' });
+    taskRepo.getById.mockReturnValueOnce({ ...restoredTask, swimlane_id: 'lane-backlog', session_id: null });
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(taskMoveRepo.currentVisit).toHaveBeenCalledWith('f00d3333-0000-0000-0000-000000000000', 'lane-backlog');
+    expect(taskRepo.getById).toHaveBeenCalledWith('f00d3333-0000-0000-0000-000000000000');
+    expect(sessionManager.remove).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+    expect(taskRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('cleans a task that was restored and then moved back into To Do, since that move is a reset', async () => {
+    const resetTask = createMockTask({
+      id: 'abab7777-0000-0000-0000-000000000000',
+      title: 'Moved back in',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/14',
+      branch_name: 'moved-back-in-abab7777',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([resetTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/14');
+    // The visit's opening move is the drag back in, not the restore before it.
+    taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T13:00:00.000Z', origin: 'renderer' });
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'git', ['branch', '-D', 'moved-back-in-abab7777'], { cwd: projectPath }, expect.any(Function),
+    );
+    expect(taskRepo.update).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'abab7777-0000-0000-0000-000000000000',
+      worktree_path: null,
+      branch_name: null,
+    }));
+  });
+
+  /**
+   * The same hazard as the restore case above, on the reset path. The task list
+   * was taken before the loop's awaits, and the sweep runs unawaited at project
+   * open, so a task the user dragged out to a spawning column while it ran now
+   * owns a NEW worktree and session. Cleaning from the listed row would remove
+   * that worktree, delete the new session's records and null its session_id.
+   * Guards a reset that trusts the snapshot instead of the row as it is now.
+   */
+  it('leaves the new worktree and session of a task that left To Do before the sweep reached it', async () => {
+    const movedTask = createMockTask({
+      id: 'f00d4444-0000-0000-0000-000000000000',
+      title: 'Dragged out while sweeping',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/18',
+      branch_name: 'dragged-out-while-sweeping-f00d4444',
+      session_id: 'session-old',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([movedTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/18');
+    // The row as it is now. A fresh object, so the snapshot above keeps its
+    // old session id and its missing lane.
+    taskRepo.getById.mockReturnValueOnce({ ...movedTask, swimlane_id: 'lane-planning', session_id: 'session-new' });
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    // The queued answer was consumed by the sweep's re-read.
+    expect(taskRepo.getById).toHaveBeenCalledTimes(1);
+    expect(taskRepo.getById).toHaveBeenCalledWith('f00d4444-0000-0000-0000-000000000000');
+    expect(sessionManager.remove).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+    expect(taskRepo.update).not.toHaveBeenCalled();
+    expect(mockRm).not.toHaveBeenCalled();
+    const gitCalls = mockExecFile.mock.calls.map((call) => (call[1] as string[]).join(' '));
+    expect(gitCalls.filter((args) => args.startsWith('worktree remove') || args.startsWith('branch -D'))).toEqual([]);
+  });
+
+  /**
+   * A move of the same task may still be running when the sweep reaches it, and
+   * it holds the task's lifecycle lock. The sweep has to wait for that lock and
+   * read the row only after it has it, or it acts on a row the move is about to
+   * change. The test holds the real lock, moves the row to Planning while the
+   * sweep waits behind it, then releases: the sweep must see Planning and skip.
+   * Guards dropping the `withTaskLock` wrapper, and reading the row outside it.
+   */
+  it('waits for the task lock before it reads the row, then skips a task that left To Do meanwhile', async () => {
+    const taskId = 'f00d5555-0000-0000-0000-000000000000';
+    const movingTask = createMockTask({
+      id: taskId,
+      title: 'Moving while sweeping',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/19',
+      branch_name: 'moving-while-sweeping-f00d5555',
+      session_id: 'session-old',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([movingTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === '/home/dev/my-project/.kangentic/worktrees/19');
+
+    // Stand in for the move: hold the task's lock until the test lets go.
+    let releaseTaskLock!: () => void;
+    const taskLockHeld = new Promise<void>((resolve) => {
+      releaseTaskLock = resolve;
+    });
+    const lockHolder = withTaskLock(taskId, () => taskLockHeld);
+
+    // Not awaited: it must park behind the lock. The finally block below always
+    // releases the lock and awaits both, so a failed assertion leaks nothing
+    // into the next test.
+    const sweep = cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      taskMoveRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    try {
+      // The sweep lists To Do right before it asks for the lock, so this proves
+      // it got that far and the checks below are not vacuous.
+      await vi.waitFor(() => expect(taskRepo.list).toHaveBeenCalledWith('lane-backlog'));
+      // Intentional fixed turns (a poll cannot prove something does NOT happen):
+      // with no lock in the way the rest of the pass is microtasks over mocks,
+      // so two macrotask turns is more than it needs to finish.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Still waiting: it has not read the row, let alone touched the task.
+      expect(taskRepo.getById).not.toHaveBeenCalled();
+      expect(sessionManager.remove).not.toHaveBeenCalled();
+      expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+      expect(taskRepo.update).not.toHaveBeenCalled();
+
+      // The move lands while the sweep waits. getById spreads the task object,
+      // so the new lane wins over its To Do default.
+      movingTask.swimlane_id = 'lane-planning';
+    } finally {
+      releaseTaskLock();
+      await lockHolder;
+      await sweep;
+    }
+
+    // It read the row once the lock freed, found Planning, and left it alone.
+    expect(taskRepo.getById).toHaveBeenCalledTimes(1);
+    expect(taskRepo.getById).toHaveBeenCalledWith(taskId);
+    expect(sessionManager.remove).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+    expect(taskRepo.update).not.toHaveBeenCalled();
+    expect(mockRm).not.toHaveBeenCalled();
+    const gitCalls = mockExecFile.mock.calls.map((call) => (call[1] as string[]).join(' '));
+    expect(gitCalls.filter((args) => args.startsWith('worktree remove') || args.startsWith('branch -D'))).toEqual([]);
+  });
+
   it('cleans task with null DB fields but stale directory on disk (core bug fix)', async () => {
     const task = createMockTask({
       id: 'cccc3333-0000-0000-0000-000000000000',
@@ -333,6 +776,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -386,6 +830,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -420,6 +865,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -444,6 +890,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -479,6 +926,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -510,6 +958,7 @@ describe('cleanupStaleResources', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -558,6 +1007,8 @@ function createMockReposWithAllTasks(allTasks: MockTask[]) {
       if (laneId === 'lane-backlog') return [];
       return allTasks;
     }),
+    // The prune re-reads a task's lane before it deletes it.
+    getById: vi.fn((id: string) => allTasks.find((task) => task.id === id)),
     listArchived: vi.fn(() => []),
     update: vi.fn(),
     delete: vi.fn(),
@@ -605,6 +1056,7 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -634,6 +1086,7 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -667,6 +1120,7 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -702,6 +1156,7 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -726,6 +1181,7 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -749,6 +1205,7 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
     await cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -796,6 +1253,7 @@ describe('pruneOrphanedWorktreeTasks ordering contract', () => {
     await pruneOrphanedWorktreeTasks(
       projectPath,
       taskRepo as never,
+      swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
     );
@@ -812,6 +1270,7 @@ describe('pruneOrphanedWorktreeTasks ordering contract', () => {
     await cleanupStaleResourcesAsync(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -829,7 +1288,7 @@ describe('pruneOrphanedWorktreeTasks ordering contract', () => {
       worktree_path: '/home/dev/my-project/.kangentic/worktrees/raced-raced111',
       branch_name: 'raced-raced111',
     });
-    const { taskRepo, sessionRepo, sessionManager } =
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
       createMockReposWithAllTasks([racedTask]);
 
     mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
@@ -853,6 +1312,7 @@ describe('pruneOrphanedWorktreeTasks ordering contract', () => {
     const pruned = await pruneOrphanedWorktreeTasks(
       projectPath,
       taskRepo as never,
+      swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
     );
@@ -869,7 +1329,7 @@ describe('pruneOrphanedWorktreeTasks ordering contract', () => {
       worktree_path: '/home/dev/my-project/.kangentic/worktrees/recreated-recreat',
       branch_name: 'recreated-recreat',
     });
-    const { taskRepo, sessionRepo, sessionManager } =
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
       createMockReposWithAllTasks([recreatedTask]);
 
     // The async existence probe (fs.promises.stat) reports the worktrees
@@ -889,10 +1349,120 @@ describe('pruneOrphanedWorktreeTasks ordering contract', () => {
     const pruned = await pruneOrphanedWorktreeTasks(
       projectPath,
       taskRepo as never,
+      swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
     );
 
+    expect(pruned).toBe(0);
+    expect(taskRepo.delete).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A To Do move removes the worktree and only then clears worktree_path, so a
+   * quit between the two leaves a To Do task pointing at a directory that is
+   * gone. That is the reset's own leftover, not a worktree deleted outside the
+   * app, and the prune used to delete the whole task for it.
+   */
+  it('never deletes a To Do task whose worktree a reset already removed', async () => {
+    const resetTask = createMockTask({
+      id: 'todo1111-0000-0000-0000-000000000000',
+      title: 'Reset cut short',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/reset-todo1111',
+      branch_name: 'reset-todo1111',
+      swimlane_id: 'lane-backlog',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
+      createMockReposWithAllTasks([resetTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
+
+    const pruned = await pruneOrphanedWorktreeTasks(
+      projectPath,
+      taskRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(pruned).toBe(0);
+    expect(taskRepo.delete).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+  });
+
+  it('re-reads the lane after the async gap: a task moved into To Do while the probes ran keeps its row', async () => {
+    const movingTask = createMockTask({
+      id: 'moving11-0000-0000-0000-000000000000',
+      title: 'Dragged to To Do at launch',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/moving-moving11',
+      branch_name: 'moving-moving11',
+      swimlane_id: 'lane-planning',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
+      createMockReposWithAllTasks([movingTask]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
+    // The move lands while the existence probe is in flight, and its reset is
+    // what removed the directory.
+    mockStat.mockImplementation(async (pathArg?: unknown) => {
+      if (String(pathArg) === movingTask.worktree_path) {
+        movingTask.swimlane_id = 'lane-backlog';
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
+      return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
+    });
+
+    const pruned = await pruneOrphanedWorktreeTasks(
+      projectPath,
+      taskRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(pruned).toBe(0);
+    expect(taskRepo.delete).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The other half of the re-read: the row can be gone, not just moved. A task
+   * deleted while the probes ran has nothing left to prune, and running the
+   * deletes for it anyway would clear session rows for an id that no longer
+   * exists. Guards a re-read that lets an undefined row through to the deletes.
+   */
+  it('re-reads the row after the async gap: a task deleted while the probes ran is not deleted again', async () => {
+    const vanishingTask = createMockTask({
+      id: 'vanish11-0000-0000-0000-000000000000',
+      title: 'Deleted at launch',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/vanishing-vanish11',
+      branch_name: 'vanishing-vanish11',
+      swimlane_id: 'lane-planning',
+    });
+    // One array reference. `list()` hands it out and `getById` searches it, so
+    // emptying it in place is what makes the row disappear for the re-read.
+    const allTasks: MockTask[] = [vanishingTask];
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
+      createMockReposWithAllTasks(allTasks);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
+    // The delete lands while the existence probe is in flight. The candidate
+    // list was already copied by then, so the task still reaches the loop.
+    mockStat.mockImplementation(async (pathArg?: unknown) => {
+      if (String(pathArg) === vanishingTask.worktree_path) {
+        allTasks.splice(0, allTasks.length);
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
+      return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
+    });
+
+    const pruned = await pruneOrphanedWorktreeTasks(
+      projectPath,
+      taskRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    // The re-read ran and found nothing, which is the only reason for the skip.
+    expect(taskRepo.getById).toHaveBeenCalledWith('vanish11-0000-0000-0000-000000000000');
     expect(pruned).toBe(0);
     expect(taskRepo.delete).not.toHaveBeenCalled();
     expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
@@ -1037,6 +1607,7 @@ describe('cleanupStaleResources -- removeWorktreeDirectory exhaustion path', () 
     const resultPromise = cleanupStaleResources(
       projectPath,
       taskRepo as never,
+      taskMoveRepo as never,
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,

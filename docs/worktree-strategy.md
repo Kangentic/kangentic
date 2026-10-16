@@ -599,10 +599,11 @@ Task moved back from Done (into any non-todo, non-done column)
   → Status: running
 
 Task moved to To Do
+  → For a task that did its own work, the PR link (pr_url, pr_number, pr_state, pr_merge_readiness), pushed_branch and head_sha are cleared in the tick that commits the lane, and its merge-verdict re-polls are cancelled (forgetPRLinkOnTodoReset)
   → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
   → Agent adapters notified so they can drop per-directory state (see below)
   → DB references cleared once the directory is removed (worktree_path, branch_name, resolved_base_branch set to null; head_sha captured first when readable)
-  → For a task that did its own work, the PR link (pr_url, pr_number, pr_state, pr_merge_readiness), pushed_branch and head_sha are cleared too, and its merge-verdict re-polls are cancelled (forgetPRLinkOnTodoReset)
+  → The head_sha that capture wrote is cleared again for a task that did its own work
   → Next activation creates a fresh worktree and branch
 
 Task deleted
@@ -648,7 +649,7 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 
 ### On Project Open
 
-- **`pruneOrphanedWorktrees()`** -- Scans `.kangentic/worktrees/`. If a worktree directory was deleted externally, deletes the associated task (skips tasks with active PTYs).
+- **`pruneOrphanedWorktreeTasks()`** (`src/main/transition-engine/resource-cleanup.ts`) -- Scans the tasks whose `worktree_path` directory is gone and deletes them, except a task in a To Do lane (a To Do move removes the directory before it clears `worktree_path`, so the To Do sweep clears those fields instead), a workflow task, and a task with a running or queued session. It re-reads the lane after its existence probes, so a task moved to To Do during the probes is kept.
 
 ### On Project Close/Delete
 

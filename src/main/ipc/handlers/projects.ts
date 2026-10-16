@@ -9,6 +9,7 @@ import { resumeSuspendedSessions, autoSpawnTasks, type ResumeSuspendedOptions } 
 import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
+import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
@@ -456,9 +457,10 @@ async function pruneOrphanedTasksAndNotify(
   context: IpcContext,
   project: Project,
   taskRepo: TaskRepository,
+  swimlaneRepo: SwimlaneRepository,
   sessionRepo: SessionRepository,
 ): Promise<void> {
-  const pruned = await pruneOrphanedWorktreeTasks(project.path, taskRepo, sessionRepo, context.sessionManager)
+  const pruned = await pruneOrphanedWorktreeTasks(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
     .catch((error) => {
       console.error(`[PROJECT_OPEN] Worktree prune failed for ${project.name}:`, error);
       return 0;
@@ -640,6 +642,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     const sessionRepo = new SessionRepository(db);
     const swimlaneRepo = new SwimlaneRepository(db);
     const automationRunRepo = new AutomationRunRepository(db);
+    const taskMoveRepo = new TaskMoveRepository(db);
 
     // Ordering contract (see pruneOrphanedWorktreeTasks): the prune completes
     // before session recovery reads the DB, but the whole chain runs off the
@@ -649,9 +652,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     // they are fired without awaiting.
     const openedProject = project;
     runWithProjectLogContext(project.name, () =>
-      pruneOrphanedTasksAndNotify(context, openedProject, taskRepo, sessionRepo)
+      pruneOrphanedTasksAndNotify(context, openedProject, taskRepo, swimlaneRepo, sessionRepo)
         .then(() => {
-          cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id), leftoverSweepOptions(context, openedProject.path))
+          cleanupStaleResourcesAsync(openedProject.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id), leftoverSweepOptions(context, openedProject.path))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
           return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), recoveryOptions(context, openedProject.path));
         })
@@ -865,13 +868,14 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
       const automationRunRepo = new AutomationRunRepository(db);
+      const taskMoveRepo = new TaskMoveRepository(db);
 
       // See openProjectByPath for rationale: the awaited prune ensures
       // recovery reads a clean DB; the slow async passes run in the
       // background and may still be in flight when activateAllProjects
       // resolves.
-      await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
-      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
+      await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
+      cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path));
@@ -1015,12 +1019,13 @@ export function registerProjectHandlers(context: IpcContext): void {
           const sessionRepo = new SessionRepository(db);
           const swimlaneRepo = new SwimlaneRepository(db);
           const automationRunRepo = new AutomationRunRepository(db);
+          const taskMoveRepo = new TaskMoveRepository(db);
 
           // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
           // completes before session recovery reads the DB; the slow
           // filesystem passes are fired without awaiting.
-          await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
-          cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
+          await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
+          cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
 
           await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path))

@@ -713,7 +713,7 @@ for it and the ladder survives the task's whole life. See
 
 When a task moves between swimlanes, the IPC handler checks priorities in order:
 
-1. **Target is To Do** → Kill session, reap what the task left running, remove the worktree and branch, and forget the PR link of a task that did its own work
+1. **Target is To Do** → Forget the PR link of a task that did its own work as the move commits, then kill the session, reap what the task left running, and remove the worktree (and the branch when `git.autoCleanup` is on)
 2. **Target is Done** → Suspend session (resumable), archive task
 3. **Target has auto_spawn=false** → Suspend session
 4. **Task has active session** → A model or effort change to a concrete value suspends and respawns so the new `--model` / `--effort` / `--permission-mode` land as CLI flags (never a typed `/model` or `/effort`). Otherwise live-inject the column's message, or keep the session alive (a permission-only change never restarts). Either keep-alive return then runs the destination's On enter group, with the already-delivered message named to the runner so it is not sent twice. See [Transition Engine](transition-engine.md) Priority 3 for the full sub-case order.
