@@ -101,96 +101,86 @@ function ProjectListItemImpl({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const activityLabel = thinkingCount > 0 || idleCount > 0
-    ? `${thinkingCount} thinking, ${idleCount} idle`
-    : null;
-  const rowTip = [
-    project.path,
-    activityLabel,
-    'Right-click for options',
-  ].filter(Boolean).join('\n');
-
   return (
-    <Tooltip label={rowTip}>
-      {/* select-none-ok: scoped to the project name span below, so it never reaches the rename input this row swaps in. */}
-      <div
-        ref={setNodeRef}
-        style={style}
-        {...attributes}
-        {...listeners}
-        role="button"
-        tabIndex={0}
-        onClick={() => onSelect(project.id)}
-        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(project.id); }}
-        onContextMenu={(event) => onContextMenu(event, project)}
-        data-testid={`project-row-${project.id}`}
-        className={`group w-full text-left py-2.5 text-sm transition-colors border-l-2 cursor-pointer outline-none px-3 ${
-          isGrouped ? 'pl-7' : ''
-        } ${
-          isActive
-            ? 'border-accent bg-surface-hover text-fg'
-            : 'border-transparent text-fg-muted hover:bg-surface-hover/50 hover:text-fg-secondary'
-        }`}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          {isRenaming ? (
-            <input
-              ref={renameInputRef}
-              value={editName}
-              onChange={(event) => setEditName(event.target.value)}
-              onBlur={handleSubmitRename}
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-                if (event.key === 'Enter') handleSubmitRename();
-                if (event.key === 'Escape') {
-                  setEditName(project.name);
-                  onCancelRename();
-                }
-              }}
-              className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b border-accent text-fg outline-none px-0.5"
-            />
-          ) : (
-            /* select-none sits on the name span rather than on the clickable row, so it never
-               reaches the rename input the row swaps in above. Same placement as GroupHeader. */
-            <span className="truncate font-medium flex-1 min-w-0 select-none">{project.name}</span>
-          )}
-          <SidebarActivityCounts thinkingCount={thinkingCount} idleCount={idleCount} />
-          {/* Stays in the right-aligned cluster rather than riding the project name.
-              Names vary from "kangentic" to "troy-web-operations-dashboard", so a
-              name-adjacent glyph lands at a different x on every row and cuts across
-              the tidy count column; right-aligned, all three indicators stack into one
-              tabular column. It also sits AFTER the counts so the envelope and spinner
-              stay `.first()` for the specs that resolve them positionally. */}
-          <SidebarCommandTerminalIndicator
-            projectId={project.id}
-            projectName={project.name}
-            count={terminalCount}
-            tone={terminalTone}
-            onOpen={onOpenCommandTerminals}
+    // select-none-ok: scoped to the project name span below, so it never reaches
+    // the rename input this row swaps in.
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(project.id)}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(project.id); }}
+      onContextMenu={(event) => onContextMenu(event, project)}
+      data-testid={`project-row-${project.id}`}
+      className={`group w-full text-left py-2.5 text-sm transition-colors border-l-2 cursor-pointer outline-none px-3 ${
+        isGrouped ? 'pl-7' : ''
+      } ${
+        isActive
+          ? 'border-accent bg-surface-hover text-fg'
+          : 'border-transparent text-fg-muted hover:bg-surface-hover/50 hover:text-fg-secondary'
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            value={editName}
+            onChange={(event) => setEditName(event.target.value)}
+            onBlur={handleSubmitRename}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === 'Enter') handleSubmitRename();
+              if (event.key === 'Escape') {
+                setEditName(project.name);
+                onCancelRename();
+              }
+            }}
+            className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b border-accent text-fg outline-none px-0.5"
           />
-          <Tooltip label="More options">
-            <button
-              type="button"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation();
-                onContextMenu(event, project);
-              }}
-              className={`flex-shrink-0 p-1 rounded transition-[opacity,color,background-color] outline-none ${
-                isActive
-                  ? 'opacity-100 text-fg-muted hover:text-fg hover:bg-surface-hover'
-                  : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/60'
-              }`}
-              data-testid={`project-menu-${project.id}`}
-              aria-label={`Open menu for ${project.name}`}
-            >
-              <MoreHorizontal size={14} />
-            </button>
-          </Tooltip>
-        </div>
+        ) : (
+          /* select-none sits on the name span rather than on the clickable row, so it never
+             reaches the rename input the row swaps in above. Same placement as GroupHeader. */
+          <span className="truncate font-medium flex-1 min-w-0 select-none">{project.name}</span>
+        )}
+        <SidebarActivityCounts thinkingCount={thinkingCount} idleCount={idleCount} />
+        {/* Stays in the right-aligned cluster rather than riding the project name.
+            Names vary from "kangentic" to "troy-web-operations-dashboard", so a
+            name-adjacent glyph lands at a different x on every row and cuts across
+            the tidy count column; right-aligned, all three indicators stack into one
+            tabular column. It also sits AFTER the counts so the envelope and spinner
+            stay `.first()` for the specs that resolve them positionally. */}
+        <SidebarCommandTerminalIndicator
+          projectId={project.id}
+          projectName={project.name}
+          count={terminalCount}
+          tone={terminalTone}
+          onOpen={onOpenCommandTerminals}
+        />
+        <Tooltip label="More options">
+          <button
+            type="button"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onContextMenu(event, project);
+            }}
+            className={`flex-shrink-0 p-1 rounded transition-[opacity,color,background-color] outline-none ${
+              isActive
+                ? 'opacity-100 text-fg-muted hover:text-fg hover:bg-surface-hover'
+                : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/60'
+            }`}
+            data-testid={`project-menu-${project.id}`}
+            aria-label={`Open menu for ${project.name}`}
+          >
+            <MoreHorizontal size={14} />
+          </button>
+        </Tooltip>
       </div>
-    </Tooltip>
+    </div>
   );
 }
 
