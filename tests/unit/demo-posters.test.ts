@@ -38,8 +38,8 @@ import { SCENE_THEMES } from '../../tests/captures/helpers/scene-page';
 
 // tests/captures/features/scenes.capture.ts validates CAPTURE_THEMES at module load, before it
 // ever reaches a call that only makes sense inside the real Playwright test runner
-// (test.beforeAll). Importing it here is the only way to run that validation for real, since
-// tests/captures sits outside tsconfig's `include` and is never typechecked. The mock lets the
+// (test.beforeAll). Importing it here is the only way to run that validation for real. It reads
+// an environment variable at module load, which no typecheck exercises. The mock lets the
 // import proceed past the runner-only calls on a valid theme, so a passing import is read as a
 // clean pass through the guard rather than an artifact of loading outside the runner. This mock
 // is file-wide (vi.mock is hoisted above every import in the file, including scene-page.ts's own

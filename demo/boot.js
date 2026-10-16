@@ -164,13 +164,19 @@
    * Press a hotkey and hold it: a mouse button as one pointerdown, a keyboard combo as one
    * keydown, dispatched where the registry listens (a capture-phase listener on window sees
    * an event dispatched on the document). Nothing releases it, so a push-to-talk stays open
-   * for the frame.
+   * for the frame. Exposed as `__demoBoot.pressCombo` for the capture rig, which presses a
+   * driver scene's mouse hotkey here because Playwright's mouse has no back or forward button.
+   * A mouse combo this table cannot press (a chord, a misspelled button) throws rather than
+   * going out as a keydown nothing listens for, so the step fails with the combo's name.
    */
   function pressCombo(combo) {
     if (Object.prototype.hasOwnProperty.call(MOUSE_BUTTONS, combo)) {
       var mouse = MOUSE_BUTTONS[combo];
       document.dispatchEvent(new PointerEvent('pointerdown', { button: mouse.button, buttons: mouse.flag, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
       return;
+    }
+    if (combo.indexOf('Mouse:') === 0) {
+      throw new Error('Cannot press "' + combo + '": a mouse hotkey here is one of ' + Object.keys(MOUSE_BUTTONS).join(', '));
     }
     var parts = combo.split('+');
     var key = parts[parts.length - 1];
@@ -703,5 +709,6 @@
     errors: errors,
     afterSeed: applyScene,
     focusRectOf: rectOf,
+    pressCombo: pressCombo,
   };
 })();

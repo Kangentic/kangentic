@@ -142,7 +142,14 @@ jobs:
       - name: Type check (tsc)
         id: typecheck
         if: ${{ !cancelled() }}
-        run: npm run typecheck
+        run: npm run typecheck:src
+      # The demo tier's own program (tsconfig.demo.json). `npm run typecheck`
+      # chains the two locally; here each is its own step so a failure in one
+      # never hides the other.
+      - name: Type check demo tier (tsc)
+        id: typecheck_demo
+        if: ${{ !cancelled() }}
+        run: npm run typecheck:demo
       - name: Build (production bundle)
         id: build
         if: ${{ !cancelled() }}
@@ -165,6 +172,7 @@ jobs:
           }
           check "Lint (ESLint)" "${{ steps.lint.outcome }}"
           check "Type check (tsc)" "${{ steps.typecheck.outcome }}"
+          check "Type check demo tier (tsc)" "${{ steps.typecheck_demo.outcome }}"
           check "Build (production bundle)" "${{ steps.build.outcome }}"
           check "Build @kangentic/protocol" "${{ steps.build_protocol.outcome }}"
           exit $status

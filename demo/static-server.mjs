@@ -48,7 +48,14 @@ export function readBuildBase(distDir) {
   return `${match[1]}/`;
 }
 
-export function startDemoServer({ distDir, port = 0, host = '127.0.0.1', extraRoutes = {} } = {}) {
+/**
+ * @param {object} options
+ * @param {string} options.distDir The web build to serve, e.g. `dist/demo`.
+ * @param {number} [options.port] 0, the default, binds an ephemeral port.
+ * @param {string} [options.host]
+ * @param {Record<string, { body: string; contentType?: string }>} [options.extraRoutes]
+ */
+export function startDemoServer({ distDir, port = 0, host = '127.0.0.1', extraRoutes = {} }) {
   const absoluteDist = path.resolve(distDir);
   const base = readBuildBase(absoluteDist);
   const server = http.createServer((request, response) => {

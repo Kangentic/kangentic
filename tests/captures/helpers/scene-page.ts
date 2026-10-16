@@ -90,14 +90,18 @@ async function playRigStep(page: Page, step: RigStep): Promise<void> {
   if (!step.drag.hold) await page.mouse.up();
 }
 
-/** A held hotkey: a mouse button the registry names, or a keyboard combo in Playwright's spelling. */
+/** The part of demo/boot.js's `window.__demoBoot` the rig presses a mouse hotkey through. */
+interface DemoBootPressWindow { __demoBoot: { pressCombo(combo: string): void } }
+
+/**
+ * A held hotkey: a mouse button the registry names, or a keyboard combo in Playwright's spelling.
+ * A mouse button goes through boot.js's own press, the pointerdown a boot scene gets, because
+ * Playwright's mouse has no back or forward button. That keeps one button table, boot.js's
+ * MOUSE_BUTTONS, which tests/unit/demo-boot-mouse-buttons.test.ts pins to the registry.
+ */
 async function pressCombo(page: Page, combo: string): Promise<void> {
-  const mouseButtons: Record<string, 'left' | 'middle' | 'right' | 'back' | 'forward'> = { 'Mouse:Middle': 'middle', 'Mouse:Back': 'back', 'Mouse:Forward': 'forward' };
-  const button = mouseButtons[combo];
-  if (button) {
-    const viewport = page.viewportSize();
-    if (viewport) await page.mouse.move(viewport.width / 2, viewport.height / 2);
-    await page.mouse.down({ button });
+  if (combo.startsWith('Mouse:')) {
+    await page.evaluate((mouseCombo) => (window as unknown as DemoBootPressWindow).__demoBoot.pressCombo(mouseCombo), combo);
     return;
   }
   // Modifiers first, then the key, all left down: Playwright's `press` would release them.

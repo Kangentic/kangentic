@@ -3,7 +3,7 @@
  *
  * These helpers exist because a `Record<keyof Swimlane, ...>` annotation in a
  * test file guards nothing: `tsconfig.json` includes only `src/**` and
- * `packages/protocol/src/**`, so `tests/` is never typechecked and the guard
+ * `packages/protocol/src/**`, so `tests/unit/` is never typechecked and the guard
  * fires in an editor and nowhere in CI. A regex scanner replaces it, which
  * trades one silent-failure mode for another: a scanner that stops matching
  * returns an empty list, and every parity test built on it then passes by

@@ -247,7 +247,11 @@ hotkey in the registry's spelling, held for the frame, each with an optional `wa
 leaves the pointer down), every patched task or session id is one the sample install seeds,
 every config key is an `AppConfig` key, and the alt strings carry no dash or curly quote (the
 writing-style scan excludes `tests/`). A boot step waits for its own target the way it waits for
-`waitFor`: a restored window's panel mounts a beat after the board.
+`waitFor`: a restored window's panel mounts a beat after the board. The rig plays a driver scene's
+steps itself, and a `press` of a mouse button goes through `boot.js`'s own
+`__demoBoot.pressCombo`, the same pointerdown a boot scene gets, because Playwright's mouse has no
+back or forward button. It presses one listed button: a chord the registry allows, or a button
+`boot.js` does not list, fails the step with the combo's name.
 
 Adding a scene is one entry: the smoke tier boots it, the rig shoots it, and `scenes.json`
 lists it, with no other file touched. What the catalog holds, and where each comes from:

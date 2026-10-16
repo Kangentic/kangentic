@@ -240,7 +240,8 @@ three things staying in step, and each is enforced rather than remembered.
   visible and, where the scene names a `focus`, that the element exists and covers a real region
   of the frame (not empty, not the whole frame: the Quick Find scenes once named the palette's
   full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
-  element, that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
+  element, that a `driver` scene is refused by name, that the rig's press of a driver scene's
+  `Mouse:Back` reaches the page through `__demoBoot.pressCombo`, that `scenes.json` is served, lists exactly
   the registry, and names the frame's version, that the ready message posted to an iframe host
   carries a dialog scene's focus rect (the same rect `__demoBoot.focusRectOf` hands the poster
   rig) and null for a scene without one, the embed and theme
@@ -274,6 +275,13 @@ three things staying in step, and each is enforced rather than remembered.
   region pills. Its maps are fetched once, by the frame that opens the graph, and never by a board
   frame. Runs as the `demo` job in `.github/workflows/ci.yml`
   and again inside `.github/workflows/deploy-demo.yml` before the Pages deploy.
+- **Type system (mechanical, CI):** `npm run typecheck` runs `tsconfig.demo.json`
+  (`npm run typecheck:demo`, its own step in CI's `checks` job) over `tests/demo/`,
+  `tests/captures/`, and `demo/*.ts`, none of which the root `tsconfig.json` covers. That program
+  fails on a spec that calls a bridge method its own window type does not declare. It also fails
+  on a rig call Playwright's types refuse, and on a call to a `demo/*.mjs` helper with an option
+  the helper's JSDoc does not declare. `tests/unit/typecheck-demo-program.test.ts` fails when the
+  program, its scripts, or its CI step drop out.
 - **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, and a
   scene entry that carries code instead of data.
 

@@ -18,8 +18,8 @@ import { test, expect, chromium, type Page, type Locator } from '@playwright/tes
 import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
-import { PLANNED_PDF_ROUTE, SCENES } from '../captures/scenes';
-import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
+import { PLANNED_PDF_ROUTE, SCENES, type SceneDefinition } from '../captures/scenes';
+import { NO_GPU_FALLBACKS, openScene, waitForSettled } from '../captures/helpers/scene-page';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
   SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET,
@@ -1017,13 +1017,26 @@ test('releasing push-to-talk over the focused Settings search box lands no text 
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+test('the capture rig presses a driver scene\'s Mouse:Back through boot.js', async ({ page }) => {
+  // The rig plays a driver scene's steps itself (tests/captures/helpers/scene-page.ts), and
+  // Playwright's mouse has no back or forward button. No driver scene presses one yet, so this
+  // plays the dictation scene's own press as a driver scene would, through the rig's openScene.
+  const dictation = SCENES.dictation;
+  if (dictation.reach !== 'boot') throw new Error(`the dictation scene is a ${dictation.reach} scene, not a boot scene`);
+  const asDriver: SceneDefinition = { ...dictation, reach: 'driver' };
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await openScene(page, asDriver, { baseUrl: server.url, theme: 'night' });
+  await expect(page.locator('[data-testid="dictation-live-chip"]')).toBeVisible();
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
 // ---- live replay and what a visitor can start ----------------------------------------------
 // A still frame paints each terminal's final state from the inline seed and never fetches a
 // recording; the live frame replays each recording's timed stream, fetched from the same origin
 // when a terminal mounts, and a drag into an auto-spawn column or a new Command Terminal starts
 // the boot recorded for it, the way the desktop starts the agent.
 
-interface DemoSessionRow { id: string; taskId: string | null; status: string; transient?: boolean }
+interface DemoSessionRow { id: string; taskId: string | null; projectId: string; status: string; transient?: boolean }
 interface DemoTaskRow { id: string; title: string; session_id: string | null }
 interface DemoRecordingsWindow {
   __demoRecordings: { base: string; sessions: Record<string, { file: string; cols: number; rows: number }> };
@@ -1035,6 +1048,7 @@ interface DemoElectronWindow {
       list: () => Promise<DemoSessionRow[]>;
       getActivity: () => Promise<Record<string, string>>;
       onData: (callback: (sessionId: string, data: string) => void) => () => void;
+      getScrollback: (sessionId: string) => Promise<string>;
       __resizeCalls?: Array<{ sessionId: string; cols: number; rows: number }>;
     };
     tasks: { list: () => Promise<DemoTaskRow[]> };
