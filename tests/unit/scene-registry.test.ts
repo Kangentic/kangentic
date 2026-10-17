@@ -133,7 +133,7 @@ const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
 const BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
 
 /** The gestures a choreography step may make (ChoreographyGesture), and what may ride beside one. */
-const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'drop', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose'];
+const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'drop', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose', 'cut'];
 const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
 
 /** Whether a scene moves under loop=1 by its own declaration: a cycle to play, a timeline, or a stated reason. */
@@ -252,6 +252,10 @@ describe('scene registry', () => {
           expect(step.pose, `${where}.pose`).toBe(true);
           expect(Object.keys(step), `${where} is a pose and nothing else`).toEqual(['pose']);
         }
+        if ('cut' in step) {
+          expect(step.cut, `${where}.cut`).toBe(true);
+          expect(Object.keys(step), `${where} is a cut and nothing else`).toEqual(['cut']);
+        }
         if ('hover' in step) expect(isTarget(step.hover), `${where}.hover`).toBe(true);
         if ('click' in step) expect(isTarget(step.click), `${where}.click`).toBe(true);
         if ('contextmenu' in step) expect(isTarget(step.contextmenu), `${where}.contextmenu`).toBe(true);
@@ -293,6 +297,17 @@ describe('scene registry', () => {
         if ('hotkeyDown' in step) expect(step.hotkeyDown, `${where}.hotkeyDown`).toMatch(/^Mouse:(Back|Forward|Middle)$/);
         if ('hotkeyUp' in step) expect(step.hotkeyUp, `${where}.hotkeyUp`).toMatch(/^Mouse:(Back|Forward|Middle)$/);
       });
+      // A cut ends the story and the steps after it are the reset: it comes after the pose, which
+      // a still plays to and a reset never reaches, with a gesture on each side, so there is a story
+      // to end and something behind the veil to put back.
+      const cuts = choreography.flatMap((step, index) => ('cut' in step ? [index] : []));
+      expect(cuts.length, `${scene.name} cuts more than once`).toBeLessThanOrEqual(1);
+      if (cuts.length === 1) {
+        const cutIndex = cuts[0];
+        const poseIndex = choreography.findIndex((step) => 'pose' in step);
+        expect(cutIndex > poseIndex + 1, `${scene.name} cuts before a gesture after the pose (or the start)`).toBe(true);
+        expect(cutIndex < choreography.length - 1, `${scene.name} cuts with nothing after it to put back`).toBe(true);
+      }
       // A hotkey a cycle lets go of is pressed again before the cycle ends, so the frame comes back held.
       const balance = new Map<string, number>();
       for (const step of choreography) {
