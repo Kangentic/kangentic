@@ -3,7 +3,7 @@
  * sample install as real projects in a preview, so the Knowledge Graph the demo shows is built by
  * the shipped pipeline. It runs against a real global database and real per-project databases
  * (better-sqlite3 loads in vitest, and tests/unit/helpers/isolate-data-dir.ts points both at a
- * throwaway directory), and only `projectRepo` is read off the context.
+ * throwaway directory), and only `projectRepo` and the MCP server handle are read off the context.
  *
  * Two contracts. A plan that fails a check throws before the FIRST write, so nothing is registered:
  * a second seed would double every task, and a throw midway would leave a half-seeded graph. And a
@@ -30,8 +30,9 @@ import type { DevSeedKnowledgeGraphDemoPlan, DevSeedKnowledgeGraphDemoResult } f
 type PlannedProject = DevSeedKnowledgeGraphDemoPlan['projects'][number];
 
 const projectRepo = new ProjectRepository();
-// The seeder reads `projectRepo` off the context and nothing else, so that is all this supplies.
-const context = { projectRepo };
+// The seeder reads `projectRepo` and `mcpServerHandle` off the context. The graph capture never
+// needs the server, so these tests run with none; the placement tests below supply one.
+const context = { projectRepo, mcpServerHandle: null };
 
 let pathCounter = 0;
 /** A path no other test in this file uses. It is only a string: the seeder never touches the disk. */
@@ -178,6 +179,107 @@ describe('seedKnowledgeGraphDemo refuses a plan before writing anything', () => 
       { projects: [good, bad] },
       'Sample refuse-task-bad: session orphan-session names task task-that-is-not-in-the-plan, which the plan does not carry',
     );
+  });
+
+  // A task placed in a column the board lacks would land in To Do, and a recorded MCP call would
+  // then read a board the scene does not paint.
+  it('refuses a task placed in a column the new board does not have', () => {
+    const good = buildProjectPlan('refuse-lane-good');
+    const bad = buildProjectPlan('refuse-lane-bad');
+    bad.tasks[0] = { ...bad.tasks[0], lane: 'Staging' };
+
+    expectRefusal({ projects: [good, bad] }, 'Sample refuse-lane-bad: the plan names a column "Staging" the new board does not have');
+  });
+
+  it('refuses an agent named on a column the new board does not have', () => {
+    const good = buildProjectPlan('refuse-column-agent-good');
+    const bad = buildProjectPlan('refuse-column-agent-bad', { columnAgents: { QA: 'claude' } });
+
+    expectRefusal({ projects: [good, bad] }, 'Sample refuse-column-agent-bad: the plan names a column "QA" the new board does not have');
+  });
+
+  // Checked like a session's agent: written to agent_override, an unknown one would only fail when
+  // the recorded move's auto-spawn resolved the column.
+  it('refuses a column agent no adapter is registered for', () => {
+    const good = buildProjectPlan('refuse-column-adapter-good');
+    const bad = buildProjectPlan('refuse-column-adapter-bad', { columnAgents: { 'Code Review': 'no-such-agent' } });
+
+    expectRefusal({ projects: [good, bad] }, 'Sample refuse-column-adapter-bad: the plan names agent "no-such-agent" on Code Review, and no adapter is registered for it');
+  });
+});
+
+/**
+ * The plan the MCP capture sends (scripts/lib/demo-mcp-capture.mjs): every task in its own column,
+ * each column's agent, and the recorded task's branch and worktree, which `kangentic_get_current_task`
+ * resolves a caller by. The result names the project's MCP URL and the server's token, which the
+ * capture writes into the agent's mcp.json.
+ */
+describe('seedKnowledgeGraphDemo places a board for a recorded MCP session', () => {
+  const plan = buildProjectPlan('placed', {
+    columnAgents: { 'Code Review': 'claude', Merge: 'copilot' },
+    tasks: [
+      { key: 'placed-review', title: 'Placed in review', description: '', labels: [], displayId: 2, done: false, archived: false, lane: 'Code Review', branchName: 'placed-review', baseBranch: 'main', worktreePath: path.join(os.tmpdir(), 'kg-demo-seed-test', 'placed-worktree') },
+      { key: 'placed-planning', title: 'Placed in planning', description: '', labels: [], displayId: 1, done: false, archived: false, lane: 'Planning' },
+      { key: 'placed-unplaced', title: 'Not placed', description: '', labels: [], displayId: 3, done: false, archived: false },
+      { key: 'placed-done', title: 'Done and placed', description: '', labels: [], displayId: 4, done: true, archived: true, lane: 'Merge' },
+    ],
+    sessions: [],
+  });
+  const mcpServerHandle = {
+    baseUrl: 'http://127.0.0.1:4000/mcp',
+    token: 'launch-token',
+    urlForProject: (projectId: string) => `http://127.0.0.1:4000/mcp/${projectId}`,
+    close: () => undefined,
+  };
+  let result: DevSeedKnowledgeGraphDemoResult;
+
+  beforeAll(() => {
+    result = seedKnowledgeGraphDemo({ projectRepo, mcpServerHandle }, { projects: [plan] });
+  });
+
+  function laneNamed(name: string): string | undefined {
+    return new SwimlaneRepository(getProjectDb(result.projects[0].projectId)).list().find((lane) => lane.name === name)?.id;
+  }
+
+  function rowFor(title: string) {
+    const taskRepository = new TaskRepository(getProjectDb(result.projects[0].projectId));
+    return [...taskRepository.list(), ...taskRepository.listArchived()].find((task) => task.title === title);
+  }
+
+  it('puts each placed task in its column, an unplaced one in To Do, and a done one in Done', () => {
+    expect(rowFor('Placed in review')?.swimlane_id).toBe(laneNamed('Code Review'));
+    expect(rowFor('Placed in planning')?.swimlane_id).toBe(laneNamed('Planning'));
+    expect(rowFor('Not placed')?.swimlane_id).toBe(laneNamed('To Do'));
+    // Done wins over a lane: an archived task is the history, wherever the plan says it sat.
+    expect(rowFor('Done and placed')?.swimlane_id).toBe(laneNamed('Done'));
+  });
+
+  it('names each planned column\'s agent and leaves the rest alone', () => {
+    const lanes = new SwimlaneRepository(getProjectDb(result.projects[0].projectId)).list();
+    const agentOf = (name: string) => lanes.find((lane) => lane.name === name)?.agent_override ?? null;
+    expect(agentOf('Code Review')).toBe('claude');
+    expect(agentOf('Merge')).toBe('copilot');
+    expect(agentOf('Executing')).toBeNull();
+  });
+
+  it('gives the recorded task its branch, base and worktree, and no other task one', () => {
+    const recorded = rowFor('Placed in review');
+    expect(recorded?.branch_name).toBe('placed-review');
+    expect(recorded?.base_branch).toBe('main');
+    expect(recorded?.worktree_path).toBe(path.join(os.tmpdir(), 'kg-demo-seed-test', 'placed-worktree'));
+    expect(rowFor('Placed in planning')?.worktree_path ?? null).toBeNull();
+  });
+
+  it('reports the project\'s MCP URL and the server\'s token', () => {
+    expect(result.mcpToken).toBe('launch-token');
+    expect(result.projects[0].mcpUrl).toBe(`http://127.0.0.1:4000/mcp/${result.projects[0].projectId}`);
+  });
+
+  it('reports no MCP URL or token when the server is off', () => {
+    const offPlan = buildProjectPlan('placed-server-off', { sessions: [] });
+    const offResult = seedKnowledgeGraphDemo({ projectRepo, mcpServerHandle: null }, { projects: [offPlan] });
+    expect(offResult.mcpToken).toBeNull();
+    expect(offResult.projects[0].mcpUrl).toBeNull();
   });
 });
 

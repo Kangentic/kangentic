@@ -6705,6 +6705,9 @@ export interface DevSeedKnowledgeGraphRealUnavailable {
  * The web demo's sample install, as board rows for a preview to index (see
  * DEV_SEED_KNOWLEDGE_GRAPH_DEMO and scripts/capture-demo-knowledge-graph.mjs). Every `key` is the
  * dataset's own id, so the snapshots read back out can be mapped onto the demo's rows.
+ *
+ * The same rows, placed in their own columns, are the board a recorded agent's `kangentic_*`
+ * calls answer from (scripts/capture-demo-sessions.mjs, a manifest entry marked `mcp`).
  */
 export interface DevSeedKnowledgeGraphDemoPlan {
   projects: Array<{
@@ -6713,6 +6716,8 @@ export interface DevSeedKnowledgeGraphDemoPlan {
     /** A repository whose history is the one the demo's History pane shows. */
     path: string;
     defaultAgent: string;
+    /** Column name to the agent the column names, as the board's own Column Manager sets it. */
+    columnAgents?: Record<string, string>;
     tasks: Array<{
       key: string;
       title: string;
@@ -6721,6 +6726,16 @@ export interface DevSeedKnowledgeGraphDemoPlan {
       displayId: number;
       done: boolean;
       archived: boolean;
+      /**
+       * The column the task sits in, by name. Absent, a task that is not done lands in To Do,
+       * which starts nothing, as the graph capture wants. Set, it lands where the demo board
+       * shows it, so a recorded `kangentic_*` call reads the board the scene paints.
+       */
+      lane?: string;
+      branchName?: string | null;
+      baseBranch?: string | null;
+      /** The task's worktree, which `kangentic_get_current_task` matches a caller's cwd against. */
+      worktreePath?: string | null;
     }>;
     /** Backlog items, which the task-record corpus indexes beside the tasks. */
     backlog: Array<{
@@ -6751,7 +6766,11 @@ export interface DevSeedKnowledgeGraphDemoResult {
     taskKeys: Record<string, string>;
     /** Preview session id to dataset session id. */
     sessionKeys: Record<string, string>;
+    /** The project's MCP server URL, as a spawn's mcp.json names it, or null when the server is off. */
+    mcpUrl: string | null;
   }>;
+  /** The MCP server's per-launch token, sent as `X-Kangentic-Token`, or null when the server is off. */
+  mcpToken: string | null;
 }
 
 /** Summary of a dev test-harness usage-data seed (see DEV_SEED_USAGE_DATA). */

@@ -26,7 +26,7 @@
  * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
@@ -94,6 +94,13 @@ export interface DemoState {
   seeds?: Record<string, unknown>;
   /** Synthetic clicks dispatched after the board renders and before the frame is revealed. */
   steps?: DemoBootStep[];
+  /**
+   * Scene-only tasks to add, by id (DEMO_SCENE_TASKS in helpers/demo-dataset.ts), each with its
+   * session. The seed adds them before it derives anything, as it folds a session patch. A row
+   * rather than a dataset task for the reason the workflow seeds are: a new card would change every
+   * figure already placed.
+   */
+  rows?: string[];
 }
 
 /**
@@ -165,32 +172,88 @@ const MIDDLEWARE_FLOATING_GEOMETRY = { x: 0.18, y: 0.15, w: 0.64, h: 0.7 };
  */
 const FITTED_FLOATING_GEOMETRY = { x: 0.18, y: 0.14, w: 0.64, h: 0.72 };
 
+/** Where a restored task window sits, as fractions of the frame, and the session a floating one is fitted to. */
+interface TaskWindowPlacement {
+  geometry: { x: number; y: number; w: number; h: number };
+  restoreGeometry: { x: number; y: number; w: number; h: number } | null;
+  fitToRecording?: string;
+}
+
 /**
- * One task-detail window restored on cold boot. `maximized` takes the full frame and ignores the
- * window's own geometry, so the floating rect rides along as `restoreGeometry`: un-maximizing lands
- * exactly where a floating window would have opened, which is what `maximizeWindow` itself stores.
- * A floating one is fitted to the middleware session's recording (FITTED_FLOATING_GEOMETRY).
+ * One task-detail window restored on cold boot, and focused. `maximized` takes the full frame and
+ * ignores the window's own geometry, so the floating rect rides along as `restoreGeometry`:
+ * un-maximizing lands exactly where a floating window would have opened, which is what
+ * `maximizeWindow` itself stores.
  */
-function middlewareWindowWorkspace(state: 'floating' | 'maximized') {
-  const placement = state === 'floating'
-    ? { geometry: FITTED_FLOATING_GEOMETRY, restoreGeometry: null, fitToRecording: SESSION_MIDDLEWARE }
-    : { geometry: MIDDLEWARE_FLOATING_GEOMETRY, restoreGeometry: MIDDLEWARE_FLOATING_GEOMETRY };
+function taskWindowWorkspace(taskId: string, title: string, state: 'floating' | 'maximized', placement: TaskWindowPlacement) {
   return {
     version: 1,
     windows: [
       {
-        taskId: TASK_MIDDLEWARE,
+        taskId,
         kind: 'task-detail',
-        title: 'Extract auth middleware',
+        title,
         ...placement,
         state,
       },
     ],
     tileTree: null,
     tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
-    focusedTaskId: TASK_MIDDLEWARE,
+    focusedTaskId: taskId,
   };
 }
+
+/** The maximized placement: the floating rect kept as `restoreGeometry`, as `maximizeWindow` keeps it. */
+const MAXIMIZED_PLACEMENT: TaskWindowPlacement = { geometry: MIDDLEWARE_FLOATING_GEOMETRY, restoreGeometry: MIDDLEWARE_FLOATING_GEOMETRY };
+
+/** The middleware task's window. A floating one is fitted to its session's recording (FITTED_FLOATING_GEOMETRY). */
+function middlewareWindowWorkspace(state: 'floating' | 'maximized') {
+  const placement = state === 'floating'
+    ? { geometry: FITTED_FLOATING_GEOMETRY, restoreGeometry: null, fitToRecording: SESSION_MIDDLEWARE }
+    : MAXIMIZED_PLACEMENT;
+  return taskWindowWorkspace(TASK_MIDDLEWARE, 'Extract auth middleware', state, placement);
+}
+
+/**
+ * The task-mcp scene's window: the scene-only Validate request bodies task, maximized, so its
+ * session's terminal is most of the frame.
+ */
+function validateWindowWorkspace() {
+  return taskWindowWorkspace(TASK_VALIDATE, 'Validate request bodies', 'maximized', MAXIMIZED_PLACEMENT);
+}
+
+const MCP_SCENE_AGENT_LIST = {
+  // The context bar's version pill reads the agent list, so the scene reports the Claude Code its
+  // recording ran on (the terminal's own header prints 2.1.302), where the sample install's other
+  // Claude recordings were made on 2.1.270. The seed's map is replaced whole by a scene seed, so
+  // every other agent is restated from it unchanged.
+  ...DEMO_AGENT_OVERRIDES,
+  claude: { ...DEMO_AGENT_OVERRIDES.claude, version: '2.1.302' },
+};
+
+/**
+ * The terminal settings the task-mcp scene runs at: the demo's own (demo/boot.js) with a larger
+ * font, the one scene that does not keep the terminal at native type (demo/README.md, One viewport,
+ * one scale). The site shows that scene as the whole app at 56 percent for its MCP tools tab, where
+ * native 12px type is under 7px and the tool names are the point. The font is sized so the
+ * maximized pane fits FEWER columns than the 154-column recording at every display scale, and the
+ * seed then holds the terminal at the largest type that carries the recording across the whole
+ * pane (displayFor in demo-dataset.ts, conformToHeldGrid in useTerminal), well above HOLD_MIN_SCALE.
+ */
+const MCP_SCENE_TERMINAL = {
+  shell: null,
+  fontFamily: 'Consolas, "Courier New", monospace',
+  // About 137 columns across the maximized pane at scale 1 (Consolas), 141 at 1.25 and 125 at 2 in
+  // the posters' Liberation Mono: under 154 everywhere, so the hold always lands, at about 18.6px.
+  // Checked in Courier New too, whose metrics Liberation Mono clones: the pane fills at 1, 1.25 and 2.
+  fontSize: 21,
+  showPreview: false,
+  panelHeight: 280,
+  panelCollapsed: false,
+  cursorStyle: 'block',
+  colors: {},
+  backspaceSendsCtrlH: false,
+};
 
 /**
  * The footprint two task windows tile into: the floating window's height, and the width two
@@ -874,6 +937,27 @@ export const SCENES: Record<string, SceneDefinition> = {
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: JSON.stringify({ browserOpen: true, dividerRatio: 0.45 }) }],
     ready: '[data-testid="browser-webview"] iframe',
   },
+  // An agent calling Kangentic's own MCP tools, for the landing page's MCP tools tab. The task is a
+  // scene-only row (DEMO_SCENE_TASKS), since a new contoso card would change every figure already
+  // placed, and its recording was made against a preview seeded with this board
+  // (scripts/lib/demo-mcp-capture.mjs), so every number and column the calls print is this frame's.
+  // The session opens once its first three calls have printed their results (its liveTailMs,
+  // demo-dataset.ts), which is what a still paints, and the live frame plays the column check and
+  // the move from there. The card stays in Code Review after the move's result lands: no main
+  // process moves it here.
+  'task-mcp': {
+    name: 'task-mcp',
+    reach: 'state',
+    description: 'A maximized task window whose Claude Code session reviews its branch and moves its own card on through Kangentic\'s MCP tools, for the landing page\'s MCP tools tab. The task and session are scene-only rows (rows), and the recording ran against a preview seeded with this board, so the ticket number, the column counts and the column settings the calls print are this frame\'s. A still paints the moment kangentic_get_current_task, kangentic_list_columns and kangentic_list_automations have printed their results; live, the agent then reads Testing with kangentic_get_column_detail and moves the card with kangentic_move_task, about eleven seconds, and loop=1 plays it again. The terminal is the one scene above native type: the site shows it at 56 percent, where native type is under 7px, so the scene raises the font and the seed holds the 154-column recording across the whole pane. The card itself stays in Code Review after the move lands, since no main process moves it.',
+    alt: 'A task window filled by its Claude Code session reviewing its branch with Kangentic\'s MCP tools: kangentic_get_current_task finds its card, #68 in Code Review, then kangentic_list_columns and kangentic_list_automations read the board before the move.',
+    rows: [TASK_VALIDATE],
+    config: {
+      workspaceByProject: { [PROJECT_CONTOSO]: validateWindowWorkspace() },
+      terminal: MCP_SCENE_TERMINAL,
+    },
+    seeds: { __mockAgentListOverrides: MCP_SCENE_AGENT_LIST },
+    ready: '[data-testid="task-title-text"]',
+  },
 
   dictation: {
     name: 'dictation',
@@ -1146,6 +1230,32 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="column-automation-group"][data-trigger="turn_end"] [data-testid="column-automation-row"][data-name="On to Merge"]',
     focus: '[data-testid="board-manager-dialog"]',
     steps: [{ click: '[data-swimlane-name="Testing"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
+  },
+  // The first of those two rows opened in its Edit automation dialog, so a figure can show what a
+  // row holds rather than its title and two marks. The first row, not the second: its Condition is
+  // an Agent evaluation in plain words, where the second quotes one specific final line. The
+  // Automation agent is a scene seed too. Without one the Condition card shows its setup notice in
+  // place of the condition, and the sample install chooses none, so settings-workflows still reads
+  // "no agent chosen". `ready` is the condition field itself, so a missing seed fails the boot.
+  'column-automation-edit': {
+    name: 'column-automation-edit',
+    reach: 'boot',
+    description: 'The Edit automation dialog on Testing\'s first turn-end row, Send findings back, for the landing page\'s Automations tab: its four cards, Trigger on agent turn end, an Agent evaluation Condition in plain words, a Frequency of three, and a Move to column Action to Executing whose message carries {{agentReply}}. Opened from the Column Manager of the same configured board as column-automation-turn-end, with Claude on Sonnet 5 as the Automation agent that answers the Condition. At the 1600 by 1000 frame the dialog\'s body scrolls by about 115px: the first three cards show whole, and the Action card shows its Type, its column and the Message, whose last line ({{agentReply}}) is cut off at the bottom of the body, with the Template variable picker below the fold.',
+    alt: 'The Edit automation dialog for Send findings back on Testing: it runs on agent turn end when an Agent evaluation finds the review left work for the implementer, up to three times, and moves the task back to Executing with a message.',
+    config: { automation: { agent: 'claude', model: DEMO_COLUMN_MODELS.sonnet, effort: null } },
+    seeds: {
+      __mockSwimlanePatches: COLUMN_LADDER,
+      __mockAutomations: [REVIEW_PASS_AUTOMATION, ...TESTING_TURN_END_AUTOMATIONS],
+    },
+    ready: '[data-testid="edit-automation-dialog"] [data-testid="edit-automation-condition"]',
+    focus: '[data-testid="edit-automation-dialog"]',
+    steps: [
+      { click: '[data-swimlane-name="Testing"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' },
+      {
+        click: '[data-testid="column-automation-group"][data-trigger="turn_end"] [data-testid="column-automation-row"][data-name="Send findings back"] [data-testid="column-automation-edit"]',
+        waitFor: '[data-testid="edit-automation-dialog"]',
+      },
+    ],
   },
   'column-handoff': {
     name: 'column-handoff',

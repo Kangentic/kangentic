@@ -16,6 +16,15 @@
  * Nothing here spawns an agent. Every task that is not Done lands in To Do, which starts nothing
  * on open, and every session row is already exited.
  *
+ * The second caller is scripts/capture-demo-sessions.mjs, for a recording whose agent calls
+ * Kangentic's own MCP tools (a manifest entry marked `mcp`). Those calls read the board, so the plan
+ * then places each task in its own column (`lane`), names each column's agent (`columnAgents`), and
+ * gives the recorded task its branch and worktree, and the result carries the MCP server's URL for
+ * the project and its token, which the capture writes into the agent's mcp.json. Rows are still
+ * written straight to the database, so the placement starts nothing either; the project is never
+ * opened, because opening adds `.kangentic/` to the repository's .gitignore and the recorded agent
+ * would read that change in its own diff.
+ *
  * Build-excluded from production (`__KANGENTIC_DEV__`); see
  * `.claude/rules/dev-tooling-build-exclusion.md`.
  */
@@ -29,6 +38,7 @@ import { TaskRepository } from '../../main/db/repositories/task-repository';
 import { SessionRepository } from '../../main/db/repositories/session-repository';
 import { SwimlaneRepository } from '../../main/db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../main/db/repositories/backlog-repository';
+import { DEFAULT_SWIMLANES } from '../../main/db/migrations/default-data';
 import { isSamePath } from '../../shared/paths';
 import type { DevSeedKnowledgeGraphDemoPlan, DevSeedKnowledgeGraphDemoResult } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
@@ -49,18 +59,22 @@ function firstRepeat(values: string[]): string | undefined {
  * second seed would double every task, and the graph would carry each conversation twice), two
  * planned projects at one path (the same doubling, from one seed), two sessions pointing at one
  * history (that conversation drawn twice), a project, task or session key the plan carries twice
- * (the id maps would hand one key two rows), an agent with no adapter, tickets not numbered 1 to
- * n, or a session naming a task the plan lacks.
+ * (the id maps would hand one key two rows), an agent with no adapter (a session's or a column's),
+ * tickets not numbered 1 to n, a session naming a task the plan lacks, or a column the new board
+ * does not have.
  * A throw after that (a new board with no To Do or Done column, the allocator numbering a task
  * other than the plan does) leaves the rows already written, so restart the preview to seed again.
  */
-export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo'>, plan: DevSeedKnowledgeGraphDemoPlan): DevSeedKnowledgeGraphDemoResult {
+export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo' | 'mcpServerHandle'>, plan: DevSeedKnowledgeGraphDemoPlan): DevSeedKnowledgeGraphDemoResult {
   // The plan arrives over IPC from a script, so its shape is checked once rather than trusted.
   if (!plan || !Array.isArray(plan.projects)) throw new Error('The demo graph plan carries no projects array');
   const repeatedProjectKey = firstRepeat(plan.projects.map((planned) => planned.key));
   if (repeatedProjectKey !== undefined) throw new Error(`The plan carries project ${repeatedProjectKey} twice`);
   const repeatedHistory = firstRepeat(plan.projects.flatMap((planned) => planned.sessions.flatMap((session) => (session.agentSessionId === null ? [] : [session.agentSessionId]))));
   if (repeatedHistory !== undefined) throw new Error(`The plan points two sessions at the history ${repeatedHistory}, so the graph would draw that conversation twice`);
+  // A planned column the default board lacks would land its task in To Do instead, and a recorded
+  // call would then read a board the scene does not paint, so it is refused before any write.
+  const defaultLaneNames = new Set<string>(DEFAULT_SWIMLANES.map((lane) => lane.name));
   for (const [projectIndex, planned] of plan.projects.entries()) {
     if (context.projectRepo.list().some((existing) => isSamePath(existing.path, planned.path))) {
       throw new Error(`A project is already registered at ${planned.path}; restart the preview to seed the demo graph again`);
@@ -74,6 +88,13 @@ export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo'>,
     const displayIds = planned.tasks.map((task) => task.displayId).sort((left, right) => left - right);
     const gapAt = displayIds.findIndex((displayId, position) => displayId !== position + 1);
     if (gapAt !== -1) throw new Error(`${planned.name}: the plan's tickets are not numbered 1 to ${displayIds.length} (found #${displayIds[gapAt]} at position ${gapAt + 1})`);
+    const unknownTaskLane = planned.tasks.find((task) => task.lane !== undefined && !defaultLaneNames.has(task.lane))?.lane;
+    const unknownAgentColumn = Object.keys(planned.columnAgents ?? {}).find((name) => !defaultLaneNames.has(name));
+    const unknownLane = unknownTaskLane ?? unknownAgentColumn;
+    if (unknownLane !== undefined) throw new Error(`${planned.name}: the plan names a column "${unknownLane}" the new board does not have`);
+    for (const [columnName, agent] of Object.entries(planned.columnAgents ?? {})) {
+      if (!agentRegistry.get(agent)) throw new Error(`${planned.name}: the plan names agent "${agent}" on ${columnName}, and no adapter is registered for it`);
+    }
     const taskKeys = new Set(planned.tasks.map((task) => task.key));
     for (const session of planned.sessions) {
       if (!agentRegistry.get(session.agent)) throw new Error(`No adapter is registered for agent "${session.agent}"`);
@@ -81,14 +102,21 @@ export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo'>,
     }
   }
 
-  const result: DevSeedKnowledgeGraphDemoResult = { projects: [] };
+  const mcpServerHandle = context.mcpServerHandle;
+  const result: DevSeedKnowledgeGraphDemoResult = { projects: [], mcpToken: mcpServerHandle?.token ?? null };
   for (const planned of plan.projects) {
     const project = context.projectRepo.create({ name: planned.name, path: planned.path, default_agent: planned.defaultAgent });
     const projectDatabase = getProjectDb(project.id);
-    const lanes = new SwimlaneRepository(projectDatabase).list();
+    const swimlaneRepository = new SwimlaneRepository(projectDatabase);
+    const lanes = swimlaneRepository.list();
     const todoLane = lanes.find((lane) => lane.role === 'todo');
     const doneLane = lanes.find((lane) => lane.role === 'done');
     if (!todoLane || !doneLane) throw new Error(`${planned.name}: the new board has no To Do or Done column`);
+    const laneIdByName = new Map(lanes.map((lane) => [lane.name, lane.id]));
+    for (const [columnName, agent] of Object.entries(planned.columnAgents ?? {})) {
+      // Present: every planned column name was checked against the default board above.
+      swimlaneRepository.update({ id: laneIdByName.get(columnName)!, agent_override: agent });
+    }
 
     const taskRepository = new TaskRepository(projectDatabase);
     const taskKeys: Record<string, string> = {};
@@ -98,14 +126,23 @@ export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo'>,
     // than re-stamped: it would mean the plan is not the dataset.
     const ordered = [...planned.tasks].sort((left, right) => left.displayId - right.displayId);
     for (const task of ordered) {
+      const placedLaneId = task.lane !== undefined ? laneIdByName.get(task.lane)! : todoLane.id;
       const created = taskRepository.create({
         title: task.title,
         description: task.description,
         labels: task.labels,
-        swimlane_id: task.done ? doneLane.id : todoLane.id,
+        swimlane_id: task.done ? doneLane.id : placedLaneId,
       });
       if (created.display_id !== task.displayId) {
         throw new Error(`${planned.name}: "${task.title}" was numbered #${created.display_id}, the dataset says #${task.displayId}`);
+      }
+      if (task.branchName !== undefined || task.baseBranch !== undefined || task.worktreePath !== undefined) {
+        taskRepository.update({
+          id: created.id,
+          ...(task.branchName !== undefined ? { branch_name: task.branchName } : {}),
+          ...(task.baseBranch !== undefined ? { base_branch: task.baseBranch } : {}),
+          ...(task.worktreePath !== undefined ? { worktree_path: task.worktreePath } : {}),
+        });
       }
       if (task.archived) taskRepository.archive(created.id);
       taskKeys[created.id] = task.key;
@@ -146,7 +183,7 @@ export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo'>,
       sessionKeys[created.id] = session.key;
     }
 
-    result.projects.push({ key: planned.key, projectId: project.id, taskKeys, sessionKeys });
+    result.projects.push({ key: planned.key, projectId: project.id, taskKeys, sessionKeys, mcpUrl: mcpServerHandle?.urlForProject(project.id) ?? null });
   }
   return result;
 }

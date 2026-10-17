@@ -22,7 +22,7 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { humanizeClaudeModelId } from '../../src/main/agent/adapters/claude/model-display-name';
 import {
-  DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_ARCHIVED_TASKS, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_KNOWLEDGE_GRAPH_CONFIG, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS,
+  DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_ARCHIVED_TASKS, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_KNOWLEDGE_GRAPH_CONFIG, DEMO_PROJECTS, DEMO_ALL_SESSIONS, DEMO_SESSIONS, DEMO_TASKS,
   archivedRunPromptOf, archivedSessionIdOf, archivedToolBreakdown, buildDemoPreConfig, taskSlugOf,
 } from '../../tests/captures/helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT, DEMO_COMPLETED_TASK_SUMMARY, demoCompletedTaskReportInput } from '../../tests/captures/helpers/demo-task-report';
@@ -179,7 +179,7 @@ describe('demo archived task reports', () => {
     };
     // A stub recording per session is all the build's recordings check wants.
     const script = buildDemoPreConfig({
-      scrollback: Object.fromEntries(DEMO_SESSIONS.map((session) => [session.id, 'recording'])),
+      scrollback: Object.fromEntries(DEMO_ALL_SESSIONS.map((session) => [session.id, 'recording'])),
       knowledgeGraph: 'fetched',
     });
     try {

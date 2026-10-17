@@ -227,6 +227,10 @@ export const SESSION_BOUTIQUE_OTEL = 'sess-ob-otel';
 export const SESSION_EMPTY_STATES = 'sess-cw-empty-states';
 export const SESSION_VITE8 = 'sess-cw-vite8';
 export const SESSION_PETCLINIC_BOOT35 = 'sess-pc-boot-35';
+// The one scene-only task and its session (DEMO_SCENE_TASKS below): a review that calls
+// Kangentic's own MCP tools, which only the task-mcp scene seeds.
+export const TASK_VALIDATE = 'task-cw-validate';
+export const SESSION_VALIDATE = 'sess-cw-validate';
 
 // The sample install is a Windows machine, as the recording machine and the mock's platform are.
 const HOME = 'C:\\Users\\dev';
@@ -517,6 +521,51 @@ export const DEMO_SESSIONS: DemoSession[] = [
   { id: SESSION_BOUTIQUE_A11Y, taskId: 'task-ob-currency-a11y', projectId: PROJECT_BOUTIQUE, agent: 'copilot', status: 'running', activity: 'thinking', startedMinutesAgo: 96, model: COPILOT, effort: null, permissionMode: 'acceptEdits', contextPercent: 38, contextWindowSize: 200000, costUsd: 0.7, durationMinutes: 96, peek: ['Edit src/frontend/templates/header.html', 'Shell go test ./...'], events: [{ minutesAgo: 41, tool: 'Edit', detail: 'src/frontend/templates/header.html' }, { minutesAgo: 40, tool: 'Shell', detail: 'go test ./...' }], isolated: true },
   { id: SESSION_BOUTIQUE_OTEL, taskId: 'task-ob-otel', projectId: PROJECT_BOUTIQUE, agent: 'codex', status: 'running', activity: 'thinking', startedMinutesAgo: 44, model: CODEX, effort: 'medium', permissionMode: 'bypassPermissions', contextPercent: 23, contextWindowSize: 400000, costUsd: 0.21, durationMinutes: 44, peek: ['Read src/shippingservice/main.go', 'rg -n otel src/shippingservice'], events: [{ minutesAgo: 7, tool: 'Read', detail: 'src/shippingservice/main.go' }, { minutesAgo: 2, tool: 'Bash', detail: 'rg -n otel src/shippingservice' }] },
 ];
+
+/**
+ * Rows only a scene seeds, never the sample install: a scene names them in its `rows`, and the
+ * seed adds them before it derives anything (buildDemoPreConfig). The same reason the workflow and
+ * completed-task seeds are scene data applies: a new contoso card would change every contoso
+ * figure, the Monitor's row count and the usage, and the Knowledge Graph fixture counts the
+ * install's tasks, so a dataset row would also need that graph rebuilt from conversations the
+ * recording machine no longer keeps.
+ *
+ * Its terminal is a recording like any other (the manifest lists it), made against a preview whose
+ * MCP server answers from this board with the task in place, so every ticket number, column and
+ * path its `kangentic_*` calls print is this row's. It takes the next free contoso ticket after the
+ * archived history, which the preview's allocator hands it when the capture seeds the board
+ * (scripts/capture-demo-sessions.mjs, a manifest entry marked `mcp`). The number is a literal, not
+ * computed: the recording prints it, so a dataset change that moves the next free ticket has to
+ * fail (tests/unit/scene-registry.test.ts) rather than renumber the card away from its terminal.
+ */
+export const DEMO_SCENE_TASKS: DemoTask[] = [
+  { id: TASK_VALIDATE, projectId: PROJECT_CONTOSO, display_id: 68, title: 'Validate request bodies', description: 'Reject malformed request bodies on the API routes with a 400 that names the fields that failed', lane: 'review', position: 1, agent: 'claude', session_id: SESSION_VALIDATE, worktree_folder: 'validate-requests-yza567', branch_name: 'validate-request-bodies', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 2 },
+];
+
+/**
+ * The scene-only task's session, on the model its recording ran on (the CLI's header reads Opus
+ * 5.5 at high effort, and its transcript names claude-opus-5-5). Its `liveTailMs` is cut to this
+ * recording: the live frame opens the moment the first three `kangentic_*` calls have printed their
+ * results (kangentic_get_current_task, kangentic_list_columns, kangentic_list_automations), which is
+ * what a still paints, and plays the column check and the move from there. The two minutes before
+ * that are the review itself, the verbose diff and file reads, which would bury the tool calls a
+ * figure of this scene is about. The open frame was cut from the stream at this tail by
+ * scripts/backfill-demo-timelines.mjs, so a re-record has to choose the tail again.
+ */
+export const DEMO_SCENE_SESSIONS: DemoSession[] = [
+  { id: SESSION_VALIDATE, taskId: TASK_VALIDATE, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 11438, startedMinutesAgo: 3, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5 (1M)' }, effort: 'high', permissionMode: 'acceptEdits', contextPercent: 7, contextWindowSize: 1000000, costUsd: 0.64, durationMinutes: 3, peek: ['Merge: no automations.'], events: [{ minutesAgo: 1.4, tool: 'Bash', detail: 'npm test' }, { minutesAgo: 0.1, tool: 'kangentic_get_current_task', detail: '#68' }, { minutesAgo: 0.1, tool: 'kangentic_list_columns', detail: 'contoso-web' }], rateLimits: true },
+];
+
+/** Every task the build carries: the sample install's, then the scene-only rows. */
+export const DEMO_ALL_TASKS: DemoTask[] = [...DEMO_TASKS, ...DEMO_SCENE_TASKS];
+
+/** Every session the build carries, and so every one it needs a recording for: the sample install's, then the scene-only rows'. */
+export const DEMO_ALL_SESSIONS: DemoSession[] = [...DEMO_SESSIONS, ...DEMO_SCENE_SESSIONS];
+
+/** A session by id, from the sample install or the scene-only rows: what the recorder and loaders look one up in. */
+export function findDemoSession(sessionId: string): DemoSession | undefined {
+  return DEMO_ALL_SESSIONS.find((session) => session.id === sessionId);
+}
 
 /**
  * One archived task's last run, as scripts/capture-demo-archived-runs.mjs recorded it: a real
@@ -887,6 +936,9 @@ export function buildDemoPreConfig(options: {
     ),
     tasks: DEMO_TASKS.map((task) => ({ ...task, swimlane_id: demoLaneId(task.projectId, task.lane) })),
     sessions: DEMO_SESSIONS,
+    // Added only when a scene names them (`rows`), folded in below before anything is derived.
+    sceneTasks: DEMO_SCENE_TASKS.map((task) => ({ ...task, swimlane_id: demoLaneId(task.projectId, task.lane) })),
+    sceneSessions: DEMO_SCENE_SESSIONS,
     archivedSummaries: DEMO_ARCHIVED_SUMMARIES,
     // One rule for an archived task's session id, read by its summary and its graph node alike.
     archivedSessionIds: Object.fromEntries(DEMO_ARCHIVED_SUMMARIES.map((summary) => [summary.taskId, archivedSessionIdOf(summary.taskId)])),
@@ -934,7 +986,7 @@ export function buildDemoPreConfig(options: {
   // Every session with a terminal replays a recording; there is no hand-authored fallback. A
   // missing one would be a blank terminal in the frame and in every capture, so it fails the
   // build and the rig instead.
-  const missingRecordings = DEMO_SESSIONS
+  const missingRecordings = DEMO_ALL_SESSIONS
     .filter((session) => session.status !== 'queued' && !(typeof scrollback[session.id] === 'string' && scrollback[session.id].length > 0))
     .map((session) => session.id);
   if (missingRecordings.length > 0) {
@@ -965,6 +1017,17 @@ export function buildDemoPreConfig(options: {
       var messageTrailMaxEntries = ${JSON.stringify(messageTrailMaxEntries)};
       var cellWidths = ${JSON.stringify(options.cellWidths ?? { wide: [], zero: [] })};
       var history = ${JSON.stringify(options.history ?? {})};
+      // The scene-only rows a scene names (its \`rows\`, which demo/boot.js publishes before calling
+      // this): each task and its sessions join the install HERE, ahead of the session patches and
+      // of everything derived from a row, so a scene can patch one and the Monitor, the usage and
+      // the clock describe it like any other. boot.js has already refused an id the build does not
+      // carry. The captures seed publishes none.
+      (window.__demoSceneRows || []).forEach(function (taskId) {
+        var sceneTask = data.sceneTasks.find(function (task) { return task.id === taskId; });
+        if (!sceneTask) throw new Error('No scene-only task "' + taskId + '" in the sample install\\'s scene rows');
+        data.tasks.push(sceneTask);
+        data.sceneSessions.forEach(function (session) { if (session.taskId === taskId) data.sessions.push(session); });
+      });
       // A scene's session patches (demo/boot.js publishes them before calling this) are folded
       // into the sessions HERE, before anything is derived from one, so the row, the Monitor row,
       // the usage, the activity stats, and the clock all describe the patched session. A patch

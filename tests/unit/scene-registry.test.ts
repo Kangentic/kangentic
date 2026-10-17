@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
 import { SCENES, isRigStep, type DemoBootStep, type RigStep, type SceneDefinition } from '../../tests/captures/scenes';
-import { DEMO_AGENT_OVERRIDES, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
 import { loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
@@ -99,7 +99,18 @@ function adapterTurnEndReports(): Map<string, boolean> {
   return reports;
 }
 
-const DEMO_STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
+const DEMO_STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps', 'rows'];
+
+/** The task ids a scene's install holds: the sample install's, plus the scene-only rows it adds. */
+function sceneTaskIds(scene: SceneDefinition): Set<string> {
+  return new Set([...DEMO_TASKS.map((task) => task.id), ...(scene.rows ?? [])]);
+}
+
+/** The session ids a scene's install holds: the sample install's, plus those of the rows it adds. */
+function sceneSessionIds(scene: SceneDefinition): Set<string> {
+  const added = DEMO_SCENE_SESSIONS.filter((session) => session.taskId !== null && (scene.rows ?? []).includes(session.taskId));
+  return new Set([...DEMO_SESSIONS.map((session) => session.id), ...added.map((session) => session.id)]);
+}
 /** What a session patch may carry, and the values each field takes (DemoState.sessions). */
 const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
   activity: ['thinking', 'idle', 'permission'],
@@ -185,10 +196,10 @@ describe('scene registry', () => {
     }
   });
 
-  it('patches only rows the sample install seeds', () => {
-    const taskIds = new Set(DEMO_TASKS.map((task) => task.id));
-    const sessionIds = new Set(DEMO_SESSIONS.map((session) => session.id));
+  it('patches only rows the scene\'s install holds: the sample install\'s and the scene-only rows it adds', () => {
     for (const scene of scenes) {
+      const taskIds = sceneTaskIds(scene);
+      const sessionIds = sceneSessionIds(scene);
       for (const patch of scene.tasks ?? []) {
         expect(taskIds.has(patch.id), `${scene.name} patches unknown task ${patch.id}`).toBe(true);
       }
@@ -202,7 +213,7 @@ describe('scene registry', () => {
     // The seed reads exactly these three fields (demo-dataset.ts, the sessionPatches fold), so an
     // extra key or an off-list value is a patch that quietly does nothing, and a resume on a
     // paused or queued session is a state main never produces: it marks only a live respawn.
-    const sessionStatus = new Map(DEMO_SESSIONS.map((session) => [session.id, session.status]));
+    const sessionStatus = new Map(DEMO_ALL_SESSIONS.map((session) => [session.id, session.status]));
     let resuming = 0;
     for (const scene of scenes) {
       for (const [sessionId, patch] of Object.entries(scene.sessions ?? {})) {
@@ -224,10 +235,10 @@ describe('scene registry', () => {
     // deserializeWorkspace drops a window whose anchor is unknown and, if that window was tiled,
     // the whole tile tree with it, silently: a tiled scene naming a stray id would boot to two
     // floating windows or none, and its ready selector would time out rather than say why.
-    const taskIds = new Set(DEMO_TASKS.map((task) => task.id));
-    const sessionIds = new Set(DEMO_SESSIONS.map((session) => session.id));
     let restoredWindows = 0;
     for (const scene of scenes) {
+      const taskIds = sceneTaskIds(scene);
+      const sessionIds = sceneSessionIds(scene);
       for (const { where, workspace } of workspacesOf(scene)) {
         const anchors = new Set<string>();
         for (const window of workspace.windows) {
@@ -246,6 +257,40 @@ describe('scene registry', () => {
     }
     // Vacuity guard: the task, changes, and tiled scenes all restore windows.
     expect(restoredWindows).toBeGreaterThan(5);
+  });
+
+  it('adds only scene-only rows the seed carries, each with a recorded session and the next free ticket', () => {
+    // The seed folds a scene's `rows` into the install by id (demo-dataset.ts); boot.js refuses an id
+    // the build does not emit, so a typo here is an error card in the frame rather than a quiet gap.
+    const carried = new Set(DEMO_SCENE_TASKS.map((task) => task.id));
+    const recordings = loadDemoRecordings().sessions;
+    let added = 0;
+    for (const scene of scenes) {
+      for (const taskId of scene.rows ?? []) {
+        added += 1;
+        expect(carried.has(taskId), `${scene.name} adds ${taskId}, which is not a scene-only task`).toBe(true);
+      }
+    }
+    for (const task of DEMO_SCENE_TASKS) {
+      expect(DEMO_TASKS.some((row) => row.id === task.id), `${task.id} is a scene-only row and a dataset row at once`).toBe(false);
+      const sessions = DEMO_SCENE_SESSIONS.filter((session) => session.taskId === task.id);
+      expect(sessions.map((session) => session.id), `${task.id} names its session`).toEqual([task.session_id]);
+      // The ticket is a literal on the row and is held two ways. It is the next free one on the
+      // board, which is the number the preview's allocator handed the task when the capture seeded
+      // the board after the archived history (scripts/capture-demo-sessions.mjs). And the recording's
+      // own kangentic_* results print it, so a dataset change that moved the next free ticket fails
+      // here rather than leaving a card whose terminal names another number.
+      const projectTickets = DEMO_TASKS.filter((row) => row.projectId === task.projectId).map((row) => row.display_id);
+      expect(task.display_id, `${task.id} must take the next free ticket on its board`).toBe(Math.max(...projectTickets) + 1);
+      for (const session of sessions) {
+        const recording = recordings[session.id];
+        expect(recording, `${session.id} has no recording; every terminal replays one`).toBeDefined();
+        const printed = (recording?.serialized ?? '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+        expect(printed, `${session.id}'s recording never prints #${task.display_id}`).toContain(`#${task.display_id}`);
+      }
+    }
+    // Vacuity guard: task-mcp adds the one scene-only row there is.
+    expect(added).toBeGreaterThanOrEqual(1);
   });
 
   it('fits a window only to a session the recordings index carries', () => {

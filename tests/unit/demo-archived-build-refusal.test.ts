@@ -46,9 +46,9 @@ function realRunsWithout(taskIds: string[]): Record<string, unknown> {
   return Object.fromEntries(Object.entries(runs).filter(([taskId]) => !taskIds.includes(taskId)));
 }
 
-/** One recording stub per session, which is all the build's recordings check wants. */
+/** One recording stub per session, scene-only ones included, which is all the build's recordings check wants. */
 function stubRecordings(dataset: DemoDataset): Record<string, string> {
-  return Object.fromEntries(dataset.DEMO_SESSIONS.map((session) => [session.id, 'recording']));
+  return Object.fromEntries(dataset.DEMO_ALL_SESSIONS.map((session) => [session.id, 'recording']));
 }
 
 function thrownMessage(action: () => unknown): string {

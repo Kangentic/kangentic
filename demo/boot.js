@@ -45,7 +45,7 @@
   // The same contract for a scene the site embeds by an earlier name. The Knowledge Graph
   // tab's scene was settings-memory until the tab id became knowledgeGraph.
   var SCENE_ALIASES = { 'settings-memory': 'settings-knowledgeGraph' };
-  var STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
+  var STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps', 'rows'];
   // What a patch may say about a session the sample install seeds, and the values each takes. The
   // seed folds a patch in before it derives anything from the session, so the row, the Monitor,
   // the usage, and the clock all describe the same state (tests/captures/helpers/demo-dataset.ts).
@@ -137,6 +137,16 @@
       if (!isPlainObject(state.sessions)) throw new Error(origin + '.sessions must be an object keyed by session id');
       Object.keys(state.sessions).forEach(function (sessionId) {
         validateSessionPatch(state.sessions[sessionId], origin + '.sessions.' + sessionId);
+      });
+    }
+    if (state.rows !== undefined) {
+      if (!Array.isArray(state.rows)) throw new Error(origin + '.rows must be an array of task ids');
+      // The build emits the scene-only task ids it carries; any other id would add nothing.
+      var sceneRowIds = window.__demoSceneRowIds || [];
+      state.rows.forEach(function (taskId) {
+        if (typeof taskId !== 'string' || sceneRowIds.indexOf(taskId) === -1) {
+          throw new Error(origin + '.rows names "' + taskId + '", which is not a scene-only task (' + (sceneRowIds.join(', ') || 'none') + ')');
+        }
       });
     }
     if (state.seeds !== undefined) {
@@ -240,12 +250,18 @@
     root.style.pointerEvents = '';
   }
 
-  /** Later sources win per key; arrays concatenate; nested config objects are replaced whole. */
+  /**
+   * Later sources win per key; arrays concatenate, except `rows`, which keeps each task id once
+   * because the seed would add a row named twice twice; nested config objects are replaced whole.
+   */
   function mergeStates(sources) {
-    var merged = { config: {}, tasks: [], sessions: {}, seeds: {}, steps: [] };
+    var merged = { config: {}, tasks: [], sessions: {}, seeds: {}, steps: [], rows: [] };
     sources.forEach(function (source) {
       if (!source) return;
       Object.assign(merged.config, source.config || {});
+      (source.rows || []).forEach(function (taskId) {
+        if (merged.rows.indexOf(taskId) === -1) merged.rows.push(taskId);
+      });
       merged.tasks = merged.tasks.concat(source.tasks || []);
       Object.assign(merged.sessions, source.sessions || {});
       Object.assign(merged.seeds, source.seeds || {});
@@ -407,6 +423,9 @@
     // A queued, paused, or resuming card is a patch rather than a dataset row because adding one
     // to the sample install would change every docs figure already placed.
     window.__demoSessionPatches = effective.sessions;
+    // Scene-only rows join the install the same way, as the seed's input: a card and its session
+    // the sample install leaves out, because adding them would change every figure already placed.
+    window.__demoSceneRows = effective.rows;
     if (typeof window.__demoApplyFixture === 'function') window.__demoApplyFixture();
 
     if (effective.tasks.length > 0 || Object.keys(effective.sessions).length > 0) {

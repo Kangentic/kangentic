@@ -117,6 +117,8 @@ async function planProject(project) {
   const sessions = [];
   const withoutNode = [];
   for (const entry of manifest.captures) {
+    // The sample install's sessions only. A scene-only session (DEMO_SCENE_SESSIONS) is no row of
+    // the install, so the map, like every other figure but its own scene's, leaves it out.
     const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
     // A Command Terminal is transient: no session row, so nothing for the indexer to find.
     if (!session || session.projectId !== project.id || session.transient || !session.taskId) continue;
