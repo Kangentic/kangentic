@@ -143,7 +143,8 @@ jobs:
         id: typecheck
         if: ${{ !cancelled() }}
         run: npm run typecheck:src
-      # The demo tier's own program (tsconfig.demo.json). `npm run typecheck`
+      # The demo tier's own programs (tsconfig.demo.json, then the web build's
+      # Vite config in tsconfig.demo-build.json). `npm run typecheck`
       # chains the two locally; here each is its own step so a failure in one
       # never hides the other.
       - name: Type check demo tier (tsc)

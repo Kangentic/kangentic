@@ -1533,6 +1533,35 @@ test('the Knowledge Graph\'s maps are fetched once, by a frame that opens the gr
   expect(graphRequests[0]).toMatch(/\/graph\/knowledge-graph-[0-9a-f]{8}\.json$/);
 });
 
+test('a scene-only row\'s recorded sessions are loaded once, by a frame that names the row, and never by a board', async ({ page }) => {
+  // The row's frames, diff, peeks and trail are its own script, not the eager seed: demo/boot.js
+  // writes it into the page ahead of the seed only when the scene's rows name it (demo-dataset.ts,
+  // buildDemoSceneRowScripts).
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const rowRequests: string[] = [];
+  page.on('request', (request) => { if (request.url().includes('/scene-rows/')) rowRequests.push(request.url()); });
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+  expect(rowRequests).toEqual([]);
+
+  await gotoScene(page, { view: 'task-mcp', embed: '1', still: '1' });
+  await SCENE_MARKERS['task-mcp'](page);
+  expect(rowRequests).toHaveLength(1);
+  expect(rowRequests[0]).toMatch(new RegExp(`/scene-rows/${TASK_VALIDATE}-[0-9a-f]{8}\\.js$`));
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a scene-only row whose script does not load refuses the frame by name rather than booting without it', async ({ page }) => {
+  await page.route('**/scene-rows/*', (route) => route.fulfill({ status: 404, contentType: 'text/plain', body: 'missing' }));
+  await page.goto(demoUrl({ view: 'task-mcp', embed: '1', still: '1' }));
+  const errorCard = page.locator('[data-testid="demo-error"]');
+  await expect(errorCard).toBeVisible();
+  await expect(errorCard).toContainText(`The recorded sessions of the scene-only task "${TASK_VALIDATE}" did not load.`);
+  // Nothing was seeded, as for every other refusal: applyScene returns before __demoApplyFixture.
+  await expect(page.locator('[data-swimlane-name]')).toHaveCount(0);
+  await expect(page.locator('html')).not.toHaveAttribute('data-demo-ready');
+});
+
 // ---- what the seed answers the Knowledge Graph with ------------------------------------------
 // The test above proves WHEN the maps are read. These prove what each answer is, which ids are left
 // to the mock, and what a failed read leaves behind (demo-dataset.ts, seededKnowledgeGraph).

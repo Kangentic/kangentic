@@ -380,10 +380,14 @@ test('a scene and a state= blob that both name the same scene-only row carry its
   expect(SCENES['task-mcp'].rows, 'the task-mcp scene stopped naming the scene-only row this test merges a second copy into').toEqual([TASK_VALIDATE]);
 
   const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const rowScriptRequests: string[] = [];
+  page.on('request', (request) => { if (request.url().includes('/scene-rows/')) rowScriptRequests.push(request.url()); });
   // view= and state= are merged (mergeStates([scene, urlState])), so this is the cross-source form:
   // the scene's rows and the blob's rows both name TASK_VALIDATE.
   await gotoScene(page, { view: 'task-mcp', embed: '1', still: '1', state: encodeState({ rows: [TASK_VALIDATE] }) });
   await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Validate request bodies');
+  // boot.js writes the row's script once per merged name, so the duplicate loads it once too.
+  expect(rowScriptRequests).toHaveLength(1);
 
   // The seed pushes a row once per name it is given, so a duplicate would show up in the arrays
   // it builds before anything is drawn. The board card is read inside the lanes, since the task

@@ -5,13 +5,16 @@ import path from 'node:path';
 // Pins the second TypeScript program that type-checks the demo tier.
 //
 // The root tsconfig.json covers none of tests/demo, tests/captures or demo/*.ts, so those files
-// are checked by a program of their own (tsconfig.demo.json). Three pieces make that program run,
-// and nothing else watches any of them: revert one and every test stays green while a type error
-// in the demo tier ships.
+// are checked by a program of their own (tsconfig.demo.json). The web build's Vite config
+// (demo/vite.config.mts, which loads the root vite.config.mts) is an ES module that resolves its
+// imports the way a bundler does, which that CommonJS program cannot check, so it has a third
+// (tsconfig.demo-build.json). Three pieces make those programs run, and nothing else watches any of
+// them: revert one and every test stays green while a type error in the demo tier ships.
 //
-//   1. tsconfig.demo.json extends the root config and includes the three demo-tier trees.
+//   1. tsconfig.demo.json extends the root config and includes the three demo-tier trees, and
+//      tsconfig.demo-build.json extends it and includes the web build's Vite config.
 //   2. package.json scripts: `typecheck` chains `typecheck:src` (the root program) and
-//      `typecheck:demo` (`-p tsconfig.demo.json`).
+//      `typecheck:demo` (`-p tsconfig.demo.json`, then `-p tsconfig.demo-build.json`).
 //   3. .github/workflows/ci.yml, `checks` job: `typecheck` runs `npm run typecheck:src`, a step
 //      with id `typecheck_demo` runs `npm run typecheck:demo`, and the summary step reports both
 //      outcomes. The summary is what turns a red step into a red job, so a step it never reads
@@ -31,6 +34,7 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
 
 interface TypecheckWiringSources {
   tsconfigDemo: string;
+  tsconfigDemoBuild: string;
   packageJson: string;
   ciYml: string;
 }
@@ -46,6 +50,7 @@ function readRepoFile(relativePath: string): string {
 function readSources(): TypecheckWiringSources {
   return {
     tsconfigDemo: readRepoFile('tsconfig.demo.json'),
+    tsconfigDemoBuild: readRepoFile('tsconfig.demo-build.json'),
     packageJson: readRepoFile('package.json'),
     ciYml: readRepoFile('.github/workflows/ci.yml'),
   };
@@ -161,6 +166,7 @@ function readScript(scripts: Record<string, unknown> | null, name: string): stri
 }
 
 const NAMES_DEMO_PROGRAM = /(?:^|\s)(?:-p|--project)\s+(?:\.\/)?tsconfig\.demo\.json(?:\s|$)/;
+const NAMES_DEMO_BUILD_PROGRAM = /(?:^|\s)(?:-p|--project)\s+(?:\.\/)?tsconfig\.demo-build\.json(?:\s|$)/;
 const NAMES_ANY_PROJECT = /(?:^|\s)(?:-p|--project)(?:\s|=|$)/;
 
 /** Every way the demo-tier typecheck wiring is broken. An empty list means it is whole. */
@@ -180,6 +186,17 @@ function findTypecheckWiringProblems(sources: TypecheckWiringSources): string[] 
       if (!includeCovers(includeEntries, directory)) {
         problems.push(`tsconfig.demo.json include does not cover ${directory}, so its type errors would ship (include: ${JSON.stringify(includeEntries)}).`);
       }
+    }
+  }
+
+  const tsconfigDemoBuild = parseJsonObject(sources.tsconfigDemoBuild, 'tsconfig.demo-build.json', problems);
+  if (tsconfigDemoBuild) {
+    if (tsconfigDemoBuild.extends !== './tsconfig.json') {
+      problems.push(`tsconfig.demo-build.json must extend "./tsconfig.json" (strict mode and paths come from there), but extends ${JSON.stringify(tsconfigDemoBuild.extends)}.`);
+    }
+    const includeEntries = Array.isArray(tsconfigDemoBuild.include) ? tsconfigDemoBuild.include : [];
+    if (!includeEntries.includes('demo/vite.config.mts')) {
+      problems.push(`tsconfig.demo-build.json include does not name demo/vite.config.mts, so the web build config's type errors would ship (include: ${JSON.stringify(includeEntries)}).`);
     }
   }
 
@@ -203,6 +220,9 @@ function findTypecheckWiringProblems(sources: TypecheckWiringSources): string[] 
   }
   if (typecheckDemoScript === null || !/^tsc\b/.test(typecheckDemoScript) || !NAMES_DEMO_PROGRAM.test(typecheckDemoScript)) {
     problems.push(`package.json "typecheck:demo" must be tsc with "-p tsconfig.demo.json" (found ${JSON.stringify(typecheckDemoScript)}).`);
+  }
+  if (typecheckDemoScript === null || !NAMES_DEMO_BUILD_PROGRAM.test(typecheckDemoScript)) {
+    problems.push(`package.json "typecheck:demo" must also run tsc with "-p tsconfig.demo-build.json" (found ${JSON.stringify(typecheckDemoScript)}).`);
   }
 
   // 3. ci.yml, `checks` job
@@ -247,6 +267,7 @@ describe('demo-tier typecheck program: the real files', () => {
   it('reads the files and the job it is meant to guard (proves the scan still matches)', () => {
     expect(fs.existsSync(path.join(REPO_ROOT, 'tsconfig.json')), 'tsconfig.demo.json extends this file').toBe(true);
     expect(fs.existsSync(path.join(REPO_ROOT, 'tsconfig.demo.json'))).toBe(true);
+    expect(fs.existsSync(path.join(REPO_ROOT, 'tsconfig.demo-build.json'))).toBe(true);
 
     const jobLines = readJobLines(readSources().ciYml, 'checks');
     expect(jobLines, 'ci.yml `checks` job was not found').not.toBeNull();
@@ -317,9 +338,30 @@ describe('findTypecheckWiringProblems', () => {
     {
       title: 'typecheck:demo loses -p tsconfig.demo.json',
       file: 'packageJson',
-      needle: '"tsc --noEmit -p tsconfig.demo.json"',
-      replacement: '"tsc --noEmit"',
+      needle: '"tsc --noEmit -p tsconfig.demo.json && ',
+      replacement: '"tsc --noEmit && ',
       expectedProblem: /"typecheck:demo" must be tsc with "-p tsconfig\.demo\.json"/,
+    },
+    {
+      title: 'typecheck:demo drops the web build config program',
+      file: 'packageJson',
+      needle: ' && tsc --noEmit -p tsconfig.demo-build.json"',
+      replacement: '"',
+      expectedProblem: /"typecheck:demo" must also run tsc with "-p tsconfig\.demo-build\.json"/,
+    },
+    {
+      title: 'tsconfig.demo-build.json stops extending the root config',
+      file: 'tsconfigDemoBuild',
+      needle: '"./tsconfig.json"',
+      replacement: '"./tsconfig.node.json"',
+      expectedProblem: /tsconfig\.demo-build\.json must extend "\.\/tsconfig\.json"/,
+    },
+    {
+      title: 'tsconfig.demo-build.json include drops the web build config',
+      file: 'tsconfigDemoBuild',
+      needle: '"demo/vite.config.mts", ',
+      replacement: '',
+      expectedProblem: /tsconfig\.demo-build\.json include does not name demo\/vite\.config\.mts/,
     },
     {
       title: 'typecheck:src is pointed at the demo program',

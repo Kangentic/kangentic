@@ -199,7 +199,9 @@ three, a value outside its set, and a resume on a session it also stops.
 `rows` is the same kind of input. It names tasks the sample install leaves out (`DEMO_SCENE_TASKS`
 in `demo-dataset.ts`), and the seed adds each one with its session before the session patches are
 folded, so a scene can patch one and everything derived from a row describes it. `boot.js`
-refuses an id the build does not carry (the build emits the list as `window.__demoSceneRowIds`).
+refuses an id the build does not carry (the build emits the list as `window.__demoSceneRowIds`),
+and writes each named row's own script into the page ahead of the seed (`window.__demoSceneRowScripts`,
+Scene-only rows below).
 
 A nested config block replaces the default rather than merging into it: the merge is a shallow
 `Object.assign` here and again in the mock. So naming one field of `monitor` would leave the other
@@ -408,6 +410,20 @@ reason. `DEMO_SCENE_TASKS` and `DEMO_SCENE_SESSIONS` in `demo-dataset.ts` hold s
 scene adds one by naming its task in `rows`. The seed then adds the task and its session before it
 derives anything, so the card, the Monitor row and the clock describe it like any other. The
 session is recorded like any other too, and the build refuses one without a recording.
+
+The row's recorded sessions (their final and opening frames, diff, peeks, peek timeline, trail and
+blame) are not in the seed, since every frame loads the seed and only the scene's frames show
+them. The build emits each row's sessions as their own script, `scene-rows/<task>-<hash>.js`
+(`buildDemoSceneRowScripts` in `demo-dataset.ts`), and `boot.js` writes it into the page with
+`document.write` for each row a frame names. That makes it parser-inserted: it runs right after
+`boot.js` and before the mock and the seed, so the seed folds the row in with its sessions already
+on the page, exactly as when they were inline. The Knowledge Graph's lazy fetch would not do here.
+The seed folds rows in synchronously and the renderer's modules are deferred, so a fetch, or a
+script added with `createElement`, lands after the renderer has read the bridge. Fetching only the
+frames when a terminal asks for one would not do either: `task-mcp`'s `ready` is the window title,
+so a poster could be shot before the frame painted. A row script that does not load (a 404) shows
+the error card naming the row, and the seed refuses a named row whose sessions are not on the page.
+The marketing captures write no row scripts, so their seed carries the rows inline.
 
 There is one: Validate request bodies, #68 in contoso-web's Code Review, whose Claude Code session
 is the MCP recording (An agent calling Kangentic's MCP tools, below). Its ticket is the next free one
@@ -1417,28 +1433,33 @@ an emulated scale alone is the bug above. WebGL stays on.
 
 ## What the page ships, and what it costs
 
-Measured with `npm run demo:measure` on the build of 2026-09-23, headless Chromium, a plain
-static server on localhost, warm disk.
+Measured with `npm run demo:measure`, headless Chromium, a plain static server on localhost, warm
+disk. The weight and cold boot tables are from the build of 2026-10-16, after the scene-only row
+left the seed. The frames-per-page table is from the build of 2026-09-23, and the observations for
+#632 below read its numbers.
 
 ### Before first paint (gzipped)
 
 | File | Raw | Gzip |
 |---|---|---|
-| index (the renderer) | 1954 KB | 542 KB |
-| xterm | 435 KB | 110 KB |
-| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 809 KB | 136 KB |
-| mock-electron-api.js (the bridge) | 239 KB | 55 KB |
-| react-vendor | 214 KB | 66 KB |
-| index.css + xterm.css | 117 KB | 19 KB |
-| Pill + datetime chunks | 91 KB | 31 KB |
-| demo-boot.js + demo-scenes.js + demo-webview.js | 95 KB | 26 KB |
-| **Eager total** | | **984 KB** |
+| index (the renderer) | 1048 KB | 296 KB |
+| WorkflowDialogs chunk | 816 KB | 216 KB |
+| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 1080 KB | 172 KB |
+| xterm + xterm-unicode11 | 460 KB | 119 KB |
+| mock-electron-api.js (the bridge) | 338 KB | 78 KB |
+| Pill, shared, datetime, useValuePulse and PrLink chunks | 225 KB | 72 KB |
+| react-vendor | 215 KB | 66 KB |
+| KebabMenu chunk | 157 KB | 47 KB |
+| demo-boot.js + demo-scenes.js + demo-webview.js | 158 KB | 38 KB |
+| index.css + xterm.css + WorkflowDialogs.css | 144 KB | 23 KB |
+| rolldown-runtime + preload-helper | 2 KB | 1 KB |
+| **Eager total** | | **1128 KB** |
 
-The whole `dist/demo/assets` is 16.8 MB raw, almost all of it monaco's lazy language and worker
-chunks, which only load when a Changes panel opens (the `changes` scene adds 4 requests).
+The whole `dist/demo/assets` is 18.1 MB raw, almost all of it monaco's lazy language and worker
+chunks, which only load when a Changes panel opens (the `changes` scene adds 6 requests).
 `demo-seed.js` carries each session's terminal frame and the working-tree diff it left behind;
-it is the one eager file that grows with the dataset (112 KB gzipped for 16 sessions and 10
-diffs). It grew 14 KB gzipped when working sessions gained their opening frame as well as their
+it is the one eager file that grows with the dataset. It was 112 KB gzipped when it held 16
+sessions and 10 diffs, and is 172 KB on the build in the table. It grew 14 KB gzipped when working sessions gained their opening frame as well as their
 last one, which is what lets a still and the captures show the moment the live replay starts
 from. It grew 3 KB more when they gained their peek timelines, which is what makes the Monitor
 move without a terminal open. It grew 7 KB more for the agent message trails, which are what the
@@ -1456,9 +1477,13 @@ fetches a transcript. The seed went from 207 to 175 KB by the same gzip, and eig
 one page from 74 to 66 MB of heap (`demo:measure`, both builds on one machine, run back to back).
 Ready times moved by less than their run-to-run noise. `tests/demo/static-demo.spec.ts` holds a
 board frame to no graph request and the graph scene to exactly one. The scene-only session
-(Scene-only rows above) adds about 18 KB gzipped (90 KB raw) to the seed: its final and opening
-frames, its diff, its peek timeline and its trail, measured by building the seed with and without
-them. Every frame carries it, though only `task-mcp` shows it.
+(Scene-only rows above) used to add about 18 KB gzipped (90 KB raw) to the seed: its final and
+opening frames, its diff, its peek timeline and its trail. Only `task-mcp` shows it, so it left the
+seed for its own script, `scene-rows/task-cw-validate-<hash>.js` (91 KB raw, 17 KB gzipped), which
+only a frame naming the row loads. The seed went from 1,169 to 1,080 KB raw and from 190 to 172 KB
+gzipped (level 9, both builds on one machine, run back to back), and `demo-boot.js` grew half a KB
+gzipped to write the script. The same test holds a board frame to no row-script request and
+`task-mcp` to exactly one.
 The 44 recordings under `recordings/` (six of them tiled siblings, five of them resume boots) are
 17.3 MB raw and 543 KB gzipped in total, fetched one at a time as terminals mount, so none of it
 is on the boot path. The resume boots are 204 KB raw and 29 KB gzipped of that, and one is fetched
@@ -1476,10 +1501,10 @@ fetched only when a conversation viewer opens.
 
 | Scene | Requests | Off-origin | First contentful paint | Ready |
 |---|---|---|---|---|
-| board | 14 | 0 | 292 ms | 354 ms |
-| task | 14 | 0 | 260 ms | 393 ms |
-| changes | 19 | 0 | 128 ms | 544 ms |
-| monitor | 17 | 0 | (paint inside the veil) | 430 ms |
+| board | 22 | 0 | 260 ms | 343 ms |
+| task | 22 | 0 | 100 ms | 385 ms |
+| changes | 28 | 0 | 104 ms | 532 ms |
+| monitor | 26 | 0 | (paint inside the veil) | 408 ms |
 
 Zero off-origin requests on every scene: the renderer's Sentry SDK has no network path of its
 own and never initializes under the mock, analytics go through the bridge the mock stubs, and the
@@ -1555,6 +1580,7 @@ demo-seed-<hash>.js              the sample install, final frames, diffs, and hi
 recordings/<name>-<hash>.json    one timed stream per recording, fetched when a terminal mounts
 transcripts/<session>-<hash>.json  the agent transcript behind a session, fetched when a conversation viewer opens
 graph/knowledge-graph-<hash>.json  the Knowledge Graph's three maps, fetched when a frame first opens the graph
+scene-rows/<task>-<hash>.js      a scene-only row's recorded sessions, written in by demo-boot only on a frame that names the row
 guest/<name>-<hash>.html         the page a project's dev URL shows in the Browser pane
 assets/                          the renderer's hashed chunks and stylesheets, monaco's lazy chunks and workers
 ```

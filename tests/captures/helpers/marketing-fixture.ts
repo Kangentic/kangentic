@@ -27,5 +27,7 @@ export function buildMarketingPreConfig(): string {
     history: loadDemoHistory(),
     // Carried, not fetched: the rig serves no recordings index to fetch the maps from.
     knowledgeGraph: 'inline',
+    // Carried too: no boot script writes a row's own script into the rig's page.
+    sceneRowData: 'inline',
   });
 }

@@ -9,7 +9,8 @@
  * and sourcemaps are off.
  *
  * One plugin injects five classic scripts ahead of the module bundle (demo/index.html documents
- * the order), emits them, the recordings, and the guest pages under content-hashed names, plus
+ * the order), emits them, the recordings, the scene-only rows' scripts (which demo/boot.js writes
+ * in only on a frame that names the row), and the guest pages under content-hashed names, plus
  * the unhashed scenes.json, and relocates the emitted HTML from `demo/index.html` to the outDir
  * root.
  *
@@ -20,7 +21,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { buildDemoPreConfig, DEMO_PROJECTS, DEMO_SCENE_TASKS, shippedKnowledgeGraph } from '../tests/captures/helpers/demo-dataset';
+import { buildDemoPreConfig, buildDemoSceneRowScripts, DEMO_PROJECTS, DEMO_SCENE_TASKS, shippedKnowledgeGraph } from '../tests/captures/helpers/demo-dataset';
 import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, loadDemoTiledFrames, loadDemoTranscripts, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
@@ -154,12 +155,24 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     guestPages[project.dev_url] = `${base}${fileName}`;
   }
   console.log(`[demo] guest pages emitted: ${Object.keys(guestPages).length}`);
+  // Each scene-only row's recorded sessions, one classic script per row (demo-dataset.ts,
+  // buildDemoSceneRowScripts), which the seed leaves out. demo/boot.js writes a row's script into
+  // the page ahead of the seed only on a frame whose scene names the row, so no other frame loads
+  // it. Keyed by task id, valued by the URL boot.js writes.
+  const seedMaps = loadSeedMaps();
+  const sceneRowScripts: Record<string, string> = {};
+  for (const [taskId, source] of Object.entries(buildDemoSceneRowScripts(seedMaps))) {
+    const fileName = hashedName(`scene-rows/${taskId}.js`, source);
+    files.push({ fileName, source });
+    sceneRowScripts[taskId] = `${base}${fileName}`;
+    console.log(`[demo] scene-only row script emitted: ${fileName} (${Math.round(source.length / 1024)} KB)`);
+  }
   const scripts = [
-    { name: 'demo-scenes.js', source: buildScenesScript(version, `window.__demoRecordings = ${JSON.stringify(index)};\nwindow.__demoGuestPages = ${JSON.stringify(guestPages)};\n`) },
+    { name: 'demo-scenes.js', source: buildScenesScript(version, sceneRowScripts, `window.__demoRecordings = ${JSON.stringify(index)};\nwindow.__demoGuestPages = ${JSON.stringify(guestPages)};\n`) },
     { name: 'demo-boot.js', source: readFileSync(BOOT_SCRIPT_PATH, 'utf8') },
     { name: 'demo-webview.js', source: readFileSync(WEBVIEW_SHIM_PATH, 'utf8') },
     { name: 'mock-electron-api.js', source: readFileSync(MOCK_SCRIPT_PATH, 'utf8') },
-    { name: 'demo-seed.js', source: buildSeedScript(version) },
+    { name: 'demo-seed.js', source: buildSeedScript(version, seedMaps) },
   ].map((script) => ({ fileName: hashedName(script.name, script.source), source: script.source }));
   files.push(...scripts);
   return { scripts: scripts.map((script) => script.fileName), files };
@@ -182,7 +195,7 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
  */
 function nestedConfigShape(): Record<string, string[]> {
   const shape: Record<string, string[]> = {};
-  for (const [key, value] of Object.entries(DEFAULT_CONFIG as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(DEFAULT_CONFIG) as Array<[string, unknown]>) {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
     const fields = Object.keys(value);
     if (fields.length === 0) continue;
@@ -194,10 +207,12 @@ function nestedConfigShape(): Record<string, string[]> {
 /**
  * The scene-only task ids the seed carries (DEMO_SCENE_TASKS), so `demo/boot.js` can refuse a
  * `state=` blob whose `rows` names one it does not, rather than booting a frame without the card.
+ * Beside them, the script each row's recorded sessions ride in, which boot.js writes for the rows
+ * a frame names.
  */
-function buildScenesScript(version: string, recordingsScript: string): string {
+function buildScenesScript(version: string, sceneRowScripts: Record<string, string>, recordingsScript: string): string {
   const sceneRowIds = DEMO_SCENE_TASKS.map((task) => task.id);
-  return `window.__demoScenes = ${JSON.stringify(SCENES)};\nwindow.__demoVersion = ${JSON.stringify(version)};\nwindow.__demoConfigShape = ${JSON.stringify(nestedConfigShape())};\nwindow.__demoSceneRowIds = ${JSON.stringify(sceneRowIds)};\n${recordingsScript}`;
+  return `window.__demoScenes = ${JSON.stringify(SCENES)};\nwindow.__demoVersion = ${JSON.stringify(version)};\nwindow.__demoConfigShape = ${JSON.stringify(nestedConfigShape())};\nwindow.__demoSceneRowIds = ${JSON.stringify(sceneRowIds)};\nwindow.__demoSceneRowScripts = ${JSON.stringify(sceneRowScripts)};\n${recordingsScript}`;
 }
 
 /** The frame every scene is authored at: the site's 1600 by 1000 (demo/stage.html). */
@@ -221,30 +236,46 @@ function buildScenesManifest(version: string): string {
   return `${JSON.stringify({ version, frame: SCENE_FRAME, scenes }, null, 2)}\n`;
 }
 
-function buildSeedScript(version: string): string {
-  const scrollback = loadDemoScrollback();
-  const changes = loadDemoChanges();
-  const peeks = loadDemoPeeks();
-  const ends = loadDemoEnds();
-  const openFrames = loadDemoOpenFrames();
-  const tiledFrames = loadDemoTiledFrames();
-  const messageTrails = loadDemoMessageTrails();
-  console.log(`[demo] recorded terminal sessions embedded: ${Object.keys(scrollback).length}, with a working-tree diff: ${Object.keys(changes).length}, with an open frame: ${Object.keys(openFrames).length}, with tiled frames: ${Object.keys(tiledFrames).length}, with an agent message trail: ${Object.keys(messageTrails).length}`);
+/**
+ * The recorded maps keyed by session id, loaded once and split by the dataset between the seed and
+ * the scene-only rows' scripts (demo-dataset.ts, splitSceneRowData), so the two halves come from
+ * the same read.
+ */
+function loadSeedMaps() {
+  return {
+    scrollback: loadDemoScrollback(),
+    changes: loadDemoChanges(),
+    peeks: loadDemoPeeks(),
+    ends: loadDemoEnds(),
+    openFrames: loadDemoOpenFrames(),
+    tiledFrames: loadDemoTiledFrames(),
+    peekTimelines: loadDemoPeekTimelines(),
+    messageTrails: loadDemoMessageTrails(),
+    history: loadDemoHistory(),
+  };
+}
+
+function buildSeedScript(version: string, seedMaps: ReturnType<typeof loadSeedMaps>): string {
+  const { scrollback, changes, peeks, ends, openFrames, tiledFrames, peekTimelines, messageTrails, history } = seedMaps;
+  console.log(`[demo] recorded terminal sessions: ${Object.keys(scrollback).length}, with a working-tree diff: ${Object.keys(changes).length}, with an open frame: ${Object.keys(openFrames).length}, with tiled frames: ${Object.keys(tiledFrames).length}, with an agent message trail: ${Object.keys(messageTrails).length}; the scene-only rows' sessions ride in their own scripts`);
   return [
     '// Generated by demo/vite.config.mts from tests/captures/helpers/demo-dataset.ts and the',
     '// recordings in tests/captures/fixtures/demo/.',
     'window.__demoApplyFixture = function () {',
     buildDemoPreConfig({
       scrollback, changes, peeks, ends, openFrames, tiledFrames,
-      peekTimelines: loadDemoPeekTimelines(),
+      peekTimelines,
       messageTrails,
       messageTrailMaxEntries: MESSAGE_TRAIL_MAX_ENTRIES,
       liveTailMs: readLiveTailMs(),
       appVersion: version,
       cellWidths: buildCellWidthTable(),
-      history: loadDemoHistory(),
+      history,
       // Fetched from the file planDemoAssets emits, when a frame opens the graph.
       knowledgeGraph: 'fetched',
+      // Written into the page by demo/boot.js from the scripts planDemoAssets emits, for the rows a
+      // frame names.
+      sceneRowData: 'separate',
     }),
     '};',
     'window.__demoBoot.afterSeed();',

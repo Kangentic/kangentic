@@ -26,7 +26,7 @@
     "test:unit": "vitest run tests/unit",
     "typecheck": "npm run typecheck:src && npm run typecheck:demo",
     "typecheck:src": "tsc --noEmit",
-    "typecheck:demo": "tsc --noEmit -p tsconfig.demo.json",
+    "typecheck:demo": "tsc --noEmit -p tsconfig.demo.json && tsc --noEmit -p tsconfig.demo-build.json",
     "dev": "node scripts/dev.js",
     "build": "node scripts/build.js",
     "build:demo": "node scripts/build-demo.js",
