@@ -236,6 +236,9 @@ interface MockContext {
   projectRepo: {
     getById: ReturnType<typeof vi.fn>;
   };
+  boardEvents: {
+    emitBoardChanged: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockTask(id: string, overrides: Partial<MockTask> = {}): MockTask {
@@ -323,14 +326,21 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     projectRepo: {
       getById: vi.fn(() => ({ id: 'proj-123', default_agent: 'claude', default_model: null, default_effort: null })),
     },
+    boardEvents: {
+      emitBoardChanged: vi.fn(),
+    },
     ...overrides,
   };
 }
 
-async function callCreateHandler<T = unknown>(context: MockContext, input: Record<string, unknown>): Promise<T> {
+async function callCreateHandler<T = unknown>(
+  context: MockContext,
+  input: Record<string, unknown>,
+  projectId?: string | null,
+): Promise<T> {
   const handler = capturedHandlers.get(IPC.TASK_CREATE);
   if (!handler) throw new Error(`Handler for ${IPC.TASK_CREATE} was not registered`);
-  return handler(null, input) as Promise<T>;
+  return handler(null, input, projectId) as Promise<T>;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,5 +761,120 @@ describe('TASK_CREATE handler', () => {
     // Both entered, in submission order
     expect(entryOrder).toHaveLength(2);
     expect(entryOrder).toEqual([0, 1]);
+  });
+
+  // =========================================================================
+  // The new task reaches the board-changed bus
+  // =========================================================================
+
+  describe('announces the create on the board-changed bus', () => {
+    // A paired phone re-reads the board when the bus fires, so the row must
+    // exist by then, and the id is the one the repository generated, never one
+    // the caller supplied. The create is stamped for 'proj-other' while the
+    // ambient project is 'proj-123', so a regression that announces for the
+    // ambient project fails. Recorded inside the mock and asserted outside it,
+    // because the announce swallows a listener's throw.
+    const STAMPED_PROJECT = 'proj-other';
+    const GENERATED_ID = 'generated-id-9';
+    const EXPECTED_EMIT = { projectId: STAMPED_PROJECT, change: 'task-created', ids: [GENERATED_ID] };
+    let rows: Map<string, MockTask>;
+    let rowExistsAtEmit: boolean | undefined;
+    let spawnCallsAtEmit: number | undefined;
+
+    function useStatefulRepo(lane: MockSwimlane): void {
+      rows = new Map();
+      swimlaneRepo = createMockSwimlaneRepo([lane]);
+      mockGetProjectRepos.mockReturnValue({
+        tasks: {
+          create: vi.fn(() => {
+            const created = createMockTask(GENERATED_ID, { swimlane_id: lane.id });
+            rows.set(created.id, created);
+            return created;
+          }),
+          getById: vi.fn((id: string) => rows.get(id)),
+        },
+        swimlanes: swimlaneRepo,
+        actions: { getTransitionsFor: vi.fn(() => []) },
+        attachments: attachmentRepo,
+      });
+    }
+
+    beforeEach(() => {
+      rowExistsAtEmit = undefined;
+      spawnCallsAtEmit = undefined;
+      // The stamped project is not the ambient one, so its path comes from the
+      // project repository.
+      context.projectRepo.getById.mockImplementation((projectId: string) => ({
+        id: projectId,
+        path: '/mock/other-project',
+        default_agent: 'claude',
+        default_model: null,
+        default_effort: null,
+      }));
+      context.boardEvents.emitBoardChanged.mockImplementation(() => {
+        rowExistsAtEmit = rows.has(GENERATED_ID);
+        spawnCallsAtEmit = mockSpawnAgent.mock.calls.length;
+      });
+    });
+
+    it('a create into a column without auto_spawn emits task-created once for the stamped project, with the row in place', async () => {
+      useStatefulRepo(createMockSwimlane('lane-backlog', { auto_spawn: false }));
+
+      await callCreateHandler(context, { swimlane_id: 'lane-backlog', title: 'Plain task' }, STAMPED_PROJECT);
+
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[EXPECTED_EMIT]]);
+      expect(rowExistsAtEmit).toBe(true);
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+    });
+
+    it('a create into an auto_spawn column emits once, after the spawn settled', async () => {
+      useStatefulRepo(createMockSwimlane('lane-doing', { auto_spawn: true }));
+
+      await callCreateHandler(context, { swimlane_id: 'lane-doing', title: 'Spawned task' }, STAMPED_PROJECT);
+
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[EXPECTED_EMIT]]);
+      expect(rowExistsAtEmit).toBe(true);
+      expect(spawnCallsAtEmit).toBe(1);
+    });
+
+    it('a create whose spawn is blocked by a failed worktree still emits once', async () => {
+      useStatefulRepo(createMockSwimlane('lane-doing', { auto_spawn: true }));
+      mockEnsureTaskWorktree.mockRejectedValue(new Error('git worktree add failed'));
+
+      await callCreateHandler(context, { swimlane_id: 'lane-doing', title: 'Blocked task' }, STAMPED_PROJECT);
+
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[EXPECTED_EMIT]]);
+    });
+
+    it('a create that throws after the row exists (an attachment write) still rejects and still emits once', async () => {
+      useStatefulRepo(createMockSwimlane('lane-backlog', { auto_spawn: false }));
+      attachmentRepo.add.mockImplementation(() => { throw new Error('disk full'); });
+
+      await expect(callCreateHandler(context, {
+        swimlane_id: 'lane-backlog',
+        title: 'Task with attachment',
+        pendingAttachments: [{ filename: 'a.png', data: 'x', media_type: 'image/png' }],
+      }, STAMPED_PROJECT)).rejects.toThrow('disk full');
+
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[EXPECTED_EMIT]]);
+      expect(rowExistsAtEmit).toBe(true);
+    });
+
+    it('a create the repository rejects emits nothing, because no row exists', async () => {
+      useStatefulRepo(createMockSwimlane('lane-backlog', { auto_spawn: false }));
+      mockGetProjectRepos.mockReturnValue({
+        tasks: { create: vi.fn(() => { throw new Error('constraint failed'); }), getById: vi.fn() },
+        swimlanes: swimlaneRepo,
+        actions: { getTransitionsFor: vi.fn(() => []) },
+        attachments: attachmentRepo,
+      });
+
+      await expect(callCreateHandler(context, { swimlane_id: 'lane-backlog', title: 'Bad task' }, STAMPED_PROJECT))
+        .rejects.toThrow('constraint failed');
+
+      expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+    });
   });
 });

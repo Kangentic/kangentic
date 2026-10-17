@@ -129,11 +129,14 @@ function makeTask(overrides: Partial<MockTask> = {}): MockTask {
   };
 }
 
+const emitBoardChanged = vi.fn();
+
 function makeContext(sessions: Array<{ id: string; status: string }> = []): IpcContext {
   return {
     currentProjectId: 'ambient-project',
     currentProjectPath: '/project',
     sessionManager: { listSessions: () => sessions },
+    boardEvents: { emitBoardChanged },
   } as unknown as IpcContext;
 }
 
@@ -359,5 +362,69 @@ describe('TASK_UPDATE_FROM_BASE', () => {
     });
 
     await expect(invoke(context)).resolves.toEqual({ status: 'dirty-tree', baseBranch: 'main' });
+  });
+
+  describe('announces the write on the board-changed bus', () => {
+    // A fast-forward moves the task's branch under a paired phone's board. The
+    // handler announces from a finally block, however the update settles once a
+    // project resolved, so the refusals inside the lock (unknown task, running
+    // session, no worktree, branch mismatch, live occupant) and the non-update
+    // results (no-remote, fetch-failed, dirty-tree, already-up-to-date) announce
+    // too. That is intended by the handler's own comment, and only the success,
+    // the attempted-and-refused merge and the no-project case are pinned here.
+    // The stamped project is 'explicit-project' and the ambient one is
+    // 'ambient-project', so a regression that announces for the wrong project
+    // fails.
+    const EXPECTED_EMIT = [{ projectId: 'explicit-project', change: 'task-updated', ids: ['task-1'] }];
+
+    beforeEach(() => {
+      // Drops the order test's recording implementation so it cannot leak.
+      emitBoardChanged.mockReset();
+    });
+
+    it('a successful fast-forward emits task-updated once for the stamped project', async () => {
+      const context = makeContext();
+      mockWorktreeGit.raw.mockImplementation(async (args: string[]) => (args[0] === 'rev-list' ? '3\t0\n' : ''));
+
+      await expect(invoke(context)).resolves.toEqual({ status: 'updated', baseBranch: 'main', commitCount: 3 });
+
+      expect(emitBoardChanged.mock.calls).toEqual([EXPECTED_EMIT]);
+    });
+
+    it('a fast-forward emits after the merge ran, not before', async () => {
+      const context = makeContext();
+      const callOrder: string[] = [];
+      mockWorktreeGit.raw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'rev-list') return '3\t0\n';
+        callOrder.push('merge');
+        return '';
+      });
+      emitBoardChanged.mockImplementation(() => { callOrder.push('emit'); });
+
+      await invoke(context);
+
+      expect(callOrder).toEqual(['merge', 'emit']);
+    });
+
+    it('a merge that is attempted and refused (cannot-ff) still emits once', async () => {
+      const context = makeContext();
+      mockWorktreeGit.raw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'rev-list') return '2\t1\n';
+        throw new Error('fatal: Not possible to fast-forward, aborting.');
+      });
+
+      await expect(invoke(context)).resolves.toMatchObject({ status: 'cannot-ff' });
+
+      expect(emitBoardChanged.mock.calls).toEqual([EXPECTED_EMIT]);
+    });
+
+    it('a call with no project open emits nothing', async () => {
+      const context = makeContext();
+      mockResolveProjectContext.mockReturnValue({ projectId: null, projectPath: null });
+
+      await expect(invoke(context)).rejects.toThrow(/No project is currently open/);
+
+      expect(emitBoardChanged).not.toHaveBeenCalled();
+    });
   });
 });

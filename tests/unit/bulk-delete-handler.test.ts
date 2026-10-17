@@ -208,6 +208,12 @@ interface MockContext {
   terminalSubmitScheduler: {
     scheduleKeystrokes: ReturnType<typeof vi.fn>;
   };
+  projectRepo: {
+    getById: ReturnType<typeof vi.fn>;
+  };
+  boardEvents: {
+    emitBoardChanged: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockTask(id: string, overrides: Partial<MockTask> = {}): MockTask {
@@ -256,16 +262,23 @@ function createMockContext(): MockContext {
     terminalSubmitScheduler: {
       scheduleKeystrokes: vi.fn(),
     },
+    // Read only for a project other than the ambient one, to resolve its path.
+    projectRepo: {
+      getById: vi.fn((projectId: string) => ({ id: projectId, path: '/mock/other-project' })),
+    },
+    boardEvents: {
+      emitBoardChanged: vi.fn(),
+    },
   };
 }
 
 // Invoke the registered TASK_BULK_DELETE handler directly. The first argument
 // (Electron Event object) is omitted since the handler only uses subsequent args.
-async function callBulkDeleteHandler(context: MockContext, ids: string[]) {
+async function callBulkDeleteHandler(context: MockContext, ids: string[], projectId?: string | null) {
   const handler = capturedHandlers.get(IPC.TASK_BULK_DELETE);
   if (!handler) throw new Error(`Handler for ${IPC.TASK_BULK_DELETE} was not registered`);
   // The IPC event is unused by this handler - pass null as a stand-in.
-  return handler(null, ids) as Promise<{ deleted: number; failures: Array<{ id: string; error: string }> }>;
+  return handler(null, ids, projectId) as Promise<{ deleted: number; failures: Array<{ id: string; error: string }> }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -556,5 +569,77 @@ describe('TASK_BULK_DELETE handler', () => {
 
     expect(result.deleted).toBe(1);
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // The batch reaches the board-changed bus
+  // -------------------------------------------------------------------------
+
+  describe('announces the batch on the board-changed bus', () => {
+    // One event for the whole batch, naming every requested id. A failed
+    // cleanup still deletes its row (the delete intent is honored), and a paired
+    // phone re-reads the whole board on the event anyway, so the failed id is in
+    // the list. The delete is stamped for 'proj-other' while the ambient project
+    // is 'proj-123', so a regression that announces for the ambient project
+    // fails. Recorded inside the mock and asserted outside it, because the
+    // announce swallows a listener's throw.
+    const STAMPED_PROJECT = 'proj-other';
+    let rowsLeftAtEmit: string[] | undefined;
+
+    beforeEach(() => {
+      rowsLeftAtEmit = undefined;
+    });
+
+    function useTasks(taskIds: string[]): void {
+      taskRepo = createMockTaskRepo(taskIds.map((taskId) => createMockTask(taskId)));
+      mockGetProjectRepos.mockReturnValue({
+        tasks: taskRepo,
+        attachments: attachmentRepo,
+        swimlanes: { list: vi.fn(() => []), getById: vi.fn() },
+        actions: { getTransitionsFor: vi.fn(() => []) },
+      });
+      context.boardEvents.emitBoardChanged.mockImplementation(() => {
+        rowsLeftAtEmit = taskIds.filter((taskId) => taskRepo.getById(taskId) !== null);
+      });
+    }
+
+    it('a clean batch emits one task-deleted for the stamped project naming every id in request order, after the rows are gone', async () => {
+      useTasks(['task-c', 'task-a', 'task-b']);
+
+      const result = await callBulkDeleteHandler(context, ['task-c', 'task-a', 'task-b'], STAMPED_PROJECT);
+
+      expect(result.deleted).toBe(3);
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+        [{ projectId: STAMPED_PROJECT, change: 'task-deleted', ids: ['task-c', 'task-a', 'task-b'] }],
+      ]);
+      expect(rowsLeftAtEmit).toEqual([]);
+    });
+
+    it('a batch where one task\'s cleanup fails still emits exactly one event naming every requested id, the failed one included', async () => {
+      useTasks(['task-ok', 'task-throws', 'task-ok-2']);
+      mockCleanupTaskResources.mockImplementation(
+        async (_ctx: unknown, task: { id: string }) => {
+          if (task.id === 'task-throws') throw new Error('PTY hang on cleanup');
+        },
+      );
+
+      const result = await callBulkDeleteHandler(context, ['task-ok', 'task-throws', 'task-ok-2'], STAMPED_PROJECT);
+
+      expect(result.failures.map((failure) => failure.id)).toEqual(['task-throws']);
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+        [{ projectId: STAMPED_PROJECT, change: 'task-deleted', ids: ['task-ok', 'task-throws', 'task-ok-2'] }],
+      ]);
+      // The failed cleanup still deleted its row, so nothing is left to re-read.
+      expect(rowsLeftAtEmit).toEqual([]);
+    });
+
+    it('an empty batch emits nothing', async () => {
+      useTasks([]);
+
+      await expect(callBulkDeleteHandler(context, [], STAMPED_PROJECT))
+        .resolves.toEqual({ deleted: 0, failures: [] });
+
+      expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+    });
   });
 });

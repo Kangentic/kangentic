@@ -135,6 +135,7 @@ interface MockContext {
   terminalSubmitScheduler: { scheduleKeystrokes: ReturnType<typeof vi.fn> };
   projectRepo: { getById: ReturnType<typeof vi.fn> };
   boardConfigManager: { getBoardProfiles: ReturnType<typeof vi.fn> };
+  boardEvents: { emitBoardChanged: ReturnType<typeof vi.fn> };
 }
 
 function createMockTask(overrides: Partial<MockTask> = {}): MockTask {
@@ -164,14 +165,18 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', default_agent: 'claude', default_model: null, default_effort: null })) },
     boardConfigManager: { getBoardProfiles: vi.fn(() => []) },
+    boardEvents: { emitBoardChanged: vi.fn() },
     ...overrides,
   };
 }
 
-async function callHandler(input: TaskSetRuntimeOverrideInput): Promise<TaskSetRuntimeOverrideResult> {
+async function callHandler(
+  input: TaskSetRuntimeOverrideInput,
+  projectId?: string | null,
+): Promise<TaskSetRuntimeOverrideResult> {
   const handler = capturedHandlers.get(IPC.TASK_SET_RUNTIME_OVERRIDE);
   if (!handler) throw new Error(`Handler for ${IPC.TASK_SET_RUNTIME_OVERRIDE} was not registered`);
-  return handler(null, input) as Promise<TaskSetRuntimeOverrideResult>;
+  return handler(null, input, projectId) as Promise<TaskSetRuntimeOverrideResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -969,6 +974,95 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     expect(taskRepo.updateOverrides).toHaveBeenCalledWith('task-1', {
       model_override: 'gpt-5',
       effort_override: null,
+    });
+  });
+
+  // =========================================================================
+  // The write reaches the board-changed bus
+  // =========================================================================
+
+  describe('announces the write on the board-changed bus', () => {
+    // A paired phone re-reads the board when the bus fires, so the override
+    // must already be on the row at emit time. The pick is stamped for
+    // 'proj-other' while the ambient project is 'proj-1', so a regression that
+    // announces for the ambient project fails. Recorded inside the mock and
+    // asserted outside it, because the announce swallows a listener's throw.
+    const STAMPED_PROJECT = 'proj-other';
+    const EXPECTED_EMIT = { projectId: STAMPED_PROJECT, change: 'task-updated', ids: ['task-1'] };
+    let modelAtEmit: string | null | undefined;
+
+    beforeEach(() => {
+      modelAtEmit = undefined;
+      context.projectRepo.getById.mockImplementation((projectId: string) => ({
+        id: projectId,
+        path: '/mock/other-project',
+        default_agent: 'claude',
+        default_model: null,
+        default_effort: null,
+      }));
+      context.boardEvents.emitBoardChanged.mockImplementation(() => {
+        modelAtEmit = task.model_override;
+      });
+      mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => []) });
+    });
+
+    it('a persisted pick (no live session) emits task-updated once for the stamped project, after the write', async () => {
+      task = createMockTask({ session_id: null });
+      taskRepo.getById.mockImplementation(() => task);
+
+      await expect(callHandler({ taskId: 'task-1', model: 'sonnet' }, STAMPED_PROJECT))
+        .resolves.toEqual({ ok: true, mode: 'persisted' });
+
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[EXPECTED_EMIT]]);
+      expect(modelAtEmit).toBe('sonnet');
+    });
+
+    it('a restart pick emits task-updated once for the stamped project, after the write', async () => {
+      await expect(callHandler({ taskId: 'task-1', model: 'sonnet' }, STAMPED_PROJECT))
+        .resolves.toEqual({ ok: true, mode: 'restart' });
+
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+        expect.anything(), STAMPED_PROJECT, '/mock/other-project', 'task-1', { phase: 'switching-model' },
+      );
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[EXPECTED_EMIT]]);
+      expect(modelAtEmit).toBe('sonnet');
+    });
+
+    it('a restart that resolves ok:false still emits once, because the override was persisted', async () => {
+      hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: false, reason: 'respawn failed: CLI exited' });
+
+      const result = await callHandler({ taskId: 'task-1', model: 'sonnet' }, STAMPED_PROJECT);
+
+      expect(result.ok).toBe(false);
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[EXPECTED_EMIT]]);
+      expect(modelAtEmit).toBe('sonnet');
+    });
+
+    it('a restart that rejects still rejects with its error and still emits once', async () => {
+      hoisted.restartSessionForSettingsChange.mockRejectedValue(new Error('suspend exploded'));
+
+      await expect(callHandler({ taskId: 'task-1', model: 'sonnet' }, STAMPED_PROJECT))
+        .rejects.toThrow('suspend exploded');
+
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[EXPECTED_EMIT]]);
+      expect(modelAtEmit).toBe('sonnet');
+    });
+
+    // What the bus hears for the pre-persist refusals inside the lock ('task not
+    // found', 'unknown agent') is left unpinned on purpose. The handler's finally
+    // announces them as it does a committed write, so a pick that wrote nothing
+    // still sends task-updated. A phone's re-read then finds the row unchanged,
+    // so the event says nothing false.
+
+    it('a pick with no project open emits nothing', async () => {
+      context = createMockContext({ currentProjectId: null });
+      capturedHandlers.clear();
+      registerTaskRuntimeOverrideHandlers(context as never);
+
+      await expect(callHandler({ taskId: 'task-1', model: 'sonnet' }))
+        .resolves.toEqual({ ok: false, reason: 'no project is currently open' });
+
+      expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
     });
   });
 });
