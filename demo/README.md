@@ -73,6 +73,16 @@ workflow calls it after `publish-release`, so the web build always shows the shi
         width="1600" height="1000" inert></iframe>
 ```
 
+A host that shows a `loop=1` frame owes the reader a visible way to stop it. WCAG 2.2.2 (Pause,
+Stop, Hide) asks it of any motion that starts by itself, lasts more than five seconds, and sits
+beside other content, and an `inert` frame takes no click, so the control lives on the page. The
+frame's stopped state already exists: swap the frame's `loop=1` for `still=1` (or show its poster),
+which is the scene's poster moment, deterministic, with nothing moving, and swap back to play. The
+frame needs no message for it, and a pause that froze the frame in place would have to freeze every
+session clock, the terminal replay, and the choreography together, which the frame does not offer.
+A visitor whose system asks for reduced motion is covered either way: the page should start them
+on `still=1`, and a `loop=1` frame holds its choreography at rest for them on its own.
+
 Opened directly (a docs link, a review), the page hands over to `stage.html`, which hosts the
 same frame at 1600 by 1000, centered, and scaled down when the window is smaller. That size is
 the one every terminal recording was made at, so at the stage the byte stream replays into the
@@ -441,8 +451,8 @@ visitor would be left with a card stuck mid-drag. And a key a script dispatched 
 Two more things hold a loop still, both for the visitor's sake. A visitor whose system asks for
 reduced motion (`prefers-reduced-motion: reduce`) gets the rest, held, with no pointer drawn: WCAG
 2.2.2 asks for a way to pause motion that starts by itself, and that setting is the one a frame can
-read before anything moves. The site still owes its loop frames a visible pause control, since an
-`inert` frame takes no click. And a cycle starts only while the frame is on screen: its tab in front
+read before anything moves. The host owes its loop frames a visible stop control, since an `inert`
+frame takes no click (Where it runs, above). And a cycle starts only while the frame is on screen: its tab in front
 and, embedded, some of it inside the page's viewport (an `IntersectionObserver` on the frame's root
 reports against the top-level viewport), so a page of loop frames plays only the ones a reader can
 see. A typed keystroke is the sequence a browser sends, keydown, beforeinput, the edit, input and
@@ -699,7 +709,10 @@ snippet above uses `inert`. And a page that is not a secure context (plain http,
 `about:blank` host the smoke tier builds) has no `navigator.mediaDevices` in its frames, so the
 silent microphone is never installed and the chip shows the error. That second one is shared with
 `dictation`, whose gate is the chip alone and so boots on the error. A poster is shot in a real page
-and is unaffected by either.
+and is unaffected by either. A third is a test browser, not a host: Playwright's WebKit build for
+Windows has neither `navigator.mediaDevices` nor Web Audio, even on a secure page, so neither
+dictation scene can be checked there (measured 2026-10-17). Safari has both; check the two scenes
+in WebKit on macOS or Linux.
 
 ### scenes.json, the hand-off to the site
 
