@@ -283,7 +283,9 @@ three things staying in step, and each is enforced rather than remembered.
   full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
   element, that every choreography plays a cycle back to rest under `loop=1` (or holds its pose)
   with a clean console, which is also what fails a choreography selector the renderer no longer
-  stamps, that every scene with a `cut` makes its reset's changes only under the landed veil with
+  stamps (the player's rest check compares the lanes' cards, the open layers, the form values and
+  selection states, and which text field holds focus, since a field left focused draws a ring the
+  poster does not have), that every scene with a `cut` makes its reset's changes only under the landed veil with
   no pointer drawn and changes nothing while the frame fades back in (the player's
   `data-demo-cut` phase), that a visitor's own click stops it and lets go of a held pose, that a reduced-motion
   visitor gets the rest held with no pointer, that a still with a pose
