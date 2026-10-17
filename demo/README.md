@@ -290,7 +290,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab) |
 | `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more |
 | `task`, `browser` | state | `workspaceByProject` (a floating window sized to its session's recording, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below) |
-| `task-mcp` | state | `rows` adds the scene-only Validate request bodies task (Scene-only rows below), and `workspaceByProject` restores its window maximized. Its session is the MCP recording (An agent calling Kangentic's MCP tools below), working, with a `liveTailMs` cut to that recording: a still paints the moment `kangentic_get_current_task`, `kangentic_list_columns` and `kangentic_list_automations` have printed their results, and live, the agent then reads Testing with `kangentic_get_column_detail` and moves the card with `kangentic_move_task`, about eleven seconds that `loop=1` replays. The whole `terminal` block is spelled out with a larger font, the one exception to the type rule above (One viewport, one scale). It also seeds `__mockAgentListOverrides` with the dataset's agent list and Claude Code at 2.1.302, the version the recording ran on, so the context bar and the terminal's header agree. Its `timeline` moves the card to Testing when the recording ends, which is where the move's result lands (the manifest's `stopWhen` cut it there), through the push main sends for an agent's move; `loop=1` puts the card back in Code Review as the stretch starts over |
+| `task-mcp` | state | `rows` adds the scene-only Validate request bodies task (Scene-only rows below), and `workspaceByProject` restores its window maximized. Its session is the MCP recording (An agent calling Kangentic's MCP tools below), working, with a `liveTailMs` cut to that recording: a still paints the moment `kangentic_get_current_task`, `kangentic_list_columns` and `kangentic_list_automations` have printed their results, and live, the agent then reads Testing with `kangentic_get_column_detail` and moves the card with `kangentic_move_task`, about eleven seconds that `loop=1` replays. The whole `terminal` block is spelled out with a larger font, the one exception to the type rule above (One viewport, one scale). It also seeds `__mockAgentListOverrides` with the dataset's agent list and Claude Code at 2.1.302, the version the recording ran on, so the context bar and the terminal's header agree. Its `timeline` moves the card to Testing when the recording ends, which is where the move's result lands (the manifest's `stopWhen` cut it there), through the push main sends for an agent's move; `loop=1` puts the card back in Code Review as the stretch starts over. The session stays: on this board Testing names the same agent, changes no model or effort, and sends no column message, which is `handleTaskMove`'s keep-alive case for a live session (Priority 3 in `task-move.ts`). The capture's preview did spawn there, because the recorded agent ran in the rig's own terminal, so the preview's task had no live session to keep |
 | `windows-tiled` | state | `workspaceByProject` with two `tiled` windows under one horizontal split, in the footprint a dock produces; both sessions have a recording at the tiled width (Terminal recordings below) |
 | `conversation` | state | `workspaceByProject` with one `conversation` window anchored on the middleware session id; the transcript is the one recorded beside the session (Transcripts below) |
 | `dictation` | boot | `config.dictation.enabled` and a held `press` of `Mouse:Back` (Dictation below) |
@@ -401,10 +401,11 @@ pointerup, mouseup and click. That one sequence drives dnd-kit, the window manag
 drag, React Flow, the board's link preview and React's hover handlers alike, and a pointerdown the
 page prevents takes the mouse events with it, as in a browser. What a script cannot get, it stands
 in for: `:hover` is mirrored (each same-origin `:hover` rule copied under `[data-demo-hover]` in the
-same parent rule, the attribute set on the element under the pointer and its ancestors); Firefox's
-refusal to capture a pointer it did not make is a no-op for the synthetic pointer's id, which is
-what Chromium and WebKit already do; and the pointer itself is drawn, the product accent arrow, so
-a menu that opens reads as a visitor's click. The arrow fades in when a cycle starts and out at
+same parent rule, the attribute set on the element under the pointer and its ancestors); pointer
+capture is kept by the player for its own pointer, since no browser captures a pointer that is not
+pressed for real (Firefox even throws), so a window drag's moves and release reach the frame that
+captured them as they would; and the pointer itself is drawn, the product accent arrow, so a menu
+that opens reads as a visitor's click. The arrow fades in when a cycle starts and out at
 rest. The renderer reads none of it. The demo tier runs Chromium only, so a change to the player is
 checked by hand in Playwright's Firefox and WebKit too; Firefox is where the capture refusal showed.
 
@@ -420,8 +421,11 @@ pacing (`window.__demoChoreographyRate`, set by a test's init script, never the 
 
 A visitor's own click, key, wheel or touch stops the choreography for the frame's life: a held
 pointer is released where it stands, the hover marks clear, and the arrow goes. Sessions keep
-looping. The site's loop frames are `inert`, so that is for a direct visit; its take-control dialog
-never passes `loop=1`. And a key a script dispatched never posts `kangentic-demo-escape`.
+looping. The site's loop frames are `inert`, so in a loop that is for a direct visit. A pose is
+let go the same way in every frame, loop or not and a still too, because the site's take-control
+dialog never passes `loop=1` and a reader who prefers reduced motion gets `still=1`: without it a
+visitor would be left with a card stuck mid-drag. And a key a script dispatched never posts
+`kangentic-demo-escape`.
 
 ### Quick Find
 

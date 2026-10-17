@@ -40,7 +40,10 @@ export interface ChoreographyOptions {
 }
 
 export interface ChoreographyPlayer {
-  /** Plays the steps up to the pose with no pacing and no pointer drawn: the still, and the live frame's first frame. */
+  /**
+   * Plays the steps up to the pose with no pacing and no pointer drawn: the still, and the live
+   * frame's first frame. A visitor's own input then lets go of the held gesture, loop or no loop.
+   */
   playToPose(): Promise<void>;
   /** Under loop=1: plays the cycle and returns to rest, again and again, until a visitor takes over. */
   startLoop(): void;
@@ -70,14 +73,18 @@ const POINTER_ID = 1;
 
 /**
  * Pointer capture, for a pointer the browser did not make. The window manager captures the pointer
- * a drag's pointerdown reported (`setPointerCapture` in useWindowDrag.ts). Chromium and WebKit
- * ignore a capture of a pointer that is not pressed for real, but Firefox throws NotFoundError for
- * every id until real input has reached the page, and a site frame is `inert`, so none ever does.
- * A capture that throws for the synthetic pointer's id is therefore a no-op, which is what the other
- * two engines do with it: the player dispatches every event to the element under the point, where
- * a captured one would go during a drag that follows the pointer. A real pointer's capture never
- * throws, so it is untouched.
+ * a drag's pointerdown reported (`setPointerCapture` in useWindowDrag.ts) and then reads the moves
+ * and the release from its own frame, wherever the pointer is. No browser captures a pointer that
+ * is not pressed for real: Chromium and WebKit ignore the call, and Firefox throws NotFoundError for
+ * every id until real input has reached the page (a site frame is `inert`, so none ever does). So
+ * for the synthetic pointer's id the capture is kept here instead: the call never throws, the
+ * element is recorded, `hasPointerCapture` reports it, and the player sends that pointer's events
+ * to it until it is released or the button comes up, as a browser does for a captured pointer. It
+ * acts only while the synthetic pointer is pressed; any other call, a visitor's own included, goes
+ * straight through to the browser.
  */
+let capturedBy: Element | null = null;
+let syntheticPressed = false;
 let captureShimInstalled = false;
 function installCaptureShim(): void {
   if (captureShimInstalled) return;
@@ -85,20 +92,39 @@ function installCaptureShim(): void {
   const prototype = Element.prototype;
   const setCapture = prototype.setPointerCapture;
   const releaseCapture = prototype.releasePointerCapture;
+  const hasCapture = prototype.hasPointerCapture;
   prototype.setPointerCapture = function (this: Element, pointerId: number): void {
+    if (pointerId !== POINTER_ID || !syntheticPressed) {
+      setCapture.call(this, pointerId);
+      return;
+    }
     try {
       setCapture.call(this, pointerId);
-    } catch (error) {
-      if (pointerId !== POINTER_ID) throw error;
+    } catch {
+      // Firefox's refusal; the capture is kept below either way.
     }
+    capturedBy = this;
   };
   prototype.releasePointerCapture = function (this: Element, pointerId: number): void {
+    if (pointerId !== POINTER_ID || capturedBy !== this) {
+      releaseCapture.call(this, pointerId);
+      return;
+    }
     try {
       releaseCapture.call(this, pointerId);
-    } catch (error) {
-      if (pointerId !== POINTER_ID) throw error;
+    } catch {
+      // As above.
     }
+    capturedBy = null;
   };
+  prototype.hasPointerCapture = function (this: Element, pointerId: number): boolean {
+    return hasCapture.call(this, pointerId) || (pointerId === POINTER_ID && capturedBy === this);
+  };
+}
+
+/** The element the synthetic pointer is captured to, while it is still in the document. */
+function captureTarget(): Element | null {
+  return capturedBy && capturedBy.isConnected ? capturedBy : null;
 }
 
 declare global {
@@ -315,8 +341,15 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     const previous = point;
     point = at;
     if (cursor) cursor.element.style.transform = `translate(${at.x - CURSOR_TIP.x}px, ${at.y - CURSOR_TIP.y}px)`;
-    const next = document.elementFromPoint(at.x, at.y);
     const init = pointerInit(at, {}, previous);
+    // A captured pointer's events go to the element that captured it, which stays its hover target.
+    const captured = captureTarget();
+    if (captured) {
+      sendPointer('pointermove', captured, init);
+      sendMouse('mousemove', captured, init);
+      return;
+    }
+    const next = document.elementFromPoint(at.x, at.y);
     transition(next, init);
     const target = next ?? document.documentElement;
     sendPointer('pointermove', target, init);
@@ -361,6 +394,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     if (!point) return;
     const target = document.elementFromPoint(point.x, point.y) ?? document.documentElement;
     buttons = button === 0 ? 1 : 2;
+    syntheticPressed = true;
     pressedOn = target;
     const init = pointerInit(point, { button }, point);
     const allowed = sendPointer('pointerdown', target, init);
@@ -374,12 +408,20 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
 
   function release(button: 0 | 2): void {
     if (!point || buttons === 0) return;
-    const target = document.elementFromPoint(point.x, point.y) ?? document.documentElement;
+    const hit = document.elementFromPoint(point.x, point.y) ?? document.documentElement;
+    const captured = captureTarget();
+    const target = captured ?? hit;
     buttons = 0;
     const init = pointerInit(point, { button }, point);
     sendPointer('pointerup', target, init);
     sendMouse('mouseup', target, init);
     compatibilitySuppressed = false;
+    syntheticPressed = false;
+    // The button coming up ends a capture, as a browser releases it implicitly after pointerup.
+    if (captured && capturedBy === captured) {
+      capturedBy = null;
+      sendPointer('lostpointercapture', captured, { ...init, bubbles: true, cancelable: false });
+    }
     if (button === 0 && pressedOn) sendMouse('click', commonAncestor(pressedOn, target), { ...init, detail: 1 });
     if (button === 2) sendMouse('contextmenu', target, init);
     pressedOn = null;
@@ -480,10 +522,25 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     setState('stopped');
   }
 
+  /**
+   * Only a real hand ends it: the events above are untrusted, a visitor's are not. Armed as soon as
+   * a pose holds the pointer, in every frame, since a held drag in a frame that does not loop (the
+   * site's take-control dialog, a still for a visitor who prefers reduced motion) would otherwise
+   * stay held for good. A listener arms no timer, so a still stays deterministic.
+   */
+  let watching = false;
+  function watchForVisitor(): void {
+    if (watching) return;
+    watching = true;
+    const takeOver = (event: Event): void => { if (event.isTrusted) stop(); };
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) window.addEventListener(type, takeOver, { capture: true, passive: true });
+  }
+
   async function playToPose(): Promise<void> {
     installHoverMirror();
     instant = true;
     if (poseIndex < 0) return;
+    watchForVisitor();
     for (const step of steps.slice(0, poseIndex)) await play(step);
   }
 
@@ -533,9 +590,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   }
 
   function startLoop(): void {
-    // Only a real hand stops it: the events above are untrusted, a visitor's are not.
-    const takeOver = (event: Event): void => { if (event.isTrusted) stop(); };
-    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) window.addEventListener(type, takeOver, { capture: true, passive: true });
+    watchForVisitor();
     loop().catch((error: unknown) => {
       console.error('[kangentic-demo] the choreography stopped:', error instanceof Error ? error.message : String(error));
       stop();

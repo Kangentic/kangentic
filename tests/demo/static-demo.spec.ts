@@ -2241,6 +2241,31 @@ test('a visitor\'s own click lets go of a held pose', async ({ page }) => {
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+// A held pose in a frame that does not loop (the site's take-control dialog never passes loop=1,
+// and a reader who prefers reduced motion gets still=1) must still let go on a real press, or the
+// visitor is left with a card stuck mid-drag or a window stuck over the dock edge.
+const HELD_POSES = [
+  { scene: 'card-drag', held: '.drag-overlay' },
+  { scene: 'window-dock', held: '[data-testid="snap-preview"]' },
+];
+for (const { scene, held } of HELD_POSES) {
+  for (const mode of [{}, { still: '1' }] as Array<Record<string, string>>) {
+    test(`view=${scene} ${mode.still ? 'as a still' : 'live without loop=1'} lets go of its pose on a visitor's own click`, async ({ page }) => {
+      const getUnexpectedErrors = collectUnexpectedErrors(page);
+      await gotoScene(page, { view: scene, embed: '1', ...mode });
+      await expect(page.locator(held)).toBeVisible();
+      // The title bar's app name: a real press there does nothing of its own.
+      await page.mouse.click(60, 20);
+      await expect(page.locator('html')).toHaveAttribute('data-demo-choreography', 'stopped');
+      // Hidden, not gone: the drag overlay unmounts, and the dock preview stays mounted with
+      // `display: none` (snap-preview-controller.ts).
+      await expect(page.locator(held)).toBeHidden();
+      await expect(page.locator('[data-demo-hover]'), 'no element is left marked as hovered').toHaveCount(0);
+      expect(getUnexpectedErrors()).toEqual([]);
+    });
+  }
+}
+
 test('a still with a pose plays it without the choreography\'s pointer, and a still without one fetches no player', async ({ page }) => {
   const playerRequests: string[] = [];
   page.on('request', (request) => { if (/\/choreography-[^/]*\.js$/.test(new URL(request.url()).pathname)) playerRequests.push(request.url()); });
