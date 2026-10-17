@@ -130,7 +130,7 @@ const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
  * here that already declares how it moves, so the list can only shrink.
  */
 const MOTION_PENDING = new Set([
-  'welcome', 'welcome-setup', 'board', 'board-filter', 'activity-tab', 'session-states', 'session-resume',
+  'welcome', 'welcome-setup', 'board-filter', 'activity-tab', 'session-states', 'session-resume',
   'activity-overlay', 'notification-toast', 'board-config-change', 'announcements', 'announcement-dialog',
   'browser', 'dictation-field', 'conversation', 'changes', 'monitor', 'monitor-table', 'command-terminal',
   'usage', 'knowledge-graph', 'backlog', 'quick-find', 'quick-find-results', 'new-task', 'edit-columns',

@@ -1804,6 +1804,14 @@ test('the tiled task windows take each session\'s tiled recording, fill their pa
   await gotoScene(page, { view: 'windows-tiled', embed: '1' });
   for (const [sessionId, fileStem] of [['sess-cw-middleware', 'contoso-web-claude-middleware'], ['sess-cw-api-client', 'contoso-web-claude-api-client']] as const) {
     await expect.poll(() => sentGrids(page, sessionId), { timeout: 10_000 }).not.toHaveLength(0);
+    // A variant is a second run with its own length, played from the moment the SESSION's clock
+    // began, and the clock stays the single recording's. A tiled window therefore opens partway
+    // into the variant (or after it ended, as api-client's does) and the session goes on working
+    // for the stretch its single recording has left. Re-basing the clock on the variant used to
+    // finish the session the moment its window opened, which CI's Linux runner caught (its fonts
+    // put the 125 percent display on the tiled layout too). Read as the window mounts: api-client's
+    // own stretch is 25 s, so it finishes on its clock soon after.
+    expect((await monitorRow(page, sessionId))?.activity, `${sessionId} finished when its tiled window opened`).toBe('thinking');
     // A tiled pane is within about eight columns either side of the tiled recording's 115 on every
     // platform (123 at 100 percent on Windows, 107 on this runner's Liberation Mono), and the tiled
     // recording shows it at a larger type than the single one could (layoutFor).
@@ -1812,15 +1820,6 @@ test('the tiled task windows take each session\'s tiled recording, fill their pa
     expect(getRecordingRequests().some((url) => url.includes(`/recordings/${fileStem}-`) && !url.includes('-tiled-'))).toBe(false);
   }
   await expectPanesFilled(page, 'windows-tiled');
-  // A variant is a second run with its own length, played from the moment the SESSION's clock
-  // began, and the clock stays the single recording's. A tiled window therefore opens partway
-  // into the variant and the session goes on working for the stretch its single recording has
-  // left, whether or not the variant has more to stream. Re-basing the clock on the variant used
-  // to finish the session the moment its window opened, which CI's Linux runner caught (its
-  // fonts put the 125 percent display on the tiled layout too).
-  for (const sessionId of ['sess-cw-middleware', 'sess-cw-api-client']) {
-    expect((await monitorRow(page, sessionId))?.activity, `${sessionId} finished when its tiled window opened`).toBe('thinking');
-  }
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
@@ -2073,8 +2072,9 @@ test('cards show the agent message trail the recordings carry, and it moves on t
   await expect(peekCard.getByTestId('monitor-card-peek')).toBeVisible();
   await expect(peekCard.getByTestId('monitor-card-trail')).toHaveCount(0);
 
-  // The api-client recording carries five more lines after the moment its live frame opens, so the
-  // card changes while the visitor watches, on the same clock the terminal replays on. Polled for
+  // The api-client recording carries one more line after the moment its live frame opens (its
+  // "Done." summary, about 24 s in), so the card changes while the visitor watches, on the same
+  // clock the terminal replays on. Polled for
   // the change rather than counted over a fixed span: the clock's offsets are the recording's, but
   // when it starts relative to the page rides on how long the bundle takes to boot.
   const openingLine = await readTrail(page, 'sess-cw-api-client');

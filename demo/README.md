@@ -1148,7 +1148,7 @@ content-hashed and a build has to be reproducible. What each working session get
 
 | Session | Recording | Changes kept in its live window |
 |---|---|---|
-| `sess-cw-api-client` | 207 s | 45 |
+| `sess-cw-api-client` | 207 s, a 25 s tail | 7 |
 | `sess-cw-middleware` | 128 s | 26 |
 | `sess-ob-otel` | 152 s | 25 |
 | `sess-ob-currency-a11y` | 35 s | 12 |
@@ -1159,6 +1159,12 @@ Which sessions the board shows as WORKING is chosen for this, not at random, and
 with tool calls in flight, so it reads as working and cannot read as anything else. One that ran
 to the agent's own end (`idle`) ends on an answer, so it can be either: shown as working it plays
 its last stretch and then finishes, which is the transition `loop=1` cycles.
+
+The api-client session's stretch is cut to 25 s so the board's hero flips a card from working to
+needs-you inside the first 30 s of every cycle: its last 25 s are the agent's final think, then
+its "Done." summary lands. Its tiled run is a second, shorter run (112 s) that ended at a
+permission prompt before the single recording's clock opens the session at 182 s, so
+`windows-tiled`'s right window paints that prompt while the card still reads working.
 
 That is why the OpenTelemetry session carries the Codex slot. It is 152 seconds of real work with
 25 changes, where the Redis TTL session it replaced was 21 seconds with 5, and looped those same

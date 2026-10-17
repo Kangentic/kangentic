@@ -834,6 +834,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     // mid-turn. One click, the same one a visitor could make.
     ready: '[data-session-id="sess-cw-middleware"]',
     steps: [{ click: '[data-session-id="sess-cw-middleware"]', waitFor: '[data-session-id="sess-cw-middleware"]' }],
+    motion: 'The panel streams the middleware session, and Generate API client types flips from working to needs-you about 25 s into each cycle (its 25 s tail).',
   },
   'board-filter': {
     name: 'board-filter',
@@ -965,8 +966,8 @@ export const SCENES: Record<string, SceneDefinition> = {
   'windows-tiled': {
     name: 'windows-tiled',
     reach: 'state',
-    description: 'The middleware and api-client task windows tiled side by side in the footprint a dock produces (TILED_PAIR_RECT). Both sessions carry a recording made at the tiled width (manifest geometry taskWindowTiled), so both terminals are at native type; the single recording would be held at two-thirds.',
-    alt: 'Two task windows tiled side by side over the board, Extract auth middleware on the left and Generate API client types on the right, each with Claude Code working in its terminal and a context bar below it showing the model, context use, and cost.',
+    description: 'The middleware and api-client task windows tiled side by side in the footprint a dock produces (TILED_PAIR_RECT). Both sessions carry a recording made at the tiled width (manifest geometry taskWindowTiled), so both terminals are at native type; the single recording would be held at two-thirds. The api-client session opens 25 s before its single recording ends (the board scene flips it), which is after its 112 s tiled run ended at a permission prompt, so the right window paints that run\'s last frame while the card reads working until the single recording ends.',
+    alt: 'Two task windows tiled side by side over the board: Claude Code working on Extract auth middleware on the left, and on the right asking to run a PowerShell typecheck for Generate API client types, each with a context bar of model, context use, and cost.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: tiledPairWorkspace() } },
     ready: '[data-testid^="tile-splitter-"]',
     motion: 'Both terminals replay their working sessions\' tiled recordings.',
