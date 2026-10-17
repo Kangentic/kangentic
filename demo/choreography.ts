@@ -68,7 +68,7 @@ const SETTLE_FRAMES = 45;
 const SETTLED_FRAMES = 3;
 /** Pacing after a step that names none. */
 const DEFAULT_PACING_MS: Record<string, number> = {
-  hover: 900, click: 900, contextmenu: 1200, drag: 900, type: 700, key: 500, scroll: 700, hotkeyDown: 900, hotkeyUp: 900,
+  hover: 900, click: 900, contextmenu: 1200, drag: 900, type: 700, key: 500, choose: 1200, scroll: 700, hotkeyDown: 900, hotkeyUp: 900,
 };
 /** The rest a visitor sees before the first cycle, and between cycles. */
 const FIRST_REST_MS = 2500;
@@ -328,6 +328,7 @@ function targetOf(step: ChoreographyStep): ChoreographyTarget | null {
   if ('contextmenu' in step) return step.contextmenu;
   if ('drag' in step) return step.drag.from;
   if ('type' in step && document.activeElement !== document.querySelector(step.type.into)) return step.type.into;
+  if ('choose' in step) return step.choose.in;
   return null;
 }
 
@@ -578,6 +579,25 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     }
   }
 
+  /**
+   * A native select picked: the pointer clicks the field, as a visitor's does, and the value is
+   * set through the element's own setter with the input and change events a pick sends. The
+   * browser's option list is its own window, which no page can draw, so it never shows.
+   */
+  async function chooseIn(selector: string, value: string): Promise<void> {
+    await travel(await locate(selector), TRAVEL_MS);
+    await pressAndRelease(0);
+    const field = await waitForElement(selector);
+    if (!(field instanceof HTMLSelectElement)) throw new Error(`the choreography chooses only in a select, and ${selector} is not one`);
+    if (!Array.from(field.options).some((option) => option.value === value)) {
+      throw new Error(`${selector} offers no option "${value}"`);
+    }
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+    if (setter) setter.call(field, value); else field.value = value;
+    field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   /** One key on whatever has the focus, which is where a keyboard's events go; it bubbles to the handlers above it. */
   function pressKey(key: string): void {
     const target = document.activeElement ?? document.body;
@@ -627,6 +647,8 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
       await typeInto(step.type.into, step.type.text);
     } else if ('key' in step) {
       pressKey(step.key);
+    } else if ('choose' in step) {
+      await chooseIn(step.choose.in, step.choose.value);
     } else if ('scroll' in step) {
       await scrollTo(step.scroll);
     } else if ('hotkeyDown' in step) {

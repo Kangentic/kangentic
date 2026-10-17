@@ -34,7 +34,7 @@ three things staying in step, and each is enforced rather than remembered.
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
   hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (steps
   from a closed vocabulary, the pointer's `hover`, `click`, `contextmenu` and `drag`, the
-  keyboard's `type`, an arrow `key` and a held `hotkeyDown`/`hotkeyUp`, a `scroll`, and one
+  keyboard's `type`, an arrow `key` and a held `hotkeyDown`/`hotkeyUp`, a select's `choose`, a `scroll`, and one
   `pose`, with pacing as a number on a step and every effect a step depends on a selector waited
   for; never Escape, never Enter, and never a write a visitor would have to undo, so a dialog's
   Cancel and a draft's revert end a cycle where Save and a promote would not), a

@@ -133,7 +133,7 @@ const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
 const BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
 
 /** The gestures a choreography step may make (ChoreographyGesture), and what may ride beside one. */
-const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'type', 'key', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose'];
+const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose'];
 const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
 
 /**
@@ -142,9 +142,9 @@ const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
  * here that already declares how it moves, so the list can only shrink.
  */
 const MOTION_PENDING = new Set([
-  'welcome', 'board-filter', 'activity-tab', 'session-states',
+  'welcome', 'board-filter', 'session-states',
   'activity-overlay', 'notification-toast', 'board-config-change', 'announcements', 'announcement-dialog',
-  'conversation', 'monitor', 'monitor-table', 'command-terminal',
+  'conversation', 'monitor-table', 'command-terminal',
   'quick-find', 'column-automation-turn-end', 'board-workflow',
   'workflow-draft', 'completed-tasks', 'completed-task', 'completed-task-usage',
   // Each holds its pose under loop=1; its loop is a Phase 3 row.
@@ -292,6 +292,11 @@ describe('scene registry', () => {
           expect(step.type.text, `${where}.type.text carries a dash or a curly quote`).not.toMatch(BANNED_CHARACTERS);
         }
         if ('key' in step) expect(CHOREOGRAPHY_KEYS as readonly string[], `${where}.key is not one a choreography may press`).toContain(step.key);
+        if ('choose' in step) {
+          expect(Object.keys(step.choose).sort(), `${where}.choose names a select and a value`).toEqual(['in', 'value']);
+          expect(step.choose.in.trim(), `${where}.choose.in`).not.toBe('');
+          expect(typeof step.choose.value, `${where}.choose.value`).toBe('string');
+        }
         if ('scroll' in step) expect(step.scroll.trim(), `${where}.scroll`).not.toBe('');
         // The same table boot.js presses a boot step's hotkey from, so a typo fails here and not in a frame.
         if ('hotkeyDown' in step) expect(step.hotkeyDown, `${where}.hotkeyDown`).toMatch(/^Mouse:(Back|Forward|Middle)$/);

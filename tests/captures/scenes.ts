@@ -30,7 +30,7 @@
  * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
@@ -89,6 +89,9 @@ export type ChoreographyGesture =
   | { type: { into: string; text: string } }
   /** One key, pressed and released on whatever has the focus. */
   | { key: (typeof CHOREOGRAPHY_KEYS)[number] }
+  /** An option of a native select picked: the pointer clicks the field and its value changes, with
+   *  the input and change events a pick sends. A page cannot draw the browser's own option list. */
+  | { choose: { in: string; value: string } }
   /** Scroll the element into the middle of its scroll container, as a wheel over it would. */
   | { scroll: string }
   /** A hotkey in the registry's spelling pressed and held, as a boot step's `press` holds it, and its release. */
@@ -905,6 +908,9 @@ const ALL_COLUMNS_CLEAN = `${BOARD_MANAGER}:has([data-testid="board-manager-tab-
 const automationPickerType = (type: string): string => `[data-testid="column-automation-picker-type"][data-type="${type}"]`;
 const DICTATION_FIELD_LISTENING = '[data-testid="dictation-live-chip"][data-placement="below"] [data-testid="dictation-recording-dot"][data-tone="active"]';
 const WORKFLOW_AUTH_CARD = `[data-testid="workflow-canvas-card"][data-workflow-task-key="${TASK_AUTH}"]`;
+/** The Agent Monitor's Group control in order: 1 Project, 2 Status. An icon may lead the group, so by type. */
+const monitorGroup = (position: number): string => `[role="group"][aria-label="Group sessions by"] > button:nth-of-type(${position})`;
+const MONITOR_FILTER = '[data-testid="monitor-text-filter"]';
 
 export const SCENES: Record<string, SceneDefinition> = {
   // ---------------------------------------------------------------- first launch
@@ -979,6 +985,14 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The terminal panel on its Activity tab: a timeline of tool calls across every running session, each line stamped with its time, its session, and the tool, with a filter above it.',
     ready: '[data-testid="activity-filter"]',
     steps: [{ click: '[data-testid="terminal-activity-tab"]', waitFor: '[data-testid="activity-filter"]' }],
+    // The list narrowed to one session's events, to another's, and back to All with the filter
+    // above it. The events themselves are seeded once: the recordings carry no tool events to put
+    // on their clocks, and the transcripts that would are not committed (demo/README.md).
+    choreography: [
+      { choose: { in: '[data-testid="activity-filter"]', value: SESSION_MIDDLEWARE }, waitFor: `[data-testid="activity-filter"] option[value="${SESSION_MIDDLEWARE}"]:checked`, ms: 2800 },
+      { choose: { in: '[data-testid="activity-filter"]', value: SESSION_API_CLIENT }, waitFor: `[data-testid="activity-filter"] option[value="${SESSION_API_CLIENT}"]:checked`, ms: 2400 },
+      { choose: { in: '[data-testid="activity-filter"]', value: '' }, waitFor: '[data-testid="activity-filter"] option[value=""]:checked', ms: 900 },
+    ],
   },
   'session-states': {
     name: 'session-states',
@@ -1286,6 +1300,18 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The Agent Monitor over all three projects: summary tiles for idle, active, and paused sessions, then a card per session grouped by project, each with its column, its latest output, and its model and context use.',
     ready: '[data-testid="monitor-card"]',
     steps: [{ click: '[data-testid="agent-monitor-button"]', waitFor: '[data-testid="monitor-page"]' }],
+    // The cards regrouped by status and back by project, then a filter typed, which narrows them to
+    // the sessions it matches, and cleared, and a click on the header that leaves the field. The
+    // view's grouping and filter persist (config.monitor), and the cycle ends on what it found.
+    // A card with a message trail draws the trail, never the output peek, so most cards change
+    // only when their agent's message lands; the cycle is what moves the page between those.
+    choreography: [
+      { click: monitorGroup(2), waitFor: `${monitorGroup(2)}[aria-pressed="true"]`, ms: 2800 },
+      { click: monitorGroup(1), waitFor: `${monitorGroup(1)}[aria-pressed="true"]`, ms: 1200 },
+      { type: { into: MONITOR_FILTER, text: 'auth' }, waitFor: '[data-testid="monitor-visible-count"]', ms: 2600 },
+      { type: { into: MONITOR_FILTER, text: '' }, waitFor: 'body:not(:has([data-testid="monitor-visible-count"]))', ms: 500 },
+      { click: { x: 0.75, y: 0.15 }, ms: 900 },
+    ],
   },
   'monitor-table': {
     name: 'monitor-table',
