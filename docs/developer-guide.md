@@ -217,7 +217,8 @@ name, no sourcemaps), and writes `dist/demo/`, which is gitignored and outside e
 glob. One plugin injects five classic scripts ahead of the module bundle: the scene registry, the
 boot script (`demo/boot.js`: the URL contract, config overrides, still and embed styles, the
 hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
-pre-reveal step runner, and a silent microphone in place of `getUserMedia`), the webview shim
+pre-reveal step runner, a silent microphone in place of `getUserMedia`, and, for each scene-only
+row a frame names, a `document.write` of that row's own script, so it runs ahead of the seed), the webview shim
 (`demo/webview-shim.js`: an iframe standing in for Electron's `<webview>` in the Browser pane,
 onto a bundled page with the project's own data at its dev URL), `tests/ui/mock-electron-api.js`
 verbatim, and the generated seed (the sample install from `tests/captures/helpers/demo-dataset.ts`
@@ -232,6 +233,8 @@ out of the scaffold's `commits.json`, the Knowledge Graph each project's map dra
 `scripts/capture-demo-knowledge-graph.mjs`, and the archived tasks' Completed Tasks rows from
 `tests/captures/fixtures/demo/archived/`, real headless runs recorded by
 `scripts/capture-demo-archived-runs.mjs`). The
+seed leaves out the recorded sessions of a scene-only row (frames, diff, peeks, trail, blame):
+the plugin emits them as `scene-rows/<task>.js`, which only a frame naming the row loads. The
 plugin also emits every
 recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
 mounts to replay the session as it happened, the agent boots a drag or a new Command
@@ -239,7 +242,7 @@ Terminal starts (recorded per task and per project by `scripts/capture-demo-sess
 the dataset), and the `claude --resume` boot a Resume replays for a session paused at its
 recording's end (recorded by the same script as `resume-<sessionId>.json`), plus the agent transcript behind a session under `transcripts/` (from
 `tests/captures/fixtures/demo/transcripts/`, derived by main's own parsers), which the
-conversation viewer fetches when it opens. The five scripts, the recordings, the transcripts, and the guest pages carry a content hash in their
+conversation viewer fetches when it opens. The five scripts, the recordings, the transcripts, the Knowledge Graph file, the scene-only row scripts, and the guest pages carry a content hash in their
 names, as Vite's own chunks do, so a copy GitHub Pages cached from an earlier release is never
 paired with a new seed. Beside them it emits `scenes.json` unhashed: the scene list (name, reach, the alt text a
 docs figure carries, the maintainer description), the frame size (1600 by 1000), and the app
@@ -393,7 +396,9 @@ npm run test:demo
 - **Type check:** the root `tsconfig.json` covers only `src/` and `packages/protocol/src/`, so
   `npm run typecheck` chains `npm run typecheck:src` (the root program) and
   `npm run typecheck:demo`, a second program (`tsconfig.demo.json`)
-  over `tests/demo/`, `tests/captures/`, and `demo/*.ts`. CI runs the two as separate steps. The
+  over `tests/demo/`, `tests/captures/`, and `demo/*.ts`, then a third (`tsconfig.demo-build.json`)
+  over the web build's Vite config, an ES module the second program's CommonJS settings cannot
+  resolve. CI runs `typecheck:src` and `typecheck:demo` as separate steps. The
   rest of `tests/` is typechecked only where those files import it (`tests/ui/helpers.ts`), so
   `tests/unit/` and the UI specs are not.
 

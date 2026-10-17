@@ -4,7 +4,9 @@
  * Runs as a classic script BEFORE tests/ui/mock-electron-api.js, so it owns everything the mock
  * reads at load time (window.__mockConfigOverrides) and everything the demo adds around the
  * renderer: the URL contract, the theme class, the still and embed styles, the scene applier
- * the seed script calls back into, and the boot-step runner that reveals the frame.
+ * the seed script calls back into, and the boot-step runner that reveals the frame. On a frame
+ * whose scene names a scene-only row it also writes that row's script in right after itself,
+ * so the row's recorded sessions are on the page before the seed runs.
  *
  * The renderer knows nothing about any of this. Every demo behaviour lives here or in the scene
  * registry (tests/captures/scenes.ts); src/renderer never checks location or a demo flag.
@@ -326,6 +328,22 @@
 
   var effective = mergeStates([scene, urlState]);
 
+  // ---------------------------------------------------------------- scene-only rows' recordings
+  // A scene-only row's recorded sessions (their frames, diff, peeks and trail) are not in the seed,
+  // since only a frame that names the row shows them. Each row's script is written here, while the
+  // parser is still in <head>, which makes it parser-inserted: it runs right after this script and
+  // before the mock and the seed, so the seed folds the row in with its sessions already on the
+  // page. A fetch, or a script added with createElement, would land after the renderer's deferred
+  // modules had read the bridge. The build emits each row's URL (window.__demoSceneRowScripts). A
+  // row with no URL writes nothing, and applyScene refuses it by name with a row that did not load.
+  if (errors.length === 0) {
+    var sceneRowScripts = window.__demoSceneRowScripts || {};
+    effective.rows.forEach(function (taskId) {
+      var scriptUrl = sceneRowScripts[taskId];
+      if (typeof scriptUrl === 'string') document.write('<script src="' + scriptUrl + '"></script>');
+    });
+  }
+
   // ---------------------------------------------------------------- config overrides
   // Object.assign in the mock is shallow, so nested objects are re-supplied whole.
   var overrides = {
@@ -416,6 +434,15 @@
     // open the What's New dialog behind the error card.
     window.electronAPI.app.getVersion = function () { return Promise.resolve(version); };
     if (errors.length > 0) return;
+    // A row whose script did not load (a 404, a blocked request, no URL in the build) leaves the
+    // seed nothing to fold in, so the frame refuses to boot rather than show the scene without its
+    // card.
+    var sceneRowData = window.__demoSceneRowData || {};
+    var unloadedRows = effective.rows.filter(function (taskId) { return !sceneRowData[taskId]; });
+    if (unloadedRows.length > 0) {
+      errors.push('The recorded sessions of the scene-only task "' + unloadedRows.join('", "') + '" did not load.');
+      return;
+    }
     // Session patches are the SEED's input, not a pass over its output: the seed derives the
     // Monitor rows, the usage, the activity stats, and each working session's clock from the
     // session as it builds it, so a patch applied to the rows afterwards left all of those

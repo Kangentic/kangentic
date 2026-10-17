@@ -68,7 +68,9 @@ three things staying in step, and each is enforced rather than remembered.
   A card only one figure needs is a scene-only row (`DEMO_SCENE_TASKS`, named by a scene's
   `rows`), for the reason the workflow seeds are scene data: a new card changes every figure
   already placed. Its session is recorded like any other, and the build refuses one without a
-  recording too.
+  recording too. Its recorded sessions ship as the row's own script, not in the eager seed, and
+  `demo/boot.js` writes that script into the page, parser-inserted ahead of the seed, only on a
+  frame whose scene names the row.
 - **What an agent's `kangentic_*` call prints is real.** A recording whose agent calls
   Kangentic's own MCP tools (a manifest entry marked `mcp`) runs against a `/preview` the capture
   seeds with the board the scene paints, through the desktop's launch shape: an `--mcp-config`
@@ -286,15 +288,19 @@ three things staying in step, and each is enforced rather than remembered.
   press, so the first press posts. A scene that names `settle` must settle. The Knowledge Graph
   must draw in a 3D context: no no-GPU card, island labels placed by a drawn frame, and named
   region pills. Its maps are fetched once, by the frame that opens the graph, and never by a board
-  frame. Runs as the `demo` job in `.github/workflows/ci.yml`
-  and again inside `.github/workflows/deploy-demo.yml` before the Pages deploy.
+  frame. A scene-only row's script loads once, on the frame that names the row and never on a
+  board, and a frame whose row script fails to load shows the error card naming the row. The tier
+  runs as the `demo` job in `.github/workflows/ci.yml` and again inside
+  `.github/workflows/deploy-demo.yml` before the Pages deploy.
 - **Type system (mechanical, CI):** `npm run typecheck` runs `tsconfig.demo.json`
   (`npm run typecheck:demo`, its own step in CI's `checks` job) over `tests/demo/`,
   `tests/captures/`, and `demo/*.ts`, none of which the root `tsconfig.json` covers. That program
   fails on a spec that calls a bridge method its own window type does not declare. It also fails
   on a rig call Playwright's types refuse, and on a call to a `demo/*.mjs` helper with an option
-  the helper's JSDoc does not declare. `tests/unit/typecheck-demo-program.test.ts` fails when the
-  program, its scripts, or its CI step drop out.
+  the helper's JSDoc does not declare. The same script then runs `tsconfig.demo-build.json` over
+  the web build's Vite config (`demo/vite.config.mts` and the root config it loads), which is an ES
+  module that program's CommonJS settings cannot resolve. `tests/unit/typecheck-demo-program.test.ts`
+  fails when either program, its scripts, or its CI step drop out.
 - **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, and a
   scene entry that carries code instead of data.
 
