@@ -1,5 +1,5 @@
 /**
- * Four contracts of the web demo that static-demo.spec.ts does not reach:
+ * Five contracts of the web demo that static-demo.spec.ts does not reach:
  *
  *  1. demo/boot.js validateSessionPatch refuses a state= blob's session patch for five reasons.
  *     static-demo.spec.ts covers "resumes a session it also stops"; this file covers the other
@@ -14,6 +14,10 @@
  *     registry allows) with an error naming the combo, instead of dispatching a keydown nothing
  *     listens for. The capture rig reaches it through `__demoBoot.pressCombo` for every `Mouse:`
  *     combo, and a listed button (`Mouse:Back`) still goes out as a pointerdown.
+ *  5. demo/boot.js validates a state= blob's `rows` (the scene-only task ids a frame adds) and
+ *     mergeStates keeps each id once across sources. A `rows` that is not an array, an id the build
+ *     does not carry, and a non-string id are each refused by name. A scene and a state= blob that
+ *     both name the same row boot normally and carry its card, session, and Monitor row once.
  *
  * The harness is a small copy of static-demo.spec.ts's (server boot, demoUrl, gotoScene,
  * encodeState, readyMessageFor). Importing that file instead would register its tests here too.
@@ -23,7 +27,7 @@ import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { SCENES } from '../captures/scenes';
-import { SESSION_WEBSOCKET, TASK_MIDDLEWARE, SESSION_MIDDLEWARE } from '../captures/helpers/demo-dataset';
+import { DEMO_SCENE_TASKS, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_MIDDLEWARE, TASK_VALIDATE, SESSION_MIDDLEWARE } from '../captures/helpers/demo-dataset';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
 
@@ -315,4 +319,87 @@ test('pressCombo still presses a listed mouse button (Mouse:Back) as one pointer
   // Button 3 is Mouse:Back (src/shared/keybindings.ts). A pressCombo that did nothing would not
   // throw either, so the event itself is what proves the press went out.
   expect(pressed).toEqual([{ button: 3, pointerType: 'mouse' }]);
+});
+
+// rows: the scene-only tasks a frame adds
+
+/** The scene-only task ids the build carries, which is the list a refusal prints. */
+const CARRIED_SCENE_ROW_IDS = DEMO_SCENE_TASKS.map((task) => task.id);
+
+interface SceneRowsRefusalCase {
+  readonly title: string;
+  /** What the blob's `rows` holds. Typed unknown because the point is a value the contract refuses. */
+  readonly rows: unknown;
+  /** Substrings of the one message this case exercises, so a check that refused for another reason fails. */
+  readonly expectedTexts: readonly string[];
+}
+
+const SCENE_ROWS_REFUSAL_CASES: readonly SceneRowsRefusalCase[] = [
+  // A bare string, not a one-element list: without the Array check it would be iterated as text.
+  { title: 'is not an array', rows: TASK_VALIDATE, expectedTexts: ['.rows must be an array of task ids'] },
+  {
+    title: 'names a task the build does not carry',
+    rows: ['task-nope'],
+    expectedTexts: ['.rows names "task-nope"', `(${CARRIED_SCENE_ROW_IDS.join(', ')})`],
+  },
+  // 42 is not a string, so no id the build carries could equal it either way. The typeof check is
+  // what keeps a non-string from reaching the seed as an id.
+  {
+    title: 'names a non-string id',
+    rows: [42],
+    expectedTexts: ['.rows names "42"', `(${CARRIED_SCENE_ROW_IDS.join(', ')})`],
+  },
+];
+
+for (const refusalCase of SCENE_ROWS_REFUSAL_CASES) {
+  test(`a state= blob whose rows ${refusalCase.title} is refused`, async ({ page }) => {
+    const blob = encodeState({ rows: refusalCase.rows });
+    await page.goto(demoUrl({ state: blob, embed: '1', still: '1' }));
+    const errorCard = page.locator('[data-testid="demo-error"]');
+    await expect(errorCard).toBeVisible();
+    for (const expectedText of refusalCase.expectedTexts) {
+      await expect(errorCard).toContainText(expectedText);
+    }
+    await expect(page.locator('[data-swimlane-name]')).toHaveCount(0);
+    await expect(page.locator('html')).not.toHaveAttribute('data-demo-ready');
+  });
+}
+
+/** The part of the window the dedup test reads: the bridge's task and session lists and the Monitor rows the mock publishes. */
+interface DemoRowsWindow {
+  electronAPI: {
+    tasks: { list: () => Promise<Array<{ id: string }>> };
+    sessions: { list: () => Promise<Array<{ id: string }>> };
+  };
+  __mockMonitorRows?: Array<{ sessionId: string }>;
+}
+
+test('a scene and a state= blob that both name the same scene-only row carry its card, session, and Monitor row once', async ({ page }) => {
+  // The scene's own list must still name the row. If it stopped, this would be a single source
+  // naming it once and the test would pass without exercising the merge across two sources.
+  expect(SCENES['task-mcp'].rows, 'the task-mcp scene stopped naming the scene-only row this test merges a second copy into').toEqual([TASK_VALIDATE]);
+
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  // view= and state= are merged (mergeStates([scene, urlState])), so this is the cross-source form:
+  // the scene's rows and the blob's rows both name TASK_VALIDATE.
+  await gotoScene(page, { view: 'task-mcp', embed: '1', still: '1', state: encodeState({ rows: [TASK_VALIDATE] }) });
+  await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Validate request bodies');
+
+  // The seed pushes a row once per name it is given, so a duplicate would show up in the arrays
+  // it builds before anything is drawn. The board card is read inside the lanes, since the task
+  // window the scene opens carries the same data-task-id on other elements.
+  const counts = await page.evaluate(async ({ taskId, sessionId }) => {
+    const demoWindow = window as unknown as DemoRowsWindow;
+    const tasks = await demoWindow.electronAPI.tasks.list();
+    const sessions = await demoWindow.electronAPI.sessions.list();
+    return {
+      tasks: tasks.filter((row) => row.id === taskId).length,
+      sessions: sessions.filter((row) => row.id === sessionId).length,
+      monitorRows: (demoWindow.__mockMonitorRows ?? []).filter((row) => row.sessionId === sessionId).length,
+      boardCards: document.querySelectorAll(`[data-board-lanes] [data-task-id="${taskId}"]`).length,
+    };
+  }, { taskId: TASK_VALIDATE, sessionId: SESSION_VALIDATE });
+  expect(counts).toEqual({ tasks: 1, sessions: 1, monitorRows: 1, boardCards: 1 });
+
+  expect(getUnexpectedErrors()).toEqual([]);
 });

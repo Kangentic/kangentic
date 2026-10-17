@@ -47,6 +47,16 @@ function listFiles(dir, prefix = '') {
 }
 
 /**
+ * Stage a scratch copy the capture matrix refreshed from its scaffold, for the commit that follows:
+ * every change, but never `.kangentic/`. An `mcp` capture runs in a task worktree under it
+ * (scripts/lib/demo-mcp-capture.mjs), and a leftover one would be committed into the scaffold's
+ * history as a gitlink.
+ */
+export function stageScaffoldRefresh(target) {
+  execFileSync('git', ['add', '-A', '--', '.', ':(exclude).kangentic'], { cwd: target, stdio: 'ignore' });
+}
+
+/**
  * Copy the scaffold to `target` and commit it following its plan. Returns the plan's author
  * identity so callers that commit later (the matrix's scaffold refresh) use the same one.
  */

@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildScaffoldRepo, readCommitPlan } from '../../scripts/lib/demo-scaffold-repo.mjs';
+import { buildScaffoldRepo, readCommitPlan, stageScaffoldRefresh } from '../../scripts/lib/demo-scaffold-repo.mjs';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAFFOLD_DIR = path.join(REPO_ROOT, 'scripts/demo-repos/contoso-web');
@@ -305,5 +305,119 @@ describe('demo-scaffold-repo', () => {
         .split('\n');
       expect(authorLines).toEqual([planAuthor.name, planAuthor.email]);
     });
+  });
+});
+
+/**
+ * stageScaffoldRefresh stages the scratch clone the capture matrix refreshed from its scaffold, for
+ * the commit that follows: every change, but never `.kangentic/`. An `mcp` capture runs in a task
+ * worktree under that folder, and a leftover one is a git repository of its own, which a plain
+ * `git add -A` stages as a gitlink and the next commit then bakes into the scaffold's history.
+ * Each test below builds its repository from scratch under os.tmpdir() and reads the index with
+ * `git diff --cached --name-only`. The last test stages the identical fixture with a plain
+ * `git add -A` and expects the leftover worktree in the index, which proves the exclusion earns
+ * its place on the git this runs on rather than passing because nothing would have been staged.
+ */
+describe('stageScaffoldRefresh', () => {
+  let refreshRoot: string;
+
+  /** Runs git with an identity and signing pinned on the command line, as the module pins its own calls. */
+  function runPinnedGit(targetDirectory: string, args: string[]): string {
+    return execFileSync(
+      'git',
+      [
+        '-c', 'user.name=Dev',
+        '-c', 'user.email=dev@example.com',
+        '-c', 'commit.gpgsign=false',
+        '-c', 'core.autocrlf=false',
+        '-C', targetDirectory,
+        ...args,
+      ],
+      // Piped stderr keeps git's "adding embedded git repository" warning out of the test output.
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+  }
+
+  function writeFileUnder(rootDirectory: string, relativePath: string, content: string): void {
+    const filePath = path.join(rootDirectory, relativePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content);
+  }
+
+  function stagedPaths(repository: string): string[] {
+    return runPinnedGit(repository, ['diff', '--cached', '--name-only'])
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .sort();
+  }
+
+  /**
+   * A scratch clone as the matrix leaves it before the refresh commit: one committed file the
+   * refresh then changes, a file it adds, a leftover task worktree that is a repository with a
+   * commit of its own (the shape `git add -A` records as a gitlink), and a plain runtime file.
+   */
+  function buildRefreshFixture(name: string): string {
+    const repository = path.join(refreshRoot, name);
+    fs.mkdirSync(repository, { recursive: true });
+    runPinnedGit(repository, ['init', '-q', '-b', 'main']);
+    writeFileUnder(repository, 'tracked.txt', 'version one\n');
+    writeFileUnder(repository, 'untouched.txt', 'never changes\n');
+    runPinnedGit(repository, ['add', '--', 'tracked.txt', 'untouched.txt']);
+    runPinnedGit(repository, ['commit', '-q', '-m', 'Initial import']);
+
+    writeFileUnder(repository, 'tracked.txt', 'version two\n');
+    writeFileUnder(repository, 'src/new-file.txt', 'added by the refresh\n');
+
+    const leftoverWorktree = path.join(repository, '.kangentic', 'worktrees', 'x');
+    fs.mkdirSync(leftoverWorktree, { recursive: true });
+    runPinnedGit(leftoverWorktree, ['init', '-q', '-b', 'main']);
+    writeFileUnder(leftoverWorktree, 'work.txt', 'the task agent\'s work\n');
+    runPinnedGit(leftoverWorktree, ['add', '--', 'work.txt']);
+    runPinnedGit(leftoverWorktree, ['commit', '-q', '-m', 'Task work']);
+
+    writeFileUnder(repository, '.kangentic/sessions/s1/status.json', '{}\n');
+    return repository;
+  }
+
+  beforeAll(() => {
+    refreshRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-scaffold-refresh-test-'));
+  });
+
+  afterAll(() => {
+    fs.rmSync(refreshRoot, { recursive: true, force: true });
+  });
+
+  it('stages the changed file and the new file, and nothing else', () => {
+    const repository = buildRefreshFixture('stage-changes');
+    // Vacuity guard: nothing is staged before the call, so the list below is the call's doing.
+    expect(stagedPaths(repository)).toEqual([]);
+
+    stageScaffoldRefresh(repository);
+
+    expect(stagedPaths(repository)).toEqual(['src/new-file.txt', 'tracked.txt']);
+  });
+
+  it('stages nothing under .kangentic, neither a leftover task worktree repository nor a plain file', () => {
+    const repository = buildRefreshFixture('stage-excludes-kangentic');
+
+    stageScaffoldRefresh(repository);
+
+    expect(stagedPaths(repository).filter((stagedPath) => stagedPath.startsWith('.kangentic'))).toEqual([]);
+    expect(runPinnedGit(repository, ['ls-files', '--stage', '--', '.kangentic'])).toBe('');
+  });
+
+  it('is the exclusion that keeps the leftover worktree out: a plain git add -A stages it as a gitlink', () => {
+    const repository = buildRefreshFixture('plain-add-all');
+
+    runPinnedGit(repository, ['add', '-A']);
+
+    expect(stagedPaths(repository)).toEqual([
+      '.kangentic/sessions/s1/status.json',
+      '.kangentic/worktrees/x',
+      'src/new-file.txt',
+      'tracked.txt',
+    ]);
+    // Mode 160000 is a gitlink: the entry is the nested repository's commit, not its files.
+    expect(runPinnedGit(repository, ['ls-files', '--stage', '--', '.kangentic/worktrees/x'])).toMatch(/^160000 /);
   });
 });
