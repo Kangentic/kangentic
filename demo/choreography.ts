@@ -726,6 +726,12 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
         .map((attribute) => element.getAttribute(attribute) ?? '').join('/');
       parts.push(`${element.getAttribute('data-testid') ?? element.tagName.toLowerCase()}:${state}`);
     }
+    // A text field a cycle leaves focused draws its focus ring, which the poster does not.
+    const active = document.activeElement;
+    const focusedField = active instanceof Element && active.matches(TEXT_FIELD) && !active.closest(EDITOR_SURFACES)
+      ? active.getAttribute('data-testid') ?? active.getAttribute('placeholder') ?? active.tagName.toLowerCase()
+      : 'none';
+    parts.push(`text focus:${focusedField}`);
     return parts.join('\n');
   }
 
@@ -757,12 +763,23 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     for (let frame = 0; frame < SETTLE_FRAMES && !stopped && getComputedStyle(fading).opacity !== String(opacity); frame++) await nextFrame();
   }
 
+  /**
+   * Where a cut is, on `<html data-demo-cut>`: fading `out`, playing its `reset` behind the opaque
+   * veil, or fading back `in`. A test reads it to tell the reset's changes from the story's.
+   */
+  function markCut(phase: 'out' | 'reset' | 'in' | null): void {
+    if (phase) document.documentElement.setAttribute('data-demo-cut', phase);
+    else document.documentElement.removeAttribute('data-demo-cut');
+  }
+
   /** The cut: the pointer goes, the frame fades out, and the steps after it play at once behind the veil. */
   async function cutAway(): Promise<void> {
     cutting = true;
+    markCut('out');
     showCursor(false);
     await fadeVeil(1);
     instant = true;
+    if (!stopped) markCut('reset');
   }
 
   /**
@@ -778,8 +795,10 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     await placeBeside(cycle);
     instant = false;
     if (stopped) return;
+    markCut('in');
     await fadeVeil(0);
     cutting = false;
+    if (!stopped) markCut(null);
   }
 
   /**
@@ -803,6 +822,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     veil?.remove();
     veil = null;
     cutting = false;
+    markCut(null);
     setState('stopped');
   }
 

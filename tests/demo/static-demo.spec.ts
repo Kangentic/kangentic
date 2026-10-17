@@ -2362,6 +2362,92 @@ test('a cut fades the frame out, puts the edit back behind the veil, and fades i
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+/** The scenes whose choreography ends its story on a cut. */
+const CUT_SCENES = Object.values(SCENES).filter((scene) => (scene.choreography ?? []).some((step) => 'cut' in step));
+
+test('the registry carries cuts to check', () => {
+  // Vacuity guard for the loop below.
+  expect(CUT_SCENES.length).toBeGreaterThan(1);
+});
+
+for (const scene of CUT_SCENES) {
+  test(`view=${scene.name} puts its edit back only behind an opaque veil, and fades in on a settled frame`, async ({ page }) => {
+    // Every state change a visitor could see (a field's value, a switch, a pressed or selected
+    // control, a card or a dialog coming or going) is logged with the cut's phase and what covered
+    // the frame when it landed. The reset's changes belong under the landed veil with no pointer
+    // drawn, and nothing changes while the frame fades back in.
+    test.setTimeout(90_000);
+    const getUnexpectedErrors = collectUnexpectedErrors(page);
+    await page.addInitScript((rate) => {
+      (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
+      type Change = { what: string; phase: string; veil: string; cursor: string };
+      const changes: Change[] = [];
+      const phases: Change[] = [];
+      Object.assign(window, { __cutChanges: changes, __cutPhases: phases });
+      const covering = (what: string): Change => {
+        const veil = document.querySelector('[data-demo-veil]');
+        const cursor = document.querySelector<HTMLElement>('[data-demo-cursor]');
+        return {
+          what,
+          phase: document.documentElement.getAttribute('data-demo-cut') ?? 'none',
+          veil: veil ? getComputedStyle(veil).opacity : 'none',
+          cursor: cursor ? cursor.style.opacity : 'none',
+        };
+      };
+      const ours = (node: Node): boolean => node instanceof Element && (node.closest('[data-demo-veil], [data-demo-cursor], .xterm') !== null);
+      const SHOWN = '[data-task-id], [role="dialog"], [data-dismissable-layer]';
+      // A task window's rect is its frame's inline style: a window docked and floated again
+      // changes nothing else a visitor would see.
+      const WINDOW = '[data-testid^="window-frame-"]';
+      for (const type of ['input', 'change']) {
+        document.addEventListener(type, (event) => {
+          if (event.target instanceof Node && !ours(event.target)) changes.push(covering(`${type} ${(event.target as Element).getAttribute?.('data-testid') ?? ''}`));
+        }, true);
+      }
+      new MutationObserver((records) => {
+        for (const record of records) {
+          if (record.target === document.documentElement && record.attributeName === 'data-demo-cut') {
+            phases.push(covering('phase'));
+            continue;
+          }
+          if (ours(record.target)) continue;
+          if (record.attributeName === 'style' && !(record.target as Element).matches(WINDOW)) continue;
+          if (record.type === 'attributes') {
+            changes.push(covering(`${record.attributeName} ${(record.target as Element).getAttribute('data-testid') ?? (record.target as Element).tagName}`));
+            continue;
+          }
+          for (const node of [...Array.from(record.addedNodes), ...Array.from(record.removedNodes)]) {
+            if (node instanceof Element && node.matches(SHOWN)) changes.push(covering(`${record.addedNodes.length > 0 ? 'added' : 'removed'} ${node.getAttribute('data-testid') ?? node.getAttribute('data-task-id') ?? node.tagName}`));
+          }
+        }
+      }).observe(document, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['data-demo-cut', 'aria-checked', 'aria-pressed', 'aria-selected', 'aria-expanded', 'checked', 'disabled', 'data-selected', 'style'],
+      });
+    }, CHOREOGRAPHY_TEST_RATE);
+    await gotoScene(page, { view: scene.name, embed: '1', loop: '1' });
+    const root = page.locator('html');
+    await expect(root).toHaveAttribute('data-demo-cycles', '1', { timeout: 60_000 });
+    type Change = { what: string; phase: string; veil: string; cursor: string };
+    const { changes, phases } = await page.evaluate(() => ({
+      changes: (window as unknown as { __cutChanges: Change[] }).__cutChanges,
+      phases: (window as unknown as { __cutPhases: Change[] }).__cutPhases,
+    }));
+    expect(phases.map((entry) => entry.phase).slice(0, 4), 'the cut fades out, resets, fades in, and ends').toEqual(['out', 'reset', 'in', 'none']);
+    const reset = phases.find((entry) => entry.phase === 'reset');
+    expect(reset && { veil: reset.veil, cursor: reset.cursor }, 'the reset starts under a landed veil with no pointer').toEqual({ veil: '1', cursor: '0' });
+    const behind = changes.filter((change) => change.phase === 'reset');
+    expect(behind.length, 'the reset puts something back').toBeGreaterThan(0);
+    expect(behind.filter((change) => change.veil !== '1' || change.cursor !== '0'), 'the reset changes nothing in view').toEqual([]);
+    expect(changes.filter((change) => change.phase === 'in'), 'nothing changes while the frame fades back in').toEqual([]);
+    await expect(page.locator('[data-demo-veil]')).toHaveCSS('opacity', '0');
+    await expect(root).not.toHaveAttribute('data-demo-choreography', 'stopped');
+    expect(getUnexpectedErrors()).toEqual([]);
+  });
+}
+
 test('a visitor\'s own click stops the choreography and takes the pointer away', async ({ page }) => {
   test.setTimeout(60_000);
   const getUnexpectedErrors = collectUnexpectedErrors(page);
