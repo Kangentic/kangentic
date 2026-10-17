@@ -11,7 +11,8 @@
  *   node demo/measure.mjs --motion   how much of each scene's frame changes under loop=1: every
  *                                    scene in scenes.json at 1600 by 1000, sampled every 2 s for
  *                                    16 s, as moves, marks (spinning marks only), or still
- *                                    (demo/README.md, Choreography and timelines)
+ *                                    (demo/README.md, Choreography and timelines);
+ *                                    --scenes=a,b measures only those
  *
  * Numbers go to stdout as one markdown block for demo/README.md. Nothing here is a test; the
  * `demo` Playwright tier asserts the invariants, this script reports the magnitudes.
@@ -375,7 +376,13 @@ async function measureMotionOf(browser, differ, server, sceneName) {
 }
 
 async function measureMotion(server) {
-  const { scenes } = JSON.parse(fs.readFileSync(path.join(distDir, 'scenes.json'), 'utf8'));
+  const listed = JSON.parse(fs.readFileSync(path.join(distDir, 'scenes.json'), 'utf8')).scenes;
+  const filter = process.argv.find((argument) => argument.startsWith('--scenes='));
+  const wanted = filter ? new Set(filter.slice('--scenes='.length).split(',')) : null;
+  const scenes = wanted ? listed.filter((scene) => wanted.has(scene.name)) : listed;
+  if (wanted && scenes.length !== wanted.size) {
+    throw new Error(`--scenes names a scene the build does not list: ${[...wanted].filter((name) => !listed.some((scene) => scene.name === name)).join(', ')}`);
+  }
   const browser = await chromium.launch({ headless: true });
   const differ = await (await browser.newContext()).newPage();
   const results = [];
