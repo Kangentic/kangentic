@@ -70,7 +70,10 @@ export type DemoBootStep =
  */
 export type ChoreographyTarget = string | { x: number; y: number };
 
-/** What one choreography step does with the pointer (demo/choreography.ts plays it). */
+/** The keys a choreography may press: moving a selection. Never Escape, which a host reads as "leave", and never Enter, which submits. */
+export const CHOREOGRAPHY_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'] as const;
+
+/** What one choreography step does with the pointer or the keyboard (demo/choreography.ts plays it). */
 export type ChoreographyGesture =
   /** Travel to the target and rest there, as a visitor's mouse does. */
   | { hover: ChoreographyTarget }
@@ -79,6 +82,16 @@ export type ChoreographyGesture =
   /** Press on `from`, travel to `to`, and release, or with `hold` stay pressed: the gesture in
    *  flight (the drag overlay, the dock preview). */
   | { drag: { from: ChoreographyTarget; to: ChoreographyTarget; hold?: boolean } }
+  /** Edit a field's text to `text` a keystroke at a time: back to what the two share, then on. The
+   *  pointer clicks into the field first unless it already has the focus. `''` clears it. */
+  | { type: { into: string; text: string } }
+  /** One key, pressed and released on whatever has the focus. */
+  | { key: (typeof CHOREOGRAPHY_KEYS)[number] }
+  /** Scroll the element into the middle of its scroll container, as a wheel over it would. */
+  | { scroll: string }
+  /** A hotkey in the registry's spelling pressed and held, as a boot step's `press` holds it, and its release. */
+  | { hotkeyDown: string }
+  | { hotkeyUp: string }
   /** The poster's moment. A still plays the steps up to it and stops, and a live loop starts and
    *  ends on it. At most one; without one the loop rests where the boot steps left the frame. */
   | { pose: true };
@@ -642,6 +655,15 @@ const WORKFLOW_VIEW_ROUND_TRIP: DemoBootStep[] = [
 
 const SETTINGS_PANEL = '[data-testid="settings-panel"]';
 
+/** The Git tab's base branch field, and the nth branch its list offers (the mock's: main, develop, then three more). */
+const BRANCH_PICKER = '[data-testid="branch-picker-input"]';
+const branchOption = (position: number): string => `[data-testid="branch-picker-dropdown"] > div:nth-child(2) > button:nth-child(${position})`;
+/** The list gone, not just closing: the popover stays mounted through its exit animation. */
+const BRANCH_PICKER_CLOSED = 'body:not(:has([data-testid="branch-picker-dropdown"]))';
+/** An option of the Task tab's card density choice, by its label. */
+const cardDensity = (label: 'Compact' | 'Default' | 'Comfortable'): string => `[data-testid="card-density-choice"] [role="radio"][aria-label="${label}"]`;
+const mcpGroupToggle = (group: string): string => `[data-testid="mcp-tool-group-${group}-toggle"]`;
+
 /**
  * Dictation switched on and nothing else changed. Nested config blocks replace the demo defaults
  * whole (boot.js merges config shallowly), so the whole block rides along with only `enabled`
@@ -681,17 +703,43 @@ const ANNOUNCEMENT_HISTORY = ANNOUNCEMENTS.map((announcement) => ({ announcement
 // test) is left out rather than described. An entry may carry
 // `config` to show its tab in use: Dictation is switched on, because off it greys out every row
 // below the switch and reads as a feature that is not there.
-const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?: Record<string, unknown>; note?: string }> = {
+const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?: Record<string, unknown>; note?: string; choreography?: ChoreographyStep[] }> = {
   general: { ready: '[data-testid="setting-row-project.location"]', alt: 'Settings on the General tab: the project\'s folder on disk, with a control to move it.' },
   // `ready` stays on the Theme row rather than the switch that now leads the tab: the grid is the
   // figure's subject, and both rows mount in the same commit.
   theme: { ready: '[data-testid="setting-row-theme"]', alt: 'Settings on the Theme tab: a Follow system appearance switch, then twelve theme tiles in Dark and Light groups, each painted in its own colors, with the current theme outlined.' },
   agent: { ready: '[data-testid="setting-row-project.defaultAgent"]', alt: 'Settings on the Agent tab: the project\'s default agent, its model and effort, the permission mode, and the path to the agent\'s CLI.' },
-  git: { ready: '[data-testid="setting-row-git.worktreesEnabled"]', alt: 'Settings on the Git tab in three cards: Branches with the default base branch and auto-fetch, Worktrees with its switch, cleanup, node_modules linking, and files and a script for each new worktree, and Pull requests with auto-refresh and merge bypass.' },
+  // The base branch picked from the branch list and back, then auto-fetch off and on. Each one
+  // writes the project's config as the desktop's does, and the cycle writes back what it found.
+  git: {
+    ready: '[data-testid="setting-row-git.worktreesEnabled"]',
+    alt: 'Settings on the Git tab in three cards: Branches with the default base branch and auto-fetch, Worktrees with its switch, cleanup, node_modules linking, and files and a script for each new worktree, and Pull requests with auto-refresh and merge bypass.',
+    choreography: [
+      { click: BRANCH_PICKER, waitFor: branchOption(2), ms: 700 },
+      { hover: branchOption(2), ms: 500 },
+      { click: branchOption(2), waitFor: BRANCH_PICKER_CLOSED, ms: 1600 },
+      { click: BRANCH_PICKER, waitFor: branchOption(1), ms: 500 },
+      { click: branchOption(1), waitFor: BRANCH_PICKER_CLOSED, ms: 1200 },
+      { click: '[data-testid="setting-row-git.autoFetch"]', waitFor: '[data-testid="setting-row-git.autoFetch"][aria-checked="false"]', ms: 1100 },
+      { click: '[data-testid="setting-row-git.autoFetch"]', waitFor: '[data-testid="setting-row-git.autoFetch"][aria-checked="true"]', ms: 600 },
+    ],
+  },
   browser: { ready: '[data-testid="setting-row-browser.enabled"]', alt: 'Settings on the Browser tab: the Browser pane toggle, the default URL a task opens, and a control to clear the browser\'s data.' },
   shortcuts: { ready: '[data-testid="add-shortcut"]', alt: 'Settings on the Shortcuts tab: the project\'s command shortcuts, none configured here, with Add shortcut and Presets controls.' },
   board: { ready: '[data-testid="setting-row-columnWidth"]', alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel and the status bar.' },
-  task: { ready: '[data-testid="setting-row-cardDensity"]', alt: 'Settings on the Task tab: card density, card preview, ticket numbers, and a switch for each pill the context bar shows.' },
+  // Card density through Compact and Comfortable and back, which redraws the board's cards beside
+  // the panel live, then the context bar's Cost pill off and on.
+  task: {
+    ready: '[data-testid="setting-row-cardDensity"]',
+    alt: 'Settings on the Task tab: card density, card preview, ticket numbers, and a switch for each pill the context bar shows.',
+    choreography: [
+      { click: cardDensity('Compact'), waitFor: `${cardDensity('Compact')}[aria-checked="true"]`, ms: 1800 },
+      { click: cardDensity('Comfortable'), waitFor: `${cardDensity('Comfortable')}[aria-checked="true"]`, ms: 1800 },
+      { click: cardDensity('Default'), waitFor: `${cardDensity('Default')}[aria-checked="true"]`, ms: 1200 },
+      { click: '[data-testid="setting-row-contextBar.showCost"]', waitFor: '[data-testid="setting-row-contextBar.showCost"][aria-checked="false"]', ms: 1100 },
+      { click: '[data-testid="setting-row-contextBar.showCost"]', waitFor: '[data-testid="setting-row-contextBar.showCost"][aria-checked="true"]', ms: 600 },
+    ],
+  },
   changes: { ready: '[data-testid="setting-row-diffViewMode"]', alt: 'Settings on the Changes tab: the diff layout, the default scope a Changes panel opens on, the whitespace, folding, wrapping, and narrow-pane options, and file sorting.' },
   terminal: { ready: '[data-testid="setting-row-terminal.shell"]', alt: 'Settings on the Terminal tab: the shell, the font size and family, the cursor style, backspace behavior, and the terminal colors.' },
   behavior: { ready: '[data-testid="setting-row-agent.maxConcurrentSessions"]', alt: 'Settings on the Behavior tab: the concurrent session cap, what happens when it is reached, idle focus and timeout, auto-resume, and how windows dismiss and restore.' },
@@ -715,7 +763,22 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     ready: '[data-testid="setting-row-knowledgeGraph.indexingEnabled"]',
     alt: `Settings on the Knowledge Graph tab, switched on: search quality, the downloaded local model, acceleration, and no Ask agent yet, then an Index card counting ${DEMO_KNOWLEDGE_GRAPH_STATUS.sources?.conversations.count} conversations, ${DEMO_KNOWLEDGE_GRAPH_STATUS.sources?.tasks.count} tasks and ${DEMO_KNOWLEDGE_GRAPH_STATUS.sources?.commits.count} commits, with summaries and source code waiting on an agent.`,
   },
-  mcpServer: { ready: '[data-testid="setting-row-mcpServer.enabled"]', alt: 'Settings on the MCP Server tab: one card with the server switch and, inside it, a Documentation row and the available tools in collapsible groups by area: tasks, board, sessions, and more.' },
+  // The tool groups folded up one by one, which brings the closed Diagnostics group into view, that
+  // one opened and closed, and the rest opened again. The groups' open state is the tab's own.
+  mcpServer: {
+    ready: '[data-testid="setting-row-mcpServer.enabled"]',
+    alt: 'Settings on the MCP Server tab: one card with the server switch and, inside it, a Documentation row and the available tools in collapsible groups by area: tasks, board, sessions, and more.',
+    choreography: [
+      { click: mcpGroupToggle('tasks'), waitFor: `${mcpGroupToggle('tasks')}[aria-expanded="false"]`, ms: 600 },
+      { click: mcpGroupToggle('board'), waitFor: `${mcpGroupToggle('board')}[aria-expanded="false"]`, ms: 600 },
+      { click: mcpGroupToggle('workflows'), waitFor: `${mcpGroupToggle('workflows')}[aria-expanded="false"]`, ms: 900 },
+      { click: mcpGroupToggle('diagnostics'), waitFor: `${mcpGroupToggle('diagnostics')}[aria-expanded="true"]`, ms: 2000 },
+      { click: mcpGroupToggle('diagnostics'), waitFor: `${mcpGroupToggle('diagnostics')}[aria-expanded="false"]`, ms: 700 },
+      { click: mcpGroupToggle('workflows'), waitFor: `${mcpGroupToggle('workflows')}[aria-expanded="true"]`, ms: 500 },
+      { click: mcpGroupToggle('board'), waitFor: `${mcpGroupToggle('board')}[aria-expanded="true"]`, ms: 500 },
+      { click: mcpGroupToggle('tasks'), waitFor: `${mcpGroupToggle('tasks')}[aria-expanded="true"]`, ms: 600 },
+    ],
+  },
   browserAutomation: { ready: '[data-testid="setting-row-browserAutomation.enabled"]', alt: 'Settings on the Agent Browser tab: one card with the browser automation switch and the actions agents get: interaction, navigation with a localhost restriction under it, and eval.' },
   mobile: { ready: '[data-testid="setting-row-mobileBridge.enabled"]', alt: 'Settings on the Mobile Devices tab: the Mobile bridge switch, off here, with links to how the relay works and how to install and pair.' },
   privacy: { ready: '[data-testid="privacy-contact-email"]', alt: 'Settings on the Privacy tab: what anonymous analytics are collected and what is not, how they work, and how to opt out.' },
@@ -732,6 +795,7 @@ function settingsScenes(): Record<string, SceneDefinition> {
       description: `The Settings dialog on the ${tab} tab, opened with the gear and the tab button.${entry.note ? ` ${entry.note}` : ''}`,
       alt: entry.alt,
       ...(entry.config ? { config: entry.config } : {}),
+      ...(entry.choreography ? { choreography: entry.choreography } : {}),
       ready: entry.ready,
       focus: SETTINGS_PANEL,
       steps: [
@@ -785,6 +849,34 @@ function knowledgeGraphProjectScenes(): Record<string, SceneDefinition> {
   return scenes;
 }
 
+// ---------------------------------------------------------------- choreography targets
+// Selectors the choreographies below share. A removal is waited for with `body:not(:has(...))`: a
+// popover or a dialog stays mounted through its exit animation, and pacing never covers the app's
+// own timing (a test plays the pacing eight times faster).
+
+const WELCOME_REFRESH = '[data-testid="welcome-refresh"]';
+/** The Usage dashboard's period buttons in order: 1 Live, 2 Today, 3 This Week, 4 This Month, 5 All Time. */
+const usagePeriod = (position: number): string => `[data-testid="stats-period-group"] [role="group"] > button:nth-child(${position})`;
+const backlogCheckbox = (itemId: string): string => `[data-testid="backlog-task-row"][data-row-id="${itemId}"] [data-testid="backlog-task-checkbox"]`;
+const PROMOTE_POPOVER = '[data-testid="promote-popover"]';
+const SEARCH_INPUT = '[data-testid="search-palette-input"]';
+const NEW_TASK_TITLE = '[data-testid="new-task-dialog"] input[placeholder="Task title"]';
+const NEW_TASK_DESCRIPTION = '[data-testid="task-description"]';
+/** A Changes panel file row's select button (the row's first), and its Viewed toggle. */
+const changesFile = (path: string): string => `[data-testid="changes-file-row"][data-path="${path}"] > button:first-child`;
+const changesViewed = (path: string): string => `[data-testid="changes-viewed-toggle"][data-path="${path}"]`;
+const BOARD_MANAGER = '[data-testid="board-manager-dialog"]';
+const BOARD_MANAGER_CLEAN = '[data-testid="board-manager-save"]:disabled';
+const columnTab = (name: string): string => `[data-testid="board-manager-tab"][data-tab-name="${name}"]`;
+/** A column's grip in the Column Manager's rail, the element just before its tab. */
+const columnGrip = (name: string): string => `[role="tablist"][aria-orientation="vertical"] [data-drag-handle]:has(+ [data-tab-name="${name}"])`;
+/** The column page's handoff switch; the All columns table draws the same switch read-only. */
+const HANDOFF_SWITCH = `${BOARD_MANAGER} button[role="switch"][aria-label="Hand off context when the agent changes"]:not([aria-readonly])`;
+const overviewRow = (lane: string): string => `[data-testid="board-manager-overview-row"][data-row-id="${demoLaneId(PROJECT_CONTOSO, lane)}"]`;
+const ALL_COLUMNS_CLEAN = `${BOARD_MANAGER}:has([data-testid="board-manager-tab-all"][aria-selected="true"]):has(${BOARD_MANAGER_CLEAN})`;
+const automationPickerType = (type: string): string => `[data-testid="column-automation-picker-type"][data-type="${type}"]`;
+const DICTATION_FIELD_LISTENING = '[data-testid="dictation-live-chip"][data-placement="below"] [data-testid="dictation-recording-dot"][data-tone="active"]';
+
 export const SCENES: Record<string, SceneDefinition> = {
   // ---------------------------------------------------------------- first launch
   welcome: {
@@ -819,6 +911,12 @@ export const SCENES: Record<string, SceneDefinition> = {
     },
     ready: '#welcome-setup-panel',
     focus: '#welcome-setup-panel',
+    // Refresh, the one control that puts every row through its real check: each reads Checking for
+    // the app's own 800 ms and resolves to the same report, since the install it reads is fixed.
+    choreography: [
+      { click: WELCOME_REFRESH, waitFor: `${WELCOME_REFRESH}:disabled`, ms: 0 },
+      { hover: WELCOME_REFRESH, waitFor: `${WELCOME_REFRESH}:not(:disabled)`, ms: 2600 },
+    ],
   },
 
   // ---------------------------------------------------------------- the board
@@ -885,6 +983,9 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: `[data-task-id="${TASK_WEBSOCKET}"] [data-testid="usage-bar"]`,
     focus: `[data-task-id="${TASK_WEBSOCKET}"], [data-task-id="task-cw-empty-states"]`,
     steps: [{ click: '[data-session-id="sess-cw-middleware"]', waitFor: '[data-session-id="sess-cw-middleware"]' }],
+    // No pause-and-resume cycle: the card has no pause control (the task window does), and a demo
+    // resume starts a session under a new id, so a cycle could not come back to this one.
+    motion: 'The bottom panel streams the middleware session, and the WebSocket card resolves its resume about 1.5 s after the frame opens, once.',
   },
   'activity-overlay': {
     name: 'activity-overlay',
@@ -989,6 +1090,14 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: JSON.stringify({ browserOpen: true, dividerRatio: 0.45 }) }],
     ready: '[data-testid="browser-webview"] iframe',
+    // A note for the agent typed into the pane's own field and taken back, then a click on the page
+    // that leaves the field. Never sent: Enter is the one key that would. The guest page itself has
+    // nothing to type into and may not animate (demo/README.md, Browser guest).
+    choreography: [
+      { type: { into: '[data-testid="browser-note-input"]', text: 'Ask for a confirmation before Cancel subscription' }, ms: 2400 },
+      { type: { into: '[data-testid="browser-note-input"]', text: '' }, ms: 500 },
+      { click: '[data-testid="browser-webview"] iframe', ms: 900 },
+    ],
   },
   // An agent calling Kangentic's own MCP tools, for the landing page's MCP tools tab. The task is a
   // scene-only row (DEMO_SCENE_TASKS), since a new contoso card would change every figure already
@@ -1036,7 +1145,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     // Below the field, which fails on the fallback: had the search box not held focus, the press
     // would resolve to the bottom panel's terminal and the chip would mount above that instead.
     // Not `:focus`, which need not match in a frame the host has not focused (stage.html).
-    ready: '[data-testid="dictation-live-chip"][data-placement="below"] [data-testid="dictation-recording-dot"][data-tone="active"]',
+    ready: DICTATION_FIELD_LISTENING,
     focus: '[data-testid="dictation-live-chip"]',
     // The first wait is for the panel's slide-in to END (useOverlayPhase drops the class on its
     // animationend), not for the panel to exist. The chip anchors to the field wherever the field
@@ -1047,6 +1156,12 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="settings-tab-dictation"]', waitFor: '[data-testid="dictation-model-lines"]' },
       { click: '[data-testid="settings-search"]' },
       { press: 'Mouse:Back', waitFor: '[data-testid="dictation-live-chip"]' },
+    ],
+    // The key let go, so the chip finalizes over the silent microphone and closes with nothing to
+    // insert, then held again, so it opens under the field again. No words: none were spoken.
+    choreography: [
+      { hotkeyUp: 'Mouse:Back', waitFor: 'body:not(:has([data-testid="dictation-live-chip"]))', ms: 1600 },
+      { hotkeyDown: 'Mouse:Back', waitFor: DICTATION_FIELD_LISTENING, ms: 3200 },
     ],
   },
 
@@ -1077,7 +1192,17 @@ export const SCENES: Record<string, SceneDefinition> = {
     // scene).
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'branch', changesViewedFiles: ['server/middleware/auth.ts'] }) }],
-    ready: '[data-testid="changes-scope-branch"][aria-checked="true"]',
+    // The selected file's row, not the scope tab alone: the tree loads after the tab is checked, and
+    // a frame built before it shows an empty panel.
+    ready: '[data-testid="changes-file-tree"]:has([data-testid="changes-scope-branch"][aria-checked="true"]) [data-testid="changes-file-row"][data-path="server/routes.ts"][data-selected="true"]',
+    // The new middleware file opened, routes.ts again, and routes.ts marked viewed and back. Both
+    // are the task's own view state, which the cycle leaves as it found it.
+    choreography: [
+      { click: changesFile('server/middleware/auth.ts'), waitFor: '[data-testid="changes-file-row"][data-path="server/middleware/auth.ts"][data-selected="true"]', ms: 2600 },
+      { click: changesFile('server/routes.ts'), waitFor: '[data-testid="changes-file-row"][data-path="server/routes.ts"][data-selected="true"]', ms: 1500 },
+      { click: changesViewed('server/routes.ts'), waitFor: `${changesViewed('server/routes.ts')}[aria-pressed="true"]`, ms: 1600 },
+      { click: changesViewed('server/routes.ts'), waitFor: `${changesViewed('server/routes.ts')}[aria-pressed="false"]`, ms: 700 },
+    ],
   },
   'changes-working': {
     name: 'changes-working',
@@ -1188,6 +1313,13 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { usageStatsScope: 'all', usageStatsPeriod: 'week' },
     ready: '[data-testid="stats-filter-row"]',
     steps: [{ click: '[data-testid="usage-stats-button"]', waitFor: '[data-testid="stats-page"]' }],
+    // Today, This Month, and This Week again: each period re-reads the series, so the tiles and
+    // charts change with it. The period persists, and the cycle ends on the one it found.
+    choreography: [
+      { click: usagePeriod(2), waitFor: `${usagePeriod(2)}[aria-pressed="true"]`, ms: 2400 },
+      { click: usagePeriod(4), waitFor: `${usagePeriod(4)}[aria-pressed="true"]`, ms: 2400 },
+      { click: usagePeriod(3), waitFor: `${usagePeriod(3)}[aria-pressed="true"]`, ms: 900 },
+    ],
   },
   'knowledge-graph': {
     name: 'knowledge-graph',
@@ -1205,6 +1337,13 @@ export const SCENES: Record<string, SceneDefinition> = {
       // The picker's menu stays open after All; a second click on its trigger closes it.
       { click: '[data-testid="knowledge-graph-projects"]' },
     ],
+    // An orbit dragged across the map and back, then Reset view, which flies the camera to the
+    // framing the frame opened on. Damping means the drag back alone would land near it, not on it.
+    choreography: [
+      { drag: { from: { x: 0.6, y: 0.52 }, to: { x: 0.74, y: 0.47 } }, ms: 1400 },
+      { drag: { from: { x: 0.74, y: 0.47 }, to: { x: 0.6, y: 0.52 } }, ms: 900 },
+      { click: '[data-testid="knowledge-graph-reset-view"]', ms: 2600 },
+    ],
   },
   ...knowledgeGraphProjectScenes(),
   backlog: {
@@ -1214,6 +1353,18 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The Backlog view: a table of unscheduled items with a priority badge, title, description, labels, and age for each, under a toolbar with search, filter, New Task, and Import Tasks.',
     ready: '[data-testid="backlog-task-row"]',
     steps: [{ click: '[data-testid="view-toggle-backlog"]', waitFor: '[data-testid="backlog-view"]' }],
+    // Two items selected, the bulk Move to board menu opened over its columns and closed again, and
+    // the selection cleared. Never a column: picking one moves the items onto the board for real.
+    choreography: [
+      { click: backlogCheckbox('backlog-cw-dark-mode'), waitFor: '[data-testid="backlog-bulk-toolbar"]', ms: 700 },
+      { click: backlogCheckbox('backlog-cw-invoice-pdf'), waitFor: `${backlogCheckbox('backlog-cw-invoice-pdf')}:checked`, ms: 900 },
+      { click: '[data-testid="bulk-move-to-board-btn"]', waitFor: PROMOTE_POPOVER, ms: 600 },
+      { hover: `${PROMOTE_POPOVER} > button:nth-of-type(1)`, ms: 500 },
+      { hover: `${PROMOTE_POPOVER} > button:nth-of-type(2)`, ms: 1100 },
+      { click: '[data-testid="bulk-move-to-board-btn"]', waitFor: `body:not(:has(${PROMOTE_POPOVER}))`, ms: 700 },
+      { click: backlogCheckbox('backlog-cw-invoice-pdf'), waitFor: `${backlogCheckbox('backlog-cw-invoice-pdf')}:not(:checked)`, ms: 500 },
+      { click: backlogCheckbox('backlog-cw-dark-mode'), waitFor: 'body:not(:has([data-testid="backlog-bulk-toolbar"]))', ms: 600 },
+    ],
   },
   'quick-find': {
     name: 'quick-find',
@@ -1239,6 +1390,19 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="open-search-button"]', waitFor: '[data-testid="search-palette-input"]' },
       { type: '[data-testid="search-palette-input"]', text: 'auth', waitFor: '[data-testid="search-palette-result"]' },
     ],
+    // The query cleared and typed again a key at a time, the results narrowing as it grows, then
+    // the arrow keys down the results and back to the first. The pointer stays out of it: a result
+    // under the pointer takes the selection. Never Escape or Enter.
+    choreography: [
+      { type: { into: SEARCH_INPUT, text: '' }, ms: 900 },
+      { type: { into: SEARCH_INPUT, text: 'auth' }, waitFor: '[data-testid="search-palette-result"]', ms: 1300 },
+      { key: 'ArrowDown', ms: 700 },
+      { key: 'ArrowDown', ms: 700 },
+      { key: 'ArrowDown', ms: 1200 },
+      { key: 'ArrowUp', ms: 400 },
+      { key: 'ArrowUp', ms: 400 },
+      { key: 'ArrowUp', waitFor: '[data-testid="search-palette-result"][data-row-index="0"].bg-surface-hover', ms: 700 },
+    ],
   },
   'new-task': {
     name: 'new-task',
@@ -1248,6 +1412,19 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="new-task-dialog"]',
     focus: '[data-testid="new-task-dialog"]',
     steps: [{ click: '[data-testid="swimlane-add-task"]', waitFor: '[data-testid="new-task-dialog"]' }],
+    // A task filled in and taken back: a title and a description typed, the project folder chosen
+    // over a worktree, the agent override opened, and each put back, the title last so it keeps the
+    // focus the dialog opened with. Create is never pressed, so no task is made.
+    choreography: [
+      { type: { into: NEW_TASK_TITLE, text: 'Add a health check route' }, ms: 700 },
+      { type: { into: NEW_TASK_DESCRIPTION, text: 'Serve GET /healthz with the build version and the uptime.' }, ms: 1100 },
+      { click: '[data-testid="worktree-option-project"]', waitFor: '[data-testid="worktree-option-project"][aria-checked="true"]', ms: 900 },
+      { click: '[data-testid="task-advanced-toggle"]', waitFor: '[data-testid="task-advanced-toggle"][aria-checked="true"]', ms: 2000 },
+      { click: '[data-testid="task-run-mode-profile"]', waitFor: '[data-testid="task-run-mode-profile"][aria-checked="true"]', ms: 700 },
+      { click: '[data-testid="worktree-option-worktree"]', waitFor: '[data-testid="worktree-option-worktree"][aria-checked="true"]', ms: 700 },
+      { type: { into: NEW_TASK_DESCRIPTION, text: '' }, ms: 400 },
+      { type: { into: NEW_TASK_TITLE, text: '' }, ms: 800 },
+    ],
   },
   'edit-columns': {
     name: 'edit-columns',
@@ -1258,6 +1435,15 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="board-manager-dialog"]',
     focus: '[data-testid="board-manager-dialog"]',
     steps: [{ click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
+    // Testing opened in the rail, dragged above Code Review (Save lights up: the order is a draft)
+    // and back below it (Save goes dark again), then Code Review selected again. Save is never
+    // pressed, so the board is never written.
+    choreography: [
+      { click: columnTab('Testing'), waitFor: `${columnTab('Testing')}[aria-selected="true"]`, ms: 1500 },
+      { drag: { from: columnGrip('Testing'), to: columnTab('Code Review') }, waitFor: '[data-testid="board-manager-save"]:not(:disabled)', ms: 1800 },
+      { drag: { from: columnGrip('Testing'), to: columnTab('Code Review') }, waitFor: BOARD_MANAGER_CLEAN, ms: 900 },
+      { click: columnTab('Code Review'), waitFor: `${BOARD_MANAGER}:has(${columnTab('Code Review')}[aria-selected="true"]):has(${BOARD_MANAGER_CLEAN})`, ms: 800 },
+    ],
   },
   // ---------------------------------------------------------------- column workflow
   // An automation and a handed-off context are per-scene seeds, never dataset rows: an automation
@@ -1277,6 +1463,15 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="column-automation-row"]',
     focus: '[data-testid="board-manager-dialog"]',
     steps: [{ click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
+    // Add automation on task exit, a type picked from its menu, which adds a draft row and opens it
+    // in the Add automation dialog, and Cancel, which takes the draft row away again. Save is never
+    // pressed, so the column's automations are never written.
+    choreography: [
+      { click: '[data-testid="column-automation-add"][data-trigger="exit"]', waitFor: '[data-testid="column-automation-picker"]', ms: 700 },
+      { hover: automationPickerType('send_message'), ms: 500 },
+      { click: automationPickerType('notify'), waitFor: '[data-testid="edit-automation-dialog"]', ms: 2400 },
+      { click: '[data-testid="edit-automation-cancel"]', waitFor: `body:not(:has([data-testid="edit-automation-dialog"])):has(${BOARD_MANAGER_CLEAN})`, ms: 900 },
+    ],
   },
   'column-automation-turn-end': {
     name: 'column-automation-turn-end',
@@ -1350,6 +1545,19 @@ export const SCENES: Record<string, SceneDefinition> = {
     steps: [
       { click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' },
       { click: '[data-testid="board-manager-tab-all"]', waitFor: '[data-testid="board-manager-tab-all"][aria-selected="true"]' },
+    ],
+    // The table is read-only, so the cycle goes through a column's own page, the way a visitor
+    // would: Testing's row opens it, its handoff switch goes off, and All columns shows the change as
+    // a draft. Then the same again with the switch back on, which leaves the board as it was.
+    choreography: [
+      { click: overviewRow('testing'), waitFor: `${columnTab('Testing')}[aria-selected="true"]`, ms: 900 },
+      { scroll: HANDOFF_SWITCH, ms: 500 },
+      { click: HANDOFF_SWITCH, waitFor: `${HANDOFF_SWITCH}[aria-checked="false"]`, ms: 1200 },
+      { click: '[data-testid="board-manager-tab-all"]', waitFor: `${overviewRow('testing')} [aria-label="unsaved changes"]`, ms: 2600 },
+      { click: overviewRow('testing'), waitFor: `${columnTab('Testing')}[aria-selected="true"]`, ms: 700 },
+      { scroll: HANDOFF_SWITCH, ms: 500 },
+      { click: HANDOFF_SWITCH, waitFor: `${HANDOFF_SWITCH}[aria-checked="true"]`, ms: 900 },
+      { click: '[data-testid="board-manager-tab-all"]', waitFor: ALL_COLUMNS_CLEAN, ms: 900 },
     ],
   },
 

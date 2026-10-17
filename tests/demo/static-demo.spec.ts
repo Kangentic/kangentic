@@ -2224,6 +2224,23 @@ test('a visitor\'s own click stops the choreography and takes the pointer away',
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+test('a visitor who prefers reduced motion gets the rest, held, and no pointer', async ({ page }) => {
+  // WCAG 2.2.2: motion that starts by itself needs a way to stop it, and the system setting is the
+  // one a frame can read before anything moves.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript((rate) => { (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate; }, CHOREOGRAPHY_TEST_RATE);
+  await gotoScene(page, { view: 'column-automation-edit', embed: '1', loop: '1' });
+  const root = page.locator('html');
+  await expect(root).toHaveAttribute('data-demo-choreography', 'rest', { timeout: 15_000 });
+  // Well past the opening rest at this pacing, where a cycle would have started.
+  await page.waitForTimeout(3_000);
+  await expect(root).toHaveAttribute('data-demo-choreography', 'rest');
+  await expect(root).toHaveAttribute('data-demo-cycles', '0');
+  await expect(page.locator('[data-demo-cursor]')).toHaveCount(0);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
 test('a visitor\'s own click lets go of a held pose', async ({ page }) => {
   // card-drag holds its card over Executing; a real press ends the gesture where it stands, as a
   // released mouse would, so the frame is the visitor's from then on.

@@ -32,9 +32,12 @@ three things staying in step, and each is enforced rather than remembered.
   window-controls cluster so the demo can hide it by selector.
 - **A scene is data, and so is how it moves.** Config overrides, task-row patches, session
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
-  hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (pointer
-  steps from a closed vocabulary, `hover`, `click`, `contextmenu`, `drag`, and one `pose`, with
-  pacing as a number on a step and every effect a step depends on a selector waited for), a
+  hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (steps
+  from a closed vocabulary, the pointer's `hover`, `click`, `contextmenu` and `drag`, the
+  keyboard's `type`, an arrow `key` and a held `hotkeyDown`/`hotkeyUp`, a `scroll`, and one
+  `pose`, with pacing as a number on a step and every effect a step depends on a selector waited
+  for; never Escape, never Enter, and never a write a visitor would have to undo, so a dialog's
+  Cancel and a draft's revert end a cycle where Save and a promote would not), a
   `timeline` (what main does at a moment on a session's replay clock), or a `motion` sentence saying
   why it moves without either. No code travels through a scene, and none of the three rides a
   `state=` URL. The page plays a choreography as a visitor's mouse would
@@ -42,7 +45,8 @@ three things staying in step, and each is enforced rather than remembered.
   mirrored under an attribute and the pointer drawn by `demo/`. Every cycle starts and ends on the
   poster's state; a held gesture (a card mid-drag, a menu open) is the `pose`, which a still plays
   up to, unpaced and with no timer, so `still=1` stays deterministic and the capture rig plays
-  nothing itself. A visitor's own input stops it.
+  nothing itself. A visitor's own input stops it, a visitor who prefers reduced motion gets the
+  rest held, and a cycle starts only while the frame is on screen.
 - **A timeline is what main does, never a show.** Its action changes the mock's state the way
   main's handler would and sends the push main sends for it (an agent's `kangentic_move_task`
   landing is a move with origin `agent` and `TASK_UPDATED_BY_AGENT`), on the recording's own
@@ -272,7 +276,8 @@ three things staying in step, and each is enforced rather than remembered.
   full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
   element, that every choreography plays a cycle back to rest under `loop=1` (or holds its pose)
   with a clean console, which is also what fails a choreography selector the renderer no longer
-  stamps, that a visitor's own click stops it and lets go of a held pose, that a still with a pose
+  stamps, that a visitor's own click stops it and lets go of a held pose, that a reduced-motion
+  visitor gets the rest held with no pointer, that a still with a pose
   draws no pointer and a still without one fetches no player, that a script's Escape never posts,
   that `task-mcp`'s timeline moves its card to Testing and the restart puts it back, that `scenes.json` is served, lists exactly
   the registry, and names the frame's version, that the ready message posted to an iframe host

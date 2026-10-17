@@ -11,6 +11,9 @@
  * React Flow's d3-drag (mouse events with a `view`), the board's link preview (a mouse
  * `pointerenter` and a dwell), and React's hover handlers (built from `pointerover`). A pointerdown
  * the page prevents suppresses the compatibility mouse events until the release, as a browser does.
+ * The keyboard is simpler: typed text goes through a field's own value setter and an input event a
+ * keystroke at a time, and a key goes to whatever has the focus. A hotkey is held and let go
+ * through boot.js's own `__demoBoot.pressCombo`, the one a boot step's `press` uses.
  *
  * Three things a script cannot get from the browser, and what stands in for each:
  *  - `:hover`. Every same-origin `:hover` rule is copied under `[data-demo-hover]`, in the same
@@ -19,8 +22,8 @@
  *    it arrives.
  *  - Pointer capture, which Firefox refuses a pointer it did not make (`installCaptureShim`).
  *  - The pointer itself. A live frame draws one, the product accent arrow, so a menu opening by
- *    itself reads as a visitor's click. It fades in when a cycle starts and out at rest, and a still
- *    never draws it.
+ *    itself reads as a visitor's click. It fades in when a cycle starts and out at rest, where it
+ *    leaves the page so nothing stays hovered, and a still never draws it.
  *
  * The renderer knows none of this: nothing here is read by `src/renderer`, and the events are the
  * ones any mouse sends. Loaded on demand (demo/choreography-entry.ts), only by a scene that has a
@@ -58,8 +61,15 @@ const DRAG_CARRY_MS = 900;
 const STILL_TRAVEL_FRAMES = 8;
 /** How long a press is held before its release, live. */
 const PRESS_HOLD_MS = 90;
+/** The beat between two keystrokes of a typed text, live. */
+const KEYSTROKE_MS = 85;
+/** Frames the pointer spends homing in on a target that is still moving once it has arrived (a layout animation), and how many still frames end that. */
+const SETTLE_FRAMES = 45;
+const SETTLED_FRAMES = 3;
 /** Pacing after a step that names none. */
-const DEFAULT_PACING_MS: Record<string, number> = { hover: 900, click: 900, contextmenu: 1200, drag: 900 };
+const DEFAULT_PACING_MS: Record<string, number> = {
+  hover: 900, click: 900, contextmenu: 1200, drag: 900, type: 700, key: 500, scroll: 700, hotkeyDown: 900, hotkeyUp: 900,
+};
 /** The rest a visitor sees before the first cycle, and between cycles. */
 const FIRST_REST_MS = 2500;
 const REST_BETWEEN_CYCLES_MS = 3500;
@@ -68,6 +78,10 @@ const DRAG_ACTIVATION_OFFSET: Point = { x: 10, y: 4 };
 /** Where the pointer appears, relative to its first target, so a cycle opens with a visible travel. */
 const ENTRY_OFFSET: Point = { x: 140, y: 90 };
 const HOVER_ATTRIBUTE = 'data-demo-hover';
+/** The exit classes useOverlayPhase puts on a dialog, popover, panel or Command Terminal that is closing. */
+const CLOSING_LAYER = '.overlay-content-out, .overlay-popover-out, .overlay-panel-out, .overlay-command-bar-out';
+/** Surfaces whose own fields are not a form the rest check reads: a terminal and the diff editor. */
+const EDITOR_SURFACES = '.xterm, .monaco-editor';
 /** One pointer, the mouse. Chromium and WebKit keep pointer id 1 for it. */
 const POINTER_ID = 1;
 
@@ -157,11 +171,70 @@ async function waitForElement(selector: string): Promise<Element> {
   }
 }
 
-async function resolveTarget(target: ChoreographyTarget): Promise<Point> {
-  if (typeof target !== 'string') return { x: target.x * window.innerWidth, y: target.y * window.innerHeight };
-  const element = await waitForElement(target);
+function centreOf(element: Element): Point {
   const rect = element.getBoundingClientRect();
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+async function resolveTarget(target: ChoreographyTarget): Promise<Point> {
+  if (typeof target !== 'string') return { x: target.x * window.innerWidth, y: target.y * window.innerHeight };
+  return centreOf(await waitForElement(target));
+}
+
+/**
+ * A target's centre as it is now, measured again on every call, so the pointer follows an element
+ * a layout animation is still moving (a group collapsing above it, a popover sliding in). An
+ * element that is replaced is found again by its selector; one that is gone keeps its last centre.
+ */
+async function locate(target: ChoreographyTarget): Promise<() => Point> {
+  if (typeof target !== 'string') {
+    const fixed = await resolveTarget(target);
+    return () => fixed;
+  }
+  let element = await waitForElement(target);
+  let last = centreOf(element);
+  return () => {
+    if (!element.isConnected) element = document.querySelector(target) ?? element;
+    if (element.isConnected) last = centreOf(element);
+    return last;
+  };
+}
+
+/** A scene's hotkey goes through boot.js's own press, so a boot step and a choreography hold the same button the same way. */
+interface DemoBootHotkeys {
+  pressCombo(combo: string): void;
+  releaseCombo(combo: string): void;
+}
+
+function demoBoot(): DemoBootHotkeys {
+  const boot = (window as unknown as { __demoBoot?: DemoBootHotkeys }).__demoBoot;
+  if (!boot) throw new Error('the choreography presses a hotkey, and boot.js has not published __demoBoot');
+  return boot;
+}
+
+/**
+ * One keystroke into a field, in a browser's order: keydown, beforeinput, the edit, input, keyup.
+ * A handler that prevents the keydown or the beforeinput keeps the edit out, as a real key's would.
+ * The value goes through the prototype's own setter, which is the one React's value tracking
+ * watches, so a controlled input reads it as typed (the approach Testing Library's user-event takes).
+ */
+function keystrokeInto(field: HTMLInputElement | HTMLTextAreaElement, value: string, inputType: 'insertText' | 'deleteContentBackward', data: string | null): void {
+  const key = data ?? 'Backspace';
+  const keyInit: KeyboardEventInit = { key, code: data === null ? 'Backspace' : '', bubbles: true, cancelable: true, composed: true };
+  const typed = field.dispatchEvent(new KeyboardEvent('keydown', keyInit))
+    && field.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType, data }));
+  if (typed) {
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')?.set;
+    if (setter) setter.call(field, value); else field.value = value;
+    field.setSelectionRange?.(value.length, value.length);
+    field.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: false, composed: true, inputType, data }));
+  }
+  field.dispatchEvent(new KeyboardEvent('keyup', keyInit));
+}
+
+/** Whether the visitor asked their system for less motion; a choreography then holds at rest, as WCAG 2.2.2's pause asks. */
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 // ---------------------------------------------------------------- :hover, mirrored
@@ -244,13 +317,24 @@ function commonAncestor(first: Element, second: Element): Element {
   return candidate ?? document.documentElement;
 }
 
-/** Where a step sends the pointer first; null for the pose. */
+/**
+ * Where a step sends the pointer first; null for a step that leaves it where it is (the pose, a
+ * key, a hotkey, a scroll, typing into the field that has the focus). A typed step names its field
+ * here, so a cycle that opens on one shows the pointer beside it.
+ */
 function targetOf(step: ChoreographyStep): ChoreographyTarget | null {
   if ('hover' in step) return step.hover;
   if ('click' in step) return step.click;
   if ('contextmenu' in step) return step.contextmenu;
   if ('drag' in step) return step.drag.from;
+  if ('type' in step && document.activeElement !== document.querySelector(step.type.into)) return step.type.into;
   return null;
+}
+
+/** The gesture a step makes, for its default pacing. */
+function kindOf(step: ChoreographyStep): string {
+  for (const kind of Object.keys(DEFAULT_PACING_MS)) if (kind in step) return kind;
+  return 'hover';
 }
 
 /** The element and its ancestors, innermost first. */
@@ -302,10 +386,16 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     return target.dispatchEvent(new MouseEvent(type, init));
   }
 
+  /**
+   * Mark the element under the pointer and its ancestors, and unmark every other. Read from the
+   * document rather than from the last chain: a hovered element the page removed (a dialog that
+   * closed under the pointer) no longer leads back to the ancestors it marked.
+   */
   function setHoverChain(next: Element | null): void {
-    const previousChain = chainOf(current);
     const nextChain = chainOf(next);
-    for (const element of previousChain) if (!nextChain.includes(element)) element.removeAttribute(HOVER_ATTRIBUTE);
+    for (const element of Array.from(document.querySelectorAll(`[${HOVER_ATTRIBUTE}]`))) {
+      if (!nextChain.includes(element)) element.removeAttribute(HOVER_ATTRIBUTE);
+    }
     for (const element of nextChain) element.setAttribute(HOVER_ATTRIBUTE, '');
   }
 
@@ -356,26 +446,46 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     sendMouse('mousemove', target, init);
   }
 
-  async function travel(to: Point, durationMs: number): Promise<void> {
+  /**
+   * Travel to a target, then stay on it while it is still moving: each frame re-measures it, so a
+   * click lands on a control a collapsing group above it is still carrying, and a press waits for
+   * the control to come to rest under the pointer.
+   */
+  async function travel(to: Point | (() => Point), durationMs: number): Promise<void> {
     if (stopped) return;
-    const from = point ?? { x: to.x + ENTRY_OFFSET.x, y: to.y + ENTRY_OFFSET.y };
+    const destination = typeof to === 'function' ? to : () => to;
+    const first = destination();
+    const from = point ?? { x: first.x + ENTRY_OFFSET.x, y: first.y + ENTRY_OFFSET.y };
     if (instant) {
       for (let frame = 1; frame <= STILL_TRAVEL_FRAMES; frame++) {
         const progress = frame / STILL_TRAVEL_FRAMES;
-        moveTo({ x: from.x + (to.x - from.x) * progress, y: from.y + (to.y - from.y) * progress });
+        const end = destination();
+        moveTo({ x: from.x + (end.x - from.x) * progress, y: from.y + (end.y - from.y) * progress });
         await nextFrame();
       }
-      return;
+    } else {
+      const duration = durationMs / rate;
+      const startedAt = performance.now();
+      for (;;) {
+        if (stopped) return;
+        const progress = Math.min(1, (performance.now() - startedAt) / duration);
+        const eased = easeInOut(progress);
+        const end = destination();
+        moveTo({ x: from.x + (end.x - from.x) * eased, y: from.y + (end.y - from.y) * eased });
+        if (progress >= 1) break;
+        await nextFrame();
+      }
     }
-    const duration = durationMs / rate;
-    const startedAt = performance.now();
-    for (;;) {
-      if (stopped) return;
-      const progress = Math.min(1, (performance.now() - startedAt) / duration);
-      const eased = easeInOut(progress);
-      moveTo({ x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased });
-      if (progress >= 1) return;
+    let still = 0;
+    for (let frame = 0; frame < SETTLE_FRAMES && still < SETTLED_FRAMES && !stopped; frame++) {
       await nextFrame();
+      const end = destination();
+      if (point && Math.abs(end.x - point.x) < 0.5 && Math.abs(end.y - point.y) < 0.5) {
+        still += 1;
+      } else {
+        still = 0;
+        moveTo(end);
+      }
     }
   }
 
@@ -417,14 +527,15 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     sendMouse('mouseup', target, init);
     compatibilitySuppressed = false;
     syntheticPressed = false;
-    // The button coming up ends a capture, as a browser releases it implicitly after pointerup.
+    if (button === 0 && pressedOn) sendMouse('click', commonAncestor(pressedOn, target), { ...init, detail: 1 });
+    if (button === 2) sendMouse('contextmenu', target, init);
+    pressedOn = null;
+    // The button coming up ends a capture, as a browser releases it implicitly after pointerup. The
+    // click goes first: the Pointer Events spec has a click fired before lostpointercapture.
     if (captured && capturedBy === captured) {
       capturedBy = null;
       sendPointer('lostpointercapture', captured, { ...init, bubbles: true, cancelable: false });
     }
-    if (button === 0 && pressedOn) sendMouse('click', commonAncestor(pressedOn, target), { ...init, detail: 1 });
-    if (button === 2) sendMouse('contextmenu', target, init);
-    pressedOn = null;
   }
 
   async function pace(milliseconds: number): Promise<void> {
@@ -438,31 +549,90 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     release(button);
   }
 
+  async function keystroke(): Promise<void> {
+    if (!instant && !stopped) await delay(KEYSTROKE_MS / rate);
+  }
+
+  /** Back to what the field and the text share, one deletion a keystroke, then on, one character a keystroke. */
+  async function typeInto(selector: string, text: string): Promise<void> {
+    const field = await waitForElement(selector);
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
+      throw new Error(`the choreography types only into an input or a textarea, and ${selector} is neither`);
+    }
+    if (document.activeElement !== field) {
+      await travel(await locate(selector), TRAVEL_MS);
+      await pressAndRelease(0);
+      if (document.activeElement !== field) field.focus({ preventScroll: true });
+    }
+    const value = field.value;
+    let shared = 0;
+    while (shared < value.length && shared < text.length && value[shared] === text[shared]) shared += 1;
+    while (field.value.length > shared && !stopped) {
+      keystrokeInto(field, field.value.slice(0, -1), 'deleteContentBackward', null);
+      await keystroke();
+    }
+    for (const character of text.slice(shared)) {
+      if (stopped) return;
+      keystrokeInto(field, field.value + character, 'insertText', character);
+      await keystroke();
+    }
+  }
+
+  /** One key on whatever has the focus, which is where a keyboard's events go; it bubbles to the handlers above it. */
+  function pressKey(key: string): void {
+    const target = document.activeElement ?? document.body;
+    for (const type of ['keydown', 'keyup']) {
+      target.dispatchEvent(new KeyboardEvent(type, { key, code: key, bubbles: true, cancelable: true, composed: true }));
+    }
+  }
+
+  /** Bring an element to the middle of its scroll container and wait for the scroll to finish. */
+  async function scrollTo(selector: string): Promise<void> {
+    const element = await waitForElement(selector);
+    element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: instant ? 'auto' : 'smooth' });
+    let previous = centreOf(element);
+    let still = 0;
+    for (let frame = 0; frame < SETTLE_FRAMES * 2 && still < SETTLED_FRAMES; frame++) {
+      await nextFrame();
+      const now = centreOf(element);
+      still = Math.abs(now.y - previous.y) < 0.5 && Math.abs(now.x - previous.x) < 0.5 ? still + 1 : 0;
+      previous = now;
+    }
+  }
+
   async function play(step: ChoreographyStep): Promise<void> {
     if (stopped) return;
     if ('pose' in step) return;
-    let kind = 'hover';
     if ('hover' in step) {
-      await travel(await resolveTarget(step.hover), TRAVEL_MS);
+      await travel(await locate(step.hover), TRAVEL_MS);
     } else if ('click' in step) {
-      kind = 'click';
-      await travel(await resolveTarget(step.click), TRAVEL_MS);
+      await travel(await locate(step.click), TRAVEL_MS);
       await pressAndRelease(0);
     } else if ('contextmenu' in step) {
-      kind = 'contextmenu';
-      await travel(await resolveTarget(step.contextmenu), TRAVEL_MS);
+      await travel(await locate(step.contextmenu), TRAVEL_MS);
       await pressAndRelease(2);
     } else if ('drag' in step) {
-      kind = 'drag';
       const from = await resolveTarget(step.drag.from);
       await travel(from, TRAVEL_MS);
       press(0);
       await travel({ x: from.x + DRAG_ACTIVATION_OFFSET.x, y: from.y + DRAG_ACTIVATION_OFFSET.y }, TRAVEL_MS / 3);
+      // Measured once, where the drop target is before the carry: a sortable list moves its items
+      // out of the dragged one's way, and a pointer that chased the target would chase that.
       await travel(await resolveTarget(step.drag.to), DRAG_CARRY_MS);
       if (!step.drag.hold) release(0);
+    } else if ('type' in step) {
+      await typeInto(step.type.into, step.type.text);
+    } else if ('key' in step) {
+      pressKey(step.key);
+    } else if ('scroll' in step) {
+      await scrollTo(step.scroll);
+    } else if ('hotkeyDown' in step) {
+      demoBoot().pressCombo(step.hotkeyDown);
+    } else if ('hotkeyUp' in step) {
+      demoBoot().releaseCombo(step.hotkeyUp);
     }
     if (step.waitFor) await waitForElement(step.waitFor);
-    await pace(step.ms ?? DEFAULT_PACING_MS[kind]);
+    await pace(step.ms ?? DEFAULT_PACING_MS[kindOf(step)]);
   }
 
   /**
@@ -478,18 +648,22 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
         parts.push(`${lane.getAttribute('data-swimlane-name')}:${cards.join(',')}`);
       }
     }
+    // A layer playing its exit animation is already closed: a boot step's last click can leave one
+    // closing as the frame turns ready, and it is gone a moment later.
     const layers = Array.from(document.querySelectorAll('[data-dismissable-layer], [role="dialog"]'))
+      .filter((layer) => !layer.matches(CLOSING_LAYER) && !layer.closest(CLOSING_LAYER) && !layer.querySelector(`:scope > :is(${CLOSING_LAYER})`))
       .map((layer) => layer.getAttribute('data-testid') ?? layer.tagName.toLowerCase()).sort();
     parts.push(`layers:${layers.join(',')}`);
     const region = (options.focus ? document.querySelector(options.focus) : null) ?? document.body;
     for (const field of Array.from(region.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select'))) {
-      // A terminal's helper textarea carries whatever the replay last typed, which is not the form.
-      if (field.closest('.xterm')) continue;
+      // A terminal's helper textarea carries whatever the replay last typed, and the diff editor's
+      // mounts when its lazy chunk lands; neither is the form.
+      if (field.closest(EDITOR_SURFACES)) continue;
       const value = field instanceof HTMLInputElement && field.type === 'checkbox' ? String(field.checked) : field.value;
       parts.push(`${field.getAttribute('data-testid') ?? field.name}=${value}`);
     }
     for (const element of Array.from(region.querySelectorAll('[aria-checked], [aria-selected], [aria-expanded], [aria-pressed]'))) {
-      if (element.closest('.xterm')) continue;
+      if (element.closest(EDITOR_SURFACES)) continue;
       const state = ['aria-checked', 'aria-selected', 'aria-expanded', 'aria-pressed']
         .map((attribute) => element.getAttribute(attribute) ?? '').join('/');
       parts.push(`${element.getAttribute('data-testid') ?? element.tagName.toLowerCase()}:${state}`);
@@ -506,9 +680,19 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     return 'no line differs';
   }
 
+  /** Show the pointer, once it has somewhere to be: a cycle of keys and hotkeys alone never draws one. */
   function showCursor(visible: boolean): void {
     if (!cursor) return;
-    cursor.element.style.opacity = visible ? '1' : '0';
+    cursor.element.style.opacity = visible && point ? '1' : '0';
+  }
+
+  /**
+   * At rest the pointer leaves the page, as a mouse moved off the window does: hover styles and
+   * tooltips close, and the frame is the poster's. A pose is the exception, since what it holds
+   * (a hover, a drag) is the poster.
+   */
+  function leave(): void {
+    if (current && poseIndex < 0) transition(null, pointerInit(point ?? { x: 0, y: 0 }, {}, point));
   }
 
   /** A visitor took over: stop for the frame's life, let go of anything held, and take the pointer away. */
@@ -544,39 +728,73 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     for (const step of steps.slice(0, poseIndex)) await play(step);
   }
 
+  /**
+   * Whether the frame is where someone can see it: its tab in front and, in an embedding page,
+   * some of it inside that page's viewport. An observer on the root in a frame reports against the
+   * top-level viewport, so a loop frame scrolled out of sight finishes its cycle and then waits.
+   */
+  let inViewport = true;
+  function watchViewport(): void {
+    if (typeof IntersectionObserver !== 'function') return;
+    new IntersectionObserver((entries) => {
+      for (const entry of entries) inViewport = entry.isIntersecting;
+    }).observe(document.documentElement);
+  }
+
+  async function whenOnScreen(): Promise<void> {
+    while (!stopped && (document.visibilityState === 'hidden' || !inViewport)) await delay(250);
+  }
+
+  /** A boot step's last click can leave a popover playing its exit as the frame turns ready; the rest is taken once it is gone. */
+  async function closingLayersGone(): Promise<void> {
+    for (let frame = 0; frame < SETTLE_FRAMES * 3 && document.querySelector(CLOSING_LAYER); frame++) await nextFrame();
+  }
+
   async function loop(): Promise<void> {
     const afterPose = poseIndex < 0 ? steps : steps.slice(poseIndex + 1);
-    // A choreography that is only a pose holds it: there is nothing to play back to it with.
-    if (afterPose.length === 0) {
+    // A choreography that is only a pose holds it: there is nothing to play back to it with. A
+    // visitor who asked their system for less motion gets the rest, held, which is the pause
+    // WCAG 2.2.2 asks of motion that starts by itself.
+    if (afterPose.length === 0 || prefersReducedMotion()) {
       setState('rest');
       return;
     }
     const cycle = poseIndex < 0 ? steps : [...afterPose, ...steps.slice(0, poseIndex)];
     installHoverMirror();
+    watchViewport();
     instant = false;
-    const rest = restSignature();
     cursor = createCursor();
-    // The pointer enters beside the cycle's first target, so the first thing it does is travel.
+    // The pointer is placed beside the cycle's first target, so the first thing it does is travel.
+    // Placed, not moved: no event goes out at rest, so nothing under that point hovers.
     if (!point) {
       const target = cycle.map(targetOf).find((candidate): candidate is ChoreographyTarget => candidate !== null);
       if (target !== undefined) {
         const at = await resolveTarget(target);
-        moveTo({ x: at.x + ENTRY_OFFSET.x, y: at.y + ENTRY_OFFSET.y });
+        point = { x: at.x + ENTRY_OFFSET.x, y: at.y + ENTRY_OFFSET.y };
       }
-    } else {
-      moveTo(point);
     }
+    if (point) cursor.element.style.transform = `translate(${point.x - CURSOR_TIP.x}px, ${point.y - CURSOR_TIP.y}px)`;
+    leave();
     setState('rest');
     await delay(FIRST_REST_MS / rate);
+    // The rest is read after the opening rest, not at ready: a panel the ready element does not wait
+    // for (a file tree, a closing menu whose exit starts a frame after the click) has landed by then.
+    await closingLayersGone();
+    const rest = restSignature();
     while (!stopped) {
+      await whenOnScreen();
+      if (stopped) return;
       setState('playing');
       showCursor(true);
       for (const step of cycle) {
         if (stopped) return;
         await play(step);
+        // A step that placed the pointer for the first time (a typed field's click) shows it.
+        showCursor(true);
       }
       if (stopped) return;
       showCursor(false);
+      leave();
       cycles += 1;
       const now = restSignature();
       if (now !== rest) {

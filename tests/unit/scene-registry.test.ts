@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
-import { SCENES, hasPose, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
+import { CHOREOGRAPHY_KEYS, SCENES, hasPose, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
 import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
 import { loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
@@ -121,7 +121,7 @@ const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
 const BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
 
 /** The gestures a choreography step may make (ChoreographyGesture), and what may ride beside one. */
-const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'pose'];
+const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'type', 'key', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose'];
 const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
 
 /**
@@ -130,15 +130,14 @@ const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
  * here that already declares how it moves, so the list can only shrink.
  */
 const MOTION_PENDING = new Set([
-  'welcome', 'welcome-setup', 'board-filter', 'activity-tab', 'session-states', 'session-resume',
+  'welcome', 'board-filter', 'activity-tab', 'session-states',
   'activity-overlay', 'notification-toast', 'board-config-change', 'announcements', 'announcement-dialog',
-  'browser', 'dictation-field', 'conversation', 'changes', 'monitor', 'monitor-table', 'command-terminal',
-  'usage', 'knowledge-graph', 'backlog', 'quick-find', 'quick-find-results', 'new-task', 'edit-columns',
-  'column-automation', 'column-automation-turn-end', 'column-handoff', 'workflows', 'board-workflow',
+  'conversation', 'monitor', 'monitor-table', 'command-terminal',
+  'quick-find', 'column-automation-turn-end', 'workflows', 'board-workflow',
   'workflow-draft', 'completed-tasks', 'completed-task', 'completed-task-usage',
   // Each holds its pose under loop=1; its loop is a Phase 3 row.
   'card-drag', 'card-menu', 'board-workflow-links', 'window-dock',
-  ...SETTINGS_TABS.map((tab) => `settings-${tab.id}`),
+  ...SETTINGS_TABS.map((tab) => `settings-${tab.id}`).filter((name) => !['settings-git', 'settings-task', 'settings-mcpServer'].includes(name)),
   ...Object.keys(SCENES).filter((name) => name.startsWith('knowledge-graph-')),
 ]);
 
@@ -266,7 +265,27 @@ describe('scene registry', () => {
           // Nothing releases a held pointer but a visitor, so the gesture it holds is the pose.
           if (step.drag.hold) expect('pose' in (choreography[index + 1] ?? {}), `${where} holds the pointer, so the pose follows it`).toBe(true);
         }
+        if ('type' in step) {
+          expect(Object.keys(step.type).sort(), `${where}.type names a field and a text`).toEqual(['into', 'text']);
+          expect(step.type.into.trim(), `${where}.type.into`).not.toBe('');
+          expect(typeof step.type.text, `${where}.type.text`).toBe('string');
+          // Typed text is a visitor's keystrokes; a newline would be the Enter that submits.
+          expect(step.type.text, `${where}.type.text carries a newline`).not.toMatch(/[\r\n]/);
+          expect(step.type.text, `${where}.type.text carries a dash or a curly quote`).not.toMatch(BANNED_CHARACTERS);
+        }
+        if ('key' in step) expect(CHOREOGRAPHY_KEYS as readonly string[], `${where}.key is not one a choreography may press`).toContain(step.key);
+        if ('scroll' in step) expect(step.scroll.trim(), `${where}.scroll`).not.toBe('');
+        // The same table boot.js presses a boot step's hotkey from, so a typo fails here and not in a frame.
+        if ('hotkeyDown' in step) expect(step.hotkeyDown, `${where}.hotkeyDown`).toMatch(/^Mouse:(Back|Forward|Middle)$/);
+        if ('hotkeyUp' in step) expect(step.hotkeyUp, `${where}.hotkeyUp`).toMatch(/^Mouse:(Back|Forward|Middle)$/);
       });
+      // A hotkey a cycle lets go of is pressed again before the cycle ends, so the frame comes back held.
+      const balance = new Map<string, number>();
+      for (const step of choreography) {
+        if ('hotkeyDown' in step) balance.set(step.hotkeyDown, (balance.get(step.hotkeyDown) ?? 0) + 1);
+        if ('hotkeyUp' in step) balance.set(step.hotkeyUp, (balance.get(step.hotkeyUp) ?? 0) - 1);
+      }
+      for (const [combo, net] of balance) expect(net, `${scene.name} presses ${combo} and lets it go a different number of times`).toBe(0);
     }
     expect(checked, 'no scene carries a choreography').toBeGreaterThan(0);
   });

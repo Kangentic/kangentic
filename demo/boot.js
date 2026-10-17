@@ -203,6 +203,18 @@
   }
 
   /**
+   * Let go of a mouse hotkey `pressCombo` held: one pointerup with the button's code and no buttons
+   * left down, which is what the registry's release matcher reads. A choreography releases
+   * push-to-talk this way and presses it again. Only a listed mouse button can be released.
+   */
+  function releaseCombo(combo) {
+    if (!Object.prototype.hasOwnProperty.call(MOUSE_BUTTONS, combo)) {
+      throw new Error('Cannot release "' + combo + '": only a held mouse hotkey is released, one of ' + Object.keys(MOUSE_BUTTONS).join(', '));
+    }
+    document.dispatchEvent(new PointerEvent('pointerup', { button: MOUSE_BUTTONS[combo].button, buttons: 0, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+  }
+
+  /**
    * Type into a field the way a visitor would: the value goes through the element's own setter
    * (React watches the native one, not the instance property) and one input event, so a
    * controlled input takes it. No timing and no per-keystroke drama: a typed query is state.
@@ -796,5 +808,6 @@
     afterSeed: applyScene,
     focusRectOf: rectOf,
     pressCombo: pressCombo,
+    releaseCombo: releaseCombo,
   };
 })();
