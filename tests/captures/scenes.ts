@@ -1825,15 +1825,19 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="open-search-button"]', waitFor: '[data-testid="search-palette-input"]' },
       { type: '[data-testid="search-palette-input"]', text: 'auth', waitFor: '[data-testid="search-palette-result"]' },
     ],
-    // The arrow keys down the results, a beat on each, and back up to the first. The pointer stays
-    // out of it: a result under the pointer takes the selection. Never Escape or Enter.
+    // The arrow keys down the results, a beat on each, then the query narrowed to the one task it
+    // was after. Then the cut, "auth" again behind it with its five results and the first one
+    // selected, and a click on the palette's search icon, which leaves the field: the frame opens
+    // with no field focused (the arrows reach the palette's own listener), so none draws a focus
+    // ring at rest. The pointer stays off the results: a result under the pointer takes the
+    // selection. Never Escape or Enter.
     choreography: [
       { key: 'ArrowDown', ms: 1000 },
-      { key: 'ArrowDown', ms: 1000 },
-      { key: 'ArrowDown', ms: 1600 },
-      { key: 'ArrowUp', ms: 500 },
-      { key: 'ArrowUp', ms: 500 },
-      { key: 'ArrowUp', waitFor: '[data-testid="search-palette-result"][data-row-index="0"].bg-surface-hover', ms: 1800 },
+      { key: 'ArrowDown', ms: 1400 },
+      { type: { into: SEARCH_INPUT, text: 'auth middleware' }, waitFor: 'body:not(:has([data-testid="search-palette-result"][data-row-index="1"]))', ms: 2800 },
+      { cut: true },
+      { type: { into: SEARCH_INPUT, text: 'auth' }, waitFor: '[data-testid="search-palette-card"]:has([data-row-index="4"]) [data-testid="search-palette-result"][data-row-index="0"].bg-surface-hover' },
+      { click: '[data-testid="search-palette-card"] > div > div:first-child > svg' },
     ],
   },
   'new-task': {

@@ -385,7 +385,8 @@ npm run test:demo
   iterates `SCENES`, so a new entry is covered with no test change), a held gesture through the
   pose its still plays, and, where it names a `focus`, that element is a real region rather than
   nothing, an empty box, or the whole frame; every choreography finishes a cycle under `loop=1`
-  back at rest, and a visitor's own click stops it; `scenes.json` is served and matches the registry, the ready
+  back at rest, a scene that ends its story on a `cut` puts its edit back only behind the landed
+  veil, and a visitor's own click stops it; `scenes.json` is served and matches the registry, the ready
   message carries a dialog scene's focus rect, Escape posts `kangentic-demo-escape` when the app
   has nothing of its own to close and stays silent when it does, a task window takes the first
   Escape even with its terminal under the pointer, Escape posts from a Command Terminal, from the
