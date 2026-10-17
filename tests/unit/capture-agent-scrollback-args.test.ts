@@ -15,18 +15,23 @@
  *   own name starts with two dots included, and refuses one outside it: a sibling, the parent, or
  *   (on Windows) another drive, where path.relative answers with an absolute path.
  * - parseArgs resolves --mcp-config, --settings and --scratch-root to absolute paths.
+ * - The read-only launch a workflow's own agent gets carries the desktop's flags, with the tool
+ *   list the desktop's read-only launch names, and the default permission mode passes no flag.
  *
  * parseArgs only resolves strings and never touches the disk, so every path here is a string built
  * under os.tmpdir() and nothing is created.
  */
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { CommandBuilder } from '../../src/main/agent/adapters/claude';
 
 interface McpLaunchOptions {
   mcpConfig: string | null;
   settings: string | null;
+  readOnly?: boolean;
 }
 
 interface LaunchCommand {
@@ -41,6 +46,7 @@ interface ParsedCaptureOptions {
   project: string;
   out: string;
   prompt: string;
+  followUp: string | null;
   resume: string | null;
   mcpConfig: string | null;
   settings: string | null;
@@ -58,10 +64,12 @@ interface CaptureScrollbackModule {
     resume: string | null,
     mcp: McpLaunchOptions,
   ) => LaunchCommand;
+  CLAUDE_READ_ONLY_TOOLS: string;
+  endsOnPermissionQuestion: (raw: string) => boolean;
 }
 
 const require = createRequire(import.meta.url);
-const { parseArgs, buildCommand } = require('../../scripts/capture-agent-scrollback.js') as CaptureScrollbackModule;
+const { parseArgs, buildCommand, endsOnPermissionQuestion, CLAUDE_READ_ONLY_TOOLS } = require('../../scripts/capture-agent-scrollback.js') as CaptureScrollbackModule;
 
 const SANDBOX = path.join(os.tmpdir(), 'kangentic-capture-args-test');
 const SCRATCH_ROOT = path.join(SANDBOX, 'clone');
@@ -138,6 +146,37 @@ describe('buildCommand: Kangentic MCP server on a claude launch', () => {
   });
 });
 
+describe('buildCommand: the read-only launch a workflow agent gets', () => {
+  it('passes no permission mode in default mode, then the MCP pair, then the read-only flags before the prompt', () => {
+    const command = buildCommand('claude', SCRATCH_ROOT, PROMPT, 'default', null, null, { mcpConfig: MCP_CONFIG, settings: SETTINGS, readOnly: true });
+
+    expect(command.args).toEqual([
+      '--settings', SETTINGS,
+      '--mcp-config', MCP_CONFIG,
+      '--tools', CLAUDE_READ_ONLY_TOOLS, '--strict-mcp-config', '--no-chrome',
+      '--', PROMPT,
+    ]);
+  });
+
+  it('names the tools and flags the desktop\'s read-only launch carries', () => {
+    const desktop = new CommandBuilder().buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'wf-1',
+      cwd: '/project',
+      permissionMode: 'default',
+      shell: 'bash',
+      readOnly: true,
+    });
+
+    expect(desktop).toContain(`--tools '${CLAUDE_READ_ONLY_TOOLS}' --strict-mcp-config --no-chrome`);
+    expect(desktop).not.toContain('--permission-mode');
+  });
+
+  it('refuses a read-only launch for an agent with no shape for one', () => {
+    expect(() => buildCommand('codex', SCRATCH_ROOT, PROMPT, null, null, null, { mcpConfig: null, settings: null, readOnly: true })).toThrow('No read-only launch shape for agent "codex"');
+  });
+});
+
 describe('buildCommand: an agent with no MCP launch shape', () => {
   it.each([
     ['codex', { mcpConfig: MCP_CONFIG, settings: null }],
@@ -200,6 +239,51 @@ describe('parseArgs: --scratch-root must contain --cwd', () => {
 
     expect(options.cwd).toBe(elsewhere);
     expect(options.scratchRoot).toBeNull();
+  });
+});
+
+describe('endsOnPermissionQuestion: the follow-up is never typed into the agent\'s own question', () => {
+  const fixturesDirectory = path.resolve(__dirname, '..', 'captures', 'fixtures', 'demo');
+  function streamOf(file: string): string {
+    const recording = JSON.parse(fs.readFileSync(path.join(fixturesDirectory, file), 'utf-8')) as { stream: Array<{ data: string }> };
+    return recording.stream.map((window) => window.data).join('');
+  }
+
+  it('is true where a real recording stops on Claude\'s permission question', () => {
+    const stream = streamOf('contoso-web-claude-api-client-tiled.json');
+    const asked = stream.lastIndexOf('Do you want to');
+    expect(asked, 'the fixture carries a permission question').toBeGreaterThan(-1);
+
+    expect(endsOnPermissionQuestion(stream.slice(0, asked + 1200))).toBe(true);
+  });
+
+  it('is false at the end of the recorded workflow agent, whose turn ends on its reply', () => {
+    expect(endsOnPermissionQuestion(streamOf('workflow-wf-cw-invoice-pdf.json'))).toBe(false);
+  });
+
+  it('is false for a question the agent asks in its own reply, which the follow-up answers', () => {
+    expect(endsOnPermissionQuestion('Both tasks run every column. Do you want to skip Planning on the client task?\r\n')).toBe(false);
+  });
+});
+
+describe('parseArgs: --follow-up', () => {
+  it('keeps the text the user types after the first turn', () => {
+    const options = parseArgs(argvFor(SCRATCH_ROOT, ['--prompt', PROMPT, '--follow-up', 'Split it in two']));
+
+    expect(options.followUp).toBe('Split it in two');
+  });
+
+  it('is null when the flag is absent', () => {
+    expect(parseArgs(argvFor(SCRATCH_ROOT)).followUp).toBeNull();
+  });
+
+  it('refuses blank text, which would send an empty turn', () => {
+    expect(() => parseArgs(argvFor(SCRATCH_ROOT, ['--follow-up', '  ']))).toThrow('--follow-up needs the text the user types');
+  });
+
+  it('refuses a cut that would end the first turn before it goes quiet', () => {
+    expect(() => parseArgs(argvFor(SCRATCH_ROOT, ['--follow-up', 'More', '--stop-after', '30']))).toThrow('--follow-up waits for the turn to end');
+    expect(() => parseArgs(argvFor(SCRATCH_ROOT, ['--follow-up', 'More', '--stop-when', 'Moving']))).toThrow('--follow-up waits for the turn to end');
   });
 });
 

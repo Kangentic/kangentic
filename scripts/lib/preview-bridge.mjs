@@ -20,18 +20,18 @@ export function readPreviewPort(repoRoot) {
 }
 
 /**
- * Evaluate an expression in the preview's renderer and return its value.
+ * POST a JSON body to one of the bridge's routes and return the parsed answer.
  *
- * The bridge sets no deadline of its own, since it awaits the promise for as long as the renderer
- * takes, and fetch has none either, so `timeoutMs` is what stops one wedged call from hanging the
- * whole run. Thirty seconds unless said. Needs Settings > Developer > Allow Unsafe Operations,
- * which is reported plainly rather than as a bare 403.
+ * The bridge sets no deadline of its own, since it awaits the work for as long as it takes, and
+ * fetch has none either, so `timeoutMs` is what stops one wedged call from hanging the whole run.
+ * Thirty seconds unless said. A route gated on Settings > Developer > Allow Unsafe Operations
+ * says so plainly rather than as a bare 403.
  */
-export async function evaluateInPreview(port, expression, timeoutMs = 30_000) {
-  const response = await fetch(`http://127.0.0.1:${port}/eval`, {
+export async function postToPreview(port, route, body, timeoutMs = 30_000) {
+  const response = await fetch(`http://127.0.0.1:${port}${route}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ expression }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
   const payload = await response.json().catch(() => null);
@@ -46,5 +46,11 @@ export async function evaluateInPreview(port, expression, timeoutMs = 30_000) {
     }
     throw new Error(`Preview rejected the call (${failure.kind ?? response.status}): ${detail}`);
   }
+  return payload;
+}
+
+/** Evaluate an expression in the preview's renderer and return its value (`postToPreview`'s deadline). */
+export async function evaluateInPreview(port, expression, timeoutMs = 30_000) {
+  const payload = await postToPreview(port, '/eval', { expression }, timeoutMs);
   return payload?.value;
 }

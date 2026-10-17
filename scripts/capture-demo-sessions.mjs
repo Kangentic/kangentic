@@ -27,6 +27,10 @@
  *              session paused at its recording's end, where the reprint shows nothing the frame
  *              has not reached. Resuming can append to those history files, which the committed
  *              trails and transcripts came from: back them up before a run and restore them after.
+ *   workflows  the manifest's `workflowAgents`: a workflow's own agent planning a workflow made
+ *              from a backlog item, against a running /preview the capture seeds, as `mcp`
+ *              entries are (scripts/lib/demo-mcp-capture.mjs). Recorded at the Workflows view's
+ *              agent pane, with the plan the agent saved written to workflow-plans/<workflowId>.json.
  *
  * Prepares one scratch repo per project under a SHORT temp path (Windows path limits bite under a
  * deep one): a shallow clone for the two upstream samples, a copy of scripts/demo-repos/contoso-web
@@ -47,7 +51,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { importTsModule } from './lib/bundle-ts-module.mjs';
 import { buildScaffoldRepo, stageScaffoldRefresh } from './lib/demo-scaffold-repo.mjs';
-import { prepareMcpCapture } from './lib/demo-mcp-capture.mjs';
+import { prepareMcpCapture, prepareWorkflowAgentCapture } from './lib/demo-mcp-capture.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
@@ -314,12 +318,13 @@ function geometryFor(entry) {
     return forAgent(transient ? geometry.commandTerminal : geometry.taskWindow);
   }
   if (entry.kind === 'terminal') return forAgent(entry.layout === 'tiled' ? geometry.commandTerminalTiled : geometry.commandTerminal);
+  if (entry.kind === 'workflow') return forAgent(geometry.workflowAgentPane);
   return forAgent(geometry.taskWindow);
 }
 
-/** Does this capture record a Command Terminal, whose session the dataset marks transient? */
+/** Does this capture record a transient session: a Command Terminal, or a workflow's own agent? */
 function isTransientCapture(entry) {
-  if (entry.kind === 'terminal') return true;
+  if (entry.kind === 'terminal' || entry.kind === 'workflow') return true;
   if (entry.kind !== 'session') return false;
   const session = dataset.findDemoSession(entry.sessionId);
   return !!(session && session.transient);
@@ -343,6 +348,8 @@ function runCapture(entry, cwd, extraArgs = []) {
   if (entry.timeout) args.push('--timeout', String(entry.timeout));
   if (entry.stopAfter) args.push('--stop-after', String(entry.stopAfter));
   if (entry.stopWhen) args.push('--stop-when', entry.stopWhen);
+  // The user's answer to the reply's choices, typed once the first turn ends.
+  if (entry.followUp) args.push('--follow-up', entry.followUp);
   if (entry.min) args.push('--min', String(entry.min));
   if (entry.idle) args.push('--idle', String(entry.idle));
   // A resume boot records the CLI reprinting a conversation the paused session's card already
@@ -400,11 +407,20 @@ function sessionEntries() {
   });
 }
 
+/**
+ * A workflow's own agent, launched in the desktop's default mode on the project's checkout. Its
+ * prompt is the first message the preview builds, so the entry carries none.
+ */
+function workflowAgentEntries() {
+  return (manifest.workflowAgents ?? []).map((entry) => ({ kind: 'workflow', mode: 'default', prompt: '', ...entry }));
+}
+
 const entries = [
   ...sessionEntries(),
   ...derivedSpawnEntries(),
   ...derivedTerminalEntries(),
   ...derivedResumeEntries(),
+  ...workflowAgentEntries(),
 ];
 console.error(`[matrix] ${entries.filter((entry) => entry.kind === 'session').length} sessions (${manifest.captures.length} in the manifest, the rest tiled variants), ${entries.filter((entry) => entry.kind === 'spawn').length} spawn boots, ${entries.filter((entry) => entry.kind === 'terminal').length} terminal boots, ${entries.filter((entry) => entry.kind === 'resume').length} resume boots`);
 
@@ -448,15 +464,28 @@ for (const entry of entries) {
   let mcp = null;
   let code;
   try {
-    if (entry.mcp) {
+    if (entry.mcp || entry.kind === 'workflow') {
       try {
-        mcp = await prepareMcpCapture({ repoRoot, dataset, entry, root: cwd });
+        mcp = entry.kind === 'workflow'
+          ? await prepareWorkflowAgentCapture({ repoRoot, dataset, entry, root: cwd })
+          : await prepareMcpCapture({ repoRoot, dataset, entry, root: cwd });
       } catch (error) {
         console.error(`[matrix] ${entry.file}: ${error.message ?? error}`);
         code = 'prepare';
       }
     }
+    // A workflow agent's prompt is the first message the preview built for its workflow.
+    if (mcp && mcp.prompt !== undefined) entry.prompt = mcp.prompt;
     if (code === undefined) code = mcp ? await runCapture(entry, mcp.cwd, mcp.args) : await runCapture(entry, cwd);
+    // The plan is read before the cleanup drops the project that holds it.
+    if (code === 0 && mcp && mcp.writePlan) {
+      try {
+        await mcp.writePlan(path.join(fixturesDir, 'workflow-plans', `${entry.workflowId}.json`));
+      } catch (error) {
+        console.error(`[matrix] ${entry.file}: the plan could not be read back (${error.message ?? error})`);
+        code = 'plan';
+      }
+    }
   } finally {
     if (history) fs.writeFileSync(history.historyFile, originalHistory);
     if (mcp) {

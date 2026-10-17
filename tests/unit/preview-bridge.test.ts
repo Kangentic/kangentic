@@ -11,7 +11,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { evaluateInPreview, readPreviewPort } from '../../scripts/lib/preview-bridge.mjs';
+import { evaluateInPreview, postToPreview, readPreviewPort } from '../../scripts/lib/preview-bridge.mjs';
 
 describe('readPreviewPort', () => {
   let repoRoot: string;
@@ -95,6 +95,22 @@ describe('evaluateInPreview', () => {
     expect(seenRequests[0].url).toBe('/eval');
     expect(seenRequests[0].contentType).toBe('application/json');
     expect(JSON.parse(seenRequests[0].body)).toEqual({ expression: 'window.electronAPI.projects.list()' });
+  });
+
+  it('POSTs a body to another route and returns the whole answer, which a route like /workflow-agent-launch sends unwrapped', async () => {
+    const launch = { cwd: '/mock/contoso-web', prompt: 'Plan it', mcpServerUrl: 'http://127.0.0.1:1/mcp/p/workflow-w', mcpServerToken: 't' };
+    const port = await startBridge((response) => sendJson(response, 200, launch));
+
+    const answer = await postToPreview(port, '/workflow-agent-launch', { projectId: 'p', workflowId: 'w' }, 5000);
+
+    expect(answer).toEqual(launch);
+    expect(seenRequests[0].url).toBe('/workflow-agent-launch');
+    expect(JSON.parse(seenRequests[0].body)).toEqual({ projectId: 'p', workflowId: 'w' });
+  });
+
+  it('names the Allow Unsafe Operations setting for any gated route, not only /eval', async () => {
+    const port = await startBridge((response) => sendJson(response, 403, { ok: false, error: { kind: 'eval-disabled' } }));
+    await expect(postToPreview(port, '/workflow-agent-launch', {}, 5000)).rejects.toThrow('Allow Unsafe Operations');
   });
 
   it('returns undefined when an OK answer carries no value', async () => {

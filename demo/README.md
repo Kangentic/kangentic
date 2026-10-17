@@ -297,7 +297,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `column-automation-edit` | boot | the same board and rows as `column-automation-turn-end`, Testing's edit button, then the first turn-end row's edit button, so the Edit automation dialog shows Send findings back as its four cards: Trigger, Condition, Frequency and Action. The first row, because its Condition is an Agent evaluation in plain words where the second quotes one specific final line. It also seeds `config.automation` (Claude on Sonnet 5), since with no Automation agent the Condition card shows its setup notice in place of the condition, and the sample install chooses none. No menu is left open, so it boots in a frame. At 1600 by 1000 the dialog is about 115px taller than its body allows, so the body scrolls: the first three cards show whole, and the Action card shows its Type, its column and the Message, whose last line (`{{agentReply}}`) is cut off at the bottom of the body, with the Template variable picker below the fold. The dialog keeps the app's own size and type. Under `loop=1` its choreography switches the Condition off and on, picks Text match, takes the Frequency down to one and back to three, and picks Agent evaluation again; the dialog keeps the evaluation's text across the switch, so the cycle ends on the poster's values, and Done is never pressed |
 | `workflows` | boot | `__mockWorkflows` and `__mockWorkflowLinks` plus `tasks` patches that join six existing contoso cards to one running workflow (Workflows below); the Workflows toggle, the agent pane's collapse, Board, Workflows again, then a click on empty canvas. It also seeds `config.automation`, since a workflow step needs an Automation agent to judge it. Under `loop=1` a card is dragged up into empty canvas and Auto layout slides it home (the button turns itself off once no card is hand-placed), and when the middleware session's recorded turn ends (about 90 s in) its timeline does what main does: the step is done at the route's last column, Executing, so the card moves to Done, and with its one blocker done the engine starts Add user auth flow in Planning, which plays its recorded plan-mode boot. The restart six seconds later undoes both |
 | `board-workflow` | state | the same seed, on the board: each member card's strip and step track, the To Do cards' waiting line, and the toggle's running mark. It carries the same timeline and `config.automation` as `workflows`, so live, about 90 s in, the middleware card leaves Executing for Done and Add user auth flow moves into Planning and starts its agent |
-| `workflow-draft` | boot | a second `__mockWorkflows` seed, a workflow planned but not started (its tasks live in the draft, so nothing reaches the board); the same round trip as `workflows`, then a click that selects the middle planned task, so the inspector shows its route switches, what it waits for and what waits for it. Under `loop=1` a link is drawn from the billing page task's handle onto the tests task, then removed from the tests task's inspector, and the middle task is selected again. The two have no path between them: a link the plan already implies is refused, on the desktop too |
+| `workflow-draft` | boot | a second `__mockWorkflows` seed, a workflow planned but not started (its tasks live in the draft, so nothing reaches the board), read from the plan its recorded agent saved, and `config.workflows` naming Claude, so the agent pane opens on that recording's end (Workflow agent below); the view, then a click that selects the billing page task, so the inspector shows its route switches and the route task it waits for. Under `loop=1` the link is removed from the billing page's inspector and drawn again from the route task's handle, then the route task is selected, which takes the new link out of its accent, and the billing page again |
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab). Under `loop=1` `board-filter` turns on High priority and the feature label, each narrowing the board behind it, and turns them off; `activity-tab` narrows the list to the middleware session's events, to api-client's, and back to All with its filter. The events are seeded once: no recording carries tool events to put on its clock, and the transcripts that would carry them are not committed |
 | `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more. Under `loop=1` the pointer goes over the banner's controls and the megaphone, and over the dialog's links and QR code, each showing its hover; nothing is pressed, since dismissing or opening the feed marks the announcement read and a link opens a browser |
 | `task`, `browser` | state | `workspaceByProject` (a floating window sized to its session's recording, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below). Under `loop=1` `browser` types a note for the agent into the pane's own field, takes it back, and clicks the page; it is never sent |
@@ -487,8 +487,8 @@ figure. The `workflows` and `board-workflow` scenes seed one instead: Harden the
 contoso-web, over six cards the install already has. Two are done, two are mid-route, and two wait
 in To Do, so the canvas shows both a met link and an open one. The mock lists a started workflow's
 tasks by `workflow_id`, which the scenes' `tasks` patches set. `workflow-draft` seeds a different
-workflow, Invoice PDF export, planned from the contoso backlog item's ask and not started, so its
-four tasks are the draft's own and no board card changes.
+workflow, Invoice PDF export, planned by its own agent from the contoso backlog item and not
+started, so its tasks are the draft's own and no board card changes (Workflow agent below).
 
 The mock reads a task's route against its own board's columns (`boardLanes`). The sample install
 tags each project's lanes, and a route read across all three drew about seventeen stops on every
@@ -504,11 +504,36 @@ around them, because the canvas never fits past 1:1 (`FIT_VIEW_OPTIONS` in `Work
 at 1600 by 1000 six cards need less than the canvas has. Filling it would take a zoom the desktop
 never opens at, so the frame keeps the app's fit.
 
-The pane is collapsed for a second reason. The workflow agent has no recording: the mock starts a
-session when the pane opens, and its terminal would be empty. The strip shows the agent's idle
-mark. A visitor who expands the pane sees that empty terminal, the one place this view is quieter
-than the desktop. Recording the workflow agent needs Kangentic's MCP server to plan against, which
-the capture matrix does not run.
+The pane is collapsed for a second reason. Harden the API's agent has no recording: its members are
+cards the install already has, each with its own recording, and a real agent's plan would not be
+theirs. The mock starts a session when the pane opens, and its terminal would be empty. A visitor
+who expands the pane sees that empty terminal, the one place this view is quieter than the
+desktop.
+
+#### Workflow agent
+
+`workflow-draft` is the other way round: its plan is a recording's. The capture matrix records the
+workflow agent planning Invoice PDF export (the manifest's `workflowAgents`,
+`scripts/lib/demo-mcp-capture.mjs`) against a running `/preview` seeded with the contoso board, the
+way a user makes one: the backlog item as a card in To Do, and the workflow made from that card. Its
+launch is the desktop's, read from the preview (`POST /workflow-agent-launch`,
+`src/devtools/main/workflow-agent-launch-route.ts`): the first message built over the preview's own
+board, and the MCP URL whose `workflow-` segment limits the agent to the read-only and planning
+tools. Claude starts read-only in the project's checkout, as `workflow-agent.ts` starts it, with
+Verbose output on so each call prints. After the run the rig reads back the plan the agent saved
+and writes it to `workflow-plans/wf-cw-invoice-pdf.json`; the scene's draft is that file, so the
+canvas draws the plan the pane shows being saved, and `scene-registry.test.ts` holds the two equal.
+
+The run is two turns. The default first message asks for as few tasks as the work allows, and the
+agent saved one; the rig then types the user's answer to the choices its reply offered (`followUp`:
+the server side first, then the billing page on top of it), and the agent saved the two linked
+tasks the canvas draws. The pane opens on the recording's end, idle, with the scene naming Claude as
+the Workflow agent so the pane opens it rather than asking for one. The scene's draft names no
+source task: the sample install keeps the item in its backlog, and the card it was made from exists
+only on the preview's board, which is why the reply mentions #69. A workflow agent passes Claude no
+permission-mode flag, so Claude starts in the user's own default mode; the rig's settings layer
+names Claude's built-in default instead, since the recording machine's preference is not the
+sample install's.
 
 ### Scene-only rows
 
@@ -1346,6 +1371,10 @@ too, by `scripts/capture-demo-sessions.mjs` from the dataset rather than from a 
   window later tiles or stands alone again, the desktop's PTY resize has the CLI repaint; here
   the session switches to the boot recorded at the other width and repaints from a cleared
   screen at the same point in the boot.
+- A workflow's own agent, which the Workflows view's pane opens, shows the recording of that
+  workflow's agent planning it (`workflow-<workflowId>.json`, the manifest's `workflowAgents`),
+  at its end: the agent saved its plan and ended its turn, so the pane opens idle on its final
+  frame. A workflow with no recording keeps the mock's empty session (Workflows above).
 - Each is announced through the pushes main sends (session status, activity, first output,
   usage, the Monitor snapshot), so the card, the Monitor, and the context bar react as they
   would to the real thing: the "Starting agent" veil lifts when the recording's first window
@@ -1364,13 +1393,15 @@ made at the size of the surface it plays on, from the manifest's `geometry`, whi
 resize bookkeeping: a task session at the task window (154 wide), the Command Terminal session at
 its single window (154 wide), a session with a `tiled` sibling once more at one pane of a tiled
 pair (115 wide), and a Command Terminal boot at both sizes its window can open at (154 wide alone,
-115 wide tiled beside an existing terminal), the frame picking one at spawn time. A grid moves with
+115 wide tiled beside an existing terminal), the frame picking one at spawn time, and a workflow's
+own agent at the Workflows view's agent pane (84 by 55, with no context bar). A grid moves with
 the device scale, since the renderer rounds the cell to device pixels, so each surface in the
 manifest names the scale it was measured at: the two single windows at scale 1 (the demo tier's
 launch; at the rig's 2x the default window fits 142, and the floating scenes size their window to
 the recording instead, see the type-size rule above), the two tiled panes
 at scale 2 (the rig's launch, so a tiled figure is at native type there; at scale 1 the pane fits
-123 and plays the recording widened to it). The spring-petclinic and online-boutique tiled
+123 and plays the recording widened to it), and the workflow agent's pane at scale 2 as well (91
+wide at scale 1). The spring-petclinic and online-boutique tiled
 boots are still at the earlier 124, recorded before the launch was pinned and not re-recordable
 until Codex credits return; a recording carries its own grid, so a pane plays those at its own. The rows
 follow the agent, because the window's context bar
@@ -1617,7 +1648,8 @@ The 44 recordings under `recordings/` (six of them tiled siblings, five of them 
 is on the boot path. The resume boots are 204 KB raw and 29 KB gzipped of that, and one is fetched
 only when a visitor resumes a session paused at its recording's end. The MCP recording, added
 later for the `task-mcp` scene, makes 45 and adds 292 KB raw and 32 KB gzipped, fetched only by a
-frame that mounts its terminal. Each recording carries its timed
+frame that mounts its terminal. The workflow agent's recording, for `workflow-draft`, makes 46 and
+adds 236 KB raw and 32 KB gzipped, fetched only when its pane opens. Each recording carries its timed
 stream, final frame and grid. They were 38.3 MB and 832 KB while each also shipped its frame
 timeline, which the page's emulator made redundant (Live replay); the fixtures keep it. The
 largest single file is the Codex OpenTelemetry session at 70 KB gzipped. The emulator is a 4 KB
