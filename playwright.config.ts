@@ -104,16 +104,17 @@ export default defineConfig({
     },
     {
       // Marketing stills and videos, and the scene rig demo/posters.mjs drives on
-      // every release. 60s because a driver scene's own budget is 30s on its own
-      // (a 20s ready wait plus a 10s gesture wait, tests/captures/helpers/scene-page.ts)
+      // every release. 60s because a scene's own budget is 30s on its own (a 20s ready
+      // wait plus a 10s wait for its ready element, tests/captures/helpers/scene-page.ts)
       // and a cold CI runner pays a module load on top; the two video captures set
       // their own 300s. The CI retry mirrors the ui, electron, and demo projects, and
       // relies on CAPTURE_OUTPUT_ROOT to land a retried shot in the same directory
       // (tests/captures/helpers/output-dir.ts). It is scoped in practice by the
       // poster job's file filter, not by this project: nothing on CI runs the whole
       // project, and a job that did would also retry the two five-minute videos.
-      // workers stays 1: the driver scenes' drags, and the hover held through the
-      // board's link dwell, are timed pointer sequences, and a starved worker drops them.
+      // workers stays 1: the held gestures' poses (a drag, the hover held through the
+      // board's link dwell) are pointer sequences played frame by frame in the page,
+      // and a starved worker drops frames the drag sensors read.
       name: 'captures',
       testDir: './tests/captures',
       testMatch: '**/*.capture.ts',

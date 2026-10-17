@@ -2,7 +2,7 @@
  * The poster set: one still per registry scene in each product theme, at the site's frame at
  * 2x, verified against the build's own scenes.json and zipped with a manifest. kangentic.com's
  * docs figures (AppFigure) render a poster before the demo frame boots, and instead of it in
- * print, under no JS, and on a phone; the `driver` scenes have no other artifact at all.
+ * print, under no JS, and on a phone.
  * demo/posters.mjs is the command, and release.yml's demo-posters job attaches its zip to every
  * release as demo-posters-<version>.zip. This module is the pure half, so
  * tests/unit/demo-posters.test.ts can run it over fixtures without a browser.

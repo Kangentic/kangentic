@@ -6,13 +6,17 @@
  * with Playwright behind it. Every entry is DATA on top of the sample install in
  * helpers/demo-dataset.ts: config overrides, task-row patches, session activity states,
  * `window.__mock*` seeds the mock reads, and a short list of steps the consumer plays before it
- * reveals the frame. No code travels through a scene, so the same shape can ride a `state=` URL
+ * reveals the frame. No code travels through a scene, so its state can ride a `state=` URL
  * parameter verbatim.
  *
- * `reach` says who can build the scene:
+ * A scene can also MOVE, still as data: a `choreography` (pointer steps the live frame plays by
+ * itself under loop=1) and a `timeline` (what main does at a moment on a session's replay clock).
+ * Neither rides a `state=` URL.
+ *
+ * `reach` says what the frame does before it reveals:
  *   state   config and rows alone; nothing is clicked
- *   boot    state plus a few pre-reveal clicks (the demo runs them; the rig runs them too)
- *   driver  needs a hover, a drag, or an open menu; the capture rig only, the demo refuses it
+ *   boot    state plus a few pre-reveal clicks, or a choreography's pose (demo/boot.js plays both,
+ *           for the site and for the capture rig alike)
  *
  * Three fields ship past this repo. `alt` is the reader-facing text a docs figure carries, so it is
  * authored here, beside the state it describes, and emitted into `dist/demo/scenes.json`. `ready`
@@ -26,19 +30,19 @@
  * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
 import contosoHistory from './fixtures/demo/history/contoso-web.json';
 
-export type SceneReach = 'state' | 'boot' | 'driver';
+export type SceneReach = 'state' | 'boot';
 
 /**
  * A step the demo plays in the page before the reveal: a click, or text typed into a field (set
  * through the element's own setter with one input event, so a controlled input takes it). Both
- * are state, not choreography: no timing, no per-keystroke replay.
+ * are state: no timing, no per-keystroke replay. Motion is the `choreography`'s.
  */
 export type DemoBootStep =
   | {
@@ -61,19 +65,48 @@ export type DemoBootStep =
     };
 
 /**
- * A step only the capture rig can play. `boot.js` refuses these in a `state=` blob and refuses a
- * `driver` scene at `view=`, so they never reach a page that cannot honour them.
+ * Where a choreography step points: the centre of the first element a selector matches, or a point
+ * as fractions of the frame (a screen edge has no element).
  */
-export type RigStep =
-  | { hover: string; waitFor?: string }
-  | { contextmenu: string; waitFor?: string }
-  | {
-      /** A pointer drag from one element's centre to another's, or to a point given as fractions
-       *  of the frame (a screen edge has no element). `hold` leaves the pointer down, so the still
-       *  shows the gesture in flight (the drag overlay, the dock preview). */
-      drag: { from: string; to: string | { x: number; y: number }; hold?: boolean };
-      waitFor?: string;
-    };
+export type ChoreographyTarget = string | { x: number; y: number };
+
+/** What one choreography step does with the pointer (demo/choreography.ts plays it). */
+export type ChoreographyGesture =
+  /** Travel to the target and rest there, as a visitor's mouse does. */
+  | { hover: ChoreographyTarget }
+  | { click: ChoreographyTarget }
+  | { contextmenu: ChoreographyTarget }
+  /** Press on `from`, travel to `to`, and release, or with `hold` stay pressed: the gesture in
+   *  flight (the drag overlay, the dock preview). */
+  | { drag: { from: ChoreographyTarget; to: ChoreographyTarget; hold?: boolean } }
+  /** The poster's moment. A still plays the steps up to it and stops, and a live loop starts and
+   *  ends on it. At most one; without one the loop rests where the boot steps left the frame. */
+  | { pose: true };
+
+/**
+ * One beat of a scene's choreography: a gesture, the selector its effect must produce before the
+ * next beat (the app's own timing, a dwell or an animation, which pacing never shortens), and the
+ * pacing after it in milliseconds. Data, never code.
+ */
+export type ChoreographyStep = ChoreographyGesture & { waitFor?: string; ms?: number };
+
+/**
+ * What main does at a moment on a session's replay clock, through the push main sends for it.
+ * `move` is an agent's own move (a recorded `kangentic_move_task` result landing): the card changes
+ * column and `TASK_UPDATED_BY_AGENT` goes out. `to` is a lane id.
+ */
+export type SceneTimelineAction = { move: { task: string; to: string; origin: 'agent' } };
+
+/**
+ * One timeline event. `at: 'end'` is the moment the session's recording ends, which is where the
+ * capture cut it (`stopWhen`), so no offset is typed by hand. `loop=1` puts the frame back when
+ * the session starts over.
+ */
+export interface SceneTimelineEvent {
+  session: string;
+  at: 'end';
+  do: SceneTimelineAction;
+}
 
 export interface DemoState {
   /** Merged into `window.__mockConfigOverrides`. Nested objects replace the demo defaults whole. */
@@ -133,15 +166,29 @@ interface SceneBase extends Omit<DemoState, 'steps'> {
   /** `empty` seeds no project at all: the welcome screen a first launch lands on. Default: the
    *  sample install. */
   install?: 'empty';
+  /**
+   * Pointer steps the frame plays by itself under loop=1, as a visitor would (demo/choreography.ts),
+   * after the boot steps. Each cycle starts and ends on the poster's state: on the `pose` step when
+   * there is one (a still plays up to it), otherwise where the boot steps left the frame. A cycle
+   * that ends anywhere else is logged and stopped. Skipped under still=1 but for the pose.
+   */
+  choreography?: ChoreographyStep[];
+  /** What main does on a session's replay clock (SceneTimelineEvent). Live frames only. */
+  timeline?: SceneTimelineEvent[];
+  /**
+   * Why the frame moves under loop=1 with neither of the above, such as a terminal replaying its
+   * recording. tests/unit/scene-registry.test.ts requires every scene to say how it moves.
+   */
+  motion?: string;
 }
 
 export type SceneDefinition =
   | (SceneBase & { reach: 'state'; steps?: never })
-  | (SceneBase & { reach: 'boot'; steps: DemoBootStep[] })
-  | (SceneBase & { reach: 'driver'; steps: Array<DemoBootStep | RigStep> });
+  | (SceneBase & { reach: 'boot'; steps?: DemoBootStep[] });
 
-export function isRigStep(step: DemoBootStep | RigStep): step is RigStep {
-  return !('click' in step) && !('type' in step) && !('press' in step);
+/** Whether a choreography has a pose: the still plays up to it, so the frame takes input before it reveals. */
+export function hasPose(choreography: ChoreographyStep[] | undefined): boolean {
+  return (choreography ?? []).some((step) => 'pose' in step);
 }
 
 /**
@@ -457,6 +504,9 @@ const TESTING_TURN_END_AUTOMATIONS = [
     config: { targetColumn: 'Merge' },
   },
 ];
+
+/** The Edit automation dialog's Condition switch, which column-automation-edit's choreography flips. */
+const AUTOMATION_CONDITION_SWITCH = '[data-testid="edit-automation-card-condition-switch"]';
 
 /**
  * The whole record of one archived contoso task, Set up CI/CD pipeline, shared by the two
@@ -910,6 +960,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     // terminal is at native type and fills its pane.
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('floating') } },
     ready: '[data-testid="task-title-text"]',
+    motion: 'The terminal replays its working session\'s recording.',
   },
   'windows-tiled': {
     name: 'windows-tiled',
@@ -918,6 +969,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'Two task windows tiled side by side over the board, Extract auth middleware on the left and Generate API client types on the right, each with Claude Code working in its terminal and a context bar below it showing the model, context use, and cost.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: tiledPairWorkspace() } },
     ready: '[data-testid^="tile-splitter-"]',
+    motion: 'Both terminals replay their working sessions\' tiled recordings.',
   },
   // The Browser and Changes scenes below keep a narrow terminal on purpose. There the PANEL is the
   // subject and the terminal beside it is context, and giving the terminal the width its native
@@ -943,12 +995,12 @@ export const SCENES: Record<string, SceneDefinition> = {
   // (scripts/lib/demo-mcp-capture.mjs), so every number and column the calls print is this frame's.
   // The session opens once its first three calls have printed their results (its liveTailMs,
   // demo-dataset.ts), which is what a still paints, and the live frame plays the column check and
-  // the move from there. The card stays in Code Review after the move's result lands: no main
-  // process moves it here.
+  // the move from there. The recording was cut where the move's result landed (the manifest's
+  // stopWhen), so its end IS the move, and the timeline moves the card then, as main does.
   'task-mcp': {
     name: 'task-mcp',
     reach: 'state',
-    description: 'A maximized task window whose Claude Code session reviews its branch and moves its own card on through Kangentic\'s MCP tools, for the landing page\'s MCP tools tab. The task and session are scene-only rows (rows), and the recording ran against a preview seeded with this board, so the ticket number, the column counts and the column settings the calls print are this frame\'s. A still paints the moment kangentic_get_current_task, kangentic_list_columns and kangentic_list_automations have printed their results; live, the agent then reads Testing with kangentic_get_column_detail and moves the card with kangentic_move_task, about eleven seconds, and loop=1 plays it again. The terminal is the one scene above native type: the site shows it at 56 percent, where native type is under 7px, so the scene raises the font and the seed holds the 154-column recording across the whole pane. The card itself stays in Code Review after the move lands, since no main process moves it.',
+    description: 'A maximized task window whose Claude Code session reviews its branch and moves its own card on through Kangentic\'s MCP tools, for the landing page\'s MCP tools tab. The task and session are scene-only rows (rows), and the recording ran against a preview seeded with this board, so the ticket number, the column counts and the column settings the calls print are this frame\'s. A still paints the moment kangentic_get_current_task, kangentic_list_columns and kangentic_list_automations have printed their results; live, the agent then reads Testing with kangentic_get_column_detail and moves the card with kangentic_move_task, about eleven seconds. When the move\'s result lands, the timeline moves the card to Testing through the push main sends for an agent\'s move, so the window\'s header and the board say Testing, and loop=1 puts it back in Code Review as the stretch starts over. The terminal is the one scene above native type: the site shows it at 56 percent, where native type is under 7px, so the scene raises the font and the seed holds the 154-column recording across the whole pane.',
     alt: 'A task window filled by its Claude Code session reviewing its branch with Kangentic\'s MCP tools: kangentic_get_current_task finds its card, #68 in Code Review, then kangentic_list_columns and kangentic_list_automations read the board before the move.',
     rows: [TASK_VALIDATE],
     config: {
@@ -957,6 +1009,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     },
     seeds: { __mockAgentListOverrides: MCP_SCENE_AGENT_LIST },
     ready: '[data-testid="task-title-text"]',
+    timeline: [{ session: SESSION_VALIDATE, at: 'end', do: { move: { task: TASK_VALIDATE, to: demoLaneId(PROJECT_CONTOSO, 'testing'), origin: 'agent' } } }],
   },
 
   dictation: {
@@ -971,6 +1024,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="dictation-live-chip"]',
     focus: '[data-testid="dictation-live-chip"]',
     steps: [{ press: 'Mouse:Back', waitFor: '[data-testid="dictation-live-chip"]' }],
+    motion: 'The terminal under the chip replays its working session\'s recording.',
   },
   'dictation-field': {
     name: 'dictation-field',
@@ -1032,6 +1086,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'working' }) }],
     ready: '[data-testid="changes-scope-working"][aria-checked="true"]',
+    motion: 'The terminal beside the panel replays its working session\'s recording.',
   },
   'changes-staged': {
     name: 'changes-staged',
@@ -1041,6 +1096,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'staged', changesSelectedFile: 'server/middleware/auth.ts' }) }],
     ready: '[data-testid="changes-scope-staged"][aria-checked="true"]',
+    motion: 'The terminal beside the panel replays its working session\'s recording.',
   },
   'changes-history': {
     name: 'changes-history',
@@ -1050,6 +1106,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'branch', changesHistoryOpen: true, changesSelectedCommit: ROUTES_COMMIT.hash }) }],
     ready: '[data-testid="changes-file-tree"]',
+    motion: 'The terminal beside the panel replays its working session\'s recording.',
   },
   'changes-blame': {
     name: 'changes-blame',
@@ -1063,6 +1120,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="diff-view-options"]', waitFor: '[data-testid="diff-blame-toggle"]' },
       { click: '[data-testid="diff-blame-toggle"]', waitFor: '[data-testid="diff-blame-toggle"][aria-checked="true"]' },
     ],
+    motion: 'The terminal beside the panel replays its working session\'s recording.',
   },
 
   // ---------------------------------------------------------------- the Agent Monitor
@@ -1117,6 +1175,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="quick-session-button"]', waitFor: '[data-testid="command-terminal-window"]' },
       { click: '[data-testid="quick-session-new-terminal"]', waitFor: '[data-command-slot="slot-2"] [data-testid^="context-bar-model-"]' },
     ],
+    motion: 'Both terminals replay their recordings, the second from its agent\'s recorded boot.',
   },
 
   // ---------------------------------------------------------------- views and dialogs
@@ -1256,6 +1315,20 @@ export const SCENES: Record<string, SceneDefinition> = {
         waitFor: '[data-testid="edit-automation-dialog"]',
       },
     ],
+    // The pointer works the form and puts it back: the Condition off and on, Text match, the
+    // Frequency down to one and back to three, and Agent evaluation again. The dialog keeps the
+    // evaluation's text across the switch (its conditionDraft), so the cycle ends on the poster's
+    // values. Done is never pressed, so the mock's automations are never written.
+    choreography: [
+      { click: AUTOMATION_CONDITION_SWITCH, waitFor: `${AUTOMATION_CONDITION_SWITCH}[aria-checked="false"]`, ms: 1600 },
+      { click: AUTOMATION_CONDITION_SWITCH, waitFor: `${AUTOMATION_CONDITION_SWITCH}[aria-checked="true"]`, ms: 1200 },
+      { click: '[data-testid="edit-automation-condition-kind-text"]', waitFor: '[data-testid="edit-automation-condition-kind-text"][aria-checked="true"]', ms: 1800 },
+      { click: '[data-testid="edit-automation-max-runs-decrement"]', ms: 500 },
+      { click: '[data-testid="edit-automation-max-runs-decrement"]', ms: 1400 },
+      { click: '[data-testid="edit-automation-max-runs-increment"]', ms: 500 },
+      { click: '[data-testid="edit-automation-max-runs-increment"]', ms: 1000 },
+      { click: '[data-testid="edit-automation-condition-kind-agent"]', waitFor: '[data-testid="edit-automation-condition-kind-agent"][aria-checked="true"]', ms: 600 },
+    ],
   },
   'column-handoff': {
     name: 'column-handoff',
@@ -1358,48 +1431,63 @@ export const SCENES: Record<string, SceneDefinition> = {
   // ---------------------------------------------------------------- settings, one per tab
   ...settingsScenes(),
 
-  // ---------------------------------------------------------------- rig only
+  // ---------------------------------------------------------------- held gestures
+  // Each of these is a gesture in flight, so its choreography ends on a pose: a still plays the
+  // gesture up to it (demo/choreography.ts, the same synthetic pointer a live frame uses), and the
+  // poster is that frame. They were the capture rig's alone until the frame could play a pointer.
   'card-drag': {
     name: 'card-drag',
-    reach: 'driver',
-    description: 'A card lifted out of Planning and held over Executing, for the drag-to-start figure. dnd-kit needs a real pointer sequence, so the rig plays it and stops before the drop.',
-    alt: 'A task card mid-drag from Planning into Executing, the card lifted and tilted, the Executing column highlighted as the drop target.',
+    reach: 'boot',
+    description: 'A card lifted out of To Do and held over Executing, for the drag-to-start figure. The choreography presses on the card and carries it past dnd-kit\'s activation distance to Executing, and the pose holds it there. To Do because a card dropped back there ends its session as main does, which is what lets a loop put the board back as it found it.',
+    alt: 'A task card mid-drag from To Do into Executing, the card lifted and tilted, the Executing column highlighted as the drop target.',
     ready: '.drag-overlay',
-    steps: [{ drag: { from: `[data-task-id="${TASK_WEBSOCKET}"]`, to: '[data-swimlane-name="Executing"]', hold: true }, waitFor: '.drag-overlay' }],
+    choreography: [
+      { drag: { from: `[data-task-id="${TASK_AUTH}"]`, to: '[data-swimlane-name="Executing"]', hold: true }, waitFor: '.drag-overlay' },
+      { pose: true },
+    ],
   },
   'card-menu': {
     name: 'card-menu',
-    reach: 'driver',
-    description: 'A card\'s context menu, which opens on right-click only.',
+    reach: 'boot',
+    description: 'A card\'s context menu, which opens on right-click only, so the choreography right-clicks the card and the pose holds the menu open.',
     alt: 'A task card\'s right-click menu open over the board: Edit, Disable automations, New workflow, a Move to list of the other columns, then Backlog, Archive, and Delete.',
     ready: '[data-testid="task-context-menu"]',
     focus: '[data-testid="task-context-menu"]',
-    steps: [{ contextmenu: `[data-task-id="${TASK_AUTH}"]`, waitFor: '[data-testid="task-context-menu"]' }],
+    choreography: [
+      { contextmenu: `[data-task-id="${TASK_AUTH}"]`, waitFor: '[data-testid="task-context-menu"]' },
+      { pose: true },
+    ],
   },
   // The board draws a workflow card's links only while the pointer rests on the card
   // (card-links-preview.ts: a mouse pointerenter, then a 400ms dwell) or after a refused move, so
-  // no click reaches it and the scene is the rig's. Refactor API error handling is the card that
-  // reads "Blocked by 2 tasks", and resting on it draws which two.
+  // no click reaches it. Refactor API error handling is the card that reads "Blocked by 2 tasks",
+  // and resting on it draws which two.
   'board-workflow-links': {
     name: 'board-workflow-links',
-    reach: 'driver',
-    description: 'The board-workflow scene with the pointer resting on Refactor API error handling, so the board draws that card\'s workflow links: one from each card it waits for. A hover is a real pointer gesture, so the rig plays it.',
+    reach: 'boot',
+    description: 'The board-workflow scene with the pointer resting on Refactor API error handling, so the board draws that card\'s workflow links: one from each card it waits for. The choreography rests the pointer on the card through the board\'s dwell, and the pose holds it there.',
     alt: 'The contoso-web board with the pointer resting on Refactor API error handling, a To Do card blocked by two tasks: lines run into it from Extract auth middleware in Executing and from Add rate limiting in Code Review, and the card is outlined.',
     seeds: WORKFLOW_HARDEN_API_SEEDS,
     tasks: WORKFLOW_HARDEN_API_MEMBERS,
     ready: '[data-testid="workflow-link-line"]',
     focus: [TASK_API_ERRORS, TASK_MIDDLEWARE, TASK_RATE_LIMIT].map((id) => `[data-task-id="${id}"]`).join(', '),
-    steps: [{ hover: `[data-task-id="${TASK_API_ERRORS}"]`, waitFor: '[data-testid="workflow-link-line"]' }],
+    choreography: [
+      { hover: `[data-task-id="${TASK_API_ERRORS}"]`, waitFor: '[data-testid="workflow-link-line"]' },
+      { pose: true },
+    ],
   },
   'window-dock': {
     name: 'window-dock',
-    reach: 'driver',
-    description: 'The task window dragged toward the right edge with the snap preview armed, for the docking figure.',
+    reach: 'boot',
+    description: 'The task window dragged toward the right edge with the snap preview armed, for the docking figure. The choreography presses on the title bar and carries the window to the edge, and the pose holds it there.',
     alt: 'A task window being dragged toward the edge of the board, the docking preview showing where it will snap.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('floating') } },
     ready: '[data-testid="snap-preview"]',
     // The snap zone is the last few pixels before the edge; the point is a fraction of the frame
     // because an edge has no element to name.
-    steps: [{ drag: { from: '[data-testid="task-detail-titlebar"]', to: { x: 0.997, y: 0.5 }, hold: true }, waitFor: '[data-testid="snap-preview"]' }],
+    choreography: [
+      { drag: { from: '[data-testid="task-detail-titlebar"]', to: { x: 0.997, y: 0.5 }, hold: true }, waitFor: '[data-testid="snap-preview"]' },
+      { pose: true },
+    ],
   },
 };

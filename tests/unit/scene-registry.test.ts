@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
-import { SCENES, isRigStep, type DemoBootStep, type RigStep, type SceneDefinition } from '../../tests/captures/scenes';
+import { SCENES, hasPose, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
 import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
 import { loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
@@ -120,13 +120,56 @@ const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
 /** The keys a boot step may carry: a click, typed text, or a held hotkey, each with an optional wait. */
 const BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
 
+/** The gestures a choreography step may make (ChoreographyGesture), and what may ride beside one. */
+const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'pose'];
+const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
+
+/**
+ * Scenes that do not move under loop=1 yet, or move but still owe the change their row in the
+ * motion task asks for. Phases 2 and 3 of that task empty this list; the test below fails a name
+ * here that already declares how it moves, so the list can only shrink.
+ */
+const MOTION_PENDING = new Set([
+  'welcome', 'welcome-setup', 'board', 'board-filter', 'activity-tab', 'session-states', 'session-resume',
+  'activity-overlay', 'notification-toast', 'board-config-change', 'announcements', 'announcement-dialog',
+  'browser', 'dictation-field', 'conversation', 'changes', 'monitor', 'monitor-table', 'command-terminal',
+  'usage', 'knowledge-graph', 'backlog', 'quick-find', 'quick-find-results', 'new-task', 'edit-columns',
+  'column-automation', 'column-automation-turn-end', 'column-handoff', 'workflows', 'board-workflow',
+  'workflow-draft', 'completed-tasks', 'completed-task', 'completed-task-usage',
+  // Each holds its pose under loop=1; its loop is a Phase 3 row.
+  'card-drag', 'card-menu', 'board-workflow-links', 'window-dock',
+  ...SETTINGS_TABS.map((tab) => `settings-${tab.id}`),
+  ...Object.keys(SCENES).filter((name) => name.startsWith('knowledge-graph-')),
+]);
+
+/** Whether a scene moves under loop=1 by its own declaration: a cycle to play, a timeline, or a stated reason. */
+function declaresMotion(scene: SceneDefinition): boolean {
+  const choreography = scene.choreography ?? [];
+  const poseIndex = choreography.findIndex((step) => 'pose' in step);
+  const playsCycle = choreography.length > 0 && (poseIndex < 0 || poseIndex < choreography.length - 1);
+  return playsCycle || (scene.timeline ?? []).length > 0 || (scene.motion ?? '').trim() !== '';
+}
+
+/** The gesture key a step makes, or null when it names none or several. */
+function gestureOf(step: ChoreographyStep): string | null {
+  const gestures = Object.keys(step).filter((key) => CHOREOGRAPHY_GESTURES.includes(key));
+  return gestures.length === 1 ? gestures[0] : null;
+}
+
+/** A target is a selector, or a point inside the frame as fractions of it. */
+function isTarget(target: ChoreographyTarget | undefined): boolean {
+  if (typeof target === 'string') return target.trim() !== '';
+  if (!target || typeof target !== 'object') return false;
+  return [target.x, target.y].every((value) => typeof value === 'number' && value >= 0 && value <= 1);
+}
+
 /** The tells the writing-style scan bans, plus the `--` separator it cannot tell from a CLI flag. */
 const BANNED_CHARACTERS = /[—–‘’“”]|--/;
 
 const entries = Object.entries(SCENES);
 const scenes = entries.map(([, scene]) => scene);
 
-function stepsOf(scene: SceneDefinition): Array<DemoBootStep | RigStep> {
+function stepsOf(scene: SceneDefinition): DemoBootStep[] {
   return scene.steps ?? [];
 }
 
@@ -177,23 +220,90 @@ describe('scene registry', () => {
     }
   });
 
-  it('tags reach by what the steps need', () => {
+  it('tags reach by what the frame does before it reveals', () => {
     for (const scene of scenes) {
       const steps = stepsOf(scene);
-      const rigSteps = steps.filter(isRigStep);
       if (scene.reach === 'state') {
         expect(steps, `${scene.name} is state but has steps`).toEqual([]);
-      } else if (scene.reach === 'boot') {
-        expect(steps.length, `${scene.name} is boot but clicks nothing; tag it state`).toBeGreaterThan(0);
-        expect(rigSteps, `${scene.name} is boot but carries a rig-only step; tag it driver`).toEqual([]);
+        expect(hasPose(scene.choreography), `${scene.name} is state but plays a pose before it reveals; tag it boot`).toBe(false);
+      } else {
+        expect(steps.length > 0 || hasPose(scene.choreography), `${scene.name} is boot but neither clicks nor poses; tag it state`).toBe(true);
         for (const step of steps) {
           const extra = Object.keys(step).filter((key) => !BOOT_STEP_KEYS.includes(key));
           expect(extra, `${scene.name} boot step has keys boot.js would refuse`).toEqual([]);
+          expect('click' in step || 'type' in step || 'press' in step, `${scene.name} boot step neither clicks, types, nor presses`).toBe(true);
         }
-      } else {
-        expect(rigSteps.length, `${scene.name} is driver but every step is a click; tag it boot`).toBeGreaterThan(0);
       }
     }
+  });
+
+  it('writes each choreography from its closed vocabulary, data only', () => {
+    let checked = 0;
+    for (const scene of scenes) {
+      const choreography = scene.choreography;
+      if (choreography === undefined) continue;
+      checked += 1;
+      expect(choreography.length, `${scene.name}.choreography is empty`).toBeGreaterThan(0);
+      expect(choreography.filter((step) => 'pose' in step).length, `${scene.name} poses more than once`).toBeLessThanOrEqual(1);
+      expect(choreography.some((step) => !('pose' in step)), `${scene.name}.choreography makes no gesture`).toBe(true);
+      choreography.forEach((step, index) => {
+        const where = `${scene.name}.choreography[${index}]`;
+        const gesture = gestureOf(step);
+        expect(gesture, `${where} makes exactly one gesture of ${CHOREOGRAPHY_GESTURES.join(', ')}`).not.toBeNull();
+        const extra = Object.keys(step).filter((key) => key !== gesture && !CHOREOGRAPHY_STEP_EXTRAS.includes(key));
+        expect(extra, `${where} carries keys the player does not read`).toEqual([]);
+        if (step.ms !== undefined) expect(Number.isFinite(step.ms) && step.ms >= 0, `${where}.ms is not a duration`).toBe(true);
+        if (step.waitFor !== undefined) expect(step.waitFor.trim(), `${where}.waitFor is empty`).not.toBe('');
+        if ('pose' in step) {
+          expect(step.pose, `${where}.pose`).toBe(true);
+          expect(Object.keys(step), `${where} is a pose and nothing else`).toEqual(['pose']);
+        }
+        if ('hover' in step) expect(isTarget(step.hover), `${where}.hover`).toBe(true);
+        if ('click' in step) expect(isTarget(step.click), `${where}.click`).toBe(true);
+        if ('contextmenu' in step) expect(isTarget(step.contextmenu), `${where}.contextmenu`).toBe(true);
+        if ('drag' in step) {
+          expect(isTarget(step.drag.from) && isTarget(step.drag.to), `${where}.drag needs a from and a to`).toBe(true);
+          // Nothing releases a held pointer but a visitor, so the gesture it holds is the pose.
+          if (step.drag.hold) expect('pose' in (choreography[index + 1] ?? {}), `${where} holds the pointer, so the pose follows it`).toBe(true);
+        }
+      });
+    }
+    expect(checked, 'no scene carries a choreography').toBeGreaterThan(0);
+  });
+
+  it('times each timeline event on a working session the scene holds, moving a card it holds', () => {
+    const laneIds = new Set(demoLaneIds());
+    const recordings = loadDemoRecordings();
+    let checked = 0;
+    for (const scene of scenes) {
+      for (const [index, event] of (scene.timeline ?? []).entries()) {
+        checked += 1;
+        const where = `${scene.name}.timeline[${index}]`;
+        expect(sceneSessionIds(scene).has(event.session), `${where} names a session the install does not hold`).toBe(true);
+        // The clock that fires it runs only for a session the board seeds as working, from its recording.
+        const session = DEMO_ALL_SESSIONS.find((candidate) => candidate.id === event.session);
+        const activity = scene.sessions?.[event.session]?.activity ?? session?.activity;
+        expect(activity, `${where} rides a session that is not working, whose clock never runs`).toBe('thinking');
+        expect(recordings.sessions[event.session], `${where} rides a session with no recording`).toBeDefined();
+        expect(event.at, `${where}.at`).toBe('end');
+        expect(Object.keys(event.do), `${where}.do names one action`).toEqual(['move']);
+        expect(sceneTaskIds(scene).has(event.do.move.task), `${where} moves a task the install does not hold`).toBe(true);
+        expect(laneIds.has(event.do.move.to), `${where} moves to a lane the install does not have`).toBe(true);
+        expect(event.do.move.origin, `${where}.origin`).toBe('agent');
+      }
+    }
+    expect(checked, 'no scene carries a timeline').toBeGreaterThan(0);
+  });
+
+  it('says how every scene moves under loop=1, and the pending list only shrinks', () => {
+    for (const scene of scenes) {
+      if (MOTION_PENDING.has(scene.name)) {
+        expect(declaresMotion(scene), `${scene.name} now declares how it moves; take it out of MOTION_PENDING`).toBe(false);
+      } else {
+        expect(declaresMotion(scene), `${scene.name} declares no choreography cycle, timeline, or motion reason`).toBe(true);
+      }
+    }
+    for (const name of MOTION_PENDING) expect(SCENES[name], `MOTION_PENDING names ${name}, which is not a scene`).toBeDefined();
   });
 
   it('patches only rows the scene\'s install holds: the sample install\'s and the scene-only rows it adds', () => {
@@ -539,6 +649,15 @@ describe('scene registry', () => {
     expect(boot, 'boot.js publishes the session patches before the seed runs').toContain('window.__demoSessionPatches = effective.sessions');
     const dataset = fs.readFileSync(path.join(REPO_ROOT, 'tests/captures/helpers/demo-dataset.ts'), 'utf-8');
     expect(dataset, 'the seed folds the session patches in').toContain('window.__demoSessionPatches');
+    // The timeline rides the same hand-off, and the seed runs it on the session's clock.
+    expect(boot, 'boot.js publishes the scene timeline before the seed runs').toContain('window.__demoSceneTimeline = (scene && scene.timeline)');
+    expect(dataset, 'the seed reads the scene timeline').toContain('window.__demoSceneTimeline');
+    expect(dataset, 'the clock\'s end runs the timeline').toContain("runSessionTimeline(sessionId, 'end')");
+    expect(dataset, 'a loop=1 restart undoes it').toContain('revertSessionTimeline(sessionId)');
+    // And the choreography: a pose is played before the reveal, a cycle after it under loop=1.
+    expect(boot).toContain('scene.choreography');
+    expect(boot).toContain('player.playToPose()');
+    expect(boot).toContain('player.startLoop()');
     // The two fields the consumers wait on and report are read by name.
     expect(boot).toContain('scene.ready');
     expect(boot).toContain('scene.focus');

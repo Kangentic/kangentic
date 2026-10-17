@@ -3,10 +3,10 @@
  * second consumer. `npm run capture` builds dist/demo first; running this file against a stale
  * or missing build is refused rather than silently shooting last release's frames.
  *
- * Every scene the site can embed is opened by URL, so a still here is a frame of what a docs
- * page shows. The `driver` scenes are the rig's alone: their gesture (a card mid-drag, a
- * right-click menu, a pointer resting on a card, a window dragged to the edge) is played with
- * Playwright after the frame reports ready, which is what no page can do for itself.
+ * Every scene is opened by URL, so a still here is a frame of what a docs page shows. A held
+ * gesture (a card mid-drag, a right-click menu, a pointer resting on a card, a window dragged to
+ * the edge) is its choreography's pose, which demo/boot.js plays in the still before it reports
+ * ready, so the rig plays nothing itself.
  *
  * Output: captures/<timestamp>/scenes/<scene>.<theme>.<resolution>.png, in the same gitignored,
  * per-run directory the marketing captures use, and beside each still a

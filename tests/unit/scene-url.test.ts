@@ -1,8 +1,8 @@
 /**
  * sceneUrl (tests/captures/helpers/scene-page.ts) is the pure half of the capture rig's page
- * open: it builds the URL a state or boot scene boots through `view=`, and the URL a driver
- * scene carries as a `state=` blob (never a `view=`, since demo/boot.js refuses a driver scene
- * by name). This pins that contract without driving a real page.
+ * open: it builds the URL every scene boots through, `view=` and a still. A held gesture is a
+ * choreography's pose, which demo/boot.js plays in the page, so no scene travels as a `state=`
+ * blob any more. This pins that contract without driving a real page.
  */
 import { describe, it, expect } from 'vitest';
 import { SCENE_THEMES, sceneUrl, type OpenSceneOptions } from '../../tests/captures/helpers/scene-page';
@@ -27,34 +27,16 @@ const bootScene: SceneDefinition = {
   steps: [{ click: '[data-testid="scene-url-click-target"]' }],
 };
 
-const driverSceneFullyLoaded: SceneDefinition = {
-  name: 'scene-url-driver-full-sample',
+const posedScene: SceneDefinition = {
+  name: 'scene-url-posed-sample',
   description: 'Fixture scene for the sceneUrl pin tests.',
   alt: 'A fixture scene used only to test sceneUrl.',
   ready: '[data-testid="scene-url-ready"]',
-  reach: 'driver',
+  reach: 'boot',
   config: { theme: 'dark' },
   tasks: [{ id: 'task-1', title: 'Sample task' }],
-  sessions: { 'session-1': { activity: 'idle' } },
-  seeds: { __mockSomething: true },
-  steps: [{ hover: '[data-testid="scene-url-hover-target"]' }],
+  choreography: [{ contextmenu: '[data-testid="scene-url-context-target"]' }, { pose: true }],
 };
-
-const driverScenePartiallyLoaded: SceneDefinition = {
-  name: 'scene-url-driver-partial-sample',
-  description: 'Fixture scene for the sceneUrl pin tests.',
-  alt: 'A fixture scene used only to test sceneUrl.',
-  ready: '[data-testid="scene-url-ready"]',
-  reach: 'driver',
-  tasks: [{ id: 'task-2', title: 'Partial task' }],
-  steps: [{ contextmenu: '[data-testid="scene-url-context-target"]' }],
-};
-
-function decodeStateParam(url: URL): unknown {
-  const encoded = url.searchParams.get('state');
-  if (encoded === null) throw new Error('The URL carries no state param to decode');
-  return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf-8'));
-}
 
 describe('sceneUrl', () => {
   it('boots a state scene through view=, with no state param', () => {
@@ -90,22 +72,12 @@ describe('sceneUrl', () => {
     }
   });
 
-  it('carries a driver scene through state=, with no view param', () => {
-    const url = new URL(sceneUrl(driverSceneFullyLoaded, options));
-    expect(url.searchParams.has('view')).toBe(false);
-    const decoded = decodeStateParam(url);
-    expect(decoded).toEqual({
-      config: { theme: 'dark' },
-      tasks: [{ id: 'task-1', title: 'Sample task' }],
-      sessions: { 'session-1': { activity: 'idle' } },
-      seeds: { __mockSomething: true },
-    });
-  });
-
-  it('carries only the keys the driver scene actually set, never steps or the descriptive fields', () => {
-    const url = new URL(sceneUrl(driverScenePartiallyLoaded, options));
-    const decoded = decodeStateParam(url);
-    expect(Object.keys(decoded as Record<string, unknown>)).toEqual(['tasks']);
-    expect(decoded).toEqual({ tasks: [{ id: 'task-2', title: 'Partial task' }] });
+  // A held gesture used to need the rig's own mouse and a state= blob, because boot.js refused the
+  // scene by name. Its pose is now played by boot.js in the still, so it boots by name like any other.
+  it('boots a scene with a pose through view=, as a still, with no state param', () => {
+    const url = new URL(sceneUrl(posedScene, options));
+    expect(url.searchParams.get('view')).toBe('scene-url-posed-sample');
+    expect(url.searchParams.get('still')).toBe('1');
+    expect(url.searchParams.has('state')).toBe(false);
   });
 });

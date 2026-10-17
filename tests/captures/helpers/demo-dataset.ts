@@ -1892,6 +1892,8 @@ export function buildDemoPreConfig(options: {
         replayTimers[sessionId].push(setTimeout(function () {
           if (clock.endPeek && clock.endPeek.length) setMonitorPeek(sessionId, clock.endPeek);
           if (clock.endedOnItsOwn) finishSession(sessionId);
+          // What main does at this moment, from the scene's timeline (a recorded move landing).
+          runSessionTimeline(sessionId, 'end');
           // Only a session the board seeds as WORKING has a stretch to replay: every other one
           // carries tail 0, so its recording is already at its end and its clock lands at once.
           // Looping those would flip an idle session to working and blank its terminal, since
@@ -1909,6 +1911,8 @@ export function buildDemoPreConfig(options: {
       // cycle's scrollback every time.
       function restartSession(sessionId, entry, clock) {
         clearReplayTimers(sessionId);
+        // The board goes back to the moment the cycle opens on, as the terminal does below.
+        revertSessionTimeline(sessionId);
         entry.startedAt = Date.now() - Math.max(0, clock.durationMs - entry.tail);
         startSession(sessionId);
         var open = openFrames[sessionId];
@@ -3333,6 +3337,65 @@ export function buildDemoPreConfig(options: {
           return result;
         });
       };
+
+      // ---- a scene's timeline ----------------------------------------------------------
+      // What main does at a moment on a session's replay clock (a scene's \`timeline\`, which
+      // demo/boot.js publishes before this runs): a recorded kangentic_move_task result landing
+      // moves the card. Each action changes the mock's state the way main's handler would and
+      // sends the push main sends for it, so the board, the window and the Monitor follow as they
+      // do on the desktop. Live frames only: the clock that fires it never runs in a still. Under
+      // loop=1 the session starts its stretch over, and each action is undone first, quietly, the
+      // way the terminal repaints from its opening frame.
+      var sceneTimeline = window.__demoSceneTimeline || [];
+      var timelineUndos = {};
+      function laneNameOf(laneId) {
+        var lane = laneById(laneId);
+        return lane ? lane.name : '';
+      }
+      // An agent's own move (kangentic_move_task): main moves the card through handleTaskMove with
+      // origin 'agent' and announces it as TASK_UPDATED_BY_AGENT (MOVE_PUSH_BY_ORIGIN in
+      // task-move.ts). The move goes through the same tasks.move a visitor's drag does, so a live
+      // session follows its card, as the engine's create_or_resume has it.
+      function moveTaskByAgent(move) {
+        var task = mockState ? mockState.tasks.find(function (candidate) { return candidate.id === move.task; }) : null;
+        if (!task || !laneById(move.to)) {
+          console.error('[demo] the timeline moves "' + move.task + '" to "' + move.to + '", which this install does not hold');
+          return null;
+        }
+        var from = { laneId: task.swimlane_id, position: task.position };
+        var title = task.title;
+        var projectId = task.projectId;
+        var sessionId = task.session_id;
+        var targetPosition = mockState.tasks.filter(function (candidate) { return candidate.swimlane_id === move.to; }).length;
+        window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: move.to, targetPosition: targetPosition }, projectId).then(function () {
+          if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(move.to) });
+          if (window.__mockFireTaskUpdatedByAgent) window.__mockFireTaskUpdatedByAgent(move.task, title, projectId);
+        });
+        return function () {
+          window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: from.laneId, targetPosition: from.position }, projectId).then(function () {
+            if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(from.laneId) });
+            if (window.__mockFireTaskChangedInOtherWindow) window.__mockFireTaskChangedInOtherWindow(projectId);
+          });
+        };
+      }
+      function runTimelineAction(action) {
+        if (action.move && action.move.origin === 'agent') return moveTaskByAgent(action.move);
+        console.error('[demo] the timeline names an action this seed does not run', action);
+        return null;
+      }
+      function runSessionTimeline(sessionId, moment) {
+        sceneTimeline.forEach(function (event) {
+          if (event.session !== sessionId || event.at !== moment) return;
+          var undo = runTimelineAction(event.do);
+          if (undo) (timelineUndos[sessionId] = timelineUndos[sessionId] || []).push(undo);
+        });
+      }
+      function revertSessionTimeline(sessionId) {
+        var undos = timelineUndos[sessionId] || [];
+        timelineUndos[sessionId] = [];
+        undos.reverse().forEach(function (undo) { undo(); });
+      }
+
       window.electronAPI.sessions.resume = function (taskId) {
         var mockTask = mockState.tasks.find(function (task) { return task.id === taskId; });
         if (!mockTask) return Promise.reject(new Error('Task not found: ' + taskId));

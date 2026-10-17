@@ -18,8 +18,8 @@ import { test, expect, chromium, type Page, type Locator } from '@playwright/tes
 import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
-import { PLANNED_PDF_ROUTE, SCENES, type SceneDefinition } from '../captures/scenes';
-import { NO_GPU_FALLBACKS, openScene, waitForSettled } from '../captures/helpers/scene-page';
+import { PLANNED_PDF_ROUTE, SCENES } from '../captures/scenes';
+import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
   SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET,
@@ -128,8 +128,8 @@ async function gotoScene(page: Page, params: Record<string, string>): Promise<vo
   await waitForDemoReady(page);
 }
 
-/** The scenes the web build can boot by name; a driver scene is the rig's and is refused here. */
-const BOOTABLE_SCENES = Object.values(SCENES).filter((scene) => scene.reach !== 'driver');
+/** Every scene boots by name: a held gesture is its choreography's pose, which boot.js plays in the still. */
+const BOOTABLE_SCENES = Object.values(SCENES);
 
 /**
  * The text of every element matching `selector` that a drawn frame has shown. The Knowledge Graph's
@@ -529,16 +529,6 @@ for (const scene of BOOTABLE_SCENES) {
     expect(getUnexpectedErrors()).toEqual([]);
   });
 }
-
-test('a driver scene is refused by name, with the rig named as the way to build it', async ({ page }) => {
-  const driverScene = Object.values(SCENES).find((scene) => scene.reach === 'driver');
-  if (!driverScene) throw new Error('the registry has no driver scene to refuse; add one or drop this test');
-  await page.goto(demoUrl({ view: driverScene.name, embed: '1', still: '1' }));
-  const errorCard = page.locator('[data-testid="demo-error"]');
-  await expect(errorCard).toBeVisible();
-  await expect(errorCard).toContainText(`Scene "${driverScene.name}" needs the capture rig`);
-  await expect(page.locator('html')).not.toHaveAttribute('data-demo-ready');
-});
 
 test('scenes.json is served unhashed, matches the registry, and names the build version', async ({ page, request }) => {
   const response = await request.get(`${server.url}scenes.json`);
@@ -1051,19 +1041,6 @@ test('releasing push-to-talk over the focused Settings search box lands no text 
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
-test('the capture rig presses a driver scene\'s Mouse:Back through boot.js', async ({ page }) => {
-  // The rig plays a driver scene's steps itself (tests/captures/helpers/scene-page.ts), and
-  // Playwright's mouse has no back or forward button. No driver scene presses one yet, so this
-  // plays the dictation scene's own press as a driver scene would, through the rig's openScene.
-  const dictation = SCENES.dictation;
-  if (dictation.reach !== 'boot') throw new Error(`the dictation scene is a ${dictation.reach} scene, not a boot scene`);
-  const asDriver: SceneDefinition = { ...dictation, reach: 'driver' };
-  const getUnexpectedErrors = collectUnexpectedErrors(page);
-  await openScene(page, asDriver, { baseUrl: server.url, theme: 'night' });
-  await expect(page.locator('[data-testid="dictation-live-chip"]')).toBeVisible();
-  expect(getUnexpectedErrors()).toEqual([]);
-});
-
 // ---- live replay and what a visitor can start ----------------------------------------------
 // A still frame paints each terminal's final state from the inline seed and never fetches a
 // recording; the live frame replays each recording's timed stream, fetched from the same origin
@@ -1091,7 +1068,7 @@ interface DemoElectronWindow {
 
 interface DemoMonitorWindow {
   __mockMonitorRows?: Array<{
-    sessionId: string; activity: string; outputPeek?: string[];
+    sessionId: string; activity: string; outputPeek?: string[]; columnName?: string;
     status?: string; modelDisplayName?: string | null; contextPercent?: number | null; description?: string | null;
   }>;
 }
@@ -1107,10 +1084,10 @@ function monitorFields(page: Page, sessionId: string): Promise<MonitorFields | n
 }
 
 /** The Monitor row state the mock publishes: what a card shows without opening a terminal. */
-function monitorRow(page: Page, sessionId: string): Promise<{ activity: string; peek: string } | null> {
+function monitorRow(page: Page, sessionId: string): Promise<{ activity: string; peek: string; columnName: string | null } | null> {
   return page.evaluate((id) => {
     const row = ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).find((candidate) => candidate.sessionId === id);
-    return row ? { activity: row.activity, peek: (row.outputPeek ?? []).join(' | ') } : null;
+    return row ? { activity: row.activity, peek: (row.outputPeek ?? []).join(' | '), columnName: row.columnName ?? null } : null;
   }, sessionId);
 }
 
@@ -2148,15 +2125,148 @@ test('task-mcp plays its kangentic_* calls through to the move, and loop=1 opens
     const row = ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).find((candidate) => candidate.sessionId === id);
     return (row?.outputPeek ?? []).join(' | ');
   }, SESSION_VALIDATE);
+  // The scene's timeline: when the move's result lands, the card moves as main moves it, and the
+  // Monitor row's column follows; the loop's restart puts both back with the terminal.
+  const laneOfCard = (): Promise<string | null> => page.evaluate((taskId) => {
+    const card = document.querySelector(`[data-swimlane-name] [data-task-id="${taskId}"]`);
+    return card?.closest('[data-swimlane-name]')?.getAttribute('data-swimlane-name') ?? null;
+  }, TASK_VALIDATE);
   await gotoScene(page, { view: 'task-mcp', embed: '1', loop: '1' });
   await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Validate request bodies');
   const opening = await peekOf();
   expect(opening, 'the session opens on the third call\'s result').toContain('Merge: no automations.');
   expect(opening, 'the session opens before the move').not.toContain(moveResult);
+  expect(await laneOfCard(), 'the card opens in Code Review').toBe('Code Review');
   await expect.poll(peekOf, { timeout: 30_000, message: 'the replay reaches the move' }).toContain(moveResult);
+  await expect.poll(laneOfCard, { timeout: 5_000, message: 'the move\'s result moves the card' }).toBe('Testing');
+  await expect.poll(async () => (await monitorRow(page, SESSION_VALIDATE))?.columnName, { timeout: 5_000 }).toBe('Testing');
   await expect.poll(peekOf, { timeout: 40_000, message: 'loop=1 opens the calls again' }).toContain('Merge: no automations.');
+  await expect.poll(laneOfCard, { timeout: 5_000, message: 'the restart puts the card back' }).toBe('Code Review');
+  expect((await monitorRow(page, SESSION_VALIDATE))?.columnName).toBe('Code Review');
   expect((await monitorRow(page, SESSION_VALIDATE))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('without loop=1 the timeline still moves the card once, and nothing puts it back', async ({ page }) => {
+  // The timeline rides the session's clock, which runs in every live frame; only the restart is
+  // loop=1's. A still arms no clock, so its card stays in Code Review (the BOOTABLE loop's marker).
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'task-mcp', embed: '1' });
+  const laneOfCard = (): Promise<string | null> => page.evaluate((taskId) => {
+    const card = document.querySelector(`[data-swimlane-name] [data-task-id="${taskId}"]`);
+    return card?.closest('[data-swimlane-name]')?.getAttribute('data-swimlane-name') ?? null;
+  }, TASK_VALIDATE);
+  await expect.poll(laneOfCard, { timeout: 30_000 }).toBe('Testing');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+// ---- choreography ------------------------------------------------------------------------------
+// A scene's pointer steps, which the frame plays by itself under loop=1 (demo/choreography.ts).
+// The tests divide its pacing (never its waitFor, which is the app's own timing) so a cycle fits.
+
+/** The pacing divisor the choreography reads; set before any script runs. */
+const CHOREOGRAPHY_TEST_RATE = 8;
+
+/** The scenes that carry a choreography, and whether each plays a cycle (steps after its pose, or no pose). */
+const CHOREOGRAPHED_SCENES = Object.values(SCENES)
+  .filter((scene) => (scene.choreography ?? []).length > 0)
+  .map((scene) => {
+    const steps = scene.choreography ?? [];
+    const poseIndex = steps.findIndex((step) => 'pose' in step);
+    return { scene, cycles: poseIndex < 0 || poseIndex < steps.length - 1 };
+  });
+
+test('the registry carries choreographies to play', () => {
+  // Vacuity guard: the loop below would pass on an empty list.
+  expect(CHOREOGRAPHED_SCENES.filter((entry) => entry.cycles).length).toBeGreaterThan(0);
+  expect(CHOREOGRAPHED_SCENES.filter((entry) => !entry.cycles).length).toBeGreaterThan(0);
+});
+
+for (const { scene, cycles } of CHOREOGRAPHED_SCENES) {
+  test(`view=${scene.name} under loop=1 ${cycles ? 'plays a cycle back to rest' : 'holds its pose'} with a clean console`, async ({ page }) => {
+    test.setTimeout(90_000);
+    const getUnexpectedErrors = collectUnexpectedErrors(page);
+    await page.addInitScript((rate) => { (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate; }, CHOREOGRAPHY_TEST_RATE);
+    await gotoScene(page, { view: scene.name, embed: '1', loop: '1' });
+    const root = page.locator('html');
+    if (cycles) {
+      // A cycle that ends anywhere but rest logs an error and stops, which the console check catches.
+      await expect(root).toHaveAttribute('data-demo-choreography', 'playing', { timeout: 15_000 });
+      await expect(root).toHaveAttribute('data-demo-cycles', '1', { timeout: 60_000 });
+      await expect(root).not.toHaveAttribute('data-demo-choreography', 'stopped');
+    } else {
+      await expect(root).toHaveAttribute('data-demo-choreography', 'rest', { timeout: 15_000 });
+      await expect(page.locator('[data-demo-cursor]'), 'a held pose draws no pointer').toHaveCount(0);
+    }
+    await expect(page.locator(scene.ready).first()).toBeVisible();
+    expect(getUnexpectedErrors()).toEqual([]);
+  });
+}
+
+test('a visitor\'s own click stops the choreography and takes the pointer away', async ({ page }) => {
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript((rate) => { (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate; }, CHOREOGRAPHY_TEST_RATE);
+  await gotoScene(page, { view: 'column-automation-edit', embed: '1', loop: '1' });
+  const root = page.locator('html');
+  await expect(root).toHaveAttribute('data-demo-choreography', 'playing', { timeout: 15_000 });
+  await expect(page.locator('[data-demo-cursor]')).toHaveCount(1);
+  // The dialog's own title: a real click there changes nothing in the form.
+  await page.locator('[data-testid="edit-automation-dialog"] h3').first().click();
+  await expect(root).toHaveAttribute('data-demo-choreography', 'stopped');
+  await expect(page.locator('[data-demo-cursor]')).toHaveCount(0);
+  await expect(page.locator('[data-demo-hover]'), 'no element is left marked as hovered').toHaveCount(0);
+  const cycles = await root.getAttribute('data-demo-cycles');
+  // Well past a cycle at this pacing: nothing plays again.
+  await page.waitForTimeout(4_000);
+  await expect(root).toHaveAttribute('data-demo-cycles', cycles ?? '0');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a visitor\'s own click lets go of a held pose', async ({ page }) => {
+  // card-drag holds its card over Executing; a real press ends the gesture where it stands, as a
+  // released mouse would, so the frame is the visitor's from then on.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'card-drag', embed: '1', loop: '1' });
+  const root = page.locator('html');
+  await expect(root).toHaveAttribute('data-demo-choreography', 'rest', { timeout: 15_000 });
+  await expect(page.locator('.drag-overlay')).toBeVisible();
+  // Empty lane space below To Do's cards, where a press does nothing of its own.
+  const lane = await page.locator('[data-swimlane-name="To Do"]').boundingBox();
+  if (!lane) throw new Error('To Do has no box');
+  await page.mouse.click(lane.x + lane.width / 2, lane.y + lane.height - 24);
+  await expect(root).toHaveAttribute('data-demo-choreography', 'stopped');
+  await expect(page.locator('.drag-overlay')).toHaveCount(0);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a still with a pose plays it without the choreography\'s pointer, and a still without one fetches no player', async ({ page }) => {
+  const playerRequests: string[] = [];
+  page.on('request', (request) => { if (/\/choreography-[^/]*\.js$/.test(new URL(request.url()).pathname)) playerRequests.push(request.url()); });
+  await gotoScene(page, { view: 'card-drag', embed: '1', still: '1' });
+  await expect(page.locator('.drag-overlay')).toBeVisible();
+  await expect(page.locator('[data-demo-cursor]')).toHaveCount(0);
+  await expect(page.locator('html')).not.toHaveAttribute('data-demo-choreography');
+  expect(playerRequests.length, 'the pose loads the player').toBe(1);
+  playerRequests.length = 0;
+  await gotoScene(page, { view: 'column-automation-edit', embed: '1', still: '1' });
+  expect(playerRequests, 'a still with no pose has nothing to play').toEqual([]);
+});
+
+test('an Escape a script dispatches never reaches the host', async ({ page }) => {
+  // A choreography's key, or a boot step's press, is the app's to act on. Only a visitor's own
+  // Escape may close the dialog the host shows the frame in. The positive control is the same key
+  // pressed for real, which posts (the first Escape test above).
+  const readMessages = await hostFrame(page, 'board');
+  const textarea = page.frameLocator('#demo').locator('.xterm-helper-textarea').first();
+  await textarea.waitFor({ state: 'attached', timeout: READY_TIMEOUT_MS });
+  await textarea.focus();
+  await textarea.evaluate((element) => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+  await page.waitForTimeout(500);
+  expect(hasEscape(await readMessages())).toBe(false);
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
 });
 
 test('loop=1 leaves a session that was never working alone', async ({ page }) => {
@@ -2249,10 +2359,10 @@ test('loop=1 and still=1 together are refused rather than silently reconciled', 
   await expect(card).toContainText('a still frame has no replay to loop');
 });
 
-test('a state= blob carrying a capture-rig step is refused', async ({ page }) => {
+test('a state= blob carrying a pointer gesture as a step is refused', async ({ page }) => {
   // boot.js's validateState checks a step's SHAPE (one of click/type/press) before it ever
   // checks the per-key allowlist, so a bare `{ hover: ... }` step is refused for missing a
-  // discriminant key rather than for naming a capture-rig key. To reach the allowlist branch and
+  // discriminant key rather than for naming a gesture key. To reach the allowlist branch and
   // pin its message, the step needs a valid `click` alongside the stray `hover` key. The click
   // target is a real swimlane, which the mutation below depends on: it is a column container
   // with no click handler, so clicking it is a no-op rather than something that opens a dialog.
@@ -2262,7 +2372,7 @@ test('a state= blob carrying a capture-rig step is refused', async ({ page }) =>
   await page.goto(demoUrl({ state: hoverStepBlob, embed: '1', still: '1' }));
   const errorCard = page.locator('[data-testid="demo-error"]');
   await expect(errorCard).toBeVisible();
-  await expect(errorCard).toContainText('"hover" is a capture-rig step');
+  await expect(errorCard).toContainText('"hover" is not a boot step');
   // Nothing was seeded: the seed script's afterSeed() call (applyScene) returns before it
   // patches rows or calls __demoApplyFixture whenever validateState already recorded an error,
   // so the board never mounts a single swimlane. Checked only after the card is visible, so this

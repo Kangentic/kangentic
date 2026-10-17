@@ -12,8 +12,8 @@
  *     starting a fresh one.
  *  4. demo/boot.js pressCombo refuses a mouse combo it cannot press (`Mouse:Left`, or a chord the
  *     registry allows) with an error naming the combo, instead of dispatching a keydown nothing
- *     listens for. The capture rig reaches it through `__demoBoot.pressCombo` for every `Mouse:`
- *     combo, and a listed button (`Mouse:Back`) still goes out as a pointerdown.
+ *     listens for. A boot step's `press` goes through it, and `__demoBoot.pressCombo` exposes it
+ *     here; a listed button (`Mouse:Back`) still goes out as a pointerdown.
  *  5. demo/boot.js validates a state= blob's `rows` (the scene-only task ids a frame adds) and
  *     mergeStates keeps each id once across sources. A `rows` that is not an array, an id the build
  *     does not carry, and a non-string id are each refused by name. A scene and a state= blob that
@@ -257,7 +257,7 @@ test('resuming a task whose agent is still running returns that same session, no
 
 // pressCombo and a mouse combo it cannot press
 
-/** The part of boot.js's `window.__demoBoot` the capture rig presses a mouse hotkey through. */
+/** The part of boot.js's `window.__demoBoot` a test presses a mouse hotkey through. */
 interface DemoBootPressWindow {
   __demoBoot: { pressCombo(combo: string): void };
   __pressObservations?: string[];

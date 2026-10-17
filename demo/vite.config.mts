@@ -220,8 +220,8 @@ const SCENE_FRAME = { width: 1600, height: 1000 };
 
 /**
  * The hand-off to the site: which scenes this deployment serves, what each shows (the alt text a
- * docs figure carries), which a page may embed (`reach`, so a rig-only scene is refused by name
- * rather than rendering the error card inside a captioned figure), and which app version they
+ * docs figure carries), what each frame does before it reveals (`reach`: config alone, or clicks or
+ * a pose; every scene boots), and which app version they
  * belong to. Emitted UNHASHED beside index.html so the site's build can fetch it by a stable URL;
  * generated from the same SCENES the page boots, so the two cannot drift. No timestamp: the build
  * stays reproducible, and the version is the only freshness that matters.

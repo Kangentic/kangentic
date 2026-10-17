@@ -21,6 +21,7 @@ npm run test:demo                     # the demo smoke tier against dist/demo/
 npm run demo:measure                  # bundle weight, boot timings, frames-per-page cost
 node demo/measure.mjs --geometry      # the grid each terminal surface fits, at device scale 1 and 2,
                                       # against the capture matrix's manifest (--check fails on a drift)
+node demo/measure.mjs --motion        # every scene under loop=1, sampled for 16 s: moves, marks, or still
 npm run demo:serve                    # serve dist/demo/ and stay up for a manual look
 npm run capture                       # build, then one still per scene and theme (and the marketing
                                       # video and walkthrough), into a gitignored captures/<timestamp>/
@@ -94,13 +95,13 @@ All parameters are optional; `demo/boot.js` reads them once, before the mock loa
 
 | Parameter | Values | Effect |
 |---|---|---|
-| `view` | any scene in `scenes.json` whose `reach` is not `driver` | A named scene from the registry. Default `board` unless `state=` is given. |
+| `view` | any scene in `scenes.json` | A named scene from the registry. Default `board` unless `state=` is given. |
 | `state` | base64url JSON of a `DemoState` | Declarative state merged over the scene, or standalone. Data only, never code. |
 | `theme` | `clay`, `rust`, `night`, or any app theme id | `clay` (light) and `rust` (dark) are the product palette, built from the site's own `tokens.css`, so a page can embed the frame in either and stay branded. `night` is an alias for the app's dark theme (its no-class default, labelled Graphite), `kangentic` is an alias for `clay`, and the pair's short-lived earlier ids `kangentic-light` / `kangentic-dark` still resolve to `clay` / `rust`. |
 | `embed` | `1` | Hides the OS window controls and renders edge to edge, for a host that sizes the iframe itself. Onboarding, update, and announcement toasts are already silent. |
 | `stage` | `0` | Opened directly (no `embed`), the page hands over to `stage.html`, which hosts the frame at the site's 1600 by 1000, centered and scaled down when the window is smaller, so every terminal recording plays at the size it was made for. `stage=0` renders edge to edge in whatever window there is; the smoke tier uses it at a 1600 by 1000 viewport. |
 | `still` | `1` | Zero animation and transition durations, the activity marks stop, the two ticking clocks freeze, no timer runs, and every terminal paints its recording's final frame. Without it each terminal replays its recording as it happened (see Live replay below). |
-| `loop` | `1` | A working session that reaches its recording's end goes back to working and replays it, so a frame left running keeps moving. Off by default, because a hero or a docs figure must not reset state under a visitor who has taken control. Refused together with `still=1`, which has no replay to loop. |
+| `loop` | `1` | A working session that reaches its recording's end goes back to working and replays it, and a scene's choreography plays by itself (Choreography and timelines below), so a frame left running keeps moving. Off by default, because a hero or a docs figure must not reset state under a visitor who has taken control. Refused together with `still=1`, which has no replay to loop. |
 | `fs` | `8` to `32` | Root font size for the UI and the terminal font size, in pixels. |
 
 On success the frame stamps `data-demo-ready="1"` and `data-demo-scene` on `<html>` and posts
@@ -113,8 +114,8 @@ scene is small inside a 1600 by 1000 frame scaled into a docs column, and the re
 page crop to the dialog without knowing the layout. It is posted once, at ready, and that is
 enough: the frame is a fixed 1600 by 1000 inside the iframe whatever the host does, so the
 fractions stay valid across a resize or a zoom and the host re-derives pixels from its own iframe
-size. There is no follow-up message to listen for. An unknown scene, a rig-only scene, or a
-malformed `state=` renders a full-frame error card, logs the reason, posts
+size. There is no follow-up message to listen for. An unknown scene or a malformed `state=`
+renders a full-frame error card, logs the reason, posts
 `{ type: 'kangentic-demo-error', reason }`, and seeds nothing: a page can never caption a scene
 the visitor is not looking at.
 
@@ -124,7 +125,9 @@ app has nothing of its own to close, so a host showing the frame in a dialog can
 cannot do this itself: the frame is cross-origin, and the renderer's arrival-focus arbiter focuses
 a mounted terminal exactly as it does on the desktop, so from then on every key goes to the
 terminal's textarea and no listener on the parent page sees one. Nothing in `demo/` takes that
-focus and nothing here declines it, because the renderer never branches on being embedded.
+focus and nothing here declines it, because the renderer never branches on being embedded. Only a
+visitor's own Escape posts: a key a script dispatched (a choreography's, or a boot step's press) is
+untrusted, and the frame keeps it for the app.
 
 What counts as "the app owns this Escape" is not invented here. `boot.js` mirrors the ladder in
 `src/renderer/pop-out/PopOutWindowFrame.tsx`, which already answers the same question for a pop-out
@@ -183,6 +186,9 @@ A `DemoState` (also the shape of every registry entry) is:
 }
 ```
 
+A registry entry may also carry `choreography`, `timeline`, and `motion` (Choreography and
+timelines below). None of the three rides a `state=` blob, so a URL can never carry a tour.
+
 A session patch is an input to the seed, not a pass over its output. `boot.js` publishes the
 merged patches as `window.__demoSessionPatches` before the seed runs, and the seed folds each one
 into its session before it derives anything from it: the row, the Monitor row, the usage, the
@@ -224,13 +230,17 @@ location.search = '?state=' + btoa(JSON.stringify(state)).replace(/\+/g, '-').re
 `view=<name>` through it, and the capture rig (`tests/captures/features/scenes.capture.ts`)
 opens the same names in the built demo and screenshots them. A scene is how a docs figure scopes
 to one section of the app, and it is DATA: config overrides, task-row patches, session activity,
-`__mock*` seeds, and a short list of steps. Each entry carries a `reach`:
+`__mock*` seeds, a short list of steps, and how it moves. Each entry carries a `reach`, which says
+what the frame does before it reveals:
 
-| reach | Meaning | Who can build it |
-|---|---|---|
-| `state` | config and rows alone; nothing is clicked | the web build and the rig |
-| `boot` | state plus a few pre-reveal clicks | the web build and the rig |
-| `driver` | needs a hover, a drag, or an open menu | the rig only; the web build refuses it |
+| reach | Meaning |
+|---|---|
+| `state` | config and rows alone; nothing is clicked |
+| `boot` | state plus a few pre-reveal clicks, or a choreography's pose (a card held mid-drag, a menu open) |
+
+The web build and the rig build every scene the same way, through `boot.js`. A held gesture was
+once a `driver` scene the rig played with Playwright's mouse and the web build refused; it is now
+a choreography whose pose the still plays (Choreography and timelines below).
 
 Three fields leave this repo. `alt` is the reader-facing text a docs figure carries, authored
 beside the state it describes (nobody else knows what the frame shows) and emitted into
@@ -249,16 +259,14 @@ every animation frame, for a frame that keeps moving after `ready`: the rig and 
 shoot only once one of them is shown and none has moved for half a second (`waitForSettled` in
 `tests/captures/helpers/scene-page.ts`). `boot.js` never reads it; a live frame plays the motion as
 the desktop does. `tests/unit/scene-registry.test.ts` pins the rest: a `state` scene has no
-steps, a `boot` scene carries only boot steps (a `click`, a `type` with `text`, or a `press` of a
-hotkey in the registry's spelling, held for the frame, each with an optional `waitFor`), a
-`driver` scene carries at least one rig step (`hover`, `contextmenu`, or `drag` with a `hold` that
-leaves the pointer down), every patched task or session id is one the sample install seeds,
+steps and no pose, a `boot` scene carries only boot steps (a `click`, a `type` with `text`, or a
+`press` of a hotkey in the registry's spelling, held for the frame, each with an optional
+`waitFor`) or a pose, every patched task or session id is one the sample install seeds,
 every config key is an `AppConfig` key, and the alt strings carry no dash or curly quote (the
 writing-style scan excludes `tests/`). A boot step waits for its own target the way it waits for
-`waitFor`: a restored window's panel mounts a beat after the board. The rig plays a driver scene's
-steps itself, and a `press` of a mouse button goes through `boot.js`'s own
-`__demoBoot.pressCombo`, the same pointerdown a boot scene gets, because Playwright's mouse has no
-back or forward button. It presses one listed button: a chord the registry allows, or a button
+`waitFor`: a restored window's panel mounts a beat after the board. A `press` of a mouse button
+goes through `boot.js`'s `pressCombo` as one pointerdown, which `__demoBoot.pressCombo` exposes to
+the contract tier. It presses one listed button: a chord the registry allows, or a button
 `boot.js` does not list, fails the step with the combo's name.
 
 Adding a scene is one entry: the smoke tier boots it, the rig shoots it, and `scenes.json`
@@ -275,14 +283,14 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `notification-toast` | state | `__mockInitialExit`, fired once when `sessions.onExit` registers, so App.tsx raises the toast itself; `notifications.toasts.durationSeconds` holds it up |
 | `board-config-change` | state | `__mockBoardConfigChanged`, fired once when `boardConfig.onChanged` registers, which App.tsx turns into its own reconciliation dialog |
 | `edit-columns`, `column-automation`, `column-automation-turn-end`, `column-handoff` | boot | the column's edit button (and, for `column-handoff`, the All columns tab), plus one shared `__mockSwimlanePatches` ladder (`COLUMN_LADDER` in `scenes.ts`) so the four describe one board: Claude Code plans on Opus 5 at xhigh and builds on Sonnet 5, Codex CLI reviews in an isolated session, Claude tests, and GitHub Copilot CLI merges, with handoff on at each change of agent. `column-automation`, `column-automation-turn-end` and `column-handoff` add the Code Review automation through `__mockAutomations`; `edit-columns` keeps the enter and exit slots empty. Never the dataset: an automation draws a glyph in the BOARD column header, so seeding one there would change every figure already placed. The forms show Model and Effort because the sample install reports each agent's capabilities (`DEMO_AGENT_OVERRIDES`), and Codex has no Effort field because it takes none from Kangentic. Codex also reports no turn end, which the dataset's agent list carries from its adapter, so Code Review's On agent turn end reads blocked as it does on the desktop. That is why `column-automation-turn-end` puts the review loop on Testing, where the ladder hands the review on to Claude. It holds two Move to column rows the runner reads in order, one of each Condition kind so both row marks show: back to Executing on an Agent evaluation (the robot mark) with a Frequency of three and a Message carrying `{{agentReply}}`, then on to Merge, once, on a Text match (the text search mark) of the line `PR: ready to merge`, the gate this repo's own `kangentic.json` puts on Testing. A move ends the group, so when the first row fires the second never runs |
-| `column-automation-edit` | boot | the same board and rows as `column-automation-turn-end`, Testing's edit button, then the first turn-end row's edit button, so the Edit automation dialog shows Send findings back as its four cards: Trigger, Condition, Frequency and Action. The first row, because its Condition is an Agent evaluation in plain words where the second quotes one specific final line. It also seeds `config.automation` (Claude on Sonnet 5), since with no Automation agent the Condition card shows its setup notice in place of the condition, and the sample install chooses none. No menu is left open, so it boots in a frame. At 1600 by 1000 the dialog is about 115px taller than its body allows, so the body scrolls: the first three cards show whole, and the Action card shows its Type, its column and the Message, whose last line (`{{agentReply}}`) is cut off at the bottom of the body, with the Template variable picker below the fold. The dialog keeps the app's own size and type |
+| `column-automation-edit` | boot | the same board and rows as `column-automation-turn-end`, Testing's edit button, then the first turn-end row's edit button, so the Edit automation dialog shows Send findings back as its four cards: Trigger, Condition, Frequency and Action. The first row, because its Condition is an Agent evaluation in plain words where the second quotes one specific final line. It also seeds `config.automation` (Claude on Sonnet 5), since with no Automation agent the Condition card shows its setup notice in place of the condition, and the sample install chooses none. No menu is left open, so it boots in a frame. At 1600 by 1000 the dialog is about 115px taller than its body allows, so the body scrolls: the first three cards show whole, and the Action card shows its Type, its column and the Message, whose last line (`{{agentReply}}`) is cut off at the bottom of the body, with the Template variable picker below the fold. The dialog keeps the app's own size and type. Under `loop=1` its choreography switches the Condition off and on, picks Text match, takes the Frequency down to one and back to three, and picks Agent evaluation again; the dialog keeps the evaluation's text across the switch, so the cycle ends on the poster's values, and Done is never pressed |
 | `workflows` | boot | `__mockWorkflows` and `__mockWorkflowLinks` plus `tasks` patches that join six existing contoso cards to one running workflow (Workflows below); the Workflows toggle, the agent pane's collapse, Board, Workflows again, then a click on empty canvas |
 | `board-workflow` | state | the same seed, on the board: each member card's strip and step track, the To Do cards' waiting line, and the toggle's running mark |
 | `workflow-draft` | boot | a second `__mockWorkflows` seed, a workflow planned but not started (its tasks live in the draft, so nothing reaches the board); the same round trip as `workflows`, then a click that selects the middle planned task, so the inspector shows its route switches, what it waits for and what waits for it |
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab) |
 | `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more |
 | `task`, `browser` | state | `workspaceByProject` (a floating window sized to its session's recording, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below) |
-| `task-mcp` | state | `rows` adds the scene-only Validate request bodies task (Scene-only rows below), and `workspaceByProject` restores its window maximized. Its session is the MCP recording (An agent calling Kangentic's MCP tools below), working, with a `liveTailMs` cut to that recording: a still paints the moment `kangentic_get_current_task`, `kangentic_list_columns` and `kangentic_list_automations` have printed their results, and live, the agent then reads Testing with `kangentic_get_column_detail` and moves the card with `kangentic_move_task`, about eleven seconds that `loop=1` replays. The whole `terminal` block is spelled out with a larger font, the one exception to the type rule above (One viewport, one scale). It also seeds `__mockAgentListOverrides` with the dataset's agent list and Claude Code at 2.1.302, the version the recording ran on, so the context bar and the terminal's header agree. The card stays in Code Review after the move's result lands, since no main process moves it |
+| `task-mcp` | state | `rows` adds the scene-only Validate request bodies task (Scene-only rows below), and `workspaceByProject` restores its window maximized. Its session is the MCP recording (An agent calling Kangentic's MCP tools below), working, with a `liveTailMs` cut to that recording: a still paints the moment `kangentic_get_current_task`, `kangentic_list_columns` and `kangentic_list_automations` have printed their results, and live, the agent then reads Testing with `kangentic_get_column_detail` and moves the card with `kangentic_move_task`, about eleven seconds that `loop=1` replays. The whole `terminal` block is spelled out with a larger font, the one exception to the type rule above (One viewport, one scale). It also seeds `__mockAgentListOverrides` with the dataset's agent list and Claude Code at 2.1.302, the version the recording ran on, so the context bar and the terminal's header agree. Its `timeline` moves the card to Testing when the recording ends, which is where the move's result lands (the manifest's `stopWhen` cut it there), through the push main sends for an agent's move; `loop=1` puts the card back in Code Review as the stretch starts over |
 | `windows-tiled` | state | `workspaceByProject` with two `tiled` windows under one horizontal split, in the footprint a dock produces; both sessions have a recording at the tiled width (Terminal recordings below) |
 | `conversation` | state | `workspaceByProject` with one `conversation` window anchored on the middleware session id; the transcript is the one recorded beside the session (Transcripts below) |
 | `dictation` | boot | `config.dictation.enabled` and a held `press` of `Mouse:Back` (Dictation below) |
@@ -298,8 +306,8 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `knowledge-graph-<project>` | boot | one per sample project, generated from the dataset: the title-bar button alone for the open project (contoso-web), and for the others the picker, that project's row, the open project's row to untick it, and the picker again. A single map frames close enough for each conversation's title to show |
 | `quick-find-results` | boot | the palette, then `type` a query; the seed answers with a keyword match over its own rows (Quick Find below) |
 | `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS`. An entry may carry config: `settings-dictation` switches dictation on, since off it greys out every row below the switch |
-| `card-drag`, `card-menu`, `window-dock` | driver | a held drag over Executing, a right-click on a card, a window dragged to the right edge |
-| `board-workflow-links` | driver | the `board-workflow` seed and a hover on Refactor API error handling: the board draws a workflow card's links only while the pointer rests on it, so no click reaches them |
+| `card-drag`, `card-menu`, `window-dock` | boot | a choreography whose pose is the gesture in flight: Add user auth flow lifted from To Do and held over Executing (To Do, because a card dropped back there ends its session as main does, which a loop needs), a right-click on a card, a window dragged to the right edge |
+| `board-workflow-links` | boot | the `board-workflow` seed and a choreography that rests the pointer on Refactor API error handling through the board's dwell: the board draws a workflow card's links only while the pointer rests on it, so no click reaches them |
 
 Three things the catalog corrected against the source while it was seeded, recorded so the next
 reader does not re-derive them: `lastSettingsTab` is renderer store state and never reaches
@@ -363,6 +371,57 @@ scenes render empty lists on purpose and say so in their alts rather than being 
 `settings-shortcuts` (the sample install configures no project shortcuts, so the tab is its Add
 Shortcut and Presets controls) and `settings-mobile` (no device is paired). Seeding either is a
 dataset decision, not a bug in the scene.
+
+### Choreography and timelines
+
+A live frame under `loop=1` should move, because motion holds a visitor's eye better than a still.
+A scene says how, as data, in one of three fields, and `tests/unit/scene-registry.test.ts` fails a
+scene that says none (bar a `MOTION_PENDING` list that only shrinks):
+
+- **`choreography`**, a list of pointer steps the frame plays by itself, as a visitor would:
+  `hover`, `click`, `contextmenu`, and `drag` (with `hold` to stay pressed), each pointing at a
+  selector's centre or a point as fractions of the frame, plus at most one `pose`. A step may carry
+  `waitFor`, a selector its effect must produce (the app's own timing: a dwell, an animation), and
+  `ms`, the pacing after it. Any step the next depends on waits for its effect; `ms` is pacing only.
+- **`timeline`**, what main does at a moment on a working session's replay clock. The one moment
+  is `at: 'end'`, where the recording ends, which for a recording cut by `stopWhen` is the moment
+  the cut names, so no offset is typed by hand. The one action is `move` with origin `agent`: the
+  card changes column through the same `tasks.move` a visitor's drag takes, the Monitor row's
+  column follows, and `TASK_UPDATED_BY_AGENT` goes out, as `MOVE_PUSH_BY_ORIGIN` in
+  `task-move.ts` sends it for a `kangentic_move_task`. The seed schedules it inside
+  `scheduleSessionClock`, so it fires whether or not a terminal is open, and `restartSession`
+  undoes it quietly as the terminal repaints from its opening frame. `task-mcp` is the first.
+- **`motion`**, a sentence saying why a scene moves with neither, such as a terminal replaying.
+
+`demo/choreography.ts` plays a choreography, a chunk `boot.js` loads only when the frame plays one.
+A browser gives a script no real pointer, so it synthesizes the events one makes, in a browser's
+order: each move hit-tests the point and sends the over, out, enter and leave transitions, a
+pointermove and its compatibility mousemove; a press sends pointerdown and mousedown, and a release
+pointerup, mouseup and click. That one sequence drives dnd-kit, the window manager's title-bar
+drag, React Flow, the board's link preview and React's hover handlers alike, and a pointerdown the
+page prevents takes the mouse events with it, as in a browser. What a script cannot get, it stands
+in for: `:hover` is mirrored (each same-origin `:hover` rule copied under `[data-demo-hover]` in the
+same parent rule, the attribute set on the element under the pointer and its ancestors); Firefox's
+refusal to capture a pointer it did not make is a no-op for the synthetic pointer's id, which is
+what Chromium and WebKit already do; and the pointer itself is drawn, the product accent arrow, so
+a menu that opens reads as a visitor's click. The arrow fades in when a cycle starts and out at
+rest. The renderer reads none of it. The demo tier runs Chromium only, so a change to the player is
+checked by hand in Playwright's Firefox and WebKit too; Firefox is where the capture refusal showed.
+
+Each cycle starts and ends on the poster's state. A choreography with a `pose` (a card held
+mid-drag, a menu open) plays up to it before the reveal, in a still too, unpaced, with no pointer
+drawn and no timer, so the still, the poster and the live frame's rest are one frame. Under
+`loop=1` the cycle is the steps after the pose and then the steps up to it again; a choreography
+that is only a pose holds it. Without a pose the frame rests where the boot steps left it. At ready
+the player records the rest (each lane's cards in order, the open dialogs, and inside the scene's
+`focus` every form value and selection state) and compares after every cycle: a choreography that
+drifts logs an error and stops, and the demo tier, which plays every choreography once at a divided
+pacing (`window.__demoChoreographyRate`, set by a test's init script, never the URL), fails on it.
+
+A visitor's own click, key, wheel or touch stops the choreography for the frame's life: a held
+pointer is released where it stands, the hover marks clear, and the arrow goes. Sessions keep
+looping. The site's loop frames are `inert`, so that is for a direct visit; its take-control dialog
+never passes `loop=1`. And a key a script dispatched never posts `kangentic-demo-escape`.
 
 ### Quick Find
 
@@ -628,8 +687,10 @@ The build emits `scenes.json` UNHASHED at the root, beside `index.html` and `sta
 Generated from the same `SCENES` the page boots, so the two cannot drift; the smoke tier asserts
 it is served, lists exactly the registry's names, and names the version the frame reports. It is
 what a docs page reads: the site fetches it from the deployed demo at build time, validates every
-figure's scene name (an unknown name or a `driver` scene fails the site build rather than
-rendering the error card inside a captioned figure), and takes `alt` and `version` from it. A URL
+figure's scene name (an unknown name fails the site build rather than rendering the error card
+inside a captioned figure), and takes `alt` and `version` from it. Since the held gestures became
+choreographies, every scene's `reach` is `state` or `boot` and every one boots; a site check that
+still refuses `driver` refuses nothing (kangentic.com #105, #111). A URL
 cannot lag the way a vendored package does, which is the failure `@kangentic/branding` plus
 `scripts/sync-brand.mjs` is known for. Placing frames on pages is the site's job (kangentic.com
 #78 and #79); this file, the registry, and the poster set below are the whole app-side contract.
@@ -639,15 +700,14 @@ cannot lag the way a vendored package does, which is the failure `@kangentic/bra
 A docs figure is an iframe of one scene, and before that frame boots, and instead of it in print,
 under no JS, on a phone, and in a browser without CSS trig functions, the figure shows a poster:
 a still of the same scene in the same theme. The site does not shoot its own (it would duplicate
-the rig, and it could never build the `driver` scenes); the rig shoots them here and every
-release attaches the set:
+the rig); the rig shoots them here and every release attaches the set:
 
 ```
 demo-posters-<version>.zip
   manifest.json
   board.clay.frame.png
   board.rust.frame.png
-  ...                       one pair per scene in scenes.json, driver scenes included
+  ...                       one pair per scene in scenes.json, held gestures included
 ```
 
 ```json
@@ -667,8 +727,8 @@ a named file is absent, so a stale or partial set cannot ship quietly. That is t
 `focus` gives every poster the rect around its scene's `focus` elements as fractions of the frame, the
 same `{ x, y, w, h }` the ready message posts, so one crop routine serves the live frame and the
 poster. It is `null` for a scene that names no focus element. The rig measures it on the still it
-just shot, through `boot.js`'s own `__demoBoot.focusRectOf`, so a driver scene gets its rect after
-its gesture, and it writes one `<scene>.<theme>.frame.focus.json` beside each PNG. A scene that
+just shot, through `boot.js`'s own `__demoBoot.focusRectOf`, so a held gesture gets its rect after
+its pose, and it writes one `<scene>.<theme>.frame.focus.json` beside each PNG. A scene that
 names a focus element the rig cannot find fails the run instead of writing `null`. The map sits
 beside `scenes` rather than inside it, so a `scenes` entry still holds only theme keys. The rect
 is only as tight as the element the scene names: the Column Manager scenes name the whole dialog,
@@ -1494,7 +1554,8 @@ stream, final frame and grid. They were 38.3 MB and 832 KB while each also shipp
 timeline, which the page's emulator made redundant (Live replay); the fixtures keep it. The
 largest single file is the Codex OpenTelemetry session at 70 KB gzipped. The emulator is a 4 KB
 chunk that shares the renderer's xterm, fetched the first time a terminal mounts on a grid other
-than its recording's. The one transcript under `transcripts/` is 32 KB raw and 8 KB gzipped,
+than its recording's. The choreography player is a 9 KB chunk (4 KB gzipped), fetched only by a
+frame that plays a choreography: a live frame under `loop=1`, or a still with a pose. The one transcript under `transcripts/` is 32 KB raw and 8 KB gzipped,
 fetched only when a conversation viewer opens.
 
 ### Cold boot per scene
@@ -1548,7 +1609,7 @@ Two things stay out of reach of a live frame: the Browser pane's REAL guest (a p
 ## Observations for the docs-visuals decision (#632)
 
 - **Declarative reach, verified against the static build.** Everything reachable from config or
-  a row in the desktop app is reachable here with no driver: `workspaceByProject` restores a
+  a row in the desktop app is reachable here with no gesture: `workspaceByProject` restores a
   task window (and stamps `skipEnterAnimation`, so it paints flat), `detail_view_state` opens the
   Changes panel on a tab and a file, `monitorWorkspace` and `commandTerminalWorkspace` restore
   their layouts once their surfaces open. Three corrections to the list #632 derived from source: the
@@ -1561,8 +1622,9 @@ Two things stay out of reach of a live frame: the Browser pane's REAL guest (a p
   `{ click, waitFor }`; the runner is under forty lines of `demo/boot.js`, veils `#root` while it
   runs, and reveals on the last `waitFor`. It is deterministic because every step waits for a
   selector rather than a delay, and it ran 30 boots of the `monitor` scene in the smoke tier and
-  measurement runs without a miss. It does not turn into a tour because it has no timing, no
-  narration, and no way to express a hover or a drag; those stay `driver` scenes for the rig.
+  measurement runs without a miss. The boot steps still carry no timing. Motion came later and
+  separately (Choreography and timelines below): pacing there is data on a step, every effect a
+  step depends on is still a selector waited for, and it plays only under `loop=1`.
 - **Per-frame boot cost** is in the table above: about 70 ms of script and under 10 MB per extra
   frame after the first, one second for eight.
 
