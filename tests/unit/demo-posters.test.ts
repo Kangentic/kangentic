@@ -54,13 +54,13 @@ vi.mock('@playwright/test', () => {
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
-/** The shape demo/vite.config.mts emits as dist/demo/scenes.json, cut to three scenes, one of them rig-only. */
+/** The shape demo/vite.config.mts emits as dist/demo/scenes.json, cut to three scenes, one of them a held gesture. */
 const FIXTURE_SCENES = {
   version: '0.43.0',
   frame: { width: 1600, height: 1000 },
   scenes: [
     { name: 'board', reach: 'boot', alt: 'The board.', description: 'The board.' },
-    { name: 'card-drag', reach: 'driver', alt: 'A card mid-drag.', description: 'A held drag.' },
+    { name: 'card-drag', reach: 'boot', alt: 'A card mid-drag.', description: 'A held drag.' },
     { name: 'settings-general', reach: 'boot', alt: 'Settings.', description: 'The General tab.' },
   ],
 };

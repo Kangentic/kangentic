@@ -257,9 +257,10 @@ inert in a browser. `npm run demo:serve` serves the build for a manual look (ope
 
 The scene registry (`tests/captures/scenes.ts`) has a second consumer: `npm run capture` builds
 the demo, then `tests/captures/features/scenes.capture.ts` opens every scene in it by URL and
-screenshots it per theme into the gitignored `captures/<timestamp>/scenes/`, playing the gesture
-a `driver` scene needs (a held drag, a right-click) with Playwright. The rig has no scene applier
-of its own; `demo/boot.js` is the applier for both consumers. A scene whose subject keeps moving
+screenshots it per theme into the gitignored `captures/<timestamp>/scenes/`. The rig has no scene
+applier of its own; `demo/boot.js` is the applier for both consumers, and it plays a held gesture
+(a card mid-drag, a right-click menu) in the still as its choreography's pose, with the page's own
+synthetic pointer (`demo/choreography.ts`). A scene whose subject keeps moving
 after `ready` (the Knowledge Graph's camera flight) names `settle`, and the rig shoots only once
 those elements hold still; it refuses a poster of the map's no-GPU card. `npm run demo:posters`
 (`demo/posters.mjs`) drives that same rig for the site's docs figures: every scene in the `clay`
@@ -378,11 +379,11 @@ npm run test:demo
 - **Runner:** Playwright with headless Chromium, one worker, against `dist/demo/` served by
   `demo/static-server.mjs` from `beforeAll` (deliberately not a `webServer` entry, which would
   start for every project filter and break the UI tier whenever the build is absent)
-- **What it asserts:** every bootable scene in the registry reaches its `ready` element (the
-  loop iterates `SCENES`, so a new entry is covered with no test change) and, where it names a
-  `focus`, that element is a real region rather than nothing, an empty box, or the whole frame; a
-  `driver` scene is refused by name, the capture rig's press of a driver scene's `Mouse:Back`
-  reaches the page through boot.js, `scenes.json` is served and matches the registry, the ready
+- **What it asserts:** every scene in the registry reaches its `ready` element (the loop
+  iterates `SCENES`, so a new entry is covered with no test change), a held gesture through the
+  pose its still plays, and, where it names a `focus`, that element is a real region rather than
+  nothing, an empty box, or the whole frame; every choreography finishes a cycle under `loop=1`
+  back at rest, and a visitor's own click stops it; `scenes.json` is served and matches the registry, the ready
   message carries a dialog scene's focus rect, Escape posts `kangentic-demo-escape` when the app
   has nothing of its own to close and stays silent when it does, a task window takes the first
   Escape even with its terminal under the pointer, Escape posts from a Command Terminal, from the

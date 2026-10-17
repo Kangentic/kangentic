@@ -829,7 +829,7 @@ jobs:
   # Shoot the docs poster set from the tag that just shipped and attach it to the
   # release as demo-posters-<version>.zip, which kangentic.com's figure sync reads
   # by version: one 3200 by 2000 still per registry scene in the clay and rust
-  # themes, driver scenes included, shot by the capture rig from the same dist/demo
+  # themes, held gestures included, shot by the capture rig from the same dist/demo
   # build the demo deploy publishes (demo/posters.mjs; demo/README.md, "The poster
   # set"). The job installs Roboto first, so the text renders in a face the app's
   # font stack names rather than the runner's fallback.

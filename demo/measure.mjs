@@ -8,6 +8,10 @@
  *                                    frame, at device scale 1 and 2, against the capture
  *                                    matrix's manifest geometry; --check exits non-zero when
  *                                    the manifest disagrees with the launch it says it measured at
+ *   node demo/measure.mjs --motion   how much of each scene's frame changes under loop=1: every
+ *                                    scene in scenes.json at 1600 by 1000, sampled every 2 s for
+ *                                    16 s, as moves, marks (spinning marks only), or still
+ *                                    (demo/README.md, Choreography and timelines)
  *
  * Numbers go to stdout as one markdown block for demo/README.md. Nothing here is a test; the
  * `demo` Playwright tier asserts the invariants, this script reports the magnitudes.
@@ -301,6 +305,111 @@ function reportGeometry(measured, check) {
   if (check && mismatches.length > 0) process.exit(1);
 }
 
+/**
+ * The motion audit's sampling: a shot every 2 s for 16 s after ready, each compared with the
+ * first, so a choreography whose cycle starts after its opening rest is caught. A pixel counts as
+ * changed when any channel moves by more than 24, on the frame scaled to 800 by 500.
+ */
+const MOTION_SAMPLE_MS = 2000;
+const MOTION_SAMPLES = 8;
+const MOTION_SETTLE_MS = 1500;
+const MOTION_CONCURRENCY = 3;
+const MOTION_CHANNEL_DELTA = 24;
+/**
+ * Calibrated on the v0.46.0 audit and this sampling: a scene with a terminal replaying changes 2
+ * to 15 percent of the frame in 16 s, one with only spinning marks 0.08 to 0.3 percent, and a
+ * dialog whose one change is a text field's blinking caret about 0.03 percent, which the audit
+ * counted as still.
+ */
+const MOTION_VERDICTS = [{ verdict: 'moves', minPercent: 0.5 }, { verdict: 'marks', minPercent: 0.05 }];
+
+/** The share of pixels that changed between two PNG shots, decoded and compared in a page's canvas. */
+function framePercentChanged(differ, firstPng, secondPng) {
+  return differ.evaluate(async ({ first, second, channelDelta }) => {
+    const decode = async (base64) => {
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      const canvas = new OffscreenCanvas(800, 500);
+      const context = canvas.getContext('2d');
+      context.drawImage(bitmap, 0, 0, 800, 500);
+      return context.getImageData(0, 0, 800, 500).data;
+    };
+    const firstPixels = await decode(first);
+    const secondPixels = await decode(second);
+    let changed = 0;
+    for (let index = 0; index < firstPixels.length; index += 4) {
+      const delta = Math.max(
+        Math.abs(firstPixels[index] - secondPixels[index]),
+        Math.abs(firstPixels[index + 1] - secondPixels[index + 1]),
+        Math.abs(firstPixels[index + 2] - secondPixels[index + 2]),
+      );
+      if (delta > channelDelta) changed += 1;
+    }
+    return (100 * changed) / (800 * 500);
+  }, { first: firstPng.toString('base64'), second: secondPng.toString('base64'), channelDelta: MOTION_CHANNEL_DELTA });
+}
+
+async function measureMotionOf(browser, differ, server, sceneName) {
+  const context = await browser.newContext({ viewport: FRAME_VIEWPORT, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${server.url}?view=${encodeURIComponent(sceneName)}&theme=rust&embed=1&loop=1&stage=0`);
+    await page.waitForSelector('html[data-demo-ready="1"]', { timeout: 45_000 });
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(MOTION_SETTLE_MS);
+    const infinite = await page.evaluate(() => document.getAnimations()
+      .filter((animation) => animation.playState === 'running' && animation.effect?.getComputedTiming().iterations === Infinity).length);
+    const first = await page.screenshot({ type: 'png' });
+    let peak = 0;
+    for (let sample = 0; sample < MOTION_SAMPLES; sample++) {
+      await page.waitForTimeout(MOTION_SAMPLE_MS);
+      peak = Math.max(peak, await framePercentChanged(differ, first, await page.screenshot({ type: 'png' })));
+    }
+    const verdict = MOTION_VERDICTS.find((band) => peak >= band.minPercent)?.verdict ?? 'still';
+    return { scene: sceneName, verdict, peak, infinite, choreography: await page.evaluate(() => document.documentElement.getAttribute('data-demo-choreography')) };
+  } catch (error) {
+    return { scene: sceneName, verdict: 'error', peak: 0, infinite: 0, choreography: null, error: error instanceof Error ? error.message.split('\n')[0] : String(error) };
+  } finally {
+    await context.close();
+  }
+}
+
+async function measureMotion(server) {
+  const { scenes } = JSON.parse(fs.readFileSync(path.join(distDir, 'scenes.json'), 'utf8'));
+  const browser = await chromium.launch({ headless: true });
+  const differ = await (await browser.newContext()).newPage();
+  const results = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < scenes.length) {
+      const result = await measureMotionOf(browser, differ, server, scenes[next++].name);
+      results.push(result);
+      console.error(`${result.scene.padEnd(36)} ${result.verdict.padEnd(6)} ${result.peak.toFixed(3)}%${result.error ? ` ${result.error}` : ''}`);
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: MOTION_CONCURRENCY }, worker));
+  } finally {
+    await browser.close();
+  }
+  return results.sort((first, second) => second.peak - first.peak);
+}
+
+function reportMotion(results) {
+  const count = (verdict) => results.filter((result) => result.verdict === verdict).length;
+  const lines = [];
+  lines.push(`### Motion under loop=1, ${results.length} scenes, headless Chromium`);
+  lines.push('');
+  lines.push(`${count('moves')} move, ${count('marks')} show only spinning marks, ${count('still')} are still${count('error') ? `, ${count('error')} failed to boot` : ''}.`);
+  lines.push('');
+  lines.push('| Scene | Verdict | Most of the frame changed in 16 s | Infinite animations | Choreography |');
+  lines.push('|---|---|---|---|---|');
+  for (const result of results) {
+    lines.push(`| ${result.scene} | ${result.verdict} | ${result.peak.toFixed(3)}% | ${result.infinite} | ${result.choreography ?? ''} |`);
+  }
+  console.log(lines.join('\n'));
+}
+
 async function main() {
   if (!fs.existsSync(path.join(distDir, 'index.html'))) {
     throw new Error(`No web build at ${distDir}. Run "npm run build:demo" first.`);
@@ -318,6 +427,16 @@ async function main() {
       await server.close();
     }
     reportGeometry(measured, process.argv.includes('--check'));
+    return;
+  }
+  if (process.argv.includes('--motion')) {
+    let results;
+    try {
+      results = await measureMotion(server);
+    } finally {
+      await server.close();
+    }
+    reportMotion(results);
     return;
   }
 

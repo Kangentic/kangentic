@@ -23,15 +23,16 @@
  *                    and every terminal painted from its recording's final frame (without it,
  *                    each terminal replays its recording as it happened; demo/README.md)
  *   loop=1           a working session that reaches its recording's end goes back to working and
- *                    replays it, so a frame left running keeps moving. Off by default: a hero or
- *                    a docs figure must not reset state under a visitor who has taken control.
+ *                    replays it, and a scene's choreography plays by itself (demo/choreography.ts),
+ *                    so a frame left running keeps moving. Off by default: a hero or a docs figure
+ *                    must not reset state under a visitor who has taken control.
  *   fs=<px>          root font size for the UI (8..32) and the terminal font size
  *
- * A scene the registry does not know, a rig-only scene, or a malformed state= blob renders a
- * full-frame error card and boots nothing: a page must never caption a scene the visitor is not
- * looking at. The parent frame is told either way (kangentic-demo-ready / kangentic-demo-error).
- * Ready fires only once the scene's `ready` element exists, and carries the rect around its `focus`
- * elements (fractions of the frame) so a host can crop a dialog scene to the dialog.
+ * A scene the registry does not know or a malformed state= blob renders a full-frame error card
+ * and boots nothing: a page must never caption a scene the visitor is not looking at. The parent
+ * frame is told either way (kangentic-demo-ready / kangentic-demo-error). Ready fires only once
+ * the scene's `ready` element exists, and carries the rect around its `focus` elements (fractions
+ * of the frame) so a host can crop a dialog scene to the dialog.
  */
 (function () {
   'use strict';
@@ -58,7 +59,7 @@
   var SESSION_STATUSES = ['running', 'suspended', 'queued'];
   // A boot step clicks, types into a field, or presses a hotkey (a keyboard combo or a mouse
   // button, in the registry's own spelling, held for the frame); anything else (a hover, a
-  // drag, a right-click) is the capture rig's and is refused here.
+  // drag, a right-click) is a pointer gesture, which only a scene's choreography carries.
   var BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
   // Mouse buttons as src/shared/keybindings.ts spells them for a hotkey: `button` is the code a
   // pointer event reports, `flag` its bit in the event's `buttons` mask, which is what the
@@ -76,10 +77,6 @@
   var version = window.__demoVersion || '0.0.0';
   var params = new URLSearchParams(window.location.search);
   var errors = [];
-
-  function bootableSceneNames() {
-    return Object.keys(scenes).filter(function (name) { return scenes[name].reach !== 'driver'; });
-  }
 
   function decodeBase64Url(text) {
     var base64 = text.replace(/-/g, '+').replace(/_/g, '/');
@@ -166,7 +163,7 @@
         var isPress = typeof step.press === 'string';
         if (!isClick && !isType && !isPress) throw new Error(origin + '.steps entries need a click selector, a type selector with text, or a press combo');
         Object.keys(step).forEach(function (key) {
-          if (BOOT_STEP_KEYS.indexOf(key) === -1) throw new Error(origin + '.steps only support click, type, text, press, and waitFor here; "' + key + '" is a capture-rig step');
+          if (BOOT_STEP_KEYS.indexOf(key) === -1) throw new Error(origin + '.steps only support click, type, text, press, and waitFor here; "' + key + '" is not a boot step (a pointer gesture is a scene\'s choreography)');
         });
       });
     }
@@ -176,8 +173,8 @@
    * Press a hotkey and hold it: a mouse button as one pointerdown, a keyboard combo as one
    * keydown, dispatched where the registry listens (a capture-phase listener on window sees
    * an event dispatched on the document). Nothing releases it, so a push-to-talk stays open
-   * for the frame. Exposed as `__demoBoot.pressCombo` for the capture rig, which presses a
-   * driver scene's mouse hotkey here because Playwright's mouse has no back or forward button.
+   * for the frame. Exposed as `__demoBoot.pressCombo` so a test can press a mouse hotkey the way a
+   * boot step does, since Playwright's mouse has no back or forward button.
    * A mouse combo this table cannot press (a chord, a misspelled button) throws rather than
    * going out as a keydown nothing listens for, so the step fails with the combo's name.
    */
@@ -279,12 +276,7 @@
   var scene = null;
   if (sceneName !== null) {
     scene = scenes[sceneName] || null;
-    if (!scene) {
-      errors.push('Unknown scene "' + sceneName + '". Scenes that boot here: ' + bootableSceneNames().join(', ') + '.');
-    } else if (scene.reach === 'driver') {
-      errors.push('Scene "' + sceneName + '" needs the capture rig (a hover, a drag, or an open menu) and cannot boot from a URL.');
-      scene = null;
-    }
+    if (!scene) errors.push('Unknown scene "' + sceneName + '". Scenes that boot here: ' + Object.keys(scenes).join(', ') + '.');
   }
 
   var urlState = null;
@@ -453,6 +445,10 @@
     // Scene-only rows join the install the same way, as the seed's input: a card and its session
     // the sample install leaves out, because adding them would change every figure already placed.
     window.__demoSceneRows = effective.rows;
+    // What main does on a session's replay clock (the scene's `timeline`), which the seed schedules
+    // beside that session's peeks and trail. Published before the seed runs, which starts the
+    // clocks; a scene's seeds land after it. A state= blob carries none.
+    window.__demoSceneTimeline = (scene && scene.timeline) || [];
     if (typeof window.__demoApplyFixture === 'function') window.__demoApplyFixture();
 
     if (effective.tasks.length > 0 || Object.keys(effective.sessions).length > 0) {
@@ -527,7 +523,7 @@
    * and the rect is the box around all of them: two cards a figure is about, say. Elements with no
    * size are left out. Null when nothing on screen matches; a host crops nothing on null. Exposed
    * as `__demoBoot.focusRectOf` for the capture rig, which measures the same rect for each poster
-   * (after its gesture, on a driver scene that booted from `state=` and so has no `scene` here).
+   * on the still it just shot.
    */
   function rectOf(selector) {
     var width = window.innerWidth;
@@ -681,6 +677,9 @@
 
   window.addEventListener('keydown', function (event) {
     if (event.key !== 'Escape') return;
+    // A key a script dispatched (a choreography's, or a boot step's press) is the app's to act on,
+    // never the host's: only a visitor's own Escape may close the dialog the frame sits in.
+    if (!event.isTrusted) return;
     if (closeHoveredTerminalWindow(event)) return;
     if (isEscapeTheAppOwns(event)) return;
     notifyParent({ type: 'kangentic-demo-escape', scene: sceneName });
@@ -692,10 +691,33 @@
     notifyParent({ type: 'kangentic-demo-ready', scene: sceneName, version: version, focus: focusRect() });
   }
 
+  // ---------------------------------------------------------------- choreography
+  // A scene's pointer steps (its `choreography`), played by demo/choreography.ts, a chunk this
+  // script loads only when the frame plays them: a still with a pose plays up to it before the
+  // reveal, and a live frame under loop=1 cycles after it. Every other frame fetches nothing.
+  var choreography = scene && Array.isArray(scene.choreography) && scene.choreography.length > 0 ? scene.choreography : null;
+  var choreographyHasPose = !!choreography && choreography.some(function (step) { return step.pose === true; });
+  var choreographyPlayer = null;
+  function loadChoreography() {
+    if (choreographyPlayer) return Promise.resolve(choreographyPlayer);
+    if (typeof window.__demoLoadChoreography !== 'function') {
+      return Promise.reject(new Error('this build carries no choreography player (demo/choreography-entry.ts)'));
+    }
+    return window.__demoLoadChoreography().then(function (module) {
+      choreographyPlayer = module.createChoreography(choreography, {
+        still: still,
+        focus: scene.focus || null,
+        // A timeline moves cards on a session's clock, which no cycle of the pointer undoes.
+        compareLanes: !(scene.timeline && scene.timeline.length > 0),
+      });
+      return choreographyPlayer;
+    });
+  }
+
   function runBootSteps() {
     var root = document.getElementById('root');
     var deadline = Date.now() + BOOT_TIMEOUT_MS;
-    var veiled = effective.steps.length > 0;
+    var veiled = effective.steps.length > 0 || choreographyHasPose;
     if (veiled && root) root.style.visibility = 'hidden';
     // The board is the gate every step waits behind; an empty install never mounts one, so its
     // gate is the app having rendered at all. It must NOT be the scene's own ready element: on an
@@ -719,6 +741,19 @@
         return step.waitFor ? waitForSelector(step.waitFor, deadline) : null;
       });
     });
+    // The pose: the gesture a still shows in flight (a card held over a column, a menu open). The
+    // pointer is hit-tested like a mouse, and `visibility: hidden` takes the app out of hit
+    // testing, as `pointer-events: none` would, so the pose plays under the opacity veil alone.
+    if (choreographyHasPose) {
+      chain = chain.then(function () {
+        if (root) {
+          root.style.visibility = '';
+          root.style.opacity = '0';
+          root.style.pointerEvents = '';
+        }
+        return loadChoreography().then(function (player) { return player.playToPose(); });
+      });
+    }
     // A scene is built when its `ready` element exists, not when the board is up: a restored
     // task window mounts a beat after the swimlanes, and a host that lifts its poster on the
     // ready message must not see the board without the window the caption describes.
@@ -728,6 +763,11 @@
     chain.then(function () {
       if (veiled && root) unveil(root);
       markReady();
+      if (choreography && loop && !still) {
+        loadChoreography().then(function (player) { player.startLoop(); }, function (error) {
+          console.error('[kangentic-demo] the choreography did not load:', error && error.message ? error.message : String(error));
+        });
+      }
     }).catch(function (error) {
       if (veiled && root) unveil(root);
       errors.push('Boot step failed: ' + (error && error.message ? error.message : String(error)));

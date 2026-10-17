@@ -30,12 +30,25 @@ three things staying in step, and each is enforced rather than remembered.
   Renderer code never reads `location`, never checks a demo flag,
   and never branches on being embedded. The one renderer concession is a `data-testid` on the
   window-controls cluster so the demo can hide it by selector.
-- **A scene is data.** Config overrides, task-row patches, session activity, `__mock*` seeds, and
-  at most a short list of boot steps: a click, a typed query, or a held hotkey, each a state and
-  none a choreography (no timing, no narration). No code travels through a scene or a `state=`
-  URL. A scene the demo cannot build (`reach: 'driver'`) is refused loudly, never approximated;
-  its gesture (a `hover`, a `contextmenu`, a `drag` that may `hold`) is data too, and only the
-  capture rig plays it.
+- **A scene is data, and so is how it moves.** Config overrides, task-row patches, session
+  activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
+  hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (pointer
+  steps from a closed vocabulary, `hover`, `click`, `contextmenu`, `drag`, and one `pose`, with
+  pacing as a number on a step and every effect a step depends on a selector waited for), a
+  `timeline` (what main does at a moment on a session's replay clock), or a `motion` sentence saying
+  why it moves without either. No code travels through a scene, and none of the three rides a
+  `state=` URL. The page plays a choreography as a visitor's mouse would
+  (`demo/choreography.ts`): the events a browser makes, never a renderer hook, with `:hover`
+  mirrored under an attribute and the pointer drawn by `demo/`. Every cycle starts and ends on the
+  poster's state; a held gesture (a card mid-drag, a menu open) is the `pose`, which a still plays
+  up to, unpaced and with no timer, so `still=1` stays deterministic and the capture rig plays
+  nothing itself. A visitor's own input stops it.
+- **A timeline is what main does, never a show.** Its action changes the mock's state the way
+  main's handler would and sends the push main sends for it (an agent's `kangentic_move_task`
+  landing is a move with origin `agent` and `TASK_UPDATED_BY_AGENT`), on the recording's own
+  clock (`at: 'end'`, where the capture cut it), and `loop=1` undoes it as the session starts over.
+  A counter the app does not draw, a transcript nobody recorded, or a push main never sends is not
+  a timeline.
 - **A surface Electron alone provides is mocked as a surface, never faked as content.** The
   `<webview>` tag has an iframe standing in for it (`demo/webview-shim.js`), loading a bundled
   page at the project's dev URL whose data is the project's own and nothing invented. Its
@@ -232,8 +245,8 @@ three things staying in step, and each is enforced rather than remembered.
   quarter-pixel size that still holds it (one step up must not fit), an accepted probe releases
   it, and a plain refusal conforms nothing.
 - **Test (mechanical, CI):** `tests/unit/scene-registry.test.ts` runs over the real `SCENES`
-  and fails when a reach tag disagrees with the steps (a `state` scene with steps, a `boot` scene
-  with a rig step, a `driver` scene with none), when `alt`, `ready`, or `description` is missing
+  and fails when a reach tag disagrees with the steps (a `state` scene with steps, a `boot` step
+  that is not a click, a typed text, or a press), when `alt`, `ready`, or `description` is missing
   or an alt carries a dash or a curly quote (the writing-style scan excludes `tests/`, so this is
   the only check the alts get), when a patched task or session id is not one the sample install
   seeds, when a config key is not an `AppConfig` key (the mock's `Object.assign` accepts any key
@@ -245,16 +258,23 @@ three things staying in step, and each is enforced rather than remembered.
   when a `__mockTaskReports` key is not an archived task of the open project or the scenes seed
   reports for more than one task, when `boot.js`'s `STATE_KEYS` or `demo/vite.config.mts`'s
   `scenes.json` fields drift from the type, and when
-  `boot.js` reads `settle` or a `settle` selector names a testid no renderer file stamps. Runs via
-  `npm run test:unit`.
+  `boot.js` reads `settle` or a `settle` selector names a testid no renderer file stamps. It also
+  holds a `state` scene to no pose and a `boot` scene to boot steps or a pose, each choreography to
+  its closed vocabulary (one gesture a step, at most one pose, a held drag followed by the pose),
+  each timeline event to a working session with a recording and a card and lane the scene holds,
+  and every scene to a declared motion, bar a `MOTION_PENDING` list that fails a name that already
+  declares one. Runs via `npm run test:unit`.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots EVERY bootable scene in the
   registry from a static server (the loop iterates `SCENES`, so a new entry is covered with no
   test change, and a stale deep marker for a retired scene fails) and asserts its `ready` element
   visible and, where the scene names a `focus`, that the element exists and covers a real region
   of the frame (not empty, not the whole frame: the Quick Find scenes once named the palette's
   full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
-  element, that a `driver` scene is refused by name, that the rig's press of a driver scene's
-  `Mouse:Back` reaches the page through `__demoBoot.pressCombo`, that `scenes.json` is served, lists exactly
+  element, that every choreography plays a cycle back to rest under `loop=1` (or holds its pose)
+  with a clean console, which is also what fails a choreography selector the renderer no longer
+  stamps, that a visitor's own click stops it and lets go of a held pose, that a still with a pose
+  draws no pointer and a still without one fetches no player, that a script's Escape never posts,
+  that `task-mcp`'s timeline moves its card to Testing and the restart puts it back, that `scenes.json` is served, lists exactly
   the registry, and names the frame's version, that the ready message posted to an iframe host
   carries a dialog scene's focus rect (the same rect `__demoBoot.focusRectOf` hands the poster
   rig) and null for a scene without one, the embed and theme
@@ -301,8 +321,11 @@ three things staying in step, and each is enforced rather than remembered.
   the web build's Vite config (`demo/vite.config.mts` and the root config it loads), which is an ES
   module that program's CommonJS settings cannot resolve. `tests/unit/typecheck-demo-program.test.ts`
   fails when either program, its scripts, or its CI step drop out.
-- **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, and a
-  scene entry that carries code instead of data.
+- **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, a
+  scene entry that carries code instead of data, and a timeline action that does something main
+  would not.
+- **Gap:** the choreography's Firefox and WebKit behavior is checked by hand
+  (`demo/README.md`, Choreography and timelines), not in CI: the demo tier runs Chromium only.
 
 ## Scope
 
