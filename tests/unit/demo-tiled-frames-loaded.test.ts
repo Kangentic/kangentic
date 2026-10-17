@@ -98,9 +98,15 @@ describe('loadDemoTiledFrames', () => {
     expect(terminalFrames.serialized).toBe(tiledRecord.serialized);
   });
 
-  const thinkingSessions: Array<{ sessionId: string; baseFile: string; tiledFile: string }> = [
-    { sessionId: SESSION_MIDDLEWARE, baseFile: 'contoso-web-claude-middleware.json', tiledFile: 'contoso-web-claude-middleware-tiled.json' },
-    { sessionId: SESSION_API_CLIENT, baseFile: 'contoso-web-claude-api-client.json', tiledFile: 'contoso-web-claude-api-client-tiled.json' },
+  /**
+   * Each real thinking session with a tiled sibling, and which branch of the loader it takes. The
+   * middleware session opens inside its tiled run, so its still is a mid-timeline frame. The
+   * api-client session's 25 s tail opens it at 182 s, after its 112 s tiled run had ended, so its
+   * still is that run's own final frame. Naming the branch keeps both cases from passing vacuously.
+   */
+  const thinkingSessions: Array<{ sessionId: string; baseFile: string; tiledFile: string; opensInsideTiledRun: boolean }> = [
+    { sessionId: SESSION_MIDDLEWARE, baseFile: 'contoso-web-claude-middleware.json', tiledFile: 'contoso-web-claude-middleware-tiled.json', opensInsideTiledRun: true },
+    { sessionId: SESSION_API_CLIENT, baseFile: 'contoso-web-claude-api-client.json', tiledFile: 'contoso-web-claude-api-client-tiled.json', opensInsideTiledRun: false },
   ];
 
   for (const thinkingSession of thinkingSessions) {
@@ -111,18 +117,24 @@ describe('loadDemoTiledFrames', () => {
       expect(session).toBeDefined();
       const liveTailMs = session?.liveTailMs ?? (manifest.liveTailMs as number);
       const expected = await computeExpectedOpenFrame(thinkingSession.baseFile, thinkingSession.tiledFile, liveTailMs);
-
-      // Not vacuous: the opening moment falls inside the tiled recording's own timeline, so the
-      // opening frame below has to be a real mid-timeline frame rather than the fallback to the
-      // tiled recording's final frame that a session recorded shorter than its tail would take.
-      expect(expected.opensAtMs).toBeLessThan(expected.tiledDurationMs);
-
       const tiledFrames = loadDemoTiledFrames();
       const sessionFrames = tiledFrames[thinkingSession.sessionId];
       expect(sessionFrames.openFrame).not.toBeNull();
-      expect(sessionFrames.openFrame?.serialized).toBe(expected.serialized);
-      expect(sessionFrames.openFrame?.serialized).not.toBe(sessionFrames.serialized);
-      expect(sessionFrames.openFrame?.peek).toEqual([]);
+
+      if (thinkingSession.opensInsideTiledRun) {
+        // The opening moment falls inside the tiled recording's own timeline, so the opening frame
+        // has to be a real mid-timeline frame rather than the run's final frame.
+        expect(expected.opensAtMs).toBeLessThan(expected.tiledDurationMs);
+        expect(sessionFrames.openFrame?.serialized).toBe(expected.serialized);
+        expect(sessionFrames.openFrame?.serialized).not.toBe(sessionFrames.serialized);
+        expect(sessionFrames.openFrame?.peek).toEqual([]);
+      } else {
+        // The tiled run ended before the single recording's clock opens the session, so the still
+        // is the run's own final frame, not a walk past the end of its timeline.
+        expect(expected.opensAtMs).toBeGreaterThanOrEqual(expected.tiledDurationMs);
+        const tiledRecord = readRawRecording(thinkingSession.tiledFile);
+        expect(sessionFrames.openFrame?.serialized).toBe(tiledRecord.serialized);
+      }
     });
   }
 
@@ -172,10 +184,9 @@ describe('loadDemoTiledFrames', () => {
     });
 
     /**
-     * None of the committed fixtures reach this branch: both real thinking sessions with a tiled
-     * sibling open inside their tiled recording's own timeline (the "Not vacuous" assertion two
-     * tests up pins that). A synthetic fixture is the only way to drive opensAtMs past the tiled
-     * timeline's own end.
+     * The api-client session reaches this branch for real (the test two up), and this synthetic
+     * fixture pins the fallback in isolation, with a timeline whose last frame differs from the
+     * recording's final frame.
      */
     it("paints the tiled recording's own final frame, not a frame walked off the end of its timeline", () => {
       temporaryFixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-tiled-frames-shorter-variant-'));
