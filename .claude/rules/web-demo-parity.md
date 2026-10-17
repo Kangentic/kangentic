@@ -49,7 +49,8 @@ three things staying in step, and each is enforced rather than remembered.
   rest held, and a cycle starts only while the frame is on screen.
 - **A timeline is what main does, never a show.** Its action changes the mock's state the way
   main's handler would and sends the push main sends for it (an agent's `kangentic_move_task`
-  landing is a move with origin `agent` and `TASK_UPDATED_BY_AGENT`), on the recording's own
+  landing is a move with origin `agent` and `TASK_UPDATED_BY_AGENT`; a workflow step or an engine
+  start is a move with origin `workflow`, checked against `src/shared/workflow-route.ts`), on the recording's own
   clock (`at: 'end'`, where the capture cut it), and `loop=1` undoes it as the session starts over.
   A counter the app does not draw, a transcript nobody recorded, or a push main never sends is not
   a timeline.
