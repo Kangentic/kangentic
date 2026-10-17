@@ -121,11 +121,14 @@ function makeTask(overrides: Partial<MockTask> = {}): MockTask {
   };
 }
 
+const emitBoardChanged = vi.fn();
+
 function makeContext(): IpcContext {
   return {
     currentProjectId: 'ambient-project',
     currentProjectPath: PROJECT_PATH,
     sessionManager: { listSessions: () => [] },
+    boardEvents: { emitBoardChanged },
   } as unknown as IpcContext;
 }
 
@@ -177,5 +180,98 @@ describe('TASK_SWITCH_BRANCH records the base in the worktree\'s own git config'
     expect(mockWorktreeGit.raw).toHaveBeenCalledWith(WORKTREE_CONFIG_WRITE);
     expect(mockWorktreeGit.addConfig).not.toHaveBeenCalled();
     expect(mockProjectGit.raw).not.toHaveBeenCalled();
+  });
+});
+
+describe('TASK_SWITCH_BRANCH announces the write on the board-changed bus', () => {
+  // The base branch lives on the task row, and a paired phone re-reads the board
+  // when the bus fires, so the row must already hold the new base at emit time.
+  // Recorded inside the mock and asserted outside it, because the announce
+  // swallows a listener's throw.
+  let storedRow: MockTask;
+  let baseBranchAtEmit: string | null | undefined;
+
+  function useStoredRow(row: MockTask): void {
+    storedRow = row;
+    mockGetProjectRepos.mockReturnValue({
+      tasks: {
+        getById: vi.fn(() => storedRow),
+        update: vi.fn((patch: Partial<MockTask>) => {
+          Object.assign(storedRow, patch);
+        }),
+      },
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    baseBranchAtEmit = undefined;
+    mockResolveProjectContext.mockImplementation((_context: IpcContext, projectId?: string | null) => ({
+      projectId: projectId ?? 'ambient-project',
+      projectPath: PROJECT_PATH,
+    }));
+    mockWorktreeGit.raw.mockResolvedValue('');
+    mockProjectGit.status.mockResolvedValue({ files: [], not_added: [] });
+    emitBoardChanged.mockImplementation(() => {
+      baseBranchAtEmit = storedRow.base_branch;
+    });
+  });
+
+  it('Path A (a worktree exists) emits task-updated once for the stamped project, after the write', async () => {
+    useStoredRow(makeTask({ worktree_path: worktreeDirectory }));
+
+    await switchBranch({ taskId: 'task-1', newBaseBranch: 'develop' });
+
+    // The stamped project is 'explicit-project', never the ambient one.
+    expect(emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: 'explicit-project', change: 'task-updated', ids: ['task-1'] }],
+    ]);
+    expect(baseBranchAtEmit).toBe('develop');
+  });
+
+  it('Path B (the switch enables a worktree) emits task-updated once for the stamped project', async () => {
+    useStoredRow(makeTask());
+    mockEnsureTaskWorktree.mockImplementation(async () => {
+      storedRow.worktree_path = worktreeDirectory;
+    });
+
+    await switchBranch({ taskId: 'task-1', newBaseBranch: 'develop', enableWorktree: true });
+
+    expect(emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: 'explicit-project', change: 'task-updated', ids: ['task-1'] }],
+    ]);
+    expect(baseBranchAtEmit).toBe('develop');
+  });
+
+  it('Path C (no worktree, none requested) emits task-updated once for the stamped project', async () => {
+    useStoredRow(makeTask());
+
+    await switchBranch({ taskId: 'task-1', newBaseBranch: 'develop' });
+
+    expect(emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: 'explicit-project', change: 'task-updated', ids: ['task-1'] }],
+    ]);
+    expect(baseBranchAtEmit).toBe('develop');
+  });
+
+  it('Path B still emits once when the worktree create fails after the base was written', async () => {
+    useStoredRow(makeTask());
+    mockEnsureTaskWorktree.mockRejectedValue(new Error('git worktree add failed'));
+
+    await expect(switchBranch({ taskId: 'task-1', newBaseBranch: 'develop', enableWorktree: true }))
+      .rejects.toThrow('git worktree add failed');
+
+    expect(emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: 'explicit-project', change: 'task-updated', ids: ['task-1'] }],
+    ]);
+    expect(baseBranchAtEmit).toBe('develop');
+  });
+
+  it('a switch refused before any write (unknown task) emits nothing', async () => {
+    mockGetProjectRepos.mockReturnValue({ tasks: { getById: vi.fn(() => undefined), update: vi.fn() } });
+
+    await expect(switchBranch({ taskId: 'task-missing', newBaseBranch: 'develop' })).rejects.toThrow(/not found/);
+
+    expect(emitBoardChanged).not.toHaveBeenCalled();
   });
 });

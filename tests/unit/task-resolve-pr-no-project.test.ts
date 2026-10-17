@@ -16,6 +16,10 @@
  * module registerSessionHandlers imports so the real handler body runs
  * unmodified, then capture the ipcMain.handle registration for
  * IPC.TASK_RESOLVE_PR and invoke it directly (no Electron, no IPC transport).
+ *
+ * The second describe block pins what the handler puts on the board-changed bus
+ * for a resolve: one `task-updated` for the stamped project, whether linkPR
+ * settles or rejects, and nothing when no project is open.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -130,6 +134,9 @@ function createMockContext(currentProjectId: string | null) {
     projectRepo: {
       getById: vi.fn(() => null),
     },
+    boardEvents: {
+      emitBoardChanged: vi.fn(),
+    },
   };
 }
 
@@ -188,5 +195,81 @@ describe('IPC.TASK_RESOLVE_PR - no project open', () => {
       context,
       expect.objectContaining({ projectId: 'proj-1', taskId: 'task-1', force: true }),
     );
+  });
+});
+
+describe('IPC.TASK_RESOLVE_PR - announces the resolve on the board-changed bus', () => {
+  // linkPR is mocked here, so its `onLinked` never fires and any event on the
+  // bus comes from the handler itself. That is the point: a resolve that only
+  // wrote the head SHA or the pushed branch still changes the task row, and a
+  // paired phone hears about it only if the handler announces. The resolve is
+  // stamped for 'proj-other' while the ambient project is 'proj-1', so a
+  // regression that announces for the ambient project fails.
+  const STAMPED_PROJECT = 'proj-other';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('a resolve linkPR reports unchanged emits task-updated once for the stamped project', async () => {
+    const context = createMockContext('proj-1');
+    registerSessionHandlers(context as never);
+    const handler = findHandler(IPC.TASK_RESOLVE_PR);
+
+    const result = (await handler(null, 'task-1', STAMPED_PROJECT)) as TaskResolvePrResult;
+
+    expect(result.reason).toBe('unchanged');
+    expect(linkPR).toHaveBeenCalledWith(
+      context,
+      expect.objectContaining({ projectId: STAMPED_PROJECT, taskId: 'task-1', force: true }),
+    );
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: STAMPED_PROJECT, change: 'task-updated', ids: ['task-1'] }],
+    ]);
+  });
+
+  it('emits after linkPR has settled, so a re-read sees what the resolve wrote', async () => {
+    const context = createMockContext('proj-1');
+    registerSessionHandlers(context as never);
+    const handler = findHandler(IPC.TASK_RESOLVE_PR);
+    let linkPRSettled = false;
+    vi.mocked(linkPR).mockImplementationOnce(async () => {
+      await Promise.resolve();
+      linkPRSettled = true;
+      return { status: 'unchanged', task: null } as Awaited<ReturnType<typeof linkPR>>;
+    });
+    let settledAtEmit: boolean | undefined;
+    context.boardEvents.emitBoardChanged.mockImplementation(() => {
+      settledAtEmit = linkPRSettled;
+    });
+
+    await handler(null, 'task-1', STAMPED_PROJECT);
+
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+    expect(settledAtEmit).toBe(true);
+  });
+
+  it('a linkPR that rejects still rejects with its error and still emits once', async () => {
+    const context = createMockContext('proj-1');
+    registerSessionHandlers(context as never);
+    const handler = findHandler(IPC.TASK_RESOLVE_PR);
+    vi.mocked(linkPR).mockRejectedValueOnce(new Error('gh exploded'));
+
+    await expect(handler(null, 'task-1', STAMPED_PROJECT)).rejects.toThrow('gh exploded');
+
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: STAMPED_PROJECT, change: 'task-updated', ids: ['task-1'] }],
+    ]);
+  });
+
+  it('a resolve with no project open emits nothing', async () => {
+    const context = createMockContext(null);
+    registerSessionHandlers(context as never);
+    const handler = findHandler(IPC.TASK_RESOLVE_PR);
+
+    const result = (await handler(null, 'task-1', null)) as TaskResolvePrResult;
+
+    expect(result.reason).toBe('resolver-unavailable');
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
   });
 });
