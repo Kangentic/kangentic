@@ -2325,6 +2325,43 @@ for (const { scene, cycles } of CHOREOGRAPHED_SCENES) {
   });
 }
 
+test('a cut fades the frame out, puts the edit back behind the veil, and fades in at rest', async ({ page }) => {
+  // new-task types its story in view and ends on a cut; the steps after it erase the form. Every
+  // keystroke into the title is logged with what covered the frame when it landed.
+  test.setTimeout(90_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript((rate) => {
+    (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
+    const edits: Array<{ inputType: string; veil: string; cursor: string }> = [];
+    (window as unknown as { __titleEdits: typeof edits }).__titleEdits = edits;
+    document.addEventListener('input', (event) => {
+      const field = event.target;
+      if (!(field instanceof HTMLInputElement) || field.placeholder !== 'Task title') return;
+      const veil = document.querySelector('[data-demo-veil]');
+      const cursor = document.querySelector<HTMLElement>('[data-demo-cursor]');
+      edits.push({
+        inputType: (event as InputEvent).inputType,
+        veil: veil ? getComputedStyle(veil).opacity : 'none',
+        cursor: cursor ? cursor.style.opacity : 'none',
+      });
+    }, true);
+  }, CHOREOGRAPHY_TEST_RATE);
+  await gotoScene(page, { view: 'new-task', embed: '1', loop: '1' });
+  const root = page.locator('html');
+  await expect(root).toHaveAttribute('data-demo-cycles', '1', { timeout: 60_000 });
+  const edits = await page.evaluate(() => (window as unknown as { __titleEdits: Array<{ inputType: string; veil: string; cursor: string }> }).__titleEdits);
+  const typed = edits.filter((edit) => edit.inputType === 'insertText');
+  const erased = edits.filter((edit) => edit.inputType === 'deleteContentBackward');
+  expect(typed.length, 'the story types a title').toBeGreaterThan(0);
+  expect(erased.length, 'the reset erases it').toBeGreaterThan(0);
+  expect(typed.filter((edit) => edit.veil !== 'none' && edit.veil !== '0'), 'the title is typed in view').toEqual([]);
+  expect(erased.filter((edit) => edit.veil !== '1' || edit.cursor !== '0'), 'the title is erased behind a veil that has landed, with no pointer drawn').toEqual([]);
+  await expect(page.locator('[data-demo-veil]')).toHaveCSS('opacity', '0');
+  await expect(page.locator('[data-testid="new-task-dialog"] input[placeholder="Task title"]')).toHaveValue('');
+  await expect(root).not.toHaveAttribute('data-demo-choreography', 'stopped');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
 test('a visitor\'s own click stops the choreography and takes the pointer away', async ({ page }) => {
   test.setTimeout(60_000);
   const getUnexpectedErrors = collectUnexpectedErrors(page);

@@ -73,6 +73,9 @@ const DEFAULT_PACING_MS: Record<string, number> = {
 /** The rest a visitor sees before the first cycle, and between cycles. */
 const FIRST_REST_MS = 2500;
 const REST_BETWEEN_CYCLES_MS = 3500;
+/** A cut's fade each way, and the frames the reset behind it is given to paint before the frame shows again. */
+const CUT_FADE_MS = 450;
+const CUT_SETTLE_FRAMES = 6;
 /** A drag sensor's activation distance is 4 or 5 px; a press then moves past it before the carry. */
 const DRAG_ACTIVATION_OFFSET: Point = { x: 10, y: 4 };
 /** Where the pointer appears, relative to its first target, so a cycle opens with a visible travel. */
@@ -314,6 +317,19 @@ function createCursor(): { element: HTMLElement; ring: HTMLElement } {
   return { element, ring };
 }
 
+/**
+ * What a cut fades the frame to: the app's own surface, over everything it draws, dialogs and
+ * menus portaled to the body included. `pointer-events: none` keeps it out of `elementFromPoint`, so
+ * the reset behind it presses what it names.
+ */
+function createVeil(): HTMLElement {
+  const veil = document.createElement('div');
+  veil.setAttribute('data-demo-veil', '');
+  veil.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;opacity:0;background:var(--color-surface, #18181b);transition-property:opacity;transition-timing-function:ease';
+  document.body.appendChild(veil);
+  return veil;
+}
+
 // ---------------------------------------------------------------- the player
 
 /** Nearest common ancestor of two elements: where a click lands after a press and a release on different ones. */
@@ -365,6 +381,9 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   let stopped = false;
   let instant = true;
   let cursor: { element: HTMLElement; ring: HTMLElement } | null = null;
+  let veil: HTMLElement | null = null;
+  /** Between a cut and the frame showing again: the reset plays unpaced and the pointer is not drawn. */
+  let cutting = false;
   let cycles = 0;
 
   const root = document.documentElement;
@@ -631,7 +650,8 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
 
   async function play(step: ChoreographyStep): Promise<void> {
     if (stopped) return;
-    if ('pose' in step) return;
+    // The loop plays a cut itself, around the steps after it.
+    if ('pose' in step || 'cut' in step) return;
     if ('hover' in step) {
       await travel(await locate(step.hover), TRAVEL_MS);
     } else if ('click' in step) {
@@ -721,7 +741,45 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   /** Show the pointer, once it has somewhere to be: a cycle of keys and hotkeys alone never draws one. */
   function showCursor(visible: boolean): void {
     if (!cursor) return;
-    cursor.element.style.opacity = visible && point ? '1' : '0';
+    cursor.element.style.opacity = visible && point && !cutting ? '1' : '0';
+  }
+
+  /**
+   * Fade the veil to an opacity and wait until it is there: a timer can fire a frame before the
+   * transition lands, and a reset that started then would show its first edit through the veil.
+   */
+  async function fadeVeil(opacity: number): Promise<void> {
+    veil ??= createVeil();
+    const fading = veil;
+    fading.style.transitionDuration = `${CUT_FADE_MS / rate}ms`;
+    fading.style.opacity = String(opacity);
+    await delay(CUT_FADE_MS / rate);
+    for (let frame = 0; frame < SETTLE_FRAMES && !stopped && getComputedStyle(fading).opacity !== String(opacity); frame++) await nextFrame();
+  }
+
+  /** The cut: the pointer goes, the frame fades out, and the steps after it play at once behind the veil. */
+  async function cutAway(): Promise<void> {
+    cutting = true;
+    showCursor(false);
+    await fadeVeil(1);
+    instant = true;
+  }
+
+  /**
+   * Back from the cut: the reset's last layer closes and paints, the pointer leaves the page, and
+   * it is placed beside the next cycle's first target, so that cycle opens with a visible travel as
+   * the first one does. Then the frame fades back in.
+   */
+  async function cutBack(cycle: ChoreographyStep[]): Promise<void> {
+    await closingLayersGone();
+    for (let frame = 0; frame < CUT_SETTLE_FRAMES; frame++) await nextFrame();
+    leave();
+    point = null;
+    await placeBeside(cycle);
+    instant = false;
+    if (stopped) return;
+    await fadeVeil(0);
+    cutting = false;
   }
 
   /**
@@ -741,6 +799,10 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     transition(null, pointerInit(point ?? { x: 0, y: 0 }, {}, point));
     cursor?.element.remove();
     cursor = null;
+    // A visitor who takes over during a cut gets the page back in view, where the reset left it.
+    veil?.remove();
+    veil = null;
+    cutting = false;
     setState('stopped');
   }
 
@@ -788,6 +850,21 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     for (let frame = 0; frame < SETTLE_FRAMES * 3 && document.querySelector(CLOSING_LAYER); frame++) await nextFrame();
   }
 
+  /**
+   * Put the pointer beside the first target the steps name, so the first thing it does is travel.
+   * Placed, not moved: no event goes out, so nothing under that point hovers.
+   */
+  async function placeBeside(upcoming: ChoreographyStep[]): Promise<void> {
+    if (point) return;
+    const target = upcoming.map(targetOf).find((candidate): candidate is ChoreographyTarget => candidate !== null);
+    if (target === undefined) return;
+    const at = await resolveTarget(target);
+    // stop() takes the cursor away; one that came while the target resolved places nothing.
+    if (stopped || !cursor) return;
+    point = { x: at.x + ENTRY_OFFSET.x, y: at.y + ENTRY_OFFSET.y };
+    cursor.element.style.transform = `translate(${point.x - CURSOR_TIP.x}px, ${point.y - CURSOR_TIP.y}px)`;
+  }
+
   async function loop(): Promise<void> {
     // A visitor who took over before ready (during the pose) ended it for the frame's life.
     if (stopped) return;
@@ -800,21 +877,17 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
       return;
     }
     const cycle = poseIndex < 0 ? steps : [...afterPose, ...steps.slice(0, poseIndex)];
+    // A cut's reset runs from the cut to the end of the steps after the pose; the steps up to the
+    // pose then play in view, since they make the poster's gesture.
+    const cutIndex = cycle.findIndex((step) => 'cut' in step);
+    const resetEnd = afterPose.length;
+    const afterReset = cycle.slice(resetEnd);
     installHoverMirror();
     watchViewport();
     instant = false;
     cursor = createCursor();
-    // The pointer is placed beside the cycle's first target, so the first thing it does is travel.
-    // Placed, not moved: no event goes out at rest, so nothing under that point hovers.
-    if (!point) {
-      const target = cycle.map(targetOf).find((candidate): candidate is ChoreographyTarget => candidate !== null);
-      if (target !== undefined) {
-        const at = await resolveTarget(target);
-        // stop() takes the cursor away; one that came while the target resolved ends the loop here.
-        if (stopped || !cursor) return;
-        point = { x: at.x + ENTRY_OFFSET.x, y: at.y + ENTRY_OFFSET.y };
-      }
-    }
+    await placeBeside(cycle);
+    if (stopped || !cursor) return;
     if (point) cursor.element.style.transform = `translate(${point.x - CURSOR_TIP.x}px, ${point.y - CURSOR_TIP.y}px)`;
     leave();
     setState('rest');
@@ -831,9 +904,10 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
       if (stopped) return;
       setState('playing');
       showCursor(true);
-      for (const step of cycle) {
+      for (let index = 0; index < cycle.length; index++) {
         if (stopped) return;
-        await play(step);
+        if (index === cutIndex) await cutAway(); else await play(cycle[index]);
+        if (cutting && index === resetEnd - 1) await cutBack(afterReset.length > 0 ? afterReset : cycle);
         // A step that placed the pointer for the first time (a typed field's click) shows it.
         showCursor(true);
       }

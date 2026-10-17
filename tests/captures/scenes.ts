@@ -102,7 +102,12 @@ export type ChoreographyGesture =
   | { hotkeyUp: string }
   /** The poster's moment. A still plays the steps up to it and stops, and a live loop starts and
    *  ends on it. At most one; without one the loop rests where the boot steps left the frame. */
-  | { pose: true };
+  | { pose: true }
+  /** Where the cycle's story ends. The frame fades out, the steps after it (up to the end, or to
+   *  the end of the steps after the pose) play at once with no pointer drawn, and the frame fades
+   *  back in at rest: a product video cutting back to its start, never the undo played on screen.
+   *  At most one, after the pose, with a gesture on each side of it. */
+  | { cut: true };
 
 /**
  * One beat of a scene's choreography: a gesture, the selector its effect must produce before the
@@ -195,6 +200,11 @@ interface SceneBase extends Omit<DemoState, 'steps'> {
    * after the boot steps. Each cycle starts and ends on the poster's state: on the `pose` step when
    * there is one (a still plays up to it), otherwise where the boot steps left the frame. A cycle
    * that ends anywhere else is logged and stopped. Skipped under still=1 but for the pose.
+   *
+   * A cycle shows what a person does next on that screen. Looking around (selecting, opening and
+   * closing, hovering) comes back to rest by itself. An edit that is the scene's point plays forward
+   * and ends on a `cut`, and the steps after the cut put it back out of view, so a visitor never
+   * watches a title typed and then deleted.
    */
   choreography?: ChoreographyStep[];
   /** What main does on a session's replay clock (SceneTimelineEvent). Live frames only. */
@@ -656,6 +666,8 @@ const INVOICE_PDF_PLAN: RecordedWorkflowPlan = invoicePdfPlan;
 /** The planned task the workflow-draft scene selects: the client half, which waits for the server half. */
 export const PLANNED_BILLING_PAGE = 'billing-page';
 const PLANNED_PDF_ROUTE = 'pdf-route';
+/** The selected task's Planning stop in the inspector's route, the column the agent's reply offers to skip. */
+const PLANNED_ROUTE_PLANNING = `[data-testid="workflow-route-switch-${contosoLaneByName('Planning')}"]`;
 const WORKFLOW_INVOICE_DRAFT_SEEDS = {
   __mockWorkflows: [{
     projectId: PROJECT_CONTOSO,
@@ -1118,6 +1130,9 @@ const PROMOTE_POPOVER = '[data-testid="promote-popover"]';
 const SEARCH_INPUT = '[data-testid="search-palette-input"]';
 const NEW_TASK_TITLE = '[data-testid="new-task-dialog"] input[placeholder="Task title"]';
 const NEW_TASK_DESCRIPTION = '[data-testid="task-description"]';
+const NEW_TASK_PRIORITY = '[data-testid="new-task-dialog"] [data-testid="task-priority"]';
+const NEW_TASK_LABELS = '[data-testid="new-task-dialog"] [data-testid="task-labels"]';
+const NEW_TASK_FEATURE_LABEL = '[data-testid="new-task-dialog"] [aria-label="Remove feature"]';
 /** A Changes panel file row's select button (the row's first), and its Viewed toggle. */
 const changesFile = (path: string): string => `[data-testid="changes-file-row"][data-path="${path}"] > button:first-child`;
 const changesViewed = (path: string): string => `[data-testid="changes-viewed-toggle"][data-path="${path}"]`;
@@ -1143,7 +1158,6 @@ const TASK_TITLEBAR = '[data-testid="task-detail-titlebar"]';
 const TODO_TOP_SLOT = { x: 0.2775, y: 0.17 };
 /** A planned card on the draft canvas, and its outgoing handle on the right edge (React Flow's own attributes). */
 const draftCard = (key: string): string => `[data-testid="workflow-canvas-card"][data-workflow-task-key="${key}"]`;
-const draftHandleOut = (key: string): string => `.react-flow__handle[data-nodeid="${key}"][data-handlepos="right"]`;
 const EMPTY_BOARD = { x: 0.8475, y: 0.6 };
 /** The Agent Monitor's Group control in order: 1 Project, 2 Status. An icon may lead the group, so by type. */
 const monitorGroup = (position: number): string => `[role="group"][aria-label="Group sessions by"] > button:nth-of-type(${position})`;
@@ -1773,18 +1787,22 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="new-task-dialog"]',
     focus: '[data-testid="new-task-dialog"]',
     steps: [{ click: '[data-testid="swimlane-add-task"]', waitFor: '[data-testid="new-task-dialog"]' }],
-    // A task filled in and taken back: a title and a description typed, the project folder chosen
-    // over a worktree, the agent override opened, and each put back, the title last so it keeps the
-    // focus the dialog opened with. Create is never pressed, so no task is made.
+    // A task filled in the way one is: a title, a description, a priority, a label picked from
+    // the suggestions, and the pointer on Create. Then the cut, and the form put back behind it,
+    // the title last so it keeps the focus the dialog opened with. Create is never pressed, so no
+    // task is made.
     choreography: [
       { type: { into: NEW_TASK_TITLE, text: 'Add a health check route' }, ms: 700 },
-      { type: { into: NEW_TASK_DESCRIPTION, text: 'Serve GET /healthz with the build version and the uptime.' }, ms: 1100 },
-      { click: '[data-testid="worktree-option-project"]', waitFor: '[data-testid="worktree-option-project"][aria-checked="true"]', ms: 900 },
-      { click: '[data-testid="task-advanced-toggle"]', waitFor: '[data-testid="task-advanced-toggle"][aria-checked="true"]', ms: 2000 },
-      { click: '[data-testid="task-run-mode-profile"]', waitFor: '[data-testid="task-run-mode-profile"][aria-checked="true"]', ms: 700 },
-      { click: '[data-testid="worktree-option-worktree"]', waitFor: '[data-testid="worktree-option-worktree"][aria-checked="true"]', ms: 700 },
-      { type: { into: NEW_TASK_DESCRIPTION, text: '' }, ms: 400 },
-      { type: { into: NEW_TASK_TITLE, text: '' }, ms: 800 },
+      { type: { into: NEW_TASK_DESCRIPTION, text: 'Serve GET /healthz with the build version and the uptime.' }, ms: 1000 },
+      { choose: { in: NEW_TASK_PRIORITY, value: '2' }, ms: 900 },
+      { type: { into: NEW_TASK_LABELS, text: 'feat' }, waitFor: '[data-testid="label-suggestion"]', ms: 600 },
+      { click: '[data-testid="label-suggestion"]', waitFor: NEW_TASK_FEATURE_LABEL, ms: 900 },
+      { hover: '[data-testid="new-task-dialog"] button[type="submit"]', ms: 1600 },
+      { cut: true },
+      { click: NEW_TASK_FEATURE_LABEL, waitFor: `[data-testid="new-task-dialog"]:not(:has([aria-label="Remove feature"]))` },
+      { choose: { in: NEW_TASK_PRIORITY, value: '0' } },
+      { type: { into: NEW_TASK_DESCRIPTION, text: '' } },
+      { type: { into: NEW_TASK_TITLE, text: '' } },
     ],
   },
   'edit-columns': {
@@ -1984,14 +2002,17 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-agent-pane"] .xterm' },
       { click: draftCard(PLANNED_BILLING_PAGE), waitFor: `${draftCard(PLANNED_BILLING_PAGE)}[data-selected="true"]` },
     ],
-    // The link taken out from the billing page's inspector, drawn again from the route task's
-    // handle, then the route task selected, which moves the drawn link out of its accent, and the
-    // billing page again. Each is an edit to the plan, and the cycle leaves it as it found it.
+    // The plan reviewed where the recording leaves it: the pointer over the agent's reply, the
+    // server task looked over, the billing page again, and its Planning stop switched off, the
+    // column the reply offers to skip. Then the cut, and Planning on again behind it. Start is
+    // never pressed.
     choreography: [
-      { click: `[data-testid="workflow-link-row"][data-task-key="${PLANNED_PDF_ROUTE}"] [data-testid="workflow-unlink"]`, waitFor: `body:not(:has([data-testid="workflow-link-row"][data-task-key="${PLANNED_PDF_ROUTE}"]))`, ms: 1600 },
-      { drag: { from: draftHandleOut(PLANNED_PDF_ROUTE), to: draftCard(PLANNED_BILLING_PAGE) }, waitFor: 'path.react-flow__edge-path[data-link-state="fresh"]', ms: 1900 },
-      { click: draftCard(PLANNED_PDF_ROUTE), waitFor: `${draftCard(PLANNED_PDF_ROUTE)}[data-selected="true"]`, ms: 1600 },
-      { click: draftCard(PLANNED_BILLING_PAGE), waitFor: `${draftCard(PLANNED_BILLING_PAGE)}[data-selected="true"]`, ms: 900 },
+      { hover: '[data-testid="workflow-agent-pane"] .xterm', ms: 1800 },
+      { click: draftCard(PLANNED_PDF_ROUTE), waitFor: `${draftCard(PLANNED_PDF_ROUTE)}[data-selected="true"]`, ms: 2400 },
+      { click: draftCard(PLANNED_BILLING_PAGE), waitFor: `${draftCard(PLANNED_BILLING_PAGE)}[data-selected="true"]`, ms: 1200 },
+      { click: PLANNED_ROUTE_PLANNING, waitFor: `${PLANNED_ROUTE_PLANNING}[aria-checked="false"]`, ms: 2600 },
+      { cut: true },
+      { click: PLANNED_ROUTE_PLANNING, waitFor: `${PLANNED_ROUTE_PLANNING}[aria-checked="true"]` },
     ],
   },
 
