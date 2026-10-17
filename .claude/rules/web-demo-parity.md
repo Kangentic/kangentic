@@ -34,12 +34,15 @@ three things staying in step, and each is enforced rather than remembered.
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
   hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (steps
   from a closed vocabulary, the pointer's `hover`, `click`, `contextmenu`, `drag` and `drop`, the
-  keyboard's `type`, an arrow `key` and a held `hotkeyDown`/`hotkeyUp`, a select's `choose`, a `scroll`, and one
-  `pose`, with pacing as a number on a step and every effect a step depends on a selector waited
+  keyboard's `type`, an arrow `key` and a held `hotkeyDown`/`hotkeyUp`, a select's `choose`, a `scroll`, one
+  `pose`, and one `cut`, with pacing as a number on a step and every effect a step depends on a selector waited
   for; never Escape, never Enter, and never a write a visitor would have to undo, so a dialog's
   Cancel and a draft's revert end a cycle where Save and a promote would not), a
   `timeline` (what main does at a moment on a session's replay clock), or a `motion` sentence saying
-  why it moves without either. No code travels through a scene, and none of the three rides a
+  why it moves without either. A cycle shows what a person does next on that screen: looking
+  around comes back to rest by itself, and an edit that is the scene's point plays forward and ends
+  on a `cut`, whose steps put it back at once behind an opaque veil with no pointer drawn, so a
+  visitor never watches an edit undone. No code travels through a scene, and none of the three rides a
   `state=` URL. The page plays a choreography as a visitor's mouse would
   (`demo/choreography.ts`): the events a browser makes, never a renderer hook, with `:hover`
   mirrored under an attribute and the pointer drawn by `demo/`. Every cycle starts and ends on the
@@ -266,7 +269,8 @@ three things staying in step, and each is enforced rather than remembered.
   `boot.js` reads `settle` or a `settle` selector names a testid no renderer file stamps. It also
   holds a `state` scene to no pose and a `boot` scene to boot steps or a pose, each choreography to
   its closed vocabulary (one gesture a step, at most one pose, a held drag followed by the pose, a
-  `drop` only after the pose that holds one), each timeline event to a working session with a
+  `drop` only after the pose that holds one, at most one `cut`, after the pose with a step on each
+  side of it), each timeline event to a working session with a
   recording and a card and lane the scene holds, each workflow-origin move to the column main would
   move it to (`src/shared/workflow-route.ts`), every scene to a declared motion, and a workflow
   whose agent the matrix recorded to the plan that recording saved (its `workflow-plans/` file),
@@ -279,7 +283,9 @@ three things staying in step, and each is enforced rather than remembered.
   full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
   element, that every choreography plays a cycle back to rest under `loop=1` (or holds its pose)
   with a clean console, which is also what fails a choreography selector the renderer no longer
-  stamps, that a visitor's own click stops it and lets go of a held pose, that a reduced-motion
+  stamps, that every scene with a `cut` makes its reset's changes only under the landed veil with
+  no pointer drawn and changes nothing while the frame fades back in (the player's
+  `data-demo-cut` phase), that a visitor's own click stops it and lets go of a held pose, that a reduced-motion
   visitor gets the rest held with no pointer, that a still with a pose
   draws no pointer and a still without one fetches no player, that a script's Escape never posts,
   that `task-mcp`'s timeline moves its card to Testing and the restart puts it back, that `scenes.json` is served, lists exactly
