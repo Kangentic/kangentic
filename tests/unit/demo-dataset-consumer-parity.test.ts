@@ -59,10 +59,14 @@ function callBody(source: string, where: string): string {
  *
  * Split on commas rather than matching delimiters in one pass: a pattern that CONSUMES the comma
  * before a key cannot then match the key after it, so `a, b, c` yields only every other one. That
- * bug is why this splits first and reads a leading identifier out of each segment.
+ * bug is why this splits first and reads a leading identifier out of each segment. Line comments
+ * go before anything else: a comment above an option starts that option's segment, and a comma
+ * inside one splits the comment's words into segments of their own, so either way the option's
+ * name was never at the start of a segment.
  */
 function optionKeys(body: string): Set<string> {
   const flat = body
+    .replace(/\/\/[^\n]*/g, '')
     // Nested literals and call arguments first, so an inner key cannot read as an option and an
     // argument comma cannot split a segment.
     .replace(/\{[^{}]*\}/g, '{}')
@@ -91,6 +95,19 @@ function declaredOptions(): Set<string> {
   return names;
 }
 
+describe('optionKeys', () => {
+  it('reads an option that a line comment, with or without a comma, sits above', () => {
+    const body = `
+      scrollback, changes,
+      // Fetched later, when a frame asks.
+      knowledgeGraph: 'fetched',
+      // Carried here.
+      sceneRowData: 'inline',
+    `;
+    expect([...optionKeys(body)].sort()).toEqual(['changes', 'knowledgeGraph', 'sceneRowData', 'scrollback']);
+  });
+});
+
 describe('both sample-install consumers are seeded from the same options', () => {
   const demoKeys = optionKeys(callBody(fs.readFileSync(DEMO_CONFIG, 'utf-8'), 'demo/vite.config.mts'));
   const marketingKeys = optionKeys(callBody(fs.readFileSync(MARKETING_FIXTURE, 'utf-8'), 'marketing-fixture.ts'));
@@ -101,6 +118,11 @@ describe('both sample-install consumers are seeded from the same options', () =>
     expect(demoKeys.size).toBeGreaterThan(5);
     expect(marketingKeys.size).toBeGreaterThan(5);
     expect(declared.size).toBeGreaterThan(5);
+    // Both call sites put a comment above these, and the scan once missed them both.
+    for (const commented of ['knowledgeGraph', 'sceneRowData']) {
+      expect(demoKeys.has(commented), `demo/vite.config.mts: ${commented} not read`).toBe(true);
+      expect(marketingKeys.has(commented), `marketing-fixture.ts: ${commented} not read`).toBe(true);
+    }
   });
 
   it('passes only options buildDemoPreConfig declares', () => {
