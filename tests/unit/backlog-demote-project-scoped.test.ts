@@ -406,6 +406,42 @@ describe('BACKLOG_DEMOTE announces the write on the board-changed bus', () => {
     ]);
   });
 
+  it('emits only after the task row is deleted, so a phone\'s re-read no longer lists the card', async () => {
+    // Recorded inside the listener and asserted outside it, because the announce
+    // swallows a listener's throw and an expect there could never fail the test.
+    let taskDeletedAtEmit: boolean | undefined;
+    context.boardEvents.emitBoardChanged.mockImplementation(() => {
+      taskDeletedAtEmit = doublesIn(OTHER_PROJECT_ID).tasks.delete.mock.calls.length > 0;
+    });
+
+    await invokeDemote(FROM_MAIN_WINDOW, OTHER_PROJECT_ID);
+
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+    expect(taskDeletedAtEmit).toBe(true);
+  });
+
+  it('still emits once, and still rejects with the delete error, when the task delete fails after the backlog row was created', async () => {
+    // The backlog row landed before the delete threw, so both lists changed and
+    // a phone must re-read. Only the `finally` reaches the bus on this path.
+    const deleteError = new Error('SQLITE_BUSY: database is locked');
+    doublesIn(OTHER_PROJECT_ID).tasks.delete.mockImplementation(() => { throw deleteError; });
+
+    await expect(invokeDemote(FROM_MAIN_WINDOW, OTHER_PROJECT_ID)).rejects.toBe(deleteError);
+
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: OTHER_PROJECT_ID, change: 'task-deleted', ids: [TASK_ID] }],
+    ]);
+  });
+
+  it('emits for the resolved current project when no id was stamped', async () => {
+    // Announcing the raw argument would hand the bus a null project and drop it.
+    await invokeDemote(FROM_MAIN_WINDOW, null);
+
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: CURRENT_PROJECT_ID, change: 'task-deleted', ids: [TASK_ID] }],
+    ]);
+  });
+
   it('emits nothing for a demote refused before any write', async () => {
     await expect(invokeDemote(FROM_OTHER_WINDOW, 'proj-removed')).rejects.toThrow('No project is currently open');
 

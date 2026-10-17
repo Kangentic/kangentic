@@ -659,6 +659,21 @@ describe('TASK_MOVE wrapper announces a move from another window', () => {
     expect(otherWindowPushes(context)).toEqual([]);
   });
 
+  it.each([
+    ['another window', FROM_OTHER_WINDOW],
+    ['the main window itself', FROM_MAIN_WINDOW],
+  ])('puts a move from %s on the bus exactly twice, because the wrapper adds no emit of its own', async (_label, event) => {
+    // handleTaskMove announces at the commit point and again at settle, for every
+    // caller. The wrapper hands announceTaskWrite a null board change; a wrapper
+    // that named one would make a third event, and a phone would re-read the
+    // board once more for every drag.
+    const context = makeContext(taskRepo, swimlaneRepo);
+    await registeredMoveHandler(context)(event, MOVE_INPUT, 'proj-test');
+
+    const expectedEmit = { projectId: 'proj-test', change: 'task-updated', ids: [MOVE_INPUT.taskId] };
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[expectedEmit], [expectedEmit]]);
+  });
+
   it('sends nothing while the app is shutting down', async () => {
     mockEnsureTaskWorktree.mockImplementation(async () => {
       mockIsShuttingDown.mockReturnValue(true);
