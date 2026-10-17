@@ -48,12 +48,13 @@ const CONTOSO_FULL_TRACK_STOPS = DEMO_LANES_BY_PROJECT[PROJECT_CONTOSO].filter((
 
 /**
  * How many stops each Harden the API card's step track draws (the workflows scenes' seed).
- * Refactor API error handling starts at Executing, so its track skips Planning.
+ * Refactor API error handling starts at Executing, so its track skips Planning. Extract auth
+ * middleware's route ends at Executing, so its track skips Code Review, Testing and Merge.
  */
 const WORKFLOW_TRACK_STOPS: Record<string, number> = {
   [TASK_SCHEMA]: CONTOSO_FULL_TRACK_STOPS,
   [TASK_LOGGING]: CONTOSO_FULL_TRACK_STOPS,
-  [TASK_MIDDLEWARE]: CONTOSO_FULL_TRACK_STOPS,
+  [TASK_MIDDLEWARE]: CONTOSO_FULL_TRACK_STOPS - 3,
   [TASK_RATE_LIMIT]: CONTOSO_FULL_TRACK_STOPS,
   [TASK_AUTH]: CONTOSO_FULL_TRACK_STOPS,
   [TASK_API_ERRORS]: CONTOSO_FULL_TRACK_STOPS - 1,
@@ -2158,6 +2159,44 @@ test('without loop=1 the timeline still moves the card once, and nothing puts it
     return card?.closest('[data-swimlane-name]')?.getAttribute('data-swimlane-name') ?? null;
   }, TASK_VALIDATE);
   await expect.poll(laneOfCard, { timeout: 30_000 }).toBe('Testing');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('workflows: the middleware step finishes its route, the engine starts Add user auth flow, and loop=1 undoes both', async ({ page }) => {
+  // The step lands when the middleware session's recorded turn ends, 90 s after the frame opens,
+  // so the test moves page time rather than waiting for it: Playwright's clock fires the session
+  // clock's timers in their order, as real time would. Reduced motion holds the choreography at
+  // rest, so no drag is in flight when time jumps.
+  test.setTimeout(120_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.clock.install();
+  await gotoScene(page, { view: 'workflows', embed: '1', loop: '1' });
+  await SCENE_MARKERS.workflows(page);
+  const view = page.locator('[data-testid="workflows-view"]');
+  const currentStep = (taskId: string) => view.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${taskId}"] [data-step-state="current"]`);
+  const links = (state: string) => view.locator(`path.react-flow__edge-path[data-link-state="${state}"]`);
+  await expect(currentStep(TASK_MIDDLEWARE)).toHaveAttribute('aria-label', 'Executing: now');
+  await expect(currentStep(TASK_AUTH)).toHaveAttribute('aria-label', 'To Do: now');
+
+  await page.clock.fastForward(91_000);
+  // Middleware is done (its route ended at Executing), which meets its two links; auth's only
+  // blocker is done, so it starts in Planning. Refactor API error handling still waits on rate limiting.
+  await expect(currentStep(TASK_MIDDLEWARE)).toHaveAttribute('aria-label', 'Done: now');
+  await expect(links('satisfied')).toHaveCount(4);
+  await expect(links('pending')).toHaveCount(1);
+  await expect(currentStep(TASK_AUTH)).toHaveAttribute('aria-label', 'Planning: now');
+  await expect.poll(() => page.evaluate(async (taskId) => {
+    const sessions = await (window as unknown as DemoElectronWindow).electronAPI.sessions.list();
+    return sessions.some((session) => session.taskId === taskId && session.status === 'running');
+  }, TASK_AUTH), { message: 'the start runs auth\'s agent, from its recorded plan-mode boot' }).toBe(true);
+
+  // The restart pause, then the session starts its stretch over and the workflow is back where it opened.
+  await page.clock.fastForward(7_000);
+  await expect(currentStep(TASK_MIDDLEWARE)).toHaveAttribute('aria-label', 'Executing: now');
+  await expect(currentStep(TASK_AUTH)).toHaveAttribute('aria-label', 'To Do: now');
+  await expect(links('satisfied')).toHaveCount(2);
+  await expect(links('pending')).toHaveCount(3);
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

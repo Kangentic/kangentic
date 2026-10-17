@@ -80,8 +80,10 @@ export type ChoreographyGesture =
   | { click: ChoreographyTarget }
   | { contextmenu: ChoreographyTarget }
   /** Press on `from`, travel to `to`, and release, or with `hold` stay pressed: the gesture in
-   *  flight (the drag overlay, the dock preview). */
+   *  flight (the drag overlay, the dock preview). `by` in place of `to` carries it that far as
+   *  fractions of the frame, for a drag into empty space no element marks. */
   | { drag: { from: ChoreographyTarget; to: ChoreographyTarget; hold?: boolean } }
+  | { drag: { from: ChoreographyTarget; by: { x: number; y: number }; hold?: boolean } }
   /** Edit a field's text to `text` a keystroke at a time: back to what the two share, then on. The
    *  pointer clicks into the field first unless it already has the focus. `''` clears it. */
   | { type: { into: string; text: string } }
@@ -104,11 +106,14 @@ export type ChoreographyGesture =
 export type ChoreographyStep = ChoreographyGesture & { waitFor?: string; ms?: number };
 
 /**
- * What main does at a moment on a session's replay clock, through the push main sends for it.
- * `move` is an agent's own move (a recorded `kangentic_move_task` result landing): the card changes
- * column and `TASK_UPDATED_BY_AGENT` goes out. `to` is a lane id.
+ * What main does at a moment on a session's replay clock, through the push main sends for it. `to`
+ * is a lane id. A `move` with origin `agent` is an agent's own move (a recorded `kangentic_move_task`
+ * result landing): the card changes column and `TASK_UPDATED_BY_AGENT` goes out. One with origin
+ * `workflow` is a workflow's: a step the Automation agent judged done moving its task on its route
+ * (workflow-step.ts), or the engine starting a task whose blockers are all done
+ * (workflow-engine-host.ts); `TASK_MOVED_BY_AUTOMATION` and the workflow's change go out.
  */
-export type SceneTimelineAction = { move: { task: string; to: string; origin: 'agent' } };
+export type SceneTimelineAction = { move: { task: string; to: string; origin: 'agent' | 'workflow' } };
 
 /**
  * One timeline event. `at: 'end'` is the moment the session's recording ends, which is where the
@@ -628,17 +633,40 @@ const WORKFLOW_INVOICE_DRAFT_SEEDS = {
   }],
 };
 
-/** The member patches. Refactor API error handling starts at Executing, so its route skips Planning. */
+/**
+ * The member patches. Refactor API error handling starts at Executing, so its route skips Planning.
+ * Extract auth middleware's route ends at Executing, where its agent is working: when its recorded
+ * turn ends, the step is done and the route is finished, so the workflow moves it to Done, which
+ * meets Add user auth flow's one link (the workflows scene's timeline).
+ */
 const WORKFLOW_HARDEN_API_MEMBERS = [TASK_SCHEMA, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_AUTH, TASK_API_ERRORS].map((id) => ({
   id,
   workflow_id: WORKFLOW_HARDEN_API,
   workflow_project_id: PROJECT_CONTOSO,
   route_start_swimlane_id: id === TASK_API_ERRORS ? demoLaneId(PROJECT_CONTOSO, 'executing') : null,
-  route_last_swimlane_id: null,
+  route_last_swimlane_id: id === TASK_MIDDLEWARE ? demoLaneId(PROJECT_CONTOSO, 'executing') : null,
   skipped_swimlane_ids: [],
   canvas_x: null,
   canvas_y: null,
 }));
+
+/**
+ * A workflow step needs someone to judge it: with no Automation agent a column is a human gate
+ * (workflow-step.ts), and the sample install chooses none. The same seed column-automation-edit
+ * uses for its Condition.
+ */
+const DEMO_AUTOMATION_AGENT = { automation: { agent: 'claude', model: DEMO_COLUMN_MODELS.sonnet, effort: null } };
+
+/**
+ * What Harden the API does when the middleware session's recorded turn ends: the step is done at
+ * the route's last column, so the task moves to Done, and with its one blocker done the engine
+ * starts Add user auth flow at its route's first column, Planning, which plays its recorded
+ * plan-mode boot. loop=1 undoes both as the session starts over.
+ */
+const HARDEN_API_STEP_TIMELINE: SceneTimelineEvent[] = [
+  { session: SESSION_MIDDLEWARE, at: 'end', do: { move: { task: TASK_MIDDLEWARE, to: demoLaneId(PROJECT_CONTOSO, 'done'), origin: 'workflow' } } },
+  { session: SESSION_MIDDLEWARE, at: 'end', do: { move: { task: TASK_AUTH, to: demoLaneId(PROJECT_CONTOSO, 'planning'), origin: 'workflow' } } },
+];
 
 /**
  * How both Workflows view scenes open the canvas: the view, the agent pane collapsed, Board, then
@@ -876,6 +904,7 @@ const overviewRow = (lane: string): string => `[data-testid="board-manager-overv
 const ALL_COLUMNS_CLEAN = `${BOARD_MANAGER}:has([data-testid="board-manager-tab-all"][aria-selected="true"]):has(${BOARD_MANAGER_CLEAN})`;
 const automationPickerType = (type: string): string => `[data-testid="column-automation-picker-type"][data-type="${type}"]`;
 const DICTATION_FIELD_LISTENING = '[data-testid="dictation-live-chip"][data-placement="below"] [data-testid="dictation-recording-dot"][data-tone="active"]';
+const WORKFLOW_AUTH_CARD = `[data-testid="workflow-canvas-card"][data-workflow-task-key="${TASK_AUTH}"]`;
 
 export const SCENES: Record<string, SceneDefinition> = {
   // ---------------------------------------------------------------- first launch
@@ -1566,8 +1595,9 @@ export const SCENES: Record<string, SceneDefinition> = {
   'workflows': {
     name: 'workflows',
     reach: 'boot',
-    description: 'The Workflows view on a running workflow, for the landing page\'s Workflows tab and the Workflows docs page. Six existing contoso cards joined by task patches. The steps collapse the agent pane and then open the view again: the canvas fits its cards only when a workflow opens, never on a resize, so this is how it opens at its full width. The pane is collapsed because the mock\'s workflow agent has no recording. The last click, on empty canvas, clears the task the view selects on open, so every link shows its own state and the inspector shows the run order.',
+    description: 'The Workflows view on a running workflow, for the landing page\'s Workflows tab and the Workflows docs page. Six existing contoso cards joined by task patches. The steps collapse the agent pane and then open the view again: the canvas fits its cards only when a workflow opens, never on a resize, so this is how it opens at its full width. The pane is collapsed because the mock\'s workflow agent has no recording. The last click, on empty canvas, clears the task the view selects on open, so every link shows its own state and the inspector shows the run order. The cards sit at their own size with room around them because the canvas never fits past 1:1 (FIT_VIEW_OPTIONS in WorkflowCanvas.tsx). Live, a card is dragged out and Auto layout slides it home while the middleware agent works; when its recorded turn ends, about 90 s in, the timeline moves it to Done and starts Add user auth flow in Planning (HARDEN_API_STEP_TIMELINE), and loop=1 undoes both six seconds later.',
     alt: 'The Workflows view on Harden the API, a running workflow of six linked cards: two done, two in progress, and two waiting in To Do. Green links run from the done cards and grey links into the waiting ones, beside the run order.',
+    config: DEMO_AUTOMATION_AGENT,
     seeds: WORKFLOW_HARDEN_API_SEEDS,
     tasks: WORKFLOW_HARDEN_API_MEMBERS,
     ready: '[data-testid="workflow-run-order"]',
@@ -1575,6 +1605,16 @@ export const SCENES: Record<string, SceneDefinition> = {
     steps: [
       ...WORKFLOW_VIEW_ROUND_TRIP,
       { click: '.react-flow__pane', waitFor: '[data-testid="workflow-run-order"]' },
+    ],
+    timeline: HARDEN_API_STEP_TIMELINE,
+    // Add user auth flow dragged up into the empty canvas, its links following, then Auto layout,
+    // the canvas's own way back: it slides hand-placed cards home and turns itself off again. Then a
+    // click on empty canvas, since a drag selects the card it moves. The drag writes the card's
+    // place as the desktop's does, and Auto layout clears it.
+    choreography: [
+      { drag: { from: WORKFLOW_AUTH_CARD, by: { x: 0, y: -0.19 } }, waitFor: '[data-testid="workflow-auto-layout"]:not(:disabled)', ms: 1600 },
+      { click: '[data-testid="workflow-auto-layout"]', waitFor: '[data-testid="workflow-auto-layout"]:disabled', ms: 1400 },
+      { click: { x: 0.3, y: 0.25 }, waitFor: '[data-testid="workflow-run-order"]', ms: 900 },
     ],
   },
   'board-workflow': {

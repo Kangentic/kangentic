@@ -295,7 +295,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `board-config-change` | state | `__mockBoardConfigChanged`, fired once when `boardConfig.onChanged` registers, which App.tsx turns into its own reconciliation dialog |
 | `edit-columns`, `column-automation`, `column-automation-turn-end`, `column-handoff` | boot | the column's edit button (and, for `column-handoff`, the All columns tab), plus one shared `__mockSwimlanePatches` ladder (`COLUMN_LADDER` in `scenes.ts`) so the four describe one board: Claude Code plans on Opus 5 at xhigh and builds on Sonnet 5, Codex CLI reviews in an isolated session, Claude tests, and GitHub Copilot CLI merges, with handoff on at each change of agent. `column-automation`, `column-automation-turn-end` and `column-handoff` add the Code Review automation through `__mockAutomations`; `edit-columns` keeps the enter and exit slots empty. Never the dataset: an automation draws a glyph in the BOARD column header, so seeding one there would change every figure already placed. The forms show Model and Effort because the sample install reports each agent's capabilities (`DEMO_AGENT_OVERRIDES`), and Codex has no Effort field because it takes none from Kangentic. Codex also reports no turn end, which the dataset's agent list carries from its adapter, so Code Review's On agent turn end reads blocked as it does on the desktop. That is why `column-automation-turn-end` puts the review loop on Testing, where the ladder hands the review on to Claude. It holds two Move to column rows the runner reads in order, one of each Condition kind so both row marks show: back to Executing on an Agent evaluation (the robot mark) with a Frequency of three and a Message carrying `{{agentReply}}`, then on to Merge, once, on a Text match (the text search mark) of the line `PR: ready to merge`, the gate this repo's own `kangentic.json` puts on Testing. A move ends the group, so when the first row fires the second never runs. Under `loop=1` every edit is a draft and Save is never pressed: `edit-columns` selects Testing, drags it above Code Review and back (Save lights up and goes dark again) and selects Code Review again; `column-automation` adds an automation on task exit, picks Notify, and cancels the draft row away; `column-handoff` opens Testing from the table, which is read-only, switches its handoff off, shows the draft in All columns, and switches it back |
 | `column-automation-edit` | boot | the same board and rows as `column-automation-turn-end`, Testing's edit button, then the first turn-end row's edit button, so the Edit automation dialog shows Send findings back as its four cards: Trigger, Condition, Frequency and Action. The first row, because its Condition is an Agent evaluation in plain words where the second quotes one specific final line. It also seeds `config.automation` (Claude on Sonnet 5), since with no Automation agent the Condition card shows its setup notice in place of the condition, and the sample install chooses none. No menu is left open, so it boots in a frame. At 1600 by 1000 the dialog is about 115px taller than its body allows, so the body scrolls: the first three cards show whole, and the Action card shows its Type, its column and the Message, whose last line (`{{agentReply}}`) is cut off at the bottom of the body, with the Template variable picker below the fold. The dialog keeps the app's own size and type. Under `loop=1` its choreography switches the Condition off and on, picks Text match, takes the Frequency down to one and back to three, and picks Agent evaluation again; the dialog keeps the evaluation's text across the switch, so the cycle ends on the poster's values, and Done is never pressed |
-| `workflows` | boot | `__mockWorkflows` and `__mockWorkflowLinks` plus `tasks` patches that join six existing contoso cards to one running workflow (Workflows below); the Workflows toggle, the agent pane's collapse, Board, Workflows again, then a click on empty canvas |
+| `workflows` | boot | `__mockWorkflows` and `__mockWorkflowLinks` plus `tasks` patches that join six existing contoso cards to one running workflow (Workflows below); the Workflows toggle, the agent pane's collapse, Board, Workflows again, then a click on empty canvas. It also seeds `config.automation`, since a workflow step needs an Automation agent to judge it. Under `loop=1` a card is dragged up into empty canvas and Auto layout slides it home (the button turns itself off once no card is hand-placed), and when the middleware session's recorded turn ends (about 90 s in) its timeline does what main does: the step is done at the route's last column, Executing, so the card moves to Done, and with its one blocker done the engine starts Add user auth flow in Planning, which plays its recorded plan-mode boot. The restart six seconds later undoes both |
 | `board-workflow` | state | the same seed, on the board: each member card's strip and step track, the To Do cards' waiting line, and the toggle's running mark |
 | `workflow-draft` | boot | a second `__mockWorkflows` seed, a workflow planned but not started (its tasks live in the draft, so nothing reaches the board); the same round trip as `workflows`, then a click that selects the middle planned task, so the inspector shows its route switches, what it waits for and what waits for it |
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab) |
@@ -402,12 +402,18 @@ scene that says none (bar a `MOTION_PENDING` list that only shrinks):
   waited for as `body:not(:has(...))`, since a popover or a dialog stays mounted through its exit.
 - **`timeline`**, what main does at a moment on a working session's replay clock. The one moment
   is `at: 'end'`, where the recording ends, which for a recording cut by `stopWhen` is the moment
-  the cut names, so no offset is typed by hand. The one action is `move` with origin `agent`: the
-  card changes column through the same `tasks.move` a visitor's drag takes, the Monitor row's
-  column follows, and `TASK_UPDATED_BY_AGENT` goes out, as `MOVE_PUSH_BY_ORIGIN` in
-  `task-move.ts` sends it for a `kangentic_move_task`. The seed schedules it inside
-  `scheduleSessionClock`, so it fires whether or not a terminal is open, and `restartSession`
-  undoes it quietly as the terminal repaints from its opening frame. `task-mcp` is the first.
+  the cut names, so no offset is typed by hand. The one action is `move`: the card changes column
+  through the same `tasks.move` a visitor's drag takes (into Done it is archived, as main does),
+  the Monitor row's column follows, and the push `MOVE_PUSH_BY_ORIGIN` in `task-move.ts` sends for
+  its origin goes out. Origin `agent` is a `kangentic_move_task` landing (`TASK_UPDATED_BY_AGENT`);
+  origin `workflow` is a workflow step or an engine start (`TASK_MOVED_BY_AUTOMATION` and the
+  workflow's change). A workflow move is the engine's to choose, never the scene's, so the
+  registry test replays each one through `src/shared/workflow-route.ts`: a step needs a session
+  whose turn ended on its own, an Automation agent, and the next column on the task's route; a
+  start needs every blocker in Done and the route's first column. The seed schedules the actions
+  inside `scheduleSessionClock`, so they fire whether or not a terminal is open, and
+  `restartSession` undoes them quietly as the terminal repaints from its opening frame (an
+  archived card is unarchived back where it was). `task-mcp` and `workflows` carry one.
 - **`motion`**, a sentence saying why a scene moves with neither, such as a terminal replaying.
 
 `demo/choreography.ts` plays a choreography, a chunk `boot.js` loads only when the frame plays one.
@@ -487,7 +493,10 @@ workflow opens and never on a resize, so the steps collapse the agent pane, leav
 open it again at its full width; the collapse is store state and survives the round trip. The view
 also selects the first task in run order when it opens, which restyles the links around that task
 and fades the rest. The last step clicks empty canvas, as a visitor would, so every link shows its
-own state and the inspector shows the run order.
+own state and the inspector shows the run order. The cards then sit at their own size with room
+around them, because the canvas never fits past 1:1 (`FIT_VIEW_OPTIONS` in `WorkflowCanvas.tsx`);
+at 1600 by 1000 six cards need less than the canvas has. Filling it would take a zoom the desktop
+never opens at, so the frame keeps the app's fit.
 
 The pane is collapsed for a second reason. The workflow agent has no recording: the mock starts a
 session when the pane opens, and its terminal would be empty. The strip shows the agent's idle

@@ -13,9 +13,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
 import { CHOREOGRAPHY_KEYS, SCENES, hasPose, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
-import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
-import { loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
+import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_LANES_BY_PROJECT, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneId, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
+import { loadDemoEnds, loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
+import { nextOnRoute, startColumn, type RouteColumn, type RouteFields } from '../../src/shared/workflow-route';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
 import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
 
@@ -106,6 +107,17 @@ function sceneTaskIds(scene: SceneDefinition): Set<string> {
   return new Set([...DEMO_TASKS.map((task) => task.id), ...(scene.rows ?? [])]);
 }
 
+/** A sample project's columns in the shape the route helpers read: ids, board order, and roles. */
+function routeColumnsOf(projectId: string): RouteColumn[] {
+  return (DEMO_LANES_BY_PROJECT[projectId] ?? []).map((lane, position) => ({
+    id: demoLaneId(projectId, lane.slug),
+    position,
+    role: lane.role,
+    is_archived: lane.is_archived,
+    is_ghost: false,
+  }));
+}
+
 /** The session ids a scene's install holds: the sample install's, plus those of the rows it adds. */
 function sceneSessionIds(scene: SceneDefinition): Set<string> {
   const added = DEMO_SCENE_SESSIONS.filter((session) => session.taskId !== null && (scene.rows ?? []).includes(session.taskId));
@@ -133,7 +145,7 @@ const MOTION_PENDING = new Set([
   'welcome', 'board-filter', 'activity-tab', 'session-states',
   'activity-overlay', 'notification-toast', 'board-config-change', 'announcements', 'announcement-dialog',
   'conversation', 'monitor', 'monitor-table', 'command-terminal',
-  'quick-find', 'column-automation-turn-end', 'workflows', 'board-workflow',
+  'quick-find', 'column-automation-turn-end', 'board-workflow',
   'workflow-draft', 'completed-tasks', 'completed-task', 'completed-task-usage',
   // Each holds its pose under loop=1; its loop is a Phase 3 row.
   'card-drag', 'card-menu', 'board-workflow-links', 'window-dock',
@@ -261,7 +273,13 @@ describe('scene registry', () => {
         if ('click' in step) expect(isTarget(step.click), `${where}.click`).toBe(true);
         if ('contextmenu' in step) expect(isTarget(step.contextmenu), `${where}.contextmenu`).toBe(true);
         if ('drag' in step) {
-          expect(isTarget(step.drag.from) && isTarget(step.drag.to), `${where}.drag needs a from and a to`).toBe(true);
+          const drag = step.drag as { from?: ChoreographyTarget; to?: ChoreographyTarget; by?: { x: number; y: number } };
+          expect(isTarget(drag.from), `${where}.drag needs a from`).toBe(true);
+          expect((drag.to === undefined) !== (drag.by === undefined), `${where}.drag needs one of a to and a by`).toBe(true);
+          if (drag.to !== undefined) expect(isTarget(drag.to), `${where}.drag.to`).toBe(true);
+          if (drag.by !== undefined) {
+            expect([drag.by.x, drag.by.y].every((value) => typeof value === 'number' && Math.abs(value) <= 1), `${where}.drag.by is fractions of the frame`).toBe(true);
+          }
           // Nothing releases a held pointer but a visitor, so the gesture it holds is the pose.
           if (step.drag.hold) expect('pose' in (choreography[index + 1] ?? {}), `${where} holds the pointer, so the pose follows it`).toBe(true);
         }
@@ -308,10 +326,54 @@ describe('scene registry', () => {
         expect(Object.keys(event.do), `${where}.do names one action`).toEqual(['move']);
         expect(sceneTaskIds(scene).has(event.do.move.task), `${where} moves a task the install does not hold`).toBe(true);
         expect(laneIds.has(event.do.move.to), `${where} moves to a lane the install does not have`).toBe(true);
-        expect(event.do.move.origin, `${where}.origin`).toBe('agent');
+        expect(['agent', 'workflow'], `${where}.origin`).toContain(event.do.move.origin);
       }
     }
     expect(checked, 'no scene carries a timeline').toBeGreaterThan(0);
+  });
+
+  it('moves a workflow\'s task only where main would: a finished step to its next column, a start once every blocker is done', () => {
+    // A workflow move is the engine's, not the scene's to choose, so each one is replayed here
+    // through the same pure route helpers main uses (src/shared/workflow-route.ts), in the
+    // timeline's own order, over the scene's board as its patches leave it.
+    const ends = loadDemoEnds();
+    let checked = 0;
+    for (const scene of scenes) {
+      const events = (scene.timeline ?? []).filter((event) => event.do.move.origin === 'workflow');
+      if (events.length === 0) continue;
+      const lanesByTask = new Map<string, string>();
+      for (const task of DEMO_TASKS) lanesByTask.set(task.id, demoLaneId(task.projectId, task.lane));
+      const patches = new Map((scene.tasks ?? []).map((patch) => [patch.id, patch]));
+      const links = ((scene.seeds?.__mockWorkflowLinks ?? []) as Array<{ blocker_task_id: string; blocked_task_id: string }>);
+      for (const [index, event] of events.entries()) {
+        checked += 1;
+        const where = `${scene.name}.timeline workflow move ${index}`;
+        const move = event.do.move;
+        const patch = patches.get(move.task) as (RouteFields & { workflow_id?: string }) | undefined;
+        expect(patch?.workflow_id, `${where} moves ${move.task}, which is not in the scene's workflow`).toBeTruthy();
+        const task = DEMO_TASKS.find((candidate) => candidate.id === move.task);
+        const columns = routeColumnsOf(task?.projectId ?? '');
+        const from = lanesByTask.get(move.task) ?? '';
+        const fromColumn = columns.find((column) => column.id === from);
+        if (fromColumn?.role === 'todo') {
+          // A start: every link into the task has its blocker in Done by now.
+          const blockers = links.filter((link) => link.blocked_task_id === move.task).map((link) => link.blocker_task_id);
+          for (const blocker of blockers) {
+            const blockerColumn = columns.find((column) => column.id === lanesByTask.get(blocker));
+            expect(blockerColumn?.role, `${where} starts ${move.task} while ${blocker} is not done`).toBe('done');
+          }
+          expect(move.to, `${where} starts ${move.task} somewhere other than its route's first column`).toBe(startColumn(columns, patch as RouteFields)?.id);
+        } else {
+          // A step: the Automation agent judges a finished turn, so the session's recording ran to
+          // the agent's own end, and the task goes to the next column on its route.
+          expect(['idle', 'exited'], `${where} rides a session whose turn never ended`).toContain(ends[event.session]?.stopReason);
+          expect(scene.config?.automation, `${where} moves on a step with no Automation agent to judge it`).toBeTruthy();
+          expect(move.to, `${where} moves ${move.task} somewhere other than the next column on its route`).toBe(nextOnRoute(columns, patch as RouteFields, from)?.id);
+        }
+        lanesByTask.set(move.task, move.to);
+      }
+    }
+    expect(checked, 'no scene carries a workflow move').toBeGreaterThan(0);
   });
 
   it('says how every scene moves under loop=1, and the pending list only shrinks', () => {

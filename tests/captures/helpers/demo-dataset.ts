@@ -3355,11 +3355,30 @@ export function buildDemoPreConfig(options: {
         var lane = laneById(laneId);
         return lane ? lane.name : '';
       }
-      // An agent's own move (kangentic_move_task): main moves the card through handleTaskMove with
-      // origin 'agent' and announces it as TASK_UPDATED_BY_AGENT (MOVE_PUSH_BY_ORIGIN in
-      // task-move.ts). The move goes through the same tasks.move a visitor's drag does, so a live
-      // session follows its card, as the engine's create_or_resume has it.
-      function moveTaskByAgent(move) {
+      // The push main sends for a move, by its origin (MOVE_PUSH_BY_ORIGIN in task-move.ts): an
+      // agent's own move (kangentic_move_task) as TASK_UPDATED_BY_AGENT; a workflow's (a step the
+      // Automation agent judged done, workflow-step.ts, or the engine's start of a task whose
+      // blockers are done, workflow-engine-host.ts) as the quiet TASK_MOVED_BY_AUTOMATION, with the
+      // workflow's own change for the view.
+      function announceTimelineMove(origin, task, title, projectId) {
+        if (origin === 'agent') {
+          if (window.__mockFireTaskUpdatedByAgent) window.__mockFireTaskUpdatedByAgent(task.id, title, projectId);
+          return;
+        }
+        if (window.__mockFireTaskMovedByAutomation) window.__mockFireTaskMovedByAutomation(projectId);
+        if (window.__mockFireWorkflowChanged && task.workflow_id) window.__mockFireWorkflowChanged({ projectId: projectId, workflowId: task.workflow_id });
+      }
+      function setSessionStatus(sessionId, status) {
+        var row = sessionById(sessionId);
+        if (!row) return;
+        row.status = status;
+        if (window.__mockFireStatus) window.__mockFireStatus(row.id, Object.assign({}, row), row.projectId);
+        patchMonitorRow(sessionId, { status: status });
+      }
+      // The move goes through the same tasks.move a visitor's drag does, so a live session follows
+      // its card and a card started into a spawn column plays its recorded boot, as the engine's
+      // create_or_resume has it. A move into Done archives the card, as main's does.
+      function moveTaskOnTimeline(move) {
         var task = mockState ? mockState.tasks.find(function (candidate) { return candidate.id === move.task; }) : null;
         if (!task || !laneById(move.to)) {
           console.error('[demo] the timeline moves "' + move.task + '" to "' + move.to + '", which this install does not hold');
@@ -3369,20 +3388,33 @@ export function buildDemoPreConfig(options: {
         var title = task.title;
         var projectId = task.projectId;
         var sessionId = task.session_id;
+        var toDone = (laneById(move.to) || {}).role === 'done';
         var targetPosition = mockState.tasks.filter(function (candidate) { return candidate.swimlane_id === move.to; }).length;
         window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: move.to, targetPosition: targetPosition }, projectId).then(function () {
           if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(move.to) });
-          if (window.__mockFireTaskUpdatedByAgent) window.__mockFireTaskUpdatedByAgent(move.task, title, projectId);
+          // Main suspends a task's session as it moves the task to Done, resumable on unarchive.
+          // Only the row's status: the clock's own timers (the loop's restart) are left running.
+          if (toDone && sessionId) setSessionStatus(sessionId, 'suspended');
+          announceTimelineMove(move.origin, task, title, projectId);
         });
+        // Undone quietly, the way the terminal repaints from its opening frame: a card main archived
+        // into Done comes back where it was, and one moved between columns moves back.
         return function () {
-          window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: from.laneId, targetPosition: from.position }, projectId).then(function () {
+          if (toDone && sessionId) setSessionStatus(sessionId, 'running');
+          var restore = toDone
+            ? window.electronAPI.tasks.unarchive({ id: move.task, targetSwimlaneId: from.laneId }, projectId).then(function () {
+              return window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: from.laneId, targetPosition: from.position }, projectId);
+            })
+            : window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: from.laneId, targetPosition: from.position }, projectId);
+          restore.then(function () {
             if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(from.laneId) });
             if (window.__mockFireTaskChangedInOtherWindow) window.__mockFireTaskChangedInOtherWindow(projectId);
+            if (window.__mockFireWorkflowChanged && task.workflow_id) window.__mockFireWorkflowChanged({ projectId: projectId, workflowId: task.workflow_id });
           });
         };
       }
       function runTimelineAction(action) {
-        if (action.move && action.move.origin === 'agent') return moveTaskByAgent(action.move);
+        if (action.move && (action.move.origin === 'agent' || action.move.origin === 'workflow')) return moveTaskOnTimeline(action.move);
         console.error('[demo] the timeline names an action this seed does not run', action);
         return null;
       }

@@ -618,7 +618,10 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
       await travel({ x: from.x + DRAG_ACTIVATION_OFFSET.x, y: from.y + DRAG_ACTIVATION_OFFSET.y }, TRAVEL_MS / 3);
       // Measured once, where the drop target is before the carry: a sortable list moves its items
       // out of the dragged one's way, and a pointer that chased the target would chase that.
-      await travel(await resolveTarget(step.drag.to), DRAG_CARRY_MS);
+      const to = 'by' in step.drag
+        ? { x: from.x + step.drag.by.x * window.innerWidth, y: from.y + step.drag.by.y * window.innerHeight }
+        : await resolveTarget(step.drag.to);
+      await travel(to, DRAG_CARRY_MS);
       if (!step.drag.hold) release(0);
     } else if ('type' in step) {
       await typeInto(step.type.into, step.type.text);
