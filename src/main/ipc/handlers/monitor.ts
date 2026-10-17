@@ -7,10 +7,9 @@
  *     already broadcast unbuffered with its projectId, and the renderer patches it
  *     onto the matching row in place. That is the common case and costs nothing.
  *   - This handler only re-pushes when the DB-resident half of a row can have
- *     changed: a session appeared / changed status / exited, or an AGENT edited a
- *     board (the BoardEventBus is agent-driven only). A USER edit can only ever
- *     target the project whose board is open, so the renderer covers that case
- *     itself rather than us broadcasting on every local keystroke.
+ *     changed: a session appeared / changed status / exited, or a task was
+ *     written. An agent edit, a move and a desktop task write all announce on
+ *     the BoardEventBus. The pushes are debounced, so a burst costs one rebuild.
  *   - There is no timer. Elapsed time ticks client-side.
  */
 import { ipcMain } from 'electron';

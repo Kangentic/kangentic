@@ -12,7 +12,7 @@ import {
   cleanupTaskSession,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
+import { announceTaskWrite } from '../helpers/task-write-announce';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -201,7 +201,9 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
     try {
       return await restoration;
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      // The restore also cleared the automations switch of a task leaving Done
+      // (`TaskRepository.unarchive`), which a phone's card shows.
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-updated', ids: [input.id] });
     }
   });
 
@@ -298,7 +300,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         });
       }
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-updated', ids });
     }
   });
 }

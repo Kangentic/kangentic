@@ -6,13 +6,15 @@
  * handler therefore pushes the quiet TASK_CHANGED_IN_OTHER_WINDOW to the main
  * window from a `finally`, because the delete is not atomic: the attachments
  * and the session are removed before the row is, so a cleanup that throws has
- * already changed the card. The sender rules of the helper are pinned in
- * other-window-task-writes.test.ts, and a source scan there holds the handler to
- * a single announce inside a `finally`. This file drives the registered handler
- * and pins what the announce does on the paths that matter.
+ * already changed the card. The same announce puts a `task-deleted` on the
+ * board-changed bus for every window, so a paired phone drops the card. The
+ * sender rules of the helper are pinned in task-write-announce.test.ts, and a
+ * source scan there holds the handler to a single announce inside a `finally`.
+ * This file drives the registered handler and pins what the announce does on the
+ * paths that matter.
  *
  * Real: `registerTaskCrudHandlers`, `resolveProjectContext`,
- * `announceTaskWriteFromOtherWindow`, `sendToRenderer`, `withTaskLock`.
+ * `announceTaskWrite`, `sendToRenderer`, `withTaskLock`.
  * Doubled: the repositories and `cleanupTaskResources`, and the task-crud
  * dependencies that need Electron, git, or a database. The task has no workflow,
  * so the workflow wake and notify that follow a successful delete do nothing.
@@ -120,6 +122,7 @@ function createContext() {
       isDestroyed: vi.fn(() => false),
       webContents: { id: MAIN_WINDOW_WEB_CONTENTS_ID, send },
     },
+    boardEvents: { emitBoardChanged: vi.fn() },
     // Read by the drain of the "auto-name asked" set after a delete that went through.
     configManager: { load: vi.fn(() => ({})), save: vi.fn() },
     sessionManager: {},
@@ -197,7 +200,7 @@ describe('TASK_DELETE announces the write to the main window', () => {
     // Red case: the shape before this change was
     //   await withTaskLock(...);
     //   drainAutoNameAskedIds(...); wakeWorkflowEngine(); notifyWorkflowOfTask(...);
-    //   announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+    //   announceTaskWrite(context, event, resolvedProjectId, ...);
     // When cleanupTaskResources rejects, the lock rejects, the `await` throws,
     // and the announce line is never reached: zero pushes, so the one-push
     // assertion below fails. The `finally` is what makes it fire on this path.
@@ -227,5 +230,35 @@ describe('TASK_DELETE announces the write to the main window', () => {
     await expect(invokeDelete(FROM_MAIN_WINDOW, OTHER_PROJECT_ID)).rejects.toBe(cleanupError);
 
     expect(otherWindowPushes()).toEqual([]);
+  });
+});
+
+describe('TASK_DELETE announces the write on the board-changed bus', () => {
+  it('emits task-deleted for the stamped project once the row is gone, for a delete from the main window', async () => {
+    // A paired phone is not the main window, so the board's own delete must
+    // still reach it. The row is already gone when the event fires, so the
+    // snapshot the phone re-reads on it no longer lists the card.
+    // Recorded, not asserted, inside the listener. The helper swallows a
+    // listener's throw, so an expect there could never fail the test.
+    let rowDeletedAtEmit: boolean | undefined;
+    context.boardEvents.emitBoardChanged.mockImplementation(() => {
+      rowDeletedAtEmit = tasks.delete.mock.calls.length > 0;
+    });
+
+    await invokeDelete(FROM_MAIN_WINDOW, OTHER_PROJECT_ID);
+
+    expect(rowDeletedAtEmit).toBe(true);
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: OTHER_PROJECT_ID, change: 'task-deleted', ids: [TASK_ID] }],
+    ]);
+  });
+
+  it('still emits once when the cleanup fails after the attachments were deleted', async () => {
+    const cleanupError = new Error('worktree removal timed out');
+    shared.cleanupTaskResources.mockRejectedValue(cleanupError);
+
+    await expect(invokeDelete(FROM_MAIN_WINDOW, OTHER_PROJECT_ID)).rejects.toBe(cleanupError);
+
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
   });
 });

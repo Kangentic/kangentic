@@ -4,7 +4,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectRepos } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
+import { announceTaskWrite } from '../helpers/task-write-announce';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
@@ -215,7 +215,7 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
       try {
         return await override;
       } finally {
-        announceTaskWriteFromOtherWindow(context, event, projectId);
+        announceTaskWrite(context, event, projectId, { change: 'task-updated', ids: [input.taskId] });
       }
     },
   );

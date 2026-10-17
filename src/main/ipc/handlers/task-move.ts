@@ -26,7 +26,7 @@ import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { forgetPRLinkOnTodoReset } from '../../pr/pr-link-reset';
 import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
+import { announceTaskBoardChange, announceTaskWrite } from '../helpers/task-write-announce';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone } from '../../analytics/usage';
@@ -343,24 +343,16 @@ export async function handleTaskMove(
   // toward a duplicate) is on the settle-time block below; the rationale for
   // the commit-time one is at the commit point.
   //
-  // The shutdown gate is load-bearing rather than defensive: on that path the
-  // DB is already closed and the window is going away, but the bus would still
-  // wake a phone subscription mid-teardown. Wrapped because BoardEventBus is a
+  // `announceTaskBoardChange` carries the shutdown gate and the try/catch. The
+  // gate is load-bearing rather than defensive: on that path the DB is already
+  // closed and the window is going away, but the bus would still wake a phone
+  // subscription mid-teardown. The catch matters because BoardEventBus is a
   // plain EventEmitter that dispatches synchronously on this stack, so a
   // subscriber that threw would either replace the error runMove is already
   // propagating, or turn a committed move into a rejection with the rest of
   // Phase 1 (the Done cleanup) skipped. Announcing is best-effort by design.
   const emitBoardChanged = (): void => {
-    if (!announceProjectId || isShuttingDown()) return;
-    try {
-      context.boardEvents.emitBoardChanged({
-        projectId: announceProjectId,
-        change: 'task-updated',
-        ids: [input.taskId],
-      });
-    } catch (announceError) {
-      console.error(`[TASK_MOVE] Announce failed for task ${input.taskId.slice(0, 8)}:`, announceError);
-    }
+    announceTaskBoardChange(context, announceProjectId, { change: 'task-updated', ids: [input.taskId] });
   };
 
   // Whether Phase 1's DB write actually landed, and the title captured with it.
@@ -1720,8 +1712,9 @@ export function registerTaskMoveHandlers(context: IpcContext): void {
     } finally {
       // Settled, not succeeded: a move can commit and then fail, which still
       // changed the board (the announce block in handleTaskMove explains why).
-      // The helper itself stays quiet during shutdown.
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      // The helper itself stays quiet during shutdown. It gets no bus change,
+      // because handleTaskMove announced at the commit point and again at settle.
+      announceTaskWrite(context, event, resolvedProjectId, null);
     }
   });
 

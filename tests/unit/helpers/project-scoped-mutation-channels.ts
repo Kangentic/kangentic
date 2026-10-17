@@ -4,8 +4,8 @@
  *
  * Shared because two tests read it and must not drift apart:
  * - `project-scoped-ipc.test.ts` holds each one to forwarding the projectId in preload;
- * - `other-window-task-writes.test.ts` holds each task-row write to announcing itself to the
- *   main window when it comes from another window.
+ * - `task-write-announce.test.ts` holds each task-row write to announcing itself on the
+ *   board-changed bus, and to the main window when it comes from another window.
  *
  * Keep in sync with the prose list in the rule when the set grows.
  */

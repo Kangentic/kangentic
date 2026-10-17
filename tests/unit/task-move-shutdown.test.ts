@@ -597,7 +597,7 @@ describe('handleTaskMove shutdown protection', () => {
 // It announces from a `finally`, so a move that committed and then failed is
 // still announced; a throw in there would replace the move's own error, which
 // is why the shutdown gate sits on it too. The helper's sender rules are pinned
-// in other-window-task-writes.test.ts.
+// in task-write-announce.test.ts.
 // ---------------------------------------------------------------------------
 
 describe('TASK_MOVE wrapper announces a move from another window', () => {

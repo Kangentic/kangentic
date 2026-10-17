@@ -463,6 +463,34 @@ export interface BoardTaskWire {
    */
   pausable?: boolean | null;
   /**
+   * True when column automations are off for this task: no On task enter, On
+   * agent turn end or On task exit row runs for it in any column, and a move
+   * types no column message. Column settings, a hand's moves and the task's own
+   * first command are untouched. It is the fact the desktop card's "Automations
+   * disabled" strip reads, and the desktop menu's Enable or Disable automations
+   * row flips it.
+   *
+   * There is no verb for it. A phone flips it with the `board-tool-write`
+   * `update_task` call, whose param is camelCase: `automationsDisabled: true`
+   * or `false`, never `automations_disabled`. A workflow task always reads
+   * false, because its workflow's Pause holds it, and `update_task` refuses
+   * `true` for one. Hide the control while `workflow` is non-null, as the
+   * desktop menu does.
+   *
+   * The desktop also clears it by itself: when the task leaves Done (a rollback
+   * of a failed move excepted), when it is restored from the archive, and when
+   * it joins a workflow. Every change, by any hand, reaches the phone as a
+   * `task-updated` board event, after which the next snapshot carries the new
+   * value.
+   *
+   * Null or absent means a desktop that predates the field (pre-0.22.0). A
+   * client offers no control then, since it cannot read the switch's state.
+   *
+   * Declared OPTIONAL (`?`) like `pausable`; `parseBoardTaskWire` populates the
+   * key from every real wire response.
+   */
+  automations_disabled?: boolean | null;
+  /**
    * The workflow the task belongs to (a set of linked tasks that runs through
    * its boards by itself), or null for an ordinary task. Absent from desktops
    * that predate workflows, which the parser reads as null, as it does a value
@@ -836,6 +864,7 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     resumable: nullableBoolean(value, 'resumable'),
     paused: nullableBoolean(value, 'paused'),
     pausable: nullableBoolean(value, 'pausable'),
+    automations_disabled: nullableBoolean(value, 'automations_disabled'),
     workflow: parseBoardTaskWorkflowWire(value.workflow),
   };
 }

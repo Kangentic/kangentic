@@ -16,7 +16,7 @@
  * - The detached monitor's writes reach the main window through main's quiet
  *   `task:changedInOtherWindow` push, whose renderer half is driven here through
  *   the mock. The UI tier cannot open a second window, so main's half is pinned
- *   in tests/unit/other-window-task-writes.test.ts.
+ *   in tests/unit/task-write-announce.test.ts.
  *
  * The confirm branches (Don't ask again, Cancel), the write that fails after it
  * committed, and the project id on a monitor-hosted or board-hosted detail's

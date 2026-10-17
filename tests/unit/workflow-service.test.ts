@@ -335,6 +335,32 @@ describe('workflow operations', () => {
     expect(tasksOf('home').getById(existing.id)!.workflow_id).toBe(workflow.id);
   });
 
+  it('a board task taken in with its automations switch on joins with it cleared, and the board hears it only after the write', async () => {
+    // Joining clears the switch (setWorkflowMembership) without bumping
+    // updated_at. A paired phone re-reads its board on the board event, so the
+    // row must already read false when the event fires.
+    const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+    const held = tasksOf('home').create({ title: 'Held', description: '', swimlane_id: todo.id, automations_disabled: true });
+    expect(tasksOf('home').getById(held.id)!.automations_disabled).toBe(true);
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, {
+      tasks: [{ key: 'held', title: 'Held', existingTask: String(held.display_id) }],
+      links: [],
+    });
+    // Recorded, not asserted, in the listener, so a failure cannot be lost to
+    // whatever catches a listener's throw.
+    const switchAtEachEmit: boolean[] = [];
+    vi.mocked(context.boardEvents.emitBoardChanged).mockImplementation((event) => {
+      if (event.projectId === 'home') switchAtEachEmit.push(tasksOf('home').getById(held.id)!.automations_disabled);
+    });
+
+    await service.startWorkflow(context, 'home', workflow.id);
+
+    expect(tasksOf('home').getById(held.id)!.automations_disabled).toBe(false);
+    expect(switchAtEachEmit.length).toBeGreaterThan(0);
+    expect(switchAtEachEmit.every((automationsDisabled) => automationsDisabled === false)).toBe(true);
+  });
+
   describe('a Start whose write fails after an earlier board committed', () => {
     // Start writes one transaction per board, then the home database's links and
     // state: separate files, so no single transaction spans them. A write that

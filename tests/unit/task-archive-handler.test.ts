@@ -45,6 +45,12 @@
  *       recovery-move contract as the single handler
  *     - resetSessionForTodoRestore: same session-only-reset / branch-survival
  *       regression coverage as TASK_UNARCHIVE, applied per task in the batch
+ *
+ *   Both restores reach a paired phone
+ *     - each emits task-updated on the board-changed bus once, after the row
+ *       is unarchived, so the automations switch the restore cleared is what
+ *       the phone re-reads; that includes a restore whose spawn fails, and a
+ *       restore into a column that starts no agent (no session edge fires)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -233,6 +239,9 @@ interface MockContext {
   projectRepo: {
     getById: ReturnType<typeof vi.fn>;
   };
+  boardEvents: {
+    emitBoardChanged: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockTask(id: string, overrides: Partial<MockTask> = {}): MockTask {
@@ -317,6 +326,9 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     },
     projectRepo: {
       getById: vi.fn(() => ({ id: 'proj-123', default_agent: 'claude', default_model: null, default_effort: null })),
+    },
+    boardEvents: {
+      emitBoardChanged: vi.fn(),
     },
     ...overrides,
   };
@@ -1247,6 +1259,105 @@ describe('task-archive handlers', () => {
         expect(mockCleanupTaskSession).not.toHaveBeenCalled();
         expect(mockCleanupTaskResources).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  // =========================================================================
+  // Both restores reach a paired phone
+  //
+  // A restore from the archive is the desktop's real way out of Done (the UI
+  // never routes an archived card through TASK_MOVE), and leaving Done clears
+  // the task's automations switch inside `TaskRepository.unarchive`
+  // (task-repository-automations-disabled.test.ts pins that). A phone hears the
+  // restore only on the board-changed bus. Before, it heard nothing unless an
+  // auto-spawn session happened to start, so a restore into a column that
+  // starts no agent left its card stale. The fake `unarchive` below clears the
+  // switch the way the repository does, and each listener records the row as it
+  // stands when the event fires.
+  // =========================================================================
+
+  describe('a restore reaches a paired phone', () => {
+    /** The rows by id, as the fake repository holds them. */
+    let rows: Map<string, MockTask & { archived_at: string | null; automations_disabled: boolean }>;
+    /** Each emit's ids, with every listed row's switch as it stood at that moment. */
+    let switchesAtEmit: Array<Record<string, boolean>>;
+
+    function arrangeHeldArchivedTasks(ids: string[], lanes: MockSwimlane[]): void {
+      rows = new Map(ids.map((id) => [id, {
+        ...createMockTask(id, { swimlane_id: doneLane.id }),
+        archived_at: '2026-10-16T00:00:00.000Z',
+        automations_disabled: true,
+      }]));
+      switchesAtEmit = [];
+      taskRepo = createMockTaskRepo([]);
+      taskRepo.getById.mockImplementation((id: string) => rows.get(id) ?? null);
+      taskRepo.list.mockImplementation(() => []);
+      taskRepo.unarchive.mockImplementation((id: string, targetSwimlaneId: string) => {
+        const row = rows.get(id);
+        if (!row) throw new Error(`Task ${id} not found`);
+        row.swimlane_id = targetSwimlaneId;
+        row.archived_at = null;
+        // TaskRepository.unarchive clears the switch of a task leaving Done.
+        row.automations_disabled = false;
+        return row;
+      });
+      mockGetProjectRepos.mockReturnValue({
+        tasks: taskRepo,
+        swimlanes: createMockSwimlaneRepo(lanes),
+        actions: { getTransitionsFor: vi.fn(() => []) },
+        attachments: { deleteByTaskId: vi.fn() },
+      });
+      // Recorded, not asserted, in the listener. The announce swallows a
+      // listener's throw, so an expect there could never fail the test.
+      context.boardEvents.emitBoardChanged.mockImplementation((event: { ids: string[] }) => {
+        switchesAtEmit.push(Object.fromEntries(event.ids.map((id) => [id, rows.get(id)?.automations_disabled ?? true])));
+      });
+    }
+
+    it('TASK_UNARCHIVE into a column that starts no agent emits task-updated once, with the switch already cleared', async () => {
+      const quietLane = createMockSwimlane('lane-review', { auto_spawn: false });
+      arrangeHeldArchivedTasks(['task-held'], [doneLane, quietLane]);
+
+      await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-held', targetSwimlaneId: 'lane-review' });
+
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+        [{ projectId: 'proj-123', change: 'task-updated', ids: ['task-held'] }],
+      ]);
+      expect(switchesAtEmit).toEqual([{ 'task-held': false }]);
+    });
+
+    it('TASK_UNARCHIVE still emits once when the restore\'s worktree step fails', async () => {
+      arrangeHeldArchivedTasks(['task-held'], [doneLane, targetLane]);
+      mockEnsureTaskWorktree.mockRejectedValue(new Error('git worktree add failed'));
+
+      await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-held', targetSwimlaneId: 'lane-doing' });
+
+      expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+      expect(switchesAtEmit).toEqual([{ 'task-held': false }]);
+    });
+
+    it('TASK_UNARCHIVE emits nothing when it is refused before any write', async () => {
+      context.currentProjectId = null;
+      capturedHandlers.clear();
+      registerTaskArchiveHandlers(context as never);
+
+      await expect(
+        callHandler(IPC.TASK_UNARCHIVE, { id: 'task-held', targetSwimlaneId: 'lane-doing' }),
+      ).rejects.toThrow('No project is currently open');
+
+      expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+    });
+
+    it('TASK_BULK_UNARCHIVE emits task-updated once for the batch, with every switch already cleared', async () => {
+      const quietLane = createMockSwimlane('lane-review', { auto_spawn: false });
+      arrangeHeldArchivedTasks(['task-held-a', 'task-held-b'], [doneLane, quietLane]);
+
+      await callHandler(IPC.TASK_BULK_UNARCHIVE, ['task-held-a', 'task-held-b'], 'lane-review');
+
+      expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+        [{ projectId: 'proj-123', change: 'task-updated', ids: ['task-held-a', 'task-held-b'] }],
+      ]);
+      expect(switchesAtEmit).toEqual([{ 'task-held-a': false, 'task-held-b': false }]);
     });
   });
 });

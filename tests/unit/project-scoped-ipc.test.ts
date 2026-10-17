@@ -18,7 +18,7 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
 const PRELOAD_PATH = path.join(REPO_ROOT, 'src/preload/preload.ts');
 
 // Mutation channels: must forward an explicit projectId. Shared with
-// other-window-task-writes.test.ts; keep in sync with the prose list in
+// task-write-announce.test.ts; keep in sync with the prose list in
 // .claude/rules/project-scoped-ipc.md when the mutation set grows.
 const MUTATION_CHANNELS = PROJECT_SCOPED_MUTATION_CHANNELS;
 

@@ -214,6 +214,9 @@ function createMockContext() {
     terminalSubmitScheduler: {
       cancel: vi.fn(),
     },
+    boardEvents: {
+      emitBoardChanged: vi.fn(),
+    },
   };
 }
 
@@ -410,6 +413,73 @@ describe('BACKLOG_PROMOTE AbortError cleanup', () => {
     expect(spawnAgentArgs.projectPath).toBe(context.currentProjectPath);
     expect(spawnAgentArgs.fromSwimlaneId).toBe('*');
     expect(spawnAgentArgs.toLane).toEqual(expect.objectContaining({ id: 'lane-doing' }));
+  });
+
+  it('puts the created task on the board-changed bus once, after the row exists, before Phase 2', async () => {
+    // A paired phone hears a promote only on the bus; before, it saw the new
+    // card only when the auto-spawn's session edge happened to fire, and never
+    // in a column that starts no agent.
+    const createdAtEmit: number[] = [];
+    context.boardEvents.emitBoardChanged.mockImplementation(() => {
+      createdAtEmit.push(taskRepoMock.create.mock.calls.length);
+    });
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+
+    await handler(null, { backlogTaskIds: ['backlog-1'], targetSwimlaneId: 'lane-doing' });
+
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: 'proj-1', change: 'task-created', ids: ['task-promoted'] }],
+    ]);
+    expect(createdAtEmit).toEqual([1]);
+    // Announced from Phase 1, so the spawn has not started when the phone hears it.
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it('still announces the tasks it created when a later promote in the batch throws', async () => {
+    const backlogError = new Error('SQLITE_BUSY: database is locked');
+    backlogRepoMock.delete.mockImplementationOnce(() => {});
+    backlogRepoMock.delete.mockImplementationOnce(() => { throw backlogError; });
+    taskRepoMock.create
+      .mockReturnValueOnce({ id: 'task-first', title: 'First', swimlane_id: 'lane-doing', session_id: null })
+      .mockReturnValueOnce({ id: 'task-second', title: 'Second', swimlane_id: 'lane-doing', session_id: null });
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+
+    await expect(Promise.resolve(handler(null, { backlogTaskIds: ['backlog-1', 'backlog-2'], targetSwimlaneId: 'lane-doing' })))
+      .rejects.toBe(backlogError);
+
+    // The second task row exists too: its create ran before the backlog delete threw.
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: 'proj-1', change: 'task-created', ids: ['task-first', 'task-second'] }],
+    ]);
+  });
+
+  it('emits nothing for a promote that creates no task, because none of the requested backlog rows exist', async () => {
+    // Every id is stale (deleted from another window before this ran), so the
+    // loop skips each one and the board is unchanged. An event here would send
+    // a paired phone to re-read a board that did not move.
+    backlogRepoMock.getById.mockReturnValue(undefined);
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+
+    const created = await handler(null, { backlogTaskIds: ['backlog-gone-1', 'backlog-gone-2'], targetSwimlaneId: 'lane-doing' });
+
+    expect(created).toEqual([]);
+    expect(taskRepoMock.create).not.toHaveBeenCalled();
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+  });
+
+  it('emits nothing and rejects when the first task create throws, because no row landed', async () => {
+    const createError = new Error('SQLITE_CONSTRAINT: UNIQUE constraint failed');
+    taskRepoMock.create.mockImplementationOnce(() => { throw createError; });
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+
+    await expect(Promise.resolve(handler(null, { backlogTaskIds: ['backlog-1'], targetSwimlaneId: 'lane-doing' })))
+      .rejects.toBe(createError);
+
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
   });
 
   it('threads onProgress + projectId into both git helpers during Phase 2', async () => {

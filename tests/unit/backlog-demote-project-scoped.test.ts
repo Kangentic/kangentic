@@ -10,7 +10,7 @@
  * trailing id and the announce were never exercised there.
  *
  * Real: `registerBacklogHandlers`, `resolveProjectContext`, `getProjectRepos`,
- * `announceTaskWriteFromOtherWindow`, `sendToRenderer`, `withTaskLock`.
+ * `announceTaskWrite`, `sendToRenderer`, `withTaskLock`.
  * Doubled: the per-project repositories (each one remembers which database
  * handle it was built from, so a wrong route is visible), `getProjectDb`, and
  * `cleanupTaskResources`.
@@ -20,7 +20,8 @@
  * test whose stamped id equalled the current one.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type Database from 'better-sqlite3';
 
 // ---------------------------------------------------------------------------
 // Shared state, hoisted so the vi.mock factories below can reach it
@@ -164,7 +165,13 @@ vi.mock('../../src/main/boards/adapters/asana', () => ({ registerAsanaIpcHandler
 // ---------------------------------------------------------------------------
 
 import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
+import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 import { IPC } from '../../src/shared/ipc-channels';
+import { WORKFLOW_REFUSALS } from '../../src/shared/workflow-refusals';
+import { getExistingProjectDb } from '../../src/main/db/database';
+import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
+import { WorkflowRepository } from '../../src/main/db/repositories/workflow-repository';
+import { openTestDatabase } from './helpers/test-database';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -244,6 +251,7 @@ function createContext() {
       isDestroyed: vi.fn(() => false),
       webContents: { id: MAIN_WINDOW_WEB_CONTENTS_ID, send },
     },
+    boardEvents: { emitBoardChanged: vi.fn() },
     terminalSubmitScheduler: { cancel: vi.fn() },
     sessionManager: {},
   };
@@ -256,10 +264,14 @@ function doublesIn(projectId: string): ProjectDoubles {
 let context: ReturnType<typeof createContext>;
 
 /** Invoke the registered handler the way the preload does: event, input, then the trailing project id (if any). */
-function invokeDemote(event: unknown, ...trailingArguments: unknown[]): Promise<unknown> {
+function invokeDemoteOf(taskId: string, event: unknown, ...trailingArguments: unknown[]): Promise<unknown> {
   const handler = shared.ipcHandlers.get(IPC.BACKLOG_DEMOTE);
   if (!handler) throw new Error('BACKLOG_DEMOTE handler not registered');
-  return Promise.resolve(handler(event, { taskId: TASK_ID }, ...trailingArguments));
+  return Promise.resolve(handler(event, { taskId }, ...trailingArguments));
+}
+
+function invokeDemote(event: unknown, ...trailingArguments: unknown[]): Promise<unknown> {
+  return invokeDemoteOf(TASK_ID, event, ...trailingArguments);
 }
 
 /** Every TASK_CHANGED_IN_OTHER_WINDOW push the main window received. */
@@ -383,6 +395,24 @@ describe('BACKLOG_DEMOTE routes by the explicit trailing projectId', () => {
 // Announce
 // ---------------------------------------------------------------------------
 
+describe('BACKLOG_DEMOTE announces the write on the board-changed bus', () => {
+  it('emits task-deleted for the stamped project once, for a demote from the main window', async () => {
+    // A paired phone is not the main window, so the board's own demote still
+    // has to take the card off its board.
+    await invokeDemote(FROM_MAIN_WINDOW, OTHER_PROJECT_ID);
+
+    expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
+      [{ projectId: OTHER_PROJECT_ID, change: 'task-deleted', ids: [TASK_ID] }],
+    ]);
+  });
+
+  it('emits nothing for a demote refused before any write', async () => {
+    await expect(invokeDemote(FROM_OTHER_WINDOW, 'proj-removed')).rejects.toThrow('No project is currently open');
+
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+  });
+});
+
 describe('BACKLOG_DEMOTE announces the write to the main window', () => {
   it('pushes the stamped project id once when another window demotes', async () => {
     await invokeDemote(FROM_OTHER_WINDOW, OTHER_PROJECT_ID);
@@ -401,7 +431,7 @@ describe('BACKLOG_DEMOTE announces the write to the main window', () => {
   it('still pushes once, and still rejects with the delete error, when the task delete fails after the backlog row was created', async () => {
     // Red case: the shape before this change was
     //   const demoted = await withTaskLock(...);
-    //   announceTaskWriteFromOtherWindow(context, event, projectId);
+    //   announceTaskWrite(context, event, projectId, ...);
     //   return demoted;
     // When tasks.delete throws, the lock rejects, the `await` throws, and the
     // announce line is never reached: zero pushes, so the one-push assertion
@@ -432,5 +462,152 @@ describe('BACKLOG_DEMOTE announces the write to the main window', () => {
     await expect(invokeDemote(FROM_MAIN_WINDOW, OTHER_PROJECT_ID)).rejects.toBe(deleteError);
 
     expect(otherWindowPushes()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Refusals announce nothing
+//
+// A demote of a task that is in a workflow, or that does not exist, changes
+// nothing, so a paired phone must not hear `task-deleted` for a card that is
+// still on the board, and the main window must not be told to reload. The
+// handler refuses before it takes the task lock for exactly that reason.
+//
+// The workflow is a real row in a real migrated database, read through the
+// real `isInWorkflow` and `workflowTitleOf`. `getExistingProjectDb` is the
+// workflow's home and the only database read for it; the per-project repository
+// doubles above stay as they are.
+// ---------------------------------------------------------------------------
+
+describe('BACKLOG_DEMOTE refuses without announcing', () => {
+  const WORKFLOW_TITLE = 'Usage budgets';
+  const UNKNOWN_TASK_ID = 'task-that-does-not-exist';
+  let database: Database.Database;
+  let workflowId: string;
+
+  beforeEach(() => {
+    database = openTestDatabase();
+    runProjectMigrations(database);
+    vi.mocked(getExistingProjectDb).mockReturnValue(database as never);
+    const workflows = new WorkflowRepository(database);
+    const workflow = workflows.create({ title: WORKFLOW_TITLE });
+    workflows.markStarted(workflow.id);
+    workflowId = workflow.id;
+  });
+
+  afterEach(() => {
+    // clearAllMocks keeps implementations, so put the file-wide default back.
+    vi.mocked(getExistingProjectDb).mockReturnValue({} as never);
+    database.close();
+  });
+
+  /** The stamped project's copy of the task, with or without its workflow membership. */
+  function taskRow(inWorkflow: boolean): Record<string, unknown> {
+    return {
+      id: TASK_ID,
+      display_id: 7,
+      title: titleIn(OTHER_PROJECT_ID),
+      description: 'desc',
+      labels: ['bug'],
+      priority: 2,
+      external_id: null,
+      external_source: null,
+      external_url: null,
+      session_id: null,
+      workflow_id: inWorkflow ? workflowId : null,
+      workflow_project_id: null,
+    };
+  }
+
+  function refusalSentence(): string {
+    return WORKFLOW_REFUSALS.removeFirst('#7', WORKFLOW_TITLE);
+  }
+
+  /** Nothing the demote does when it goes through happened. */
+  function expectNothingDemoted(): void {
+    const stamped = doublesIn(OTHER_PROJECT_ID);
+    expect(shared.cleanupTaskResources).not.toHaveBeenCalled();
+    expect(stamped.backlogRepository.createFromTask).not.toHaveBeenCalled();
+    expect(stamped.backlogAttachmentAdd).not.toHaveBeenCalled();
+    expect(stamped.attachments.deleteByTaskId).not.toHaveBeenCalled();
+    expect(stamped.tasks.delete).not.toHaveBeenCalled();
+  }
+
+  it('a task in a workflow rejects with the refusal and announces nothing, even from another window', async () => {
+    doublesIn(OTHER_PROJECT_ID).tasks.getById.mockReturnValue(taskRow(true));
+
+    await expect(invokeDemote(FROM_OTHER_WINDOW, OTHER_PROJECT_ID))
+      .rejects.toThrow(new Error(refusalSentence()));
+
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+    expect(otherWindowPushes()).toEqual([]);
+    expectNothingDemoted();
+    expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
+  });
+
+  it('refuses a workflow task before it queues on the task lock', async () => {
+    doublesIn(OTHER_PROJECT_ID).tasks.getById.mockReturnValue(taskRow(true));
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const holder = withTaskLock(TASK_ID, () => lockHeld);
+
+    const outcome: { settled: boolean; error?: unknown } = { settled: false };
+    const demotion = invokeDemote(FROM_OTHER_WINDOW, OTHER_PROJECT_ID)
+      .catch((error: unknown) => { outcome.error = error; })
+      .finally(() => { outcome.settled = true; });
+
+    try {
+      // A fixed turn of the event loop, on purpose. A demote parked on the held
+      // lock never settles, and the absence of a settlement cannot be polled.
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+      expect(outcome.settled).toBe(true);
+      expect(outcome.error).toEqual(new Error(refusalSentence()));
+    } finally {
+      releaseLock();
+      await holder;
+      await demotion;
+    }
+
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+    expect(otherWindowPushes()).toEqual([]);
+    expectNothingDemoted();
+  });
+
+  it('a task that joins a workflow while the demote waits on the lock is refused inside the lock', async () => {
+    // The first read (before the lock) sees an ordinary task, every later read
+    // sees a member, which is the race the second check exists for.
+    doublesIn(OTHER_PROJECT_ID).tasks.getById
+      .mockReturnValueOnce(taskRow(false))
+      .mockReturnValue(taskRow(true));
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const holder = withTaskLock(TASK_ID, () => lockHeld);
+
+    const refused = expect(invokeDemote(FROM_OTHER_WINDOW, OTHER_PROJECT_ID))
+      .rejects.toThrow(new Error(refusalSentence()));
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    // Parked on the lock, so the body has not run yet.
+    expect(shared.cleanupTaskResources).not.toHaveBeenCalled();
+
+    releaseLock();
+    await holder;
+    await refused;
+
+    expectNothingDemoted();
+    expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
+    // What the bus and the main window hear for this in-lock refusal is left
+    // unpinned on purpose. The handler's finally announces it as it does a write
+    // that committed, and backlog.ts accepts that for this race, since a phone
+    // only re-reads the board on the event.
+  });
+
+  it('an unknown task id rejects with not found and announces nothing', async () => {
+    await expect(invokeDemoteOf(UNKNOWN_TASK_ID, FROM_OTHER_WINDOW, OTHER_PROJECT_ID))
+      .rejects.toThrow(`Task ${UNKNOWN_TASK_ID} not found`);
+
+    expect(doublesIn(OTHER_PROJECT_ID).tasks.getById).toHaveBeenCalledWith(UNKNOWN_TASK_ID);
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+    expect(otherWindowPushes()).toEqual([]);
+    expectNothingDemoted();
   });
 });

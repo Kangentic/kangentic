@@ -209,7 +209,9 @@ describe('handleReadBoard', () => {
       projectId: 'proj-1',
       columns: [{ id: 'lane-1', role: null, spawns_session: true }],
       // An ordinary task carries a null workflow: the key is always sent.
-      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, pausable: false, workflow: null }],
+      // automations_disabled is a real false even though the row left the
+      // column out. An absent key would read on the phone as an older desktop.
+      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, pausable: false, automations_disabled: false, workflow: null }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
@@ -231,6 +233,56 @@ describe('handleReadBoard', () => {
     expect(session.sendMessage).toHaveBeenCalledWith({
       type: 'event',
       event: { kind: 'board', projectId: 'proj-1', taskId: 't-9', payload: { change: 'task-updated', ids: ['t-9'] } },
+    });
+  });
+
+  describe('automations_disabled (protocol 0.22.0)', () => {
+    it('a flip pushes a board event, and the snapshot the phone re-reads on it carries the new value', async () => {
+      // The row the repository lists; the flip writes it in place, the way any
+      // desktop, MCP or phone write lands before its board event.
+      const row = { id: 't-1', swimlane_id: 'lane-1', session_id: null, automations_disabled: false };
+      tasksList.mockReturnValue([row]);
+      let capturedListener: ((event: unknown) => void) | undefined;
+      const context = boardContext();
+      (context.boardEvents as unknown as { onBoardChanged: unknown }).onBoardChanged = vi.fn((listener: (event: unknown) => void) => {
+        capturedListener = listener;
+        return vi.fn();
+      });
+      const session = fakeSession();
+      const request = fakeRequest({ projectId: 'proj-1', view: 'full' });
+
+      const before = await handleReadBoard(request, session, context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      expect((before.payload as { tasks: Array<{ automations_disabled: unknown }> }).tasks[0].automations_disabled).toBe(false);
+
+      row.automations_disabled = true;
+      capturedListener?.({ projectId: 'proj-1', change: 'task-updated', ids: ['t-1'] });
+      expect(session.sendMessage).toHaveBeenCalledWith({
+        type: 'event',
+        event: { kind: 'board', projectId: 'proj-1', taskId: 't-1', payload: { change: 'task-updated', ids: ['t-1'] } },
+      });
+
+      const after = await handleReadBoard(request, session, context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      expect((after.payload as { tasks: Array<{ automations_disabled: unknown }> }).tasks[0].automations_disabled).toBe(true);
+    });
+
+    it('a workflow join announced with no task ids still pushes a board event', async () => {
+      // `announceBoardChange` sends `ids: []` for a workflow Start; the phone
+      // re-reads the whole board on any board event, so the cleared switch lands.
+      let capturedListener: ((event: unknown) => void) | undefined;
+      const context = boardContext();
+      (context.boardEvents as unknown as { onBoardChanged: unknown }).onBoardChanged = vi.fn((listener: (event: unknown) => void) => {
+        capturedListener = listener;
+        return vi.fn();
+      });
+      const session = fakeSession();
+
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      capturedListener?.({ projectId: 'proj-1', change: 'task-updated', ids: [] });
+
+      expect(session.sendMessage).toHaveBeenCalledWith({
+        type: 'event',
+        event: { kind: 'board', projectId: 'proj-1', payload: { change: 'task-updated', ids: [] } },
+      });
     });
   });
 

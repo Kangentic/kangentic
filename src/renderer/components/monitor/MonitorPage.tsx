@@ -58,13 +58,12 @@ export function MonitorPage() {
     return () => document.removeEventListener('keydown', handleEscape);
   }, [overlay]);
 
-  // Main's MONITOR_CHANGED push covers session lifecycle and AGENT-driven board
-  // edits (the BoardEventBus is agent-fed only). A USER edit made on the board -
-  // renaming a task, dragging it to another column - emits nothing on that bus,
-  // but it targets the project whose board is open, which is exactly what this
-  // store holds. So the open board is the remaining signal, and subscribing to it
-  // here (the main-window-only host) closes the gap without broadcasting on every
-  // local keystroke. Mounted with the overlay, so it costs nothing while closed.
+  // Main's MONITOR_CHANGED push covers session lifecycle and every task write
+  // that announces on the BoardEventBus (agent edits, moves, and desktop task
+  // writes), debounced. The open board is a second signal for what this store
+  // holds: an optimistic board edit lands here before main's push does, so
+  // subscribing to it here (the main-window-only host) keeps the rows current in
+  // the meantime. Mounted with the overlay, so it costs nothing while closed.
   //
   // The monitor's own writes run the other way: its row menu and task details
   // write straight to the IPC, and resyncBoardAfterMonitorWrite brings this board

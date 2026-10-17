@@ -619,9 +619,10 @@ export function registerWorkflowEngine(context: IpcContext): WorkflowEngineHost 
   // reaching Done, a workflow task moving on, a start landing.
   context.boardEvents.onBoardChanged((event) => {
     wake();
-    // An agent's delete announces after the row is gone, so which workflow it
-    // was in is no longer readable: every open workflow of that board reloads.
-    // Deletes are rare; a move names its own workflow at commit (task-move.ts).
+    // A delete (an agent's, or a desktop one through announceTaskWrite)
+    // announces after the row is gone, so which workflow it was in is no longer
+    // readable: every open workflow of that board reloads. Deletes are rare; a
+    // move names its own workflow at commit (task-move.ts).
     if (event.change === 'task-deleted') notifyOpenWorkflows(event.projectId);
   });
   // A slot freed.
