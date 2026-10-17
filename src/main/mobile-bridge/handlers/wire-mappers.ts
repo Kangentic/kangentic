@@ -385,6 +385,10 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  * `workflow` is read per board, not per task (`workflowWireFacts`), since a
  * card's lock and what it waits for come from its whole workflow; a task
  * outside one, or a caller that has not read them, sends null.
+ *
+ * `automations_disabled` is always a real boolean, for the reason
+ * `columnSpawnsSession` gives. A Task assembled without the column must not
+ * reach the phone as an absent key, which it reads as an older desktop.
  */
 export function toBoardTaskWire(
   task: Task,
@@ -418,6 +422,7 @@ export function toBoardTaskWire(
     resumable: pauseFlags.resumable,
     paused: pauseFlags.paused,
     pausable: pauseFlags.pausable,
+    automations_disabled: task.automations_disabled === true,
     workflow,
   };
 }

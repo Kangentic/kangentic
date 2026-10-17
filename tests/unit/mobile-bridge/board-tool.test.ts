@@ -124,6 +124,21 @@ describe('handleBoardTool', () => {
     expect(response.payload).toEqual({ result: { tasks: [{ id: 't-1' }] } });
   });
 
+  it('hands a phone\'s automations switch flip to update_task untouched, with the project\'s command context', async () => {
+    // The phone's only write path for the switch (protocol 0.22.0 reads it on
+    // BoardTaskWire.automations_disabled). The param stays camelCase, as the MCP
+    // tool takes it; update_task's own onTaskUpdated is what reaches the bus.
+    const commandContext = { getProjectPath: () => '/projects/proj-1' };
+    buildCommandContextForProjectMock.mockReturnValue(commandContext);
+    updateTaskHandler.mockReturnValue({ success: true, data: { id: 't-1', automationsDisabled: true } });
+    const params = { taskId: 't-1', automationsDisabled: true };
+
+    const response = await handleBoardTool(fakeRequest('board-tool-write', { tool: 'update_task', params }), fakeContext('proj-1'));
+
+    expect(response.ok).toBe(true);
+    expect(updateTaskHandler).toHaveBeenCalledWith(params, commandContext);
+  });
+
   it('maps a failed CommandResponse into a capability-response error', async () => {
     updateTaskHandler.mockReturnValue({ success: false, error: 'task not found' });
     const response = await handleBoardTool(fakeRequest('board-tool-write', { tool: 'update_task', params: {} }), fakeContext('proj-1'));

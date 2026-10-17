@@ -19,7 +19,7 @@ import {
   spawnAgent,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
+import { announceTaskWrite } from '../helpers/task-write-announce';
 import { trackEvent } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
 import { trackMilestone } from '../../analytics/usage';
@@ -193,7 +193,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
 
       return tasks.getById(task.id) ?? task;
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-created', ids: [task.id] });
     }
   });
 
@@ -275,7 +275,9 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       notifyWorkflowOfTask(updated, resolvedProjectId);
       return updated;
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      // Every edit, not only the automations switch, since a rename or a label
+      // is on the phone's card too.
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-updated', ids: [input.id] });
     }
   });
 
@@ -316,7 +318,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       wakeWorkflowEngine();
       notifyWorkflowOfTask(deletedTask, resolvedProjectId);
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-deleted', ids: [id] });
     }
   });
 
@@ -453,7 +455,9 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
 
       return { deleted: total - failures.length, failures };
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      // Every id attempted. A failed cleanup still deleted its row, and the
+      // phone re-reads the whole board on the event anyway.
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-deleted', ids });
     }
   });
 }

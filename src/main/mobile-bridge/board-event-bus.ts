@@ -40,6 +40,12 @@ export interface BoardChangedEvent {
  * its renderer push is the quiet `TASK_PR_LINK_CHANGED`: toast-worthiness is a
  * renderer concern, and a subscriber here still needs to know the row moved.
  *
+ * A desktop task write over IPC (create, edit, delete, restore from the archive,
+ * branch switch, a model pin, a backlog promote or demote) announces here through
+ * `announceTaskWrite` (ipc/helpers/task-write-announce.ts), whichever window
+ * made it. No `*_BY_AGENT` push goes beside it, because the window that wrote
+ * already has the result.
+ *
  * This is purely additive: it is fed alongside the existing renderer
  * `sendToRenderer(...)` calls, never replacing them, so the renderer's
  * `useAgentDrivenInvalidation` path is entirely unaffected. Not an IPC

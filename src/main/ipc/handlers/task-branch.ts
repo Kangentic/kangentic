@@ -11,7 +11,7 @@ import {
   ensureTaskWorktree,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
+import { announceTaskWrite } from '../helpers/task-write-announce';
 // Directly from the submodule for the same reason as resolveProjectContext:
 // it is a pure context reader, and handler tests that vi.mock the helpers
 // barrel should keep exercising the real resolution.
@@ -223,7 +223,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
       tasks.update({ id: task.id, base_branch: input.newBaseBranch || null });
       return tasks.getById(task.id)!;
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-updated', ids: [input.taskId] });
     }
   });
 
@@ -335,7 +335,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
     try {
       return await update;
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-updated', ids: [input.taskId] });
     }
   });
 }

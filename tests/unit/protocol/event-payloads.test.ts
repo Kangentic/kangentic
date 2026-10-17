@@ -66,6 +66,7 @@ const boardTaskFixture: JsonValue = {
   resumable: false,
   paused: false,
   pausable: true,
+  automations_disabled: false,
   workflow: null,
 };
 
@@ -385,6 +386,17 @@ describe('board row guards', () => {
     delete withoutPausable.pausable;
     expect(parseBoardTaskWire(withoutPausable).pausable).toBeNull();
     expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), pausable: 1 }).pausable).toBeNull();
+  });
+
+  it('passes automations_disabled through as true or false, and reads an absent or non-boolean one as null (pre-0.22.0 desktop)', () => {
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), automations_disabled: true }).automations_disabled).toBe(true);
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), automations_disabled: false }).automations_disabled).toBe(false);
+    // Null, not false. The phone gates its menu row on this, and an older
+    // desktop cannot say what the switch reads.
+    const withoutSwitch = { ...(boardTaskFixture as Record<string, JsonValue>) };
+    delete withoutSwitch.automations_disabled;
+    expect(parseBoardTaskWire(withoutSwitch).automations_disabled).toBeNull();
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), automations_disabled: 1 }).automations_disabled).toBeNull();
   });
 
   it('parses a column row', () => {

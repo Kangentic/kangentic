@@ -728,6 +728,29 @@ describe('the commit signal fires when the row lands, before the slow work', () 
     expect(context.boardEvents.emitBoardChanged.mock.calls[0]).toEqual(context.boardEvents.emitBoardChanged.mock.calls[1]);
   });
 
+  it('a move out of Done announces only after tasks.move, the write that clears the automations switch', async () => {
+    // TaskRepository.move clears a task's automations switch in the same
+    // transaction when it leaves Done (task-repository-automations-disabled.test.ts
+    // pins that). A paired phone re-reads its board on the bus event, so both
+    // emits must come after the move, or the phone keeps the strip until the
+    // next unrelated change.
+    const context = makeContext(makeTask({ swimlane_id: DONE_LANE_ID, archived_at: '2026-10-16T00:00:00.000Z' }));
+    const repos = mockGetProjectRepos() as { tasks: { move: ReturnType<typeof vi.fn> } };
+    const movedAtEachEmit: boolean[] = [];
+    context.boardEvents.emitBoardChanged.mockImplementation(() => {
+      movedAtEachEmit.push(repos.tasks.move.mock.calls.length > 0);
+    });
+
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 },
+      'agent',
+    );
+
+    expect(repos.tasks.move).toHaveBeenCalledTimes(1);
+    expect(movedAtEachEmit).toEqual([true, true]);
+  });
+
   it('fires onCommitted on a Done move while the worktree removal is still running', async () => {
     // The Done path is the one that hurts: suspend, reap and deleteTaskWorktree
     // all run INSIDE the Phase 1 lock, after the commit. Holding the removal

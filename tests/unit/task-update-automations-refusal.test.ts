@@ -20,6 +20,9 @@
  *   - `false` on a workflow task reaches `tasks.update` (releasing nothing is not refused)
  *   - an edit that does not touch the switch reaches `tasks.update` for a workflow task
  *   - `true` for a task the repository does not know is left to `tasks.update`
+ *   - a flip from the card menu or the Agent Monitor row emits `task-updated` on
+ *     the board-changed bus once, after the row holds the new value, so a paired
+ *     phone's re-read shows it; a refused hold emits nothing
  *
  * Red-green: make `automationsSwitchRefusal` return null and the two refusal
  * tests fail with the update going through; make it refuse every task and the
@@ -143,6 +146,7 @@ function createMockContext(): Record<string, unknown> {
     },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-123', path: '/mock/project' })) },
+    boardEvents: { emitBoardChanged: vi.fn() },
   };
 }
 
@@ -232,6 +236,64 @@ describe('TASK_UPDATE automations switch', () => {
 
       expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
       expect(mockTaskUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1', automations_disabled: false }));
+    });
+  });
+
+  describe('a flip reaches a paired phone', () => {
+    // The card's right-click menu and the Agent Monitor's row menu both write
+    // through TASK_UPDATE (the monitor stamps another project when the row is
+    // not on the open board). A paired phone hears it only on the board-changed
+    // bus, and re-reads the board when it does, so the row must already hold the
+    // new value when the event fires.
+    let storedRow: Record<string, unknown>;
+    let emitBoardChanged: ReturnType<typeof vi.fn>;
+    let flagAtEmit: unknown;
+
+    beforeEach(() => {
+      storedRow = createExistingTask();
+      flagAtEmit = undefined;
+      mockTaskUpdate = vi.fn((patch: Record<string, unknown>) => {
+        Object.assign(storedRow, patch);
+        return { ...storedRow };
+      });
+      mockGetProjectRepos.mockReturnValue({
+        tasks: { getById: vi.fn(() => ({ ...storedRow })), update: mockTaskUpdate },
+      });
+      const context = createMockContext();
+      emitBoardChanged = (context.boardEvents as { emitBoardChanged: ReturnType<typeof vi.fn> }).emitBoardChanged;
+      // Recorded, not asserted, here, because the announce swallows a listener's throw.
+      emitBoardChanged.mockImplementation(() => {
+        flagAtEmit = storedRow.automations_disabled;
+      });
+      registerTaskCrudHandlers(context as never);
+    });
+
+    it.each([
+      ['the card menu, on the open board', 'proj-123'],
+      ['the Agent Monitor row menu, for another project', 'proj-other'],
+    ])('disabling from %s emits task-updated once, after the write', async (_label, projectId) => {
+      await callUpdateHandler({ id: 'task-1', automations_disabled: true }, projectId);
+
+      expect(emitBoardChanged.mock.calls).toEqual([[{ projectId, change: 'task-updated', ids: ['task-1'] }]]);
+      expect(flagAtEmit).toBe(true);
+    });
+
+    it('enabling emits too, with the cleared value already written', async () => {
+      storedRow.automations_disabled = true;
+
+      await callUpdateHandler({ id: 'task-1', automations_disabled: false });
+
+      expect(emitBoardChanged).toHaveBeenCalledTimes(1);
+      expect(flagAtEmit).toBe(false);
+    });
+
+    it('a refused hold writes nothing and emits nothing', async () => {
+      storedRow.workflow_id = 'workflow-1';
+
+      await expect(callUpdateHandler({ id: 'task-1', automations_disabled: true }))
+        .rejects.toThrow(AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL);
+
+      expect(emitBoardChanged).not.toHaveBeenCalled();
     });
   });
 

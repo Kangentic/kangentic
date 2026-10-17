@@ -1021,9 +1021,10 @@ export const retrievalService = {
         scheduleArchive(context, sessionId, LIVE_INDEX_DEBOUNCE_MS);
       }
     });
-    // Task records follow the board. The bus hears agent and MCP edits and
-    // every move; a plain desktop edit of a task's text is caught by the
-    // refresh a question asks for (`refreshTaskRecords`).
+    // Task records follow the board. The bus hears agent and MCP edits, every
+    // move, and every desktop task write (`announceTaskWrite`); the refresh a
+    // question asks for (`refreshTaskRecords`) stays as the backstop for a
+    // write that reaches none of those.
     context.boardEvents.onBoardChanged((event) => {
       // A column change touches no task record, and a Command Terminal has none.
       if (event.change === 'swimlane-updated' || event.change === 'command-terminals-changed') return;

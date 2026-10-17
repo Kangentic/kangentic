@@ -15,7 +15,7 @@ import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTa
 import { isAbortError } from '../../../shared/abort-utils';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
+import { announceTaskBoardChange, announceTaskWrite } from '../helpers/task-write-announce';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
@@ -197,45 +197,55 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const createdTasks: Task[] = [];
     const tasksToSpawn: Task[] = [];
 
-    for (const backlogTaskId of input.backlogTaskIds) {
-      const item = backlogRepo.getById(backlogTaskId);
-      if (!item) continue;
+    // Announced however the loop ends. Each task is created as the loop reaches
+    // it, so a throw partway has still put the earlier ones on the board.
+    const createdTaskIds: string[] = [];
+    try {
+      for (const backlogTaskId of input.backlogTaskIds) {
+        const item = backlogRepo.getById(backlogTaskId);
+        if (!item) continue;
 
-      // Create a task from the backlog task, carrying over labels, priority, and
-      // external origin (so import dedup still sees the issue after promotion).
-      const task = tasks.create({
-        title: item.title,
-        description: item.description,
-        swimlane_id: input.targetSwimlaneId,
-        labels: item.labels,
-        priority: item.priority,
-        externalId: item.external_id ?? undefined,
-        externalSource: item.external_source ?? undefined,
-        externalUrl: item.external_url ?? undefined,
-      });
+        // Create a task from the backlog task, carrying over labels, priority, and
+        // external origin (so import dedup still sees the issue after promotion).
+        const task = tasks.create({
+          title: item.title,
+          description: item.description,
+          swimlane_id: input.targetSwimlaneId,
+          labels: item.labels,
+          priority: item.priority,
+          externalId: item.external_id ?? undefined,
+          externalSource: item.external_source ?? undefined,
+          externalUrl: item.external_url ?? undefined,
+        });
+        createdTaskIds.push(task.id);
 
-      // Copy backlog attachments to task attachments
-      const itemAttachments = backlogAttachments.list(backlogTaskId);
-      for (const backlogAttachment of itemAttachments) {
-        try {
-          const buffer = fs.readFileSync(backlogAttachment.file_path);
-          const base64Data = buffer.toString('base64');
-          attachments.add(projectPath, task.id, backlogAttachment.filename, base64Data, backlogAttachment.media_type);
-        } catch (error) {
-          console.error(`[BACKLOG_PROMOTE] Failed to copy attachment "${backlogAttachment.filename}":`, error);
+        // Copy backlog attachments to task attachments
+        const itemAttachments = backlogAttachments.list(backlogTaskId);
+        for (const backlogAttachment of itemAttachments) {
+          try {
+            const buffer = fs.readFileSync(backlogAttachment.file_path);
+            const base64Data = buffer.toString('base64');
+            attachments.add(projectPath, task.id, backlogAttachment.filename, base64Data, backlogAttachment.media_type);
+          } catch (error) {
+            console.error(`[BACKLOG_PROMOTE] Failed to copy attachment "${backlogAttachment.filename}":`, error);
+          }
+        }
+        // Clean up backlog attachment files
+        backlogAttachments.deleteByTaskId(backlogTaskId);
+
+        // Remove from backlog
+        backlogRepo.delete(backlogTaskId);
+
+        const freshTask = tasks.getById(task.id) ?? task;
+        createdTasks.push(freshTask);
+
+        if (targetSwimlane.auto_spawn) {
+          tasksToSpawn.push(freshTask);
         }
       }
-      // Clean up backlog attachment files
-      backlogAttachments.deleteByTaskId(backlogTaskId);
-
-      // Remove from backlog
-      backlogRepo.delete(backlogTaskId);
-
-      const freshTask = tasks.getById(task.id) ?? task;
-      createdTasks.push(freshTask);
-
-      if (targetSwimlane.auto_spawn) {
-        tasksToSpawn.push(freshTask);
+    } finally {
+      if (createdTaskIds.length > 0) {
+        announceTaskBoardChange(context, projectId, { change: 'task-created', ids: createdTaskIds });
       }
     }
 
@@ -318,18 +328,27 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
     const { tasks, attachments } = getProjectRepos(context, projectId);
 
+    // A demote deletes the task, which would drop it from its workflow and
+    // unblock what waits for it, from a menu that says only "Backlog".
+    const demotableTask = (task: Task | undefined): Task => {
+      if (!task) throw new Error(`Task ${input.taskId} not found`);
+      if (isInWorkflow(task, projectId)) {
+        throw new Error(WORKFLOW_REFUSALS.removeFirst(`#${task.display_id}`, workflowTitleOf(task, projectId)));
+      }
+      return task;
+    };
+    // Refused here, before the announce below can run, so a refused demote does
+    // not tell a phone the card was deleted. The check inside the lock catches
+    // a task that joined a workflow while this waited. That rare refusal is
+    // still announced, which costs a phone one re-read of the board.
+    demotableTask(tasks.getById(input.taskId));
+
     // Cancel any in-flight backlog promotion BEFORE queueing on the lock so
     // a stuck promotion can be aborted by this demote.
     abortBacklogPromotion(input.taskId);
 
     const demotion = withTaskLock(input.taskId, async () => {
-      const task = tasks.getById(input.taskId);
-      if (!task) throw new Error(`Task ${input.taskId} not found`);
-      // A demote deletes the task, which would drop it from its workflow and
-      // unblock what waits for it, from a menu that says only "Backlog".
-      if (isInWorkflow(task, projectId)) {
-        throw new Error(WORKFLOW_REFUSALS.removeFirst(`#${task.display_id}`, workflowTitleOf(task, projectId)));
-      }
+      const task = demotableTask(tasks.getById(input.taskId));
 
       // Cancel any pending auto_command injection before cleanup, and any
       // message still waiting to be pasted, which the scheduler does not hold.
@@ -372,13 +391,13 @@ export function registerBacklogHandlers(context: IpcContext): void {
       // Re-fetch to get updated attachment_count
       return backlogRepo.getById(backlogTask.id) ?? backlogTask;
     });
-    // Announced however the demote settles: the cleanup and the backlog row
-    // commit before the task row is deleted, so a late failure has still
-    // changed both lists.
+    // Announced however the demote settles once it passed the refusals above.
+    // The cleanup and the backlog row commit before the task row is deleted,
+    // so a late failure has still changed both lists.
     try {
       return await demotion;
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, projectId);
+      announceTaskWrite(context, event, projectId, { change: 'task-deleted', ids: [input.taskId] });
     }
   });
 

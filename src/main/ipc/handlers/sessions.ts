@@ -15,7 +15,7 @@ import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { nextOnRoute } from '../../../shared/workflow-route';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { readTaskLastMessage, readTaskReport } from '../helpers/task-report';
-import { announceTaskWriteFromOtherWindow } from '../helpers/other-window-task-writes';
+import { announceTaskWrite } from '../helpers/task-write-announce';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed, trackMilestone } from '../../analytics/usage';
@@ -834,7 +834,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
         message: result.message,
       };
     } finally {
-      announceTaskWriteFromOtherWindow(context, event, resolvedProjectId);
+      // linkPR's onLinked announces a changed or cleared PR link, but not a
+      // write of the head SHA or pushed branch alone, so the resolve announces
+      // itself. A second emit beside onLinked's costs a phone one more re-read.
+      announceTaskWrite(context, event, resolvedProjectId, { change: 'task-updated', ids: [taskId] });
     }
   });
 

@@ -94,6 +94,21 @@ describe('toBoardTaskWire', () => {
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).pausable).toBe(false);
   });
 
+  it('carries automations_disabled, true and false, through the phone-side parse', () => {
+    const held = parseBoardTaskWire(toBoardTaskWire(makeTask({ automations_disabled: true }), null, notPaused) as unknown as JsonValue);
+    expect(held.automations_disabled).toBe(true);
+    const running = parseBoardTaskWire(toBoardTaskWire(makeTask({ automations_disabled: false }), null, notPaused) as unknown as JsonValue);
+    expect(running.automations_disabled).toBe(false);
+  });
+
+  it('sends automations_disabled as a real false, never undefined, for a task assembled without the column', () => {
+    // makeTask leaves the field out. An absent key reaches the phone as null,
+    // which it reads as a desktop too old to have the switch, and hides the row.
+    const wire = toBoardTaskWire(makeTask(), null, notPaused);
+    expect(wire.automations_disabled).toBe(false);
+    expect(parseBoardTaskWire(wire as unknown as JsonValue).automations_disabled).toBe(false);
+  });
+
   it('sanitizes the label it puts on the wire, so a raw git line never reaches the phone as-is', () => {
     const wire = toBoardTaskWire(makeTask(), '\u001b[32mReceiving objects:\u001b[0m 45%\r', notPaused);
     expect(wire.spawn_progress).toBe('Receiving objects: 45%');
