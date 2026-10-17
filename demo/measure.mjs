@@ -94,13 +94,17 @@ function encodeState(state) {
 /**
  * Only the surface's OWN terminals are read: the board's bottom panel mounts one too (15 rows,
  * no surface of the matrix), and a Command Terminal the scene spawns has an id minted at spawn
- * time, so `spawned` stands for every session the sample install did not seed.
+ * time, so `spawned` stands for every session the sample install did not seed. The workflow
+ * agent's session is minted when its pane opens, so its surface is a spawned one that decides
+ * (`spawnedDecides`): the pane has no context bar, so the race that keeps a spawned Command
+ * Terminal from deciding (below) does not reach it.
  */
 const GEOMETRY_SURFACES = [
   { key: 'taskWindow', params: { state: encodeState(defaultTaskWindowState()) }, sessions: ['sess-cw-middleware'] },
   { key: 'taskWindowTiled', params: { view: 'windows-tiled' }, sessions: ['sess-cw-middleware', 'sess-cw-api-client'] },
   { key: 'commandTerminal', params: { state: encodeState(defaultCommandTerminalState()) }, sessions: ['sess-cw-terminal-1'] },
   { key: 'commandTerminalTiled', params: { view: 'command-terminal-tiled' }, sessions: ['sess-cw-terminal-1', 'spawned'] },
+  { key: 'workflowAgentPane', params: { view: 'workflow-draft' }, sessions: ['spawned'], spawnedDecides: true },
 ];
 
 function isSeededSession(sessionId) {
@@ -291,7 +295,7 @@ function reportGeometry(measured, check) {
       // only once its usage lands, a beat after its first output, and whether the settle catches
       // that is a race (measured both 37 and 39 rows on the same build). The seeded session in
       // the same layout is the stable measure of the pane, and the rows follow the agent anyway.
-      if (sessionId === 'spawned') continue;
+      if (sessionId === 'spawned' && !surface.spawnedDecides) continue;
       const grid = rowsByScale[GEOMETRY_SCALES.indexOf(recorded.scale)][index]?.[1];
       // The rows in the manifest are the Claude rows; every surface here mounts a Claude session.
       if (!grid || grid.cols !== recorded.cols || grid.rows !== recorded.rows) {

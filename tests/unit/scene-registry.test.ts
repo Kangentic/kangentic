@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
-import { CHOREOGRAPHY_KEYS, SCENES, hasPose, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
+import { CHOREOGRAPHY_KEYS, SCENES, WORKFLOW_INVOICE_PDF, draftOfRecordedPlan, hasPose, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
 import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_LANES_BY_PROJECT, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneId, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
 import { loadDemoEnds, loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
@@ -675,6 +675,50 @@ describe('scene registry', () => {
     }
     // Vacuity guard: the workflows and board-workflow scenes both seed links.
     expect(checked).toBeGreaterThanOrEqual(2);
+  });
+
+  it('draws a recorded workflow agent\'s plan as the plan its recording saved, beside the agent', () => {
+    // The pane shows the agent saving a plan, and the canvas beside it draws the scene's draft. A
+    // draft written by hand, or a plan fixture left behind by a re-recording, would put a plan on
+    // the canvas the agent never saved, so the draft must be the recording's plan read back
+    // (scripts/lib/demo-mcp-capture.mjs, planFixtureOf). A scene that shows one also names a
+    // Workflow agent, since the pane otherwise asks for one and never opens the agent.
+    const recorded = Object.keys(loadDemoRecordings().workflowAgents);
+    const plansDirectory = path.resolve(__dirname, '..', 'captures', 'fixtures', 'demo', 'workflow-plans');
+    const shownBy = new Map<string, string[]>();
+    for (const scene of scenes) {
+      const seeds = (scene.seeds ?? {}) as { __mockWorkflows?: Array<{ workflow: { id: string; title: string; draft: unknown } }> };
+      for (const { workflow } of seeds.__mockWorkflows ?? []) {
+        if (!recorded.includes(workflow.id)) continue;
+        shownBy.set(workflow.id, [...(shownBy.get(workflow.id) ?? []), scene.name]);
+        const plan = JSON.parse(fs.readFileSync(path.join(plansDirectory, `${workflow.id}.json`), 'utf-8')) as Parameters<typeof draftOfRecordedPlan>[0];
+        expect(workflow.draft, `${scene.name} draws a plan for ${workflow.id} that its recording did not save`).toEqual(draftOfRecordedPlan(plan));
+        expect(workflow.title).toBe(plan.title);
+        const choice = (scene.config as { workflows?: { agent?: string | null; model?: string | null } } | undefined)?.workflows;
+        expect(choice?.agent, `${scene.name} shows ${workflow.id}'s recorded agent, so it names a Workflow agent`).toBeTruthy();
+        expect(choice?.model, `${scene.name} names a model, which Claude's Workflow agent setting needs`).toBeTruthy();
+      }
+    }
+    // Every recorded workflow agent is shown somewhere, and has the plan it saved beside it: the
+    // last save its terminal prints (the result kangentic_save_workflow answers with,
+    // workflow-commands.ts) counts the plan file's tasks and links, so a re-recording whose plan
+    // was never read back cannot pair a new conversation with the old plan.
+    for (const workflowId of recorded) {
+      expect(shownBy.has(workflowId), `workflow-${workflowId}.json is recorded, and no scene seeds its workflow`).toBe(true);
+      const planPath = path.join(plansDirectory, `${workflowId}.json`);
+      expect(fs.existsSync(planPath), `workflow-${workflowId}.json has no plan fixture`).toBe(true);
+      const plan = JSON.parse(fs.readFileSync(planPath, 'utf-8')) as Parameters<typeof draftOfRecordedPlan>[0];
+      const painted = loadDemoRecordings().workflowAgents[workflowId].serialized
+        .replace(/\x1b\[\d*C/g, ' ')
+        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+      const saves = [...painted.matchAll(/Saved:\s+(\d+)\s+tasks?,\s+(\d+)\s+links?\./g)];
+      expect(saves.length, `workflow-${workflowId}.json prints no save`).toBeGreaterThan(0);
+      const [, taskCount, linkCount] = saves[saves.length - 1];
+      expect({ tasks: Number(taskCount), links: Number(linkCount) }, `workflow-${workflowId}.json's last save is not its plan fixture`)
+        .toEqual({ tasks: plan.tasks.length, links: plan.links.length });
+    }
+    // Vacuity guard: workflow-draft shows one.
+    expect(shownBy.get(WORKFLOW_INVOICE_PDF)).toContain('workflow-draft');
   });
 
   it('has one settings scene per settings tab, and no other', () => {

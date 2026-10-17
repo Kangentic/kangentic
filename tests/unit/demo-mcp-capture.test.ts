@@ -3,9 +3,10 @@
  * ready to start: it seeds a running /preview with the board the scene paints, writes the two
  * launch files the desktop hands Claude for its server, and judges the headless run that leaves
  * the work the recorded session reviews. Everything that needs the preview or a real CLI
- * (`prepareMcpCapture`) is out of reach of a unit test, so this file pins the four exports that are
- * pure or touch only the temp folder: `laneNameOf`, `seedPlanFor`, `writeLaunchFiles`, and
- * `preparedRunSucceeded`.
+ * (`prepareMcpCapture`, `prepareWorkflowAgentCapture`) is out of reach of a unit test, so this file
+ * pins the five exports that are pure or touch only the temp folder: `laneNameOf`, `seedPlanFor`,
+ * `writeLaunchFiles`, `preparedRunSucceeded`, and `planFixtureOf`, which turns the plan a recorded
+ * workflow agent saved into the fixture the web build seeds.
  *
  * `preparedRunSucceeded` reads the stdout of `claude -p --output-format json`, an external input,
  * so it is pinned to two REAL captures (tests/fixtures/claude-print-result-success.json and
@@ -22,6 +23,7 @@ import path from 'node:path';
 import * as dataset from '../captures/helpers/demo-dataset';
 import {
   laneNameOf,
+  planFixtureOf,
   preparedRunSucceeded,
   seedPlanFor,
   writeLaunchFiles,
@@ -67,7 +69,7 @@ interface SeedPlan {
 
 interface LaunchSettings {
   verbose?: boolean;
-  permissions?: { allow: string[] };
+  permissions?: { allow: string[]; defaultMode?: string };
 }
 
 function mustFind<Item>(items: readonly Item[], predicate: (item: Item) => boolean, description: string): Item {
@@ -146,6 +148,65 @@ describe('preparedRunSucceeded', () => {
   });
 });
 
+describe('planFixtureOf', () => {
+  const lanes = [
+    { id: 'lane-uuid-todo', name: 'To Do' },
+    { id: 'lane-uuid-planning', name: 'Planning' },
+    { id: 'lane-uuid-executing', name: 'Executing' },
+  ];
+  const runSettings = {
+    base_branch: null, use_worktree: null, run_mode: 'column_settings', profile_id: null,
+    agent_override: null, model_override: null, effort_override: null, permission_mode: null,
+  };
+  function plannedTask(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      key: 'pdf-route', title: 'Invoice PDF route', description: 'The server half.', labels: ['feature'], priority: 0,
+      project_id: null, existing_task_id: null,
+      route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+      canvas_x: null, canvas_y: null, ...runSettings, ...overrides,
+    };
+  }
+  function workflowWith(tasks: Array<Record<string, unknown>>, links: Array<{ blocker: string; blocked: string }> = []) {
+    return { title: 'Invoice PDF export', brief: 'Invoice PDF export\n\nA downloadable invoice', draft: { tasks, links } };
+  }
+
+  it('names each column by its name, so the plan reads on the sample install\'s own ids', () => {
+    const plan = planFixtureOf(workflowWith([
+      plannedTask({ route_start_swimlane_id: 'lane-uuid-executing', skipped_swimlane_ids: ['lane-uuid-planning'] }),
+    ]), lanes);
+
+    expect(plan.tasks[0]).toMatchObject({ routeStart: 'Executing', routeLast: null, skipped: ['Planning'] });
+  });
+
+  it('keeps the title, the brief, the links, and every run setting but the profile, as saved', () => {
+    const plan = planFixtureOf(workflowWith(
+      [plannedTask(), plannedTask({ key: 'billing-page', title: 'Billing page', model_override: 'claude-opus-5' })],
+      [{ blocker: 'pdf-route', blocked: 'billing-page' }],
+    ), lanes);
+
+    expect(plan.title).toBe('Invoice PDF export');
+    expect(plan.brief).toBe('Invoice PDF export\n\nA downloadable invoice');
+    expect(plan.links).toEqual([{ blocker: 'pdf-route', blocked: 'billing-page' }]);
+    expect(plan.tasks[1].runSettings).toEqual({ ...Object.fromEntries(Object.entries(runSettings).filter(([key]) => key !== 'profile_id')), model_override: 'claude-opus-5' });
+  });
+
+  it('refuses a column its board does not have, rather than dropping it from the route', () => {
+    expect(() => planFixtureOf(workflowWith([plannedTask({ route_last_swimlane_id: 'lane-uuid-gone' })]), lanes)).toThrow('which its board does not have');
+  });
+
+  it.each([
+    [{ project_id: 'proj-other' }, 'another project'],
+    [{ existing_task_id: 'task-on-board' }, 'takes over a task already on the board'],
+    [{ profile_id: 'profile-1' }, 'Board Profile'],
+  ])('refuses a plan the sample install\'s draft cannot show the same way: %j', (overrides, message) => {
+    expect(() => planFixtureOf(workflowWith([plannedTask(overrides)]), lanes)).toThrow(message);
+  });
+
+  it('refuses a workflow with no plan, a started one or one the agent never saved', () => {
+    expect(() => planFixtureOf({ title: 'Invoice PDF export', brief: null, draft: null }, lanes)).toThrow('has no plan');
+  });
+});
+
 describe('writeLaunchFiles', () => {
   const MCP_URL = 'http://127.0.0.1:54321/mcp/contoso-web';
   const MCP_TOKEN = 'test-token-0123456789abcdef';
@@ -194,6 +255,16 @@ describe('writeLaunchFiles', () => {
     expect(readJson(launch.settingsPath)).toStrictEqual({
       verbose: true,
       permissions: { allow: ['mcp__kangentic'] },
+    });
+  });
+
+  it('pins Claude\'s built-in default mode beside the allow rule when asked, for a launch that passes no mode flag', () => {
+    const launch = writeLaunchFiles(MCP_URL, MCP_TOKEN, { verbose: true }, { pinBuiltInDefaultMode: true });
+    createdDirectories.push(launch.directory);
+
+    expect(readJson(launch.settingsPath)).toStrictEqual({
+      verbose: true,
+      permissions: { allow: ['mcp__kangentic'], defaultMode: 'default' },
     });
   });
 

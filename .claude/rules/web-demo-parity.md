@@ -268,8 +268,9 @@ three things staying in step, and each is enforced rather than remembered.
   its closed vocabulary (one gesture a step, at most one pose, a held drag followed by the pose, a
   `drop` only after the pose that holds one), each timeline event to a working session with a
   recording and a card and lane the scene holds, each workflow-origin move to the column main would
-  move it to (`src/shared/workflow-route.ts`), and every scene to a declared motion. Runs via
-  `npm run test:unit`.
+  move it to (`src/shared/workflow-route.ts`), every scene to a declared motion, and a workflow
+  whose agent the matrix recorded to the plan that recording saved (its `workflow-plans/` file),
+  shown by a scene that names a Workflow agent. Runs via `npm run test:unit`.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots EVERY bootable scene in the
   registry from a static server (the loop iterates `SCENES`, so a new entry is covered with no
   test change, and a stale deep marker for a retired scene fails) and asserts its `ready` element

@@ -2922,7 +2922,14 @@ export function buildDemoPreConfig(options: {
           var stillGrid = mountedGeometry[sessionId];
           return Promise.resolve(stillGrid ? notePainted(sessionId, stillGrid, fitFrameToGrid(stillFrame, stillGrid, entry && entry.grid ? entry.grid : undefined)) : stillFrame);
         }
-        if (entry && recordings) return fetchRecording(entry.file).then(function (recording) { return recording.serialized; });
+        // A session the page started (a spawned Command Terminal, a workflow's agent) has no frame
+        // in the seed, so a still reads its recording's final frame and fits it the same way.
+        if (entry && recordings) {
+          return fetchRecording(entry.file).then(function (recording) {
+            var grid = mountedGeometry[sessionId];
+            return grid ? notePainted(sessionId, grid, fitFrameToGrid(recording.serialized, grid, recording)) : recording.serialized;
+          });
+        }
         return Promise.resolve('');
       };
 
@@ -3457,7 +3464,14 @@ export function buildDemoPreConfig(options: {
         console.error('[demo] the timeline names an action this seed does not run', action);
         return null;
       }
+      // Each session's moments that have run this cycle. A terminal mounted after the session's end
+      // schedules its clock again, and the end lands at once; main moved the card once, so the
+      // moment runs once a cycle, and the loop's revert opens the next.
+      var timelineMomentsRun = {};
       function runSessionTimeline(sessionId, moment) {
+        var run = timelineMomentsRun[sessionId] = timelineMomentsRun[sessionId] || {};
+        if (run[moment]) return;
+        run[moment] = true;
         sceneTimeline.forEach(function (event) {
           if (event.session !== sessionId || event.at !== moment) return;
           var undo = runTimelineAction(event.do);
@@ -3467,6 +3481,7 @@ export function buildDemoPreConfig(options: {
       function revertSessionTimeline(sessionId) {
         var undos = timelineUndos[sessionId] || [];
         timelineUndos[sessionId] = [];
+        timelineMomentsRun[sessionId] = {};
         undos.reverse().forEach(function (undo) { undo(); });
       }
 
@@ -3501,6 +3516,25 @@ export function buildDemoPreConfig(options: {
           announceSession(result.session, 'idle');
           announceMonitorRow(result.session, null, agent, data.defaultPermissionMode);
           return result;
+        });
+      };
+
+      // A workflow's own agent, which the Workflows view's pane opens (workflows.agentOpen). Where
+      // the capture matrix recorded that workflow's agent planning it (workflow-<id>.json), the
+      // agent read the board and the code, saved the plan, and ended its turn, so the pane opens
+      // on that end: idle, its first output long past, its terminal the recording's final frame.
+      // A workflow with no recording keeps the mock's empty session.
+      var originalAgentOpen = window.electronAPI.workflows.agentOpen;
+      window.electronAPI.workflows.agentOpen = function (projectId, workflowId) {
+        return originalAgentOpen.apply(this, arguments).then(function (status) {
+          var indexed = recordings && recordings.workflowAgents ? recordings.workflowAgents[workflowId] || null : null;
+          var session = status ? status.session : null;
+          if (!indexed || !session || replays[session.id]) return status;
+          replays[session.id] = { file: indexed.file, grid: gridOf(indexed), startedAt: null, tail: 0, projectId: projectId };
+          mockState.activityCache[session.id] = 'idle';
+          if (window.__mockFireActivity) window.__mockFireActivity(session.id, 'idle', null, projectId, workflowId);
+          fireFirstOutput(session.id);
+          return status;
         });
       };
 

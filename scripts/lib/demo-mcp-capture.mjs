@@ -21,17 +21,24 @@
  * `kangentic_get_current_task` resolves the task from the caller's working directory. Before the
  * recording a headless run of the task's own prompt (`claude -p`, unrecorded) leaves the work the
  * recorded session then reviews: the column message is a review, and a review needs a diff.
+ *
+ * A workflow's own agent (prepareWorkflowAgentCapture) records against the same seeded board, in
+ * the project's checkout with no worktree, as Kangentic runs it. Its launch is the desktop's,
+ * read from the preview (src/devtools/main/workflow-agent-launch-route.ts): the first message
+ * over the preview's board, and the MCP URL whose `workflow-` segment scopes the agent to the
+ * read-only and planning tools. After the run the plan it saved is read back for the web build.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { evaluateInPreview, readPreviewPort } from './preview-bridge.mjs';
+import { evaluateInPreview, postToPreview, readPreviewPort } from './preview-bridge.mjs';
 import { importTsModule } from './bundle-ts-module.mjs';
 
 const require = createRequire(import.meta.url);
 const { toSpawnable, shellReparsedArgument, childAgentEnv } = require('./spawnable.js');
+const { buildSanitizer, sanitizeDeep } = require('./demo-sanitizer.js');
 
 /** A headless pre-run that has not finished in this long is stopped, and the capture with it. */
 const PREPARE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -54,7 +61,7 @@ export function laneNameOf(dataset, task) {
 /**
  * The board the preview is seeded with: the project's whole install (live tasks, the archived
  * history, the backlog) plus its scene-only tasks, each in its own column, and the recorded task
- * at the worktree the agent runs in.
+ * at the worktree the agent runs in. A workflow agent records with no task of its own (null).
  */
 export function seedPlanFor(dataset, project, root, recordedTask, worktree) {
   const tasks = dataset.DEMO_ALL_TASKS.filter((task) => task.projectId === project.id);
@@ -79,7 +86,7 @@ export function seedPlanFor(dataset, project, root, recordedTask, worktree) {
         baseBranch: task.base_branch,
         // Only the recorded task's worktree exists on this machine; the others' paths are the
         // sample install's and name nothing here.
-        ...(task.id === recordedTask.id ? { worktreePath: worktree } : {}),
+        ...(recordedTask && task.id === recordedTask.id ? { worktreePath: worktree } : {}),
       })),
       backlog: dataset.DEMO_BACKLOG
         .filter((item) => item.projectId === project.id)
@@ -301,17 +308,23 @@ function runPrepare(cwd, prompt) {
  * rides in the --settings file instead, where Claude reads it the same way. The allow rule is
  * always the desktop's, and the entry cannot carry a permission of its own. A write that fails
  * takes the folder with it, since mcp.json carries the server's token.
+ *
+ * `pinBuiltInDefaultMode` is for a launch in the default permission mode, which passes Claude no
+ * mode flag, so Claude starts in the user's own `defaultMode`. That is the recording machine's
+ * preference, not the sample install's, so the settings layer names Claude's built-in default
+ * instead, the mode a user who never set one starts in.
  */
-export function writeLaunchFiles(url, token, userSettings) {
+export function writeLaunchFiles(url, token, userSettings, { pinBuiltInDefaultMode = false } = {}) {
   if (userSettings && Object.prototype.hasOwnProperty.call(userSettings, 'permissions')) {
     throw new Error('[mcp] claudeSettings stands in for a display preference; it carries no permissions, which nothing pre-allows');
   }
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-demo-mcp-'));
   const mcpConfigPath = path.join(directory, 'mcp.json');
   const settingsPath = path.join(directory, 'settings.json');
+  const permissions = { allow: ['mcp__kangentic'], ...(pinBuiltInDefaultMode ? { defaultMode: 'default' } : {}) };
   try {
     fs.writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: { kangentic: { type: 'http', url, headers: { 'X-Kangentic-Token': token } } } }, null, 2));
-    fs.writeFileSync(settingsPath, JSON.stringify({ ...(userSettings ?? {}), permissions: { allow: ['mcp__kangentic'] } }, null, 2));
+    fs.writeFileSync(settingsPath, JSON.stringify({ ...(userSettings ?? {}), permissions }, null, 2));
   } catch (error) {
     fs.rmSync(directory, { recursive: true, force: true });
     throw error;
@@ -375,4 +388,133 @@ export async function prepareMcpCapture({ repoRoot, dataset, entry, root }) {
     args: ['--mcp-config', launch.mcpConfigPath, '--settings', launch.settingsPath, '--scratch-root', root],
     cleanup: release,
   };
+}
+
+/**
+ * The plan a workflow agent saved, in the sample install's terms: each column by its name rather
+ * than the preview's id, and every other field as saved. The web build seeds the workflow-draft
+ * scene from it, so the canvas draws the plan the recording shows being saved. A plan this cannot
+ * show the same way is refused rather than bent: a task on another board, a task the plan takes
+ * over from the board, or a Board Profile, none of which the sample install's draft carries.
+ */
+export function planFixtureOf(workflow, lanes) {
+  if (!workflow.draft) throw new Error('[workflow] the workflow has no plan: it was started, or the agent saved none');
+  const laneName = (id) => {
+    if (id === null) return null;
+    const lane = lanes.find((candidate) => candidate.id === id);
+    if (!lane) throw new Error(`[workflow] the plan names column ${id}, which its board does not have`);
+    return lane.name;
+  };
+  return {
+    title: workflow.title,
+    brief: workflow.brief,
+    tasks: workflow.draft.tasks.map((task) => {
+      if (task.project_id) throw new Error(`[workflow] "${task.title}" is planned on another project's board`);
+      if (task.existing_task_id) throw new Error(`[workflow] "${task.title}" takes over a task already on the board`);
+      if (task.profile_id) throw new Error(`[workflow] "${task.title}" runs on a Board Profile`);
+      return {
+        key: task.key,
+        title: task.title,
+        description: task.description,
+        labels: task.labels,
+        priority: task.priority,
+        routeStart: laneName(task.route_start_swimlane_id),
+        routeLast: laneName(task.route_last_swimlane_id),
+        skipped: task.skipped_swimlane_ids.map(laneName),
+        runSettings: {
+          base_branch: task.base_branch,
+          use_worktree: task.use_worktree,
+          run_mode: task.run_mode,
+          agent_override: task.agent_override,
+          model_override: task.model_override,
+          effort_override: task.effort_override,
+          permission_mode: task.permission_mode,
+        },
+      };
+    }),
+    links: workflow.draft.links.map((link) => ({ blocker: link.blocker, blocked: link.blocked })),
+  };
+}
+
+/**
+ * Get the preview, the board and the workflow in place for one `workflowAgent` entry, the way a
+ * user makes one: the project's board seeded at the scratch clone, the backlog item the entry
+ * names as a card in To Do, and the workflow made from that card, whose title and description are
+ * then its brief. Returns the directory the agent runs in (the project's checkout), its first
+ * message, the extra capture-agent-scrollback.js arguments, `writePlan`, which writes the plan the
+ * agent saved, and a cleanup that takes the board, the preview's Claude path and the launch files
+ * back again.
+ */
+export async function prepareWorkflowAgentCapture({ repoRoot, dataset, entry, root }) {
+  if (entry.agent !== 'claude') throw new Error(`[workflow] ${entry.file}: only Claude's launch shape carries Kangentic's MCP server here`);
+  const item = dataset.DEMO_BACKLOG.find((candidate) => candidate.id === entry.backlog);
+  if (!item) throw new Error(`[workflow] ${entry.file}: the dataset has no backlog item ${entry.backlog}`);
+  const project = dataset.DEMO_PROJECTS.find((candidate) => candidate.id === item.projectId);
+
+  const port = await connectPreview(repoRoot);
+  await dropEarlierProject(port, root);
+  const seeded = await evaluateInPreview(port, `window.electronAPI.dev.seedKnowledgeGraphDemo(${JSON.stringify(seedPlanFor(dataset, project, root, null, null))})`, 120_000);
+
+  // From here the preview holds the seeded project, so every failure releases it before it is
+  // thrown, as prepareMcpCapture does.
+  let previousClaudePath;
+  let launchFiles = null;
+  const release = async () => {
+    let failure = null;
+    try {
+      await dropEarlierProject(port, root);
+    } catch (error) {
+      failure = error;
+    }
+    if (previousClaudePath !== undefined) {
+      try {
+        await setClaudePath(port, previousClaudePath);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (launchFiles) fs.rmSync(launchFiles.directory, { recursive: true, force: true, maxRetries: 3 });
+    if (failure) throw failure;
+  };
+  try {
+    const projectResult = seeded?.projects?.[0];
+    if (!projectResult?.mcpUrl || !seeded?.mcpToken) throw new Error('[workflow] the preview reports no MCP server; turn Settings > MCP Server on and re-run');
+    const projectId = projectResult.projectId;
+    previousClaudePath = await pointClaudeAtMock(port, repoRoot);
+    const lanes = await evaluateInPreview(port, `window.electronAPI.swimlanes.list(${JSON.stringify(projectId)})`);
+    const todo = lanes.find((lane) => lane.role === 'todo');
+    if (!todo) throw new Error(`[workflow] ${project.name}'s board has no To Do column`);
+    // To Do starts no agent, so the card is a card and nothing else.
+    const card = await evaluateInPreview(port, `window.electronAPI.tasks.create(${JSON.stringify({ title: item.title, description: item.description, labels: item.labels, swimlane_id: todo.id })}, ${JSON.stringify(projectId)})`);
+    const workflow = await evaluateInPreview(port, `window.electronAPI.workflows.create(${JSON.stringify(projectId)}, ${JSON.stringify(card.id)})`);
+    const launch = await postToPreview(port, '/workflow-agent-launch', { projectId, workflowId: workflow.id });
+    if (!sameDirectory(launch.cwd, root)) throw new Error(`[workflow] the agent would run in ${launch.cwd}, not the seeded checkout ${root}`);
+    // A workflow agent launches in the default mode (workflow-agent.ts), which passes no mode flag.
+    launchFiles = writeLaunchFiles(launch.mcpServerUrl, launch.mcpServerToken, entry.claudeSettings, { pinBuiltInDefaultMode: true });
+    console.error(`[workflow] seeded ${project.name} at ${root}; ${item.title} is #${card.display_id} in To Do, and workflow ${workflow.id} is made from it`);
+    const writePlan = async (outPath) => {
+      const detail = await evaluateInPreview(port, `window.electronAPI.workflows.get(${JSON.stringify(projectId)}, ${JSON.stringify(workflow.id)})`);
+      // The same rewrite the recording gets (capture-agent-scrollback.js), by the manifest's project.
+      const sanitizer = buildSanitizer({ project: entry.project, cwd: root });
+      const plan = sanitizeDeep(planFixtureOf(detail.workflow, lanes), sanitizer);
+      sanitizer.assertClean(JSON.stringify(plan), 'workflow plan');
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, `${JSON.stringify(plan, null, 2)}\n`);
+      console.error(`[workflow] the plan the agent saved: ${plan.tasks.length} tasks, ${plan.links.length} links, written to ${outPath}`);
+    };
+    return {
+      cwd: launch.cwd,
+      prompt: launch.prompt,
+      args: ['--mcp-config', launchFiles.mcpConfigPath, '--settings', launchFiles.settingsPath, '--read-only'],
+      writePlan,
+      cleanup: release,
+    };
+  } catch (error) {
+    try {
+      await release();
+    } catch (releaseError) {
+      console.error(`[workflow] releasing the board after that failure failed too (${releaseError.message ?? releaseError}); the next capture retries it`);
+    }
+    throw error;
+  }
 }

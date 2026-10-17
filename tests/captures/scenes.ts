@@ -30,12 +30,13 @@
  * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
 import contosoHistory from './fixtures/demo/history/contoso-web.json';
+import invoicePdfPlan from './fixtures/demo/workflow-plans/wf-cw-invoice-pdf.json';
 
 export type SceneReach = 'state' | 'boot';
 
@@ -594,49 +595,85 @@ const WORKFLOW_HARDEN_API_SEEDS = {
   })),
 };
 /**
- * A workflow planned but not started, for the workflow-draft scene: the plan the workflow agent
- * writes from a brief, before Start makes any of it a board task. The brief is the contoso backlog
- * item's own ask, and the scaffold already serves invoices (server/store.ts), so the plan is work
- * this repo could take. Planned tasks live in the draft, not on the board, so seeding it changes
- * no other figure; it is still a scene seed, as every workflow is.
+ * A workflow planned but not started, for the workflow-draft scene: the plan its own agent wrote
+ * and saved, before Start makes any of it a board task. It is the capture matrix's recording of
+ * that agent planning the contoso backlog item (workflow-wf-cw-invoice-pdf.json, the manifest's
+ * `workflowAgents`), and the draft is read from the plan the recording shows being saved
+ * (workflow-plans/wf-cw-invoice-pdf.json, written by scripts/lib/demo-mcp-capture.mjs), never
+ * written by hand, so the canvas and the agent pane beside it agree. Planned tasks live in the
+ * draft, not on the board, so seeding it changes no other figure.
  */
-const WORKFLOW_INVOICE_PDF = 'wf-cw-invoice-pdf';
-/** The planned task the workflow-draft scene selects: it waits for one task and two wait for it. */
-export const PLANNED_PDF_ROUTE = 'task-2';
-function plannedTask(key: string, title: string, description: string, labels: string[], routeStart: string | null = null): Record<string, unknown> {
+export const WORKFLOW_INVOICE_PDF = 'wf-cw-invoice-pdf';
+
+/** A plan the capture matrix read back from a recorded workflow agent (planFixtureOf). */
+interface RecordedWorkflowPlan {
+  title: string;
+  brief: string | null;
+  tasks: Array<{
+    key: string;
+    title: string;
+    description: string;
+    labels: string[];
+    priority: number;
+    routeStart: string | null;
+    routeLast: string | null;
+    skipped: string[];
+    runSettings: Record<string, unknown>;
+  }>;
+  links: Array<{ blocker: string; blocked: string }>;
+}
+
+/** A contoso column's sample-install id, by the name a recorded plan gives it. */
+function contosoLaneByName(name: string): string {
+  const lane = DEMO_LANES_BY_PROJECT[PROJECT_CONTOSO].find((candidate) => candidate.name === name);
+  if (!lane) throw new Error(`a recorded workflow plan names column "${name}", which contoso's board does not have`);
+  return demoLaneId(PROJECT_CONTOSO, lane.slug);
+}
+
+/** The draft a recorded plan becomes on contoso's board: its columns by the install's ids. */
+export function draftOfRecordedPlan(plan: RecordedWorkflowPlan): Record<string, unknown> {
   return {
-    key, title, description, labels, priority: 0,
-    project_id: null, existing_task_id: null,
-    route_start_swimlane_id: routeStart, route_last_swimlane_id: null, skipped_swimlane_ids: [],
-    canvas_x: null, canvas_y: null,
+    tasks: plan.tasks.map((task) => ({
+      key: task.key,
+      title: task.title,
+      description: task.description,
+      labels: task.labels,
+      priority: task.priority,
+      project_id: null,
+      existing_task_id: null,
+      route_start_swimlane_id: task.routeStart === null ? null : contosoLaneByName(task.routeStart),
+      route_last_swimlane_id: task.routeLast === null ? null : contosoLaneByName(task.routeLast),
+      skipped_swimlane_ids: task.skipped.map(contosoLaneByName),
+      canvas_x: null,
+      canvas_y: null,
+      ...task.runSettings,
+    })),
+    links: plan.links.map((link) => ({ blocker: link.blocker, blocked: link.blocked })),
   };
 }
+
+const INVOICE_PDF_PLAN: RecordedWorkflowPlan = invoicePdfPlan;
+/** The planned task the workflow-draft scene selects: the client half, which waits for the server half. */
+export const PLANNED_BILLING_PAGE = 'billing-page';
+const PLANNED_PDF_ROUTE = 'pdf-route';
 const WORKFLOW_INVOICE_DRAFT_SEEDS = {
   __mockWorkflows: [{
     projectId: PROJECT_CONTOSO,
     workflow: {
       id: WORKFLOW_INVOICE_PDF,
-      title: 'Invoice PDF export',
-      brief: 'Customers ask for a downloadable invoice from the billing page.',
+      title: INVOICE_PDF_PLAN.title,
+      brief: INVOICE_PDF_PLAN.brief,
       state: 'draft',
       color_slot: FIRST_WORKFLOW_COLOR_SLOT,
-      agent_name: 'claude',
-      draft: {
-        tasks: [
-          plannedTask('task-1', 'Render an invoice as a PDF', 'A server module that turns one invoice from the store into a PDF: its number, line items, and total.', ['feature']),
-          plannedTask(PLANNED_PDF_ROUTE, 'Add the invoice PDF route', 'GET /api/invoices/:id/pdf in server/routes.ts, behind the auth middleware, sent as a download.', ['feature']),
-          plannedTask('task-3', 'Download button on the billing page', 'A Download PDF button on each invoice row that calls the new route.', ['feature']),
-          plannedTask('task-4', 'Tests for the PDF route', 'Route tests for a known invoice, an unknown id, and a request with no session.', ['tests'], demoLaneId(PROJECT_CONTOSO, 'executing')),
-        ],
-        links: [
-          { blocker: 'task-1', blocked: PLANNED_PDF_ROUTE },
-          { blocker: PLANNED_PDF_ROUTE, blocked: 'task-3' },
-          { blocker: PLANNED_PDF_ROUTE, blocked: 'task-4' },
-        ],
-      },
+      draft: draftOfRecordedPlan(INVOICE_PDF_PLAN),
     },
   }],
 };
+/**
+ * The Workflow agent setting the recording ran under, so the pane opens the agent rather than
+ * asking for one: Claude, on the model the sample install's Claude columns plan with.
+ */
+const WORKFLOW_AGENT_CHOICE = { workflows: { agent: 'claude', model: DEMO_COLUMN_MODELS.opus, effort: null } };
 
 /**
  * The member patches. Refactor API error handling starts at Executing, so its route skips Planning.
@@ -674,10 +711,10 @@ const HARDEN_API_STEP_TIMELINE: SceneTimelineEvent[] = [
 ];
 
 /**
- * How both Workflows view scenes open the canvas: the view, the agent pane collapsed, Board, then
- * the view again. The canvas fits its cards when a workflow opens and never on a resize, so only
- * the second open lays them out at the width the collapse gave back. The collapse is store state
- * and survives the round trip.
+ * How the workflows scene opens the canvas: the view, the agent pane collapsed, Board, then the
+ * view again. The canvas fits its cards when a workflow opens and never on a resize, so only the
+ * second open lays them out at the width the collapse gave back. The collapse is store state and
+ * survives the round trip. Its workflow's agent has no recording, so the pane would be empty.
  */
 const WORKFLOW_VIEW_ROUND_TRIP: DemoBootStep[] = [
   { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-agent-pane-collapse"]' },
@@ -1935,27 +1972,26 @@ export const SCENES: Record<string, SceneDefinition> = {
   'workflow-draft': {
     name: 'workflow-draft',
     reach: 'boot',
-    description: 'The Workflows view on a workflow planned but not started, for the part of the Workflows docs that shows how one is made: planned cards, the links between them, the selected task\'s route and blockers in the inspector, and Start in the header. The same round trip as the workflows scene opens the canvas at its full width with the agent pane collapsed, and the last click selects the middle task, so every link is lit and the inspector shows both what it waits for and what waits for it.',
-    alt: 'The Workflows view on Invoice PDF export, planned but not started, with Start in its header: four planned cards and their links, and Add the invoice PDF route selected, the inspector showing the columns it will visit, what it waits for and what waits for it.',
+    description: 'The Workflows view on a workflow planned but not started, for the part of the Workflows docs that shows how one is made: the workflow agent in its pane beside the plan it saved, the planned cards and the link between them, the selected task\'s route and what it waits for in the inspector, and Start in the header. The pane is the recorded agent at the end of its planning: it saved one task, the user asked for the server and the page apart, and it saved the two linked tasks the canvas draws. The last click selects the billing page task, so its link is lit and the inspector names the route task it waits for.',
+    alt: 'The Workflows view on Invoice PDF export, planned but not started: the workflow agent\'s reply after saving two linked tasks, the server route and billing page cards, and the billing page selected, with its route and what it waits for.',
+    config: WORKFLOW_AGENT_CHOICE,
     seeds: WORKFLOW_INVOICE_DRAFT_SEEDS,
-    ready: '[data-testid="workflow-inspector-title"]',
+    ready: `${draftCard(PLANNED_BILLING_PAGE)}[data-selected="true"]`,
     focus: '[data-testid="workflows-view"]',
+    // The view, with the agent pane open on its recording, and the billing page selected over the
+    // first task in run order, which the view selects when it opens.
     steps: [
-      ...WORKFLOW_VIEW_ROUND_TRIP,
-      {
-        click: `[data-testid="workflow-canvas-card"][data-workflow-task-key="${PLANNED_PDF_ROUTE}"]`,
-        waitFor: `[data-testid="workflow-canvas-card"][data-workflow-task-key="${PLANNED_PDF_ROUTE}"][data-selected="true"]`,
-      },
+      { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-agent-pane"] .xterm' },
+      { click: draftCard(PLANNED_BILLING_PAGE), waitFor: `${draftCard(PLANNED_BILLING_PAGE)}[data-selected="true"]` },
     ],
-    // A link drawn from the billing page task's handle onto the tests task, two that had no path
-    // between them (a link the plan already implies is refused), then taken out from the tests
-    // task's inspector, and the middle task selected again. Each is an edit to the plan, and the
-    // cycle leaves the plan as it found it.
+    // The link taken out from the billing page's inspector, drawn again from the route task's
+    // handle, then the route task selected, which moves the drawn link out of its accent, and the
+    // billing page again. Each is an edit to the plan, and the cycle leaves it as it found it.
     choreography: [
-      { drag: { from: draftHandleOut('task-3'), to: draftCard('task-4') }, waitFor: 'path.react-flow__edge-path[data-link-state="fresh"]', ms: 1900 },
-      { click: draftCard('task-4'), waitFor: `${draftCard('task-4')}[data-selected="true"]`, ms: 1400 },
-      { click: '[data-testid="workflow-link-row"][data-task-key="task-3"] [data-testid="workflow-unlink"]', waitFor: 'body:not(:has([data-testid="workflow-link-row"][data-task-key="task-3"]))', ms: 1200 },
-      { click: draftCard(PLANNED_PDF_ROUTE), waitFor: `${draftCard(PLANNED_PDF_ROUTE)}[data-selected="true"]`, ms: 900 },
+      { click: `[data-testid="workflow-link-row"][data-task-key="${PLANNED_PDF_ROUTE}"] [data-testid="workflow-unlink"]`, waitFor: `body:not(:has([data-testid="workflow-link-row"][data-task-key="${PLANNED_PDF_ROUTE}"]))`, ms: 1600 },
+      { drag: { from: draftHandleOut(PLANNED_PDF_ROUTE), to: draftCard(PLANNED_BILLING_PAGE) }, waitFor: 'path.react-flow__edge-path[data-link-state="fresh"]', ms: 1900 },
+      { click: draftCard(PLANNED_PDF_ROUTE), waitFor: `${draftCard(PLANNED_PDF_ROUTE)}[data-selected="true"]`, ms: 1600 },
+      { click: draftCard(PLANNED_BILLING_PAGE), waitFor: `${draftCard(PLANNED_BILLING_PAGE)}[data-selected="true"]`, ms: 900 },
     ],
   },
 

@@ -18,7 +18,8 @@ import { test, expect, chromium, type Page, type Locator } from '@playwright/tes
 import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
-import { PLANNED_PDF_ROUTE, SCENES } from '../captures/scenes';
+import { PLANNED_BILLING_PAGE, SCENES } from '../captures/scenes';
+import INVOICE_PDF_PLAN from '../captures/fixtures/demo/workflow-plans/wf-cw-invoice-pdf.json';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
@@ -292,24 +293,30 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(view.locator('[data-testid="workflow-agent-pane"]')).toHaveAttribute('data-collapsed', 'true');
   },
   'workflow-draft': async (page) => {
-    // A plan before Start: four planned cards (no board task behind any), the middle one selected,
-    // and every link lit around it, one it waits for and two that wait for it.
+    // A plan before Start: the tasks the recorded workflow agent saved (no board task behind any),
+    // the billing page selected, and its one link lit as what it waits for.
     const view = page.locator('[data-testid="workflows-view"]');
     const cards = view.locator('[data-testid="workflow-canvas-card"]');
-    await expect(cards).toHaveCount(4);
-    await expect(view.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveAttribute('data-workflow-task-key', PLANNED_PDF_ROUTE);
-    await expect(view.locator('[data-testid="workflow-inspector-title"]')).toContainText('Add the invoice PDF route');
+    await expect(cards).toHaveCount(INVOICE_PDF_PLAN.tasks.length);
+    await expect(view.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveAttribute('data-workflow-task-key', PLANNED_BILLING_PAGE);
+    await expect(view.locator('[data-testid="workflow-inspector-title"]')).toContainText('Billing page invoice downloads');
     await expect(view.locator('[data-testid="workflow-start"]')).toBeVisible();
     await expect(view.locator('path.react-flow__edge-path[data-link-relation="blocker"]')).toHaveCount(1);
-    await expect(view.locator('path.react-flow__edge-path[data-link-relation="dependent"]')).toHaveCount(2);
-    // Planned tracks run over contoso's own columns too; the tests task starts at Executing.
-    expect(await trackStopCounts(cards, 'data-workflow-task-key')).toEqual({
-      'task-1': CONTOSO_FULL_TRACK_STOPS,
-      [PLANNED_PDF_ROUTE]: CONTOSO_FULL_TRACK_STOPS,
-      'task-3': CONTOSO_FULL_TRACK_STOPS,
-      'task-4': CONTOSO_FULL_TRACK_STOPS - 1,
+    // Planned tracks run over contoso's own columns too, every column of it on this plan.
+    expect(await trackStopCounts(cards, 'data-workflow-task-key')).toEqual(
+      Object.fromEntries(INVOICE_PDF_PLAN.tasks.map((task) => [task.key, CONTOSO_FULL_TRACK_STOPS])),
+    );
+    // The agent pane is open on the recording's end: the agent idle after the save the canvas
+    // draws, which its terminal shows, the first save of one task above it.
+    await expect(view.locator('[data-testid="workflow-agent-pane"]')).not.toHaveAttribute('data-collapsed', 'true');
+    const agentSessionId = await page.evaluate(async () => {
+      const sessions = await (window as unknown as DemoElectronWindow).electronAPI.sessions.list();
+      return sessions.find((session) => session.workflowId)?.id ?? null;
     });
-    await expect(view.locator('[data-testid="workflow-agent-pane"]')).toHaveAttribute('data-collapsed', 'true');
+    expect(agentSessionId, 'the pane opened the workflow agent').not.toBeNull();
+    const painted = stripAnsi(await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), agentSessionId as string));
+    expect(painted).toContain('kangentic_save_workflow (MCP)');
+    expect(painted).toContain(`Saved: ${INVOICE_PDF_PLAN.tasks.length} tasks, ${INVOICE_PDF_PLAN.links.length} link`);
   },
   'board-workflow': async (page) => {
     // The four members still on the board carry the strip; the two done ones are archived.
@@ -1048,7 +1055,7 @@ test('releasing push-to-talk over the focused Settings search box lands no text 
 // when a terminal mounts, and a drag into an auto-spawn column or a new Command Terminal starts
 // the boot recorded for it, the way the desktop starts the agent.
 
-interface DemoSessionRow { id: string; taskId: string | null; projectId: string; status: string; transient?: boolean }
+interface DemoSessionRow { id: string; taskId: string | null; projectId: string; status: string; transient?: boolean; workflowId?: string | null }
 interface DemoTaskRow { id: string; title: string; session_id: string | null }
 interface DemoRecordingsWindow {
   __demoRecordings: { base: string; sessions: Record<string, { file: string; cols: number; rows: number }> };
@@ -2154,11 +2161,32 @@ test('without loop=1 the timeline still moves the card once, and nothing puts it
   test.setTimeout(60_000);
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   await gotoScene(page, { view: 'task-mcp', embed: '1' });
+  // Every push main would send for an agent's move, counted from here on.
+  await page.evaluate(() => {
+    const target = window as unknown as { __mockFireTaskUpdatedByAgent?: (...args: unknown[]) => void; __agentMovePushes: number };
+    const original = target.__mockFireTaskUpdatedByAgent;
+    target.__agentMovePushes = 0;
+    target.__mockFireTaskUpdatedByAgent = (...args: unknown[]) => {
+      target.__agentMovePushes += 1;
+      original?.(...args);
+    };
+  });
+  const agentMovePushes = (): Promise<number> => page.evaluate(() => (window as unknown as { __agentMovePushes: number }).__agentMovePushes);
   const laneOfCard = (): Promise<string | null> => page.evaluate((taskId) => {
     const card = document.querySelector(`[data-swimlane-name] [data-task-id="${taskId}"]`);
     return card?.closest('[data-swimlane-name]')?.getAttribute('data-swimlane-name') ?? null;
   }, TASK_VALIDATE);
   await expect.poll(laneOfCard, { timeout: 30_000 }).toBe('Testing');
+  await expect.poll(agentMovePushes).toBe(1);
+  // A terminal that mounts after the session's end asks for its scrollback, which schedules the
+  // session's clock again, and the end lands at once. The move is main's, made once, so two more
+  // mounts move nothing.
+  for (let mount = 0; mount < 2; mount += 1) {
+    await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), SESSION_VALIDATE);
+  }
+  await page.waitForTimeout(1_500);
+  expect(await agentMovePushes()).toBe(1);
+  expect(await laneOfCard()).toBe('Testing');
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
@@ -2234,6 +2262,15 @@ test('workflows: the middleware step finishes its route, the engine starts Add u
     const sessions = await (window as unknown as DemoElectronWindow).electronAPI.sessions.list();
     return sessions.some((session) => session.taskId === taskId && session.status === 'running');
   }, TASK_AUTH), { message: 'the start runs auth\'s agent, from its recorded plan-mode boot' }).toBe(true);
+  // A terminal that mounts after the end asks for its scrollback, which schedules the session's
+  // clock again and lands its end at once. Main moved the cards once: a second run would move an
+  // archived card that is no longer on the board, and stack a second undo for the restart.
+  for (let mount = 0; mount < 2; mount += 1) {
+    await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), SESSION_MIDDLEWARE);
+  }
+  await page.clock.fastForward(500);
+  expect(getUnexpectedErrors(), 'a mount after the end runs no move again').toEqual([]);
+  await expect(currentStep(TASK_AUTH)).toHaveAttribute('aria-label', 'Planning: now');
 
   // The restart pause, then the session starts its stretch over and the workflow is back where it opened.
   await page.clock.fastForward(7_000);
@@ -2305,6 +2342,40 @@ test('a visitor\'s own click stops the choreography and takes the pointer away',
   // Well past a cycle at this pacing: nothing plays again.
   await page.waitForTimeout(4_000);
   await expect(root).toHaveAttribute('data-demo-cycles', cycles ?? '0');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a visitor\'s press mid-travel ends the step in flight: the choreography presses nothing after it', async ({ page }) => {
+  // At a quarter of the pacing a travel lasts over two seconds, so a press as the cycle starts
+  // lands while the pointer is still on its way to its first target. That step used to go on to
+  // its click once the travel gave up, onto whatever the pointer had reached.
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript(() => {
+    (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = 0.25;
+    const seen: Array<{ type: string; trusted: boolean }> = [];
+    (window as unknown as { __pointerLog: typeof seen }).__pointerLog = seen;
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'click']) {
+      window.addEventListener(type, (event) => seen.push({ type, trusted: event.isTrusted }), { capture: true });
+    }
+  });
+  await gotoScene(page, { view: 'column-automation-edit', embed: '1', loop: '1' });
+  const root = page.locator('html');
+  await expect(root).toHaveAttribute('data-demo-choreography', 'playing', { timeout: 30_000 });
+  // The dialog's own title: a real press there changes nothing in the form.
+  const title = await page.locator('[data-testid="edit-automation-dialog"] h3').first().boundingBox();
+  expect(title).not.toBeNull();
+  await page.mouse.click((title?.x ?? 0) + 8, (title?.y ?? 0) + 4);
+  await expect(root).toHaveAttribute('data-demo-choreography', 'stopped');
+  // Long enough for the press and the 360 ms hold this pacing gives it to have gone out.
+  await page.waitForTimeout(1_500);
+  const log = await page.evaluate(() => (window as unknown as { __pointerLog: Array<{ type: string; trusted: boolean }> }).__pointerLog);
+  const visitorPress = log.findIndex((entry) => entry.trusted && entry.type === 'pointerdown');
+  expect(visitorPress, 'the visitor\'s press was seen').toBeGreaterThan(-1);
+  // Letting go of a press the choreography was holding is a release (pointerup, click), which a
+  // takeover sends on purpose; a new press is the step going on without it.
+  const syntheticPresses = log.slice(visitorPress).filter((entry) => !entry.trusted && (entry.type === 'pointerdown' || entry.type === 'mousedown'));
+  expect(syntheticPresses, 'no synthetic press after the visitor took over').toEqual([]);
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

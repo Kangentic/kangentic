@@ -508,7 +508,8 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   }
 
   function press(button: 0 | 2): void {
-    if (!point) return;
+    // A visitor who took over mid-travel owns the page now: a step still in flight presses nothing.
+    if (!point || stopped) return;
     const target = document.elementFromPoint(point.x, point.y) ?? document.documentElement;
     buttons = button === 0 ? 1 : 2;
     syntheticPressed = true;
@@ -569,6 +570,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     if (document.activeElement !== field) {
       await travel(await locate(selector), TRAVEL_MS);
       await pressAndRelease(0);
+      if (stopped) return;
       if (document.activeElement !== field) field.focus({ preventScroll: true });
     }
     const value = field.value;
@@ -593,6 +595,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   async function chooseIn(selector: string, value: string): Promise<void> {
     await travel(await locate(selector), TRAVEL_MS);
     await pressAndRelease(0);
+    if (stopped) return;
     const field = await waitForElement(selector);
     if (!(field instanceof HTMLSelectElement)) throw new Error(`the choreography chooses only in a select, and ${selector} is not one`);
     if (!Array.from(field.options).some((option) => option.value === value)) {
@@ -665,6 +668,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     } else if ('hotkeyUp' in step) {
       demoBoot().releaseCombo(step.hotkeyUp);
     }
+    if (stopped) return;
     if (step.waitFor) await waitForElement(step.waitFor);
     await pace(step.ms ?? DEFAULT_PACING_MS[kindOf(step)]);
   }
@@ -785,6 +789,8 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   }
 
   async function loop(): Promise<void> {
+    // A visitor who took over before ready (during the pose) ended it for the frame's life.
+    if (stopped) return;
     const afterPose = poseIndex < 0 ? steps : steps.slice(poseIndex + 1);
     // A choreography that is only a pose holds it: there is nothing to play back to it with. A
     // visitor who asked their system for less motion gets the rest, held, which is the pause
@@ -804,6 +810,8 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
       const target = cycle.map(targetOf).find((candidate): candidate is ChoreographyTarget => candidate !== null);
       if (target !== undefined) {
         const at = await resolveTarget(target);
+        // stop() takes the cursor away; one that came while the target resolved ends the loop here.
+        if (stopped || !cursor) return;
         point = { x: at.x + ENTRY_OFFSET.x, y: at.y + ENTRY_OFFSET.y };
       }
     }

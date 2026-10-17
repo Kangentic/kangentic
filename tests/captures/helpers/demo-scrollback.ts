@@ -108,10 +108,11 @@ export interface DemoTiledFrames {
 /**
  * Every recording on disk, by what the frame replays it for: a session the boards show, the
  * agent starting on a task in a permission mode (a drag into an auto-spawn column), or the
- * project's default agent starting with no prompt (a new Command Terminal), or a paused session
- * resumed on its own conversation (a Resume). The spawn, terminal, and resume recordings are
- * named by the driver (spawn-<taskId>-<mode>.json, terminal-<projectId>.json,
- * resume-<sessionId>.json), so the listing is the index.
+ * project's default agent starting with no prompt (a new Command Terminal), a paused session
+ * resumed on its own conversation (a Resume), or a workflow's own agent planning it. The spawn,
+ * terminal, resume and workflow recordings are named by the driver (spawn-<taskId>-<mode>.json,
+ * terminal-<projectId>.json, resume-<sessionId>.json, workflow-<workflowId>.json), so the listing
+ * is the index.
  */
 export interface DemoRecordingsIndex {
   sessions: Record<string, DemoRecordingEntry>;
@@ -119,6 +120,8 @@ export interface DemoRecordingsIndex {
   terminals: Record<string, DemoRecordingEntry>;
   /** Keyed by the dataset session the resume continues. */
   resumes: Record<string, DemoRecordingEntry>;
+  /** A workflow's own agent planning it, keyed by the scene's workflow id (workflow-<id>.json). */
+  workflowAgents: Record<string, DemoRecordingEntry>;
   /** The surface sizes the recordings were made at, so the frame can tell which boot fits a window. */
   geometry: Record<string, { cols: number; rows: number }>;
 }
@@ -155,7 +158,7 @@ export function buildCellWidthTable(): DemoCellWidthTable {
 
 export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): DemoRecordingsIndex {
   const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest;
-  const index: DemoRecordingsIndex = { sessions: {}, spawns: {}, terminals: {}, resumes: {}, geometry: manifest.geometry ?? {} };
+  const index: DemoRecordingsIndex = { sessions: {}, spawns: {}, terminals: {}, resumes: {}, workflowAgents: {}, geometry: manifest.geometry ?? {} };
   // Built in one place so a new DemoRecordingEntry field cannot reach the spawn and terminal
   // entries below while the session entries keep the old shape. The sessions loop takes the
   // record loadRecordings already parsed; only spawns and terminals, which the manifest does not
@@ -181,6 +184,7 @@ export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): Dem
     const spawn = /^spawn-(.+)-(plan|acceptEdits|default|dontAsk|bypassPermissions|auto)\.json$/.exec(file);
     const terminal = /^terminal-(.+)\.json$/.exec(file);
     const resume = /^resume-(.+)\.json$/.exec(file);
+    const workflowAgent = /^workflow-(.+)\.json$/.exec(file);
     if (spawn) {
       const entry = read(file);
       if (entry) index.spawns[`${spawn[1]}:${spawn[2]}`] = entry;
@@ -190,6 +194,9 @@ export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): Dem
     } else if (resume) {
       const entry = read(file);
       if (entry) index.resumes[resume[1]] = entry;
+    } else if (workflowAgent) {
+      const entry = read(file);
+      if (entry) index.workflowAgents[workflowAgent[1]] = entry;
     }
   }
   return index;

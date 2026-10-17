@@ -26,6 +26,9 @@
  *          --live-tail <ms>         also keep the frame this long before the end: the moment the live
  *                                   frame opens a working session at, which a still paints for it
  *          --prompt ""              a Command Terminal: the agent started with no prompt
+ *          --follow-up <text>       once the first turn goes quiet, type this a key at a time and
+ *                                   send it, and record until the second turn goes quiet: a user
+ *                                   answering the choices the agent's reply offered
  *          --no-message-trail       write an empty trail: the session this records is transient,
  *                                   and MessageTrailTracker skips those
  *          --transcript-out <path>  also write the agent's whole transcript there, sanitized, for
@@ -37,6 +40,9 @@
  *          --settings <path>        (claude only, both): the mcp.json naming a preview's server and
  *                                   the settings file whose one rule allows its tools
  *                                   (scripts/lib/demo-mcp-capture.mjs writes both)
+ *          --read-only              (claude only) the read-only launch a workflow's own agent gets:
+ *                                   the read and search tools, Kangentic's server as the only one,
+ *                                   and no Claude in Chrome
  *          --scratch-root <dir>     the scratch clone when --cwd is a worktree inside it, so the
  *                                   sanitizer rewrites the clone to the project's home and the
  *                                   worktree keeps its own path under it
@@ -61,7 +67,7 @@ const { buildSanitizer, forwardSlash, sanitizeDeep } = require('./lib/demo-sanit
 const { toSpawnable, childAgentEnv } = require('./lib/spawnable');
 
 function parseArgs(argv) {
-  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true, transcriptOut: null, resume: null, mcpConfig: null, settings: null, scratchRoot: null };
+  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', followUp: null, messageTrail: true, transcriptOut: null, resume: null, mcpConfig: null, settings: null, readOnly: false, scratchRoot: null };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const next = () => argv[++index];
@@ -70,6 +76,7 @@ function parseArgs(argv) {
       case '--cwd': options.cwd = path.resolve(next()); break;
       case '--project': options.project = next(); break;
       case '--prompt': options.prompt = next(); break;
+      case '--follow-up': options.followUp = next(); break;
       case '--out': options.out = path.resolve(next()); break;
       case '--cols': options.cols = Number(next()); break;
       case '--rows': options.rows = Number(next()); break;
@@ -89,6 +96,7 @@ function parseArgs(argv) {
       case '--resume': options.resume = next(); break;
       case '--mcp-config': options.mcpConfig = path.resolve(next()); break;
       case '--settings': options.settings = path.resolve(next()); break;
+      case '--read-only': options.readOnly = true; break;
       case '--scratch-root': options.scratchRoot = path.resolve(next()); break;
       default: throw new Error(`Unknown argument ${argument}`);
     }
@@ -98,6 +106,8 @@ function parseArgs(argv) {
     if (!options[required]) throw new Error(`--${required} is required`);
   }
   if (options.resume && options.prompt) throw new Error('--resume takes no --prompt: a resumed conversation waits for the user');
+  if (options.followUp !== null && !options.followUp.trim()) throw new Error('--follow-up needs the text the user types');
+  if (options.followUp && (options.stopAfter || options.stopWhen)) throw new Error('--follow-up waits for the turn to end, which --stop-after and --stop-when cut short');
   if (options.scratchRoot) {
     // Outside the root is a path that climbs out of it, or, for a --cwd on another Windows drive,
     // an absolute one. A folder whose own name starts with ".." is still inside.
@@ -110,6 +120,23 @@ function parseArgs(argv) {
 }
 
 /**
+ * Whether the agent went quiet on a permission question (Claude's "Do you want to ...?" over a
+ * numbered "1. Yes" choice) rather than at the end of its turn. Read off the last of the stream
+ * with each cursor move taken as a space, which is how the CLI lays the question out.
+ */
+function endsOnPermissionQuestion(raw) {
+  const tail = raw.slice(-4096).replace(/\x1b\[\d*C/g, ' ').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+  return /Do you want to [^?]*\?[\s\S]{0,400}1\.\s*Yes/.test(tail);
+}
+
+/**
+ * The built-in tools a read-only Claude launch keeps (READ_ONLY_TOOLS in
+ * src/main/agent/adapters/claude/command-builder.ts; tests/unit/capture-agent-scrollback-args.test.ts
+ * holds the two equal).
+ */
+const CLAUDE_READ_ONLY_TOOLS = 'Read,Grep,Glob,ToolSearch';
+
+/**
  * The interactive launch shape of each adapter, minus the session extras. An empty prompt is the
  * Command Terminal shape: the agent started interactively with nothing to do yet. Kangentic's MCP
  * server rides along only when asked (`mcp`), in Claude's shape, since it runs only inside a
@@ -120,12 +147,16 @@ function buildCommand(agent, cwd, prompt, mode, model, resume, mcp) {
   // Kangentic resumes a Claude session with --resume and no prompt (claude/command-builder.ts).
   if (resume && agent !== 'claude') throw new Error(`No resume launch shape for agent "${agent}"`);
   if ((mcp.mcpConfig || mcp.settings) && agent !== 'claude') throw new Error(`No MCP launch shape for agent "${agent}": each adapter delivers the server its own way`);
-  // The desktop's order (claude/command-builder.ts): the merged settings, then the MCP config.
+  if (mcp.readOnly && agent !== 'claude') throw new Error(`No read-only launch shape for agent "${agent}"`);
+  // The desktop's order (claude/command-builder.ts): the permission mode, which the default mode
+  // passes no flag for, the merged settings, the MCP config, then the read-only launch's tools.
+  const modeArgs = mode === 'default' ? [] : ['--permission-mode', mode || 'acceptEdits'];
   const mcpArgs = [...(mcp.settings ? ['--settings', mcp.settings] : []), ...(mcp.mcpConfig ? ['--mcp-config', mcp.mcpConfig] : [])];
+  const readOnlyArgs = mcp.readOnly ? ['--tools', CLAUDE_READ_ONLY_TOOLS, '--strict-mcp-config', '--no-chrome'] : [];
   switch (agent) {
     case 'claude':
-      if (resume) return { exe: 'claude', args: ['--permission-mode', mode || 'acceptEdits', ...mcpArgs, '--resume', resume], exit: ['\x03', '/exit\r'] };
-      return { exe: 'claude', args: withPrompt(['--permission-mode', mode || 'acceptEdits', ...mcpArgs], ['--', prompt]), exit: ['\x03', '/exit\r'] };
+      if (resume) return { exe: 'claude', args: [...modeArgs, ...mcpArgs, ...readOnlyArgs, '--resume', resume], exit: ['\x03', '/exit\r'] };
+      return { exe: 'claude', args: withPrompt([...modeArgs, ...mcpArgs, ...readOnlyArgs], ['--', prompt]), exit: ['\x03', '/exit\r'] };
     case 'codex':
       // The adapter's acceptEdits and bypass mappings (src/main/agent/adapters/codex/command-builder.ts).
       // Codex's Windows sandbox needs a helper this machine does not have, and a session in which every
@@ -331,7 +362,7 @@ async function main() {
     console.error('Failed to load node-pty. Try: npm rebuild node-pty');
     throw error;
   }
-  const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model, options.resume, { mcpConfig: options.mcpConfig, settings: options.settings });
+  const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model, options.resume, { mcpConfig: options.mcpConfig, settings: options.settings, readOnly: options.readOnly });
   if (options.trust) await seedTrust(options.agent, options.cwd);
   // A worktree run rewrites the clone it sits in, so the worktree keeps its own path under the
   // project's home (C:\Users\dev\work\contoso-web\.kangentic\worktrees\<folder>).
@@ -383,6 +414,7 @@ async function main() {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let reason = 'timeout';
+  let followUpSent = false;
   for (;;) {
     await sleep(500);
     const elapsed = Date.now() - startedAt;
@@ -397,7 +429,30 @@ async function main() {
       const tail = raw.slice(-8192).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
       if (options.stopWhen.test(tail)) { reason = 'stop-when'; break; }
     }
-    if (elapsed > options.min * 1000 && Date.now() - lastOutputAt > options.idle * 1000) { reason = 'idle'; break; }
+    if (elapsed > options.min * 1000 && Date.now() - lastOutputAt > options.idle * 1000) {
+      if (options.followUp && !followUpSent && endsOnPermissionQuestion(raw)) {
+        // Typed into the agent's own question, the follow-up would answer it rather than the
+        // reply, and the recording would still read as captured.
+        reason = 'question';
+        break;
+      }
+      if (options.followUp && !followUpSent) {
+        // Typed as a user types it, so the input box takes it as keys rather than a paste, and
+        // sent with Enter once the last key has landed.
+        followUpSent = true;
+        console.error(`[capture] the first turn went quiet; typing the follow-up: ${options.followUp}`);
+        for (const character of options.followUp) {
+          child.write(character);
+          await sleep(30);
+        }
+        await sleep(500);
+        child.write('\r');
+        lastOutputAt = Date.now();
+        continue;
+      }
+      reason = 'idle';
+      break;
+    }
     if (elapsed % 10000 < 500) console.error(`[capture] ${(elapsed / 1000).toFixed(0)}s, ${raw.length} bytes`);
   }
   console.error(`[capture] stopping after ${((Date.now() - startedAt) / 1000).toFixed(1)}s (${reason}), ${raw.length} bytes`);
@@ -418,6 +473,10 @@ async function main() {
   // Each stage announces itself: a capture that stalls after the recording ended (seen on long
   // Codex sessions) is then a named stage in the matrix log, not a silent watchdog kill.
   console.error(`[capture] exit sequence done (agent ${exited ? 'exited' : 'still running'})`);
+  // A recording the manifest gave a second turn has one, or it is not the session it names.
+  if (options.followUp && !followUpSent) {
+    throw new Error(`[capture] the follow-up was never typed (the first turn ended on ${reason === 'question' ? 'a permission question' : `a ${reason}`}); nothing was written`);
+  }
 
   // Two views of the same bytes ship. The serialized terminal state is what a still frame and
   // the marketing captures paint; the timed stream is what the live frame replays as it
@@ -589,4 +648,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, buildCommand };
+module.exports = { parseArgs, buildCommand, endsOnPermissionQuestion, CLAUDE_READ_ONLY_TOOLS };

@@ -231,6 +231,31 @@ async function handleRequest(
     });
   }
 
+  // What a workflow's own agent would start with, for the demo capture rig
+  // (scripts/lib/demo-mcp-capture.mjs). No CDP needed. Behind Allow Unsafe
+  // Operations, like /eval: the answer carries the MCP server's token. Loaded
+  // on use for the reason `commandHandlers` is: the prompt builder reaches the
+  // project database.
+  if (route === 'POST /workflow-agent-launch') {
+    if (!options.getEvalEnabled()) {
+      return respondError(
+        response,
+        403,
+        'eval-disabled',
+        'Settings → Developer → Allow Unsafe Operations is off (gates the workflow agent launch; it carries the MCP token).',
+      );
+    }
+    const body = await readJsonBody(request);
+    if (body === null) {
+      return respondError(response, 400, 'invalid-json', 'Request body must be valid JSON.');
+    }
+    const { respondWorkflowAgentLaunch } = await import('./workflow-agent-launch-route');
+    return respondWorkflowAgentLaunch(body, options.getIpcContext(), {
+      json: (statusCode, payload) => respondJson(response, statusCode, payload),
+      error: (statusCode, kind, detail) => respondError(response, statusCode, kind, detail),
+    });
+  }
+
   // Graceful quit for tooling. scripts/dev.js posts here when a stop file asks
   // it to shut a preview down, so Electron runs its real quit path (before-quit,
   // the synchronous cleanup, the PTY exit-callback drain) instead of being

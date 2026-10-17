@@ -1,0 +1,54 @@
+{
+  "title": "Invoice PDF export",
+  "brief": "Invoice PDF export\n\nCustomers ask for a downloadable invoice from the billing page",
+  "tasks": [
+    {
+      "key": "pdf-route",
+      "title": "Invoice PDF route (server)",
+      "description": "## What\nAdd `GET /api/invoices/:id/pdf`, which returns one of the signed-in user's invoices as a PDF. This is the server half of invoice PDF export. A follow-up task builds the billing page and its Download button on top of this route.\n\n## Why\nCustomers keep asking for a downloadable invoice from the billing page (brief #69). The server side is split out so it can be reviewed by itself.\n\n## Scope\n- Add the route in `server/routes.ts`. Use the same auth and `checkRateLimit(req.user.sub, 'read')` checks as `GET /invoices`. Task #4 (Extract auth middleware) is in progress. If its middleware is on main when you start, use it. Otherwise copy the inline token/verifyJwt pattern the other routes use.\n- Look the invoice up only within `listInvoices(req.user.sub)`. An id that belongs to another user must get the same 404 as an unknown id, so fall through with `next()` as `/subscriptions/:id/cancel` does. This ownership check is the security property that matters most here.\n- Respond with `Content-Type: application/pdf` and `Content-Disposition: attachment; filename=\"invoice-<id>.pdf\"`.\n- PDF content: invoice id, issue date, amount formatted from `amountCents`, paid/unpaid status, and the customer's email and plan. Add small helpers in `server/store.ts` to look these up by user id. Line items, addresses, tax and branding are out of scope.\n- Choosing how to generate the PDF is a Planning decision: a small dependency such as `pdfkit`, or a minimal hand-written PDF. Keep it light, and make it work under `node --experimental-strip-types`.\n- Add tests for the route under `tests/` (vitest). supertest isn't installed, so choose between adding it and calling the handler directly. Task #7 owns the broader billing integration tests, so test only this route.\n- No frontend changes. Those belong to the follow-up billing page task.\n\n## Done when\n- No or invalid token → 401.\n- Another user's invoice id or an unknown id → 404.\n- Your own invoice → 200, `application/pdf`, attachment filename `invoice-<id>.pdf`, body starts with `%PDF-`.\n- Over the read rate limit → 429.\n- `npm run typecheck` and `npm test` pass.",
+      "labels": [
+        "feature"
+      ],
+      "priority": 0,
+      "routeStart": null,
+      "routeLast": null,
+      "skipped": [],
+      "runSettings": {
+        "base_branch": null,
+        "use_worktree": null,
+        "run_mode": "column_settings",
+        "agent_override": null,
+        "model_override": null,
+        "effort_override": null,
+        "permission_mode": null
+      }
+    },
+    {
+      "key": "billing-page",
+      "title": "Billing page invoice downloads (client)",
+      "description": "## What\nAdd an invoices section to the billing page with a Download PDF button for each invoice. The buttons call `GET /api/invoices/:id/pdf`, which the server task merged before this one started.\n\n## Why\nCustomers keep asking for a downloadable invoice from the billing page (brief #69). This is the client half, reviewed separately from the server route.\n\n## Scope\n- Add a new `apiDownload(path, token)` (or similar) helper in `src/lib/http-client.ts`. It fetches with an `Authorization: Bearer` header, reads the response as a blob, and triggers the save through an object URL, using the filename from `Content-Disposition` or `invoice-<id>.pdf`. Don't change `apiFetch`, because task #5 (Generate API client types) is rewriting it.\n- There is no billing page yet. `src/App.tsx` only lists subscriptions. Add a minimal invoices section that lists the user's invoices from `GET /api/invoices` (date, amount, paid) with a Download PDF button on each. Task #8 (Onboarding empty states) also touches billing pages. If a billing page from #8 is on main by then, build on it instead of creating a second one.\n- The frontend sends no auth token today. The login flow is task #1 and out of scope here. Have the helper take a token parameter and wire it the way the rest of the app gets one, or leave a clear TODO if no token source exists yet.\n- Show a simple error if a download fails. Don't change the server route.\n\n## Done when\n- The invoices section renders the user's invoices.\n- Download PDF fetches the route with the token and saves `invoice-<id>.pdf`.\n- A failed download shows an error and doesn't crash the page.\n- `apiFetch` is unchanged.\n- `npm run typecheck`, `npm test` and `npm run build` pass.",
+      "labels": [
+        "feature"
+      ],
+      "priority": 0,
+      "routeStart": null,
+      "routeLast": null,
+      "skipped": [],
+      "runSettings": {
+        "base_branch": null,
+        "use_worktree": null,
+        "run_mode": "column_settings",
+        "agent_override": null,
+        "model_override": null,
+        "effort_override": null,
+        "permission_mode": null
+      }
+    }
+  ],
+  "links": [
+    {
+      "blocker": "pdf-route",
+      "blocked": "billing-page"
+    }
+  ]
+}
