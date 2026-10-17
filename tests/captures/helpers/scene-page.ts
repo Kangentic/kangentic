@@ -49,6 +49,7 @@ export function sceneUrl(scene: SceneDefinition, options: OpenSceneOptions): str
     if (scene.tasks) state.tasks = scene.tasks;
     if (scene.sessions) state.sessions = scene.sessions;
     if (scene.seeds) state.seeds = scene.seeds;
+    if (scene.rows) state.rows = scene.rows;
     url.searchParams.set('state', encodeState(state));
   } else {
     url.searchParams.set('view', scene.name);
