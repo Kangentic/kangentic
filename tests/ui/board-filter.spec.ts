@@ -97,7 +97,11 @@ test.describe('Board Filters', () => {
     // Popover should be open from previous test
     // Click "High" priority pill (index 3)
     const highPill = page.locator('[data-testid="board-filter-btn"]').locator('..').locator('text=High');
+    // The pill is a toggle button, so its state is aria-pressed, which a screen reader announces.
+    const highToggle = page.locator('[data-testid="filter-priority"][data-priority="3"]');
+    await expect(highToggle).toHaveAttribute('aria-pressed', 'false');
     await highPill.click();
+    await expect(highToggle).toHaveAttribute('aria-pressed', 'true');
 
     // Only the High priority task should be visible
     await expect(page.locator('[data-testid="swimlane"]').locator('text=Auth bug fix')).toBeVisible();
@@ -107,6 +111,7 @@ test.describe('Board Filters', () => {
 
     // Untoggle High
     await highPill.click();
+    await expect(highToggle).toHaveAttribute('aria-pressed', 'false');
 
     // All tasks should be visible again
     await expect(page.locator('[data-testid="swimlane"]').locator('text=Auth bug fix')).toBeVisible();

@@ -632,7 +632,7 @@ test.describe('ContextBar tool-call breakdown popover', () => {
     await expect(toolCells).toHaveText(['Read', 'Bash']);
     await expect(table.locator('th', { has: page.locator('[data-testid="by-tool-sort-tokens"]') }))
       .toHaveAttribute('aria-sort', 'descending');
-    await expect(callsHeader).toHaveAttribute('aria-sort', 'none');
+    await expect(callsHeader).not.toHaveAttribute('aria-sort');
 
     // The live count moves and the refetch brings tools the kept estimates do not
     // name, so no row carries result tokens. Name order (Glob, Grep) is also what a

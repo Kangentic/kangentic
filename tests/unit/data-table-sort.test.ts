@@ -16,7 +16,7 @@
  * full state-transition table.
  */
 import { describe, it, expect } from 'vitest';
-import { computeNextSorts, sortRows, type SortLevel } from '../../src/renderer/components/DataTable';
+import { computeNextSorts, sortRows, sortStateOf, type SortLevel } from '../../src/renderer/components/DataTable';
 
 interface Row {
   id: string;
@@ -28,6 +28,24 @@ const nameColumn = { key: 'name', sortValue: (row: Row) => row.name };
 const amountColumn = { key: 'amount', align: 'right' as const, sortValue: (row: Row) => row.amount };
 const unsortableColumn = { key: 'id' };
 const columns = [nameColumn, amountColumn, unsortableColumn];
+
+describe('sortStateOf (a header\'s aria-sort)', () => {
+  it('names the primary sort\'s direction and leaves the attribute off otherwise', () => {
+    expect(sortStateOf('asc')).toBe('ascending');
+    expect(sortStateOf('desc')).toBe('descending');
+    expect(sortStateOf(null)).toBeUndefined();
+  });
+
+  it('follows a plain-click cycle back to no attribute, so a header says when the table is unsorted again', () => {
+    let sorts: Array<SortLevel<string>> = [];
+    const states: Array<string | undefined> = [];
+    for (let click = 0; click < 3; click += 1) {
+      sorts = computeNextSorts<Row, string>(sorts, nameColumn, false);
+      states.push(sortStateOf(sorts[0]?.key === 'name' ? sorts[0].direction : null));
+    }
+    expect(states).toEqual(['ascending', 'descending', undefined]);
+  });
+});
 
 describe('computeNextSorts (header click cycle)', () => {
   it('plain click on an unsorted text column starts ascending', () => {

@@ -30,7 +30,7 @@
  * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
@@ -84,6 +84,8 @@ export type ChoreographyGesture =
    *  fractions of the frame, for a drag into empty space no element marks. */
   | { drag: { from: ChoreographyTarget; to: ChoreographyTarget; hold?: boolean } }
   | { drag: { from: ChoreographyTarget; by: { x: number; y: number }; hold?: boolean } }
+  /** Let go of the pointer a held drag kept pressed, where it is: the pose's gesture completing. */
+  | { drop: true }
   /** Edit a field's text to `text` a keystroke at a time: back to what the two share, then on. The
    *  pointer clicks into the field first unless it already has the focus. `''` clears it. */
   | { type: { into: string; text: string } }
@@ -734,12 +736,47 @@ const ANNOUNCEMENT_HISTORY = ANNOUNCEMENTS.map((announcement) => ({ announcement
 // test) is left out rather than described. An entry may carry
 // `config` to show its tab in use: Dictation is switched on, because off it greys out every row
 // below the switch and reads as a feature that is not there.
+/**
+ * Steps every settings tab's choreography is built from, as data: a switch flipped to a state, a
+ * segmented option picked, and the panel's project switcher taken to another project and back,
+ * which is how a project tab shows the same rows for a second project. Each tab's cycle ends on the
+ * values it found, so whatever a step writes, a later one writes back.
+ */
+const settingSwitch = (id: string): string => `[data-testid="setting-row-${id}"]`;
+const switchSetting = (id: string, on: boolean, ms: number): ChoreographyStep => ({ click: settingSwitch(id), waitFor: `${settingSwitch(id)}[aria-checked="${on}"]`, ms });
+const pickSetting = (selector: string, ms: number): ChoreographyStep => ({ click: selector, waitFor: `${selector}[aria-checked="true"]`, ms });
+const settingChoice = (rowId: string, label: string): string => `[data-testid="setting-row-${rowId}"] [role="radio"][aria-label="${label}"]`;
+const WORKFLOW_PROMPT_VARIABLES = '[data-testid="workflow-agent-prompt-variable-trigger"]';
+/** The switcher's options are the projects' folders. */
+const projectPath = (projectId: string): string => DEMO_PROJECTS.find((project) => project.id === projectId)?.path ?? projectId;
+const PROJECT_SWITCHER_ROUND_TRIP: ChoreographyStep[] = [
+  { choose: { in: '[data-testid="settings-project-switcher"]', value: projectPath(PROJECT_PETCLINIC) }, ms: 2600 },
+  { choose: { in: '[data-testid="settings-project-switcher"]', value: projectPath(PROJECT_CONTOSO) }, ms: 900 },
+];
+
 const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?: Record<string, unknown>; note?: string; choreography?: ChoreographyStep[] }> = {
-  general: { ready: '[data-testid="setting-row-project.location"]', alt: 'Settings on the General tab: the project\'s folder on disk, with a control to move it.' },
+  general: {
+    ready: '[data-testid="setting-row-project.location"]',
+    alt: 'Settings on the General tab: the project\'s folder on disk, with a control to move it.',
+    choreography: PROJECT_SWITCHER_ROUND_TRIP,
+  },
   // `ready` stays on the Theme row rather than the switch that now leads the tab: the grid is the
-  // figure's subject, and both rows mount in the same commit.
-  theme: { ready: '[data-testid="setting-row-theme"]', alt: 'Settings on the Theme tab: a Follow system appearance switch, then twelve theme tiles in Dark and Light groups, each painted in its own colors, with the current theme outlined.' },
-  agent: { ready: '[data-testid="setting-row-project.defaultAgent"]', alt: 'Settings on the Agent tab: the project\'s default agent, its model and effort, the permission mode, and the path to the agent\'s CLI.' },
+  // figure's subject, and both rows mount in the same commit. The first tile that is not the frame's
+  // theme is picked, which re-themes the whole frame live, and then the tile the frame opened on
+  // again. A host passes the theme, so the cycle names it by the player's rest mark, never by name.
+  theme: {
+    ready: '[data-testid="setting-row-theme"]',
+    alt: 'Settings on the Theme tab: a Follow system appearance switch, then twelve theme tiles in Dark and Light groups, each painted in its own colors, with the current theme outlined.',
+    choreography: [
+      { click: '[data-testid^="theme-tile-"]:not([data-demo-rest])', waitFor: '[data-testid^="theme-tile-"][data-demo-rest][aria-checked="false"]', ms: 2800 },
+      { click: '[data-testid^="theme-tile-"][data-demo-rest]', waitFor: '[data-testid^="theme-tile-"][data-demo-rest][aria-checked="true"]', ms: 1200 },
+    ],
+  },
+  agent: {
+    ready: '[data-testid="setting-row-project.defaultAgent"]',
+    alt: 'Settings on the Agent tab: the project\'s default agent, its model and effort, the permission mode, and the path to the agent\'s CLI.',
+    choreography: PROJECT_SWITCHER_ROUND_TRIP,
+  },
   // The base branch picked from the branch list and back, then auto-fetch off and on. Each one
   // writes the project's config as the desktop's does, and the cycle writes back what it found.
   git: {
@@ -755,9 +792,32 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
       { click: '[data-testid="setting-row-git.autoFetch"]', waitFor: '[data-testid="setting-row-git.autoFetch"][aria-checked="true"]', ms: 600 },
     ],
   },
-  browser: { ready: '[data-testid="setting-row-browser.enabled"]', alt: 'Settings on the Browser tab: the Browser pane toggle, the default URL a task opens, and a control to clear the browser\'s data.' },
-  shortcuts: { ready: '[data-testid="add-shortcut"]', alt: 'Settings on the Shortcuts tab: the project\'s command shortcuts, none configured here, with Add shortcut and Presets controls.' },
-  board: { ready: '[data-testid="setting-row-columnWidth"]', alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel and the status bar.' },
+  // The Browser pane switched off, which takes its rows away, and on again.
+  browser: {
+    ready: '[data-testid="setting-row-browser.enabled"]',
+    alt: 'Settings on the Browser tab: the Browser pane toggle, the default URL a task opens, and a control to clear the browser\'s data.',
+    choreography: [switchSetting('browser.enabled', false, 2000), switchSetting('browser.enabled', true, 900)],
+  },
+  // The Presets menu opened over its preset shortcuts and closed again without adding one.
+  shortcuts: {
+    ready: '[data-testid="add-shortcut"]',
+    alt: 'Settings on the Shortcuts tab: the project\'s command shortcuts, none configured here, with Add shortcut and Presets controls.',
+    choreography: [
+      { click: '[data-testid="shortcut-presets"]', waitFor: '[data-testid="shortcut-presets-menu"]', ms: 900 },
+      { hover: '[data-testid="shortcut-presets-menu"] button', ms: 1600 },
+      { click: '[data-testid="shortcut-presets"]', waitFor: 'body:not(:has([data-testid="shortcut-presets-menu"]))', ms: 1000 },
+    ],
+  },
+  // Column width through Narrow and Wide, which redraws the board's columns beside the panel, and back.
+  board: {
+    ready: '[data-testid="setting-row-columnWidth"]',
+    alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel and the status bar.',
+    choreography: [
+      pickSetting(settingChoice('columnWidth', 'Narrow'), 1800),
+      pickSetting(settingChoice('columnWidth', 'Wide'), 1800),
+      pickSetting(settingChoice('columnWidth', 'Default'), 900),
+    ],
+  },
   // Card density through Compact and Comfortable and back, which redraws the board's cards beside
   // the panel live, then the context bar's Cost pill off and on.
   task: {
@@ -771,14 +831,66 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
       { click: '[data-testid="setting-row-contextBar.showCost"]', waitFor: '[data-testid="setting-row-contextBar.showCost"][aria-checked="true"]', ms: 600 },
     ],
   },
-  changes: { ready: '[data-testid="setting-row-diffViewMode"]', alt: 'Settings on the Changes tab: the diff layout, the default scope a Changes panel opens on, the whitespace, folding, wrapping, and narrow-pane options, and file sorting.' },
-  terminal: { ready: '[data-testid="setting-row-terminal.shell"]', alt: 'Settings on the Terminal tab: the shell, the font size and family, the cursor style, backspace behavior, and the terminal colors.' },
-  behavior: { ready: '[data-testid="setting-row-agent.maxConcurrentSessions"]', alt: 'Settings on the Behavior tab: the concurrent session cap, what happens when it is reached, idle focus and timeout, auto-resume, and how windows dismiss and restore.' },
+  changes: {
+    ready: '[data-testid="setting-row-diffViewMode"]',
+    alt: 'Settings on the Changes tab: the diff layout, the default scope a Changes panel opens on, the whitespace, folding, wrapping, and narrow-pane options, and file sorting.',
+    choreography: [
+      pickSetting(settingChoice('diffViewMode', 'Inline'), 1400),
+      pickSetting(settingChoice('diffViewMode', 'Side by side'), 900),
+      switchSetting('diffWrapLines', true, 1200),
+      switchSetting('diffWrapLines', false, 700),
+      pickSetting(settingChoice('diffFileSort', 'Status'), 1200),
+      pickSetting(settingChoice('diffFileSort', 'Name'), 900),
+    ],
+  },
+  // Cursor style through Underline and Bar, which every terminal in the panel below takes live, and back.
+  terminal: {
+    ready: '[data-testid="setting-row-terminal.shell"]',
+    alt: 'Settings on the Terminal tab: the shell, the font size and family, the cursor style, backspace behavior, and the terminal colors.',
+    choreography: [
+      pickSetting(settingChoice('terminal.cursorStyle', 'Underline'), 1600),
+      pickSetting(settingChoice('terminal.cursorStyle', 'Bar'), 1600),
+      pickSetting(settingChoice('terminal.cursorStyle', 'Block'), 900),
+    ],
+  },
+  behavior: {
+    ready: '[data-testid="setting-row-agent.maxConcurrentSessions"]',
+    alt: 'Settings on the Behavior tab: the concurrent session cap, what happens when it is reached, idle focus and timeout, auto-resume, and how windows dismiss and restore.',
+    choreography: [
+      pickSetting(settingChoice('agent.queueOverflow', 'Reject'), 1300),
+      pickSetting(settingChoice('agent.queueOverflow', 'Queue'), 900),
+      pickSetting(settingChoice('windowLightDismiss', 'Off'), 1300),
+      pickSetting(settingChoice('windowLightDismiss', 'Focused'), 900),
+    ],
+  },
   // The callout under Graphics acceleration only renders on an install Kangentic downgraded
   // itself, so the alt describes the two switches a normal install shows and not that line.
-  performance: { ready: '[data-testid="setting-row-graphicsAccelerationEnabled"]', alt: 'Settings on the Performance tab: switches for graphics acceleration and for animations.' },
-  hotkeys: { ready: '[data-testid="hotkeys-tab"]', alt: 'Settings on the Hotkeys tab: every keyboard shortcut with its current binding and a Rebind control, with a reset to defaults above the list.' },
-  notifications: { ready: '[data-testid="setting-row-notifications.onAgentIdle"]', alt: 'Settings on the Notifications tab: for each event, whether it raises a desktop notification, a toast, or both, and how toasts are delivered.' },
+  // Animations off and on; never Graphics acceleration, which only takes effect on a restart.
+  performance: {
+    ready: '[data-testid="setting-row-graphicsAccelerationEnabled"]',
+    alt: 'Settings on the Performance tab: switches for graphics acceleration and for animations.',
+    choreography: [switchSetting('animationsEnabled', false, 1800), switchSetting('animationsEnabled', true, 900)],
+  },
+  // Rebind on the first hotkey, which opens its capture box asking for a key, and a click beside
+  // it, which cancels as a click away does. No key is pressed, so no binding changes.
+  hotkeys: {
+    ready: '[data-testid="hotkeys-tab"]',
+    alt: 'Settings on the Hotkeys tab: every keyboard shortcut with its current binding and a Rebind control, with a reset to defaults above the list.',
+    choreography: [
+      { click: '[data-testid="key-capture-input"]', waitFor: '[data-testid="key-capture-box"]', ms: 2800 },
+      { click: { x: 0.72, y: 0.28 }, waitFor: 'body:not(:has([data-testid="key-capture-box"]))', ms: 1000 },
+    ],
+  },
+  notifications: {
+    ready: '[data-testid="setting-row-notifications.onAgentIdle"]',
+    alt: 'Settings on the Notifications tab: for each event, whether it raises a desktop notification, a toast, or both, and how toasts are delivered.',
+    choreography: [
+      pickSetting('[data-testid="notify-channel-onAgentIdle-toast"]', 1300),
+      pickSetting('[data-testid="notify-channel-onAgentIdle-both"]', 900),
+      pickSetting('[data-testid="notify-channel-onPlanComplete-desktop"]', 1300),
+      pickSetting('[data-testid="notify-channel-onPlanComplete-both"]', 900),
+    ],
+  },
   // `ready` is the model list, which mounts only once getInfo has answered, so the frame is never
   // shot before its lines name their models.
   dictation: {
@@ -786,13 +898,35 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     alt: 'Settings on the Dictation tab with voice dictation on: the push-to-talk key, release buffer, and auto-submit, then a Transcription card with English, the Best mode, the live and refinement models each with a check, and their licenses.',
     config: { dictation: DICTATION_ON },
     note: 'Dictation is switched on, with every other setting at its default, so the models are the ones the dataset\'s getInfo answer selects (DEMO_DICTATION_INFO).',
+    // The mode through Balanced and Light and back to Best.
+    choreography: [
+      pickSetting('[data-testid="dictation-preset-balanced"]', 1600),
+      pickSetting('[data-testid="dictation-preset-fast"]', 1600),
+      pickSetting('[data-testid="dictation-preset-accurate"]', 900),
+    ],
   },
-  workflows: { ready: '[data-testid="setting-row-workflows.agent"]', alt: 'Settings on the Workflows tab: the Workflow agent card that plans each workflow, the agent\'s first message, and the Automation agent card that judges conditions and workflow steps and names tasks, with no agent chosen on either card yet.' },
+  // The first message's Template variable menu opened over the variables it can insert, and closed.
+  // No agent is chosen: the alt says so, and a choice could not be taken back to none.
+  workflows: {
+    ready: '[data-testid="setting-row-workflows.agent"]',
+    alt: 'Settings on the Workflows tab: the Workflow agent card that plans each workflow, the agent\'s first message, and the Automation agent card that judges conditions and workflow steps and names tasks, with no agent chosen on either card yet.',
+    choreography: [
+      { click: WORKFLOW_PROMPT_VARIABLES, waitFor: `${WORKFLOW_PROMPT_VARIABLES}[aria-expanded="true"]`, ms: 2200 },
+      { click: WORKFLOW_PROMPT_VARIABLES, waitFor: `${WORKFLOW_PROMPT_VARIABLES}[aria-expanded="false"]`, ms: 1000 },
+    ],
+  },
   // The sample install has the Knowledge Graph on, as its maps were built (DEMO_KNOWLEDGE_GRAPH_CONFIG),
   // so the card shows the rows a switched-on graph has. The Index counts are the derived status's.
   knowledgeGraph: {
     ready: '[data-testid="setting-row-knowledgeGraph.indexingEnabled"]',
     alt: `Settings on the Knowledge Graph tab, switched on: search quality, the downloaded local model, acceleration, and no Ask agent yet, then an Index card counting ${DEMO_KNOWLEDGE_GRAPH_STATUS.sources?.conversations.count} conversations, ${DEMO_KNOWLEDGE_GRAPH_STATUS.sources?.tasks.count} tasks and ${DEMO_KNOWLEDGE_GRAPH_STATUS.sources?.commits.count} commits, with summaries and source code waiting on an agent.`,
+    // Model acceleration through GPU and CPU and back to Auto. Search quality stays: a different
+    // model would mean a download and a rebuilt index, which no cycle could take back.
+    choreography: [
+      pickSetting('[data-testid="knowledge-graph-acceleration-gpu"]', 1500),
+      pickSetting('[data-testid="knowledge-graph-acceleration-cpu"]', 1500),
+      pickSetting('[data-testid="knowledge-graph-acceleration-auto"]', 900),
+    ],
   },
   // The tool groups folded up one by one, which brings the closed Diagnostics group into view, that
   // one opened and closed, and the rest opened again. The groups' open state is the tab's own.
@@ -810,10 +944,46 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
       { click: mcpGroupToggle('tasks'), waitFor: `${mcpGroupToggle('tasks')}[aria-expanded="true"]`, ms: 600 },
     ],
   },
-  browserAutomation: { ready: '[data-testid="setting-row-browserAutomation.enabled"]', alt: 'Settings on the Agent Browser tab: one card with the browser automation switch and the actions agents get: interaction, navigation with a localhost restriction under it, and eval.' },
-  mobile: { ready: '[data-testid="setting-row-mobileBridge.enabled"]', alt: 'Settings on the Mobile Devices tab: the Mobile bridge switch, off here, with links to how the relay works and how to install and pair.' },
-  privacy: { ready: '[data-testid="privacy-contact-email"]', alt: 'Settings on the Privacy tab: what anonymous analytics are collected and what is not, how they work, and how to opt out.' },
-  developer: { ready: '[data-testid="developer-tab"]', alt: 'Settings on the Developer tab: the activity debug overlay, persistent console logs, crash reports, and IPC recording.' },
+  browserAutomation: {
+    ready: '[data-testid="setting-row-browserAutomation.enabled"]',
+    alt: 'Settings on the Agent Browser tab: one card with the browser automation switch and the actions agents get: interaction, navigation with a localhost restriction under it, and eval.',
+    choreography: [
+      switchSetting('browserAutomation.restrictNavigationToLocalhost', true, 1400),
+      switchSetting('browserAutomation.allowEval', true, 1400),
+      switchSetting('browserAutomation.allowEval', false, 700),
+      switchSetting('browserAutomation.restrictNavigationToLocalhost', false, 900),
+    ],
+  },
+  // The pointer over the two guides, each showing its hover. The bridge switch stays off: turning it
+  // on starts a pairing a visitor cannot finish, and a guide opens a browser.
+  mobile: {
+    ready: '[data-testid="setting-row-mobileBridge.enabled"]',
+    alt: 'Settings on the Mobile Devices tab: the Mobile bridge switch, off here, with links to how the relay works and how to install and pair.',
+    choreography: [
+      { hover: '[data-testid="mobile-relay-docs-link"]', ms: 1600 },
+      { hover: '[data-testid="mobile-get-app-docs-link"]', ms: 1600 },
+    ],
+  },
+  // The tab scrolled down to the contact line and back up to its first card.
+  privacy: {
+    ready: '[data-testid="privacy-contact-email"]',
+    alt: 'Settings on the Privacy tab: what anonymous analytics are collected and what is not, how they work, and how to opt out.',
+    // Back up is the tab's first list line: centring a line that near the top scrolls to the top.
+    choreography: [
+      { scroll: '[data-testid="privacy-contact-email"]', ms: 2400 },
+      { scroll: '[data-testid="settings-content"] li', ms: 1200 },
+    ],
+  },
+  // The activity debug overlay switched on, which draws it over the board and the panel, and closed
+  // with the overlay's own close control, which turns the same setting off.
+  developer: {
+    ready: '[data-testid="developer-tab"]',
+    alt: 'Settings on the Developer tab: the activity debug overlay, persistent console logs, crash reports, and IPC recording.',
+    choreography: [
+      switchSetting('developer.activityDebugOverlay', true, 2800),
+      { click: '[data-testid="activity-debug-overlay"] button[data-overlay-button]', waitFor: `${settingSwitch('developer.activityDebugOverlay')}[aria-checked="false"]`, ms: 1000 },
+    ],
+  },
 };
 
 function settingsScenes(): Record<string, SceneDefinition> {
@@ -866,6 +1036,7 @@ function knowledgeGraphProjectScenes(): Record<string, SceneDefinition> {
       ready: `[data-testid="knowledge-graph-canvas"][data-drawn-count="${graph.projection.nodes.length}"]`,
       settle: '[data-testid="knowledge-graph-cluster-label"], [data-testid="knowledge-graph-node-title"]',
       focus: '[data-testid="knowledge-graph-page"]',
+      choreography: KNOWLEDGE_GRAPH_ORBIT,
       steps: project.id === PROJECT_CONTOSO
         ? [open]
         : [
@@ -886,6 +1057,23 @@ function knowledgeGraphProjectScenes(): Record<string, SceneDefinition> {
 // own timing (a test plays the pacing eight times faster).
 
 const WELCOME_REFRESH = '[data-testid="welcome-refresh"]';
+const WELCOME_SETUP_TOGGLE = '[data-testid="welcome-setup-toggle"]';
+/** A board filter pill: a priority by its index (0 None, 1 Low, 2 Medium, 3 High, 4 Urgent), or a label. */
+const priorityFilter = (index: number): string => `[data-testid="filter-priority"][data-priority="${index}"]`;
+const labelFilter = (label: string): string => `[data-testid="filter-label"][data-label="${label}"]`;
+const CONFIG_CHANGE_ALWAYS = '[data-testid="config-change-dialog"] input[type="checkbox"]';
+const CONVERSATION_SEARCH = '[data-testid="conversation-search-input"]';
+/** The Agent Monitor table's header for a column, by its key; the first group's table answers first. */
+const monitorHeader = (key: string): string => `[data-testid="monitor-page"] th[data-column-key="${key}"]`;
+const completedRow = (taskId: string): string => `[data-testid="completed-task-row"][data-row-id="${taskId}"]`;
+const turnEndRowEdit = (name: string): string => `[data-testid="column-automation-group"][data-trigger="turn_end"] [data-testid="column-automation-row"][data-name="${name}"] [data-testid="column-automation-edit"]`;
+const completedTab = (tab: 'summary' | 'usage' | 'description'): string => `[data-testid="completed-task-tabs-${tab}"]`;
+/** An orbit across a Knowledge Graph and back, then Reset view, which flies the camera to the framing it opened on. */
+const KNOWLEDGE_GRAPH_ORBIT: ChoreographyStep[] = [
+  { drag: { from: { x: 0.6, y: 0.52 }, to: { x: 0.74, y: 0.47 } }, ms: 1400 },
+  { drag: { from: { x: 0.74, y: 0.47 }, to: { x: 0.6, y: 0.52 } }, ms: 900 },
+  { click: '[data-testid="knowledge-graph-reset-view"]', ms: 2600 },
+];
 /** The Usage dashboard's period buttons in order: 1 Live, 2 Today, 3 This Week, 4 This Month, 5 All Time. */
 const usagePeriod = (position: number): string => `[data-testid="stats-period-group"] [role="group"] > button:nth-child(${position})`;
 const backlogCheckbox = (itemId: string): string => `[data-testid="backlog-task-row"][data-row-id="${itemId}"] [data-testid="backlog-task-checkbox"]`;
@@ -908,6 +1096,18 @@ const ALL_COLUMNS_CLEAN = `${BOARD_MANAGER}:has([data-testid="board-manager-tab-
 const automationPickerType = (type: string): string => `[data-testid="column-automation-picker-type"][data-type="${type}"]`;
 const DICTATION_FIELD_LISTENING = '[data-testid="dictation-live-chip"][data-placement="below"] [data-testid="dictation-recording-dot"][data-tone="active"]';
 const WORKFLOW_AUTH_CARD = `[data-testid="workflow-canvas-card"][data-workflow-task-key="${TASK_AUTH}"]`;
+const AUTH_CARD = `[data-task-id="${TASK_AUTH}"]`;
+const TASK_TITLEBAR = '[data-testid="task-detail-titlebar"]';
+/**
+ * Points on the board at the 1600 by 1000 frame, where no element marks the spot: the top of To Do
+ * (above the middle of its first card, so a dropped card goes in first), and empty space at the foot
+ * of Code Review, which holds one card.
+ */
+const TODO_TOP_SLOT = { x: 0.2775, y: 0.17 };
+/** A planned card on the draft canvas, and its outgoing handle on the right edge (React Flow's own attributes). */
+const draftCard = (key: string): string => `[data-testid="workflow-canvas-card"][data-workflow-task-key="${key}"]`;
+const draftHandleOut = (key: string): string => `.react-flow__handle[data-nodeid="${key}"][data-handlepos="right"]`;
+const EMPTY_BOARD = { x: 0.8475, y: 0.6 };
 /** The Agent Monitor's Group control in order: 1 Project, 2 Status. An icon may lead the group, so by type. */
 const monitorGroup = (position: number): string => `[role="group"][aria-label="Group sessions by"] > button:nth-of-type(${position})`;
 const MONITOR_FILTER = '[data-testid="monitor-text-filter"]';
@@ -921,6 +1121,13 @@ export const SCENES: Record<string, SceneDefinition> = {
     description: 'The welcome screen a first launch lands on, with no project yet. Nothing from the sample install is seeded; the detection line reads the same agent list the sample install reports.',
     alt: 'The welcome screen on first launch: the Kangentic mark, an Open a project button, a line reporting the git and agent CLIs it found with a Show setup control, and three notes on what opening a project does.',
     ready: '[data-testid="welcome-open-project"]',
+    // Show setup, Refresh (every row reads Checking for the app's own 800 ms), and Hide setup.
+    choreography: [
+      { click: WELCOME_SETUP_TOGGLE, waitFor: `${WELCOME_SETUP_TOGGLE}[aria-expanded="true"]`, ms: 900 },
+      { click: WELCOME_REFRESH, waitFor: `${WELCOME_REFRESH}:disabled`, ms: 0 },
+      { hover: WELCOME_REFRESH, waitFor: `${WELCOME_REFRESH}:not(:disabled)`, ms: 2000 },
+      { click: WELCOME_SETUP_TOGGLE, waitFor: `${WELCOME_SETUP_TOGGLE}[aria-expanded="false"]`, ms: 900 },
+    ],
   },
   'welcome-setup': {
     name: 'welcome-setup',
@@ -977,6 +1184,14 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="board-filter-btn-popover"]',
     focus: '[data-testid="board-filter-btn-popover"]',
     steps: [{ click: '[data-testid="board-filter-btn"]', waitFor: '[data-testid="board-filter-btn-popover"]' }],
+    // High priority, then the feature label, each narrowing the board behind the popover, then each
+    // switched off again. Filters are the board's view state; the cycle ends on every card shown.
+    choreography: [
+      { click: priorityFilter(3), waitFor: `${priorityFilter(3)}[aria-pressed="true"]`, ms: 1800 },
+      { click: labelFilter('feature'), waitFor: `${labelFilter('feature')}[aria-pressed="true"]`, ms: 2000 },
+      { click: labelFilter('feature'), waitFor: `${labelFilter('feature')}[aria-pressed="false"]`, ms: 700 },
+      { click: priorityFilter(3), waitFor: `${priorityFilter(3)}[aria-pressed="false"]`, ms: 900 },
+    ],
   },
   'activity-tab': {
     name: 'activity-tab',
@@ -1010,6 +1225,9 @@ export const SCENES: Record<string, SceneDefinition> = {
     },
     ready: '[data-task-id="task-cw-empty-states"]',
     steps: [{ click: '[data-session-id="sess-cw-middleware"]', waitFor: '[data-session-id="sess-cw-middleware"]' }],
+    // No pause-and-start cycle: the card carries no pause control, the sample install's cap leaves a
+    // free slot so nothing would start from the queue, and a resume mints a new session.
+    motion: 'The bottom panel streams the middleware session and Generate API client types flips to needs-you about 25 s in, while the paused and queued cards hold, as a paused and a queued agent do.',
   },
   'session-resume': {
     name: 'session-resume',
@@ -1040,6 +1258,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { developer: { activityDebugOverlay: true } },
     ready: '[data-testid="activity-debug-overlay"]',
     focus: '[data-testid="activity-debug-overlay"]',
+    motion: 'The overlay polls every 2 s, and each snapshot is taken when it is asked, so a panel\'s time since its last signal counts up; when a session\'s recording ends its panel turns idle and logs the event:idle step (Generate API client types about 25 s in), and loop=1 logs event:prompt as it starts again.',
   },
   'notification-toast': {
     name: 'notification-toast',
@@ -1064,6 +1283,9 @@ export const SCENES: Record<string, SceneDefinition> = {
     },
     ready: '[data-testid="toast"]',
     focus: '[data-testid="toast"]',
+    // No dismiss-and-raise cycle: raising the toast again would take an exit push main never sends
+    // twice. The toasts that come later are the sample install's own.
+    motion: 'The toast counts its 30 s down and closes, and the board\'s sessions raise their own toasts as each finishes its turn on its recording\'s clock, Generate API client types about 25 s in and again every cycle under loop=1.',
   },
   'board-config-change': {
     name: 'board-config-change',
@@ -1073,6 +1295,12 @@ export const SCENES: Record<string, SceneDefinition> = {
     seeds: { __mockBoardConfigChanged: PROJECT_CONTOSO },
     ready: '[data-testid="config-change-dialog"]',
     focus: '[data-testid="config-change-dialog"]',
+    // The always-apply box ticked and unticked, which writes nothing until Apply or Dismiss, and
+    // neither is pressed. Raising the dialog again would take a file change that never happened.
+    choreography: [
+      { click: CONFIG_CHANGE_ALWAYS, waitFor: `${CONFIG_CHANGE_ALWAYS}:checked`, ms: 1800 },
+      { click: CONFIG_CHANGE_ALWAYS, waitFor: `${CONFIG_CHANGE_ALWAYS}:not(:checked)`, ms: 1200 },
+    ],
   },
   announcements: {
     name: 'announcements',
@@ -1082,6 +1310,14 @@ export const SCENES: Record<string, SceneDefinition> = {
     seeds: { __mockActiveAnnouncements: ANNOUNCEMENTS, __mockAnnouncementHistory: ANNOUNCEMENT_HISTORY },
     ready: '[data-testid="announcement-banner"]',
     focus: '[data-testid="announcement-banner"]',
+    // The pointer over Learn more, the banner's dismiss control, and the megaphone, each showing its
+    // own hover and tip. Nothing is pressed: dismissing the banner and opening the feed both mark
+    // the announcement read, which no cycle could take back.
+    choreography: [
+      { hover: '[data-testid="announcement-learn-more"]', ms: 1600 },
+      { hover: '[data-testid="announcement-dismiss"]', ms: 1600 },
+      { hover: '[data-testid="announcements-button"]', ms: 1800 },
+    ],
   },
   'announcement-dialog': {
     name: 'announcement-dialog',
@@ -1092,6 +1328,13 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="announcement-dialog-content"]',
     focus: '[data-testid="announcement-dialog-content"]',
     steps: [{ click: '[data-testid="announcement-learn-more"]', waitFor: '[data-testid="announcement-dialog-content"]' }],
+    // The dialog fits its frame, so there is nothing to scroll: the pointer goes over the store
+    // links and the QR code, each with its hover. A link is never pressed, since it opens a browser.
+    choreography: [
+      { hover: '[data-testid="announcement-link"]', ms: 1400 },
+      { hover: '[data-testid="announcement-qr"]', ms: 1600 },
+      { hover: '[data-testid="announcement-dialog-content"] > :last-child [data-testid="announcement-link"]', ms: 1400 },
+    ],
   },
 
   // ---------------------------------------------------------------- the task window
@@ -1219,6 +1462,17 @@ export const SCENES: Record<string, SceneDefinition> = {
     // reveal waits for the conversation rather than for an empty window.
     ready: '[data-testid="conversation-row-assistant"]',
     focus: '[data-testid="conversation-window"]',
+    // A search typed into the viewer, its matches stepped through, and cleared, then the closing
+    // message brought back into view, which is where the viewer opened.
+    choreography: [
+      { type: { into: CONVERSATION_SEARCH, text: 'middleware' }, waitFor: '[data-testid="conversation-search-next"]:not(:disabled)', ms: 1400 },
+      { click: '[data-testid="conversation-search-next"]', ms: 1300 },
+      { click: '[data-testid="conversation-search-next"]', ms: 1300 },
+      { click: '[data-testid="conversation-search-previous"]', ms: 1300 },
+      { type: { into: CONVERSATION_SEARCH, text: '' }, waitFor: '[data-testid="conversation-search-next"]:disabled', ms: 600 },
+      // The viewer's own way back to the end, which shows once a match has scrolled it up.
+      { click: '[data-testid="conversation-jump-to-latest"]', waitFor: 'body:not(:has([data-testid="conversation-jump-to-latest"]))', ms: 1000 },
+    ],
   },
 
   // ---------------------------------------------------------------- the Changes panel
@@ -1329,6 +1583,13 @@ export const SCENES: Record<string, SceneDefinition> = {
     },
     ready: '[data-testid="monitor-table-row"]',
     steps: [{ click: '[data-testid="agent-monitor-button"]', waitFor: '[data-testid="monitor-page"]' }],
+    // The Column header clicked through its cycle, ascending, descending, and back to the order the
+    // rows arrived in. A table's sort is its own state and never persists.
+    choreography: [
+      { click: monitorHeader('column'), waitFor: `${monitorHeader('column')}[aria-sort="ascending"]`, ms: 2000 },
+      { click: monitorHeader('column'), waitFor: `${monitorHeader('column')}[aria-sort="descending"]`, ms: 2000 },
+      { click: monitorHeader('column'), waitFor: `${monitorHeader('column')}:not([aria-sort])`, ms: 900 },
+    ],
   },
 
   // ---------------------------------------------------------------- the Command Terminal
@@ -1340,6 +1601,13 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { commandTerminalWorkspace: commandTerminalWorkspace(true) },
     ready: '[data-testid="command-terminal-window"]',
     steps: [{ click: '[data-testid="quick-session-button"]', waitFor: '[data-testid="command-terminal-window"]' }],
+    // The window maximized and restored to its fitted rect, its terminal repainting at each size.
+    // Its session finished its recording, so the terminal itself holds; restarting it would take a
+    // working stretch the scene does not have an opening frame for.
+    choreography: [
+      { click: '[data-testid="command-bar-maximize"]', ms: 2600 },
+      { click: '[data-testid="command-bar-maximize"]', ms: 1400 },
+    ],
   },
   'command-terminal-tiled': {
     name: 'command-terminal-tiled',
@@ -1394,11 +1662,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     ],
     // An orbit dragged across the map and back, then Reset view, which flies the camera to the
     // framing the frame opened on. Damping means the drag back alone would land near it, not on it.
-    choreography: [
-      { drag: { from: { x: 0.6, y: 0.52 }, to: { x: 0.74, y: 0.47 } }, ms: 1400 },
-      { drag: { from: { x: 0.74, y: 0.47 }, to: { x: 0.6, y: 0.52 } }, ms: 900 },
-      { click: '[data-testid="knowledge-graph-reset-view"]', ms: 2600 },
-    ],
+    choreography: KNOWLEDGE_GRAPH_ORBIT,
   },
   ...knowledgeGraphProjectScenes(),
   backlog: {
@@ -1431,6 +1695,11 @@ export const SCENES: Record<string, SceneDefinition> = {
     // a no-op (the smoke tier now fails a focus that resolves to the whole frame).
     focus: '[data-testid="search-palette-card"]',
     steps: [{ click: '[data-testid="open-search-button"]', waitFor: '[data-testid="search-palette-input"]' }],
+    // A query typed a key at a time, its results arriving, and cleared back to the empty state.
+    choreography: [
+      { type: { into: SEARCH_INPUT, text: 'websocket' }, waitFor: '[data-testid="search-palette-result"]', ms: 2600 },
+      { type: { into: SEARCH_INPUT, text: '' }, waitFor: 'body:not(:has([data-testid="search-palette-result"]))', ms: 900 },
+    ],
   },
   'quick-find-results': {
     name: 'quick-find-results',
@@ -1540,6 +1809,14 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="column-automation-group"][data-trigger="turn_end"] [data-testid="column-automation-row"][data-name="On to Merge"]',
     focus: '[data-testid="board-manager-dialog"]',
     steps: [{ click: '[data-swimlane-name="Testing"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
+    // Each turn-end row opened in its Edit automation dialog and cancelled, so a figure moves through
+    // what both rows hold. Cancel on a saved row changes nothing, and Save is never pressed.
+    choreography: [
+      { click: turnEndRowEdit('Send findings back'), waitFor: '[data-testid="edit-automation-dialog"]', ms: 2800 },
+      { click: '[data-testid="edit-automation-cancel"]', waitFor: `body:not(:has([data-testid="edit-automation-dialog"])):has(${BOARD_MANAGER_CLEAN})`, ms: 800 },
+      { click: turnEndRowEdit('On to Merge'), waitFor: '[data-testid="edit-automation-dialog"]', ms: 2800 },
+      { click: '[data-testid="edit-automation-cancel"]', waitFor: `body:not(:has([data-testid="edit-automation-dialog"])):has(${BOARD_MANAGER_CLEAN})`, ms: 900 },
+    ],
   },
   // The first of those two rows opened in its Edit automation dialog, so a figure can show what a
   // row holds rather than its title and two marks. The first row, not the second: its Condition is
@@ -1646,10 +1923,12 @@ export const SCENES: Record<string, SceneDefinition> = {
   'board-workflow': {
     name: 'board-workflow',
     reach: 'state',
-    description: 'The board with the workflows scene\'s running workflow seeded, for the figure of workflow cards on the board: each member card\'s strip and step track, the To Do cards\' waiting line, and the view toggle\'s running mark. Nothing is clicked.',
+    description: 'The board with the workflows scene\'s running workflow seeded, for the figure of workflow cards on the board: each member card\'s strip and step track, the To Do cards\' waiting line, and the view toggle\'s running mark. Nothing is clicked. Live, the same step chain as the workflows scene plays on the board when the middleware session\'s recorded turn ends, about 90 s in: its card leaves Executing for Done, and Add user auth flow moves from To Do into Planning and starts its agent.',
     alt: 'The contoso-web board with Harden the API running: each of its cards carries the workflow\'s strip and a step track through the columns, the two in To Do say what they are blocked by, and the Workflows toggle shows a running mark.',
+    config: DEMO_AUTOMATION_AGENT,
     seeds: WORKFLOW_HARDEN_API_SEEDS,
     tasks: WORKFLOW_HARDEN_API_MEMBERS,
+    timeline: HARDEN_API_STEP_TIMELINE,
     ready: `[data-task-id="${TASK_MIDDLEWARE}"] [data-testid="workflow-card-strip"]`,
     focus: [TASK_AUTH, TASK_API_ERRORS, TASK_MIDDLEWARE, TASK_RATE_LIMIT].map((id) => `[data-task-id="${id}"]`).join(', '),
   },
@@ -1668,6 +1947,16 @@ export const SCENES: Record<string, SceneDefinition> = {
         waitFor: `[data-testid="workflow-canvas-card"][data-workflow-task-key="${PLANNED_PDF_ROUTE}"][data-selected="true"]`,
       },
     ],
+    // A link drawn from the billing page task's handle onto the tests task, two that had no path
+    // between them (a link the plan already implies is refused), then taken out from the tests
+    // task's inspector, and the middle task selected again. Each is an edit to the plan, and the
+    // cycle leaves the plan as it found it.
+    choreography: [
+      { drag: { from: draftHandleOut('task-3'), to: draftCard('task-4') }, waitFor: 'path.react-flow__edge-path[data-link-state="fresh"]', ms: 1900 },
+      { click: draftCard('task-4'), waitFor: `${draftCard('task-4')}[data-selected="true"]`, ms: 1400 },
+      { click: '[data-testid="workflow-link-row"][data-task-key="task-3"] [data-testid="workflow-unlink"]', waitFor: 'body:not(:has([data-testid="workflow-link-row"][data-task-key="task-3"]))', ms: 1200 },
+      { click: draftCard(PLANNED_PDF_ROUTE), waitFor: `${draftCard(PLANNED_PDF_ROUTE)}[data-selected="true"]`, ms: 900 },
+    ],
   },
 
   'completed-tasks': {
@@ -1678,6 +1967,19 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="completed-task-checkbox"]',
     focus: '[data-testid="completed-tasks-dialog"]',
     steps: [{ click: '[data-testid="expand-completed-btn"]', waitFor: '[data-testid="completed-tasks-dialog"]' }],
+    // The pointer down the rows, then View details on the CI/CD pipeline row, which opens its
+    // completed task view, and that window closed again over the list.
+    choreography: [
+      { hover: completedRow(DEMO_COMPLETED_TASK_ID), ms: 600 },
+      { click: `${completedRow(DEMO_COMPLETED_TASK_ID)} [data-testid="view-task-btn"]`, waitFor: '[data-testid="completed-task-view"]', ms: 3200 },
+      // The list hands over to the view, so it opens again from the Completed header once the view
+      // closes. That header is on Done, past the frame's right edge, so the board scrolls to it and
+      // back to To Do, where the frame opened, behind the list.
+      { click: '[data-testid="task-detail-close"]', waitFor: 'body:not(:has([data-testid="completed-task-view"]))', ms: 600 },
+      { scroll: '[data-testid="expand-completed-btn"]', ms: 300 },
+      { click: '[data-testid="expand-completed-btn"]', waitFor: '[data-testid="completed-task-checkbox"]', ms: 300 },
+      { scroll: '[data-swimlane-name="To Do"]', ms: 1000 },
+    ],
   },
   'completed-task': {
     name: 'completed-task',
@@ -1688,6 +1990,12 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="completed-route"]',
     focus: '[data-testid="task-detail-dialog"]',
     steps: COMPLETED_TASK_STEPS,
+    // Usage, then Description, then Summary again: the report's three tabs.
+    choreography: [
+      { click: completedTab('usage'), waitFor: `${completedTab('usage')}[aria-selected="true"]`, ms: 3000 },
+      { click: completedTab('description'), waitFor: `${completedTab('description')}[aria-selected="true"]`, ms: 2400 },
+      { click: completedTab('summary'), waitFor: `${completedTab('summary')}[aria-selected="true"]`, ms: 900 },
+    ],
   },
   'completed-task-usage': {
     name: 'completed-task-usage',
@@ -1701,6 +2009,12 @@ export const SCENES: Record<string, SceneDefinition> = {
       ...COMPLETED_TASK_STEPS,
       { click: '[data-testid="completed-task-tabs-usage"]', waitFor: '[data-testid="completed-task-tabs-usage"][aria-selected="true"]' },
     ],
+    // Summary, then Description, then Usage again.
+    choreography: [
+      { click: completedTab('summary'), waitFor: `${completedTab('summary')}[aria-selected="true"]`, ms: 3000 },
+      { click: completedTab('description'), waitFor: `${completedTab('description')}[aria-selected="true"]`, ms: 2400 },
+      { click: completedTab('usage'), waitFor: `${completedTab('usage')}[aria-selected="true"]`, ms: 900 },
+    ],
   },
 
   // ---------------------------------------------------------------- settings, one per tab
@@ -1713,24 +2027,32 @@ export const SCENES: Record<string, SceneDefinition> = {
   'card-drag': {
     name: 'card-drag',
     reach: 'boot',
-    description: 'A card lifted out of To Do and held over Executing, for the drag-to-start figure. The choreography presses on the card and carries it past dnd-kit\'s activation distance to Executing, and the pose holds it there. To Do because a card dropped back there ends its session as main does, which is what lets a loop put the board back as it found it.',
+    description: 'A card lifted out of To Do and held over Executing, for the drag-to-start figure. The choreography presses on the card and carries it past dnd-kit\'s activation distance to Executing, and the pose holds it there. Live, the card is dropped, its agent starts from the recorded boot, and the card is dragged back to the top of To Do, which ends its session as main does, so the board is back as it was when the card is lifted again.',
     alt: 'A task card mid-drag from To Do into Executing, the card lifted and tilted, the Executing column highlighted as the drop target.',
     ready: '.drag-overlay',
     choreography: [
-      { drag: { from: `[data-task-id="${TASK_AUTH}"]`, to: '[data-swimlane-name="Executing"]', hold: true }, waitFor: '.drag-overlay' },
+      { drag: { from: AUTH_CARD, to: '[data-swimlane-name="Executing"]', hold: true }, waitFor: '.drag-overlay' },
       { pose: true },
+      { drop: true, waitFor: `[data-swimlane-name="Executing"] ${AUTH_CARD}`, ms: 5500 },
+      // Above Refactor API error handling's middle, so the card goes back to the top of the column.
+      { drag: { from: `[data-swimlane-name="Executing"] ${AUTH_CARD}`, to: TODO_TOP_SLOT }, waitFor: `[data-swimlane-name="To Do"] ${AUTH_CARD}`, ms: 1600 },
     ],
   },
   'card-menu': {
     name: 'card-menu',
     reach: 'boot',
-    description: 'A card\'s context menu, which opens on right-click only, so the choreography right-clicks the card and the pose holds the menu open.',
+    description: 'A card\'s context menu, which opens on right-click only, so the choreography right-clicks the card and the pose holds the menu open. Live, the pointer runs down the items without picking one, a click on empty board closes the menu, and the card is right-clicked again.',
     alt: 'A task card\'s right-click menu open over the board: Edit, Disable automations, New workflow, a Move to list of the other columns, then Backlog, Archive, and Delete.',
     ready: '[data-testid="task-context-menu"]',
     focus: '[data-testid="task-context-menu"]',
     choreography: [
-      { contextmenu: `[data-task-id="${TASK_AUTH}"]`, waitFor: '[data-testid="task-context-menu"]' },
+      { contextmenu: AUTH_CARD, waitFor: '[data-testid="task-context-menu"]' },
       { pose: true },
+      { hover: '[data-testid="context-edit-task"]', ms: 500 },
+      { hover: '[data-testid="context-toggle-automations"]', ms: 500 },
+      { hover: '[data-testid="context-new-workflow"]', ms: 700 },
+      { hover: '[data-testid="context-move-to"]', ms: 1100 },
+      { click: EMPTY_BOARD, waitFor: 'body:not(:has([data-testid="task-context-menu"]))', ms: 1400 },
     ],
   },
   // The board draws a workflow card's links only while the pointer rests on the card
@@ -1740,7 +2062,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'board-workflow-links': {
     name: 'board-workflow-links',
     reach: 'boot',
-    description: 'The board-workflow scene with the pointer resting on Refactor API error handling, so the board draws that card\'s workflow links: one from each card it waits for. The choreography rests the pointer on the card through the board\'s dwell, and the pose holds it there.',
+    description: 'The board-workflow scene with the pointer resting on Refactor API error handling, so the board draws that card\'s workflow links: one from each card it waits for. The choreography rests the pointer on the card through the board\'s dwell, and the pose holds it there. Live, the pointer moves up to Add user auth flow, whose one link runs from the middleware card, and back.',
     alt: 'The contoso-web board with the pointer resting on Refactor API error handling, a To Do card blocked by two tasks: lines run into it from Extract auth middleware in Executing and from Add rate limiting in Code Review, and the card is outlined.',
     seeds: WORKFLOW_HARDEN_API_SEEDS,
     tasks: WORKFLOW_HARDEN_API_MEMBERS,
@@ -1749,20 +2071,24 @@ export const SCENES: Record<string, SceneDefinition> = {
     choreography: [
       { hover: `[data-task-id="${TASK_API_ERRORS}"]`, waitFor: '[data-testid="workflow-link-line"]' },
       { pose: true },
+      // The board's dwell is its own 400 ms, so the pacing holds the card long enough to draw.
+      { hover: AUTH_CARD, waitFor: '[data-testid="workflow-link-line"]', ms: 2800 },
     ],
   },
   'window-dock': {
     name: 'window-dock',
     reach: 'boot',
-    description: 'The task window dragged toward the right edge with the snap preview armed, for the docking figure. The choreography presses on the title bar and carries the window to the edge, and the pose holds it there.',
+    description: 'The task window dragged toward the right edge with the snap preview armed, for the docking figure. The choreography presses on the title bar and carries the window to the edge, and the pose holds it there. Live, the window is dropped and docks to the right half, then its title bar is dragged back out, which floats it at its own size again. The pose\'s frame depends only on the window\'s size and where its title bar is held, so it is the same each time.',
     alt: 'A task window being dragged toward the edge of the board, the docking preview showing where it will snap.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('floating') } },
     ready: '[data-testid="snap-preview"]',
     // The snap zone is the last few pixels before the edge; the point is a fraction of the frame
     // because an edge has no element to name.
     choreography: [
-      { drag: { from: '[data-testid="task-detail-titlebar"]', to: { x: 0.997, y: 0.5 }, hold: true }, waitFor: '[data-testid="snap-preview"]' },
+      { drag: { from: TASK_TITLEBAR, to: { x: 0.997, y: 0.5 }, hold: true }, waitFor: '[data-testid="snap-preview"]' },
       { pose: true },
+      { drop: true, ms: 2600 },
+      { drag: { from: TASK_TITLEBAR, to: { x: 0.5, y: 0.2 } }, ms: 1600 },
     ],
   },
 };

@@ -73,6 +73,9 @@ export const FilterPopover = React.memo(function FilterPopover({
               key={index}
               type="button"
               onClick={() => onTogglePriority(index)}
+              aria-pressed={isActive}
+              data-testid="filter-priority"
+              data-priority={index}
             >
               <Pill
                 size="sm"
@@ -103,6 +106,9 @@ export const FilterPopover = React.memo(function FilterPopover({
                   type="button"
                   onClick={() => onToggleLabel(label)}
                   className="flex items-center justify-center"
+                  aria-pressed={isActive}
+                  data-testid="filter-label"
+                  data-label={label}
                 >
                   <Pill
                     size="sm"
