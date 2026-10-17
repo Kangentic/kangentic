@@ -270,6 +270,81 @@ async function isLineInModifiedViewport(target: Page, lineNumber: number): Promi
   }, lineNumber);
 }
 
+/**
+ * The modified editor's layout top of a line, read once monaco has held it for
+ * three animation frames in a row. Monaco applies a fold, an opened region, or
+ * a diff result to its layout on the next frame, so a single read can catch the
+ * layout mid-move. The wait is capped inside the page and returns the last value
+ * read, so it cannot hang. Returns -1 with no diff editor mounted.
+ */
+async function readStableLineTop(target: Page, lineNumber: number): Promise<number> {
+  return target.evaluate(
+    (line) =>
+      new Promise<number>((resolve) => {
+        const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+        const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+        if (diffEditors.length === 0) {
+          resolve(-1);
+          return;
+        }
+        const modifiedEditor = diffEditors[0].getModifiedEditor();
+        const deadline = performance.now() + 3000;
+        let lastTop = modifiedEditor.getTopForLineNumber(line);
+        let unchangedFrames = 0;
+        const onFrame = () => {
+          const currentTop = modifiedEditor.getTopForLineNumber(line);
+          unchangedFrames = currentTop === lastTop ? unchangedFrames + 1 : 0;
+          lastTop = currentTop;
+          if (unchangedFrames >= 3 || performance.now() > deadline) {
+            resolve(currentTop);
+            return;
+          }
+          requestAnimationFrame(onFrame);
+        };
+        requestAnimationFrame(onFrame);
+      }),
+    lineNumber,
+  );
+}
+
+/**
+ * Scroll the modified editor to its top, wait two animation frames so monaco
+ * has painted its fold widgets there, then return the center of the topmost
+ * fold's lower edge that lies inside the editor's box (null when there is none).
+ * One page round trip, so no frame passes between the paint and the read.
+ */
+async function locateTopmostFoldEdgeAtScrollTop(target: Page): Promise<{ x: number; y: number } | null> {
+  return target.evaluate(
+    () =>
+      new Promise<{ x: number; y: number } | null>((resolve) => {
+        const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+        const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+        if (diffEditors.length === 0) {
+          resolve(null);
+          return;
+        }
+        diffEditors[0].getModifiedEditor().setScrollTop(0);
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            const editorBox = document.querySelector('.monaco-diff-editor .editor.modified')?.getBoundingClientRect();
+            if (!editorBox) {
+              resolve(null);
+              return;
+            }
+            let topmost: { x: number; y: number } | null = null;
+            for (const edge of document.querySelectorAll('.monaco-diff-editor .diff-hidden-lines .bottom')) {
+              const box = edge.getBoundingClientRect();
+              const centerY = box.top + box.height / 2;
+              if (box.width <= 0 || box.height <= 0 || centerY <= editorBox.top || centerY >= editorBox.bottom) continue;
+              if (topmost === null || centerY < topmost.y) topmost = { x: box.left + box.width / 2, y: centerY };
+            }
+            resolve(topmost);
+          }),
+        );
+      }),
+  );
+}
+
 /** The modified model's line count, or -1 with no diff editor or model. */
 async function readModifiedLineCount(target: Page): Promise<number> {
   return target.evaluate(() => {
@@ -934,8 +1009,9 @@ test.describe('Changes view: diff scroll memory', () => {
   // on monaco's diff view model, and a same-file refresh replaces that view
   // model. Before the content swap they were lost too. The in-place flush
   // wiped the decorations monaco tracks them by and the fold closed again.
-  // The revealed lines add height to the modified side, so the scroll height
-  // is the public read of whether they survived.
+  // The opened lines sit above the change and push it down, so the top of the
+  // change's line, read through monaco's public getTopForLineNumber, is the
+  // read of whether they survived.
   test('a same-file refresh keeps the lines opened in a folded region', async () => {
     test.slow();
     const getPageErrors = collectPageErrors(page);
@@ -948,43 +1024,33 @@ test.describe('Changes view: diff scroll memory', () => {
       await setCollapseUnchanged(page, true);
       await expect.poll(async () => page.locator('.monaco-diff-editor .diff-hidden-lines').count(), { timeout: 10000 }).toBeGreaterThan(0);
       await waitForDiffToSettle(page);
-      const foldedHeight = (await readModifiedScrollState(page)).scrollHeight;
+      const foldedTop = await readStableLineTop(page, EPSILON_CHANGE_LINE);
 
       // A plain click (no drag) on a fold's lower edge reveals monaco's default
       // 20 lines. Monaco scrolls its own viewport, so a fold widget outside it
-      // cannot be scrolled into view by Playwright. Go to the top, where the
-      // first fold is, and click the lower edge of one inside the editor's box.
-      await page.evaluate(() => {
-        const monaco = (window as unknown as { __monaco: MonacoTestHandle }).__monaco;
-        monaco.editor.getDiffEditors()[0].getModifiedEditor().setScrollTop(0);
-      });
-      let foldEdge: { x: number; y: number } | null = null;
+      // cannot be scrolled into view by Playwright. Each attempt goes to the
+      // top, waits for monaco to paint there, and clicks the topmost fold edge
+      // inside the editor's box. The fold above the change is the first one.
+      //
+      // The click and its check are ONE polled action. A single click can land
+      // while monaco still paints the widget at its old scroll position (its
+      // layout follows the next frame), and then it opens nothing. So the poll
+      // reads the result first and clicks again only while no line has opened.
+      const revealedMinimumGrowth = 10 * LINE_HEIGHT_PX;
       await expect
         .poll(
           async () => {
-            foldEdge = await page.evaluate(() => {
-              const editorBox = document.querySelector('.monaco-diff-editor .editor.modified')?.getBoundingClientRect();
-              if (!editorBox) return null;
-              for (const edge of document.querySelectorAll('.monaco-diff-editor .diff-hidden-lines .bottom')) {
-                const box = edge.getBoundingClientRect();
-                const centerY = box.top + box.height / 2;
-                if (box.width > 0 && box.height > 0 && centerY > editorBox.top && centerY < editorBox.bottom) {
-                  return { x: box.left + box.width / 2, y: centerY };
-                }
-              }
-              return null;
-            });
-            return foldEdge !== null;
+            if ((await readStableLineTop(page, EPSILON_CHANGE_LINE)) - foldedTop > revealedMinimumGrowth) return true;
+            const foldEdge = await locateTopmostFoldEdgeAtScrollTop(page);
+            if (foldEdge === null) return false;
+            await page.mouse.click(foldEdge.x, foldEdge.y);
+            return false;
           },
-          { timeout: 5000 },
+          { timeout: 20000, intervals: [100, 250, 500, 1000] },
         )
         .toBe(true);
-      const edge = foldEdge as unknown as { x: number; y: number };
-      await page.mouse.click(edge.x, edge.y);
-      await expect
-        .poll(async () => (await readModifiedScrollState(page)).scrollHeight, { timeout: 5000 })
-        .toBeGreaterThan(foldedHeight + 10 * LINE_HEIGHT_PX);
-      const revealedHeight = (await readModifiedScrollState(page)).scrollHeight;
+      // The opened lines sit above the change, so its top moves down by what opened.
+      const revealedTop = await readStableLineTop(page, EPSILON_CHANGE_LINE);
 
       const lineCountBefore = await readModifiedLineCount(page);
       await page.evaluate(() => {
@@ -1000,11 +1066,16 @@ test.describe('Changes view: diff scroll memory', () => {
       await expect.poll(() => readModifiedLineCount(page), { timeout: 10000 }).toBe(lineCountBefore + 1);
       await waitForDiffToSettle(page);
 
-      // The appended line sits inside the folded tail, so it adds no height.
-      // One line of slack (cross-platform-parity.md).
+      // The appended line lands at the end of the file, below the change, so it
+      // cannot move the change's top. Whether it opens a hunk of its own
+      // (its context lines and itself, four lines) or joins one a sibling test
+      // left there depends on test order, which is why this reads the top of a
+      // line above it and not the scroll height. A fold that closed again would
+      // put the top back near foldedTop, 20 lines up. One line of slack
+      // (cross-platform-parity.md).
       await expect
-        .poll(async () => Math.abs((await readModifiedScrollState(page)).scrollHeight - revealedHeight), { timeout: 5000 })
-        .toBeLessThanOrEqual(20);
+        .poll(async () => Math.abs((await readStableLineTop(page, EPSILON_CHANGE_LINE)) - revealedTop), { timeout: 10000 })
+        .toBeLessThanOrEqual(LINE_HEIGHT_PX);
       expect(getPageErrors()).toHaveLength(0);
     } finally {
       await setCollapseUnchanged(page, false);
