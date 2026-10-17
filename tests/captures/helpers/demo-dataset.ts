@@ -1820,9 +1820,32 @@ export function buildDemoPreConfig(options: {
       function endedOnItsOwn(recording) {
         return recording.stopReason === 'idle' || recording.stopReason === 'exited';
       }
+      // What the activity engine records when a session's clock flips it, for the debug overlay's
+      // snapshot (getActivityStats): the new state, the moment as its last signal, and the step in
+      // its transition log, labelled as the engine labels a finished turn (event:idle) and a new
+      // one (event:prompt). The seed's snapshot is otherwise the one it built at boot.
+      function noteActivityTransition(sessionId, to) {
+        var stats = mockState.activityStatsCache[sessionId];
+        if (!stats || stats.activity === to) return;
+        var at = Date.now();
+        var finished = to === 'idle';
+        mockState.activityStatsCache[sessionId] = Object.assign({}, stats, {
+          activity: to,
+          reason: finished ? { kind: 'idle', since: at } : { kind: 'tool', pendingCount: 1, currentTool: stats.reason && stats.reason.currentTool ? stats.reason.currentTool : null },
+          pendingToolCount: finished ? 0 : 1,
+          turnActive: !finished,
+          lastSignalAt: at, lastPtyOutputAt: at, msSinceLastSignal: 0, msSincePtyOutput: 0,
+          needsUserSince: finished ? at : null,
+          recentTransitions: (stats.recentTransitions || []).concat([{
+            ts: at, from: stats.activity, to: to, reasonKind: finished ? 'idle' : 'tool',
+            trigger: finished ? 'event:idle' : 'event:prompt', counterDelta: finished ? 'turn no' : 'turn yes',
+          }]).slice(-20),
+        });
+      }
       function finishSession(sessionId) {
         var row = sessionById(sessionId);
         if (!row || mockState.activityCache[sessionId] !== 'thinking') return;
+        noteActivityTransition(sessionId, 'idle');
         mockState.activityCache[sessionId] = 'idle';
         if (window.__mockFireActivity) window.__mockFireActivity(sessionId, 'idle', null, row.projectId, row.taskId);
         var rows = (window.__mockMonitorRows || []).map(function (monitorRow) {
@@ -1836,6 +1859,7 @@ export function buildDemoPreConfig(options: {
       function startSession(sessionId) {
         var row = sessionById(sessionId);
         if (!row || mockState.activityCache[sessionId] === 'thinking') return;
+        noteActivityTransition(sessionId, 'thinking');
         mockState.activityCache[sessionId] = 'thinking';
         if (window.__mockFireActivity) window.__mockFireActivity(sessionId, 'thinking', null, row.projectId, row.taskId);
         var rows = (window.__mockMonitorRows || []).map(function (monitorRow) {
@@ -3338,6 +3362,21 @@ export function buildDemoPreConfig(options: {
             }
           }
           return result;
+        });
+      };
+
+      // Main takes the activity snapshot when it is asked, so the time since a session's last signal
+      // is measured then and counts up between the debug overlay's polls. A still keeps the
+      // snapshot the seed built, which is what makes it the same frame every time.
+      var originalGetActivityStats = window.electronAPI.sessions.getActivityStats;
+      window.electronAPI.sessions.getActivityStats = function () {
+        return originalGetActivityStats.apply(this, arguments).then(function (stats) {
+          if (!live || !stats || stats.lastSignalAt === null || stats.lastSignalAt === undefined) return stats;
+          var askedAt = Date.now();
+          return Object.assign({}, stats, {
+            msSinceLastSignal: askedAt - stats.lastSignalAt,
+            msSincePtyOutput: stats.lastPtyOutputAt === null || stats.lastPtyOutputAt === undefined ? null : askedAt - stats.lastPtyOutputAt,
+          });
         });
       };
 

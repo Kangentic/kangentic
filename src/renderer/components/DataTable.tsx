@@ -74,6 +74,17 @@ interface SortableColumn<TRow, TKey extends string> {
 }
 
 /**
+ * A header's `aria-sort`: its direction when it is the primary sort, otherwise no attribute.
+ * WAI-ARIA puts the attribute on one header at a time, and the APG sortable table removes it
+ * from every header but the sorted one.
+ */
+export function sortStateOf(primaryDirection: 'asc' | 'desc' | null): 'ascending' | 'descending' | undefined {
+  if (primaryDirection === 'asc') return 'ascending';
+  if (primaryDirection === 'desc') return 'descending';
+  return undefined;
+}
+
+/**
  * Computes the next ordered sort-level array for a header click. Pure and
  * exported so the direction-anchored asc/desc/clear cycle and Shift+Click
  * multi-sort transitions can be unit tested without mounting the table.
@@ -320,6 +331,8 @@ export function DataTable<TRow, TKey extends string = string>({
             <th
               className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none transition-colors ${column.width || ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${isSortable ? 'cursor-pointer hover:text-fg-muted' : ''}`}
               onClick={isSortable ? (event) => handleHeaderClick(column, event.shiftKey) : undefined}
+              data-column-key={column.key}
+              aria-sort={sortStateOf(isSortable && sortIndex === 0 ? sorts[0].direction : null)}
             >
               {column.headerRender ? (
                 column.headerRender(sortedData)

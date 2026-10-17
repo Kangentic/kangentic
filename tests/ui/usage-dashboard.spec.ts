@@ -257,17 +257,23 @@ test.describe('usage dashboard', () => {
       const firstRow = page.locator('[data-testid="per-project-row"]').first();
       const tokensInHeader = page.locator('[data-testid="per-project-table"] th').filter({ hasText: 'Tokens In' });
 
+      // Each sorted state is also the header's aria-sort, which a screen reader announces; an
+      // unsorted header carries none, since only the sorted header holds the attribute.
+      await expect(tokensInHeader).not.toHaveAttribute('aria-sort');
       // Numeric columns start descending (Mock Project has the most input tokens)...
       await tokensInHeader.click();
       await expect(firstRow).toContainText('Mock Project');
+      await expect(tokensInHeader).toHaveAttribute('aria-sort', 'descending');
       // ...a second click flips to ASCENDING. This direction used to be
       // unreachable: the old cycle was anchored to asc-first, so numeric
       // columns went desc -> clear and never offered ascending.
       await tokensInHeader.click();
       await expect(firstRow).toContainText('Other Project');
+      await expect(tokensInHeader).toHaveAttribute('aria-sort', 'ascending');
       // ...and a third click clears back to payload order.
       await tokensInHeader.click();
       await expect(firstRow).toContainText('Mock Project');
+      await expect(tokensInHeader).not.toHaveAttribute('aria-sort');
 
       // Shift+Click adds a second sort level; both headers show a priority.
       await tokensInHeader.click();

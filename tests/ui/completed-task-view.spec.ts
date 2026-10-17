@@ -1178,12 +1178,12 @@ test.describe('Per-tool table on a completed task', () => {
       const toolHeader = table.locator('th', { has: page.locator('[data-testid="by-tool-sort-tool"]') });
       const callsHeader = table.locator('th', { has: page.locator('[data-testid="by-tool-sort-calls"]') });
       await expect(toolCells).toHaveText(['Edit', 'Bash', 'Read']);
-      await expect(toolHeader).toHaveAttribute('aria-sort', 'none');
+      await expect(toolHeader).not.toHaveAttribute('aria-sort');
 
       await page.locator('[data-testid="by-tool-sort-tool"]').click();
       await expect(toolCells).toHaveText(['Bash', 'Edit', 'Read']);
       await expect(toolHeader).toHaveAttribute('aria-sort', 'ascending');
-      await expect(callsHeader).toHaveAttribute('aria-sort', 'none');
+      await expect(callsHeader).not.toHaveAttribute('aria-sort');
 
       await page.locator('[data-testid="by-tool-sort-tool"]').click();
       await expect(toolCells).toHaveText(['Read', 'Edit', 'Bash']);

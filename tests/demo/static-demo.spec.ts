@@ -22,7 +22,7 @@ import { PLANNED_PDF_ROUTE, SCENES } from '../captures/scenes';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
-  SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET,
+  SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET,
   DEMO_SCENE_TASKS, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_REPORT, DEMO_COMPLETED_TASK_SUMMARY } from '../captures/helpers/demo-task-report';
@@ -2162,6 +2162,50 @@ test('without loop=1 the timeline still moves the card once, and nothing puts it
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+interface ActivitySnapshotWindow {
+  electronAPI: {
+    sessions: {
+      getActivityStats: (sessionId: string) => Promise<{
+        activity: string;
+        msSinceLastSignal: number | null;
+        recentTransitions: Array<{ to: string; trigger: string }>;
+      } | null>;
+    };
+  };
+}
+
+test('the activity overlay\'s snapshot follows the session clock live, and a still keeps the seeded one', async ({ page }) => {
+  // Main takes the snapshot when it is asked, so the time since a session's last signal counts up
+  // between the overlay's polls, and a session whose recording ends is idle with the engine's
+  // event:idle step logged. A still keeps what the seed built, so it is the same frame every time.
+  test.setTimeout(90_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const snapshot = (): ReturnType<ActivitySnapshotWindow['electronAPI']['sessions']['getActivityStats']> => page.evaluate(
+    (sessionId) => (window as unknown as ActivitySnapshotWindow).electronAPI.sessions.getActivityStats(sessionId),
+    SESSION_API_CLIENT,
+  );
+  await page.clock.install();
+  await gotoScene(page, { view: 'activity-overlay', embed: '1' });
+  await expect(page.locator('[data-testid="activity-debug-overlay"]')).toBeVisible();
+  const opening = await snapshot();
+  expect(opening?.activity).toBe('thinking');
+  await page.clock.fastForward(5_000);
+  const later = await snapshot();
+  expect((later?.msSinceLastSignal ?? 0) - (opening?.msSinceLastSignal ?? 0)).toBeGreaterThanOrEqual(4_000);
+  // api-client's 25 s stretch ends and its turn with it.
+  await page.clock.fastForward(22_000);
+  await expect.poll(async () => (await snapshot())?.activity).toBe('idle');
+  const finished = await snapshot();
+  expect(finished?.recentTransitions.at(-1)).toMatchObject({ to: 'idle', trigger: 'event:idle' });
+
+  await gotoScene(page, { view: 'activity-overlay', embed: '1', still: '1' });
+  await expect(page.locator('[data-testid="activity-debug-overlay"]')).toBeVisible();
+  const stillOpening = await snapshot();
+  await page.clock.fastForward(5_000);
+  expect((await snapshot())?.msSinceLastSignal).toBe(stillOpening?.msSinceLastSignal);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
 test('workflows: the middleware step finishes its route, the engine starts Add user auth flow, and loop=1 undoes both', async ({ page }) => {
   // The step lands when the middleware session's recorded turn ends, 90 s after the frame opens,
   // so the test moves page time rather than waiting for it: Playwright's clock fires the session
@@ -2217,9 +2261,10 @@ const CHOREOGRAPHED_SCENES = Object.values(SCENES)
   });
 
 test('the registry carries choreographies to play', () => {
-  // Vacuity guard: the loop below would pass on an empty list.
+  // Vacuity guard: the loop below would pass on an empty list. Every pose scene now plays on past
+  // its pose, so the hold branch below waits for a scene that ends on one.
   expect(CHOREOGRAPHED_SCENES.filter((entry) => entry.cycles).length).toBeGreaterThan(0);
-  expect(CHOREOGRAPHED_SCENES.filter((entry) => !entry.cycles).length).toBeGreaterThan(0);
+  expect(CHOREOGRAPHED_SCENES.some((entry) => (entry.scene.choreography ?? []).some((step) => 'pose' in step))).toBe(true);
 });
 
 for (const { scene, cycles } of CHOREOGRAPHED_SCENES) {

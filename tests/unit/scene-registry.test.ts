@@ -133,25 +133,8 @@ const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
 const BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
 
 /** The gestures a choreography step may make (ChoreographyGesture), and what may ride beside one. */
-const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose'];
+const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'drop', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose'];
 const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
-
-/**
- * Scenes that do not move under loop=1 yet, or move but still owe the change their row in the
- * motion task asks for. Phases 2 and 3 of that task empty this list; the test below fails a name
- * here that already declares how it moves, so the list can only shrink.
- */
-const MOTION_PENDING = new Set([
-  'welcome', 'board-filter', 'session-states',
-  'activity-overlay', 'notification-toast', 'board-config-change', 'announcements', 'announcement-dialog',
-  'conversation', 'monitor-table', 'command-terminal',
-  'quick-find', 'column-automation-turn-end', 'board-workflow',
-  'workflow-draft', 'completed-tasks', 'completed-task', 'completed-task-usage',
-  // Each holds its pose under loop=1; its loop is a Phase 3 row.
-  'card-drag', 'card-menu', 'board-workflow-links', 'window-dock',
-  ...SETTINGS_TABS.map((tab) => `settings-${tab.id}`).filter((name) => !['settings-git', 'settings-task', 'settings-mcpServer'].includes(name)),
-  ...Object.keys(SCENES).filter((name) => name.startsWith('knowledge-graph-')),
-]);
 
 /** Whether a scene moves under loop=1 by its own declaration: a cycle to play, a timeline, or a stated reason. */
 function declaresMotion(scene: SceneDefinition): boolean {
@@ -298,6 +281,14 @@ describe('scene registry', () => {
           expect(typeof step.choose.value, `${where}.choose.value`).toBe('string');
         }
         if ('scroll' in step) expect(step.scroll.trim(), `${where}.scroll`).not.toBe('');
+        if ('drop' in step) {
+          // It lets go of the pose's held drag, which is the only drag a cycle starts holding: the
+          // pose comes right before it, and the step before the pose holds.
+          expect(step.drop, `${where}.drop`).toBe(true);
+          const previous = choreography[index - 1] ?? {};
+          const held = choreography[index - 2] ?? {};
+          expect('pose' in previous && 'drag' in held && held.drag.hold === true, `${where} drops a drag the pose before it does not hold`).toBe(true);
+        }
         // The same table boot.js presses a boot step's hotkey from, so a typo fails here and not in a frame.
         if ('hotkeyDown' in step) expect(step.hotkeyDown, `${where}.hotkeyDown`).toMatch(/^Mouse:(Back|Forward|Middle)$/);
         if ('hotkeyUp' in step) expect(step.hotkeyUp, `${where}.hotkeyUp`).toMatch(/^Mouse:(Back|Forward|Middle)$/);
@@ -381,15 +372,12 @@ describe('scene registry', () => {
     expect(checked, 'no scene carries a workflow move').toBeGreaterThan(0);
   });
 
-  it('says how every scene moves under loop=1, and the pending list only shrinks', () => {
+  it('says how every scene moves under loop=1', () => {
+    // A choreography that is only a pose holds still, so it does not count: every scene plays a
+    // cycle, rides a timeline, or says in a sentence why it moves without either.
     for (const scene of scenes) {
-      if (MOTION_PENDING.has(scene.name)) {
-        expect(declaresMotion(scene), `${scene.name} now declares how it moves; take it out of MOTION_PENDING`).toBe(false);
-      } else {
-        expect(declaresMotion(scene), `${scene.name} declares no choreography cycle, timeline, or motion reason`).toBe(true);
-      }
+      expect(declaresMotion(scene), `${scene.name} declares no choreography cycle, timeline, or motion reason`).toBe(true);
     }
-    for (const name of MOTION_PENDING) expect(SCENES[name], `MOTION_PENDING names ${name}, which is not a scene`).toBeDefined();
   });
 
   it('patches only rows the scene\'s install holds: the sample install\'s and the scene-only rows it adds', () => {

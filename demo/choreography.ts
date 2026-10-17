@@ -68,7 +68,7 @@ const SETTLE_FRAMES = 45;
 const SETTLED_FRAMES = 3;
 /** Pacing after a step that names none. */
 const DEFAULT_PACING_MS: Record<string, number> = {
-  hover: 900, click: 900, contextmenu: 1200, drag: 900, type: 700, key: 500, choose: 1200, scroll: 700, hotkeyDown: 900, hotkeyUp: 900,
+  hover: 900, click: 900, contextmenu: 1200, drag: 900, drop: 900, type: 700, key: 500, choose: 1200, scroll: 700, hotkeyDown: 900, hotkeyUp: 900,
 };
 /** The rest a visitor sees before the first cycle, and between cycles. */
 const FIRST_REST_MS = 2500;
@@ -78,6 +78,12 @@ const DRAG_ACTIVATION_OFFSET: Point = { x: 10, y: 4 };
 /** Where the pointer appears, relative to its first target, so a cycle opens with a visible travel. */
 const ENTRY_OFFSET: Point = { x: 140, y: 90 };
 const HOVER_ATTRIBUTE = 'data-demo-hover';
+/**
+ * Stamped on what is checked, selected or pressed when the rest is read, so a step can name the
+ * option the frame opened on as a selector (`[data-demo-rest]`), which the scene cannot know: the
+ * theme a host passes, for one.
+ */
+const REST_ATTRIBUTE = 'data-demo-rest';
 /** The exit classes useOverlayPhase puts on a dialog, popover, panel or Command Terminal that is closing. */
 const CLOSING_LAYER = '.overlay-content-out, .overlay-popover-out, .overlay-panel-out, .overlay-command-bar-out';
 /** Surfaces whose own fields are not a form the rest check reads: a terminal and the diff editor. */
@@ -643,6 +649,9 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
         : await resolveTarget(step.drag.to);
       await travel(to, DRAG_CARRY_MS);
       if (!step.drag.hold) release(0);
+    } else if ('drop' in step) {
+      if (buttons === 0) throw new Error('the choreography drops a drag no step is holding');
+      release(0);
     } else if ('type' in step) {
       await typeInto(step.type.into, step.type.text);
     } else if ('key' in step) {
@@ -806,6 +815,9 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     // for (a file tree, a closing menu whose exit starts a frame after the click) has landed by then.
     await closingLayersGone();
     const rest = restSignature();
+    for (const chosen of Array.from(document.querySelectorAll('[aria-checked="true"], [aria-selected="true"], [aria-pressed="true"]'))) {
+      chosen.setAttribute(REST_ATTRIBUTE, '');
+    }
     while (!stopped) {
       await whenOnScreen();
       if (stopped) return;

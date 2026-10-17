@@ -33,7 +33,7 @@ three things staying in step, and each is enforced rather than remembered.
 - **A scene is data, and so is how it moves.** Config overrides, task-row patches, session
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
   hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (steps
-  from a closed vocabulary, the pointer's `hover`, `click`, `contextmenu` and `drag`, the
+  from a closed vocabulary, the pointer's `hover`, `click`, `contextmenu`, `drag` and `drop`, the
   keyboard's `type`, an arrow `key` and a held `hotkeyDown`/`hotkeyUp`, a select's `choose`, a `scroll`, and one
   `pose`, with pacing as a number on a step and every effect a step depends on a selector waited
   for; never Escape, never Enter, and never a write a visitor would have to undo, so a dialog's
@@ -265,10 +265,11 @@ three things staying in step, and each is enforced rather than remembered.
   `scenes.json` fields drift from the type, and when
   `boot.js` reads `settle` or a `settle` selector names a testid no renderer file stamps. It also
   holds a `state` scene to no pose and a `boot` scene to boot steps or a pose, each choreography to
-  its closed vocabulary (one gesture a step, at most one pose, a held drag followed by the pose),
-  each timeline event to a working session with a recording and a card and lane the scene holds,
-  and every scene to a declared motion, bar a `MOTION_PENDING` list that fails a name that already
-  declares one. Runs via `npm run test:unit`.
+  its closed vocabulary (one gesture a step, at most one pose, a held drag followed by the pose, a
+  `drop` only after the pose that holds one), each timeline event to a working session with a
+  recording and a card and lane the scene holds, each workflow-origin move to the column main would
+  move it to (`src/shared/workflow-route.ts`), and every scene to a declared motion. Runs via
+  `npm run test:unit`.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots EVERY bootable scene in the
   registry from a static server (the loop iterates `SCENES`, so a new entry is covered with no
   test change, and a stale deep marker for a retired scene fails) and asserts its `ready` element

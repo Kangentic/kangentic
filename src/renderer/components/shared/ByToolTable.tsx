@@ -124,7 +124,8 @@ function SortableHeader({
   tip?: string;
 }) {
   const active = sort.key === sortKey;
-  const ariaSort = active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none';
+  // Only the sorted header carries aria-sort, as WAI-ARIA and the APG sortable table have it.
+  const ariaSort = active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined;
   return (
     <th
       className={`${align === 'left' ? 'text-left' : 'text-right'} font-normal pt-2 pb-1 pr-3 last:pr-0`}
