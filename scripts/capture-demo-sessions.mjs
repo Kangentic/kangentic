@@ -7,7 +7,11 @@
  *              (which agent, which repo, the prompt, where the recording is cut). An entry with
  *              `tiled` is recorded twice, the second time at the tiled width, the way the
  *              terminal boots below are; an entry with `transcript` also has the agent's own
- *              transcript derived beside it (transcripts/<file>) for the conversation viewer.
+ *              transcript derived beside it (transcripts/<file>) for the conversation viewer. An
+ *              entry with `mcp` is a session whose agent calls Kangentic's own MCP tools: it needs a
+ *              running /preview of this worktree with Allow Unsafe Operations on, which the capture
+ *              seeds with the project's board, and it runs in its task's worktree
+ *              (scripts/lib/demo-mcp-capture.mjs).
  *   spawns     DERIVED from the dataset: for every task with no session, the agent starting on
  *              that task the way a drag into an auto-spawn column starts it on the desktop, with
  *              the prompt Kangentic's default template sends ("<title>: <description>"). A To Do
@@ -42,7 +46,8 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { importTsModule } from './lib/bundle-ts-module.mjs';
-import { buildScaffoldRepo } from './lib/demo-scaffold-repo.mjs';
+import { buildScaffoldRepo, stageScaffoldRefresh } from './lib/demo-scaffold-repo.mjs';
+import { prepareMcpCapture } from './lib/demo-mcp-capture.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
@@ -147,6 +152,8 @@ function derivedTerminalEntries() {
  */
 function derivedResumeEntries() {
   return manifest.captures.flatMap((entry) => {
+    // The sample install's sessions only: a scene-only session ran in its task's worktree against a
+    // preview, and its resume is not a boot the frame plays.
     const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
     if (entry.agent !== 'claude' || !session || !session.taskId || session.transient) return [];
     return [{
@@ -248,7 +255,7 @@ function refreshScaffold(name, spec, target) {
   fs.cpSync(path.join(repoRoot, spec.scaffold), target, { recursive: true });
   // The commit plan describes the repo; it is not a file in it.
   fs.rmSync(path.join(target, 'commits.json'), { force: true });
-  execFileSync('git', ['add', '-A'], { cwd: target, stdio: 'ignore' });
+  stageScaffoldRefresh(target);
   try {
     execFileSync('git', ['-c', 'user.name=Dev', '-c', 'user.email=dev@example.com', 'commit', '-q', '-m', 'Refresh scaffold'], { cwd: target, stdio: 'ignore' });
     console.error(`[matrix] ${name}: scaffold refreshed`);
@@ -299,7 +306,7 @@ function geometryFor(entry) {
   // rate-limit pills) and one for every other agent, which is two more terminal rows.
   const forAgent = (surface) => ({ cols: surface.cols, rows: (surface.rowsByAgent && surface.rowsByAgent[entry.agent]) || surface.rows });
   if (entry.kind === 'session') {
-    const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
+    const session = dataset.findDemoSession(entry.sessionId);
     const transient = !!(session && session.transient);
     // The tiled variant of a session records at the width its window has beside another
     // (windows-tiled, command-terminal-tiled in tests/captures/scenes.ts).
@@ -314,17 +321,18 @@ function geometryFor(entry) {
 function isTransientCapture(entry) {
   if (entry.kind === 'terminal') return true;
   if (entry.kind !== 'session') return false;
-  const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
+  const session = dataset.findDemoSession(entry.sessionId);
   return !!(session && session.transient);
 }
 
-function runCapture(entry, cwd) {
+function runCapture(entry, cwd, extraArgs = []) {
   const out = path.join(fixturesDir, entry.file);
   const { cols, rows } = geometryFor(entry);
   const args = [
     path.join(repoRoot, 'scripts', 'capture-agent-scrollback.js'),
     '--agent', entry.agent, '--cwd', cwd, '--project', entry.project, '--prompt', entry.prompt, '--out', out,
     '--cols', String(cols), '--rows', String(rows),
+    ...extraArgs,
   ];
   if (entry.mode) args.push('--mode', entry.mode);
   // The model the session runs on, where the CLI takes one. A card names the model its recording
@@ -353,7 +361,7 @@ function runCapture(entry, cwd) {
     // A tiled variant keeps none: it plays on the single recording's clock, so the frame a still
     // paints for it is derived from its own frame timeline at the single's opening offset
     // (loadDemoTiledFrames in tests/captures/helpers/demo-scrollback.ts).
-    const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
+    const session = dataset.findDemoSession(entry.sessionId);
     const liveTail = (session && session.liveTailMs) || manifest.liveTailMs;
     if (liveTail) args.push('--live-tail', String(liveTail));
   }
@@ -433,11 +441,33 @@ for (const entry of entries) {
   // trails and transcripts were derived from that file.
   const originalHistory = history ? fs.readFileSync(history.historyFile) : null;
   if (history) fs.writeFileSync(history.historyFile, withoutRigExit(originalHistory.toString('utf-8')));
+  // An entry whose agent calls Kangentic's own MCP tools runs in its task's worktree against a
+  // seeded preview (scripts/lib/demo-mcp-capture.mjs), after an unrecorded run leaves the work it
+  // reviews. A preview that is not running, or that refuses the bridge, fails this entry loudly,
+  // and the matrix goes on to the next one.
+  let mcp = null;
   let code;
   try {
-    code = await runCapture(entry, cwd);
+    if (entry.mcp) {
+      try {
+        mcp = await prepareMcpCapture({ repoRoot, dataset, entry, root: cwd });
+      } catch (error) {
+        console.error(`[matrix] ${entry.file}: ${error.message ?? error}`);
+        code = 'prepare';
+      }
+    }
+    if (code === undefined) code = mcp ? await runCapture(entry, mcp.cwd, mcp.args) : await runCapture(entry, cwd);
   } finally {
     if (history) fs.writeFileSync(history.historyFile, originalHistory);
+    if (mcp) {
+      // A cleanup that fails is reported, not fatal: the next `mcp` capture releases the board
+      // and worktree again before it seeds, and the recording above is already written.
+      try {
+        await mcp.cleanup();
+      } catch (error) {
+        console.error(`[matrix] ${entry.file}: cleanup failed (${error.message ?? error}); the next mcp capture retries it`);
+      }
+    }
   }
   results.push({ file: entry.file, status: code === 0 ? 'captured' : `failed (${code})` });
   await resetRepo(cwd);

@@ -20,7 +20,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { buildDemoPreConfig, DEMO_PROJECTS, shippedKnowledgeGraph } from '../tests/captures/helpers/demo-dataset';
+import { buildDemoPreConfig, DEMO_PROJECTS, DEMO_SCENE_TASKS, shippedKnowledgeGraph } from '../tests/captures/helpers/demo-dataset';
 import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, loadDemoTiledFrames, loadDemoTranscripts, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
@@ -191,8 +191,13 @@ function nestedConfigShape(): Record<string, string[]> {
   return shape;
 }
 
+/**
+ * The scene-only task ids the seed carries (DEMO_SCENE_TASKS), so `demo/boot.js` can refuse a
+ * `state=` blob whose `rows` names one it does not, rather than booting a frame without the card.
+ */
 function buildScenesScript(version: string, recordingsScript: string): string {
-  return `window.__demoScenes = ${JSON.stringify(SCENES)};\nwindow.__demoVersion = ${JSON.stringify(version)};\nwindow.__demoConfigShape = ${JSON.stringify(nestedConfigShape())};\n${recordingsScript}`;
+  const sceneRowIds = DEMO_SCENE_TASKS.map((task) => task.id);
+  return `window.__demoScenes = ${JSON.stringify(SCENES)};\nwindow.__demoVersion = ${JSON.stringify(version)};\nwindow.__demoConfigShape = ${JSON.stringify(nestedConfigShape())};\nwindow.__demoSceneRowIds = ${JSON.stringify(sceneRowIds)};\n${recordingsScript}`;
 }
 
 /** The frame every scene is authored at: the site's 1600 by 1000 (demo/stage.html). */

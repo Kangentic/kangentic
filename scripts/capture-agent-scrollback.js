@@ -33,6 +33,13 @@
  *          --resume <session id>    resume that conversation instead of starting one (claude only):
  *                                   the launch Kangentic's Resume makes, no prompt, so the recording
  *                                   is the CLI reprinting the conversation and waiting for the user
+ *          --mcp-config <path>      attach Kangentic's MCP server the way a spawn attaches it
+ *          --settings <path>        (claude only, both): the mcp.json naming a preview's server and
+ *                                   the settings file whose one rule allows its tools
+ *                                   (scripts/lib/demo-mcp-capture.mjs writes both)
+ *          --scratch-root <dir>     the scratch clone when --cwd is a worktree inside it, so the
+ *                                   sanitizer rewrites the clone to the project's home and the
+ *                                   worktree keeps its own path under it
  *
  * The agent's own transcript is read once at the end for the board card's message trail, which the
  * terminal bytes cannot supply. A failure there is reported but never loses the recording; CI
@@ -54,7 +61,7 @@ const { buildSanitizer, forwardSlash, sanitizeDeep } = require('./lib/demo-sanit
 const { toSpawnable, childAgentEnv } = require('./lib/spawnable');
 
 function parseArgs(argv) {
-  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true, transcriptOut: null, resume: null };
+  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true, transcriptOut: null, resume: null, mcpConfig: null, settings: null, scratchRoot: null };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const next = () => argv[++index];
@@ -80,6 +87,9 @@ function parseArgs(argv) {
       case '--no-message-trail': options.messageTrail = false; break;
       case '--transcript-out': options.transcriptOut = path.resolve(next()); break;
       case '--resume': options.resume = next(); break;
+      case '--mcp-config': options.mcpConfig = path.resolve(next()); break;
+      case '--settings': options.settings = path.resolve(next()); break;
+      case '--scratch-root': options.scratchRoot = path.resolve(next()); break;
       default: throw new Error(`Unknown argument ${argument}`);
     }
   }
@@ -88,21 +98,34 @@ function parseArgs(argv) {
     if (!options[required]) throw new Error(`--${required} is required`);
   }
   if (options.resume && options.prompt) throw new Error('--resume takes no --prompt: a resumed conversation waits for the user');
+  if (options.scratchRoot) {
+    // Outside the root is a path that climbs out of it, or, for a --cwd on another Windows drive,
+    // an absolute one. A folder whose own name starts with ".." is still inside.
+    const relative = path.relative(options.scratchRoot, options.cwd);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error('--scratch-root must contain --cwd: it names the clone a worktree --cwd sits in');
+    }
+  }
   return options;
 }
 
 /**
- * The interactive launch shape of each adapter, minus the session and MCP extras. An empty prompt
- * is the Command Terminal shape: the agent started interactively with nothing to do yet.
+ * The interactive launch shape of each adapter, minus the session extras. An empty prompt is the
+ * Command Terminal shape: the agent started interactively with nothing to do yet. Kangentic's MCP
+ * server rides along only when asked (`mcp`), in Claude's shape, since it runs only inside a
+ * preview the capture seeds (scripts/lib/demo-mcp-capture.mjs).
  */
-function buildCommand(agent, cwd, prompt, mode, model, resume) {
+function buildCommand(agent, cwd, prompt, mode, model, resume, mcp) {
   const withPrompt = (args, positional) => (prompt ? [...args, ...positional] : args);
   // Kangentic resumes a Claude session with --resume and no prompt (claude/command-builder.ts).
   if (resume && agent !== 'claude') throw new Error(`No resume launch shape for agent "${agent}"`);
+  if ((mcp.mcpConfig || mcp.settings) && agent !== 'claude') throw new Error(`No MCP launch shape for agent "${agent}": each adapter delivers the server its own way`);
+  // The desktop's order (claude/command-builder.ts): the merged settings, then the MCP config.
+  const mcpArgs = [...(mcp.settings ? ['--settings', mcp.settings] : []), ...(mcp.mcpConfig ? ['--mcp-config', mcp.mcpConfig] : [])];
   switch (agent) {
     case 'claude':
-      if (resume) return { exe: 'claude', args: ['--permission-mode', mode || 'acceptEdits', '--resume', resume], exit: ['\x03', '/exit\r'] };
-      return { exe: 'claude', args: withPrompt(['--permission-mode', mode || 'acceptEdits'], ['--', prompt]), exit: ['\x03', '/exit\r'] };
+      if (resume) return { exe: 'claude', args: ['--permission-mode', mode || 'acceptEdits', ...mcpArgs, '--resume', resume], exit: ['\x03', '/exit\r'] };
+      return { exe: 'claude', args: withPrompt(['--permission-mode', mode || 'acceptEdits', ...mcpArgs], ['--', prompt]), exit: ['\x03', '/exit\r'] };
     case 'codex':
       // The adapter's acceptEdits and bypass mappings (src/main/agent/adapters/codex/command-builder.ts).
       // Codex's Windows sandbox needs a helper this machine does not have, and a session in which every
@@ -308,9 +331,11 @@ async function main() {
     console.error('Failed to load node-pty. Try: npm rebuild node-pty');
     throw error;
   }
-  const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model, options.resume);
+  const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model, options.resume, { mcpConfig: options.mcpConfig, settings: options.settings });
   if (options.trust) await seedTrust(options.agent, options.cwd);
-  const sanitizer = buildSanitizer(options);
+  // A worktree run rewrites the clone it sits in, so the worktree keeps its own path under the
+  // project's home (C:\Users\dev\work\contoso-web\.kangentic\worktrees\<folder>).
+  const sanitizer = buildSanitizer({ ...options, cwd: options.scratchRoot || options.cwd });
 
   console.error(`[capture] ${options.agent} in ${options.cwd} (${options.cols}x${options.rows})`);
   console.error(`[capture] ${command.exe} ${command.args.map((value) => (value.includes(' ') ? JSON.stringify(value) : value)).join(' ')}`);
@@ -551,11 +576,17 @@ function writeTranscript(outPath, { sessionOptions, capturedAt, durationMs, entr
   console.error(`[capture] transcript: ${sanitized.length} entries written to ${outPath}`);
 }
 
-main().then(() => {
-  // A force-killed agent can leave the ConPTY handle open, which keeps the event loop alive and
-  // stalls the matrix driver behind a process that has nothing left to do.
-  process.exit(0);
-}).catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+// Run as a script, never on require: tests/unit/capture-agent-scrollback-args.test.ts imports the
+// argument parsing and the launch shapes.
+if (require.main === module) {
+  main().then(() => {
+    // A force-killed agent can leave the ConPTY handle open, which keeps the event loop alive and
+    // stalls the matrix driver behind a process that has nothing left to do.
+    process.exit(0);
+  }).catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = { parseArgs, buildCommand };

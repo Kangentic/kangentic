@@ -21,7 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_BACKLOG, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL,
-  DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, archivedSessionIdOf, buildDemoPreConfig,
+  DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, DEMO_ALL_SESSIONS, DEMO_SESSIONS, DEMO_TASKS, archivedSessionIdOf, buildDemoPreConfig,
   shippedKnowledgeGraph,
 } from '../../tests/captures/helpers/demo-dataset';
 import { TranscriptMatchError, agentSessionIdOf } from '../../tests/captures/helpers/message-trail-extract';
@@ -240,7 +240,7 @@ describe('demo Knowledge Graph node facts', () => {
    * `adjust` edits that data first, to reach a case the sample install itself never has.
    */
   function liftKnowledgeGraphSeed(adjust?: (data: SeedData) => void): Lifted {
-    const script = buildDemoPreConfig({ scrollback: Object.fromEntries(DEMO_SESSIONS.map((session) => [session.id, 'recording'])) });
+    const script = buildDemoPreConfig({ scrollback: Object.fromEntries(DEMO_ALL_SESSIONS.map((session) => [session.id, 'recording'])) });
     // `var data = <JSON>;` is one line: JSON.stringify escapes every newline inside a string.
     const dataStart = script.indexOf('var data = ') + 'var data = '.length;
     const data = JSON.parse(script.slice(dataStart, script.indexOf(';\n', dataStart))) as SeedData;
@@ -432,7 +432,7 @@ describe('demo Knowledge Graph in the seed', () => {
     const dataStart = script.indexOf('var data = ') + 'var data = '.length;
     return JSON.parse(script.slice(dataStart, script.indexOf(';\n', dataStart)));
   }
-  const scrollback = Object.fromEntries(DEMO_SESSIONS.map((session) => [session.id, 'recording']));
+  const scrollback = Object.fromEntries(DEMO_ALL_SESSIONS.map((session) => [session.id, 'recording']));
 
   it('leaves the maps out of a seed that fetches them, which the web build emits as their own file', () => {
     expect(seededData(buildDemoPreConfig({ scrollback, knowledgeGraph: 'fetched' })).knowledgeGraph).toBeNull();

@@ -179,6 +179,7 @@ A `DemoState` (also the shape of every registry entry) is:
     | { type: string; text: string; waitFor?: string }  // a field selector and the text set in it
     | { press: string; waitFor?: string }               // a hotkey in the registry's spelling, held
   >;
+  rows?: string[];                              // scene-only tasks to add, each with its session (Scene-only rows below)
 }
 ```
 
@@ -194,6 +195,11 @@ visitor's Resume click does: first output a beat after page open, then the usage
 the card trades "Resuming agent..." for its model. The flag itself stays set, as it does in main:
 it means the session was spawned as a resume. `validateState` refuses a field outside these
 three, a value outside its set, and a resume on a session it also stops.
+
+`rows` is the same kind of input. It names tasks the sample install leaves out (`DEMO_SCENE_TASKS`
+in `demo-dataset.ts`), and the seed adds each one with its session before the session patches are
+folded, so a scene can patch one and everything derived from a row describes it. `boot.js`
+refuses an id the build does not carry (the build emits the list as `window.__demoSceneRowIds`).
 
 A nested config block replaces the default rather than merging into it: the merge is a shallow
 `Object.assign` here and again in the mock. So naming one field of `monitor` would leave the other
@@ -267,12 +273,14 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `notification-toast` | state | `__mockInitialExit`, fired once when `sessions.onExit` registers, so App.tsx raises the toast itself; `notifications.toasts.durationSeconds` holds it up |
 | `board-config-change` | state | `__mockBoardConfigChanged`, fired once when `boardConfig.onChanged` registers, which App.tsx turns into its own reconciliation dialog |
 | `edit-columns`, `column-automation`, `column-automation-turn-end`, `column-handoff` | boot | the column's edit button (and, for `column-handoff`, the All columns tab), plus one shared `__mockSwimlanePatches` ladder (`COLUMN_LADDER` in `scenes.ts`) so the four describe one board: Claude Code plans on Opus 5 at xhigh and builds on Sonnet 5, Codex CLI reviews in an isolated session, Claude tests, and GitHub Copilot CLI merges, with handoff on at each change of agent. `column-automation`, `column-automation-turn-end` and `column-handoff` add the Code Review automation through `__mockAutomations`; `edit-columns` keeps the enter and exit slots empty. Never the dataset: an automation draws a glyph in the BOARD column header, so seeding one there would change every figure already placed. The forms show Model and Effort because the sample install reports each agent's capabilities (`DEMO_AGENT_OVERRIDES`), and Codex has no Effort field because it takes none from Kangentic. Codex also reports no turn end, which the dataset's agent list carries from its adapter, so Code Review's On agent turn end reads blocked as it does on the desktop. That is why `column-automation-turn-end` puts the review loop on Testing, where the ladder hands the review on to Claude. It holds two Move to column rows the runner reads in order, one of each Condition kind so both row marks show: back to Executing on an Agent evaluation (the robot mark) with a Frequency of three and a Message carrying `{{agentReply}}`, then on to Merge, once, on a Text match (the text search mark) of the line `PR: ready to merge`, the gate this repo's own `kangentic.json` puts on Testing. A move ends the group, so when the first row fires the second never runs |
+| `column-automation-edit` | boot | the same board and rows as `column-automation-turn-end`, Testing's edit button, then the first turn-end row's edit button, so the Edit automation dialog shows Send findings back as its four cards: Trigger, Condition, Frequency and Action. The first row, because its Condition is an Agent evaluation in plain words where the second quotes one specific final line. It also seeds `config.automation` (Claude on Sonnet 5), since with no Automation agent the Condition card shows its setup notice in place of the condition, and the sample install chooses none. No menu is left open, so it boots in a frame. At 1600 by 1000 the dialog is about 115px taller than its body allows, so the body scrolls: the first three cards show whole, and the Action card shows its Type, its column and the Message, whose last line (`{{agentReply}}`) is cut off at the bottom of the body, with the Template variable picker below the fold. The dialog keeps the app's own size and type |
 | `workflows` | boot | `__mockWorkflows` and `__mockWorkflowLinks` plus `tasks` patches that join six existing contoso cards to one running workflow (Workflows below); the Workflows toggle, the agent pane's collapse, Board, Workflows again, then a click on empty canvas |
 | `board-workflow` | state | the same seed, on the board: each member card's strip and step track, the To Do cards' waiting line, and the toggle's running mark |
 | `workflow-draft` | boot | a second `__mockWorkflows` seed, a workflow planned but not started (its tasks live in the draft, so nothing reaches the board); the same round trip as `workflows`, then a click that selects the middle planned task, so the inspector shows its route switches, what it waits for and what waits for it |
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab) |
 | `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more |
 | `task`, `browser` | state | `workspaceByProject` (a floating window sized to its session's recording, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below) |
+| `task-mcp` | state | `rows` adds the scene-only Validate request bodies task (Scene-only rows below), and `workspaceByProject` restores its window maximized. Its session is the MCP recording (An agent calling Kangentic's MCP tools below), working, with a `liveTailMs` cut to that recording: a still paints the moment `kangentic_get_current_task`, `kangentic_list_columns` and `kangentic_list_automations` have printed their results, and live, the agent then reads Testing with `kangentic_get_column_detail` and moves the card with `kangentic_move_task`, about eleven seconds that `loop=1` replays. The whole `terminal` block is spelled out with a larger font, the one exception to the type rule above (One viewport, one scale). It also seeds `__mockAgentListOverrides` with the dataset's agent list and Claude Code at 2.1.302, the version the recording ran on, so the context bar and the terminal's header agree. The card stays in Code Review after the move's result lands, since no main process moves it |
 | `windows-tiled` | state | `workspaceByProject` with two `tiled` windows under one horizontal split, in the footprint a dock produces; both sessions have a recording at the tiled width (Terminal recordings below) |
 | `conversation` | state | `workspaceByProject` with one `conversation` window anchored on the middleware session id; the transcript is the one recorded beside the session (Transcripts below) |
 | `dictation` | boot | `config.dictation.enabled` and a held `press` of `Mouse:Back` (Dictation below) |
@@ -389,6 +397,24 @@ session when the pane opens, and its terminal would be empty. The strip shows th
 mark. A visitor who expands the pane sees that empty terminal, the one place this view is quieter
 than the desktop. Recording the workflow agent needs Kangentic's MCP server to plan against, which
 the capture matrix does not run.
+
+### Scene-only rows
+
+A card only one figure needs is not a row of the sample install. A new contoso card would change
+every contoso figure, the Monitor's row count and the usage, and the Knowledge Graph fixture counts
+the install's tasks, so a dataset row would also need that graph rebuilt from conversations Claude
+Code deletes after thirty days. The workflow and completed-task seeds are scene data for the same
+reason. `DEMO_SCENE_TASKS` and `DEMO_SCENE_SESSIONS` in `demo-dataset.ts` hold such rows, and a
+scene adds one by naming its task in `rows`. The seed then adds the task and its session before it
+derives anything, so the card, the Monitor row and the clock describe it like any other. The
+session is recorded like any other too, and the build refuses one without a recording.
+
+There is one: Validate request bodies, #68 in contoso-web's Code Review, whose Claude Code session
+is the MCP recording (An agent calling Kangentic's MCP tools, below). Its ticket is the next free one
+after the archived history, and it is a literal rather than computed: the recording prints it, so
+`tests/unit/scene-registry.test.ts` fails when a dataset change moves the next free ticket, and
+when the recording stops printing the row's number. The Knowledge Graph and its capture leave the
+session out, like every figure but its scene, and it has no resume boot.
 
 ### Knowledge Graph
 
@@ -718,6 +744,13 @@ with the reader's device pixel ratio, because the renderer rounds the cell to de
 `node demo/measure.mjs --geometry` prints the grid every surface fits at scale 1 and 2, and the
 manifest's `geometry` names the scale each of its numbers was measured at.
 
+`task-mcp` is the one named exception. The site shows it as the whole app at 56 percent for its MCP
+tools tab, where native 12px type is under 7px and the tool names are the point of the figure. So
+the scene spells out the `terminal` block with a larger font, sized so the maximized pane fits fewer
+columns than the 154-column recording at every display scale, and the seed's hold then lands the
+recording on the whole pane at the largest type that carries it. The rest of the frame keeps the
+app's own type. No other scene should copy it. The rule above is what keeps the figures one app.
+
 ## The sample install
 
 `tests/captures/helpers/demo-dataset.ts`, shared by the marketing captures and the web build. Three
@@ -909,6 +942,54 @@ on purpose: every CLI prints its working directory somewhere, the full-screen on
 status-bar column, and a truncated path can only survive sanitization when the part that
 survives is already the final text. `--root` moves them at the cost of that property.
 
+### An agent calling Kangentic's MCP tools
+
+One recording shows what no other can: an agent calling `kangentic_*` tools.
+`contoso-web-claude-validate-mcp.json` is Claude Code reviewing the Validate request bodies task's
+branch on the Code Review column message ("Review the diff on this branch. When it is clean, move
+this card on with kangentic_move_task."). It reads the diff, the files, and the tests, then finds
+its own card with `kangentic_get_current_task`, reads the board with `kangentic_list_columns` and
+`kangentic_list_automations`, checks the next column with `kangentic_get_column_detail`, and moves
+the card with `kangentic_move_task`. The recording is cut when the move's result lands
+(`stopWhen`). The task is a scene-only row (Scene-only rows above), which only the `task-mcp`
+scene adds.
+
+Claude Code 2.1.302 folds consecutive MCP calls into one "Called kangentic 4 times (ctrl+o to
+expand)" line in its default view, even while they run, so a default recording shows no tool name
+at all. The entry therefore turns on Claude's own Verbose output (`claudeSettings` in the manifest,
+`"verbose": true`), the documented display preference a user sets in Claude's `/config`, which
+prints each call with its arguments and result. Claude keeps that preference in the user's
+`~/.claude/settings.json` and reads it itself beside the `--settings` file Kangentic passes, so a
+desktop user who turned it on sees what this recording shows. The rig cannot edit the recording
+machine's own file, so the preference rides in the `--settings` file, where Claude reads it the
+same way. Verbose also prints the files the agent reads in full, which is why the scene opens late
+in the run (`task-mcp` above). `claudeSettings` carries display preferences only, and the rig
+refuses one that names a permission.
+
+The rest of the matrix leaves Kangentic's server out, and it cannot be faked: the server runs only
+inside the app, and every result it prints comes from that app's board. So the manifest entry is
+marked `mcp`, and `scripts/lib/demo-mcp-capture.mjs` does four things before the PTY starts:
+
+- It drives a running `/preview` of this worktree (Allow Unsafe Operations on), never the
+  dogfooding app, whose server answers from the recording machine's real projects. It seeds the
+  preview with contoso-web as the scene paints it, through the Knowledge Graph capture's seeder in
+  its lane placement mode: every task in its own column, each column's agent, the archived history,
+  and the recorded task last, so the preview's allocator hands it the ticket the scene's card
+  carries. The project is never opened, because opening adds `.kangentic/` to the clone's
+  `.gitignore` and the agent would read that in its diff.
+- It points the preview's Claude CLI at the repo's mock, so the auto-spawn the move starts in the
+  next column costs nothing.
+- It makes the task's worktree under the scratch clone, on the task's branch, with `node_modules`
+  linked in the way Kangentic links it, and runs the task's own prompt there headless
+  (`claude -p`, not recorded), so the review has real work to read.
+- It launches Claude the way Kangentic does with its server attached: an `--mcp-config` naming the
+  project's URL and the preview's token, and a `--settings` file whose one rule allows
+  `mcp__kangentic`, which the desktop adds so its own tools never prompt. Nothing else is allowed.
+
+`--scratch-root` tells the sanitizer the clone the worktree sits in, so the worktree keeps its own
+path under the project's home. A re-run removes the project an earlier one registered and seeds a
+fresh board.
+
 Each CLI must be logged in; the runs happen on the accounts of whoever runs the matrix. The set
 was recorded with Claude Code, Codex CLI, Gemini CLI, OpenCode, and GitHub Copilot CLI. What kept
 the others out, so the next run knows what to expect: Kimi Code and Droid had no account on the
@@ -1064,7 +1145,8 @@ already played into `messageTrailCache` before the renderer mounts, because `syn
 reconciles the store against the `getMessageTrails()` snapshot and a push-only seed would be
 dropped; the rest ride `scheduleSessionClock` beside the peeks.
 
-Eleven of the sixteen sessions carry one. The other five show a description, exactly as they would
+Eleven of the sample install's sixteen sessions carry one, and so does the scene-only session
+(Scene-only rows above). The other five show a description, exactly as they would
 on the desktop: Cursor and Copilot have no transcript parser at all, a Command Terminal's session is
 transient and `MessageTrailTracker` skips those, and the Gemini capture put all its prose in
 thinking blocks, which `assistantMessagePreviews` excludes. A card with a trail draws it INSTEAD of
@@ -1373,11 +1455,16 @@ the first time a frame opens the graph (`seededKnowledgeGraph`), as the conversa
 fetches a transcript. The seed went from 207 to 175 KB by the same gzip, and eight board frames on
 one page from 74 to 66 MB of heap (`demo:measure`, both builds on one machine, run back to back).
 Ready times moved by less than their run-to-run noise. `tests/demo/static-demo.spec.ts` holds a
-board frame to no graph request and the graph scene to exactly one.
+board frame to no graph request and the graph scene to exactly one. The scene-only session
+(Scene-only rows above) adds about 18 KB gzipped (90 KB raw) to the seed: its final and opening
+frames, its diff, its peek timeline and its trail, measured by building the seed with and without
+them. Every frame carries it, though only `task-mcp` shows it.
 The 44 recordings under `recordings/` (six of them tiled siblings, five of them resume boots) are
 17.3 MB raw and 543 KB gzipped in total, fetched one at a time as terminals mount, so none of it
 is on the boot path. The resume boots are 204 KB raw and 29 KB gzipped of that, and one is fetched
-only when a visitor resumes a session paused at its recording's end. Each carries its timed
+only when a visitor resumes a session paused at its recording's end. The MCP recording, added
+later for the `task-mcp` scene, makes 45 and adds 292 KB raw and 32 KB gzipped, fetched only by a
+frame that mounts its terminal. Each recording carries its timed
 stream, final frame and grid. They were 38.3 MB and 832 KB while each also shipped its frame
 timeline, which the page's emulator made redundant (Live replay); the fixtures keep it. The
 largest single file is the Codex OpenTelemetry session at 70 KB gzipped. The emulator is a 4 KB

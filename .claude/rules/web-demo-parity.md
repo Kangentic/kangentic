@@ -65,6 +65,15 @@ three things staying in step, and each is enforced rather than remembered.
   `demo-dataset.ts`; terminal content comes from recordings in `tests/captures/fixtures/demo/`
   made by `scripts/capture-agent-scrollback.js` and sanitized at record time. There is no
   hand-authored terminal content, and the build refuses to seed a session without a recording.
+  A card only one figure needs is a scene-only row (`DEMO_SCENE_TASKS`, named by a scene's
+  `rows`), for the reason the workflow seeds are scene data: a new card changes every figure
+  already placed. Its session is recorded like any other, and the build refuses one without a
+  recording too.
+- **What an agent's `kangentic_*` call prints is real.** A recording whose agent calls
+  Kangentic's own MCP tools (a manifest entry marked `mcp`) runs against a `/preview` the capture
+  seeds with the board the scene paints, through the desktop's launch shape: an `--mcp-config`
+  and a settings file whose one rule allows `mcp__kangentic`. Never the dogfooding app, whose
+  server answers from the recording machine's real projects, and never a hand-written result.
 - **What a visitor can start is recorded too.** The transition engine is not in a browser, so a
   drag into an auto-spawn column and a new Command Terminal replay boots the matrix records from
   the dataset (one per task and permission mode, one per project), announced through the same
@@ -228,10 +237,12 @@ three things staying in step, and each is enforced rather than remembered.
   seeds, when a config key is not an `AppConfig` key (the mock's `Object.assign` accepts any key
   and the renderer never reads it), when the settings scenes stop matching `SETTINGS_TABS` one to
   one or a `setting-row-<id>` marker names a row that is not on that tab, when a `fitToRecording`
-  names a session the recordings index does not carry, when a `__mockTaskReports` key is not an
-  archived task of the open project or the scenes seed reports for more than one task, when
-  `boot.js`'s
-  `STATE_KEYS` or `demo/vite.config.mts`'s `scenes.json` fields drift from the type, and when
+  names a session the recordings index does not carry, when a scene's `rows` names a task that is
+  not a scene-only row, when a scene-only task is also a dataset row, has no recorded session, is
+  not the next free ticket on its board, or has a recording that never prints its ticket number,
+  when a `__mockTaskReports` key is not an archived task of the open project or the scenes seed
+  reports for more than one task, when `boot.js`'s `STATE_KEYS` or `demo/vite.config.mts`'s
+  `scenes.json` fields drift from the type, and when
   `boot.js` reads `settle` or a `settle` selector names a testid no renderer file stamps. Runs via
   `npm run test:unit`.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots EVERY bootable scene in the
@@ -249,9 +260,11 @@ three things staying in step, and each is enforced rather than remembered.
   unknown scene, a clean console, zero off-origin requests, that a still frame fetches no
   recording, that the live frame fetches its session's recording, that a live Monitor's output
   peeks change while a still frame's do not, that `loop=1` brings a finished session back and its
-  absence leaves it finished, that a terminal on a grid its recording does not fit plays through
-  the emulator and leaves its session working (including the board's bottom panel, where no grid
-  could fit), that every terminal scene fills its panes at device scale 1, 1.25 and 2 and as a
+  absence leaves it finished, that the MCP scene's still opens on its first recorded `kangentic_*`
+  calls and its live frame plays on to `kangentic_move_task`, that a terminal on a grid its
+  recording does not fit plays through the emulator and leaves its session working (including
+  the board's bottom panel, where no grid could fit), that every terminal scene fills its panes
+  at device scale 1, 1.25 and 2 and as a
   still at 2, and that bytes reach a terminal only on one of its recordings' grids, that a held
   terminal reporting its conformed grid back is read as the conform landing
   rather than a resize, so a session already at its recording's end receives nothing,

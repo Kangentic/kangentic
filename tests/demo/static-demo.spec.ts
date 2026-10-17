@@ -22,8 +22,8 @@ import { PLANNED_PDF_ROUTE, SCENES, type SceneDefinition } from '../captures/sce
 import { NO_GPU_FALLBACKS, openScene, waitForSettled } from '../captures/helpers/scene-page';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
-  SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET,
-  TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_WEBSOCKET,
+  SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET,
+  DEMO_SCENE_TASKS, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_REPORT, DEMO_COMPLETED_TASK_SUMMARY } from '../captures/helpers/demo-task-report';
 import { formatCost, formatSpan } from '../../src/renderer/utils/format-session';
@@ -241,6 +241,40 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     }
     // Sibling negative: the Testing form's enter group holds none of the board's other rows.
     await expect(dialog.locator('[data-testid="column-automation-group"][data-trigger="enter"] [data-testid="column-automation-row"]')).toHaveCount(0);
+  },
+  'column-automation-edit': async (page) => {
+    // Send findings back opened in its editor, every card holding the row's own value. The Condition
+    // shows its field, not the setup notice, which is what the scene's Automation agent seed buys:
+    // the sample install chooses none.
+    const editor = page.locator('[data-testid="edit-automation-dialog"]');
+    await expect(editor.locator('[data-testid="edit-automation-name"]')).toHaveValue('Send findings back');
+    await expect(editor.locator('[data-testid="edit-automation-trigger-turn_end"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(editor.locator('[data-testid="edit-automation-condition-setup"]')).toHaveCount(0);
+    await expect(editor.locator('[data-testid="edit-automation-condition-kind-agent"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(editor.locator('[data-testid="edit-automation-condition"]')).toHaveValue('The review found work the implementer can do');
+    await expect(editor.locator('[data-testid="edit-automation-max-runs-value"]')).toHaveValue('3');
+    await expect(editor.locator('[data-testid="automation-config-targetColumn"]')).toHaveAttribute('data-value', 'Executing');
+    await expect(editor.locator('[data-testid="automation-config-message"]')).toHaveValue(/\{\{agentReply\}\}/);
+    // A dialog, not a menu: nothing is left open over it, or the scene would need a driver.
+    await expect(page.locator('[aria-expanded="true"]')).toHaveCount(0);
+  },
+  'task-mcp': async (page) => {
+    // The scene-only task's window, maximized, over a board that now carries its card in Code
+    // Review. As a still, the terminal paints the session's opening moment: the first three
+    // kangentic_* calls with their results, the first naming the card by the number it carries, and
+    // not yet the move, which the live frame plays from there.
+    const sceneTask = DEMO_SCENE_TASKS.find((task) => task.id === TASK_VALIDATE);
+    await expect(page.locator('[data-testid="task-title-text"]')).toHaveText(sceneTask?.title ?? '');
+    await expect(page.locator(`[data-task-id="${TASK_VALIDATE}"]`).first()).toBeAttached();
+    const painted = stripAnsi(await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), SESSION_VALIDATE));
+    for (const tool of ['kangentic_get_current_task', 'kangentic_list_columns', 'kangentic_list_automations']) {
+      expect(painted, `the still shows ${tool}`).toContain(`${tool} (MCP)`);
+    }
+    expect(painted).toContain(`#${sceneTask?.display_id}`);
+    expect(painted, 'the still is the opening moment, before the move').not.toContain('kangentic_move_task (MCP)');
+    // The context bar names the Claude Code the recording ran on, which its header prints too.
+    expect(painted).toContain('Claude Code v2.1.302');
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).toContainText('v2.1.302');
   },
   workflows: async (page) => {
     const view = page.locator('[data-testid="workflows-view"]');
@@ -1284,13 +1318,20 @@ const MIDDLEWARE_TILED_GRID: Grid = { cols: 115, rows: 37 };
  * grid allows and then filled at a smaller cell (displayFor in demo-dataset.ts). A letterboxed
  * recording left 56px beside and 23px below every card window at 125 percent, and 314px below the
  * Browser scene's terminal at 100; a pane the seed fills stays inside these on every display.
+ *
+ * The pixels are those cells at the app's 12px type. A terminal at larger type (task-mcp, the one
+ * scene above native type) leaves larger whole cells, so each band may also be two of that
+ * terminal's own cells, whichever is more.
  */
 const MAX_EMPTY_BESIDE_PX = 16;
 const MAX_EMPTY_BELOW_PX = 30;
 
-interface PaneBands { right: number; below: number }
+interface PaneBands { right: number; below: number; cellWidth: number; cellHeight: number }
 
-/** The empty band beside and below the screen of every terminal on the page, as the fit addon measures its box. */
+/**
+ * The empty band beside and below the screen of every terminal on the page, as the fit addon
+ * measures its box, and the terminal's cell, which xterm writes onto its helper textarea's size.
+ */
 function paneBands(page: Page): Promise<PaneBands[]> {
   return page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.xterm')).flatMap((xterm) => {
     const parent = xterm.parentElement;
@@ -1302,9 +1343,12 @@ function paneBands(page: Page): Promise<PaneBands[]> {
     const style = getComputedStyle(xterm);
     const screenBox = screen.getBoundingClientRect();
     const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const textarea = xterm.querySelector<HTMLElement>('.xterm-helper-textarea');
     return [{
       right: Math.round(parentBox.width - padding - (viewport.offsetWidth - viewport.clientWidth) - screenBox.width),
       below: Math.round(parentBox.height - screenBox.height),
+      cellWidth: parseFloat(textarea?.style.width ?? '') || 0,
+      cellHeight: parseFloat(textarea?.style.height ?? '') || 0,
     }];
   }));
 }
@@ -1317,7 +1361,8 @@ async function expectPanesFilled(page: Page, label: string): Promise<void> {
   await expect.poll(async () => {
     const bands = await paneBands(page);
     if (bands.length === 0) return ['no terminal on the page'];
-    return bands.filter((band) => band.right > MAX_EMPTY_BESIDE_PX || band.below > MAX_EMPTY_BELOW_PX);
+    return bands.filter((band) => band.right > Math.max(MAX_EMPTY_BESIDE_PX, 2 * band.cellWidth)
+      || band.below > Math.max(MAX_EMPTY_BELOW_PX, 2 * band.cellHeight));
   }, { timeout: 15_000, message: `${label}: a terminal left its pane empty around it` }).toEqual([]);
 }
 
@@ -1806,7 +1851,7 @@ for (const deviceScaleFactor of [1, 1.25, 2]) {
 // the Changes scene 300px below at 125. A still fills too, since the posters are stills, shot at
 // twice scale; this runner's Liberation Mono is the face whose heights round unevenly, the case
 // the renderer's conform used to stop short on.
-const TERMINAL_SCENES = ['task', 'windows-tiled', 'browser', 'changes', 'command-terminal', 'command-terminal-tiled', 'board'] as const;
+const TERMINAL_SCENES = ['task', 'windows-tiled', 'browser', 'changes', 'command-terminal', 'command-terminal-tiled', 'board', 'task-mcp'] as const;
 for (const [deviceScaleFactor, still] of [[1, false], [1.25, false], [2, false], [2, true]] as const) {
   test(`every terminal scene fills its panes at device scale ${deviceScaleFactor}${still ? ', as a still' : ''}`, async ({ browser }) => {
     test.setTimeout(180_000);
@@ -2057,6 +2102,31 @@ test('loop=1 starts a finished session over, and without it the session stays fi
   // Well past the loop's pause: a frame that was not asked to loop must stay put.
   await page.waitForTimeout(12_000);
   expect((await monitorRow(page, session))?.activity).toBe('idle');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('task-mcp plays its kangentic_* calls through to the move, and loop=1 opens them again', async ({ page }) => {
+  // The still paints the moment the first three calls have printed (the scene marker holds that);
+  // live, the session's clock runs on from there to kangentic_move_task, about eleven seconds, and
+  // loop=1 starts the same stretch over after its pause. The Monitor peek follows the replay
+  // whether or not the window's terminal shows it, so it is what this reads. The move is read by
+  // its printed result, which holds from the recording's end until the loop restarts: the peek
+  // naming kangentic_move_task itself lasts about a second, which a poll on a loaded runner can miss.
+  test.setTimeout(120_000);
+  const moveResult = 'Moving "Validate request bodies" (#68) to Testing';
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const peekOf = (): Promise<string> => page.evaluate((id) => {
+    const row = ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).find((candidate) => candidate.sessionId === id);
+    return (row?.outputPeek ?? []).join(' | ');
+  }, SESSION_VALIDATE);
+  await gotoScene(page, { view: 'task-mcp', embed: '1', loop: '1' });
+  await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Validate request bodies');
+  const opening = await peekOf();
+  expect(opening, 'the session opens on the third call\'s result').toContain('Merge: no automations.');
+  expect(opening, 'the session opens before the move').not.toContain(moveResult);
+  await expect.poll(peekOf, { timeout: 30_000, message: 'the replay reaches the move' }).toContain(moveResult);
+  await expect.poll(peekOf, { timeout: 40_000, message: 'loop=1 opens the calls again' }).toContain('Merge: no automations.');
+  expect((await monitorRow(page, SESSION_VALIDATE))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

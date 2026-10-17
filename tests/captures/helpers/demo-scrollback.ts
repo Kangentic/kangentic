@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEMO_SESSIONS, type DemoCellWidthTable, type DemoChangesMap, type DemoDiff, type DemoHistory, type DemoScrollbackMap } from './demo-dataset';
+import { findDemoSession, type DemoCellWidthTable, type DemoChangesMap, type DemoDiff, type DemoHistory, type DemoScrollbackMap } from './demo-dataset';
 import type { TranscriptEntry } from '../../../src/shared/types';
 import { wcwidthV11 } from '../../../src/shared/xterm-unicode11';
 
@@ -319,7 +319,7 @@ export function loadDemoOpenFrames(fixturesDir: string = DEMO_FIXTURES_DIR): Rec
 /** A recording's open frame, refused when it was kept at a tail the live frame no longer opens at. */
 function checkedOpenFrame(sessionId: string, record: DemoCaptureRecord, liveTailMs: number, reRecord: string): { serialized: string; peek: string[] } | null {
   if (!record.openFrame) return null;
-  const session = DEMO_SESSIONS.find((candidate) => candidate.id === sessionId);
+  const session = findDemoSession(sessionId);
   const expectedTail = session?.liveTailMs ?? liveTailMs;
   if (record.openFrame.beforeEndMs !== expectedTail) {
     throw new Error(`${sessionId}: its recording's open frame was kept ${record.openFrame.beforeEndMs} ms before the end, but the live frame opens it ${expectedTail} ms before. Re-run scripts/capture-demo-sessions.mjs --only ${reRecord}`);
@@ -358,7 +358,7 @@ export function loadDemoTiledFrames(fixturesDir: string = DEMO_FIXTURES_DIR): Re
     if (typeof tiled.record.serialized !== 'string' || tiled.record.serialized.length === 0) {
       throw new Error(`${sessionId}: its tiled recording ${tiled.file} carries no serialized frame. Re-run "node scripts/capture-demo-sessions.mjs --only ${tiled.file.replace(/\.json$/, '')}"`);
     }
-    const session = DEMO_SESSIONS.find((candidate) => candidate.id === sessionId);
+    const session = findDemoSession(sessionId);
     let openFrame: DemoTiledFrames['openFrame'] = null;
     if (session?.activity === 'thinking') {
       const stream = Array.isArray(record.stream) ? record.stream : [];
@@ -425,7 +425,7 @@ export function loadDemoPeekTimelines(fixturesDir: string = DEMO_FIXTURES_DIR): 
   const timelines: Record<string, Array<{ t: number; lines: string[] }>> = {};
   for (const { sessionId, record } of loadRecordings(fixturesDir)) {
     if (!Array.isArray(record.peekTimeline) || record.peekTimeline.length === 0) continue;
-    const session = DEMO_SESSIONS.find((candidate) => candidate.id === sessionId);
+    const session = findDemoSession(sessionId);
     if (session?.activity !== 'thinking') continue;
     timelines[sessionId] = record.peekTimeline;
   }
