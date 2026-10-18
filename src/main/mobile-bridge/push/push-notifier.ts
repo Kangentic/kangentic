@@ -34,7 +34,8 @@
  * category) cooldown - stamped before the send so a synchronous burst of
  * the same category cannot double up, but released again if the send
  * itself fails, so a genuine delivery failure never spends a real
- * notification's retry window. Only data.blob carries real content.
+ * notification's retry window. Only data.blob (a notification) and
+ * data.clear (a clear, below) carry real content.
  *
  * THE VISIBLE TITLE/BODY ARE iOS-ONLY, and that is load-bearing rather
  * than an optimisation. On Android, expo-notifications presents the
@@ -53,20 +54,73 @@
  * - which costs nothing, since the channel actually used is chosen
  * on-device from the DECRYPTED category (channelIdForCategory in the
  * phone's background task), and only the phone knows that. iOS keeps
- * title/body: with no Notification Service Extension yet, that
- * placeholder is the ONLY visible content an iOS push can have, and
- * stripping it globally would turn iOS from "silent because
- * unauthorized" into "silent by construction". channelId is dropped for
- * iOS too, since Expo ignores it for APNs and there is nothing to gain
- * by sending it.
+ * title/body: the Notification Service Extension that decrypts the
+ * envelope runs only for a push that carries an alert, and the
+ * placeholder is what shows when it cannot open one. Stripping it would
+ * make iOS silent by construction. channelId is dropped for iOS too,
+ * since Expo ignores it for APNs and there is nothing to gain by sending
+ * it.
  *
  * A DeviceNotRegistered ticket drops the registration.
+ *
+ * CLEARS. A notification goes stale when its condition resolves at the
+ * desk, and only the desktop sees that moment, so it tells the phone
+ * (the protocol's crypto/push-clear.ts). Only a device that registered
+ * with acceptsClears takes part: an older app shows the placeholder for
+ * any message it cannot open, so a clear would arrive there as a new
+ * notification. Every notification dispatched to such a device is
+ * recorded in a PushClearLedger, and these resolve it:
+ *
+ * - input-required: the session leaves 'permission', or exits.
+ * - turn-complete: the session leaves 'idle'. An exit does not resolve
+ *   it: the idle timeout suspends an idle session with nobody at the
+ *   desk, and that alert is still owed.
+ * - plan-complete: a turn of the same task that BEGAN after it ends
+ *   ('turn-ended'). Not "thinking": approving the plan takes the session
+ *   from permission to thinking in the same breath as 'plan-exit'. Matched
+ *   by task, because the plan-exit auto-move may respawn the session
+ *   under a new id.
+ * - session-failed: a different session of the task reaches 'running'.
+ * - spawn-stalled: a session of the task reaches 'running'.
+ * - every one of these: the task changes lane, is archived (Done), or is
+ *   deleted (boardEvents). The plan-exit auto-move resolves all but
+ *   plan-complete, whose recorded lane moves with the task instead.
+ * - workflow-complete is never recorded; the phone clears it when the
+ *   Board opens.
+ *
+ * A device connected at that moment is skipped: the app is running and
+ * reconciles its own notifications. Otherwise the clear waits a short
+ * coalescing window and goes out as one sealed message under data.clear:
+ * data-only at NORMAL priority on Android (FCM deprioritizes an app whose
+ * high-priority messages show nothing), and a background push on iOS
+ * (contentAvailable, no alert, APNs priority 5), at most once per device
+ * per IOS_STANDALONE_CLEAR_INTERVAL_MS (one Expo refused does not count).
+ *
+ * Pending clears also ride the device's next visible envelope as
+ * `clears`. An Android clear is done once Expo accepts it; an iOS one
+ * stays pending until a visible push carries it or 24h pass, because iOS
+ * delivers background pushes only when it chooses to, and never to an app
+ * the user force-quit. The ledger is memory-only, so a desktop restart
+ * forgets it.
  */
-import { hexToBytes, sealPushEnvelope, type PushCategory, type PushEnvelopePlaintext, type PushSessionKind } from '@kangentic/protocol';
-import type { ActivityReason, ActivityState, MobileDeviceConnectionState } from '../../../shared/types';
-import type { SessionManager } from '../../pty/session-manager';
-import type { PushRegistration, PushRegistrationStore } from './push-registration-store';
+import {
+  hexToBytes,
+  PUSH_CLEAR_DATA_KEY,
+  PUSH_ENVELOPE_DATA_KEY,
+  sealPushClear,
+  sealPushEnvelope,
+  sealedPushBlobLength,
+  type PushCategory,
+  type PushEnvelopePlaintext,
+  type PushSessionKind,
+} from '@kangentic/protocol';
+import type { ActivityReason, ActivityState, MobileDeviceConnectionState, Session, TaskMoveRecordOrigin } from '../../../shared/types';
+import { isWorkflowAgentSession } from '../../../shared/session-owner';
+import type { SessionManager, TurnEndedPayload } from '../../pty/session-manager';
+import type { BoardChangedEvent, BoardEventBus } from '../board-event-bus';
+import type { PushRegistration, PushRegistrationEntry, PushRegistrationStore } from './push-registration-store';
 import { createExpoWakeChannel, type FetchLike } from './expo-push-client';
+import { PushClearLedger, type OutstandingNotification, type PickedClear, type PushClearIdentity } from './push-clear-ledger';
 import type { WakeChannel } from './wake-channel';
 
 const PERMISSION_DEBOUNCE_MS = 2000;
@@ -87,6 +141,17 @@ const PERMISSION_DEBOUNCE_MS = 2000;
 const IDLE_SETTLE_MS = 45_000;
 const CATEGORY_COOLDOWN_MS = 30_000;
 const NOTIFICATION_TITLE = 'Kangentic';
+
+/** How long a device's clears gather before they go out, so one task move costs one message rather than several. */
+const CLEAR_COALESCE_MS = 5_000;
+/** Apple asks for no more than two or three background pushes an hour; past that iOS throttles them anyway. */
+const IOS_STANDALONE_CLEAR_INTERVAL_MS = 20 * 60_000;
+/**
+ * The longest sealed blob (base64url characters) a message carrying clears
+ * may have. Expo caps the whole payload it hands APNs and FCM at 4096 bytes;
+ * this leaves room for Expo's own fields and the iOS placeholder.
+ */
+const CLEAR_BLOB_BUDGET = 3_000;
 
 /**
  * OS-visible placeholder body per category - never real content, and
@@ -110,6 +175,16 @@ export interface PushTaskContext {
   taskTitle: string;
   /** Set for a session that is not a task's agent, so the phone routes the tap to it. */
   sessionKind?: PushSessionKind;
+  /** The task's lane right now. Absent for a Command Terminal, whose taskId names no task row. */
+  swimlaneId?: string;
+}
+
+/** Where a task sits on its board: what a lane-change or archive resolution is checked against. */
+export interface PushTaskPlacement {
+  swimlaneId: string;
+  archived: boolean;
+  /** How the task reached its current lane; null when no move row records it. */
+  lastMoveOrigin: TaskMoveRecordOrigin | null;
 }
 
 /**
@@ -162,6 +237,8 @@ export function redactPushTokens(text: string): string {
 export interface PushNotifierOptions {
   sessionManager: Pick<SessionManager, 'on' | 'off' | 'getActivityStatsSnapshot'>;
   registrationStore: Pick<PushRegistrationStore, 'list' | 'remove'>;
+  /** Task moves, archives and deletes: what resolves a task's outstanding notifications. */
+  boardEvents: Pick<BoardEventBus, 'onBoardChanged'>;
   /**
    * The Mobile bridge switch, read at every notification. Off, nothing is sent: a
    * push goes to Expo directly, so closing the relay sessions alone would not stop it.
@@ -172,31 +249,70 @@ export interface PushNotifierOptions {
   resolveTaskContext: (sessionId: string) => PushTaskContext | null;
   /** For triggers with no session yet (spawn-stalled). Scans by taskId instead. */
   resolveTaskContextByTaskId: (taskId: string) => PushTaskContext | null;
+  /** The task's lane and archive state now, or null when its row is gone. Read only for a task with notifications outstanding. */
+  readTaskPlacement: (projectId: string, taskId: string) => PushTaskPlacement | null;
   /** The device's roster static public key, sealed into every envelope as AAD. Null means "unknown device, skip". */
   getDeviceStaticPublicKey: (deviceId: string) => Uint8Array | null;
   /** Injectable for tests; defaults to the protocol package's sealPushEnvelope. */
   sealEnvelope?: typeof sealPushEnvelope;
+  /** Injectable for tests; defaults to the protocol package's sealPushClear. */
+  sealClear?: typeof sealPushClear;
   /** Injectable for tests; defaults to a WakeChannel over the global fetch. */
   wakeChannel?: WakeChannel;
   /** Injectable for tests; only used to build the default Expo wake channel. Ignored when wakeChannel is set. */
   fetchImpl?: FetchLike;
 }
 
+/** One visible notification on its way to one device. */
+interface VisibleDelivery {
+  cooldownKey: string;
+  stampedAt: number;
+  deviceId: string;
+  expoPushToken: string;
+  platform: PushRegistration['platform'];
+  category: PushCategory;
+  sealedBlob: string;
+  /** The ledger key the notification was recorded under; null for a device that takes no clears. */
+  clearKey: string | null;
+  /** The record this one replaced under clearKey, restored if the send fails. */
+  replacedRecord: OutstandingNotification | undefined;
+  /** Pending clears riding this envelope. */
+  piggybacked: PickedClear[];
+}
+
+/** A thrown send's stack (or message), redacted: a replacement WakeChannel may put the token in its error text. */
+function describeThrownSend(error: unknown): string {
+  return redactPushTokens(error instanceof Error ? (error.stack ?? error.message) : String(error));
+}
+
+function isRunningTaskSession(session: Session): boolean {
+  // A workflow's own agent and a Command Terminal are transient; neither is
+  // a session of a board task.
+  return session.status === 'running' && !session.transient && !isWorkflowAgentSession(session);
+}
+
 export class PushNotifier {
   private readonly options: PushNotifierOptions;
   private readonly sealEnvelope: typeof sealPushEnvelope;
+  private readonly sealClear: typeof sealPushClear;
   private readonly wakeChannel: WakeChannel;
   private readonly lastActivityState = new Map<string, ActivityState>();
   private readonly permissionDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly idleSettleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Last-notified wall-clock ms per `${deviceId}|${sessionId}|${category}`. */
   private readonly cooldowns = new Map<string, number>();
+  private readonly clearLedger = new PushClearLedger();
+  private readonly clearFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** When each iOS device last got a standalone clear, for IOS_STANDALONE_CLEAR_INTERVAL_MS. */
+  private readonly lastStandaloneClearAt = new Map<string, number>();
+  private unsubscribeBoardEvents: (() => void) | null = null;
   private started = false;
   private disposed = false;
 
   constructor(options: PushNotifierOptions) {
     this.options = options;
     this.sealEnvelope = options.sealEnvelope ?? sealPushEnvelope;
+    this.sealClear = options.sealClear ?? sealPushClear;
     this.wakeChannel = options.wakeChannel ?? createExpoWakeChannel(options.fetchImpl ?? fetch);
   }
 
@@ -204,6 +320,10 @@ export class PushNotifier {
     const previousState = this.lastActivityState.get(sessionId);
     this.lastActivityState.set(sessionId, state);
     if (state === previousState) return;
+
+    // The edges that make a notification stale (see the header's CLEARS).
+    if (previousState === 'permission') this.resolveSessionCategory(sessionId, 'input-required');
+    if (previousState === 'idle') this.resolveSessionCategory(sessionId, 'turn-complete');
 
     if (state === 'permission') {
       // Emphatically not finished: a prompt is the clearest possible
@@ -230,6 +350,9 @@ export class PushNotifier {
     // An exited session is reported as session-failed (below) or not at
     // all; either way a pending "went idle" is stale.
     this.clearIdleSettle(sessionId);
+    // The prompt died with the process. Resolved before the crash alert so
+    // the clear can ride it.
+    this.resolveSessionCategory(sessionId, 'input-required');
     // The spawn-failure path emits no flag; a spawn failure is not a
     // deliberate stop, so only an explicit true suppresses.
     if (intentional === true) return;
@@ -240,12 +363,53 @@ export class PushNotifier {
     this.notify(sessionId, 'plan-complete', '');
   };
 
+  /** A turn the agent finished, in any session of a task: resolves a plan-complete sent before that turn began. */
+  private readonly onTurnEnded = (payload: TurnEndedPayload): void => {
+    const turnStartedAt = payload.turnStartedAt;
+    if (turnStartedAt === null) return;
+    this.resolveClears((notification) =>
+      notification.identity.category === 'plan-complete' &&
+      notification.identity.projectId === payload.projectId &&
+      notification.identity.taskId === payload.taskId &&
+      turnStartedAt > notification.notifiedAt,
+    );
+  };
+
+  /** A session of a task running: a failed earlier session and a stalled spawn are both over. Fires repeatedly per session. */
+  private readonly onSessionChanged = (sessionId: string, session: Session): void => {
+    if (!isRunningTaskSession(session)) return;
+    this.resolveClears((notification) => {
+      const { identity } = notification;
+      if (identity.projectId !== session.projectId || identity.taskId !== session.taskId) return false;
+      if (identity.category === 'spawn-stalled') return true;
+      return identity.category === 'session-failed' && identity.sessionId !== sessionId;
+    });
+  };
+
+  private readonly onBoardChanged = (event: BoardChangedEvent): void => {
+    // Synchronous inside the move's task lock, and the MCP emitters do not
+    // catch: a throw here must not fail the move that announced itself.
+    try {
+      if (event.change === 'task-deleted') {
+        for (const taskId of event.ids) this.resolveTask(event.projectId, taskId, () => true);
+        return;
+      }
+      if (event.change !== 'task-updated') return;
+      for (const taskId of event.ids) this.reconcileTaskPlacement(event.projectId, taskId);
+    } catch (error) {
+      console.warn('[mobile-bridge/push-notifier] resolving clears for a board change failed:', error);
+    }
+  };
+
   start(): void {
     if (this.started || this.disposed) return;
     this.started = true;
     this.options.sessionManager.on('activity', this.onActivity);
     this.options.sessionManager.on('exit', this.onExit);
     this.options.sessionManager.on('plan-exit', this.onPlanExit);
+    this.options.sessionManager.on('turn-ended', this.onTurnEnded);
+    this.options.sessionManager.on('session-changed', this.onSessionChanged);
+    this.unsubscribeBoardEvents = this.options.boardEvents.onBoardChanged(this.onBoardChanged);
   }
 
   private schedulePermissionNotification(sessionId: string): void {
@@ -347,6 +511,7 @@ export class PushNotifier {
     if (!this.options.isBridgeEnabled()) return;
     const connectedDeviceIds = this.options.getConnectedDeviceIds();
     const now = Date.now();
+    this.clearLedger.prune(now);
 
     for (const registration of this.options.registrationStore.list()) {
       if (connectedDeviceIds.has(registration.deviceId)) continue;
@@ -370,26 +535,55 @@ export class PushNotifier {
         sentAt: now,
         ...(taskContext.sessionKind ? { sessionKind: taskContext.sessionKind } : {}),
       };
+      const acceptsClears = registration.acceptsClears === true;
+      const piggybacked = acceptsClears
+        ? this.clearLedger.pickForMessage(
+            registration.deviceId,
+            (entries) => sealedPushBlobLength({ ...plaintext, clears: entries }) <= CLEAR_BLOB_BUDGET,
+          ).picked
+        : [];
+      const sealedPlaintext: PushEnvelopePlaintext =
+        piggybacked.length > 0 ? { ...plaintext, clears: piggybacked.map((pick) => pick.entry) } : plaintext;
       let sealedBlob: string;
       try {
-        sealedBlob = this.sealEnvelope(hexToBytes(registration.pushKeyHex), deviceStaticPublicKey, plaintext);
+        sealedBlob = this.sealEnvelope(hexToBytes(registration.pushKeyHex), deviceStaticPublicKey, sealedPlaintext);
       } catch {
         continue; // a malformed stored key must not take down the other devices' sends
       }
       this.cooldowns.set(cooldownKey, now);
-      void this.deliver(cooldownKey, now, registration.deviceId, registration.expoPushToken, registration.platform, category, sealedBlob);
+      // The phone has nothing to clear a workflow's completion against until
+      // it opens the Board, so that one is never recorded.
+      const clearKey = acceptsClears && category !== 'workflow-complete' ? `${cooldownSubject}|${category}` : null;
+      let replacedRecord: OutstandingNotification | undefined;
+      if (clearKey !== null) {
+        // Copied from the sealed plaintext, never from the cooldown subject:
+        // the phone matches a clear against the envelope it decrypted.
+        const identity: PushClearIdentity = {
+          category,
+          projectId: plaintext.projectId,
+          taskId: plaintext.taskId,
+          sessionId: plaintext.sessionId,
+          ...(plaintext.sessionKind ? { sessionKind: plaintext.sessionKind } : {}),
+        };
+        replacedRecord = this.clearLedger.recordDispatched(registration.deviceId, clearKey, identity, now, taskContext.swimlaneId);
+      }
+      void this.deliver({
+        cooldownKey,
+        stampedAt: now,
+        deviceId: registration.deviceId,
+        expoPushToken: registration.expoPushToken,
+        platform: registration.platform,
+        category,
+        sealedBlob,
+        clearKey,
+        replacedRecord,
+        piggybacked,
+      });
     }
   }
 
-  private async deliver(
-    cooldownKey: string,
-    stampedAt: number,
-    deviceId: string,
-    expoPushToken: string,
-    platform: PushRegistration['platform'],
-    category: PushCategory,
-    sealedBlob: string,
-  ): Promise<void> {
+  private async deliver(delivery: VisibleDelivery): Promise<void> {
+    const { cooldownKey, stampedAt, deviceId, platform, category } = delivery;
     // Best-effort: a failed send never propagates into the session
     // pipeline. It is not silent, though - every non-delivery is logged
     // below, with the short device id only and never the sealed blob.
@@ -402,14 +596,20 @@ export class PushNotifier {
       const placeholder =
         platform === 'ios' ? { title: NOTIFICATION_TITLE, body: PLACEHOLDER_BODIES[category] } : {};
       const result = await this.wakeChannel.send({
-        token: expoPushToken,
+        token: delivery.expoPushToken,
         ...placeholder,
-        blob: sealedBlob,
+        blob: delivery.sealedBlob,
+        dataKey: PUSH_ENVELOPE_DATA_KEY,
+        priority: 'high',
+        mutableContent: true,
+        contentAvailable: false,
       });
-      if (result.delivered) return;
+      if (result.delivered) {
+        this.clearLedger.removeIfUnchanged(deviceId, delivery.piggybacked);
+        return;
+      }
       if (result.reason === 'device-not-registered') {
-        console.warn(`[mobile-bridge/push-notifier] ${deviceId.slice(0, 8)} is no longer registered with Expo; dropping its push registration`);
-        this.options.registrationStore.remove(deviceId);
+        this.dropUnregisteredDevice(deviceId);
         return;
       }
       // A genuine send failure (network, Expo outage) should not spend
@@ -420,25 +620,208 @@ export class PushNotifier {
       // never a fresher one a later notifyWithContext call already set
       // for the same key while this send was in flight.
       this.releaseCooldownIfUnclaimed(cooldownKey, stampedAt);
+      this.forgetUndelivered(delivery);
       console.warn(`[mobile-bridge/push-notifier] ${category} push to ${deviceId.slice(0, 8)} failed:`, result.reason, redactPushTokens(result.detail));
     } catch (error) {
       this.releaseCooldownIfUnclaimed(cooldownKey, stampedAt);
+      this.forgetUndelivered(delivery);
       // The stack is kept, not reduced to the message: sendExpoPush never
       // throws, so this branch only ever fires for a replacement
       // WakeChannel, where the stack is the whole diagnostic. It is
       // redacted for the same reason the detail above is - a thrown
       // client may well have put the token it was posting to into its
       // own error text.
-      const thrownText = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      console.warn(`[mobile-bridge/push-notifier] ${category} push to ${deviceId.slice(0, 8)} threw:`, redactPushTokens(thrownText));
+      console.warn(`[mobile-bridge/push-notifier] ${category} push to ${deviceId.slice(0, 8)} threw:`, describeThrownSend(error));
     }
+  }
+
+  /** Expo says the token is dead: forget the registration and everything owed to the device. */
+  private dropUnregisteredDevice(deviceId: string): void {
+    console.warn(`[mobile-bridge/push-notifier] ${deviceId.slice(0, 8)} is no longer registered with Expo; dropping its push registration`);
+    this.options.registrationStore.remove(deviceId);
+    this.clearLedger.dropDevice(deviceId);
+  }
+
+  /** The phone never got this notification, so there is nothing on it to clear. Its piggybacked clears stay pending. */
+  private forgetUndelivered(delivery: VisibleDelivery): void {
+    if (delivery.clearKey === null) return;
+    this.clearLedger.forgetIfUnchanged(delivery.deviceId, delivery.clearKey, delivery.stampedAt, delivery.replacedRecord);
   }
 
   private releaseCooldownIfUnclaimed(cooldownKey: string, stampedAt: number): void {
     if (this.cooldowns.get(cooldownKey) === stampedAt) this.cooldowns.delete(cooldownKey);
   }
 
-  /** Synchronous, per synchronous-shutdown.md: detaches listeners and clears every pending debounce timer. */
+  private resolveSessionCategory(sessionId: string, category: PushCategory): void {
+    this.resolveClears((notification) => notification.identity.category === category && notification.identity.sessionId === sessionId);
+  }
+
+  private resolveTask(projectId: string, taskId: string, matches: (notification: OutstandingNotification) => boolean): void {
+    this.resolveClears((notification) =>
+      notification.identity.projectId === projectId && notification.identity.taskId === taskId && matches(notification),
+    );
+  }
+
+  /**
+   * A task-updated board event: resolve the task's notifications whose
+   * recorded lane it has left, or all of them once it is archived or gone.
+   * Only notifications with a recorded lane take part: a Command Terminal's
+   * taskId names no task row, and reading that as "deleted" would clear its
+   * alert the moment it went out. The plan-exit auto-move resolves all but
+   * plan-complete, which moves lane with the task instead (its own trigger
+   * is the next turn's end).
+   */
+  private reconcileTaskPlacement(projectId: string, taskId: string): void {
+    const placed = this.clearLedger.outstandingForTask(projectId, taskId).filter((notification) => notification.swimlaneId !== undefined);
+    if (placed.length === 0) return;
+    const placement = this.options.readTaskPlacement(projectId, taskId);
+    if (!placement || placement.archived) {
+      this.resolveTask(projectId, taskId, (notification) => notification.swimlaneId !== undefined);
+      return;
+    }
+    const leftLane = (notification: OutstandingNotification): boolean =>
+      notification.swimlaneId !== undefined && notification.swimlaneId !== placement.swimlaneId;
+    if (!placed.some(leftLane)) return;
+    if (placement.lastMoveOrigin === 'auto-move') {
+      this.clearLedger.rebaseline(
+        (notification) =>
+          notification.identity.projectId === projectId &&
+          notification.identity.taskId === taskId &&
+          notification.identity.category === 'plan-complete' &&
+          leftLane(notification),
+        placement.swimlaneId,
+      );
+      this.resolveTask(projectId, taskId, (notification) => notification.identity.category !== 'plan-complete' && leftLane(notification));
+      return;
+    }
+    this.resolveTask(projectId, taskId, leftLane);
+  }
+
+  private resolveClears(matches: (notification: OutstandingNotification) => boolean): void {
+    if (this.disposed) return;
+    const devicesWithNewClears = this.clearLedger.resolve(matches, () => this.options.getConnectedDeviceIds(), Date.now());
+    for (const deviceId of devicesWithNewClears) this.scheduleClearFlush(deviceId);
+  }
+
+  private findRegistration(deviceId: string): PushRegistrationEntry | undefined {
+    return this.options.registrationStore.list().find((registration) => registration.deviceId === deviceId);
+  }
+
+  private scheduleClearFlush(deviceId: string): void {
+    if (this.disposed || this.clearFlushTimers.has(deviceId)) return;
+    let delayMs = CLEAR_COALESCE_MS;
+    const lastStandaloneAt = this.lastStandaloneClearAt.get(deviceId);
+    if (lastStandaloneAt !== undefined && this.findRegistration(deviceId)?.platform === 'ios') {
+      delayMs = Math.max(delayMs, lastStandaloneAt + IOS_STANDALONE_CLEAR_INTERVAL_MS - Date.now());
+    }
+    const flushTimer = setTimeout(() => {
+      this.clearFlushTimers.delete(deviceId);
+      this.flushClears(deviceId);
+    }, delayMs);
+    flushTimer.unref?.();
+    this.clearFlushTimers.set(deviceId, flushTimer);
+  }
+
+  /** Sends one standalone clear carrying as many of the device's pending clears as fit, and reschedules for the rest. */
+  private flushClears(deviceId: string): void {
+    if (this.disposed) return;
+    const now = Date.now();
+    this.clearLedger.prune(now);
+    if (!this.options.isBridgeEnabled()) {
+      this.clearLedger.dropPending(deviceId);
+      return;
+    }
+    const registration = this.findRegistration(deviceId);
+    if (!registration || registration.acceptsClears !== true) {
+      this.clearLedger.dropDevice(deviceId);
+      return;
+    }
+    // Watching from the app now, which reconciles its own notifications.
+    if (this.options.getConnectedDeviceIds().has(deviceId)) {
+      this.clearLedger.dropPending(deviceId);
+      return;
+    }
+    const deviceStaticPublicKey = this.options.getDeviceStaticPublicKey(deviceId);
+    if (!deviceStaticPublicKey) {
+      this.clearLedger.dropPending(deviceId);
+      return;
+    }
+    const { picked, unsentLeft } = this.clearLedger.pickForMessage(
+      deviceId,
+      (entries) => sealedPushBlobLength({ clears: entries, sentAt: now }) <= CLEAR_BLOB_BUDGET,
+    );
+    if (picked.length === 0) {
+      // Pending clears exist only when a resolution queued one, so an empty
+      // pick means not one of them fits a message alone. Never true of a
+      // real entry; drop them rather than reschedule forever.
+      this.clearLedger.dropPending(deviceId);
+      return;
+    }
+    let sealedClear: string;
+    try {
+      sealedClear = this.sealClear(hexToBytes(registration.pushKeyHex), deviceStaticPublicKey, {
+        clears: picked.map((pick) => pick.entry),
+        sentAt: now,
+      });
+    } catch {
+      this.clearLedger.dropPending(deviceId); // a malformed stored key will not seal the next try either
+      return;
+    }
+    // Stamped before the send so a flush scheduled meanwhile waits out the
+    // window; released again below if Expo refuses the clear.
+    if (registration.platform === 'ios') this.lastStandaloneClearAt.set(deviceId, now);
+    if (unsentLeft) this.scheduleClearFlush(deviceId);
+    void this.deliverClear(deviceId, registration, picked, sealedClear, now);
+  }
+
+  /**
+   * A background clear Expo refused never reached Apple, so it must not
+   * spend the device's interval: compare-and-clear, as the notification
+   * cooldown does, so a fresher stamp from a later flush survives.
+   */
+  private releaseStandaloneStampIfUnclaimed(deviceId: string, stampedAt: number): void {
+    if (this.lastStandaloneClearAt.get(deviceId) === stampedAt) this.lastStandaloneClearAt.delete(deviceId);
+  }
+
+  private async deliverClear(
+    deviceId: string,
+    registration: PushRegistrationEntry,
+    picked: PickedClear[],
+    sealedClear: string,
+    stampedAt: number,
+  ): Promise<void> {
+    try {
+      // No title, body or channelId on either platform: nothing for the OS
+      // to show. Normal priority on both; iOS adds the background wake.
+      const result = await this.wakeChannel.send({
+        token: registration.expoPushToken,
+        blob: sealedClear,
+        dataKey: PUSH_CLEAR_DATA_KEY,
+        priority: 'normal',
+        mutableContent: false,
+        contentAvailable: registration.platform === 'ios',
+      });
+      if (result.delivered) {
+        // Expo accepting an iOS background push says nothing about the app
+        // getting it, so those entries wait for a visible push as well.
+        if (registration.platform === 'ios') this.clearLedger.markStandaloneSent(deviceId, picked, Date.now());
+        else this.clearLedger.removeIfUnchanged(deviceId, picked);
+        return;
+      }
+      if (result.reason === 'device-not-registered') {
+        this.dropUnregisteredDevice(deviceId);
+        return;
+      }
+      // The entries stay pending: the next flush or visible push carries them.
+      this.releaseStandaloneStampIfUnclaimed(deviceId, stampedAt);
+      console.warn(`[mobile-bridge/push-notifier] clear push to ${deviceId.slice(0, 8)} failed:`, result.reason, redactPushTokens(result.detail));
+    } catch (error) {
+      this.releaseStandaloneStampIfUnclaimed(deviceId, stampedAt);
+      console.warn(`[mobile-bridge/push-notifier] clear push to ${deviceId.slice(0, 8)} threw:`, describeThrownSend(error));
+    }
+  }
+
+  /** Synchronous, per synchronous-shutdown.md: detaches listeners and clears every pending debounce, settle and flush timer. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -446,12 +829,20 @@ export class PushNotifier {
       this.options.sessionManager.off('activity', this.onActivity);
       this.options.sessionManager.off('exit', this.onExit);
       this.options.sessionManager.off('plan-exit', this.onPlanExit);
+      this.options.sessionManager.off('turn-ended', this.onTurnEnded);
+      this.options.sessionManager.off('session-changed', this.onSessionChanged);
     }
+    this.unsubscribeBoardEvents?.();
+    this.unsubscribeBoardEvents = null;
     for (const debounceTimer of this.permissionDebounceTimers.values()) clearTimeout(debounceTimer);
     this.permissionDebounceTimers.clear();
     for (const settleTimer of this.idleSettleTimers.values()) clearTimeout(settleTimer);
     this.idleSettleTimers.clear();
+    for (const flushTimer of this.clearFlushTimers.values()) clearTimeout(flushTimer);
+    this.clearFlushTimers.clear();
     this.lastActivityState.clear();
     this.cooldowns.clear();
+    this.clearLedger.clear();
+    this.lastStandaloneClearAt.clear();
   }
 }

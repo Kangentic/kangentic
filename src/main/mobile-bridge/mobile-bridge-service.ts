@@ -288,6 +288,7 @@ export class MobileBridgeService extends EventEmitter {
     this.pushNotifier = new PushNotifier({
       sessionManager: context.sessionManager,
       registrationStore: this.pushRegistrations,
+      boardEvents: context.boardEvents,
       isBridgeEnabled: () => this.config.enabled,
       // Presence = a bridge session reporting 'connected' for that device;
       // the user is already watching from it, so it is never pinged.
@@ -314,18 +315,33 @@ export class MobileBridgeService extends EventEmitter {
           };
         }
         let taskTitle = '';
+        let swimlaneId: string | undefined;
         try {
-          taskTitle = getProjectRepos(context, projectId).tasks.getById(taskId)?.title ?? '';
+          const task = getProjectRepos(context, projectId).tasks.getById(taskId);
+          taskTitle = task?.title ?? '';
+          swimlaneId = task?.swimlane_id;
         } catch {
           // Best-effort: an unknown title still yields a useful notification.
         }
-        return { projectId, taskId, taskTitle };
+        return { projectId, taskId, taskTitle, ...(swimlaneId !== undefined ? { swimlaneId } : {}) };
       },
       // A spawn stall has no session yet, so there is no getSessionProjectId
       // to consult; findTaskOwner scans the project list instead.
       resolveTaskContextByTaskId: (taskId) => {
         const owner = this.findTaskOwner(context, taskId);
-        return owner ? { projectId: owner.projectId, taskId, taskTitle: owner.taskTitle } : null;
+        return owner ? { projectId: owner.projectId, taskId, taskTitle: owner.taskTitle, swimlaneId: owner.swimlaneId } : null;
+      },
+      // Read only for a task with a notification outstanding, on its own
+      // board-changed events; a missing row reads as deleted.
+      readTaskPlacement: (projectId, taskId) => {
+        const repos = getProjectRepos(context, projectId);
+        const task = repos.tasks.getById(taskId);
+        if (!task) return null;
+        return {
+          swimlaneId: task.swimlane_id,
+          archived: task.archived_at !== null,
+          lastMoveOrigin: repos.taskMoves.currentVisit(taskId, task.swimlane_id)?.origin ?? null,
+        };
       },
       getDeviceStaticPublicKey: (deviceId) => {
         const identity = this.loadedIdentity();
@@ -352,11 +368,11 @@ export class MobileBridgeService extends EventEmitter {
    * per label, which it keeps until the label clears, and only while a phone
    * watches a board).
    */
-  private findTaskOwner(context: IpcContext, taskId: string): { projectId: string; taskTitle: string } | null {
+  private findTaskOwner(context: IpcContext, taskId: string): { projectId: string; taskTitle: string; swimlaneId: string } | null {
     for (const project of context.projectRepo.list()) {
       try {
         const task = getProjectRepos(context, project.id).tasks.getById(taskId);
-        if (task) return { projectId: project.id, taskTitle: task.title };
+        if (task) return { projectId: project.id, taskTitle: task.title, swimlaneId: task.swimlane_id };
       } catch {
         // This project's repos may not be initialized; try the next one.
       }

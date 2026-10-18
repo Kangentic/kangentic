@@ -113,6 +113,7 @@ export {
   PUSH_SESSION_KINDS,
   isPushSessionKind,
   parsePushEnvelopePlaintext,
+  parsePushClearEntries,
   sealPushEnvelope,
   openPushEnvelope,
   PUSH_ENVELOPE_MAX_AGE_MS,
@@ -120,7 +121,18 @@ export {
   type PushCategory,
   type PushSessionKind,
   type PushEnvelopePlaintext,
+  type PushClearEntry,
 } from './crypto/push-envelope';
+
+export {
+  PUSH_ENVELOPE_DATA_KEY,
+  PUSH_CLEAR_DATA_KEY,
+  parsePushClearPlaintext,
+  sealPushClear,
+  openPushClear,
+  sealedPushBlobLength,
+  type PushClearPlaintext,
+} from './crypto/push-clear';
 
 export {
   PAIRING_URI_SCHEME,

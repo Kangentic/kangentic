@@ -61,6 +61,30 @@ describe('handleRegisterPush', () => {
     expect((upsert.mock.calls[1][1] as { categories?: string[] }).categories).toBeUndefined();
   });
 
+  /**
+   * Clears go only to a device that asked for them: an older app shows the
+   * placeholder for a message it cannot open. So only an explicit true is
+   * stored, and a re-registration without it (an app downgrade) drops it.
+   */
+  it('stores acceptsClears only when the device sent true', () => {
+    handleRegisterPush(
+      fakeRequest({ action: 'register', expoPushToken: 'tok', pushKeyBase64: VALID_KEY_BASE64, acceptsClears: true }),
+      { deviceId: 'device-1' },
+      store,
+    );
+    expect((upsert.mock.calls[0][1] as { acceptsClears?: boolean }).acceptsClears).toBe(true);
+
+    handleRegisterPush(
+      fakeRequest({ action: 'register', expoPushToken: 'tok', pushKeyBase64: VALID_KEY_BASE64, acceptsClears: false }),
+      { deviceId: 'device-1' },
+      store,
+    );
+    expect(upsert.mock.calls[1][1]).not.toHaveProperty('acceptsClears');
+
+    handleRegisterPush(fakeRequest({ action: 'register', expoPushToken: 'tok', pushKeyBase64: VALID_KEY_BASE64 }), { deviceId: 'device-1' }, store);
+    expect(upsert.mock.calls[2][1]).not.toHaveProperty('acceptsClears');
+  });
+
   it('platform defaults to android when omitted', () => {
     handleRegisterPush(
       fakeRequest({ action: 'register', expoPushToken: 'tok', pushKeyBase64: VALID_KEY_BASE64 }),

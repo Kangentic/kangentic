@@ -36,7 +36,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { BrowserWindow } from 'electron';
 import type { CapabilityRequestMessage, CapabilityResponseMessage, RosterDeviceEntry, TransportState } from '@kangentic/protocol';
-import type { MobileDeviceConnectionState } from '../../../src/shared/types';
+import type { MobileDeviceConnectionState, TaskMoveRecordOrigin } from '../../../src/shared/types';
+import type { PushNotifierOptions } from '../../../src/main/mobile-bridge/push/push-notifier';
 import { emitSpawnProgress, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
 
 vi.mock('electron', async () => {
@@ -137,10 +138,7 @@ vi.mock('../../../src/main/mobile-bridge/transport/transport-factory', () => ({
 // the matching field, so every other case in this file runs unchanged.
 const attachCapture = vi.hoisted(() => ({
   /** The options attachContext() built its PushNotifier from. */
-  pushNotifierOptions: null as {
-    resolveTaskContext: (sessionId: string) => { projectId: string; taskId: string; taskTitle: string; sessionKind?: string } | null;
-    resolveTaskContextByTaskId: (taskId: string) => { projectId: string; taskId: string; taskTitle: string } | null;
-  } | null,
+  pushNotifierOptions: null as PushNotifierOptions | null,
   /** The deps attachContext() registered the capability handlers with. */
   handlerDeps: null as { spawnProgressFeed: { onTaskSpawnProgressChanged: (listener: (projectId: string, taskId: string) => void) => () => void } } | null,
   /** Stands in for getProjectRepos when set: the fake repos of one project, or a throw. */
@@ -204,7 +202,7 @@ async function openSession(service: MobileBridgeServiceInstance): Promise<FakeBr
   // so the fake needs the registration seam (the probe itself stays unused:
   // no test here spawns a PTY).
   const fakeSessionManager = Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() });
-  service.attachContext({ sessionManager: fakeSessionManager, boardEvents: { emitBoardChanged: vi.fn() } } as never);
+  service.attachContext({ sessionManager: fakeSessionManager, boardEvents: { emitBoardChanged: vi.fn(), onBoardChanged: vi.fn(() => () => {}) } } as never);
   // The identity and the secure-storage verdict load once, asynchronously,
   // in the warm-up attachContext() starts; runSyncSessions() waits for it too.
   await service.whenStorageReady();
@@ -922,7 +920,7 @@ describe('MobileBridgeService.attachContext() task-owner and spawn-progress wiri
     servicesToDispose.push(service);
     const sessionManager = Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() });
     const projectRepo = { list: () => Object.keys(projects).map((id) => ({ id })) };
-    service.attachContext({ sessionManager, boardEvents: { emitBoardChanged: vi.fn() }, projectRepo } as never);
+    service.attachContext({ sessionManager, boardEvents: { emitBoardChanged: vi.fn(), onBoardChanged: vi.fn(() => () => {}) }, projectRepo } as never);
     return service;
   }
 
@@ -1053,7 +1051,7 @@ describe('MobileBridgeService.attachContext() push task-context resolver', () =>
       getSessionTaskId: (id: string) => rows[id]?.taskId,
       getSession: (id: string) => rows[id],
     });
-    service.attachContext({ sessionManager, boardEvents: { emitBoardChanged: vi.fn() }, projectRepo: { list: () => [] } } as never);
+    service.attachContext({ sessionManager, boardEvents: { emitBoardChanged: vi.fn(), onBoardChanged: vi.fn(() => () => {}) }, projectRepo: { list: () => [] } } as never);
     const options = attachCapture.pushNotifierOptions;
     if (!options) throw new Error('attachContext() did not build a PushNotifier');
     return options.resolveTaskContext(sessionId);
@@ -1132,5 +1130,230 @@ describe('MobileBridgeService.attachContext() push task-context resolver', () =>
 
     expect(context).toBeNull();
     expect(taskRepoReads).toEqual([]);
+  });
+});
+
+/**
+ * The board half of the push wiring: the lane a notification is stamped with,
+ * the placement read that decides whether it still stands, and the bus the
+ * notifier listens on. push-notifier.test.ts injects every one of these as a
+ * stub, so only this drives the real callbacks attachContext() builds the
+ * notifier with, over fake repos behind the getProjectRepos seam.
+ *
+ * Project, task and lane ids are all distinct strings so a callback that passes
+ * the wrong one on cannot match by accident. Whole-object assertions use
+ * toStrictEqual because toEqual treats a key set to undefined as absent, which
+ * would hide a context that always carries swimlaneId.
+ */
+describe('MobileBridgeService.attachContext() push lane and placement wiring', () => {
+  interface FakeTaskRow {
+    title: string;
+    swimlane_id: string;
+    archived_at: string | null;
+  }
+
+  interface FakeSession {
+    projectId: string;
+    taskId: string;
+    transient?: boolean;
+    commandTerminalLabel?: string | null;
+    commandTerminalSlot?: string | null;
+  }
+
+  type FakeVisit = { origin: TaskMoveRecordOrigin } | null | undefined;
+
+  const ARCHIVED_AT = '2026-01-02T03:04:05.000Z';
+  const servicesToDispose: Array<InstanceType<typeof MobileBridgeService>> = [];
+  /** Task rows by project id, then task id. The project list the owner scan walks is this map's keys, in order. */
+  let taskRowsByProject: Record<string, Record<string, FakeTaskRow>> = {};
+  /** What currentVisit answers, keyed `<taskId>/<swimlaneId>`. Any pair not listed answers undefined. */
+  let visitsByTaskAndLane: Record<string, FakeVisit> = {};
+  /** `<projectId>/<taskId>` for every task row the service looked up. */
+  const taskRowReads: string[] = [];
+  const currentVisitSpy = vi.fn((taskId: string, swimlaneId: string): FakeVisit => visitsByTaskAndLane[`${taskId}/${swimlaneId}`]);
+
+  /** attachContext() over the fake repos and a session manager that knows only `sessions`, then the options it built the notifier with. */
+  function attachWithBoard(sessions: Record<string, FakeSession> = {}) {
+    attachCapture.projectRepos = (projectId) => ({
+      tasks: {
+        getById: (taskId: string) => {
+          taskRowReads.push(`${projectId}/${taskId}`);
+          return taskRowsByProject[projectId]?.[taskId];
+        },
+      },
+      taskMoves: { currentVisit: currentVisitSpy },
+    });
+    const boardEvents = { emitBoardChanged: vi.fn(), onBoardChanged: vi.fn(() => () => {}) };
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    servicesToDispose.push(service);
+    const sessionManager = Object.assign(new EventEmitter(), {
+      setMobileTerminalProbe: vi.fn(),
+      getSessionProjectId: (sessionId: string) => sessions[sessionId]?.projectId,
+      getSessionTaskId: (sessionId: string) => sessions[sessionId]?.taskId,
+      getSession: (sessionId: string) => sessions[sessionId],
+    });
+    const projectRepo = { list: () => Object.keys(taskRowsByProject).map((id) => ({ id })) };
+    service.attachContext({ sessionManager, boardEvents, projectRepo } as never);
+    const options = attachCapture.pushNotifierOptions;
+    if (!options) throw new Error('attachContext() did not build a PushNotifier');
+    return { options, boardEvents };
+  }
+
+  beforeEach(() => {
+    attachCapture.pushNotifierOptions = null;
+    attachCapture.projectRepos = null;
+    taskRowsByProject = {};
+    visitsByTaskAndLane = {};
+    taskRowReads.length = 0;
+    currentVisitSpy.mockClear();
+  });
+
+  afterEach(() => {
+    for (const service of servicesToDispose) service.dispose();
+    servicesToDispose.length = 0;
+    attachCapture.projectRepos = null;
+  });
+
+  it('a task session context carries the swimlane id from its task row', () => {
+    taskRowsByProject = {
+      'proj-1': { 'task-1': { title: 'Add dark mode', swimlane_id: 'lane-review', archived_at: null } },
+    };
+    const { options } = attachWithBoard({ 'session-1': { projectId: 'proj-1', taskId: 'task-1' } });
+
+    expect(options.resolveTaskContext('session-1')).toStrictEqual({
+      projectId: 'proj-1',
+      taskId: 'task-1',
+      taskTitle: 'Add dark mode',
+      swimlaneId: 'lane-review',
+    });
+  });
+
+  it('a task session whose row is gone omits swimlaneId instead of setting it to undefined', () => {
+    taskRowsByProject = { 'proj-1': {} };
+    const { options } = attachWithBoard({ 'session-1': { projectId: 'proj-1', taskId: 'task-1' } });
+
+    const context = options.resolveTaskContext('session-1');
+
+    expect(context).toStrictEqual({ projectId: 'proj-1', taskId: 'task-1', taskTitle: '' });
+    expect(context).not.toHaveProperty('swimlaneId');
+  });
+
+  it('a Command Terminal context has no swimlaneId even when a task row exists under its id, and reads no task row', () => {
+    taskRowsByProject = {
+      'proj-1': { 'transient-task-1': { title: 'A stale row', swimlane_id: 'lane-review', archived_at: null } },
+    };
+    const { options } = attachWithBoard({
+      'terminal-1': {
+        projectId: 'proj-1',
+        taskId: 'transient-task-1',
+        transient: true,
+        commandTerminalLabel: 'Fix the flaky login test',
+        commandTerminalSlot: 'slot-2',
+      },
+    });
+
+    const context = options.resolveTaskContext('terminal-1');
+
+    expect(context).toStrictEqual({
+      projectId: 'proj-1',
+      taskId: 'transient-task-1',
+      taskTitle: 'Fix the flaky login test',
+      sessionKind: 'command-terminal',
+    });
+    expect(taskRowReads).toEqual([]);
+  });
+
+  it('a spawn stall context carries the swimlane id of the project row that owns the task', () => {
+    taskRowsByProject = {
+      'proj-other': { 'task-9': { title: 'Somebody else\'s task', swimlane_id: 'lane-backlog', archived_at: null } },
+      'proj-owner': { 'task-1': { title: 'Add dark mode', swimlane_id: 'lane-review', archived_at: null } },
+    };
+    const { options } = attachWithBoard();
+
+    expect(options.resolveTaskContextByTaskId('task-1')).toStrictEqual({
+      projectId: 'proj-owner',
+      taskId: 'task-1',
+      taskTitle: 'Add dark mode',
+      swimlaneId: 'lane-review',
+    });
+  });
+
+  it('readTaskPlacement reports a live task with the origin of the move that opened its current visit', () => {
+    taskRowsByProject = {
+      'proj-1': { 'task-1': { title: 'Add dark mode', swimlane_id: 'lane-review', archived_at: null } },
+    };
+    visitsByTaskAndLane = { 'task-1/lane-review': { origin: 'auto-move' } };
+    const { options } = attachWithBoard();
+
+    expect(options.readTaskPlacement('proj-1', 'task-1')).toStrictEqual({
+      swimlaneId: 'lane-review',
+      archived: false,
+      lastMoveOrigin: 'auto-move',
+    });
+  });
+
+  it('readTaskPlacement asks currentVisit about the task and the lane the row is in now', () => {
+    taskRowsByProject = {
+      'proj-1': { 'task-1': { title: 'Add dark mode', swimlane_id: 'lane-review', archived_at: null } },
+    };
+    const { options } = attachWithBoard();
+
+    options.readTaskPlacement('proj-1', 'task-1');
+
+    expect(currentVisitSpy).toHaveBeenCalledExactlyOnceWith('task-1', 'lane-review');
+  });
+
+  it('readTaskPlacement reports archived: true once archived_at is set', () => {
+    taskRowsByProject = {
+      'proj-1': { 'task-1': { title: 'Add dark mode', swimlane_id: 'lane-review', archived_at: ARCHIVED_AT } },
+    };
+    visitsByTaskAndLane = { 'task-1/lane-review': { origin: 'auto-move' } };
+    const { options } = attachWithBoard();
+
+    expect(options.readTaskPlacement('proj-1', 'task-1')).toStrictEqual({
+      swimlaneId: 'lane-review',
+      archived: true,
+      lastMoveOrigin: 'auto-move',
+    });
+  });
+
+  it.each([[undefined], [null]])('readTaskPlacement reports lastMoveOrigin null when currentVisit returns %s', (visit) => {
+    taskRowsByProject = {
+      'proj-1': { 'task-1': { title: 'Add dark mode', swimlane_id: 'lane-review', archived_at: null } },
+    };
+    visitsByTaskAndLane = { 'task-1/lane-review': visit };
+    const { options } = attachWithBoard();
+
+    expect(options.readTaskPlacement('proj-1', 'task-1')).toStrictEqual({
+      swimlaneId: 'lane-review',
+      archived: false,
+      lastMoveOrigin: null,
+    });
+  });
+
+  it('readTaskPlacement returns null for a missing row without asking for a visit', () => {
+    taskRowsByProject = { 'proj-1': {} };
+    const { options } = attachWithBoard();
+
+    expect(options.readTaskPlacement('proj-1', 'task-1')).toBeNull();
+    expect(currentVisitSpy).not.toHaveBeenCalled();
+  });
+
+  it('readTaskPlacement reads the task from the project it is asked about', () => {
+    taskRowsByProject = {
+      'proj-a': { 'task-1': { title: 'Add dark mode', swimlane_id: 'lane-review', archived_at: null } },
+      'proj-b': {},
+    };
+    const { options } = attachWithBoard();
+
+    expect(options.readTaskPlacement('proj-b', 'task-1')).toBeNull();
+    expect(options.readTaskPlacement('proj-a', 'task-1')).toMatchObject({ swimlaneId: 'lane-review' });
+  });
+
+  it('the notifier listens on the context\'s own board event bus', () => {
+    const { options, boardEvents } = attachWithBoard();
+
+    expect(options.boardEvents).toBe(boardEvents);
+    expect(boardEvents.onBoardChanged).toHaveBeenCalledTimes(1);
   });
 });

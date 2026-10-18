@@ -173,7 +173,7 @@ async function flushMicrotasks(): Promise<void> {
 async function openSessions(service: MobileBridgeServiceInstance): Promise<Map<string, FakeBridgeSession>> {
   // attachContext registers the resting park's MobileTerminalProbe, so the
   // fake session manager needs the registration seam (the probe stays unused).
-  service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+  service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn(), onBoardChanged: vi.fn(() => () => {}) } } as never);
   // The identity and the secure-storage verdict load once, asynchronously,
   // in the warm-up attachContext() starts; runSyncSessions() waits for it too.
   await service.whenStorageReady();

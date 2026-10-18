@@ -52,6 +52,9 @@ export function handleRegisterPush(
     platform: payload.platform ?? 'android',
     registeredAt: new Date().toISOString(),
     categories: payload.categories,
+    // Only an explicit opt-in is stored: a device that re-registers without
+    // the flag (an app downgrade) stops receiving clears.
+    ...(payload.acceptsClears === true ? { acceptsClears: true } : {}),
   });
   return respond(request.requestId, true);
 }

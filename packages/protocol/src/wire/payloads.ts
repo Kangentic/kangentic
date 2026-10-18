@@ -958,10 +958,17 @@ const PUSH_KEY_LENGTH = 32;
  *
  * `categories`, when present, is the device's push preferences: the desktop
  * filters outgoing notifications to this set before sending, so preference
- * enforcement never depends on the receiving device (a future iOS
- * Notification Service Extension stays preference-free). Absent means every
- * category (the default, and what an older device that predates this field
- * implicitly requests); an explicit empty array means none.
+ * enforcement never depends on the receiving device (the iOS Notification
+ * Service Extension stays preference-free). Absent means every category (the
+ * default, and what an older device that predates this field implicitly
+ * requests); an explicit empty array means none.
+ *
+ * `acceptsClears: true` opts the device into sealed clears (see
+ * crypto/push-clear.ts): standalone clear messages under `data.clear`, and
+ * `clears` piggybacked on its notification envelopes. The desktop sends
+ * either only to a registration that set it, because an older Android app
+ * shows the generic placeholder for any message it cannot open, which would
+ * turn a clear into a new notification.
  */
 export interface RegisterPushRequestPayload {
   action: 'register' | 'unregister';
@@ -969,6 +976,7 @@ export interface RegisterPushRequestPayload {
   pushKeyBase64?: string;
   platform?: 'android' | 'ios';
   categories?: PushCategory[];
+  acceptsClears?: boolean;
 }
 
 export interface RegisterPushResponsePayload {
@@ -1012,6 +1020,10 @@ export function parseRegisterPushRequestPayload(payload: JsonValue): RegisterPus
     // rejected: registration must not fail outright over a category this
     // desktop does not yet know.
     request.categories = payload.categories.filter(isPushCategory);
+  }
+  if (payload.acceptsClears !== undefined) {
+    if (typeof payload.acceptsClears !== 'boolean') throw new Error('register-push payload has a non-boolean "acceptsClears"');
+    request.acceptsClears = payload.acceptsClears;
   }
   if (request.action === 'register') {
     if (request.expoPushToken === undefined) throw new Error('register-push register payload missing "expoPushToken"');

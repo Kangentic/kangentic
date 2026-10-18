@@ -2,8 +2,15 @@
  * Minimal Expo push sender - a single JSON POST to the Expo push API, no
  * SDK dependency. The fetch implementation is injected so tests never
  * touch the network. The ONLY real content in the message rides
- * data.blob (the sealed push envelope); title/body are static
- * placeholders, per the E2E notification-privacy design.
+ * data.blob (a sealed notification envelope) or data.clear (a sealed
+ * clear); title/body are static placeholders, per the E2E
+ * notification-privacy design.
+ *
+ * Expo's documented mappings this relies on: priority 'normal' is APNs
+ * priority 5 and 'high' is 10; `contentAvailable` maps to
+ * aps.content-available; and a message carrying only data plus
+ * `contentAvailable` is a headless background notification. Expo does not
+ * document which apns-push-type header it sends for one.
  *
  * The one Expo ticket error the caller must act on is
  * DeviceNotRegistered ("stop sending to this token"), surfaced as a
@@ -29,8 +36,15 @@ export interface ExpoPushMessage {
    */
   title?: string;
   body?: string;
-  /** The sealed push envelope - the only non-placeholder content in the POST. */
+  /** The sealed payload - the only non-placeholder content in the POST. */
   dataBlob: string;
+  /** The data key dataBlob rides under: 'blob' for a notification, 'clear' for a sealed clear. */
+  dataKey: WakeMessage['dataKey'];
+  priority: WakeMessage['priority'];
+  /** Sent only when true: the Notification Service Extension runs only for an alert push. */
+  mutableContent: boolean;
+  /** Sent only when true: an iOS background wake for a push with no alert. */
+  contentAvailable: boolean;
 }
 
 export type ExpoPushSendResult =
@@ -81,12 +95,14 @@ export async function sendExpoPush(fetchImpl: FetchLike, message: ExpoPushMessag
     // the key outright is the whole point of the Android path.
     ...(message.title !== undefined ? { title: message.title } : {}),
     ...(message.body !== undefined ? { body: message.body } : {}),
-    data: { blob: message.dataBlob },
-    priority: 'high',
-    // Required for iOS: without mutable-content:1 the Notification Service
-    // Extension that decrypts the envelope is never invoked. Expo maps this
-    // camelCase field to the APNs header; Android ignores it.
-    mutableContent: true,
+    data: { [message.dataKey]: message.dataBlob },
+    priority: message.priority,
+    // Required for an iOS alert: without mutable-content:1 the Notification
+    // Service Extension that decrypts the envelope is never invoked. Expo
+    // maps this camelCase field to the APNs header; Android ignores it.
+    ...(message.mutableContent ? { mutableContent: true } : {}),
+    // An iOS clear: no alert, just a background wake for the app's task.
+    ...(message.contentAvailable ? { contentAvailable: true } : {}),
   });
   const requestInit = {
     method: 'POST',
@@ -141,6 +157,10 @@ export function createExpoWakeChannel(fetchImpl: FetchLike): WakeChannel {
         ...(message.title !== undefined ? { title: message.title } : {}),
         ...(message.body !== undefined ? { body: message.body } : {}),
         dataBlob: message.blob,
+        dataKey: message.dataKey,
+        priority: message.priority,
+        mutableContent: message.mutableContent,
+        contentAvailable: message.contentAvailable,
       });
     },
   };
