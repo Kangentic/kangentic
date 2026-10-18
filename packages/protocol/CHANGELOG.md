@@ -2,6 +2,43 @@
 
 <!-- releases -->
 
+## [protocol-v0.22.0] - 2026-10-17
+
+Sends a task's automations switch to the phone. Additive on the wire;
+`PROTOCOL_VERSION` stays '3'.
+
+`BoardTaskWire` gains an optional `automations_disabled`. It is true when column
+automations are off for the task: no On task enter, On agent turn end or On task
+exit row runs for it, and a move types no column message. It is the fact the
+desktop card's "Automations disabled" strip reads. Null or absent means a
+desktop older than 0.22.0, and a phone offers no control then.
+
+There is no new verb. A phone flips the switch with its existing
+`board-tool-write` `update_task` call and the camelCase param
+`automationsDisabled`, never `automations_disabled`. A workflow task always reads
+false and `update_task` refuses `true` for one, so a phone hides the control
+while `workflow` is non-null. The desktop also clears the switch by itself when
+a task leaves Done (a rollback excepted), is restored from the archive, or joins
+a workflow, and each of those reaches the phone as a `task-updated` board event.
+
+On the desktop side, with no wire change: every desktop task write (create,
+edit, delete, restore from the archive, branch switch, a model pin, a backlog
+promote or demote) now emits a board event. Before, a subscribed phone heard of
+such a write only when something unrelated fired, so a flip from the desktop
+card menu left the phone's board stale. A backlog label rename or delete still
+emits nothing.
+
+The `SessionSummaryWire` doc comment states the desktop's corrected roll-up for
+a completed task. Cost, duration and tokens count once per conversation and add
+across conversations, tool calls and lines sum, and files changed takes the
+max. The shape is unchanged, but a desktop that ships this version no longer
+counts a resumed conversation's cost and runtime once per resume, so those
+values read lower for a task that was resumed.
+
+### Features
+- Send a task's automations switch to the phone, announce desktop task writes (9d5c8d70)
+- Fix the cost and agent runtime roll-up and redesign the completed task view (24368335)
+
 ## [protocol-v0.21.0] - 2026-10-12
 
 Adds workflows to the bridge: a workflow is a set of linked tasks that runs
