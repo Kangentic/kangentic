@@ -1,7 +1,8 @@
 /**
  * Wake the workflow engine from a write it would not otherwise hear promptly: a
- * link delete, a workflow started, resumed or edited, and a task delete. A task
- * delete also reaches the board bus, but wakes the engine here without waiting.
+ * link delete, a project delete, a workflow started, resumed or edited, and a
+ * task delete. A task delete also reaches the board bus, but wakes the engine
+ * here without waiting.
  *
  * A module of its own, holding only a callback the engine sets when it
  * registers, so a handler that deletes a task does not import the engine (and
