@@ -2111,6 +2111,17 @@ export interface SessionEvent {
    */
   subagentId?: string;
   /**
+   * Whether the agent was in plan mode when it fired the hook, as the adapter
+   * classifies its own mode (`extractPlanMode`). Undefined means no report, not
+   * "out of plan mode". `SessionTelemetry` keeps the session's changes so a
+   * turn-end automation can tell a turn that began after the plan was left.
+   *
+   * Source: Claude Code's `permission_mode` on its UserPromptSubmit and Stop
+   * payloads (`plan` is plan mode), never a subagent's Stop. Adapters without
+   * one leave it undefined.
+   */
+  planMode?: boolean;
+  /**
    * Polymorphic context for the event:
    * - For `tool_start`/`tool_end`: tool-specific info (file path, command)
    * - For `idle`: an `IdleReason` constant

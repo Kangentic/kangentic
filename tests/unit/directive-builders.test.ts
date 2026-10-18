@@ -14,6 +14,7 @@ import {
   extractTool,
   extractToolId,
   extractSubagentId,
+  extractPlanMode,
   extractToolPath,
   extractDetail,
   extractDetailPath,
@@ -44,6 +45,8 @@ describe('directive builders - wire format contract', () => {
     ['extractToolId nested', extractToolId(['tool_use_id'], { nested: 'tool_response' }), 'extractToolId', { fields: ['tool_use_id'], nested: 'tool_response' }],
     // Top-level only, no `nested` option. A subagent's `agent_id` is a top-level hook field.
     ['extractSubagentId', extractSubagentId(['agent_id']), 'extractSubagentId', { fields: ['agent_id'] }],
+    ['extractPlanMode', extractPlanMode('permission_mode', ['plan']), 'extractPlanMode', { field: 'permission_mode', planValues: ['plan'] }],
+    ['extractPlanMode unlessField', extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' }), 'extractPlanMode', { field: 'permission_mode', planValues: ['plan'], unlessField: 'agent_id' }],
     ['extractDetail top-level', extractDetail(['message', 'notification']), 'extractDetail', { fields: ['message', 'notification'] }],
     ['extractDetail nested', extractDetail(['model'], { nested: 'llm_request' }), 'extractDetail', { fields: ['model'], nested: 'llm_request' }],
     // `whenTool` scopes the extraction to one tool and, unlike `nested`, also

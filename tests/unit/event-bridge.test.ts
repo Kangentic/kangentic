@@ -19,6 +19,7 @@ import {
   extractTool,
   extractToolId,
   extractSubagentId,
+  extractPlanMode,
   extractToolPath,
   extractDetail,
   extractDetailPath,
@@ -242,6 +243,70 @@ describe('event-bridge', () => {
 
   it('extractSubagentId rejects an empty field list', () => {
     expect(() => extractSubagentId([])).toThrow('extractSubagentId requires at least one field');
+  });
+
+  // --- planMode: whether the agent was in plan mode, as a boolean ---
+
+  const PLAN_MODE = extractPlanMode('permission_mode', ['plan']);
+
+  it('planMode is true when the mode field names plan mode', () => {
+    runBridge(JSON.stringify({ hook_event_name: 'UserPromptSubmit', permission_mode: 'plan' }), [outputFile, 'prompt', PLAN_MODE]);
+    expect(readEvent().planMode).toBe(true);
+  });
+
+  it('planMode is false for any other mode, and the mode string never reaches the event', () => {
+    runBridge(JSON.stringify({ hook_event_name: 'Stop', permission_mode: 'auto' }), [outputFile, 'idle', PLAN_MODE]);
+    const line = readEvent();
+    expect(line.planMode).toBe(false);
+    expect(JSON.stringify(line)).not.toContain('auto');
+  });
+
+  it('planMode is absent when the payload carries no mode, so the engine reads it as unknown', () => {
+    runBridge(JSON.stringify({ hook_event_name: 'SessionStart' }), [outputFile, 'idle', PLAN_MODE]);
+    expect(readEvent()).not.toHaveProperty('planMode');
+  });
+
+  it('planMode is absent when the mode field is not a string', () => {
+    runBridge(JSON.stringify({ permission_mode: { name: 'plan' } }), [outputFile, 'idle', PLAN_MODE]);
+    expect(readEvent()).not.toHaveProperty('planMode');
+  });
+
+  // The bridge writes an event whatever stdin held: empty stdin leaves its parsed
+  // context null (the `input.length` check), and the JSON text `null` parses to
+  // null. Both reach the `!ctx` guard in the extractPlanMode arm, which must
+  // report nothing instead of reading a field off null and crashing before the
+  // event is written. readEvent() throws when no event file exists, so reading
+  // it is what proves the event landed.
+  it('planMode is absent and the event still writes when stdin is empty', () => {
+    runBridge('', [outputFile, 'idle', PLAN_MODE]);
+    const line = readEvent();
+    expect(line.type).toBe('idle');
+    expect(line).not.toHaveProperty('planMode');
+  });
+
+  it('planMode is absent and the event still writes when stdin is the JSON null', () => {
+    runBridge('null', [outputFile, 'idle', PLAN_MODE]);
+    const line = readEvent();
+    expect(line.type).toBe('idle');
+    expect(line).not.toHaveProperty('planMode');
+  });
+
+  // Claude's Stop fires for a subagent too, carrying its agent_id, and a
+  // subagent can run in its own mode while the session plans.
+  const MAIN_AGENT_PLAN_MODE = extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' });
+
+  it('planMode is absent on a payload that carries the unlessField, such as a subagent\'s Stop', () => {
+    runBridge(JSON.stringify({ hook_event_name: 'Stop', agent_id: 'a0a114181178d1064', permission_mode: 'default' }), [outputFile, 'idle', MAIN_AGENT_PLAN_MODE]);
+    expect(readEvent()).not.toHaveProperty('planMode');
+  });
+
+  it('planMode is still read from a payload without the unlessField, such as the main agent\'s Stop', () => {
+    runBridge(JSON.stringify({ hook_event_name: 'Stop', permission_mode: 'plan' }), [outputFile, 'idle', MAIN_AGENT_PLAN_MODE]);
+    expect(readEvent().planMode).toBe(true);
+  });
+
+  it('extractPlanMode rejects an empty value list', () => {
+    expect(() => extractPlanMode('permission_mode', [])).toThrow('extractPlanMode requires at least one plan value');
   });
 
   // --- remap directive (top-level field) ---

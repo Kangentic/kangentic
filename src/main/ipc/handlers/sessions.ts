@@ -11,9 +11,7 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
-import { applyProfileToLane } from '../../transition-engine/column-strategy';
-import { nextOnRoute } from '../../../shared/workflow-route';
-import { loadTaskProfile } from '../helpers/task-profile';
+import { planExitTargetFor } from '../helpers/plan-exit-target';
 import { readTaskLastMessage, readTaskReport } from '../helpers/task-report';
 import { announceTaskWrite } from '../helpers/task-write-announce';
 import { handleTaskMove } from './task-move';
@@ -876,17 +874,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
 
       // Folded through the task's Board Profile: a profile can re-point where
       // this column routes on plan exit, so two tasks leaving plan mode in the
-      // same column can legitimately land in different columns.
-      const lane = applyProfileToLane(
-        swimlanes.getById(task.swimlane_id),
-        loadTaskProfile(context, task, resolvedProjectPath),
-        swimlanes.list(),
-      );
-      // A workflow task's plan approval finishes its step: it moves to the next
-      // column on its ROUTE, wherever the column would send an ordinary task.
-      const target = task.workflow_id
-        ? nextOnRoute(swimlanes.list(), task, task.swimlane_id)
-        : (lane?.plan_exit_target_id ? swimlanes.getById(lane.plan_exit_target_id) : null);
+      // same column can legitimately land in different columns. A workflow
+      // task's plan approval finishes its step: it moves to the next column on
+      // its ROUTE, wherever the column would send an ordinary task.
+      const target = planExitTargetFor(context, task, task.swimlane_id, swimlanes, resolvedProjectPath);
       if (!target) return;
 
       const position = tasks.list(target.id).length;

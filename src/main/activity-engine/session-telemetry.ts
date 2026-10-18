@@ -11,6 +11,7 @@ import { looksLikeShellId } from './background-shell/looks-like-shell-id';
 import { UsageAccumulator } from './usage-accumulator';
 import { PRCommandDetector } from './pr-command-detector';
 import { PushCommandDetector } from './push-command-detector';
+import { PlanModeTrail } from './plan-mode-trail';
 import { UserInterruptCoordinator } from './user-interrupt-coordinator';
 
 const MAX_EVENTS_PER_SESSION = 500;
@@ -176,6 +177,7 @@ export class SessionTelemetry {
   private readonly usage = new UsageAccumulator();
   private readonly prCommandDetector = new PRCommandDetector();
   private readonly pushCommandDetector = new PushCommandDetector();
+  private readonly planModeTrail = new PlanModeTrail();
   /**
    * Live snapshot writer. Recreated on demand when the resolver returns a
    * different path so toggle changes (e.g. `developer.activityDebugOverlay`)
@@ -798,6 +800,8 @@ export class SessionTelemetry {
   clearSessionTracking(sessionId: string): void {
     this.activityEngine.deleteSession(sessionId);
     this.ptyTracker.clearSession(sessionId);
+    // A suspend ends the agent's process; a resume reports its mode afresh.
+    this.planModeTrail.removeSession(sessionId);
     this.notifySessionEnded(sessionId);
     // deleteSession removes engine state directly - it never commits a
     // transition, so onActivityChange never fires to clear this session out
@@ -819,6 +823,7 @@ export class SessionTelemetry {
     this.lastReportedAgentSessionIds.delete(sessionId);
     this.prCommandDetector.removeSession(sessionId);
     this.pushCommandDetector.removeSession(sessionId);
+    this.planModeTrail.removeSession(sessionId);
     this.notifySessionEnded(sessionId);
     // Same reasoning as clearSessionTracking above.
     if (this.permissionPendingSessions.delete(sessionId)) {
@@ -962,6 +967,7 @@ export class SessionTelemetry {
    *     thinking signal
    *   - `detectExitPlanMode` fires plan-exit when ExitPlanMode tool
    *     completes (user approved the plan)
+   *   - the plan-mode trail records a changed `planMode` report
    *   - activity engine processes the event (counters + predicate)
    *   - bg-shell watcher baseline re-anchors on BackgroundShellStart
    */
@@ -984,6 +990,7 @@ export class SessionTelemetry {
 
       this.maybeSuppressPtyTracker(sessionId, event, parser);
       this.detectExitPlanMode(sessionId, event);
+      this.planModeTrail.note(sessionId, event, Date.now());
 
       const prResult = this.prCommandDetector.detect(sessionId, event);
       if (prResult.fireCandidate) {
@@ -1065,6 +1072,11 @@ export class SessionTelemetry {
    */
   getWorkSerial(sessionId: string): number | undefined {
     return this.activityEngine.getState(sessionId)?.workSerial;
+  }
+
+  /** See `PlanModeTrail.hadLeftPlanModeBy`. */
+  hadLeftPlanModeBy(sessionId: string, atMs: number): boolean {
+    return this.planModeTrail.hadLeftPlanModeBy(sessionId, atMs);
   }
 
   getActivityReason(sessionId: string): ActivityReason | null {

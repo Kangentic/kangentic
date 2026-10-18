@@ -3393,6 +3393,16 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Had this session's agent left plan mode by `atMs` (epoch ms, the app's
+   * clock): it reported plan mode, then reported being out of it, and had not
+   * reported re-entering it by then. False when it never reported plan mode or
+   * reports no mode at all (`SessionEvent.planMode`).
+   */
+  hadLeftPlanModeBy(sessionId: string, atMs: number): boolean {
+    return this.telemetry.hadLeftPlanModeBy(sessionId, atMs);
+  }
+
+  /**
    * Assert that this session's current idle is authoritative - the caller knows
    * from outside the hook stream that the agent is parked and started no work.
    * Used by the settings-change restart, whose resumed session sends no prompt

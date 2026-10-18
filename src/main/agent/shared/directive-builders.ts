@@ -101,6 +101,26 @@ export function extractSubagentId(fields: string[]): string {
 }
 
 /**
+ * Set `event.planMode` to whether the top-level stdin string field `field` is
+ * one of `planValues`. The event carries a boolean, never the mode string, so
+ * the adapter that names `planValues` is the only place an agent's mode
+ * vocabulary lives. No-op when the field is absent or not a string: the engine
+ * then has no report, which it reads as unknown.
+ *
+ * `unlessField` skips a payload that carries that top-level field. It is for a
+ * hook that can fire for something other than the session's own agent. Claude
+ * adds `agent_id` to a hook that fires inside a subagent, and a subagent can
+ * run in its own mode while the session plans.
+ *
+ * Its own kind, so a stale `event-bridge.js` copy rejects it via `default` (a
+ * logged no-op), which leaves the mode unknown as before this directive.
+ */
+export function extractPlanMode(field: string, planValues: string[], options: { unlessField?: string } = {}): string {
+  if (planValues.length === 0) throw new Error('extractPlanMode requires at least one plan value');
+  return encodeDirective('extractPlanMode', options.unlessField ? { field, planValues, unlessField: options.unlessField } : { field, planValues });
+}
+
+/**
  * Extract `event.detail` from the first non-null of `fields`, read from the
  * top-level stdin object or - when `nested` is given - from `ctx[nested]`.
  *

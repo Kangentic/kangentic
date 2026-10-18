@@ -82,10 +82,11 @@ Surrounding infrastructure:
 | `src/main/activity-engine/background-shell/process-tree.ts` | Cross-platform descendant enumeration; `listAllProcesses` shared once per cycle |
 | `src/main/activity-engine/background-shell/resume.ts` | Resume-time orphan adoption |
 | `src/main/activity-engine/background-shell/looks-like-shell-id.ts` | Shell-id shape gate |
-| `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractToolId, extractSubagentId, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
+| `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractToolId, extractSubagentId, extractPlanMode, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
 | `src/main/agent/adapters/claude/hook-manager.ts` | Claude Code hook configuration |
 | `src/main/agent/adapters/claude/permission-rejection-transcript.ts` | Manual-deny detector (task #640): scans the durable transcript for a rejected `tool_result` no hook can report |
-| `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId`, `SessionEvent.subagentId` |
+| `src/main/activity-engine/plan-mode-trail.ts` | Each session's reported plan-mode changes (`SessionEvent.planMode`), stamped at ingest, so the turn-end runner can ask whether a session had left plan mode by a past move |
+| `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId`, `SessionEvent.subagentId`, `SessionEvent.planMode` |
 
 ## ActivityState
 
@@ -256,7 +257,20 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   where the implementation begins. A rejected plan sends no `tool_end` and keeps the stamp. The
   turn-end runner uses it to ignore a turn that began before the task entered its column. A task
   dragged into Executing mid-plan and approved after the drag therefore counts there, while one
-  dragged in mid-turn with no approval after the drag is still dropped.
+  dragged in mid-turn with no approval after the drag is dropped, unless the drag came after the
+  plan was left (next bullet).
+- **Plan mode.** A plan left in the conversation, with no approved ExitPlanMode, gets no re-stamp:
+  the user types "looks good" in Planning, drags the card on mid-turn, and the turn would read as
+  Planning's (kangentic-mobile #119). So an adapter can report the session's mode on its events, as
+  the boolean `SessionEvent.planMode` that the `extractPlanMode` directive sets. Claude's
+  `UserPromptSubmit` and `Stop` hooks carry `permission_mode`. A payload that carries `agent_id`
+  fired inside a subagent, which can run in its own mode, so it reports nothing. `SessionTelemetry`
+  keeps each session's changes in a `PlanModeTrail` (`plan-mode-trail.ts`), stamped with the app's
+  clock at ingest rather than `event.ts`, which is the agent host's.
+  `SessionManager.hadLeftPlanModeBy(sessionId, atMs)` is true when the session reported plan mode
+  and then reported being out of it by `atMs`. The trail is dropped on a suspend and on removal, so
+  a resumed session starts with none, and a drag counts as a plan exit only once it reports plan
+  mode again. An agent that reports no mode always answers false.
 - **`workSerial`** is the turn's identity. It counts the turn-initiating events (`TURN_INITIATING_EVENTS`)
   `processEvent` has handled, and rides the turn end beside `turnStartedAt`.
   `SessionManager.isLatestTurn(sessionId, workSerial)` is true only while the agent has reported no

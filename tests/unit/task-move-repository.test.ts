@@ -58,10 +58,11 @@ describe('TaskMoveRepository.currentVisit and visitStartedAt', () => {
     origin: TaskMoveRecordOrigin,
     at: string,
     forTaskId: string = taskId,
+    fromSwimlaneId: string | null = null,
   ): void {
     database
       .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(moveId, forTaskId, null, toSwimlaneId, origin, null, at);
+      .run(moveId, forTaskId, fromSwimlaneId, toSwimlaneId, origin, null, at);
   }
 
   it('returns null from both reads when no move into the column was recorded', () => {
@@ -75,7 +76,7 @@ describe('TaskMoveRepository.currentVisit and visitStartedAt', () => {
     expect(moves.currentVisit(taskId, columnId)).toBeNull();
     expect(moves.visitStartedAt(taskId, columnId)).toBeNull();
     // The same row answers for the column it did enter.
-    expect(moves.currentVisit(taskId, otherColumnId)).toEqual({ at: SECOND_INSTANT, origin: 'renderer' });
+    expect(moves.currentVisit(taskId, otherColumnId)).toEqual({ at: SECOND_INSTANT, origin: 'renderer', from_swimlane_id: null });
   });
 
   it('does not count another task\'s move into the same column', () => {
@@ -92,7 +93,7 @@ describe('TaskMoveRepository.currentVisit and visitStartedAt', () => {
     recordMove('move-c-middle', columnId, 'agent', SECOND_INSTANT);
     recordMove('move-a-oldest', columnId, 'auto-move', FIRST_INSTANT);
 
-    expect(moves.currentVisit(taskId, columnId)).toEqual({ at: THIRD_INSTANT, origin: 'renderer' });
+    expect(moves.currentVisit(taskId, columnId)).toEqual({ at: THIRD_INSTANT, origin: 'renderer', from_swimlane_id: null });
   });
 
   it('returns a newer renderer move over an older auto-move', () => {
@@ -115,27 +116,36 @@ describe('TaskMoveRepository.currentVisit and visitStartedAt', () => {
     recordMove('move-z-first-inserted', columnId, 'auto-move', SECOND_INSTANT);
     recordMove('move-a-second-inserted', columnId, 'renderer', SECOND_INSTANT);
 
-    expect(moves.currentVisit(taskId, columnId)).toEqual({ at: SECOND_INSTANT, origin: 'renderer' });
+    expect(moves.currentVisit(taskId, columnId)).toEqual({ at: SECOND_INSTANT, origin: 'renderer', from_swimlane_id: null });
   });
 
   it('breaks a same-millisecond tie toward the later-inserted move when that one is an auto-move', () => {
     recordMove('move-z-first-inserted', columnId, 'renderer', SECOND_INSTANT);
     recordMove('move-a-second-inserted', columnId, 'auto-move', SECOND_INSTANT);
 
-    expect(moves.currentVisit(taskId, columnId)).toEqual({ at: SECOND_INSTANT, origin: 'auto-move' });
+    expect(moves.currentVisit(taskId, columnId)).toEqual({ at: SECOND_INSTANT, origin: 'auto-move', from_swimlane_id: null });
   });
 
   it('keeps the tie-break inside a column, ignoring a later-inserted move into another column', () => {
     recordMove('move-this-column', columnId, 'renderer', SECOND_INSTANT);
     recordMove('move-other-column', otherColumnId, 'auto-move', SECOND_INSTANT);
 
-    expect(moves.currentVisit(taskId, columnId)).toEqual({ at: SECOND_INSTANT, origin: 'renderer' });
+    expect(moves.currentVisit(taskId, columnId)).toEqual({ at: SECOND_INSTANT, origin: 'renderer', from_swimlane_id: null });
   });
 
   it('round-trips an auto-move origin unchanged', () => {
     recordMove('move-auto', columnId, 'auto-move', SECOND_INSTANT);
 
-    expect(moves.currentVisit(taskId, columnId)).toStrictEqual({ at: SECOND_INSTANT, origin: 'auto-move' });
+    expect(moves.currentVisit(taskId, columnId)).toStrictEqual({ at: SECOND_INSTANT, origin: 'auto-move', from_swimlane_id: null });
+  });
+
+  // The runner reads the column the move came from to tell a drag into that
+  // column's plan exit target from any other move.
+  it('returns the column the newest move came from', () => {
+    recordMove('move-older', columnId, 'renderer', FIRST_INSTANT, taskId, null);
+    recordMove('move-newer', columnId, 'renderer', SECOND_INSTANT, taskId, otherColumnId);
+
+    expect(moves.currentVisit(taskId, columnId)).toStrictEqual({ at: SECOND_INSTANT, origin: 'renderer', from_swimlane_id: otherColumnId });
   });
 
   it('answers visitStartedAt with the same instant currentVisit returns', () => {

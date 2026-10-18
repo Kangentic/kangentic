@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
 
 /** All Claude Code hook event names (settings.json keys). */
 export const ClaudeHookEvent = {
@@ -67,9 +67,15 @@ export function buildHooks(
 ): Record<string, ClaudeHookEntry[]> {
   const H = ClaudeHookEvent;
   const E = EventType;
+  // The session's mode at each prompt and turn end, so a turn-end automation
+  // can tell a turn that began after the plan was left (SessionEvent.planMode).
+  // Never a subagent's: a subagent can run in its own mode while the session
+  // plans. Its tool hooks are left out, and its Stop, which arrives through the
+  // same Stop hook, carries `agent_id` where the main agent's does not.
+  const planMode = extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' });
   const promptCommand = options.capturePromptText
-    ? buildBridgeCommand(eventBridge, eventsPath, E.Prompt, extractDetail(['prompt']))
-    : buildBridgeCommand(eventBridge, eventsPath, E.Prompt);
+    ? buildBridgeCommand(eventBridge, eventsPath, E.Prompt, extractDetail(['prompt']), planMode)
+    : buildBridgeCommand(eventBridge, eventsPath, E.Prompt, planMode);
 
   // Claude Code stdin field extraction directives:
   // - tool_name: tool identifier at top level
@@ -224,7 +230,7 @@ export function buildHooks(
     ],
     [H.Stop]: [
       ...(existingHooks[H.Stop] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.Idle) }] },
+      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.Idle, planMode) }] },
     ],
     // StopFailure fires INSTEAD of Stop when a turn concludes due to an API
     // error (rate limit, overload, server error, auth, ...). Without it, an

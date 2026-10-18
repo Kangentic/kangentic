@@ -40,6 +40,7 @@ const hoisted = vi.hoisted(() => ({
   clearSpawnProgress: vi.fn(),
   executeTransition: vi.fn(),
   checkConditions: vi.fn(),
+  recordSkipped: vi.fn(),
   rows: [] as unknown[],
   task: {} as Record<string, unknown>,
   column: {} as Record<string, unknown>,
@@ -56,7 +57,7 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
     tasks: { getById: () => hoisted.task, list: () => [] },
     swimlanes: { getById: () => hoisted.column, list: () => [] },
     automations: { getForTrigger: () => hoisted.rows },
-    automationRuns: { hasRunSince: () => false, hasSkipSince: () => false, countRuns: () => 0 },
+    automationRuns: { hasRunSince: () => false, hasSkipSince: () => false, countRuns: () => 0, recordSkipped: hoisted.recordSkipped },
     taskMoves: { visitStartedAt: () => null, currentVisit: () => null },
     attachments: {},
   })),
@@ -95,7 +96,7 @@ vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
   deliverMessageAfterMove: vi.fn(),
 }));
 
-const { registerTurnEndAutomations } = await import('../../src/main/automations/turn-end/turn-end-runner');
+const { registerTurnEndAutomations, AGENT_NOT_IDLE_REASON } = await import('../../src/main/automations/turn-end/turn-end-runner');
 
 const SESSION_ID = 'session-1';
 const PROJECT_ID = 'project-1';
@@ -248,12 +249,13 @@ describe('a turn end and the workflow step', () => {
   it('runs the workflow step when the agent is no longer idle and the rows were held back', async () => {
     // The check can take a while; a row must not land on a running turn. The
     // rows run nothing, so there is no message to wait on, and the step makes
-    // its own idle check.
+    // its own idle check. The held-back row says why.
     activity[SESSION_ID] = 'thinking';
 
     await endTurn();
 
     expect(hoisted.executeTransition).not.toHaveBeenCalled();
+    expect(hoisted.recordSkipped).toHaveBeenCalledWith(expect.objectContaining({ automation: KEEP_GOING_ROW, taskId }), AGENT_NOT_IDLE_REASON);
     expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
   });
 
