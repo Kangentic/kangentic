@@ -1599,7 +1599,7 @@ describe('ActivityEngine', () => {
       const state = engine.getState(SESSION_ID)!;
       engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', subagentIds[0]));
       expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
-      // A new id overflows the cap: the oldest by last write goes, not the re-started id.
+      // A new id overflows the cap: the oldest stopped id goes, and the re-started id is live again.
       engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'fresh-agent'));
       expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
       expect(state.subagentLifecycleById.has(subagentIds[0])).toBe(true);
