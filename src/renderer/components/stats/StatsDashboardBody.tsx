@@ -15,6 +15,7 @@ import { StatsFilterRow } from './StatsFilterRow';
 import { StatsMetricToggle } from './StatsMetricToggle';
 import { StatsScopePicker } from './StatsScopePicker';
 import { useWindowResizing } from '../../hooks/useWindowResizing';
+import { motionReduced } from '../../utils/motion-reduced';
 import { KngLineAreaChart } from './charts/KngLineAreaChart';
 import { KngBarChart } from './charts/KngBarChart';
 import { formatBucketLabel, isModelStackEmpty, useStatsData } from './useStatsData';
@@ -76,9 +77,12 @@ export function StatsDashboardBody() {
   const projects = useProjectStore((state) => state.projects);
   // Suspend chart data animations while the OS window is actively resizing so
   // layout tracks the drag crisply (a tween re-triggering per resize tick
-  // reads as stutter).
+  // reads as stutter). Animations off, or the system's reduced motion, turns
+  // them off for good: the `.no-motion` class the setting sets reaches CSS
+  // only, and these tweens are the chart library's own script. Read on each
+  // render, which is when a tween starts.
   const windowResizing = useWindowResizing();
-  const animateCharts = !windowResizing;
+  const animateCharts = !windowResizing && !motionReduced();
 
   // Poll floor while visible (pause when the window is hidden).
   useEffect(() => {
