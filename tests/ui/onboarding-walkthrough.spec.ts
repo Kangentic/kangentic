@@ -64,11 +64,25 @@ async function createProjectKeepingChecklist(page: Page, name: string): Promise<
  * One CI run failed exactly that way. A press is retried only after `PRESS_SETTLE_MS` of
  * nothing happening, far longer than the exit animation, so a retry means the first press was
  * dropped before its listener attached.
+ *
+ * The CHECK FIRST above must not mistake the checklist that is still LEAVING for the one that
+ * returned. Clicking a checklist row opens the step's surface in the same tick that the
+ * checklist starts its own 150ms exit animation, so a caller that has only awaited the surface
+ * is looking at a checklist that is still in the DOM, still `visible` to Playwright, and about
+ * to unmount. Measured: the checklist count is 1 at that point on every run. The helper then
+ * returned without pressing anything, and the assertion after it read the dying checklist's
+ * "0 of 5 done" a few milliseconds before it unmounted, so the test passed without ever
+ * exercising Escape. When the unmount landed first (a loaded CI runner), nothing had pressed
+ * Escape, the surface stayed open for the whole poll, and the assertion timed out reading null.
+ * So the helper first waits for any outgoing checklist to detach. That is a no-op for a caller
+ * whose checklist is already gone, and it makes the first check below mean "has the checklist
+ * come BACK".
  */
 const PRESS_SETTLE_MS = 2500;
 
 async function pressEscapeUntilChecklistReturns(page: Page): Promise<void> {
   const checklist = page.locator('[data-testid="onboarding-checklist"]');
+  await checklist.waitFor({ state: 'detached', timeout: 5000 });
   for (let attempt = 0; attempt < 4; attempt += 1) {
     if (await checklist.count() > 0) return;
     await page.keyboard.press('Escape');
