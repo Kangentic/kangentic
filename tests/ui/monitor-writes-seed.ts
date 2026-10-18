@@ -1,6 +1,7 @@
 /**
  * Shared seed and page helpers for the Agent Monitor write specs
- * (monitor-writes-reach-board.spec.ts and monitor-confirm-and-detail-writes.spec.ts).
+ * (monitor-writes-reach-board.spec.ts and monitor-confirm-and-detail-writes.spec.ts)
+ * and the task menu session row specs (task-menu-session-toggle*.spec.ts).
  *
  * This is a plain module, not a spec: importing a spec file would register its
  * tests a second time in the importer. Every helper here is stateless, and each
@@ -12,7 +13,7 @@
  * tagged so the open board never lists it. The mock holds ONE task list, so the
  * other project's task lives beside the open project's, tagged.
  */
-import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
+import { chromium, expect, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
 
@@ -229,4 +230,71 @@ export async function demoteCalls(page: Page): Promise<Array<{ taskId: string; p
   return page.evaluate(() => (window as unknown as {
     __mockDemoteCalls?: Array<{ taskId: string; projectId: string | null }>;
   }).__mockDemoteCalls ?? []);
+}
+
+/**
+ * Let the next `sessions.suspend` run in the mock, which commits the pause (it
+ * clears the task's session pointer), and then reject, as main does when the
+ * pause commits and the agent then fails to stop.
+ */
+export async function failSuspendAfterCommit(page: Page, failureReason: string): Promise<void> {
+  await page.evaluate((message) => {
+    const sessionsApi = window.electronAPI.sessions;
+    const originalSuspend = sessionsApi.suspend;
+    sessionsApi.suspend = async (taskId, projectId) => {
+      await originalSuspend(taskId, projectId);
+      throw new Error(message);
+    };
+  }, failureReason);
+}
+
+/**
+ * Hold the next `sessions.suspend` until `releaseSuspend`, so a test can act
+ * while main is still pausing. The mock records the call only once released.
+ */
+export async function holdNextSuspend(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const sessionsApi = window.electronAPI.sessions;
+    const originalSuspend = sessionsApi.suspend;
+    sessionsApi.suspend = async (taskId, projectId) => {
+      sessionsApi.suspend = originalSuspend;
+      window.__suspendHeld = true;
+      await new Promise<void>((resolve) => { window.__releaseSuspend = resolve; });
+      return originalSuspend(taskId, projectId);
+    };
+  });
+}
+
+export async function suspendHeld(page: Page): Promise<boolean> {
+  return page.evaluate(() => window.__suspendHeld === true);
+}
+
+export async function releaseSuspend(page: Page): Promise<void> {
+  await page.evaluate(() => window.__releaseSuspend?.());
+}
+
+export async function resetIpcCallCounts(page: Page): Promise<void> {
+  await page.evaluate(() => window.__resetIpcCallCounts());
+}
+
+/** Board reads since the last reset: a reload, or a cold switch, reads the task list. */
+export async function tasksListCalls(page: Page): Promise<number> {
+  return page.evaluate(() => window.__getIpcCallCounts()['tasks.list'] ?? 0);
+}
+
+/** Click a project's sidebar row. */
+export async function switchToProject(page: Page, projectId: string): Promise<void> {
+  await byTestId(page, `project-row-${projectId}`).click();
+}
+
+/**
+ * Visit the other board and come back, so this board is reopened by a project
+ * switch and holds a warm snapshot when the user leaves it again. Checked by the
+ * title, since the mock lists an untagged task on every board.
+ */
+export async function visitOtherBoardAndBack(page: Page): Promise<void> {
+  await switchToProject(page, OTHER_PROJECT_ID);
+  await expect(byTestId(page, 'titlebar-project-name')).toHaveText(OTHER_PROJECT_NAME);
+  await switchToProject(page, PROJECT_ID);
+  await expect(byTestId(page, 'titlebar-project-name')).toHaveText(PROJECT_NAME);
 }
