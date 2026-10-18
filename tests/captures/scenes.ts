@@ -1736,7 +1736,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   usage: {
     name: 'usage',
     reach: 'boot',
-    description: 'The Usage dashboard over all projects for the week, from the seeded fourteen-day series. The scope and period persist; the open flag does not.',
+    description: 'The Usage dashboard over all projects for the week, from the seeded ninety-day history. Each period reads its slice of that history on main\'s own grid: Today by the hour from local midnight, This Week from Monday and This Month from the 1st by the day. So the bars a still shows under This Week depend on the weekday it was shot. The scope and period persist; the open flag does not.',
     alt: 'The Usage dashboard for all projects this week: token, cost and burn rate tiles, session and tool counts, a Background card for the calls Kangentic makes itself, cost per day by model beside cumulative spend, and breakdowns by agent, model and effort.',
     config: { usageStatsScope: 'all', usageStatsPeriod: 'week' },
     ready: '[data-testid="stats-filter-row"]',

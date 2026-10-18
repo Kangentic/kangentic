@@ -3731,16 +3731,23 @@ export function buildDemoPreConfig(options: {
       window.__mockFileHistoryByWorktree = fileHistoryByWorktree;
       window.__mockGitDiffByCommit = diffByCommit;
 
-      // A deterministic usage dashboard: fourteen days of sessions per project, seeded so every
+      // A deterministic usage dashboard: ninety days of sessions per project, seeded so every
       // boot draws the same charts, scaled by the project's share of the sample install.
       function seeded(seed) { var value = seed; return function () { value = (value * 1664525 + 1013904223) % 4294967296; return value / 4294967296; }; }
       window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
         var hourMs = 3600000;
         var dayMs = 24 * hourMs;
+        var halfHourMs = 30 * 60000;
+        var fiveMinutesMs = 5 * 60000;
         var random = seeded(scope.kind === 'all' ? 7 : (String(scope.projectId || '').length + 11));
         var scale = scope.kind === 'all' ? 1 : 0.42;
-        var days = period === 'all' ? 90 : period === '7d' ? 7 : 14;
-        var rangeStartMs = Math.floor(now / dayMs) * dayMs - (days - 1) * dayMs;
+        var nowDate = new Date(now);
+        // Local calendar days and hours, as main buckets them (src/main/usage-stats/bucketing.ts).
+        function localDay(offset) { return new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() + offset).getTime(); }
+        function localHour(hour) { return new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate(), hour).getTime(); }
+        // Per-turn capture starts later than the cost ledger (earliestTurnMs below), so the token
+        // series is empty before it, as a real install's is.
+        var turnLedgerStartMs = now - 30 * dayMs;
 
         // The stacked cost chart keys its series off the model ids the byModel breakdown returns,
         // and that breakdown is derived from the sessions the boards actually show. So the daily
@@ -3759,63 +3766,203 @@ export function buildDemoPreConfig(options: {
         var weightTotal = modelWeights.reduce(function (sum, entry) { return sum + entry.weight; }, 0) || 1;
         modelWeights.sort(function (left, right) { return right.weight - left.weight; });
 
-        var costSeries = [];
-        var totalCost = 0, totalInput = 0, totalOutput = 0, sessionCount = 0;
-        for (var day = 0; day < days; day++) {
-          var bucketStart = rangeStartMs + day * dayMs;
-          var weekend = new Date(bucketStart).getDay() % 6 === 0;
+        function sum(records, startMs) {
+          return records.reduce(function (total, record) {
+            total.costUsd += record.costUsd; total.inputTokens += record.inputTokens;
+            total.outputTokens += record.outputTokens; total.sessionCount += record.sessionCount;
+            return total;
+          }, { startMs: startMs, costUsd: 0, inputTokens: 0, outputTokens: 0, sessionCount: 0 });
+        }
+        // A record cut into parts by shares, its whole counts handed out by running total so the
+        // parts add back to the record.
+        function split(record, shares, startOf) {
+          var total = shares.reduce(function (running, share) { return running + share; }, 0);
+          var before = 0;
+          return shares.map(function (share, index) {
+            var after = before + share / total;
+            var from = before;
+            before = after;
+            function whole(value) { return Math.round(value * after) - Math.round(value * from); }
+            return {
+              startMs: startOf(index), costUsd: record.costUsd * share / total,
+              inputTokens: whole(record.inputTokens), outputTokens: whole(record.outputTokens), sessionCount: whole(record.sessionCount),
+            };
+          });
+        }
+
+        // One history for every period: ninety local days ending today, drawn once in day order, so
+        // each period reads a slice of the same days. Today's tiles are This Week's last bar, and
+        // This Week sits inside This Month, as they do over main's one ledger.
+        var historyDays = 90;
+        var history = [];
+        for (var day = 0; day < historyDays; day++) {
+          var dayStartMs = localDay(day - (historyDays - 1));
+          var isToday = day === historyDays - 1;
+          // Today is a working day whatever the calendar says: the board's sessions are working now.
+          var weekend = !isToday && new Date(dayStartMs).getDay() % 6 === 0;
           // Real histories have gaps and bursts rather than a smooth band, which is what the
           // /preview seeder reproduces and what makes a 90-day chart worth looking at: roughly one
           // day in eight is idle, and one in twelve is a push at three times the volume.
           var dayRoll = random();
-          var idle = day < days - 1 && dayRoll < 0.12;
+          var idle = !isToday && dayRoll < 0.12;
           var spike = dayRoll > 0.92 ? 3 : 1;
-          var cost = idle ? 0 : (weekend ? 1.2 : 6.5 + random() * 5) * scale * spike;
           var input = idle ? 0 : Math.round((weekend ? 40000 : 180000 + random() * 120000) * scale * spike);
-          var output = Math.round(input * 0.28);
-          var sessions = idle ? 0 : Math.max(1, Math.round((weekend ? 1 : 3 + random() * 4) * spike));
-          totalCost += cost; totalInput += input; totalOutput += output; sessionCount += sessions;
-          var dayModels = modelWeights.map(function (entry) {
-            var share = entry.weight / weightTotal;
-            return {
-              modelId: entry.modelId, costUsd: cost * share,
-              inputTokens: Math.round(input * share), outputTokens: Math.round(output * share),
-            };
-          });
-          costSeries.push({
-            bucketStartMs: bucketStart, costUsd: cost, inputTokens: input, outputTokens: output, sessionCount: sessions,
-            byModel: dayModels,
+          history.push({
+            startMs: dayStartMs,
+            costUsd: idle ? 0 : (weekend ? 1.2 : 6.5 + random() * 5) * scale * spike,
+            inputTokens: input, outputTokens: Math.round(input * 0.28),
+            sessionCount: idle ? 0 : Math.max(1, Math.round((weekend ? 1 : 3 + random() * 4) * spike)),
           });
         }
-        var tokenSeries = [];
-        var bucketCount = 12;
-        var tokenStart = Math.floor(now / hourMs) * hourMs - (bucketCount - 1) * hourMs;
-        for (var bucket = 0; bucket < bucketCount; bucket++) {
-          var perBucketInput = Math.round((6000 + random() * 9000) * scale);
-          tokenSeries.push({
-            bucketStartMs: tokenStart + bucket * hourMs, inputTokens: perBucketInput, outputTokens: Math.round(perBucketInput * 0.3),
-            cacheCreationTokens: Math.round(perBucketInput * 0.15), cacheReadTokens: Math.round(perBucketInput * 4.5),
-            allocatedCostUsd: (0.18 + random() * 0.3) * scale, turnCount: 4 + Math.floor(random() * 6),
-          });
+        // Today by the hour, from a generator of its own so no period draws more of the shared one.
+        // The working day carries the volume and the last three hours the most, since the board's
+        // sessions are working now. Only the hours so far have happened, so today in the history is
+        // their sum.
+        var hourRandom = seeded(scope.kind === 'all' ? 97 : 98);
+        var currentHour = nowDate.getHours();
+        var hourShares = [];
+        for (var hour = 0; hour < 24; hour++) {
+          var recent = hour <= currentHour && currentHour - hour < 3;
+          hourShares.push((recent ? 3 : hour >= 9 && hour < 19 ? 1 : 0.1) * (0.6 + hourRandom() * 0.8));
         }
-        var kpis = {
-          totalCostUsd: totalCost, costKnown: true, totalInputTokens: totalInput, totalOutputTokens: totalOutput,
-          totalTokens: totalInput + totalOutput, sessionCount: sessionCount, toolCallCount: Math.round(sessionCount * 41),
-          linesAdded: Math.round(sessionCount * 160), linesRemoved: Math.round(sessionCount * 55), filesChanged: Math.round(sessionCount * 7),
-          compactionCount: Math.round(sessionCount / 6), totalDurationMs: sessionCount * 38 * 60000,
-          turnInputTokens: Math.round(totalInput * 0.35), turnOutputTokens: Math.round(totalOutput * 0.5),
-          cacheCreationTokens: Math.round(totalInput * 0.2), cacheReadTokens: Math.round(totalInput * 5.5),
-          burnRateTokensPerHour: Math.round(26000 * scale), burnRateUsdPerHour: 1.7 * scale,
-          // Active (agent-working) time, and the sessions the interval ledger
-          // reaches. Deliberately BOTH lower than their wall-clock/sessionCount
-          // neighbours above: active time runs well under session duration, and
-          // per-interval recording covers fewer sessions than the usage ledger,
-          // which is exactly what the Avg Active tile's caveat describes.
-          activeMs: Math.round(sessionCount * 38 * 60000 * 0.39),
-          activeSessionsCovered: Math.max(1, Math.round(sessionCount * 0.72)),
-        };
-        var previous = {};
-        Object.keys(kpis).forEach(function (key) { previous[key] = typeof kpis[key] === 'number' ? Math.round(kpis[key] * 0.86 * 1000) / 1000 : kpis[key]; });
+        var todayHours = split(history[historyDays - 1], hourShares, localHour).slice(0, currentHour + 1);
+        history[historyDays - 1] = sum(todayHours, localDay(0));
+
+        // Live's five-minute grid: each slice a twelfth of its hour, give or take, today's hours and
+        // before midnight a twenty-fourth of yesterday.
+        function fiveMinuteRecords(fromMs, toMs) {
+          var yesterday = history[historyDays - 2];
+          var records = [];
+          for (var start = fromMs; start < toMs; start += fiveMinutesMs) {
+            var source = start >= localDay(0) ? todayHours[new Date(start).getHours()] : null;
+            var jitter = (0.5 + hourRandom()) / 12;
+            records.push({
+              startMs: start,
+              costUsd: (source ? source.costUsd : yesterday.costUsd / 24) * jitter,
+              inputTokens: Math.round((source ? source.inputTokens : yesterday.inputTokens / 24) * jitter),
+              outputTokens: Math.round((source ? source.outputTokens : yesterday.outputTokens / 24) * jitter),
+              sessionCount: (source ? source.sessionCount : yesterday.sessionCount / 24) * jitter,
+            });
+          }
+          return records;
+        }
+        function byDay(records) {
+          var groups = [];
+          records.forEach(function (record) {
+            var date = new Date(record.startMs);
+            var startMs = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+            if (groups.length === 0 || groups[groups.length - 1].startMs !== startMs) groups.push({ startMs: startMs, records: [] });
+            groups[groups.length - 1].records.push(record);
+          });
+          return groups.map(function (group) { return sum(group.records, group.startMs); });
+        }
+        // Today's token chart is on main's half-hour grid: each hour in two, or whole in its first
+        // half while the second has not begun.
+        function halves(hours) {
+          var parts = [];
+          hours.forEach(function (hourRecord) {
+            var shares = hourRecord.startMs + halfHourMs < now ? [1, 1] : [1];
+            parts.push.apply(parts, split(hourRecord, shares, function (index) { return hourRecord.startMs + index * halfHourMs; }));
+          });
+          return parts;
+        }
+
+        // The period's window, chart grid and comparison window, as resolveBucketing and
+        // resolvePreviousWindow draw them: Live the trailing two hours, Today from local midnight
+        // by the hour, This Week from Monday and This Month from the 1st by the day, All Time every
+        // day there is.
+        var rangeStartMs, tokenBucketMs, costBucketMs, costRecords, tokenRecords, previousRecords, previousSpanMs;
+        if (period === 'live') {
+          rangeStartMs = Math.floor((now - 2 * hourMs) / fiveMinutesMs) * fiveMinutesMs;
+          tokenRecords = fiveMinuteRecords(rangeStartMs, now);
+          costRecords = byDay(tokenRecords);
+          previousRecords = fiveMinuteRecords(rangeStartMs - 2 * hourMs, rangeStartMs);
+          previousSpanMs = 2 * hourMs;
+          tokenBucketMs = fiveMinutesMs;
+          costBucketMs = dayMs;
+        } else if (period === 'today') {
+          rangeStartMs = localDay(0);
+          costRecords = todayHours;
+          tokenRecords = halves(todayHours);
+          previousRecords = [history[historyDays - 2]];
+          previousSpanMs = rangeStartMs - localDay(-1);
+          tokenBucketMs = halfHourMs;
+          costBucketMs = hourMs;
+        } else {
+          var mondayOffset = (nowDate.getDay() + 6) % 7;
+          rangeStartMs = period === 'week' ? localDay(-mondayOffset)
+            : period === 'month' ? new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime()
+            : history[0].startMs;
+          var previousStartMs = period === 'week' ? localDay(-mondayOffset - 7)
+            : period === 'month' ? new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1).getTime()
+            : null;
+          costRecords = history.filter(function (record) { return record.startMs >= rangeStartMs; });
+          tokenRecords = costRecords;
+          previousRecords = previousStartMs === null ? null : history.filter(function (record) { return record.startMs >= previousStartMs && record.startMs < rangeStartMs; });
+          previousSpanMs = previousStartMs === null ? 0 : rangeStartMs - previousStartMs;
+          tokenBucketMs = dayMs;
+          costBucketMs = dayMs;
+        }
+
+        function costPointOf(record) {
+          return {
+            bucketStartMs: record.startMs, costUsd: record.costUsd, inputTokens: record.inputTokens, outputTokens: record.outputTokens,
+            sessionCount: Math.round(record.sessionCount),
+            byModel: modelWeights.map(function (entry) {
+              var share = entry.weight / weightTotal;
+              return {
+                modelId: entry.modelId, costUsd: record.costUsd * share,
+                inputTokens: Math.round(record.inputTokens * share), outputTokens: Math.round(record.outputTokens * share),
+              };
+            }),
+          };
+        }
+        // The turn ledger's view of the same work: about a third of the session ledger's fresh
+        // input and half its output, with the cache a long agent run reads. Nothing before the turn
+        // ledger began.
+        function tokenPointOf(record) {
+          var counted = record.startMs >= turnLedgerStartMs;
+          var turnInput = counted ? Math.round(record.inputTokens * 0.35) : 0;
+          return {
+            bucketStartMs: record.startMs, inputTokens: turnInput, outputTokens: counted ? Math.round(record.outputTokens * 0.5) : 0,
+            cacheCreationTokens: Math.round(turnInput * 0.57), cacheReadTokens: Math.round(turnInput * 15.7),
+            allocatedCostUsd: counted ? record.costUsd : 0, turnCount: Math.round(turnInput / 7000),
+          };
+        }
+        // The tiles over a window: the session ledger's totals from its records, the turn fields
+        // and cache from its token points, and both burn rates over the same elapsed hours, each
+        // numerator the field its own tile shows (computeKpis).
+        function kpisOf(records, points, spanMs) {
+          var totals = sum(records, 0);
+          var sessions = Math.round(totals.sessionCount);
+          var turnInput = 0, turnOutput = 0, cacheCreation = 0, cacheRead = 0;
+          points.forEach(function (point) {
+            turnInput += point.inputTokens; turnOutput += point.outputTokens;
+            cacheCreation += point.cacheCreationTokens; cacheRead += point.cacheReadTokens;
+          });
+          var elapsedHours = Math.max(spanMs, 60000) / hourMs;
+          return {
+            totalCostUsd: totals.costUsd, costKnown: true, totalInputTokens: totals.inputTokens, totalOutputTokens: totals.outputTokens,
+            totalTokens: totals.inputTokens + totals.outputTokens, sessionCount: sessions, toolCallCount: Math.round(sessions * 41),
+            linesAdded: Math.round(sessions * 160), linesRemoved: Math.round(sessions * 55), filesChanged: Math.round(sessions * 7),
+            compactionCount: Math.round(sessions / 6), totalDurationMs: sessions * 38 * 60000,
+            turnInputTokens: turnInput, turnOutputTokens: turnOutput, cacheCreationTokens: cacheCreation, cacheReadTokens: cacheRead,
+            burnRateTokensPerHour: sessions > 0 ? (turnInput + turnOutput) / elapsedHours : null,
+            burnRateUsdPerHour: sessions > 0 ? totals.costUsd / elapsedHours : null,
+            // Active (agent-working) time, and the sessions the interval ledger
+            // reaches. Deliberately BOTH lower than their wall-clock/sessionCount
+            // neighbours above: active time runs well under session duration, and
+            // per-interval recording covers fewer sessions than the usage ledger,
+            // which is exactly what the Avg Active tile's caveat describes.
+            activeMs: Math.round(sessions * 38 * 60000 * 0.39),
+            activeSessionsCovered: sessions > 0 ? Math.max(1, Math.round(sessions * 0.72)) : 0,
+          };
+        }
+        var costSeries = costRecords.map(costPointOf);
+        var tokenSeries = tokenRecords.map(tokenPointOf);
+        var kpis = kpisOf(costRecords, tokenSeries, now - rangeStartMs);
+        var previous = previousRecords === null ? null : kpisOf(previousRecords, previousRecords.map(tokenPointOf), previousSpanMs);
+        var totalCost = kpis.totalCostUsd, totalInput = kpis.totalInputTokens, totalOutput = kpis.totalOutputTokens, sessionCount = kpis.sessionCount;
         // The model, agent, and effort breakdowns come from the sessions the boards actually show,
         // weighted by the tokens each has used, so the dashboard names the same models the
         // terminals do.
@@ -3869,7 +4016,6 @@ export function buildDemoPreConfig(options: {
           { job: 'terminal_name', modelId: 'claude-haiku-5-5', perDay: 1, input: 800, write: 1000, read: 6000, output: 16, cost: 0.0025, ms: 2200 },
         ];
         var backgroundDayCount = period === 'live' || period === 'today' ? 1 : 6;
-        var nowDate = new Date(now);
         var backgroundDays = [];
         for (var dayOffset = 0; dayOffset < backgroundDayCount; dayOffset++) {
           var backgroundDayStart = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() - dayOffset).getTime();
@@ -3909,8 +4055,8 @@ export function buildDemoPreConfig(options: {
           byDay: backgroundDays,
         };
         return {
-          scope: scope, period: period, rangeStartMs: rangeStartMs, rangeEndMs: now, bucketSizeMs: hourMs, costBucketSizeMs: dayMs, generatedAtMs: now,
-          kpis: kpis, previousKpis: period === 'all' ? null : previous, tokenSeries: tokenSeries, costSeries: costSeries,
+          scope: scope, period: period, rangeStartMs: rangeStartMs, rangeEndMs: now, bucketSizeMs: tokenBucketMs, costBucketSizeMs: costBucketMs, generatedAtMs: now,
+          kpis: kpis, previousKpis: previous, tokenSeries: tokenSeries, costSeries: costSeries,
           tokenModelSeries: tokenModelSeries, background: background,
           byModel: breakdown(function (session) { return session.model ? session.model.id : null; }, function (session) { return session.model.displayName; }).map(function (row) {
             return { modelId: row.key, modelDisplayName: row.label, inputTokens: row.inputTokens, outputTokens: row.outputTokens, costUsd: row.costUsd, sessionCount: row.sessionCount };
@@ -3940,7 +4086,7 @@ export function buildDemoPreConfig(options: {
           liveLedgerBaseline: { costUsd: 0 },
           // Per-turn capture starts later than the cost ledger, so a long range
           // shows the Tokens tile's partial-coverage note, as a real install does.
-          earliestTurnMs: now - 30 * dayMs,
+          earliestTurnMs: turnLedgerStartMs,
         };
       };
     })();
