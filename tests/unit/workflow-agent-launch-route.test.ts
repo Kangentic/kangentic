@@ -45,9 +45,15 @@ interface Answer {
   detail?: string;
 }
 
+/** The projects the registry holds: proj-1 with its database, and proj-no-db, whose database is gone. */
+const REGISTERED_PROJECTS: Record<string, { id: string; name: string; path: string }> = {
+  'proj-1': { id: 'proj-1', name: 'contoso-web', path: '/mock/contoso-web' },
+  'proj-no-db': { id: 'proj-no-db', name: 'spring-petclinic', path: '/mock/spring-petclinic' },
+};
+
 function makeContext(options: { agentPrompt?: string | null; mcpServerOff?: boolean } = {}): IpcContext {
   return {
-    projectRepo: { getById: (id: string) => (id === 'proj-1' ? { id: 'proj-1', name: 'contoso-web', path: '/mock/contoso-web' } : undefined) },
+    projectRepo: { getById: (id: string) => REGISTERED_PROJECTS[id] },
     mcpServerHandle: options.mcpServerOff ? null : { token: MCP_TOKEN, urlForProject: (id: string) => `${PROJECT_URL_BASE}/${id}` },
     configManager: { load: () => ({ workflows: { agentPrompt: options.agentPrompt ?? null } }) },
   } as unknown as IpcContext;
@@ -66,6 +72,7 @@ function respond(body: unknown, context: IpcContext | null): Answer {
 describe('respondWorkflowAgentLaunch', () => {
   beforeEach(() => {
     buildWorkflowAgentFirstMessage.mockClear();
+    getExistingProjectDb.mockClear();
   });
 
   it('answers the launch: the checkout, the first message, the workflow\'s own MCP URL, and the token', () => {
@@ -107,9 +114,16 @@ describe('respondWorkflowAgentLaunch', () => {
     expect(respond(body, makeContext())).toMatchObject({ status: 400, kind: 'missing-field', detail: `Provide "${field}".` });
   });
 
-  it('answers 404 for a workflow the project does not have, and for a project with no database', () => {
+  it('answers 404 for a workflow the project does not have, and for a registered project with no database', () => {
     expect(respond({ projectId: 'proj-1', workflowId: 'wf-unknown' }, makeContext())).toMatchObject({ status: 404, kind: 'unknown-workflow' });
-    expect(respond({ projectId: 'proj-gone', workflowId: 'wf-1' }, makeContext())).toMatchObject({ status: 404, kind: 'unknown-workflow' });
+    expect(respond({ projectId: 'proj-no-db', workflowId: 'wf-1' }, makeContext())).toMatchObject({ status: 404, kind: 'unknown-workflow' });
+  });
+
+  it.each(['proj-gone', '../outside-the-projects-folder'])('answers 404 for project %j the registry does not hold, and opens no database for it', (projectId) => {
+    // A project id names its database file, so an id from the request body reaches the disk only
+    // once the registry has vouched for it.
+    expect(respond({ projectId, workflowId: 'wf-1' }, makeContext())).toMatchObject({ status: 404, kind: 'unknown-project' });
+    expect(getExistingProjectDb).not.toHaveBeenCalled();
   });
 
   it('answers 503 and names the setting when the MCP server is off, since the agent could not save a plan', () => {

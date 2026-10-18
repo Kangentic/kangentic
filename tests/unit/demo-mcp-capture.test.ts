@@ -2,11 +2,23 @@
  * scripts/lib/demo-mcp-capture.mjs gets a recording whose agent calls Kangentic's own MCP tools
  * ready to start: it seeds a running /preview with the board the scene paints, writes the two
  * launch files the desktop hands Claude for its server, and judges the headless run that leaves
- * the work the recorded session reviews. Everything that needs the preview or a real CLI
- * (`prepareMcpCapture`, `prepareWorkflowAgentCapture`) is out of reach of a unit test, so this file
- * pins the five exports that are pure or touch only the temp folder: `laneNameOf`, `seedPlanFor`,
- * `writeLaunchFiles`, `preparedRunSucceeded`, and `planFixtureOf`, which turns the plan a recorded
- * workflow agent saved into the fixture the web build seeds.
+ * the work the recorded session reviews. `prepareMcpCapture` needs a real git worktree and a real
+ * `claude -p` run, so it is out of reach of a unit test. This file pins the five exports that are
+ * pure or touch only the temp folder: `laneNameOf`, `seedPlanFor`, `writeLaunchFiles`,
+ * `preparedRunSucceeded`, and `planFixtureOf`, which turns the plan a recorded workflow agent saved
+ * into the fixture the web build seeds.
+ *
+ * `prepareWorkflowAgentCapture` is reachable because every call it makes to the preview goes
+ * through ./preview-bridge.mjs, which this file replaces with a fake preview: an in-memory
+ * `window.electronAPI` (projects, config, seeding, columns, cards, workflows) that runs the exact
+ * expression strings the rig builds, so the expressions themselves are exercised. It pins the
+ * three guards that refuse a bad manifest entry BEFORE any preview call (a non-Claude agent, an
+ * unknown backlog item, a backlog item whose project the dataset lacks, the last throwing a
+ * `[workflow]` error rather than a bare TypeError); that a failure after the board is seeded
+ * releases it before the ORIGINAL error is rethrown, even when the release fails too (the seeded
+ * project dropped, the preview's Claude path put back only if it had been changed); the launch it returns and the cleanup that
+ * takes the board and the launch folder back; and that a launch folder that cannot be removed is
+ * reported by path instead of thrown, without hiding the release's own failure.
  *
  * `preparedRunSucceeded` reads the stdout of `claude -p --output-format json`, an external input,
  * so it is pinned to two REAL captures (tests/fixtures/claude-print-result-success.json and
@@ -16,18 +28,28 @@
  * make: every Done task there is also archived, so a swap of the two flags would pass on it.
  * Every file this test writes lives under os.tmpdir() and is removed afterwards.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import * as dataset from '../captures/helpers/demo-dataset';
 import {
   laneNameOf,
   planFixtureOf,
+  prepareWorkflowAgentCapture,
   preparedRunSucceeded,
   seedPlanFor,
   writeLaunchFiles,
 } from '../../scripts/lib/demo-mcp-capture.mjs';
+
+// Every call prepareWorkflowAgentCapture makes to the running preview goes through these three.
+const previewBridge = vi.hoisted(() => ({
+  readPreviewPort: vi.fn(),
+  evaluateInPreview: vi.fn(),
+  postToPreview: vi.fn(),
+}));
+vi.mock('../../scripts/lib/preview-bridge.mjs', () => previewBridge);
 
 const FIXTURES_DIRECTORY = path.resolve(__dirname, '..', 'fixtures');
 
@@ -605,5 +627,344 @@ describe('seedPlanFor over a board where the flags and the agents come apart', (
     expect(seededTask('alpha-parked').worktreePath).toBe(alphaWorktree);
     expect(seededTask('alpha-shipped-live')).not.toHaveProperty('worktreePath');
     expect(seededTask('alpha-archived-in-build')).not.toHaveProperty('worktreePath');
+  });
+});
+
+describe('prepareWorkflowAgentCapture against a fake preview', () => {
+  const PREVIEW_PORT = 54321;
+  const ALPHA = 'proj-alpha';
+  const EARLIER_PROJECT_ID = 'earlier-run-project';
+  const SEEDED_PROJECT_ID = 'seeded-project';
+  const PREVIOUS_CLAUDE_PATH = '/mock/bin/claude';
+  const MCP_URL = 'http://127.0.0.1:54321/mcp/alpha';
+  const SEED_MCP_TOKEN = 'seed-token-0123456789abcdef';
+  const LAUNCH_URL = 'http://127.0.0.1:54321/mcp/alpha/workflow-workflow-1';
+  const LAUNCH_TOKEN = 'launch-token-0123456789abcdef';
+  const LAUNCH_PROMPT = 'the first message of the workflow agent';
+
+  const workflowDataset = {
+    DEMO_PROJECTS: [{ id: ALPHA, name: 'alpha', default_agent: 'claude' }],
+    DEMO_ALL_TASKS: [],
+    DEMO_LANES_BY_PROJECT: { [ALPHA]: [{ slug: 'todo', name: 'To Do', agent: null }] },
+    DEMO_BACKLOG: [
+      { id: 'alpha-idea', projectId: ALPHA, title: 'Alpha idea', description: 'Alpha details', priority: 1, labels: ['idea'] },
+      // Its project is not in DEMO_PROJECTS: the manifest typo the project guard exists for.
+      { id: 'ghost-idea', projectId: 'proj-ghost', title: 'Ghost idea', description: 'Ghost details', priority: 2, labels: [] },
+    ],
+  };
+  const workflowEntry = {
+    file: 'alpha-workflow.json',
+    agent: 'claude',
+    backlog: 'alpha-idea',
+    project: 'alpha',
+    claudeSettings: { verbose: true },
+  };
+
+  /** The seed answer of a preview whose MCP server is on. */
+  const seedAnswerWithMcpServer = {
+    projects: [{ projectId: SEEDED_PROJECT_ID, mcpUrl: MCP_URL, taskKeys: {} }],
+    mcpToken: SEED_MCP_TOKEN,
+  };
+
+  interface PreviewState {
+    /** The projects the preview holds, as `projects.list()` answers them. */
+    registered: Array<{ id: string; path: string }>;
+    deletedProjectIds: string[];
+    /** The preview's configured Claude path (null for none). */
+    claudePath: string | null;
+    /** Every value the Claude path was set to, in order. */
+    claudePathHistory: Array<string | null>;
+    seedAnswer: unknown;
+    seedPlans: Array<{ projects: Array<{ key: string; path: string }> }>;
+    lanes: Array<{ id: string; name: string; role: string }>;
+    createdCards: Array<{ input: Record<string, unknown>; projectId: string }>;
+    createdWorkflows: Array<{ projectId: string; cardId: string }>;
+    /** A project whose deletion rejects, to fail a release. */
+    failDeleteOf: string | null;
+  }
+
+  let repoRoot = '';
+  let root = '';
+  const launchDirectories: string[] = [];
+
+  /**
+   * An in-memory `window.electronAPI` for the preview, and the evaluate mock that runs the rig's
+   * own expression strings against it. The rig builds those strings (JSON-encoded ids, a
+   * read-modify-write of the config), so running them rather than matching their text is what
+   * pins the effect on the preview.
+   */
+  function installFakePreview(overrides: Partial<PreviewState> = {}): PreviewState {
+    const state: PreviewState = {
+      registered: [{ id: EARLIER_PROJECT_ID, path: root }],
+      deletedProjectIds: [],
+      claudePath: PREVIOUS_CLAUDE_PATH,
+      claudePathHistory: [],
+      seedAnswer: seedAnswerWithMcpServer,
+      seedPlans: [],
+      lanes: [
+        { id: 'lane-todo', name: 'To Do', role: 'todo' },
+        { id: 'lane-executing', name: 'Executing', role: 'none' },
+      ],
+      createdCards: [],
+      createdWorkflows: [],
+      failDeleteOf: null,
+      ...overrides,
+    };
+    const electronAPI = {
+      projects: {
+        list: async () => state.registered.map((project) => ({ ...project })),
+        delete: async (projectId: string) => {
+          if (projectId === state.failDeleteOf) throw new Error(`the preview could not delete ${projectId}`);
+          state.deletedProjectIds.push(projectId);
+          state.registered = state.registered.filter((project) => project.id !== projectId);
+        },
+      },
+      config: {
+        get: async () => ({ agent: { cliPaths: state.claudePath === null ? {} : { claude: state.claudePath } } }),
+        set: async (config: { agent: { cliPaths: { claude?: string } } }) => {
+          state.claudePath = config.agent.cliPaths.claude ?? null;
+          state.claudePathHistory.push(state.claudePath);
+        },
+      },
+      dev: {
+        seedKnowledgeGraphDemo: async (plan: { projects: Array<{ key: string; path: string }> }) => {
+          state.seedPlans.push(plan);
+          state.registered.push({ id: SEEDED_PROJECT_ID, path: plan.projects[0].path });
+          return state.seedAnswer;
+        },
+      },
+      swimlanes: { list: async () => state.lanes },
+      tasks: {
+        create: async (input: Record<string, unknown>, projectId: string) => {
+          state.createdCards.push({ input, projectId });
+          return { id: 'card-1', display_id: 7 };
+        },
+      },
+      workflows: {
+        create: async (projectId: string, cardId: string) => {
+          state.createdWorkflows.push({ projectId, cardId });
+          return { id: 'workflow-1' };
+        },
+      },
+    };
+    previewBridge.readPreviewPort.mockReturnValue(PREVIEW_PORT);
+    previewBridge.evaluateInPreview.mockImplementation(async (_port: number, expression: string) =>
+      vm.runInNewContext(expression, { window: { electronAPI } }));
+    previewBridge.postToPreview.mockResolvedValue({
+      cwd: root,
+      prompt: LAUNCH_PROMPT,
+      mcpServerUrl: LAUNCH_URL,
+      mcpServerToken: LAUNCH_TOKEN,
+    });
+    return state;
+  }
+
+  function prepare(entryOverrides: Record<string, unknown> = {}) {
+    return prepareWorkflowAgentCapture({
+      repoRoot,
+      dataset: workflowDataset,
+      entry: { ...workflowEntry, ...entryOverrides },
+      root,
+    });
+  }
+
+  function expectNoPreviewCall(): void {
+    expect(previewBridge.readPreviewPort).not.toHaveBeenCalled();
+    expect(previewBridge.evaluateInPreview).not.toHaveBeenCalled();
+    expect(previewBridge.postToPreview).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    previewBridge.readPreviewPort.mockReset();
+    previewBridge.evaluateInPreview.mockReset();
+    previewBridge.postToPreview.mockReset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // The rig points the preview's Claude path at the repo's mock CLI, and on POSIX marks it
+    // executable first, so the fixture has to exist under the repo root it is given.
+    repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-demo-workflow-repo-'));
+    const fixturesDirectory = path.join(repoRoot, 'tests', 'fixtures');
+    fs.mkdirSync(fixturesDirectory, { recursive: true });
+    fs.writeFileSync(path.join(fixturesDirectory, 'mock-claude.cmd'), '@echo off\n');
+    fs.writeFileSync(path.join(fixturesDirectory, 'mock-claude.js'), '#!/usr/bin/env node\n');
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-demo-workflow-root-'));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const directory of [repoRoot, root, ...launchDirectories.splice(0)]) {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses an agent other than Claude before it touches the preview', async () => {
+    installFakePreview();
+
+    await expect(prepare({ agent: 'codex' })).rejects.toThrow(/^\[workflow\] alpha-workflow\.json: only Claude's launch shape/);
+    expectNoPreviewCall();
+  });
+
+  it('refuses a backlog item the dataset does not have, naming it, before it touches the preview', async () => {
+    installFakePreview();
+
+    await expect(prepare({ backlog: 'no-such-idea' })).rejects.toThrow(/^\[workflow\] alpha-workflow\.json: the dataset has no backlog item no-such-idea/);
+    expectNoPreviewCall();
+  });
+
+  it('refuses a backlog item whose project the dataset lacks with a [workflow] error naming it, before it touches the preview', async () => {
+    installFakePreview();
+
+    // Without the guard the project is undefined, the preview is connected and its earlier board
+    // dropped, and seedPlanFor then fails on a bare TypeError reading the project's id.
+    const failure = await prepare({ backlog: 'ghost-idea' }).then(() => null, (error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(TypeError);
+    expect((failure as Error).message).toMatch(/^\[workflow\] /);
+    expect((failure as Error).message).toContain('proj-ghost');
+    expect((failure as Error).message).toContain('ghost-idea');
+    expectNoPreviewCall();
+  });
+
+  it('releases the board it seeded, and rethrows the original error, when the preview reports no MCP server', async () => {
+    const preview = installFakePreview({
+      // The seed succeeded but the answer carries no token: the MCP server is off.
+      seedAnswer: { projects: [{ projectId: SEEDED_PROJECT_ID, mcpUrl: MCP_URL, taskKeys: {} }] },
+    });
+
+    await expect(prepare()).rejects.toThrow('[workflow] the preview reports no MCP server');
+
+    // Vacuity guard: the run got as far as seeding this project's board at the scratch clone.
+    expect(preview.seedPlans).toHaveLength(1);
+    expect(preview.seedPlans[0].projects[0]).toMatchObject({ key: ALPHA, path: root });
+    // The earlier run's project was dropped before the seed, and the seeded one again on release.
+    expect(preview.deletedProjectIds).toEqual([EARLIER_PROJECT_ID, SEEDED_PROJECT_ID]);
+    expect(preview.registered).toEqual([]);
+    // The Claude path had not been changed yet, so release leaves it alone.
+    expect(preview.claudePathHistory).toEqual([]);
+    expect(preview.claudePath).toBe(PREVIOUS_CLAUDE_PATH);
+    expect(previewBridge.postToPreview).not.toHaveBeenCalled();
+  });
+
+  it('rethrows the ORIGINAL error, not the release\'s, when releasing the board fails too, and reports the release failure', async () => {
+    installFakePreview({
+      seedAnswer: { projects: [{ projectId: SEEDED_PROJECT_ID, mcpUrl: MCP_URL, taskKeys: {} }] },
+      failDeleteOf: SEEDED_PROJECT_ID,
+    });
+
+    const failure = await prepare().then(() => null, (error: unknown) => error);
+
+    // The caller needs the fault that stopped the capture, not the cleanup that failed after it.
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('[workflow] the preview reports no MCP server');
+    expect((failure as Error).message).not.toContain('could not delete');
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('releasing the board after that failure failed too'));
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining(`the preview could not delete ${SEEDED_PROJECT_ID}`));
+  });
+
+  it.each([
+    ['a path was configured', PREVIOUS_CLAUDE_PATH],
+    ['none was configured', null],
+  ])('puts the preview\'s Claude path back and drops the board when a later step fails, and %s before', async (_description, previousClaudePath) => {
+    const preview = installFakePreview({
+      claudePath: previousClaudePath,
+      // The board has no To Do column to put the backlog card in, which fails after the Claude path moved.
+      lanes: [{ id: 'lane-executing', name: 'Executing', role: 'none' }],
+    });
+
+    await expect(prepare()).rejects.toThrow('[workflow] alpha\'s board has no To Do column');
+
+    expect(preview.claudePathHistory).toHaveLength(2);
+    expect(preview.claudePathHistory[0]).toContain('mock-claude');
+    expect(preview.claudePathHistory[1]).toBe(previousClaudePath);
+    expect(preview.claudePath).toBe(previousClaudePath);
+    expect(preview.deletedProjectIds).toEqual([EARLIER_PROJECT_ID, SEEDED_PROJECT_ID]);
+    expect(preview.registered).toEqual([]);
+  });
+
+  describe('once the capture is prepared', () => {
+    /** Prepares the capture and registers its launch folder for removal before any assertion can fail. */
+    async function prepareTracked() {
+      const preview = installFakePreview();
+      const capture = await prepare();
+      const launchDirectory = path.dirname(capture.args[1]);
+      launchDirectories.push(launchDirectory);
+      return { preview, capture, launchDirectory };
+    }
+
+    function readJson(filePath: string): unknown {
+      return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    }
+
+    it('makes the workflow from a backlog card in To Do, and returns the desktop\'s own launch for the agent', async () => {
+      const { preview, capture, launchDirectory } = await prepareTracked();
+
+      expect(preview.createdCards).toEqual([{
+        input: { title: 'Alpha idea', description: 'Alpha details', labels: ['idea'], swimlane_id: 'lane-todo' },
+        projectId: SEEDED_PROJECT_ID,
+      }]);
+      expect(preview.createdWorkflows).toEqual([{ projectId: SEEDED_PROJECT_ID, cardId: 'card-1' }]);
+      expect(previewBridge.postToPreview).toHaveBeenCalledWith(PREVIEW_PORT, '/workflow-agent-launch', {
+        projectId: SEEDED_PROJECT_ID,
+        workflowId: 'workflow-1',
+      });
+      expect(capture.cwd).toBe(root);
+      expect(capture.prompt).toBe(LAUNCH_PROMPT);
+      expect(capture.args).toEqual([
+        '--mcp-config', path.join(launchDirectory, 'mcp.json'),
+        '--settings', path.join(launchDirectory, 'settings.json'),
+        '--read-only',
+      ]);
+      expect(readJson(capture.args[1])).toStrictEqual({
+        mcpServers: { kangentic: { type: 'http', url: LAUNCH_URL, headers: { 'X-Kangentic-Token': LAUNCH_TOKEN } } },
+      });
+      // A workflow agent launches in the default mode, which passes no mode flag, so it is pinned.
+      expect(readJson(capture.args[3])).toStrictEqual({
+        verbose: true,
+        permissions: { allow: ['mcp__kangentic'], defaultMode: 'default' },
+      });
+    });
+
+    it('takes the board, the preview\'s Claude path and the launch folder back on cleanup', async () => {
+      const { preview, capture, launchDirectory } = await prepareTracked();
+      // Vacuity guard: before cleanup the board is seeded, the Claude path is the mock's, and the folder exists.
+      expect(preview.registered).toEqual([{ id: SEEDED_PROJECT_ID, path: root }]);
+      expect(preview.claudePath).toContain('mock-claude');
+      expect(fs.existsSync(launchDirectory)).toBe(true);
+
+      await capture.cleanup();
+
+      expect(preview.registered).toEqual([]);
+      expect(preview.deletedProjectIds).toEqual([EARLIER_PROJECT_ID, SEEDED_PROJECT_ID]);
+      expect(preview.claudePath).toBe(PREVIOUS_CLAUDE_PATH);
+      expect(fs.existsSync(launchDirectory)).toBe(false);
+    });
+
+    it('reports a launch folder it cannot remove by path, and does not throw, so cleanup still succeeds', async () => {
+      const { preview, capture, launchDirectory } = await prepareTracked();
+      const realRmSync = fs.rmSync;
+      vi.spyOn(fs, 'rmSync').mockImplementation((target, options) => {
+        if (String(target) === launchDirectory) throw new Error('EBUSY: resource busy or locked');
+        return realRmSync(target, options);
+      });
+
+      await expect(capture.cleanup()).resolves.toBeUndefined();
+
+      // mcp.json in that folder carries the preview's token, so the folder is named for a manual delete.
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining(launchDirectory));
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('delete that folder by hand'));
+      // The release itself had already run.
+      expect(preview.registered).toEqual([]);
+    });
+
+    it('still removes the launch folder, and throws the release\'s own failure, when the board cannot be dropped', async () => {
+      const { preview, capture, launchDirectory } = await prepareTracked();
+      preview.failDeleteOf = SEEDED_PROJECT_ID;
+
+      await expect(capture.cleanup()).rejects.toThrow(`the preview could not delete ${SEEDED_PROJECT_ID}`);
+
+      expect(fs.existsSync(launchDirectory)).toBe(false);
+      // The step after the failed drop still ran.
+      expect(preview.claudePath).toBe(PREVIOUS_CLAUDE_PATH);
+    });
   });
 });

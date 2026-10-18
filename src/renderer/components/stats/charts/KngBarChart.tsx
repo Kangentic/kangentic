@@ -19,7 +19,11 @@ interface KngBarChartProps {
   ariaLabel: string;
   /** When set, buckets are clickable (day drill-down) and the cursor says so. */
   onBucketClick?: (bucketStartMs: number) => void;
-  /** Suspend data animations (e.g. during an active window resize). */
+  /**
+   * Suspend data animations (e.g. during an active window resize, or with motion off).
+   * Mirrored on the wrapper as `data-animated`: the chart library puts no animation
+   * flag in the DOM, so a UI test reads the gate from there.
+   */
   animate?: boolean;
 }
 
@@ -43,7 +47,12 @@ export const KngBarChart = memo(function KngBarChart({
 }: KngBarChartProps) {
   const isStacked = series.length > 1;
   return (
-    <div className={`h-full w-full ${onBucketClick ? 'cursor-pointer' : ''}`} role="img" aria-label={ariaLabel}>
+    <div
+      className={`h-full w-full ${onBucketClick ? 'cursor-pointer' : ''}`}
+      role="img"
+      aria-label={ariaLabel}
+      data-animated={animate ? 'true' : 'false'}
+    >
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={rows}

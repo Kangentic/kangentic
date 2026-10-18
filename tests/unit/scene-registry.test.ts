@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
-import { CHOREOGRAPHY_KEYS, SCENES, WORKFLOW_INVOICE_PDF, draftOfRecordedPlan, hasPose, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
+import { CHOREOGRAPHY_KEYS, SCENES, WORKFLOW_INVOICE_PDF, draftOfRecordedPlan, hasPose, playsCycle, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
 import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_LANES_BY_PROJECT, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneId, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
 import { loadDemoEnds, loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
@@ -138,10 +138,14 @@ const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
 
 /** Whether a scene moves under loop=1 by its own declaration: a cycle to play, a timeline, or a stated reason. */
 function declaresMotion(scene: SceneDefinition): boolean {
-  const choreography = scene.choreography ?? [];
-  const poseIndex = choreography.findIndex((step) => 'pose' in step);
-  const playsCycle = choreography.length > 0 && (poseIndex < 0 || poseIndex < choreography.length - 1);
-  return playsCycle || (scene.timeline ?? []).length > 0 || (scene.motion ?? '').trim() !== '';
+  return playsCycle(scene.choreography) || (scene.timeline ?? []).length > 0 || (scene.motion ?? '').trim() !== '';
+}
+
+/** The mouse hotkeys boot.js can press and release: the keys of its MOUSE_BUTTONS table. */
+function bootMouseButtons(): string[] {
+  const table = fs.readFileSync(DEMO_BOOT_PATH, 'utf-8').match(/var MOUSE_BUTTONS = \{([\s\S]*?)\n\s*\};/);
+  if (!table) throw new Error('MOUSE_BUTTONS not found in demo/boot.js');
+  return [...table[1].matchAll(/'(Mouse:[A-Za-z]+)'/g)].map((match) => match[1]);
 }
 
 /** The gesture key a step makes, or null when it names none or several. */
@@ -232,6 +236,8 @@ describe('scene registry', () => {
   });
 
   it('writes each choreography from its closed vocabulary, data only', () => {
+    const mouseButtons = bootMouseButtons();
+    expect(mouseButtons, 'boot.js lists no mouse hotkey').toContain('Mouse:Back');
     let checked = 0;
     for (const scene of scenes) {
       const choreography = scene.choreography;
@@ -293,9 +299,9 @@ describe('scene registry', () => {
           const held = choreography[index - 2] ?? {};
           expect('pose' in previous && 'drag' in held && held.drag.hold === true, `${where} drops a drag the pose before it does not hold`).toBe(true);
         }
-        // The same table boot.js presses a boot step's hotkey from, so a typo fails here and not in a frame.
-        if ('hotkeyDown' in step) expect(step.hotkeyDown, `${where}.hotkeyDown`).toMatch(/^Mouse:(Back|Forward|Middle)$/);
-        if ('hotkeyUp' in step) expect(step.hotkeyUp, `${where}.hotkeyUp`).toMatch(/^Mouse:(Back|Forward|Middle)$/);
+        // The table boot.js presses a boot step's hotkey from, read from boot.js, so a typo fails here and not in a frame.
+        if ('hotkeyDown' in step) expect(mouseButtons, `${where}.hotkeyDown`).toContain(step.hotkeyDown);
+        if ('hotkeyUp' in step) expect(mouseButtons, `${where}.hotkeyUp`).toContain(step.hotkeyUp);
       });
       // A cut ends the story and the steps after it are the reset: it comes after the pose, which
       // a still plays to and a reset never reaches, with a gesture on each side, so there is a story

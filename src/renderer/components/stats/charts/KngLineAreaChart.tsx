@@ -23,7 +23,11 @@ interface KngLineAreaChartProps {
   ariaLabel: string;
   /** When set, buckets are clickable (day drill-down) and the cursor says so. */
   onBucketClick?: (bucketStartMs: number) => void;
-  /** Suspend data animations (e.g. during an active window resize). */
+  /**
+   * Suspend data animations (e.g. during an active window resize, or with motion off).
+   * Mirrored on the wrapper as `data-animated`: the chart library puts no animation
+   * flag in the DOM, so a UI test reads the gate from there.
+   */
   animate?: boolean;
   /**
    * A fixed y range with fractional ticks, for a ratio. Without it the axis
@@ -54,7 +58,12 @@ export const KngLineAreaChart = memo(function KngLineAreaChart({
   yDomain,
 }: KngLineAreaChartProps) {
   return (
-    <div className={`h-full w-full ${onBucketClick ? 'cursor-pointer' : ''}`} role="img" aria-label={ariaLabel}>
+    <div
+      className={`h-full w-full ${onBucketClick ? 'cursor-pointer' : ''}`}
+      role="img"
+      aria-label={ariaLabel}
+      data-animated={animate ? 'true' : 'false'}
+    >
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart
           data={points}

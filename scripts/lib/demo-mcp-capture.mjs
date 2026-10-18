@@ -174,25 +174,28 @@ function removeTaskWorktree(root, worktree) {
 }
 
 /**
- * Put the scratch clone and the preview back as they were before an `mcp` capture: the link first,
- * then the preview's project (whose removal ends the agent holding the worktree), then whatever of
- * the worktree is left, and last the preview's Claude path, once the project that could auto-spawn
- * an agent is gone. A link that cannot be removed stops everything, because the project's removal
- * deletes `.kangentic/`. After it, each step runs even when an earlier one failed, and the first
- * failure is thrown at the end.
+ * Put the scratch clone and the preview back as they were before a capture: the link first, then
+ * the preview's project (whose removal ends the agent holding the worktree), then whatever of the
+ * worktree is left, and last the preview's Claude path, once the project that could auto-spawn an
+ * agent is gone. A `workflowAgent` capture runs in the project's checkout and passes no worktree,
+ * so it skips the worktree's steps. A link that cannot be removed stops everything, because the
+ * project's removal deletes `.kangentic/`. After it, each step runs even when an earlier one
+ * failed, and the first failure is thrown at the end.
  */
 async function releaseBoard(port, root, worktree, previousClaudePath) {
-  removeNodeModulesLink(worktree);
+  if (worktree) removeNodeModulesLink(worktree);
   let failure = null;
   try {
     await dropEarlierProject(port, root);
   } catch (error) {
     failure = error;
   }
-  try {
-    removeTaskWorktree(root, worktree);
-  } catch (error) {
-    failure ??= error;
+  if (worktree) {
+    try {
+      removeTaskWorktree(root, worktree);
+    } catch (error) {
+      failure ??= error;
+    }
   }
   if (previousClaudePath !== undefined) {
     try {
@@ -202,6 +205,20 @@ async function releaseBoard(port, root, worktree, previousClaudePath) {
     }
   }
   if (failure) throw failure;
+}
+
+/**
+ * Remove the launch files after a release. A removal that fails is reported by path rather than
+ * thrown, so it never hides the release's own failure, and the folder is named because mcp.json in
+ * it carries the preview's token.
+ */
+function removeLaunchFiles(launch) {
+  if (!launch) return;
+  try {
+    fs.rmSync(launch.directory, { recursive: true, force: true, maxRetries: 3 });
+  } catch (error) {
+    console.error(`[mcp] could not remove the launch files at ${launch.directory} (${error.message ?? error}); delete that folder by hand`);
+  }
 }
 
 /** The task's worktree on its own branch from the scaffold's tip, with node_modules linked in. */
@@ -360,7 +377,7 @@ export async function prepareMcpCapture({ repoRoot, dataset, entry, root }) {
     try {
       await releaseBoard(port, root, worktree, previousClaudePath);
     } finally {
-      if (launch) fs.rmSync(launch.directory, { recursive: true, force: true, maxRetries: 3 });
+      removeLaunchFiles(launch);
     }
   };
   try {
@@ -450,6 +467,8 @@ export async function prepareWorkflowAgentCapture({ repoRoot, dataset, entry, ro
   const item = dataset.DEMO_BACKLOG.find((candidate) => candidate.id === entry.backlog);
   if (!item) throw new Error(`[workflow] ${entry.file}: the dataset has no backlog item ${entry.backlog}`);
   const project = dataset.DEMO_PROJECTS.find((candidate) => candidate.id === item.projectId);
+  // Checked before the preview is touched, so a manifest typo never drops a board first.
+  if (!project) throw new Error(`[workflow] ${entry.file}: backlog item ${entry.backlog} belongs to project ${item.projectId}, which the dataset does not have`);
 
   const port = await connectPreview(repoRoot);
   await dropEarlierProject(port, root);
@@ -460,21 +479,11 @@ export async function prepareWorkflowAgentCapture({ repoRoot, dataset, entry, ro
   let previousClaudePath;
   let launchFiles = null;
   const release = async () => {
-    let failure = null;
     try {
-      await dropEarlierProject(port, root);
-    } catch (error) {
-      failure = error;
+      await releaseBoard(port, root, null, previousClaudePath);
+    } finally {
+      removeLaunchFiles(launchFiles);
     }
-    if (previousClaudePath !== undefined) {
-      try {
-        await setClaudePath(port, previousClaudePath);
-      } catch (error) {
-        failure ??= error;
-      }
-    }
-    if (launchFiles) fs.rmSync(launchFiles.directory, { recursive: true, force: true, maxRetries: 3 });
-    if (failure) throw failure;
   };
   try {
     const projectResult = seeded?.projects?.[0];

@@ -710,6 +710,8 @@
   var choreography = scene && Array.isArray(scene.choreography) && scene.choreography.length > 0 ? scene.choreography : null;
   var choreographyHasPose = !!choreography && choreography.some(function (step) { return step.pose === true; });
   var choreographyPlayer = null;
+  // The input that is a visitor taking over, as demo/choreography.ts's watchForVisitor reads it.
+  var VISITOR_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
   function loadChoreography() {
     if (choreographyPlayer) return Promise.resolve(choreographyPlayer);
     if (typeof window.__demoLoadChoreography !== 'function') {
@@ -776,7 +778,19 @@
       if (veiled && root) unveil(root);
       markReady();
       if (choreography && loop && !still) {
-        loadChoreography().then(function (player) { player.startLoop(); }, function (error) {
+        // A visitor's own input stops the loop, and the player that listens for it may still be
+        // loading. Input that lands before it does is noted here and ends the loop before it starts.
+        var visitorTookOver = false;
+        var noteVisitor = function (event) { if (event.isTrusted) visitorTookOver = true; };
+        VISITOR_EVENTS.forEach(function (type) { window.addEventListener(type, noteVisitor, { capture: true, passive: true }); });
+        var stopNoting = function () {
+          VISITOR_EVENTS.forEach(function (type) { window.removeEventListener(type, noteVisitor, { capture: true }); });
+        };
+        loadChoreography().then(function (player) {
+          stopNoting();
+          if (visitorTookOver) player.stop(); else player.startLoop();
+        }, function (error) {
+          stopNoting();
           console.error('[kangentic-demo] the choreography did not load:', error && error.message ? error.message : String(error));
         });
       }

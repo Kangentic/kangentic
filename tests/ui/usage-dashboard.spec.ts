@@ -92,6 +92,41 @@ async function openDashboard(page: Page): Promise<void> {
   await page.locator('[data-testid="stats-page"]').waitFor({ state: 'visible', timeout: 10000 });
 }
 
+async function closeDashboard(page: Page): Promise<void> {
+  await page.locator('[data-testid="stats-close"]').click();
+  await page.locator('[data-testid="stats-page"]').waitFor({ state: 'hidden', timeout: 5000 });
+}
+
+/**
+ * The Animations setting (`animationsEnabled`), written through the config API and reloaded into
+ * the config store, which is what puts `.no-motion` on <html> (or takes it off).
+ */
+async function setAnimationsEnabled(page: Page, enabled: boolean): Promise<void> {
+  await page.evaluate(async (nextEnabled) => {
+    const scope = window as unknown as {
+      electronAPI: { config: { set: (partial: { animationsEnabled: boolean }) => Promise<void> } };
+      __zustandStores?: { config: { getState: () => { loadConfig: () => Promise<void> } } };
+    };
+    await scope.electronAPI.config.set({ animationsEnabled: nextEnabled });
+    await scope.__zustandStores?.config.getState().loadConfig();
+  }, enabled);
+}
+
+/**
+ * Every usage chart takes the dashboard's one `animate` gate and mirrors it as `data-animated`
+ * on its wrapper. chart-daily is the stacked bar chart (KngBarChart); the cumulative and
+ * burn-rate cards are area charts (KngLineAreaChart). Each locator must match exactly one
+ * wrapper, so a card that mounted no chart fails here rather than passing vacuously.
+ */
+async function expectUsageChartsAnimated(page: Page, expected: 'true' | 'false'): Promise<void> {
+  for (const cardTestId of ['chart-daily', 'chart-cumulative', 'chart-burn-rate']) {
+    await expect(
+      page.locator(`[data-testid="${cardTestId}"] [data-animated]`),
+      `${cardTestId} animate gate`,
+    ).toHaveAttribute('data-animated', expected, { timeout: 10000 });
+  }
+}
+
 type RecordedCall = {
   scope: { kind: string; projectId?: string };
   period: string;
@@ -277,11 +312,17 @@ test.describe('usage dashboard', () => {
 
       // Shift+Click adds a second sort level; both headers show a priority.
       await tokensInHeader.click();
-      await page
-        .locator('[data-testid="per-project-table"] th')
-        .filter({ hasText: /^Cost$/ })
-        .click({ modifiers: ['Shift'] });
+      // By column key, not by text: once sorted, the header's text carries its priority number.
+      const costHeader = page.locator('[data-testid="per-project-table"] th[data-column-key="metricValue"]');
+      await expect(costHeader).toContainText('Cost');
+      await costHeader.click({ modifiers: ['Shift'] });
       await expect(page.locator('[data-testid="sort-priority"]')).toHaveCount(2);
+      // aria-sort belongs to the primary level alone (WAI-ARIA names one sorted header at a time):
+      // Tokens In stays the primary and keeps its direction, and the Shift+Click tie-break header
+      // carries no attribute even though it is sorted (it shows level 2).
+      await expect(costHeader.locator('[data-testid="sort-priority"]')).toHaveText('2');
+      await expect(tokensInHeader).toHaveAttribute('aria-sort', 'descending');
+      await expect(costHeader).not.toHaveAttribute('aria-sort');
     } finally {
       await browser.close();
     }
@@ -971,6 +1012,63 @@ test.describe('usage dashboard', () => {
           return last ? `${last.scope.kind}:${last.scope.projectId ?? ''}:${last.period}` : '';
         }, { timeout: 5000 })
         .toBe(`project:${PROJECT_B}:week`);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // StatsDashboardBody hands every chart one `animate` gate: `!windowResizing && !motionReduced()`.
+  // The Animations setting only puts `.no-motion` on <html>, which reaches CSS and never the chart
+  // library's own tweens, so the gate is what holds the bars and lines still. Recharts puts no
+  // animation flag in the DOM, so both chart components mirror the gate as `data-animated` on their
+  // wrapper. The gate is read on each render (a tween starts at a render), so each case closes the
+  // overlay, which unmounts it, and reopens it with the new setting in force.
+  test('the usage charts animate with motion on and hold still once Animations is off', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      // Live's cards can be empty placeholders that mount no chart: a week of history has all three.
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+
+      // Control: with motion on, every chart tweens, so the 'false' below comes from the setting
+      // and not from a gate that was never open.
+      await expectUsageChartsAnimated(page, 'true');
+
+      // Animations off, through the same config path the Performance tab's switch writes.
+      await closeDashboard(page);
+      await setAnimationsEnabled(page, false);
+      await expect(page.locator('html')).toHaveClass(/(^|\s)no-motion(\s|$)/);
+      await openDashboard(page);
+      await expectUsageChartsAnimated(page, 'false');
+
+      // Animations back on: the charts tween again, so the gate follows the setting both ways.
+      await closeDashboard(page);
+      await setAnimationsEnabled(page, true);
+      await expect(page.locator('html')).not.toHaveClass(/(^|\s)no-motion(\s|$)/);
+      await openDashboard(page);
+      await expectUsageChartsAnimated(page, 'true');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the usage charts hold still under the system reduced-motion preference', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+      await expectUsageChartsAnimated(page, 'true');
+
+      // The Animations setting stays ON here: this is the OS preference alone.
+      await closeDashboard(page);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      // Proves the emulation is in force, so the 'false' below is not read off the normal path.
+      expect(await page.evaluate(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
+      await expect(page.locator('html')).not.toHaveClass(/(^|\s)no-motion(\s|$)/);
+      await openDashboard(page);
+      await expectUsageChartsAnimated(page, 'false');
     } finally {
       await browser.close();
     }

@@ -18,7 +18,7 @@ import { test, expect, chromium, type Page, type Locator } from '@playwright/tes
 import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
-import { PLANNED_BILLING_PAGE, SCENES } from '../captures/scenes';
+import { PLANNED_BILLING_PAGE, SCENES, playsCycle } from '../captures/scenes';
 import INVOICE_PDF_PLAN from '../captures/fixtures/demo/workflow-plans/wf-cw-invoice-pdf.json';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
@@ -257,7 +257,7 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(editor.locator('[data-testid="edit-automation-max-runs-value"]')).toHaveValue('3');
     await expect(editor.locator('[data-testid="automation-config-targetColumn"]')).toHaveAttribute('data-value', 'Executing');
     await expect(editor.locator('[data-testid="automation-config-message"]')).toHaveValue(/\{\{agentReply\}\}/);
-    // A dialog, not a menu: nothing is left open over it, or the scene would need a driver.
+    // A dialog, not a menu: no menu or popover is left open over it.
     await expect(page.locator('[aria-expanded="true"]')).toHaveCount(0);
   },
   'task-mcp': async (page) => {
@@ -1810,16 +1810,19 @@ test('the tiled task windows take each session\'s tiled recording, fill their pa
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   const getRecordingRequests = recordingRequests(page);
   await gotoScene(page, { view: 'windows-tiled', embed: '1' });
-  for (const [sessionId, fileStem] of [['sess-cw-middleware', 'contoso-web-claude-middleware'], ['sess-cw-api-client', 'contoso-web-claude-api-client']] as const) {
-    await expect.poll(() => sentGrids(page, sessionId), { timeout: 10_000 }).not.toHaveLength(0);
-    // A variant is a second run with its own length, played from the moment the SESSION's clock
-    // began, and the clock stays the single recording's. A tiled window therefore opens partway
-    // into the variant (or after it ended, as api-client's does) and the session goes on working
-    // for the stretch its single recording has left. Re-basing the clock on the variant used to
-    // finish the session the moment its window opened, which CI's Linux runner caught (its fonts
-    // put the 125 percent display on the tiled layout too). Read as the window mounts: api-client's
-    // own stretch is 25 s, so it finishes on its clock soon after.
+  const tiledSessions = [['sess-cw-middleware', 'contoso-web-claude-middleware'], ['sess-cw-api-client', 'contoso-web-claude-api-client']] as const;
+  // A variant is a second run with its own length, played from the moment the SESSION's clock
+  // began, and the clock stays the single recording's. A tiled window therefore opens partway
+  // into the variant (or after it ended, as api-client's does) and the session goes on working
+  // for the stretch its single recording has left. Re-basing the clock on the variant used to
+  // finish the session the moment its window opened, which CI's Linux runner caught (its fonts
+  // put the 125 percent display on the tiled layout too). Both are read as the windows mount,
+  // before any replay check: api-client's own stretch is 25 s, so it finishes on its clock soon after.
+  for (const [sessionId] of tiledSessions) {
     expect((await monitorRow(page, sessionId))?.activity, `${sessionId} finished when its tiled window opened`).toBe('thinking');
+  }
+  for (const [sessionId, fileStem] of tiledSessions) {
+    await expect.poll(() => sentGrids(page, sessionId), { timeout: 10_000 }).not.toHaveLength(0);
     // A tiled pane is within about eight columns either side of the tiled recording's 115 on every
     // platform (123 at 100 percent on Windows, 107 on this runner's Liberation Mono), and the tiled
     // recording shows it at a larger type than the single one could (layoutFor).
@@ -2119,6 +2122,14 @@ test('loop=1 starts a finished session over, and without it the session stays fi
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+/** The column a board card sits in, by its name, or null when the board does not draw it. */
+function laneOfCard(page: Page, taskId: string): Promise<string | null> {
+  return page.evaluate((id) => {
+    const card = document.querySelector(`[data-swimlane-name] [data-task-id="${id}"]`);
+    return card?.closest('[data-swimlane-name]')?.getAttribute('data-swimlane-name') ?? null;
+  }, taskId);
+}
+
 test('task-mcp plays its kangentic_* calls through to the move, and loop=1 opens them again', async ({ page }) => {
   // The still paints the moment the first three calls have printed (the scene marker holds that);
   // live, the session's clock runs on from there to kangentic_move_task, about eleven seconds, and
@@ -2135,21 +2146,18 @@ test('task-mcp plays its kangentic_* calls through to the move, and loop=1 opens
   }, SESSION_VALIDATE);
   // The scene's timeline: when the move's result lands, the card moves as main moves it, and the
   // Monitor row's column follows; the loop's restart puts both back with the terminal.
-  const laneOfCard = (): Promise<string | null> => page.evaluate((taskId) => {
-    const card = document.querySelector(`[data-swimlane-name] [data-task-id="${taskId}"]`);
-    return card?.closest('[data-swimlane-name]')?.getAttribute('data-swimlane-name') ?? null;
-  }, TASK_VALIDATE);
+  const validateLane = (): Promise<string | null> => laneOfCard(page, TASK_VALIDATE);
   await gotoScene(page, { view: 'task-mcp', embed: '1', loop: '1' });
   await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Validate request bodies');
   const opening = await peekOf();
   expect(opening, 'the session opens on the third call\'s result').toContain('Merge: no automations.');
   expect(opening, 'the session opens before the move').not.toContain(moveResult);
-  expect(await laneOfCard(), 'the card opens in Code Review').toBe('Code Review');
+  expect(await validateLane(), 'the card opens in Code Review').toBe('Code Review');
   await expect.poll(peekOf, { timeout: 30_000, message: 'the replay reaches the move' }).toContain(moveResult);
-  await expect.poll(laneOfCard, { timeout: 5_000, message: 'the move\'s result moves the card' }).toBe('Testing');
+  await expect.poll(validateLane, { timeout: 5_000, message: 'the move\'s result moves the card' }).toBe('Testing');
   await expect.poll(async () => (await monitorRow(page, SESSION_VALIDATE))?.columnName, { timeout: 5_000 }).toBe('Testing');
   await expect.poll(peekOf, { timeout: 40_000, message: 'loop=1 opens the calls again' }).toContain('Merge: no automations.');
-  await expect.poll(laneOfCard, { timeout: 5_000, message: 'the restart puts the card back' }).toBe('Code Review');
+  await expect.poll(validateLane, { timeout: 5_000, message: 'the restart puts the card back' }).toBe('Code Review');
   expect((await monitorRow(page, SESSION_VALIDATE))?.columnName).toBe('Code Review');
   expect((await monitorRow(page, SESSION_VALIDATE))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);
@@ -2172,11 +2180,8 @@ test('without loop=1 the timeline still moves the card once, and nothing puts it
     };
   });
   const agentMovePushes = (): Promise<number> => page.evaluate(() => (window as unknown as { __agentMovePushes: number }).__agentMovePushes);
-  const laneOfCard = (): Promise<string | null> => page.evaluate((taskId) => {
-    const card = document.querySelector(`[data-swimlane-name] [data-task-id="${taskId}"]`);
-    return card?.closest('[data-swimlane-name]')?.getAttribute('data-swimlane-name') ?? null;
-  }, TASK_VALIDATE);
-  await expect.poll(laneOfCard, { timeout: 30_000 }).toBe('Testing');
+  const validateLane = (): Promise<string | null> => laneOfCard(page, TASK_VALIDATE);
+  await expect.poll(validateLane, { timeout: 30_000 }).toBe('Testing');
   await expect.poll(agentMovePushes).toBe(1);
   // A terminal that mounts after the session's end asks for its scrollback, which schedules the
   // session's clock again, and the end lands at once. The move is main's, made once, so two more
@@ -2186,7 +2191,7 @@ test('without loop=1 the timeline still moves the card once, and nothing puts it
   }
   await page.waitForTimeout(1_500);
   expect(await agentMovePushes()).toBe(1);
-  expect(await laneOfCard()).toBe('Testing');
+  expect(await validateLane()).toBe('Testing');
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
@@ -2291,11 +2296,12 @@ const CHOREOGRAPHY_TEST_RATE = 8;
 /** The scenes that carry a choreography, and whether each plays a cycle (steps after its pose, or no pose). */
 const CHOREOGRAPHED_SCENES = Object.values(SCENES)
   .filter((scene) => (scene.choreography ?? []).length > 0)
-  .map((scene) => {
-    const steps = scene.choreography ?? [];
-    const poseIndex = steps.findIndex((step) => 'pose' in step);
-    return { scene, cycles: poseIndex < 0 || poseIndex < steps.length - 1 };
-  });
+  .map((scene) => ({ scene, cycles: playsCycle(scene.choreography) }));
+
+/** Set the choreography's pacing divisor before any of the page's scripts run. */
+async function setChoreographyRate(page: Page, rate: number): Promise<void> {
+  await page.addInitScript((divisor) => { (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = divisor; }, rate);
+}
 
 test('the registry carries choreographies to play', () => {
   // Vacuity guard: the loop below would pass on an empty list. Every pose scene now plays on past
@@ -2308,7 +2314,7 @@ for (const { scene, cycles } of CHOREOGRAPHED_SCENES) {
   test(`view=${scene.name} under loop=1 ${cycles ? 'plays a cycle back to rest' : 'holds its pose'} with a clean console`, async ({ page }) => {
     test.setTimeout(90_000);
     const getUnexpectedErrors = collectUnexpectedErrors(page);
-    await page.addInitScript((rate) => { (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate; }, CHOREOGRAPHY_TEST_RATE);
+    await setChoreographyRate(page, CHOREOGRAPHY_TEST_RATE);
     await gotoScene(page, { view: scene.name, embed: '1', loop: '1' });
     const root = page.locator('html');
     if (cycles) {
@@ -2362,6 +2368,9 @@ test('a cut fades the frame out, puts the edit back behind the veil, and fades i
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+/** A change a visitor could see, logged with the cut's phase and what covered the frame when it landed. */
+type CutChange = { what: string; phase: string; veil: string; cursor: string };
+
 /** The scenes whose choreography ends its story on a cut. */
 const CUT_SCENES = Object.values(SCENES).filter((scene) => (scene.choreography ?? []).some((step) => 'cut' in step));
 
@@ -2380,11 +2389,10 @@ for (const scene of CUT_SCENES) {
     const getUnexpectedErrors = collectUnexpectedErrors(page);
     await page.addInitScript((rate) => {
       (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
-      type Change = { what: string; phase: string; veil: string; cursor: string };
-      const changes: Change[] = [];
-      const phases: Change[] = [];
+      const changes: CutChange[] = [];
+      const phases: CutChange[] = [];
       Object.assign(window, { __cutChanges: changes, __cutPhases: phases });
-      const covering = (what: string): Change => {
+      const covering = (what: string): CutChange => {
         const veil = document.querySelector('[data-demo-veil]');
         const cursor = document.querySelector<HTMLElement>('[data-demo-cursor]');
         return {
@@ -2434,10 +2442,9 @@ for (const scene of CUT_SCENES) {
     await gotoScene(page, { view: scene.name, embed: '1', loop: '1' });
     const root = page.locator('html');
     await expect(root).toHaveAttribute('data-demo-cycles', '1', { timeout: 60_000 });
-    type Change = { what: string; phase: string; veil: string; cursor: string };
     const { changes, phases } = await page.evaluate(() => ({
-      changes: (window as unknown as { __cutChanges: Change[] }).__cutChanges,
-      phases: (window as unknown as { __cutPhases: Change[] }).__cutPhases,
+      changes: (window as unknown as { __cutChanges: CutChange[] }).__cutChanges,
+      phases: (window as unknown as { __cutPhases: CutChange[] }).__cutPhases,
     }));
     expect(phases.map((entry) => entry.phase).slice(0, 4), 'the cut fades out, resets, fades in, and ends').toEqual(['out', 'reset', 'in', 'none']);
     const reset = phases.find((entry) => entry.phase === 'reset');
@@ -2456,7 +2463,7 @@ for (const scene of CUT_SCENES) {
 test('a visitor\'s own click stops the choreography and takes the pointer away', async ({ page }) => {
   test.setTimeout(60_000);
   const getUnexpectedErrors = collectUnexpectedErrors(page);
-  await page.addInitScript((rate) => { (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate; }, CHOREOGRAPHY_TEST_RATE);
+  await setChoreographyRate(page, CHOREOGRAPHY_TEST_RATE);
   await gotoScene(page, { view: 'column-automation-edit', embed: '1', loop: '1' });
   const root = page.locator('html');
   await expect(root).toHaveAttribute('data-demo-choreography', 'playing', { timeout: 15_000 });
@@ -2471,6 +2478,50 @@ test('a visitor\'s own click stops the choreography and takes the pointer away',
   await page.waitForTimeout(4_000);
   await expect(root).toHaveAttribute('data-demo-cycles', cycles ?? '0');
   expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a visitor\'s click after the frame is ready but before the player has loaded stops the loop before it starts', async ({ page }) => {
+  // boot.js marks the frame ready and only then fetches the choreography chunk, which is what
+  // listens for a visitor. Input in that gap used to be missed: the loop started anyway, on the
+  // state the visitor had just changed. The chunk is held at the network so the gap is as wide
+  // as the test needs, and the click lands inside it.
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await setChoreographyRate(page, CHOREOGRAPHY_TEST_RATE);
+  const heldRequests: string[] = [];
+  let releasePlayer: () => void = () => undefined;
+  const playerReleased = new Promise<void>((resolve) => { releasePlayer = resolve; });
+  await page.route(/\/assets\/choreography-[^/?]+\.js(\?.*)?$/, async (route) => {
+    heldRequests.push(route.request().url());
+    await playerReleased;
+    await route.continue();
+  });
+  try {
+    await gotoScene(page, { view: 'column-automation-edit', embed: '1', loop: '1' });
+    const root = page.locator('html');
+    // The vacuity guard: without these two the click would meet a player that is already
+    // listening, which stops the loop by its own path and passes the assertions below untested.
+    await expect.poll(() => heldRequests.length, { message: 'the player chunk was requested and is being held' }).toBeGreaterThan(0);
+    await expect(root, 'no player exists yet, so nothing is listening for a visitor').not.toHaveAttribute('data-demo-choreography');
+    // The dialog's own title: a real click there changes nothing in the form.
+    const title = await page.locator('[data-testid="edit-automation-dialog"] h3').first().boundingBox();
+    expect(title).not.toBeNull();
+    await page.mouse.click((title?.x ?? 0) + 8, (title?.y ?? 0) + 4);
+    await expect(root, 'the held chunk is still not loaded after the click').not.toHaveAttribute('data-demo-choreography');
+    releasePlayer();
+    await expect(root).toHaveAttribute('data-demo-choreography', 'stopped');
+    await expect(root).toHaveAttribute('data-demo-cycles', '0');
+    await expect(page.locator('[data-demo-cursor]')).toHaveCount(0);
+    // Intentional fixed wait: nothing can be polled for "never starts". Well past the opening
+    // rest at this pacing (2.5 s over 8), where a loop that had started would be drawing its pointer.
+    await page.waitForTimeout(3_000);
+    await expect(root).toHaveAttribute('data-demo-choreography', 'stopped');
+    await expect(root).toHaveAttribute('data-demo-cycles', '0');
+    await expect(page.locator('[data-demo-cursor]')).toHaveCount(0);
+    expect(getUnexpectedErrors()).toEqual([]);
+  } finally {
+    releasePlayer();
+  }
 });
 
 test('a visitor\'s press mid-travel ends the step in flight: the choreography presses nothing after it', async ({ page }) => {
@@ -2512,7 +2563,7 @@ test('a visitor who prefers reduced motion gets the rest, held, and no pointer',
   // one a frame can read before anything moves.
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.addInitScript((rate) => { (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate; }, CHOREOGRAPHY_TEST_RATE);
+  await setChoreographyRate(page, CHOREOGRAPHY_TEST_RATE);
   await gotoScene(page, { view: 'column-automation-edit', embed: '1', loop: '1' });
   const root = page.locator('html');
   await expect(root).toHaveAttribute('data-demo-choreography', 'rest', { timeout: 15_000 });
@@ -2575,6 +2626,179 @@ test('a usage still has its bars drawn at ready, since Animations off holds the 
   const tallestBar = await page.evaluate(() => Math.max(0, ...Array.from(document.querySelectorAll('.recharts-bar-rectangle path'))
     .map((bar) => bar.getBoundingClientRect().height)));
   expect(tallestBar, 'the tallest cost bar, in CSS pixels, the moment the frame is ready').toBeGreaterThan(20);
+});
+
+// ---- usage dashboard fixture ---------------------------------------------------------------------
+// The sample install answers the dashboard from one seeded ninety-day history that every period
+// reads a slice of, with the running sessions sitting in it once (tests/captures/helpers/demo-dataset.ts).
+// These tests call that fixture directly and hold it against itself, so they hold on any weekday
+// and at any hour: no total is a number written here.
+
+type UsagePeriodName = 'today' | 'week' | 'month' | 'all';
+const USAGE_PERIODS: UsagePeriodName[] = ['today', 'week', 'month', 'all'];
+
+interface UsageScope { kind: 'all' | 'project'; projectId?: string }
+
+/** The scopes the dashboard offers: every project, and one. The project scope is the branch that filters the running sessions. */
+const USAGE_SCOPES: Array<[label: string, scope: UsageScope]> = [
+  ['all projects', { kind: 'all' }],
+  ['one project', { kind: 'project', projectId: PROJECT_CONTOSO }],
+];
+
+/** One bar of the cost chart: a local hour (Today) or a local day. */
+interface UsageBar { bucketStartMs: number; costUsd: number; inputTokens: number; outputTokens: number; sessionCount: number }
+
+/** The part of a dashboard payload these tests read. */
+interface UsagePayload {
+  rangeStartMs: number;
+  rangeEndMs: number;
+  kpis: { totalCostUsd: number; totalInputTokens: number; totalOutputTokens: number; sessionCount: number };
+  costSeries: UsageBar[];
+  liveLedgerBaseline: { costUsd: number };
+}
+
+/** A running session the Cost tile's live overlay layers on: when it started and the cost it reads. */
+interface LiveReading { startMs: number; costUsd: number }
+
+interface UsageRead { periods: Record<UsagePeriodName, UsagePayload>; live: LiveReading[] }
+
+interface DemoUsageWindow {
+  electronAPI: {
+    usage: {
+      __dashboardStatsFixture: (scope: UsageScope, period: UsagePeriodName, drill: null, customWindow: null) => UsagePayload;
+    };
+    sessions: {
+      list: () => Promise<Array<{ id: string; projectId: string; status: string; transient?: boolean; workflowId?: string | null; startedAt: string }>>;
+      getUsage: () => Promise<Record<string, { cost: { totalCostUsd: number } }>>;
+    };
+  };
+}
+
+/**
+ * The fixture's answer for each period in one scope, with the running sessions the overlay would
+ * layer on. That set is the renderer's own rule (selectLiveSessionIds in useStatsData.ts), built
+ * from the bridge and not from the fixture: a live status, not a Command Terminal, in the viewed
+ * project, each with the cost its usage reading carries.
+ */
+async function readUsage(page: Page, scope: UsageScope): Promise<UsageRead> {
+  return page.evaluate(async ({ requested, periods }) => {
+    const api = (window as unknown as DemoUsageWindow).electronAPI;
+    const [sessions, readings] = await Promise.all([api.sessions.list(), api.sessions.getUsage()]);
+    const live: LiveReading[] = [];
+    for (const session of sessions) {
+      const isLive = session.status === 'running' || session.status === 'queued';
+      const isCommandTerminal = !!session.transient && !session.workflowId;
+      const inScope = requested.kind === 'all' || session.projectId === requested.projectId;
+      if (isLive && !isCommandTerminal && inScope && readings[session.id]) {
+        live.push({ startMs: Date.parse(session.startedAt), costUsd: readings[session.id].cost.totalCostUsd });
+      }
+    }
+    const read: Partial<Record<UsagePeriodName, UsagePayload>> = {};
+    for (const period of periods) {
+      const payload = api.usage.__dashboardStatsFixture(requested, period, null, null);
+      read[period] = {
+        rangeStartMs: payload.rangeStartMs,
+        rangeEndMs: payload.rangeEndMs,
+        kpis: {
+          totalCostUsd: payload.kpis.totalCostUsd,
+          totalInputTokens: payload.kpis.totalInputTokens,
+          totalOutputTokens: payload.kpis.totalOutputTokens,
+          sessionCount: payload.kpis.sessionCount,
+        },
+        costSeries: payload.costSeries.map((bar) => ({
+          bucketStartMs: bar.bucketStartMs, costUsd: bar.costUsd, inputTokens: bar.inputTokens, outputTokens: bar.outputTokens, sessionCount: bar.sessionCount,
+        })),
+        liveLedgerBaseline: { costUsd: payload.liveLedgerBaseline.costUsd },
+      };
+    }
+    return { periods: read as Record<UsagePeriodName, UsagePayload>, live };
+  }, { requested: scope, periods: USAGE_PERIODS });
+}
+
+const sumOf = (values: number[]): number => values.reduce((total, value) => total + value, 0);
+
+test('the usage fixture reads every period from one history: Today is the last bar of the longer periods', async ({ page }) => {
+  // The fixture used to draw each period from a generator of its own, so Today's tiles and This
+  // Week's last bar were two different days. They are one day now, and each longer period is a
+  // slice of the same ninety.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'usage', embed: '1', still: '1' });
+  for (const [label, scope] of USAGE_SCOPES) {
+    const { periods } = await readUsage(page, scope);
+    const today = periods.today;
+    // Cost only: in the first minutes after local midnight Today's hour can round to no sessions.
+    expect(today.kpis.totalCostUsd, `${label}: Today has spend, or the comparisons below prove nothing`).toBeGreaterThan(0);
+    for (const period of ['week', 'month', 'all'] as const) {
+      const bars = periods[period].costSeries;
+      const lastBar = bars[bars.length - 1];
+      expect(lastBar, `${label}: ${period} has a last bar`).toBeDefined();
+      expect(lastBar.bucketStartMs, `${label}: ${period} ends on the day Today starts`).toBe(today.rangeStartMs);
+      expect(lastBar.costUsd, `${label}: ${period}'s last bar costs what Today's tile reads`).toBeCloseTo(today.kpis.totalCostUsd, 6);
+      expect(lastBar.inputTokens, `${label}: ${period}'s last bar input tokens`).toBe(today.kpis.totalInputTokens);
+      expect(lastBar.outputTokens, `${label}: ${period}'s last bar output tokens`).toBe(today.kpis.totalOutputTokens);
+      expect(lastBar.sessionCount, `${label}: ${period}'s last bar sessions`).toBe(today.kpis.sessionCount);
+    }
+    for (const period of USAGE_PERIODS) {
+      const { costSeries, kpis } = periods[period];
+      expect(sumOf(costSeries.map((bar) => bar.costUsd)), `${label}: ${period}'s bars add up to its cost tile`).toBeCloseTo(kpis.totalCostUsd, 6);
+      expect(sumOf(costSeries.map((bar) => bar.sessionCount)), `${label}: ${period}'s bars add up to its session tile`).toBe(kpis.sessionCount);
+    }
+    // A period holds what the ones inside it hold. This Week is not compared with This Month: on
+    // the first days of a month, that week's Monday falls in the month before.
+    const nested: Array<[inner: UsagePeriodName, outer: UsagePeriodName]> = [['today', 'week'], ['today', 'month'], ['today', 'all'], ['week', 'all'], ['month', 'all']];
+    for (const [inner, outer] of nested) {
+      expect(periods[inner].kpis.totalCostUsd, `${label}: ${inner} costs no more than ${outer}`).toBeLessThanOrEqual(periods[outer].kpis.totalCostUsd + 1e-9);
+      expect(periods[inner].kpis.sessionCount, `${label}: ${inner} has no more sessions than ${outer}`).toBeLessThanOrEqual(periods[outer].kpis.sessionCount);
+    }
+    expect(periods.all.kpis.totalCostUsd, `${label}: all time holds more than a week`).toBeGreaterThan(periods.week.kpis.totalCostUsd);
+  }
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('the usage fixture counts each running session once: the baseline is what the ledger holds of them', async ({ page }) => {
+  // The Cost tile is the ledger total, minus liveLedgerBaseline, plus each running session's
+  // cumulative reading (resolveDisplayCost). The fixture once held the running sessions out of
+  // its history and sent a baseline of 0, so every period but Live added the overlay on top of
+  // bars that never showed it, and Today's tile read three times its bars. Now the sessions sit
+  // in the history under the hour or day they started, and the baseline is exactly the ones
+  // that started inside the window.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'usage', embed: '1', still: '1' });
+  for (const [scopeLabel, scope] of USAGE_SCOPES) {
+    const { periods, live } = await readUsage(page, scope);
+    expect(live.length, `${scopeLabel}: the sample install has running sessions to count`).toBeGreaterThan(0);
+    const overlayCostUsd = sumOf(live.map((reading) => reading.costUsd));
+    for (const period of USAGE_PERIODS) {
+      const label = `${scopeLabel}, ${period}`;
+      const payload = periods[period];
+      const inside = live.filter((reading) => reading.startMs >= payload.rangeStartMs && reading.startMs < payload.rangeEndMs);
+      const insideCostUsd = sumOf(inside.map((reading) => reading.costUsd));
+      const barsCostUsd = sumOf(payload.costSeries.map((bar) => bar.costUsd));
+      const baselineCostUsd = payload.liveLedgerBaseline.costUsd;
+      expect(baselineCostUsd, `${label}: the baseline is the cost of the running sessions that started inside the window`).toBeCloseTo(insideCostUsd, 6);
+      // Each running session sits in the history under the hour or day it started, so that bar
+      // holds at least its cost and one session. The baseline alone would pass with the sessions
+      // missing from the bars, which is the other half of the fix.
+      payload.costSeries.forEach((bar, index) => {
+        const bucketEndMs = index + 1 < payload.costSeries.length ? payload.costSeries[index + 1].bucketStartMs : payload.rangeEndMs;
+        const started = live.filter((reading) => reading.startMs >= bar.bucketStartMs && reading.startMs < bucketEndMs);
+        const barLabel = `${label}, the bar at ${new Date(bar.bucketStartMs).toISOString()}`;
+        expect(bar.costUsd, `${barLabel}: holds the cost of the running sessions that started in it`).toBeGreaterThanOrEqual(sumOf(started.map((reading) => reading.costUsd)) - 1e-9);
+        expect(bar.sessionCount, `${barLabel}: counts the running sessions that started in it`).toBeGreaterThanOrEqual(started.length);
+      });
+      expect(payload.kpis.totalCostUsd, `${label}: the ledger holds at least what the baseline takes off`).toBeGreaterThanOrEqual(baselineCostUsd - 1e-9);
+      expect(payload.kpis.sessionCount, `${label}: the session tile counts each of them`).toBeGreaterThanOrEqual(inside.length);
+      // What the tile shows, against the bars drawn from the same ledger: they differ only by a
+      // session that started before the window, whose cost the ledger holds under an earlier day.
+      const tileCostUsd = payload.kpis.totalCostUsd - baselineCostUsd + overlayCostUsd;
+      expect(tileCostUsd, `${label}: the tile reads its bars plus the sessions that started before the window`).toBeCloseTo(barsCostUsd + (overlayCostUsd - insideCostUsd), 6);
+    }
+    // Every running session started inside the ninety days, so All Time's tile IS its bars.
+    const all = periods.all;
+    const allTileCostUsd = all.kpis.totalCostUsd - all.liveLedgerBaseline.costUsd + overlayCostUsd;
+    expect(allTileCostUsd, `${scopeLabel}: All Time's tile reads its bars, each running session once`).toBeCloseTo(sumOf(all.costSeries.map((bar) => bar.costUsd)), 6);
+  }
+  expect(getUnexpectedErrors()).toEqual([]);
 });
 
 test('a still with a pose plays it without the choreography\'s pointer, and a still without one fetches no player', async ({ page }) => {

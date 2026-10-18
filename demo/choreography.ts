@@ -50,6 +50,8 @@ export interface ChoreographyPlayer {
   playToPose(): Promise<void>;
   /** Under loop=1: plays the cycle and returns to rest, again and again, until a visitor takes over. */
   startLoop(): void;
+  /** A visitor took over before the loop started (boot.js saw their input while the player loaded): nothing plays. */
+  stop(): void;
 }
 
 /** How long a step's target or its `waitFor` may take to appear before the choreography gives up. */
@@ -333,6 +335,9 @@ function createVeil(): HTMLElement {
   veil.setAttribute('data-demo-veil', '');
   veil.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;opacity:0;background:var(--color-surface, #18181b);transition-property:opacity;transition-timing-function:ease';
   document.body.appendChild(veil);
+  // A transition runs from the element's last computed style, which a new element has none of, so
+  // the first cut would jump to opaque. Reading the style computes it at 0.
+  void getComputedStyle(veil).opacity;
   return veil;
 }
 
@@ -377,7 +382,9 @@ const TEXT_FIELD = 'input:not([type="checkbox"]):not([type="radio"]):not([type="
 
 export function createChoreography(steps: ChoreographyStep[], options: ChoreographyOptions): ChoreographyPlayer {
   const poseIndex = steps.findIndex((step) => 'pose' in step);
-  const rate = Math.max(1, Number(window.__demoChoreographyRate) || 1);
+  // Any positive rate: a test slows the pacing too, to land a press mid-travel.
+  const configuredRate = Number(window.__demoChoreographyRate);
+  const rate = configuredRate > 0 ? configuredRate : 1;
   installCaptureShim();
   let point: Point | null = null;
   let current: Element | null = null;
@@ -462,7 +469,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   function moveTo(at: Point): void {
     const previous = point;
     point = at;
-    if (cursor) cursor.element.style.transform = `translate(${at.x - CURSOR_TIP.x}px, ${at.y - CURSOR_TIP.y}px)`;
+    drawCursorAt(at);
     const init = pointerInit(at, {}, previous);
     // A captured pointer's events go to the element that captured it, which stays its hover target.
     const captured = captureTarget();
@@ -602,8 +609,12 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     let shared = 0;
     while (shared < value.length && shared < text.length && value[shared] === text[shared]) shared += 1;
     while (field.value.length > shared && !stopped) {
-      keystrokeInto(field, field.value.slice(0, -1), 'deleteContentBackward', null);
+      const before = field.value;
+      keystrokeInto(field, before.slice(0, -1), 'deleteContentBackward', null);
       await keystroke();
+      // A field that keeps its text through a Backspace would hold this loop, and in a still or a
+      // cut's reset, where a keystroke waits for nothing, no other script would run again.
+      if (!stopped && field.value === before) throw new Error(`${selector} kept its text through a Backspace`);
     }
     for (const character of text.slice(shared)) {
       if (stopped) return;
@@ -643,6 +654,8 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   /** Bring an element to the middle of its scroll container and wait for the scroll to finish. */
   async function scrollTo(selector: string): Promise<void> {
     const element = await waitForElement(selector);
+    // The page is the visitor's once they take over, so a scroll still on its way stays put.
+    if (stopped) return;
     element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: instant ? 'auto' : 'smooth' });
     let previous = centreOf(element);
     let still = 0;
@@ -748,6 +761,11 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
       if (expectedLines[index] !== actualLines[index]) return `expected "${expectedLines[index] ?? ''}", found "${actualLines[index] ?? ''}"`;
     }
     return 'no line differs';
+  }
+
+  /** Draw the pointer's arrow with its tip on a point. */
+  function drawCursorAt(at: Point): void {
+    if (cursor) cursor.element.style.transform = `translate(${at.x - CURSOR_TIP.x}px, ${at.y - CURSOR_TIP.y}px)`;
   }
 
   /** Show the pointer, once it has somewhere to be: a cycle of keys and hotkeys alone never draws one. */
@@ -888,7 +906,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     // stop() takes the cursor away; one that came while the target resolved places nothing.
     if (stopped || !cursor) return;
     point = { x: at.x + ENTRY_OFFSET.x, y: at.y + ENTRY_OFFSET.y };
-    cursor.element.style.transform = `translate(${point.x - CURSOR_TIP.x}px, ${point.y - CURSOR_TIP.y}px)`;
+    drawCursorAt(point);
   }
 
   async function loop(): Promise<void> {
@@ -914,7 +932,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     cursor = createCursor();
     await placeBeside(cycle);
     if (stopped || !cursor) return;
-    if (point) cursor.element.style.transform = `translate(${point.x - CURSOR_TIP.x}px, ${point.y - CURSOR_TIP.y}px)`;
+    if (point) drawCursorAt(point);
     leave();
     setState('rest');
     await delay(FIRST_REST_MS / rate);
@@ -957,10 +975,12 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   function startLoop(): void {
     watchForVisitor();
     loop().catch((error: unknown) => {
+      // A step still waiting when a visitor took over gives up on its own later; that is no fault.
+      if (stopped) return;
       console.error('[kangentic-demo] the choreography stopped:', error instanceof Error ? error.message : String(error));
       stop();
     });
   }
 
-  return { playToPose, startLoop };
+  return { playToPose, startLoop, stop };
 }

@@ -32,6 +32,13 @@
  *      open). The route's own request-shape validation and 200 envelope are
  *      covered separately in cookie-jar-routes.test.ts; these two tests pin
  *      only the dispatcher-level wiring around it.
+ *   4b. POST /workflow-agent-launch dispatch wiring - the same security boundary: its
+ *      answer carries the MCP server's token, so while Allow Unsafe Operations is off
+ *      it answers 403 eval-disabled WITHOUT reading the body or the IPC context. With
+ *      it on, a malformed body is a 400 invalid-json, and a valid one reaches the
+ *      handler (503 no-ipc-context while the app has no context), with no main window
+ *      needed because the route sits above the CDP-attached gate. The handler's own
+ *      answers are covered in workflow-agent-launch-route.test.ts.
  *   5. POST /quit - reachable with no main window (same no-CDP-needed shape as
  *      cookie-jar-list above) and actually calls app.quit(). The route's other
  *      invariant, that it responds BEFORE quitting (so scripts/dev.js gets its
@@ -154,7 +161,10 @@ function buildFakeBrowserWindow(stubDebugger: StubDebugger): BrowserWindow {
 interface RequestOptions {
   method?: string;
   path: string;
+  /** Sent as JSON. */
   body?: unknown;
+  /** Sent verbatim, for a body that is not valid JSON. Wins over `body`. */
+  rawBody?: string;
 }
 
 interface JsonResponse {
@@ -164,7 +174,7 @@ interface JsonResponse {
 
 function httpRequest(port: number, options: RequestOptions): Promise<JsonResponse> {
   return new Promise((resolve, reject) => {
-    const rawBody = options.body !== undefined ? JSON.stringify(options.body) : undefined;
+    const rawBody = options.rawBody ?? (options.body !== undefined ? JSON.stringify(options.body) : undefined);
     const request = http.request(
       {
         host: '127.0.0.1',
@@ -632,6 +642,101 @@ describe('inspection-server handler behaviors', () => {
         });
         serverPort = restoredPort!;
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 4b. POST /workflow-agent-launch - dispatch wiring
+  // -------------------------------------------------------------------------
+
+  describe('POST /workflow-agent-launch - dispatch wiring', () => {
+    const VALID_BODY = { projectId: 'proj-1', workflowId: 'wf-1' };
+    const MALFORMED_BODY = '{"projectId": "proj-1", ';
+
+    /**
+     * Runs `run` against a fresh server with the given Allow Unsafe Operations gate, then restores
+     * the shared eval-enabled server even when an assertion threw (see the cookie-jar tests above
+     * for why a bare stop/start would cascade a failure into every later test). The server has NO
+     * main window: the route answers its own errors, never the CDP gate's 503 no-main-window,
+     * because it is dispatched above that gate.
+     */
+    async function withServer(
+      evalEnabled: boolean,
+      getIpcContext: () => null,
+      run: (port: number) => Promise<void>,
+    ): Promise<void> {
+      stopInspectionServer();
+      try {
+        const port = await startInspectionServer({
+          getMainWindow: () => null,
+          getEvalEnabled: () => evalEnabled,
+          getSessionManager: () => null,
+          getProjectRoot: () => null,
+          getIpcContext,
+          getProjectId: () => null,
+        });
+        expect(port).not.toBeNull();
+        await run(port!);
+      } finally {
+        stopInspectionServer();
+        const restoredPort = await startInspectionServer({
+          getMainWindow: () => fakeWindow,
+          getEvalEnabled: () => true,
+          getSessionManager: () => null,
+          getProjectRoot: () => null,
+          getIpcContext: () => null,
+          getProjectId: () => null,
+        });
+        serverPort = restoredPort!;
+      }
+    }
+
+    it.each([
+      ['a valid body', { body: VALID_BODY }],
+      ['a malformed body, because the gate is checked before the body is read', { rawBody: MALFORMED_BODY }],
+    ])('returns 403 eval-disabled and never reads the IPC context when Allow Unsafe Operations is off, for %s', async (_description, payload) => {
+      const getIpcContext = vi.fn(() => null);
+
+      await withServer(false, getIpcContext, async (port) => {
+        const response = await httpRequest(port, { method: 'POST', path: '/workflow-agent-launch', ...payload });
+
+        expect(response.status).toBe(403);
+        const responseBody = response.body as { ok: boolean; error: { kind: string; detail: string } };
+        expect(responseBody.ok).toBe(false);
+        expect(responseBody.error.kind).toBe('eval-disabled');
+        expect(responseBody.error.detail).toContain('Allow Unsafe Operations');
+      });
+      expect(getIpcContext).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 invalid-json for a malformed body once Allow Unsafe Operations is on, before reading the IPC context', async () => {
+      const getIpcContext = vi.fn(() => null);
+
+      await withServer(true, getIpcContext, async (port) => {
+        const response = await httpRequest(port, { method: 'POST', path: '/workflow-agent-launch', rawBody: MALFORMED_BODY });
+
+        expect(response.status).toBe(400);
+        const responseBody = response.body as { ok: boolean; error: { kind: string } };
+        expect(responseBody.ok).toBe(false);
+        expect(responseBody.error.kind).toBe('invalid-json');
+      });
+      expect(getIpcContext).not.toHaveBeenCalled();
+    });
+
+    it('reaches the handler for a valid body with no main window at all: 503 no-ipc-context while the app has no context', async () => {
+      const getIpcContext = vi.fn(() => null);
+
+      await withServer(true, getIpcContext, async (port) => {
+        const response = await httpRequest(port, { method: 'POST', path: '/workflow-agent-launch', body: VALID_BODY });
+
+        // The handler's own answer, not the CDP gate's 503 no-main-window: the route never falls
+        // through to the attach check below it.
+        expect(response.status).toBe(503);
+        const responseBody = response.body as { ok: boolean; error: { kind: string } };
+        expect(responseBody.ok).toBe(false);
+        expect(responseBody.error.kind).toBe('no-ipc-context');
+      });
+      expect(getIpcContext).toHaveBeenCalledTimes(1);
     });
   });
 

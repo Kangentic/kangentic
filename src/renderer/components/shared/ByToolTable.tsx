@@ -4,6 +4,7 @@ import { formatTokenCount } from '../../utils/format-tokens';
 import { formatDuration, formatCost } from '../../utils/format-session';
 import type { PerToolStat } from '../../../shared/types';
 import { Tooltip } from '../Tooltip';
+import { sortStateOf } from '../DataTable';
 
 // Tool durations are often sub-second (Read, Edit, Grep). The shared
 // `formatDuration` helper rounds to seconds, so it would render every
@@ -124,12 +125,10 @@ function SortableHeader({
   tip?: string;
 }) {
   const active = sort.key === sortKey;
-  // Only the sorted header carries aria-sort, as WAI-ARIA and the APG sortable table have it.
-  const ariaSort = active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined;
   return (
     <th
       className={`${align === 'left' ? 'text-left' : 'text-right'} font-normal pt-2 pb-1 pr-3 last:pr-0`}
-      aria-sort={ariaSort}
+      aria-sort={sortStateOf(active ? sort.direction : null)}
     >
       <Tooltip label={tip ?? ''}>
         <button
