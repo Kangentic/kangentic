@@ -5166,7 +5166,7 @@
       // reports as unavailable when it is not installed. Null when a start may run.
       async function mockWorkflowAgentRefusal() {
         var choice = (config && config.workflows) || {};
-        var setupNeeded = { session: null, unavailable: null, setupNeeded: true };
+        var setupNeeded = { session: null, unavailable: null, setupNeeded: true, startsOnRequest: false };
         if (!choice.agent) return setupNeeded;
         var agents = await window.electronAPI.agents.list(false, true);
         var candidate = agents.find(function (entry) { return entry.name === choice.agent; });
@@ -5174,7 +5174,7 @@
         var takesModel = Boolean(candidate.capabilities && candidate.capabilities.supportsModelOverride);
         if (takesModel && !choice.model) return setupNeeded;
         if (!candidate.found) {
-          return { session: null, unavailable: 'Kangentic cannot find ' + (candidate.displayName || candidate.name) + ' on this machine.', setupNeeded: false };
+          return { session: null, unavailable: 'Kangentic cannot find ' + (candidate.displayName || candidate.name) + ' on this machine.', setupNeeded: false, startsOnRequest: false };
         }
         return null;
       }
@@ -5185,13 +5185,30 @@
 
       async function openMockWorkflowAgent(projectId, workflowId, resume) {
         if (window.__mockWorkflowAgentUnavailable) {
-          return { session: null, unavailable: String(window.__mockWorkflowAgentUnavailable), setupNeeded: false };
+          return { session: null, unavailable: String(window.__mockWorkflowAgentUnavailable), setupNeeded: false, startsOnRequest: false };
         }
         var before = findMockWorkflowAgent(workflowId);
         // As main does before any start: a live agent comes back as it is, and
         // an open leaves a paused one paused. A Resume or a new start needs the setting.
         if (before && (before.status !== 'suspended' || !resume)) {
-          return { session: JSON.parse(JSON.stringify(before)), unavailable: null, setupNeeded: false };
+          return { session: JSON.parse(JSON.stringify(before)), unavailable: null, setupNeeded: false, startsOnRequest: false };
+        }
+        // As main's `planNoAgentHasSeen`, by the rule it shares with the pane
+        // (`awaitsFirstAgent`, src/shared/workflow-agent-first-open.ts): an open
+        // on a workflow with tasks and no agent ever recorded starts nothing,
+        // before any setting check. The tasks are the draft's before Start and
+        // the board's after. The pane's Ask for changes comes back as a resume.
+        if (!resume) {
+          hydrate();
+          var planned = entries.find(function (entry) { return entry.workflow.id === workflowId; });
+          var plannedWorkflow = planned ? planned.workflow : null;
+          var plannedTaskCount = !plannedWorkflow ? 0
+            : plannedWorkflow.state === 'draft'
+              ? (plannedWorkflow.draft ? plannedWorkflow.draft.tasks.length : 0)
+              : createdTasks(workflowId).length;
+          if (plannedWorkflow && plannedWorkflow.state !== 'done' && plannedWorkflow.agent_name === null && plannedTaskCount > 0) {
+            return { session: null, unavailable: null, setupNeeded: false, startsOnRequest: true };
+          }
         }
         var refusal = await mockWorkflowAgentRefusal();
         if (refusal) return refusal;
@@ -5203,7 +5220,7 @@
           delete startedOverSessions[workflowId];
           fireMockWorkflowAgentStatus(existing);
         }
-        if (existing) return { session: JSON.parse(JSON.stringify(existing)), unavailable: null, setupNeeded: false };
+        if (existing) return { session: JSON.parse(JSON.stringify(existing)), unavailable: null, setupNeeded: false, startsOnRequest: false };
         var session = makeMockWorkflowAgentSession(projectId, workflowId);
         sessions.push(session);
         // Main records the conversation on the workflow at every start, on the
@@ -5215,7 +5232,7 @@
           owner.workflow.agent_cwd = session.cwd;
         }
         fireMockWorkflowAgentStatus(session);
-        return { session: JSON.parse(JSON.stringify(session)), unavailable: null, setupNeeded: false };
+        return { session: JSON.parse(JSON.stringify(session)), unavailable: null, setupNeeded: false, startsOnRequest: false };
       }
 
       function hydrate() {
@@ -5895,7 +5912,7 @@
           window.__mockWorkflowAgentOpenCount = (window.__mockWorkflowAgentOpenCount || 0) + 1;
           if (window.__mockWorkflowAgentSetupNeededOnce) {
             window.__mockWorkflowAgentSetupNeededOnce = false;
-            return { session: null, unavailable: null, setupNeeded: true };
+            return { session: null, unavailable: null, setupNeeded: true, startsOnRequest: false };
           }
           return openMockWorkflowAgent(projectId, workflowId, false);
         },

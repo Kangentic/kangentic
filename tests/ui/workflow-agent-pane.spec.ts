@@ -40,20 +40,31 @@ interface SeedOptions {
    * workflow with no conversation yet.
    */
   recordedRun?: { agentName: string; agentSessionId: string | null };
+  /**
+   * Another session created and planned the workflow over MCP: it has its task
+   * and no agent recorded. Every other seed is a workflow its own agent planned.
+   */
+  plannedElsewhere?: boolean;
+  /**
+   * A second draft workflow, listed after the first, so the picker has two to
+   * move between inside one launch. Planned by its own agent unless
+   * `plannedElsewhere`, the same as the first.
+   */
+  secondWorkflow?: { plannedElsewhere: boolean };
 }
 
 const RECORDED_SESSION_ID = 'wf-draft-agent-session';
+const SECOND_WORKFLOW_ID = 'wf-second';
 
-function seedScript(options: SeedOptions): string {
-  const workflowAgent = options.workflowAgent === undefined ? WORKFLOW_AGENT : options.workflowAgent;
-  const recordedRun = options.recordedRun ?? null;
-  const draft = {
+/** A draft with one planned task. `agentFields` is what main recorded for its agent: nothing when another session planned it. */
+function plannedDraftSeed(identity: { id: string; title: string; colorSlot: number; taskKey: string; taskTitle: string }, agentFields: Record<string, unknown>) {
+  return {
     workflow: {
-      id: WORKFLOW_ID, title: 'Theme tokens', state: 'draft', color_slot: 2,
-      ...(recordedRun ? { agent_name: recordedRun.agentName, agent_session_id: recordedRun.agentSessionId, agent_cwd: '/mock/project' } : {}),
+      id: identity.id, title: identity.title, state: 'draft', color_slot: identity.colorSlot,
+      ...agentFields,
       draft: {
         tasks: [{
-          key: 'task-1', title: 'Token table', description: 'Planned.', project_id: null, existing_task_id: null,
+          key: identity.taskKey, title: identity.taskTitle, description: 'Planned.', project_id: null, existing_task_id: null,
           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
           labels: [], priority: 0, canvas_x: null, canvas_y: null,
         }],
@@ -61,6 +72,26 @@ function seedScript(options: SeedOptions): string {
       },
     },
   };
+}
+
+function seedScript(options: SeedOptions): string {
+  const workflowAgent = options.workflowAgent === undefined ? WORKFLOW_AGENT : options.workflowAgent;
+  const recordedRun = options.recordedRun ?? null;
+  // Planned by its own workflow agent unless `plannedElsewhere`: a plan with
+  // no agent recorded opens with nothing started (main's planNoAgentHasSeen).
+  const draft = plannedDraftSeed(
+    { id: WORKFLOW_ID, title: 'Theme tokens', colorSlot: 2, taskKey: 'task-1', taskTitle: 'Token table' },
+    recordedRun
+      ? { agent_name: recordedRun.agentName, agent_session_id: recordedRun.agentSessionId, agent_cwd: '/mock/project' }
+      : options.plannedElsewhere ? {} : { agent_name: 'claude' },
+  );
+  const seededWorkflows = [draft];
+  if (options.secondWorkflow) {
+    seededWorkflows.push(plannedDraftSeed(
+      { id: SECOND_WORKFLOW_ID, title: 'Icon set', colorSlot: 3, taskKey: 'task-2', taskTitle: 'Icon table' },
+      options.secondWorkflow.plannedElsewhere ? {} : { agent_name: 'claude' },
+    ));
+  }
   // The session row as main's workflow-agent.ts produces it (see the mock's makeMockWorkflowAgentSession).
   const recordedSession = {
     id: RECORDED_SESSION_ID, taskId: WORKFLOW_ID, projectId: PROJECT_ID, pid: null, status: 'running', shell: '/bin/bash',
@@ -69,7 +100,7 @@ function seedScript(options: SeedOptions): string {
     isolatedSwimlaneId: null, agentSessionId: recordedRun?.agentSessionId ?? null,
   };
   return `
-    window.__mockWorkflows = ${JSON.stringify([draft])};
+    window.__mockWorkflows = ${JSON.stringify(seededWorkflows)};
     ${options.unavailable ? `window.__mockWorkflowAgentUnavailable = ${JSON.stringify(options.unavailable)};` : ''}
     ${options.setupNeededOnce ? 'window.__mockWorkflowAgentSetupNeededOnce = true;' : ''}
     ${options.agentListOverrides ? `window.__mockAgentListOverrides = ${JSON.stringify(options.agentListOverrides)};` : ''}
@@ -87,7 +118,7 @@ function seedScript(options: SeedOptions): string {
   `;
 }
 
-async function launch(options: SeedOptions & { width?: number } = {}): Promise<{ browser: Browser; page: Page }> {
+async function launch(options: SeedOptions & { width?: number; awaitAgentList?: boolean } = {}): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: options.width ?? 1700, height: 950 } })).newPage();
@@ -95,6 +126,14 @@ async function launch(options: SeedOptions & { width?: number } = {}): Promise<{
   await page.addInitScript(seedScript(options));
   await gotoVite(page, VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+  // The pane reads the Workflow agent setting only once the agent list is in
+  // (its setup gap and its Settings hold are both null before then). A test that
+  // pins what the pane does with the setting waits here, so its first read is
+  // the real one and not a race against the boot's list load.
+  if (options.awaitAgentList) {
+    await page.waitForFunction(() => (window as unknown as { __zustandStores: { config: { getState: () => { agentListLoaded: boolean } } } })
+      .__zustandStores.config.getState().agentListLoaded === true);
+  }
   await page.locator('[data-testid="view-toggle-workflows"]').click();
   await page.locator('[data-testid="workflows-view"]').waitFor({ state: 'visible', timeout: 15000 });
   return { browser, page };
@@ -216,8 +255,8 @@ test('while the agent works, Start and Add task wait with the reason, and the ca
     await expect(byTestId(page, 'workflow-add-task')).toBeDisabled();
     await expect(byTestId(page, 'workflow-add-task')).toHaveAccessibleDescription('Available when the workflow agent finishes');
 
-    // Where each sits: the label top left, clear of Add task at the bottom
-    // center, and the two view tools side by side at the bottom left.
+    // Where each sits: the label top left, Add task in the bottom right corner,
+    // and the two view tools side by side at the bottom left.
     const boxes = await page.evaluate(() => {
       const rect = (testId: string) => {
         const box = document.querySelector(`[data-testid="${testId}"]`)!.getBoundingClientRect();
@@ -233,7 +272,7 @@ test('while the agent works, Start and Add task wait with the reason, and the ca
     });
     expect(boxes.label.left - boxes.canvas.left).toBeLessThan(24);
     expect(boxes.label.top - boxes.canvas.top).toBeLessThan(24);
-    expect(Math.abs(boxes.addTask.centerX - boxes.canvas.centerX)).toBeLessThan(4);
+    expect(boxes.canvas.right - boxes.addTask.right).toBeLessThan(24);
     expect(boxes.canvas.bottom - boxes.addTask.bottom).toBeLessThan(40);
     expect(boxes.autoLayout.left - boxes.fitView.right).toBeLessThan(12);
     expect(boxes.autoLayout.right).toBeLessThan(boxes.addTask.left);
@@ -643,6 +682,277 @@ test('a sidebar opened inside Workflows stays open for that visit, and the next 
     await expect(byTestId(page, 'workflows-view')).toBeVisible();
     await expect(sidebar).toHaveAttribute('data-open', 'false');
     expect(await savedVisible()).not.toBe(false);
+  } finally {
+    await browser.close();
+  }
+});
+
+// Found dogfooding: every visit to Workflows began with the sidebar sliding
+// shut over 200 ms and the view moving under it. The view's fold now lands in
+// one frame both ways; the user's own toggle keeps its slide. The slide is three
+// transitions, not one: the area's width and the fade of each of its two layers
+// (the full sidebar and the collapsed rail over it). A layer left fading while
+// the width snaps shows the sidebar's contents ghosting through the switch.
+test('the view\'s fold lands in one frame both ways, and the sidebar\'s own toggle still slides', async () => {
+  const { browser, page } = await launch();
+  try {
+    const sidebar = byTestId(page, 'sidebar-area');
+    await expect(sidebar).toHaveAttribute('data-open', 'false');
+    /**
+     * Click a view toggle, then read the sidebar two frames later, inside one
+     * task: the area's transition duration, then its two layers'.
+     */
+    const twoFramesAfter = (toggleTestId: string) => page.evaluate(async (testId) => {
+      const area = document.querySelector<HTMLElement>('[data-testid="sidebar-area"]')!;
+      document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!.click();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return {
+        width: area.getBoundingClientRect().width,
+        layerCount: area.children.length,
+        durations: [area, ...Array.from(area.children)].map((element) => getComputedStyle(element).transitionDuration),
+      };
+    }, toggleTestId);
+    /** The area's transition duration, then its two layers' (the full sidebar, the collapsed rail). */
+    const slideDurations = () => sidebar.evaluate((element) => [element, ...Array.from(element.children)]
+      .map((layer) => getComputedStyle(layer).transitionDuration));
+    const SLIDING = ['0.2s', '0.2s', '0.2s'];
+    const SNAPPED = ['0s', '0s', '0s'];
+
+    // Board: back at its open width at once, with no transition running.
+    await expect.poll(slideDurations).toEqual(SLIDING);
+    const toBoard = await twoFramesAfter('view-toggle-board');
+    // Two layers, so a markup change cannot leave the check reading none.
+    expect(toBoard.layerCount).toBe(2);
+    expect(toBoard.durations).toEqual(SNAPPED);
+    await expect(sidebar).toHaveAttribute('data-open', 'true');
+    const openWidth = await sidebar.evaluate((element) => element.getBoundingClientRect().width);
+    expect(Math.abs(toBoard.width - openWidth)).toBeLessThan(2);
+
+    // Workflows: the strip at once.
+    await expect.poll(slideDurations).toEqual(SLIDING);
+    const toWorkflows = await twoFramesAfter('view-toggle-workflows');
+    expect(toWorkflows.layerCount).toBe(2);
+    expect(toWorkflows.durations).toEqual(SNAPPED);
+    expect(toWorkflows.width).toBeLessThan(40);
+
+    // Once the switch settles the slide is back, on the width and both fades, for the toggle the user presses.
+    await expect.poll(slideDurations).toEqual(SLIDING);
+    await page.locator('[data-testid="sidebar-expand-button"]').click();
+    await expect(sidebar).toHaveAttribute('data-open', 'true');
+  } finally {
+    await browser.close();
+  }
+});
+
+// The bug: a plan saved with kangentic_save_workflow from a Command Terminal
+// opened in the view with a new agent planning from the brief again, which held
+// Start for its whole turn and could save over the finished plan.
+test('a workflow another session created opens with no agent and the pane folded, and Ask for changes starts it', async () => {
+  const { browser, page } = await launch({ plannedElsewhere: true });
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    const notice = byTestId(page, 'workflow-agent-plan-saved');
+    // Folded to its strip for the plan's room, with no agent started.
+    await expect(pane).toHaveAttribute('data-folded', 'true');
+    await expect(notice).toHaveCount(0);
+    await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+    // Nothing holds the plan: Start and Add task are the user's from the first frame.
+    await expect(byTestId(page, 'workflow-agent-working')).toHaveAttribute('data-working', 'false');
+    await expect(byTestId(page, 'workflow-start')).toBeEnabled();
+    await expect(byTestId(page, 'workflow-add-task')).toBeEnabled();
+
+    // Expanded, the pane says why no agent runs, with no Pause or Resume and no conversation yet.
+    await byTestId(page, 'workflow-agent-pane-expand').click();
+    await expect(pane).toHaveAttribute('data-collapsed', 'false');
+    await expect(pane).toHaveAttribute('data-agent-state', 'starts-on-request');
+    await expect(notice.getByRole('heading')).toHaveText('The workflow agent has not seen this plan');
+    await expect(byTestId(page, 'workflow-agent-toggle')).toHaveCount(0);
+    await expect(byTestId(page, 'workflow-agent-conversation')).toBeDisabled();
+
+    // The next visit folds it again, and still starts nothing.
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await page.locator('[data-testid="view-toggle-workflows"]').click();
+    await expect.poll(() => page.evaluate(() => window.__mockWorkflowAgentOpenCount)).toBeGreaterThanOrEqual(2);
+    await expect(pane).toHaveAttribute('data-folded', 'true');
+    await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+
+    // Ask for changes starts the agent; once one has run, the pane opens as the user left it.
+    await byTestId(page, 'workflow-agent-pane-expand').click();
+    await byTestId(page, 'workflow-agent-ask-for-changes').click();
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await expect(notice).toHaveCount(0);
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await page.locator('[data-testid="view-toggle-workflows"]').click();
+    await expect(pane).toHaveAttribute('data-collapsed', 'false');
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+  } finally {
+    await browser.close();
+  }
+});
+
+/** The workflow the view has selected, read off the workflow store. */
+async function selectedWorkflowId(page: Page): Promise<string | null> {
+  return page.evaluate(() => (window as unknown as { __zustandStores: { workflow: { getState: () => { selectedWorkflowId: string | null } } } })
+    .__zustandStores.workflow.getState().selectedWorkflowId);
+}
+
+/** The pane's own collapse (the user's), which the fold never writes. */
+async function agentPaneCollapsed(page: Page): Promise<boolean> {
+  return page.evaluate(() => (window as unknown as { __zustandStores: { workflow: { getState: () => { agentPaneCollapsed: boolean } } } })
+    .__zustandStores.workflow.getState().agentPaneCollapsed);
+}
+
+/** Choose a workflow in the header's picker, and wait for the view to have it selected. */
+async function pickWorkflow(page: Page, workflowId: string): Promise<void> {
+  await byTestId(page, 'workflow-picker').click();
+  await page.locator(`[data-testid="workflow-picker-option"][data-workflow-id="${workflowId}"]`).click();
+  await expect.poll(() => selectedWorkflowId(page)).toBe(workflowId);
+}
+
+/** How many workflow agents have a session at all. A plan no agent has seen starts none. */
+async function workflowAgentSessionCount(page: Page): Promise<number> {
+  return page.evaluate(async () => (await window.electronAPI.sessions.list()).filter((session) => session.workflowId).length);
+}
+
+// The fold is the workflow's, never the pane's own collapse. A workflow folded
+// for its unseen plan, which the user never expands, leaves the pane open on the
+// next workflow its own agent planned. And the collapse the user made on that one
+// is theirs, so it survives a trip to the board and back.
+test('the fold leaves the pane\'s own collapse alone', async () => {
+  const { browser, page } = await launch({ plannedElsewhere: true, secondWorkflow: { plannedElsewhere: false } });
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    // The first workflow is another session's plan: folded to its strip, never expanded here.
+    await expect.poll(() => selectedWorkflowId(page)).toBe(WORKFLOW_ID);
+    await expect(pane).toHaveAttribute('data-collapsed', 'true');
+    await expect(pane).toHaveAttribute('data-folded', 'true');
+    expect(await agentPaneCollapsed(page)).toBe(false);
+
+    // A workflow its own agent planned opens expanded with its agent: the fold wrote no collapse.
+    await pickWorkflow(page, SECOND_WORKFLOW_ID);
+    await expect(pane).toHaveAttribute('data-collapsed', 'false');
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    expect(await agentPaneCollapsed(page)).toBe(false);
+
+    // The user's own collapse is a strip that is not folded, and it outlasts a visit to the board.
+    await byTestId(page, 'workflow-agent-pane-collapse').click();
+    await expect(pane).toHaveAttribute('data-collapsed', 'true');
+    await expect(pane).toHaveAttribute('data-folded', 'false');
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await page.locator('[data-testid="view-toggle-workflows"]').click();
+    // Still this workflow, so the strip is the collapse and not a fold.
+    await expect.poll(() => selectedWorkflowId(page)).toBe(SECOND_WORKFLOW_ID);
+    await expect(pane).toHaveAttribute('data-collapsed', 'true');
+    await expect(pane).toHaveAttribute('data-folded', 'false');
+  } finally {
+    await browser.close();
+  }
+});
+
+// A workflow can be folded for its unseen plan while the user has also collapsed
+// the pane. One press on the strip's expand button lifts both, so the notice
+// shows at once and the user is not left pressing it twice.
+test('one expand click lifts both the fold and the pane\'s own collapse', async () => {
+  const { browser, page } = await launch({ secondWorkflow: { plannedElsewhere: true } });
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    // The first workflow's own agent planned it: open, then collapsed by the user.
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await byTestId(page, 'workflow-agent-pane-collapse').click();
+    await expect(pane).toHaveAttribute('data-collapsed', 'true');
+    await expect(pane).toHaveAttribute('data-folded', 'false');
+
+    // The second is another session's plan: the strip now holds the user's collapse and the fold.
+    await pickWorkflow(page, SECOND_WORKFLOW_ID);
+    await expect(pane).toHaveAttribute('data-collapsed', 'true');
+    await expect(pane).toHaveAttribute('data-folded', 'true');
+    expect(await agentPaneCollapsed(page)).toBe(true);
+
+    // One click, no retry: both are lifted, and the pane says why no agent runs.
+    await byTestId(page, 'workflow-agent-pane-expand').click();
+    await expect(pane).toHaveAttribute('data-collapsed', 'false');
+    await expect(pane).toHaveAttribute('data-agent-state', 'starts-on-request');
+    await expect(byTestId(page, 'workflow-agent-plan-saved').getByRole('heading')).toHaveText('The workflow agent has not seen this plan');
+    expect(await agentPaneCollapsed(page)).toBe(false);
+  } finally {
+    await browser.close();
+  }
+});
+
+// The agent list gates the pane's read of the Workflow agent setting, so a
+// launch that pins that read waits for it (`awaitAgentList`). With the setting
+// empty the pane never asks main to open, so the fold on arrival can only come
+// from the picker's summary, and the setup state must not promise a start on close.
+test('a plan no agent has seen, with no Workflow agent chosen, arrives folded and asks main for nothing', async () => {
+  const { browser, page } = await launch({ plannedElsewhere: true, workflowAgent: null, awaitAgentList: true });
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    // Folded on the first frame, though main was never asked and so never said so.
+    await expect(pane).toHaveAttribute('data-folded', 'true');
+    await settleFrames(page, 5);
+    expect(await agentOpenCount(page)).toBe(0);
+    await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+    expect(await workflowAgentSessionCount(page)).toBe(0);
+
+    // Expanded, it asks for the setting, and its line promises a start on request, not on close.
+    await byTestId(page, 'workflow-agent-pane-expand').click();
+    await expect(pane).toHaveAttribute('data-collapsed', 'false');
+    const setup = byTestId(page, 'workflow-agent-setup');
+    await expect(setup).toHaveAttribute('data-setting', 'needed');
+    await expect(setup).toContainText('It plans your workflows, and starts when you ask for changes.');
+    await expect(setup).not.toContainText('close Settings');
+    await expect(byTestId(page, 'workflow-agent-plan-saved')).toHaveCount(0);
+
+    // Choosing the setting with Settings still open: the notice, and the open is held until the close.
+    await openSettingsFromPane(page);
+    await setWorkflowAgent(page, WORKFLOW_AGENT);
+    await expect(byTestId(page, 'workflow-agent-plan-saved')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-setup')).toHaveCount(0);
+    expect(await agentOpenCount(page)).toBe(0);
+
+    // Closing Settings opens once, and main answers that no agent starts until asked.
+    await closeSettings(page);
+    await expect.poll(() => agentOpenCount(page)).toBeGreaterThanOrEqual(1);
+    await expect(byTestId(page, 'workflow-agent-plan-saved')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-ask-for-changes')).toBeEnabled();
+    await expect(pane).toHaveAttribute('data-agent-state', 'starts-on-request');
+    await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+    expect(await workflowAgentSessionCount(page)).toBe(0);
+  } finally {
+    await browser.close();
+  }
+});
+
+// The bug this replaced: with Settings open, a plan no agent has seen read as held
+// for Settings ("Workflow agent chosen. It starts when you close Settings."), though
+// closing Settings starts nothing on it. The notice and Ask for changes stay.
+test('a plan no agent has seen keeps its notice with Settings open, and is not held for the close', async () => {
+  const { browser, page } = await launch({ plannedElsewhere: true, awaitAgentList: true });
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    await expect(pane).toHaveAttribute('data-folded', 'true');
+    await byTestId(page, 'workflow-agent-pane-expand').click();
+    await expect(byTestId(page, 'workflow-agent-plan-saved')).toBeVisible();
+    // The open on arrival has been answered: nothing started.
+    await expect.poll(() => agentOpenCount(page)).toBe(1);
+
+    await openSettingsFromTitleBar(page);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __zustandStores: { config: { getState: () => { settingsOpen: boolean } } } })
+      .__zustandStores.config.getState().settingsOpen)).toBe(true);
+    // Settings does not remount the pane, so the lifted fold holds.
+    await expect(pane).toHaveAttribute('data-collapsed', 'false');
+    await expect(pane).toHaveAttribute('data-agent-state', 'starts-on-request');
+    await expect(byTestId(page, 'workflow-agent-plan-saved')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-ask-for-changes')).toBeEnabled();
+    await expect(byTestId(page, 'workflow-agent-setup')).toHaveCount(0);
+    await expect(pane).not.toContainText('Workflow agent chosen');
+    await expect(pane).not.toContainText('It starts when you close Settings.');
+
+    // The close starts nothing either.
+    await closeSettings(page);
+    await expect(byTestId(page, 'workflow-agent-plan-saved')).toBeVisible();
+    await expect(byTestId(page, 'workflow-agent-terminal')).toHaveCount(0);
+    expect(await workflowAgentSessionCount(page)).toBe(0);
   } finally {
     await browser.close();
   }

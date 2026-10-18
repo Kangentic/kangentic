@@ -238,8 +238,8 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 | `workflow:setLink` | invoke | Link or unlink two tasks (one waits for the other to reach Done) |
 | `workflow:setRoute` | invoke | A task's route, as the column ids it visits |
 | `workflow:setPositions` | invoke | Where hands placed cards, or null for the automatic layout; any other payload is refused; changes no plan revision |
-| `workflow:agentOpen` | invoke | The pane shows the workflow agent: an existing session as it is (a paused one stays paused), else a start that resumes its conversation by id or sends the first message (`src/main/workflows/workflow-agent.ts`). A start with the Workflow agent setting incomplete spawns nothing and answers `setupNeeded`, and the pane asks for the setting |
-| `workflow:agentResume` | invoke | The pane's Resume: start the paused agent again on its own conversation, on the Workflow agent's current model and effort, for a conversation on the chosen agent (`setupNeeded` as for an open) |
+| `workflow:agentOpen` | invoke | The pane shows the workflow agent: an existing session as it is (a paused one stays paused), else a start that resumes its conversation by id, or continues from the saved plan when one is saved (`buildWorkflowAgentContinueMessage`), or sends the first message (`src/main/workflows/workflow-agent.ts`). A workflow with tasks and no agent ever recorded is checked first, before the setting. A start with the Workflow agent setting incomplete spawns nothing and answers `setupNeeded`, and the pane asks for the setting. A workflow with tasks and no agent ever recorded (another session created it over MCP) spawns nothing and answers `startsOnRequest`, and the pane offers Ask for changes |
+| `workflow:agentResume` | invoke | The pane's Resume: start the paused agent again on its own conversation, on the Workflow agent's current model and effort, for a conversation on the chosen agent (`setupNeeded` as for an open). Also the pane's Ask for changes, which starts the agent on a saved plan no agent has seen |
 | `workflow:agentPause` | invoke | The pane's Pause: suspend the agent, keeping its conversation (its spend is captured first) |
 | `workflow:changed` | on | A workflow or its tasks changed, whoever changed it; an open view reloads it |
 
@@ -1041,7 +1041,8 @@ src/main/workflows/
                              #   read access to other projects, its spend captured for Stats
   workflow-agent-record.ts   # a SessionRecord built from the workflow row, so transcript readers reach its conversation
   workflow-agent-prompt.ts   # its first message: {{columns}}, {{brief_xml}} and the project's facts, and the
-                             #   continue-from-the-saved-plan message for a conversation that cannot be resumed
+                             #   continue-from-the-saved-plan message for a start with no conversation to resume (a lost
+                             #   one, or a plan no agent has seen; `WorkflowAgentContinueReason` names which)
   workflow-format.ts         # a workflow's plan as text (formatWorkflow), for the MCP tools and the continue message
   workflow-agent-effort.ts   # the effort it started at, for its Stats rows when the status line reports none
   workflow-runtime.ts        # the IPC context the operations act through
@@ -1068,9 +1069,17 @@ src/main/workflows/
   Read,Grep,Glob,ToolSearch`, `--strict-mcp-config`, `--no-chrome`) it also has no edit or shell
   tools; any other runs in its default mode, and the first message asks it to leave files alone.
   An id the agent reports after launch, or a Claude `/clear` fork's new one, is recorded on the
-  workflow by the `'agent-session-id'` listener. A start with no conversation to resume on a
-  workflow whose agent already ran continues from the saved plan
-  (`buildWorkflowAgentContinueMessage`). It is not resumed at boot; the view's pane opens it.
+  workflow by the `'agent-session-id'` listener. A start with no conversation to resume continues
+  from the saved plan when there is one (`buildWorkflowAgentContinueMessage`, whose reason says
+  where it came from): on a workflow whose agent already ran (`not-resumed`, and the pane says it
+  started over), or on a plan no agent of the workflow has seen (`saved-elsewhere`: another
+  session saved it over MCP, or the user planned by hand while the agent could not start). It is
+  not resumed at boot; the view's pane opens it. An open on a workflow with tasks and no agent ever
+  recorded (`agent_name` null) starts nothing and answers `startsOnRequest`; the pane's Ask for
+  changes starts it through the Resume path, so arrival never holds the plan. The rule is
+  `awaitsFirstAgent` (`src/shared/workflow-agent-first-open.ts`), which the pane also reads from
+  the picker's summary to open folded to its strip on that workflow, without writing its own
+  collapse, and to keep its setup state from promising a start when Settings closes.
 
 - **A stored project id can outlive its project.** A task's home (`workflow_project_id`), a link's
   far end and a planned task's board are ids in another record, and `getProjectDb` on main creates

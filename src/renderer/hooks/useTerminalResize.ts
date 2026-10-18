@@ -11,8 +11,9 @@ const MIN_HEIGHT = 100;
 export const COLLAPSED_HEIGHT = 36;
 // How long after a project switch the height transition stays suppressed so the panel
 // snaps to the destination's collapsed/expanded state. Comfortably covers the switch's
-// height-change cascade (~1 frame) and exceeds the 200ms animation it replaces.
-const SWITCH_SNAP_WINDOW_MS = 250;
+// height-change cascade (~1 frame) and exceeds the 200ms animation it replaces. The
+// sidebar's view-switch fold (`useSidebarResize`) snaps for the same window.
+export const SWITCH_SNAP_WINDOW_MS = 250;
 
 /** What to do with the panel's mounted terminal content when the effective collapsed
  *  state changes. Extracted as a pure function so the regression-prone
