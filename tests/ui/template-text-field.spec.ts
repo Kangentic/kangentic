@@ -354,21 +354,23 @@ test.describe('TemplateTextField', () => {
   // leaves the caret ready for the rest of the sentence. It is skipped where the
   // text already continues with whitespace, or re-picking mid-line would widen
   // the gap every time.
-  test('accepting a variable adds the space after it, unless one is already there', async () => {
+  test('accepting a variable adds the space after it', async () => {
     await openMessageField('');
     await field().click();
     await page.keyboard.type('{{base');
     await expect(inlinePicker()).toBeVisible();
     await page.keyboard.press('Enter');
     await expect(field()).toHaveValue('{{baseBranch}} ');
+  });
 
-    // Accepting where the text already continues with a space must not add a
-    // second one. Typed rather than driven through `setSelectionRange`, whose
-    // synthetic `select` event never reaches the React handler that opens the
-    // picker.
-    await field().fill('');
+  test('accepting a variable adds no second space where one is already there', async () => {
+    // Seeded rather than cleared with `fill('')` after a first accept: on CI
+    // the first accept's text came back after the fill and doubled the
+    // variable. A fresh field carries nothing over.
+    await openMessageField(' and more');
     await field().click();
-    await page.keyboard.type(' and more');
+    // Typed rather than driven through `setSelectionRange`, whose synthetic
+    // `select` event never reaches the React handler that opens the picker.
     await page.keyboard.press('Home');
     await page.keyboard.type('{{base');
     await expect(inlinePicker()).toBeVisible();
