@@ -967,7 +967,9 @@ fallback is stale.
 Every timestamp is an offset from boot, so cards read "3 min ago" whenever the frame opens.
 Sessions cover every state the app distinguishes (thinking, needs-you, a permission prompt,
 suspended, queued) plus a Command Terminal; Monitor rows are derived from the session rows so the
-two views cannot disagree; the usage dashboard is a seeded, deterministic fourteen-day series.
+two views cannot disagree; the usage dashboard is a seeded, deterministic ninety-day history, and
+each period reads its slice on main's own grid (Today by the hour from local midnight, This Week
+from Monday, This Month from the 1st), so Today's tiles are This Week's last bar.
 Each archived task carries the stats its last session left (`DEMO_ARCHIVED_SUMMARIES`, what the
 Completed Tasks dialog lists), and that session was run for real.
 `scripts/capture-demo-archived-runs.mjs` gives each archived task one headless Claude Code run of
