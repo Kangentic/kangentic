@@ -36,14 +36,15 @@ function plannedTask(key: string, title: string): Record<string, unknown> {
  * `two-drafts`: the `draft` workflow, listed first so it opens, and a second
  * draft whose three planned tasks carry the SAME keys (a planned task's key is
  * only unique within its workflow), so a save aimed at the wrong workflow
- * places the wrong cards instead of missing.
+ * places the wrong cards instead of missing. Each is planned by its own
+ * workflow agent, so the pane starts it on open.
  */
 type Seed = 'draft' | 'started' | 'two-drafts';
 
 function seedScript(seed: Seed): string {
   const draftWorkflow = {
     workflow: {
-      id: 'wf-draft', title: 'Theme tokens', state: 'draft',
+      id: 'wf-draft', title: 'Theme tokens', state: 'draft', agent_name: 'claude',
       draft: {
         tasks: [plannedTask('task-1', 'Token table'), plannedTask('task-2', 'Token picker'), plannedTask('task-3', 'Token docs')],
         links: [{ blocker: 'task-1', blocked: 'task-2' }],
@@ -52,7 +53,7 @@ function seedScript(seed: Seed): string {
   };
   const otherDraftWorkflow = {
     workflow: {
-      id: 'wf-other', title: 'Relay notes', state: 'draft',
+      id: 'wf-other', title: 'Relay notes', state: 'draft', agent_name: 'claude',
       draft: {
         tasks: [plannedTask('task-1', 'Note table'), plannedTask('task-2', 'Note picker'), plannedTask('task-3', 'Note docs')],
         links: [],
@@ -60,7 +61,7 @@ function seedScript(seed: Seed): string {
     },
   };
   let workflows: unknown[];
-  if (seed === 'started') workflows = [{ workflow: { id: 'wf-running', title: 'Relay reconnect', state: 'running', draft: null } }];
+  if (seed === 'started') workflows = [{ workflow: { id: 'wf-running', title: 'Relay reconnect', state: 'running', draft: null, agent_name: 'claude' } }];
   else if (seed === 'two-drafts') workflows = [draftWorkflow, otherDraftWorkflow];
   else workflows = [draftWorkflow];
   const links = seed === 'started'

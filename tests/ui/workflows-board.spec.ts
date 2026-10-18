@@ -72,7 +72,8 @@ function seedScript(options: Options): string {
   const homeProjectId = options.homeElsewhere ? HOME_PROJECT_ID : PROJECT_ID;
   const workflow = {
     workflow: {
-      id: 'wf-usage', title: 'Usage budgets', state: options.state ?? 'running', draft: null, color_slot: 5,
+      // Planned by its own workflow agent, so the pane starts it on open.
+      id: 'wf-usage', title: 'Usage budgets', state: options.state ?? 'running', draft: null, color_slot: 5, agent_name: 'claude',
       source_task_id: options.supersededSource ? 't409' : null,
     },
     ...(options.homeElsewhere ? { projectId: HOME_PROJECT_ID } : {}),

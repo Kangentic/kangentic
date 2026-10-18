@@ -45,7 +45,8 @@ const TASKS: SeedTask[] = [
 
 function seedScript(): string {
   return `
-    window.__mockWorkflows = [{ workflow: { id: 'wf-fit', title: 'Usage budgets', state: 'running', draft: null, color_slot: 5 } }];
+    // Planned by its own workflow agent, so the pane starts it on open.
+    window.__mockWorkflows = [{ workflow: { id: 'wf-fit', title: 'Usage budgets', state: 'running', draft: null, color_slot: 5, agent_name: 'claude' } }];
     window.__mockWorkflowLinks = [
       { workflow_id: 'wf-fit', blocker_task_id: 't411', blocked_task_id: 't413' },
       { workflow_id: 'wf-fit', blocker_task_id: 't411', blocked_task_id: 't416' },
