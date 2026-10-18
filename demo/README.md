@@ -249,9 +249,9 @@ what the frame does before it reveals:
 | `state` | config and rows alone; nothing is clicked |
 | `boot` | state plus a few pre-reveal clicks, or a choreography's pose (a card held mid-drag, a menu open) |
 
-The web build and the rig build every scene the same way, through `boot.js`. A held gesture was
-once a `driver` scene the rig played with Playwright's mouse and the web build refused; it is now
-a choreography whose pose the still plays (Choreography and timelines below).
+The web build and the rig build every scene the same way, through `boot.js`. A held gesture (a
+card mid-drag, a menu open) is a choreography whose pose the still plays (Choreography and
+timelines below).
 
 Three fields leave this repo. `alt` is the reader-facing text a docs figure carries, authored
 beside the state it describes (nobody else knows what the frame shows) and emitted into
@@ -791,9 +791,8 @@ Generated from the same `SCENES` the page boots, so the two cannot drift; the sm
 it is served, lists exactly the registry's names, and names the version the frame reports. It is
 what a docs page reads: the site fetches it from the deployed demo at build time, validates every
 figure's scene name (an unknown name fails the site build rather than rendering the error card
-inside a captioned figure), and takes `alt` and `version` from it. Since the held gestures became
-choreographies, every scene's `reach` is `state` or `boot` and every one boots; a site check that
-still refuses `driver` refuses nothing (kangentic.com #105, #111). A URL
+inside a captioned figure), and takes `alt` and `version` from it. Every scene's `reach` is
+`state` or `boot`, and every one boots. A URL
 cannot lag the way a vendored package does, which is the failure `@kangentic/branding` plus
 `scripts/sync-brand.mjs` is known for. Placing frames on pages is the site's job (kangentic.com
 #78 and #79); this file, the registry, and the poster set below are the whole app-side contract.

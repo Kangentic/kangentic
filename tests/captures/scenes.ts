@@ -166,9 +166,8 @@ export interface DemoState {
 }
 
 /**
- * A scene's fields beside its steps. `steps` is left to each reach below: inherited from
- * DemoState as well, it intersected with the driver variant's and narrowed a driver step to one
- * that is a boot step and a rig step at once.
+ * A scene's fields beside its steps. `steps` is left to each reach below, which types it its own
+ * way: a `state` scene has none, and a `boot` scene may carry boot steps.
  */
 interface SceneBase extends Omit<DemoState, 'steps'> {
   name: string;
@@ -223,6 +222,13 @@ export type SceneDefinition =
 /** Whether a choreography has a pose: the still plays up to it, so the frame takes input before it reveals. */
 export function hasPose(choreography: ChoreographyStep[] | undefined): boolean {
   return (choreography ?? []).some((step) => 'pose' in step);
+}
+
+/** Whether a choreography plays a cycle under loop=1: it has steps after its pose, or no pose. One that ends on its pose holds it. */
+export function playsCycle(choreography: ChoreographyStep[] | undefined): boolean {
+  const steps = choreography ?? [];
+  const poseIndex = steps.findIndex((step) => 'pose' in step);
+  return steps.length > 0 && (poseIndex < 0 || poseIndex < steps.length - 1);
 }
 
 /**
@@ -739,13 +745,19 @@ const WORKFLOW_VIEW_ROUND_TRIP: DemoBootStep[] = [
   { click: '[data-testid="view-toggle-workflows"]', waitFor: '[data-testid="workflow-inspector-title"]' },
 ];
 
+/**
+ * A `waitFor` for something gone, not just closing: a popover or a dialog stays mounted through its
+ * exit animation, and pacing never covers the app's own timing (a test plays it eight times faster).
+ */
+const gone = (selector: string): string => `body:not(:has(${selector}))`;
+
 const SETTINGS_PANEL = '[data-testid="settings-panel"]';
 
 /** The Git tab's base branch field, and the nth branch its list offers (the mock's: main, develop, then three more). */
 const BRANCH_PICKER = '[data-testid="branch-picker-input"]';
 const branchOption = (position: number): string => `[data-testid="branch-picker-dropdown"] > div:nth-child(2) > button:nth-child(${position})`;
 /** The list gone, not just closing: the popover stays mounted through its exit animation. */
-const BRANCH_PICKER_CLOSED = 'body:not(:has([data-testid="branch-picker-dropdown"]))';
+const BRANCH_PICKER_CLOSED = gone('[data-testid="branch-picker-dropdown"]');
 const mcpGroupToggle = (group: string): string => `[data-testid="mcp-tool-group-${group}-toggle"]`;
 
 /**
@@ -793,11 +805,13 @@ const ANNOUNCEMENT_HISTORY = ANNOUNCEMENTS.map((announcement) => ({ announcement
  * which is how a project tab shows the same rows for a second project. Each tab's cycle ends on the
  * values it found, so whatever a step writes, a later one writes back.
  */
-const settingSwitch = (id: string): string => `[data-testid="setting-row-${id}"]`;
+/** A settings row by its registry id; a switch row is the switch itself. */
+const settingRow = (id: string): string => `[data-testid="setting-row-${id}"]`;
 /** A step after a cut plays at once behind the veil, so it carries no pacing. */
-const switchSetting = (id: string, on: boolean, ms?: number): ChoreographyStep => ({ click: settingSwitch(id), waitFor: `${settingSwitch(id)}[aria-checked="${on}"]`, ms });
+const switchSetting = (id: string, on: boolean, ms?: number): ChoreographyStep => ({ click: settingRow(id), waitFor: `${settingRow(id)}[aria-checked="${on}"]`, ms });
 const pickSetting = (selector: string, ms?: number): ChoreographyStep => ({ click: selector, waitFor: `${selector}[aria-checked="true"]`, ms });
-const settingChoice = (rowId: string, label: string): string => `[data-testid="setting-row-${rowId}"] [role="radio"][aria-label="${label}"]`;
+/** One option of a row's segmented control, by its label. */
+const settingRadio = (rowId: string, label: string): string => `[data-testid="setting-row-${rowId}"] [role="radio"][aria-label="${label}"]`;
 const WORKFLOW_PROMPT_VARIABLES = '[data-testid="workflow-agent-prompt-variable-trigger"]';
 /** The switcher's options are the projects' folders. */
 const projectPath = (projectId: string): string => DEMO_PROJECTS.find((project) => project.id === projectId)?.path ?? projectId;
@@ -858,7 +872,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     choreography: [
       { click: '[data-testid="shortcut-presets"]', waitFor: '[data-testid="shortcut-presets-menu"]', ms: 900 },
       { hover: '[data-testid="shortcut-presets-menu"] button', ms: 1600 },
-      { click: '[data-testid="shortcut-presets"]', waitFor: 'body:not(:has([data-testid="shortcut-presets-menu"]))', ms: 1000 },
+      { click: '[data-testid="shortcut-presets"]', waitFor: gone('[data-testid="shortcut-presets-menu"]'), ms: 1000 },
     ],
   },
   // Column width through Narrow and Wide, which redraws the board's columns beside the panel, and back.
@@ -866,9 +880,9 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     ready: '[data-testid="setting-row-columnWidth"]',
     alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel and the status bar.',
     choreography: [
-      pickSetting(settingChoice('columnWidth', 'Narrow'), 1800),
-      pickSetting(settingChoice('columnWidth', 'Wide'), 1800),
-      pickSetting(settingChoice('columnWidth', 'Default'), 900),
+      pickSetting(settingRadio('columnWidth', 'Narrow'), 1800),
+      pickSetting(settingRadio('columnWidth', 'Wide'), 1800),
+      pickSetting(settingRadio('columnWidth', 'Default'), 900),
     ],
   },
   // The context bar trimmed from the top down: Version, Cost and Tool calls switched off. The site's
@@ -893,13 +907,13 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     ready: '[data-testid="setting-row-diffViewMode"]',
     alt: 'Settings on the Changes tab: the diff layout, the default scope a Changes panel opens on, the whitespace, folding, wrapping, and narrow-pane options, and file sorting.',
     choreography: [
-      pickSetting(settingChoice('diffViewMode', 'Inline'), 1400),
+      pickSetting(settingRadio('diffViewMode', 'Inline'), 1400),
       switchSetting('diffWrapLines', true, 1200),
-      pickSetting(settingChoice('diffFileSort', 'Status'), 2000),
+      pickSetting(settingRadio('diffFileSort', 'Status'), 2000),
       { cut: true },
-      pickSetting(settingChoice('diffViewMode', 'Side by side')),
+      pickSetting(settingRadio('diffViewMode', 'Side by side')),
       switchSetting('diffWrapLines', false),
-      pickSetting(settingChoice('diffFileSort', 'Name')),
+      pickSetting(settingRadio('diffFileSort', 'Name')),
     ],
   },
   // Cursor style through Underline and Bar, which every terminal in the panel below takes live, and back.
@@ -907,9 +921,9 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     ready: '[data-testid="setting-row-terminal.shell"]',
     alt: 'Settings on the Terminal tab: the shell, the font size and family, the cursor style, backspace behavior, and the terminal colors.',
     choreography: [
-      pickSetting(settingChoice('terminal.cursorStyle', 'Underline'), 1600),
-      pickSetting(settingChoice('terminal.cursorStyle', 'Bar'), 1600),
-      pickSetting(settingChoice('terminal.cursorStyle', 'Block'), 900),
+      pickSetting(settingRadio('terminal.cursorStyle', 'Underline'), 1600),
+      pickSetting(settingRadio('terminal.cursorStyle', 'Bar'), 1600),
+      pickSetting(settingRadio('terminal.cursorStyle', 'Block'), 900),
     ],
   },
   behavior: {
@@ -918,11 +932,11 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     // A full queue set to reject, and windows set to stay open on a click outside. Then the cut,
     // and both put back behind it.
     choreography: [
-      pickSetting(settingChoice('agent.queueOverflow', 'Reject'), 1400),
-      pickSetting(settingChoice('windowLightDismiss', 'Off'), 2000),
+      pickSetting(settingRadio('agent.queueOverflow', 'Reject'), 1400),
+      pickSetting(settingRadio('windowLightDismiss', 'Off'), 2000),
       { cut: true },
-      pickSetting(settingChoice('agent.queueOverflow', 'Queue')),
-      pickSetting(settingChoice('windowLightDismiss', 'Focused')),
+      pickSetting(settingRadio('agent.queueOverflow', 'Queue')),
+      pickSetting(settingRadio('windowLightDismiss', 'Focused')),
     ],
   },
   // The callout under Graphics acceleration only renders on an install Kangentic downgraded
@@ -941,7 +955,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     alt: 'Settings on the Hotkeys tab: every keyboard shortcut with its current binding and a Rebind control, with a reset to defaults above the list.',
     choreography: [
       { click: '[data-testid="key-capture-input"]', waitFor: '[data-testid="key-capture-box"]', ms: 2800 },
-      { click: { x: 0.72, y: 0.28 }, waitFor: 'body:not(:has([data-testid="key-capture-box"]))', ms: 1000 },
+      { click: { x: 0.72, y: 0.28 }, waitFor: gone('[data-testid="key-capture-box"]'), ms: 1000 },
     ],
   },
   notifications: {
@@ -1051,7 +1065,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     alt: 'Settings on the Developer tab: the activity debug overlay, persistent console logs, crash reports, and IPC recording.',
     choreography: [
       switchSetting('developer.activityDebugOverlay', true, 2800),
-      { click: '[data-testid="activity-debug-overlay"] button[data-overlay-button]', waitFor: `${settingSwitch('developer.activityDebugOverlay')}[aria-checked="false"]`, ms: 1000 },
+      { click: '[data-testid="activity-debug-overlay"] button[data-overlay-button]', waitFor: `${settingRow('developer.activityDebugOverlay')}[aria-checked="false"]`, ms: 1000 },
     ],
   },
 };
@@ -1122,9 +1136,7 @@ function knowledgeGraphProjectScenes(): Record<string, SceneDefinition> {
 }
 
 // ---------------------------------------------------------------- choreography targets
-// Selectors the choreographies below share. A removal is waited for with `body:not(:has(...))`: a
-// popover or a dialog stays mounted through its exit animation, and pacing never covers the app's
-// own timing (a test plays the pacing eight times faster).
+// Selectors the choreographies below share. A removal is waited for with `gone(...)` (above).
 
 const WELCOME_REFRESH = '[data-testid="welcome-refresh"]';
 const WELCOME_SETUP_TOGGLE = '[data-testid="welcome-setup-toggle"]';
@@ -1528,7 +1540,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     // The key let go, so the chip finalizes over the silent microphone and closes with nothing to
     // insert, then held again, so it opens under the field again. No words: none were spoken.
     choreography: [
-      { hotkeyUp: 'Mouse:Back', waitFor: 'body:not(:has([data-testid="dictation-live-chip"]))', ms: 1600 },
+      { hotkeyUp: 'Mouse:Back', waitFor: gone('[data-testid="dictation-live-chip"]'), ms: 1600 },
       { hotkeyDown: 'Mouse:Back', waitFor: DICTATION_FIELD_LISTENING, ms: 3200 },
     ],
   },
@@ -1555,7 +1567,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       { cut: true },
       { type: { into: CONVERSATION_SEARCH, text: '' }, waitFor: '[data-testid="conversation-search-next"]:disabled' },
       // The viewer's own way back to the end, which shows once a match has scrolled it up.
-      { click: '[data-testid="conversation-jump-to-latest"]', waitFor: 'body:not(:has([data-testid="conversation-jump-to-latest"]))' },
+      { click: '[data-testid="conversation-jump-to-latest"]', waitFor: gone('[data-testid="conversation-jump-to-latest"]') },
     ],
   },
 
@@ -1668,7 +1680,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: monitorGroup(2), waitFor: `${monitorGroup(2)}[aria-pressed="true"]`, ms: 3000 },
       { cut: true },
       { click: monitorGroup(1), waitFor: `${monitorGroup(1)}[aria-pressed="true"]` },
-      { type: { into: MONITOR_FILTER, text: '' }, waitFor: 'body:not(:has([data-testid="monitor-visible-count"]))' },
+      { type: { into: MONITOR_FILTER, text: '' }, waitFor: gone('[data-testid="monitor-visible-count"]') },
       { click: { x: 0.75, y: 0.15 } },
     ],
   },
@@ -1787,9 +1799,9 @@ export const SCENES: Record<string, SceneDefinition> = {
       { hover: `${PROMOTE_POPOVER} > button:nth-of-type(1)`, ms: 500 },
       { hover: `${PROMOTE_POPOVER} > button:nth-of-type(2)`, ms: 2000 },
       { cut: true },
-      { click: '[data-testid="bulk-move-to-board-btn"]', waitFor: `body:not(:has(${PROMOTE_POPOVER}))` },
+      { click: '[data-testid="bulk-move-to-board-btn"]', waitFor: gone(PROMOTE_POPOVER) },
       { click: backlogCheckbox('backlog-cw-invoice-pdf'), waitFor: `${backlogCheckbox('backlog-cw-invoice-pdf')}:not(:checked)` },
-      { click: backlogCheckbox('backlog-cw-dark-mode'), waitFor: 'body:not(:has([data-testid="backlog-bulk-toolbar"]))' },
+      { click: backlogCheckbox('backlog-cw-dark-mode'), waitFor: gone('[data-testid="backlog-bulk-toolbar"]') },
     ],
   },
   'quick-find': {
@@ -1808,7 +1820,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     choreography: [
       { type: { into: SEARCH_INPUT, text: 'websocket' }, waitFor: '[data-testid="search-palette-result"]', ms: 3200 },
       { cut: true },
-      { type: { into: SEARCH_INPUT, text: '' }, waitFor: 'body:not(:has([data-testid="search-palette-result"]))' },
+      { type: { into: SEARCH_INPUT, text: '' }, waitFor: gone('[data-testid="search-palette-result"]') },
       { click: '[data-testid="search-palette-card"] > div > div:last-child' },
     ],
   },
@@ -1834,7 +1846,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     choreography: [
       { key: 'ArrowDown', ms: 1000 },
       { key: 'ArrowDown', ms: 1400 },
-      { type: { into: SEARCH_INPUT, text: 'auth middleware' }, waitFor: 'body:not(:has([data-testid="search-palette-result"][data-row-index="1"]))', ms: 2800 },
+      { type: { into: SEARCH_INPUT, text: 'auth middleware' }, waitFor: gone('[data-testid="search-palette-result"][data-row-index="1"]'), ms: 2800 },
       { cut: true },
       { type: { into: SEARCH_INPUT, text: 'auth' }, waitFor: '[data-testid="search-palette-card"]:has([data-row-index="4"]) [data-testid="search-palette-result"][data-row-index="0"].bg-surface-hover' },
       { click: '[data-testid="search-palette-card"] > div > div:first-child > svg' },
@@ -1914,7 +1926,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="column-automation-add"][data-trigger="exit"]', waitFor: '[data-testid="column-automation-picker"]', ms: 700 },
       { hover: automationPickerType('send_message'), ms: 500 },
       { click: automationPickerType('notify'), waitFor: '[data-testid="edit-automation-dialog"]', ms: 2400 },
-      { click: '[data-testid="edit-automation-cancel"]', waitFor: `body:not(:has([data-testid="edit-automation-dialog"])):has(${BOARD_MANAGER_CLEAN})`, ms: 900 },
+      { click: '[data-testid="edit-automation-cancel"]', waitFor: `${gone('[data-testid="edit-automation-dialog"]')}:has(${BOARD_MANAGER_CLEAN})`, ms: 900 },
     ],
   },
   'column-automation-turn-end': {
@@ -1933,9 +1945,9 @@ export const SCENES: Record<string, SceneDefinition> = {
     // what both rows hold. Cancel on a saved row changes nothing, and Save is never pressed.
     choreography: [
       { click: turnEndRowEdit('Send findings back'), waitFor: '[data-testid="edit-automation-dialog"]', ms: 2800 },
-      { click: '[data-testid="edit-automation-cancel"]', waitFor: `body:not(:has([data-testid="edit-automation-dialog"])):has(${BOARD_MANAGER_CLEAN})`, ms: 800 },
+      { click: '[data-testid="edit-automation-cancel"]', waitFor: `${gone('[data-testid="edit-automation-dialog"]')}:has(${BOARD_MANAGER_CLEAN})`, ms: 800 },
       { click: turnEndRowEdit('On to Merge'), waitFor: '[data-testid="edit-automation-dialog"]', ms: 2800 },
-      { click: '[data-testid="edit-automation-cancel"]', waitFor: `body:not(:has([data-testid="edit-automation-dialog"])):has(${BOARD_MANAGER_CLEAN})`, ms: 900 },
+      { click: '[data-testid="edit-automation-cancel"]', waitFor: `${gone('[data-testid="edit-automation-dialog"]')}:has(${BOARD_MANAGER_CLEAN})`, ms: 900 },
     ],
   },
   // The first of those two rows opened in its Edit automation dialog, so a figure can show what a
@@ -1949,7 +1961,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'boot',
     description: 'The Edit automation dialog on Testing\'s first turn-end row, Send findings back, for the landing page\'s Automations tab: its four cards, Trigger on agent turn end, an Agent evaluation Condition in plain words, a Frequency of three, and a Move to column Action to Executing whose message carries {{agentReply}}. Opened from the Column Manager of the same configured board as column-automation-turn-end, with Claude on Sonnet 5 as the Automation agent that answers the Condition. At the 1600 by 1000 frame the dialog\'s body scrolls by about 115px: the first three cards show whole, and the Action card shows its Type, its column and the Message, whose last line ({{agentReply}}) is cut off at the bottom of the body, with the Template variable picker below the fold.',
     alt: 'The Edit automation dialog for Send findings back on Testing: it runs on agent turn end when an Agent evaluation finds the review left work for the implementer, up to three times, and moves the task back to Executing with a message.',
-    config: { automation: { agent: 'claude', model: DEMO_COLUMN_MODELS.sonnet, effort: null } },
+    config: DEMO_AUTOMATION_AGENT,
     seeds: {
       __mockSwimlanePatches: COLUMN_LADDER,
       __mockAutomations: [REVIEW_PASS_AUTOMATION, ...TESTING_TURN_END_AUTOMATIONS],
@@ -2109,7 +2121,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       // The list hands over to the view, so it opens again from the Completed header once the view
       // closes. That header is on Done, past the frame's right edge, so the board scrolls to it and
       // back to To Do, where the frame opened, behind the list.
-      { click: '[data-testid="task-detail-close"]', waitFor: 'body:not(:has([data-testid="completed-task-view"]))', ms: 600 },
+      { click: '[data-testid="task-detail-close"]', waitFor: gone('[data-testid="completed-task-view"]'), ms: 600 },
       { scroll: '[data-testid="expand-completed-btn"]', ms: 300 },
       { click: '[data-testid="expand-completed-btn"]', waitFor: '[data-testid="completed-task-checkbox"]', ms: 300 },
       { scroll: '[data-swimlane-name="To Do"]', ms: 1000 },
@@ -2172,7 +2184,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       // Above Refactor API error handling's middle, so the card goes back to the top of the column,
       // and landed there: the overlay plays its drop animation after the card has moved, and the
       // frame fades back in only once it is gone.
-      { drag: { from: `[data-swimlane-name="Executing"] ${AUTH_CARD}`, to: TODO_TOP_SLOT }, waitFor: `body:not(:has(.drag-overlay)) [data-swimlane-name="To Do"] ${AUTH_CARD}` },
+      { drag: { from: `[data-swimlane-name="Executing"] ${AUTH_CARD}`, to: TODO_TOP_SLOT }, waitFor: `${gone('.drag-overlay')} [data-swimlane-name="To Do"] ${AUTH_CARD}` },
     ],
   },
   'card-menu': {
@@ -2189,7 +2201,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       { hover: '[data-testid="context-toggle-automations"]', ms: 500 },
       { hover: '[data-testid="context-new-workflow"]', ms: 700 },
       { hover: '[data-testid="context-move-to"]', ms: 1100 },
-      { click: EMPTY_BOARD, waitFor: 'body:not(:has([data-testid="task-context-menu"]))', ms: 1400 },
+      { click: EMPTY_BOARD, waitFor: gone('[data-testid="task-context-menu"]'), ms: 1400 },
     ],
   },
   // The board draws a workflow card's links only while the pointer rests on the card

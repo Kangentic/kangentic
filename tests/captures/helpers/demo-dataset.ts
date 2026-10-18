@@ -3447,11 +3447,12 @@ export function buildDemoPreConfig(options: {
         // into Done comes back where it was, and one moved between columns moves back.
         return function () {
           if (toDone && sessionId) setSessionStatus(sessionId, 'running');
+          var moveBack = function () {
+            return window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: from.laneId, targetPosition: from.position }, projectId);
+          };
           var restore = toDone
-            ? window.electronAPI.tasks.unarchive({ id: move.task, targetSwimlaneId: from.laneId }, projectId).then(function () {
-              return window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: from.laneId, targetPosition: from.position }, projectId);
-            })
-            : window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: from.laneId, targetPosition: from.position }, projectId);
+            ? window.electronAPI.tasks.unarchive({ id: move.task, targetSwimlaneId: from.laneId }, projectId).then(moveBack)
+            : moveBack();
           restore.then(function () {
             if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(from.laneId) });
             if (window.__mockFireTaskChangedInOtherWindow) window.__mockFireTaskChangedInOtherWindow(projectId);
@@ -3743,8 +3744,8 @@ export function buildDemoPreConfig(options: {
         var scale = scope.kind === 'all' ? 1 : 0.42;
         var nowDate = new Date(now);
         // Local calendar days and hours, as main buckets them (src/main/usage-stats/bucketing.ts).
-        function localDay(offset) { return new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() + offset).getTime(); }
-        function localHour(hour) { return new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate(), hour).getTime(); }
+        function dayStartFromToday(offset) { return new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() + offset).getTime(); }
+        function hourStartToday(hour) { return new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate(), hour).getTime(); }
         // Per-turn capture starts later than the cost ledger (earliestTurnMs below), so the token
         // series is empty before it, as a real install's is.
         var turnLedgerStartMs = now - 30 * dayMs;
@@ -3791,12 +3792,12 @@ export function buildDemoPreConfig(options: {
         }
 
         // One history for every period: ninety local days ending today, drawn once in day order, so
-        // each period reads a slice of the same days. Today's tiles are This Week's last bar, and
-        // This Week sits inside This Month, as they do over main's one ledger.
+        // each period reads a slice of the same days. Today's tiles are This Week's last bar, and a
+        // day two periods both hold reads the same in each, as it does over main's one ledger.
         var historyDays = 90;
         var history = [];
         for (var day = 0; day < historyDays; day++) {
-          var dayStartMs = localDay(day - (historyDays - 1));
+          var dayStartMs = dayStartFromToday(day - (historyDays - 1));
           var isToday = day === historyDays - 1;
           // Today is a working day whatever the calendar says: the board's sessions are working now.
           var weekend = !isToday && new Date(dayStartMs).getDay() % 6 === 0;
@@ -3825,7 +3826,7 @@ export function buildDemoPreConfig(options: {
           var recent = hour <= currentHour && currentHour - hour < 3;
           hourShares.push((recent ? 3 : hour >= 9 && hour < 19 ? 1 : 0.1) * (0.6 + hourRandom() * 0.8));
         }
-        var todayHours = split(history[historyDays - 1], hourShares, localHour).slice(0, currentHour + 1);
+        var todayHours = split(history[historyDays - 1], hourShares, hourStartToday).slice(0, currentHour + 1);
         // The ledger holds the running sessions too, each under the hour or day it started: main's
         // metrics timer upserts their readings, and the renderer's live overlay subtracts what the
         // window's ledger holds for them (liveLedgerBaseline below). These are the sessions that
@@ -3841,14 +3842,14 @@ export function buildDemoPreConfig(options: {
           return { startMs: now - session.startedMinutesAgo * 60000, costUsd: session.costUsd };
         });
         liveSessions.forEach(function (live) {
-          var record = live.startMs >= localDay(0)
+          var record = live.startMs >= dayStartFromToday(0)
             ? todayHours[new Date(live.startMs).getHours()]
             : history.filter(function (dayRecord) { return dayRecord.startMs <= live.startMs; }).pop();
           if (!record) return;
           record.costUsd += live.costUsd;
           record.sessionCount += 1;
         });
-        history[historyDays - 1] = sum(todayHours, localDay(0));
+        history[historyDays - 1] = sum(todayHours, dayStartFromToday(0));
 
         // Live's five-minute grid: each slice a twelfth of its hour, give or take, today's hours and
         // before midnight a twenty-fourth of yesterday.
@@ -3856,7 +3857,7 @@ export function buildDemoPreConfig(options: {
           var yesterday = history[historyDays - 2];
           var records = [];
           for (var start = fromMs; start < toMs; start += fiveMinutesMs) {
-            var source = start >= localDay(0) ? todayHours[new Date(start).getHours()] : null;
+            var source = start >= dayStartFromToday(0) ? todayHours[new Date(start).getHours()] : null;
             var jitter = (0.5 + hourRandom()) / 12;
             records.push({
               startMs: start,
@@ -3868,7 +3869,7 @@ export function buildDemoPreConfig(options: {
           }
           return records;
         }
-        function localDayOf(epochMs) {
+        function dayStartContaining(epochMs) {
           var date = new Date(epochMs);
           return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
         }
@@ -3882,7 +3883,7 @@ export function buildDemoPreConfig(options: {
         history.forEach(function (record) { historyByStart[record.startMs] = record; });
         function dayRecords(fromMs, toMs) {
           var records = [];
-          for (var start = localDayOf(fromMs); start < toMs; start = localDayOf(start + 36 * hourMs)) {
+          for (var start = dayStartContaining(fromMs); start < toMs; start = dayStartContaining(start + 36 * hourMs)) {
             records.push(historyByStart[start] || { startMs: start, costUsd: 0, inputTokens: 0, outputTokens: 0, sessionCount: 0 });
           }
           return records;
@@ -3899,7 +3900,7 @@ export function buildDemoPreConfig(options: {
         // A day by the hour, for a drill: today as it happened, a past day with the working day
         // carrying the volume.
         function hoursOf(dayRecord) {
-          if (dayRecord.startMs === localDay(0)) return todayHours;
+          if (dayRecord.startMs === dayStartFromToday(0)) return todayHours;
           var shares = [];
           for (var dayHour = 0; dayHour < 24; dayHour++) shares.push((dayHour >= 9 && dayHour < 19 ? 1 : 0.1) * (0.6 + hourRandom() * 0.8));
           var date = new Date(dayRecord.startMs);
@@ -3923,9 +3924,9 @@ export function buildDemoPreConfig(options: {
         // and This Month from the 1st by the day, and All Time every day there is.
         var windowStartMs, rangeEndMs = now, tokenBucketMs, costBucketMs, costRecords, tokenRecords, previousRecords, previousSpanMs;
         if (drill) {
-          windowStartMs = localDayOf(drill.dayStartMs);
-          var drillEndMs = localDayOf(windowStartMs + 36 * hourMs);
-          var dayBeforeMs = localDayOf(windowStartMs - 12 * hourMs);
+          windowStartMs = dayStartContaining(drill.dayStartMs);
+          var drillEndMs = dayStartContaining(windowStartMs + 36 * hourMs);
+          var dayBeforeMs = dayStartContaining(windowStartMs - 12 * hourMs);
           rangeEndMs = Math.min(drillEndMs, now);
           costRecords = hoursOf(dayRecords(windowStartMs, drillEndMs)[0]);
           tokenRecords = halves(costRecords);
@@ -3954,19 +3955,19 @@ export function buildDemoPreConfig(options: {
           tokenBucketMs = fiveMinutesMs;
           costBucketMs = dayMs;
         } else if (period === 'today') {
-          windowStartMs = localDay(0);
+          windowStartMs = dayStartFromToday(0);
           costRecords = todayHours;
           tokenRecords = halves(todayHours);
           previousRecords = [history[historyDays - 2]];
-          previousSpanMs = windowStartMs - localDay(-1);
+          previousSpanMs = windowStartMs - dayStartFromToday(-1);
           tokenBucketMs = halfHourMs;
           costBucketMs = hourMs;
         } else {
           var mondayOffset = (nowDate.getDay() + 6) % 7;
-          windowStartMs = period === 'week' ? localDay(-mondayOffset)
+          windowStartMs = period === 'week' ? dayStartFromToday(-mondayOffset)
             : period === 'month' ? new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime()
             : history[0].startMs;
-          var previousStartMs = period === 'week' ? localDay(-mondayOffset - 7)
+          var previousStartMs = period === 'week' ? dayStartFromToday(-mondayOffset - 7)
             : period === 'month' ? new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1).getTime()
             : null;
           costRecords = dayRecords(windowStartMs, now);
@@ -4101,7 +4102,7 @@ export function buildDemoPreConfig(options: {
         ];
         var backgroundDays = [];
         for (var dayOffset = 0; dayOffset < 6; dayOffset++) {
-          var backgroundDayStart = localDay(-dayOffset);
+          var backgroundDayStart = dayStartFromToday(-dayOffset);
           backgroundJobShapes.forEach(function (shape) {
             var calls = Math.round(shape.perDay * (scope.kind === 'all' ? 1.6 : 1) * (0.6 + random() * 0.8));
             if (calls === 0) return;
@@ -4115,7 +4116,7 @@ export function buildDemoPreConfig(options: {
         }
         // Every day is drawn whatever the window, so a day reads the same in each; the window keeps
         // the days inside it.
-        backgroundDays = backgroundDays.filter(function (row) { return row.dayStartMs >= localDayOf(windowStartMs) && row.dayStartMs < rangeEndMs; });
+        backgroundDays = backgroundDays.filter(function (row) { return row.dayStartMs >= dayStartContaining(windowStartMs) && row.dayStartMs < rangeEndMs; });
         // The fold foldBackgroundUsage (src/main/usage-stats/background-usage.ts) does, copied
         // here as the UI mock copies it. Keep the totals' fields in step with BackgroundCallTotals.
         function emptyBackgroundTotals() {

@@ -119,9 +119,12 @@ test.describe('Board Filters', () => {
   });
 
   test('label toggle filters tasks', async () => {
-    // Click "auth" label pill
-    const authPill = page.locator('[data-testid="board-filter-btn"]').locator('..').locator('text=auth');
-    await authPill.click();
+    // Click the "auth" label pill. Like the priority pill, it is a toggle button, so its state is
+    // aria-pressed, which a screen reader announces.
+    const authToggle = page.locator('[data-testid="filter-label"][data-label="auth"]');
+    await expect(authToggle).toHaveAttribute('aria-pressed', 'false');
+    await authToggle.click();
+    await expect(authToggle).toHaveAttribute('aria-pressed', 'true');
 
     // Tasks with "auth" label: Auth bug fix, API refactor
     await expect(page.locator('[data-testid="swimlane"]').locator('text=Auth bug fix')).toBeVisible();
@@ -130,7 +133,10 @@ test.describe('Board Filters', () => {
     await expect(page.locator('[data-testid="swimlane"]').locator('text=Docs update')).not.toBeVisible();
 
     // Untoggle auth
-    await authPill.click();
+    await authToggle.click();
+    await expect(authToggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=Dashboard feature')).toBeVisible();
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=Docs update')).toBeVisible();
   });
 
   test('combined priority + label filter uses AND logic', async () => {

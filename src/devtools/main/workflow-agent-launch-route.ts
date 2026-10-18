@@ -25,7 +25,7 @@ interface JsonResponder {
 }
 
 /** A new conversation's launch, as `startWorkflowAgent` builds it for a workflow with no agent yet. */
-export interface WorkflowAgentLaunch {
+interface WorkflowAgentLaunch {
   /** The project's checkout: the agent runs there, with no worktree. */
   cwd: string;
   /** The first message, from the configured template with its variables filled in. */
@@ -58,12 +58,14 @@ function readString(body: unknown, key: string): string {
   throw new WorkflowAgentLaunchError('missing-field', `Provide "${key}".`);
 }
 
-export function describeWorkflowAgentLaunch(context: IpcContext, projectId: string, workflowId: string): WorkflowAgentLaunch {
+function describeWorkflowAgentLaunch(context: IpcContext, projectId: string, workflowId: string): WorkflowAgentLaunch {
+  // The registry first: a project id names its database file, so an id the app does not hold
+  // never reaches the disk.
+  const project = context.projectRepo.getById(projectId);
+  if (!project) throw new WorkflowAgentLaunchError('unknown-project', `No project ${projectId}.`);
   const database = getExistingProjectDb(projectId);
   const workflow = database ? new WorkflowRepository(database).getById(workflowId) : undefined;
   if (!workflow) throw new WorkflowAgentLaunchError('unknown-workflow', `Project ${projectId} has no workflow ${workflowId}.`);
-  const project = context.projectRepo.getById(projectId);
-  if (!project) throw new WorkflowAgentLaunchError('unknown-project', `No project ${projectId}.`);
   const handle = context.mcpServerHandle;
   const mcpServerUrl = handle ? appendWorkflowAgentCaller(handle.urlForProject(projectId), workflow.id) : undefined;
   if (!handle || !mcpServerUrl) throw new WorkflowAgentLaunchError('mcp-server-off', 'The MCP server is off. Turn it on in Settings, MCP Server.');
