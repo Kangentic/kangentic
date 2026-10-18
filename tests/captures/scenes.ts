@@ -2169,8 +2169,10 @@ export const SCENES: Record<string, SceneDefinition> = {
       { pose: true },
       { drop: true, waitFor: `[data-swimlane-name="Executing"] ${AUTH_CARD}`, ms: 5500 },
       { cut: true },
-      // Above Refactor API error handling's middle, so the card goes back to the top of the column.
-      { drag: { from: `[data-swimlane-name="Executing"] ${AUTH_CARD}`, to: TODO_TOP_SLOT }, waitFor: `[data-swimlane-name="To Do"] ${AUTH_CARD}` },
+      // Above Refactor API error handling's middle, so the card goes back to the top of the column,
+      // and landed there: the overlay plays its drop animation after the card has moved, and the
+      // frame fades back in only once it is gone.
+      { drag: { from: `[data-swimlane-name="Executing"] ${AUTH_CARD}`, to: TODO_TOP_SLOT }, waitFor: `body:not(:has(.drag-overlay)) [data-swimlane-name="To Do"] ${AUTH_CARD}` },
     ],
   },
   'card-menu': {
