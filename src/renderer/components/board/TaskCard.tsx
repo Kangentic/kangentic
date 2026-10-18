@@ -26,6 +26,7 @@ import { boardWorkflowNow, refusedBoardMove } from '../../utils/workflow-refusal
 import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
 import { describeIpcError } from '../../lib/ipc-error';
 import { runSessionToggle, sessionToggleRowFor, type SessionToggleDirection } from '../../utils/session-toggle';
+import { resyncBoardAfterMonitorWrite } from '../monitor/resync-board-after-monitor-write';
 
 interface TaskCardProps {
   task: Task;
@@ -178,14 +179,16 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   };
 
   // No window to close: the card's status bar shows the pause through the
-  // store's optimistic write, and the board reload picks up the task row main
-  // rewrote (its session pointer), as the task detail's board host does.
+  // store's optimistic write, and the resync picks up the task row main
+  // rewrote (its session pointer). It runs however the toggle settles, because
+  // a pause clears the pointer before it stops the agent, and the stop can
+  // still fail. It targets the project the card was on at the click: a pause
+  // can take seconds, and a user who switched boards meanwhile needs that
+  // board's warm snapshot dropped, not the open board reloaded.
   const handleToggleSession = (direction: SessionToggleDirection) => {
-    void runSessionToggle({
-      taskId: task.id,
-      direction,
-      projectId: useProjectStore.getState().currentProject?.id ?? null,
-      onSucceeded: () => { void useBoardStore.getState().loadBoard(); },
+    const projectId = useProjectStore.getState().currentProject?.id ?? null;
+    void runSessionToggle({ taskId: task.id, direction, projectId }).finally(() => {
+      if (projectId !== null) resyncBoardAfterMonitorWrite(projectId);
     });
   };
 

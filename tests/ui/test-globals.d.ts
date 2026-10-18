@@ -134,6 +134,21 @@ declare global {
     __mockWorkflowAgentOpenCount?: number;
     /** When true, the next `workflows.agentOpen` answers `setupNeeded: true` whatever the setting says, then clears itself. Set in addInitScript. */
     __mockWorkflowAgentSetupNeededOnce?: boolean;
+
+    /** When true, the next `tasks.move` hangs until `__mockTaskMoveResolve` runs, then clears itself. Set at runtime. */
+    __mockTaskMoveDeferred?: boolean;
+    /** Settles the move `__mockTaskMoveDeferred` held. Installed by the mock when it holds one. */
+    __mockTaskMoveResolve?: () => void;
+    /** Makes the next `tasks.move` commit and then reject with this message, then clears itself. Set at runtime. */
+    __mockMoveRejectAfterCommit?: string | null;
+    /** Zeroes the mock's IPC call counter. Installed eagerly at mock-bootstrap time, so it is not optional: a missing counter must throw, not skip the reset. */
+    __resetIpcCallCounts: () => void;
+    /** The mock's watched IPC calls since the last reset, keyed `namespace.method` (`tasks.list`). Installed eagerly at mock-bootstrap time. */
+    __getIpcCallCounts: () => Record<string, number>;
+    /** Set by a spec's `sessions.suspend` hold once the held call arrives. */
+    __suspendHeld?: boolean;
+    /** Releases the `sessions.suspend` call a spec is holding. */
+    __releaseSuspend?: () => void;
   }
 }
 
