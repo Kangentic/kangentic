@@ -2617,6 +2617,71 @@ for (const { scene, held } of HELD_POSES) {
   }
 }
 
+/** One flip of `data-demo-choreography` to `rest` or `playing`, with what the page showed at that moment. */
+interface StateFlip { state: string; cycles: string; cursor: string; overlay: boolean; at: number }
+
+/** The scenes that end a cycle holding a drag, and one that ends it at rest with the button up. */
+const CYCLE_END_SCENES = [
+  { scene: 'card-drag', holding: true },
+  { scene: 'window-dock', holding: true },
+  { scene: 'column-automation-edit', holding: false },
+];
+for (const { scene, holding } of CYCLE_END_SCENES) {
+  test(`view=${scene} ${holding ? 'ends a cycle with the pointer still drawn and goes straight to its drop' : 'ends a cycle with the pointer gone and rests before the next'}`, async ({ page }) => {
+    // A cycle that ends on a held drag is a hand mid-gesture: the pointer stays on the page and the
+    // drop follows a beat later, where a cycle at rest takes the pointer away for the long pause.
+    // At the test pacing that pause is 3.5 s over 8.
+    test.setTimeout(90_000);
+    const restBetweenCyclesMs = 3500 / CHOREOGRAPHY_TEST_RATE;
+    const getUnexpectedErrors = collectUnexpectedErrors(page);
+    await page.addInitScript((rate) => {
+      (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
+      const flips: StateFlip[] = [];
+      (window as unknown as { __stateFlips: StateFlip[] }).__stateFlips = flips;
+      new MutationObserver((records) => {
+        for (const record of records) {
+          if (record.attributeName !== 'data-demo-choreography') continue;
+          const root = document.documentElement;
+          const cursor = document.querySelector<HTMLElement>('[data-demo-cursor]');
+          flips.push({
+            state: root.getAttribute('data-demo-choreography') ?? '',
+            cycles: root.getAttribute('data-demo-cycles') ?? '',
+            cursor: cursor ? cursor.style.opacity : 'none',
+            overlay: document.querySelector('.drag-overlay, [data-testid="snap-preview"]:not([style*="display: none"])') !== null,
+            at: performance.now(),
+          });
+        }
+      // Observed on the document, not its root: an init script runs before the root element exists.
+      }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-demo-choreography'] });
+    }, CHOREOGRAPHY_TEST_RATE);
+    await gotoScene(page, { view: scene, embed: '1', loop: '1' });
+    const readFlips = (): Promise<StateFlip[]> => page.evaluate(() => (window as unknown as { __stateFlips: StateFlip[] }).__stateFlips);
+    // The first cycle's rest, and the play that follows it.
+    await expect.poll(async () => {
+      const flips = await readFlips();
+      const restIndex = flips.findIndex((flip) => flip.state === 'rest' && flip.cycles === '1');
+      return restIndex >= 0 && flips.slice(restIndex + 1).some((flip) => flip.state === 'playing');
+    }, { timeout: 60_000, message: 'a cycle ended and the next one began' }).toBe(true);
+    const flips = await readFlips();
+    const restIndex = flips.findIndex((flip) => flip.state === 'rest' && flip.cycles === '1');
+    const rest = flips[restIndex];
+    const next = flips.slice(restIndex + 1).find((flip) => flip.state === 'playing');
+    if (!next) throw new Error('no play followed the first cycle');
+    const gap = next.at - rest.at;
+    if (holding) {
+      expect(rest.cursor, 'the hand holding the drag keeps its pointer').toBe('1');
+      expect(rest.overlay, 'the drag is still held at the end of the cycle').toBe(true);
+      expect(gap, 'a held drag goes straight on to its drop, with no rest between').toBeLessThan(restBetweenCyclesMs / 2);
+    } else {
+      expect(rest.cursor, 'a cycle at rest takes the pointer away').toBe('0');
+      // A timer never fires early, so the full pause (less a frame's rounding) has passed.
+      expect(gap, 'a cycle at rest waits out the pause before the next').toBeGreaterThan(restBetweenCyclesMs * 0.8);
+    }
+    await expect(page.locator('html')).not.toHaveAttribute('data-demo-choreography', 'stopped');
+    expect(getUnexpectedErrors()).toEqual([]);
+  });
+}
+
 test('a usage still has its bars drawn at ready, since Animations off holds the chart tweens too', async ({ page }) => {
   // A still turns the Animations setting off, and the poster rig shoots at ready. The charts' tweens
   // are the chart library's own script, which the setting's `.no-motion` class never reached, so a
