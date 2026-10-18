@@ -446,7 +446,11 @@ Each cycle starts and ends on the poster's state. A choreography with a `pose` (
 mid-drag, a menu open) plays up to it before the reveal, in a still too, unpaced, with no pointer
 drawn and no timer, so the still, the poster and the live frame's rest are one frame. Under
 `loop=1` the cycle is the steps after the pose and then the steps up to it again; a choreography
-that is only a pose holds it. Without a pose the frame rests where the boot steps left it. At ready
+that is only a pose holds it. A pose that holds the button down (a card carried over Executing, a
+window over the dock edge) is a hand mid-gesture, so live it hangs only a half-second beat after
+the carry lands and then drops, with its pointer still drawn: nobody holds a card still in the air
+for seconds. A pose with the button up (a menu open, the pointer resting on a card) gets the full
+rest between cycles. Without a pose the frame rests where the boot steps left it. At ready
 the player records the rest (each lane's cards in order, the open dialogs but one already closing,
 and inside the scene's `focus` every form value and selection state, a terminal's and the diff
 editor's own fields aside, and which text field holds focus, since a field a cycle leaves focused
@@ -468,7 +472,8 @@ runs from the cut to the end of the steps after the pose, and the steps up to th
 view, since they make the poster's gesture. The player stamps the phase on
 `<html data-demo-cut>` (`out`, `reset`, `in`), and the demo tier plays every scene with a cut once,
 asserting that each change the reset makes lands under the landed veil with no pointer and that
-nothing changes while the frame fades back in.
+nothing changes while the frame fades back in, a card the reset dropped still playing its drop
+animation included.
 
 A visitor's own click, key, wheel or touch stops the choreography for the frame's life: a held
 pointer is released where it stands, the hover marks clear, the arrow goes, and a veil mid-cut is

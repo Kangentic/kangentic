@@ -2396,6 +2396,10 @@ for (const scene of CUT_SCENES) {
       };
       const ours = (node: Node): boolean => node instanceof Element && (node.closest('[data-demo-veil], [data-demo-cursor], .xterm') !== null);
       const SHOWN = '[data-task-id], [role="dialog"], [data-dismissable-layer]';
+      // A dragged card, which plays its drop animation after the release; dnd-kit unmounts the
+      // wrapper around it, so the overlay is looked for inside what came and went too.
+      const OVERLAY = '.drag-overlay';
+      const shown = (node: Node): node is Element => node instanceof Element && (node.matches(SHOWN) || node.matches(OVERLAY) || node.querySelector(OVERLAY) !== null);
       // A task window's rect is its frame's inline style: a window docked and floated again
       // changes nothing else a visitor would see.
       const WINDOW = '[data-testid^="window-frame-"]';
@@ -2407,7 +2411,7 @@ for (const scene of CUT_SCENES) {
       new MutationObserver((records) => {
         for (const record of records) {
           if (record.target === document.documentElement && record.attributeName === 'data-demo-cut') {
-            phases.push(covering('phase'));
+            phases.push(covering(document.querySelector(OVERLAY) ? 'phase, a dragged card still landing' : 'phase'));
             continue;
           }
           if (ours(record.target)) continue;
@@ -2417,7 +2421,7 @@ for (const scene of CUT_SCENES) {
             continue;
           }
           for (const node of [...Array.from(record.addedNodes), ...Array.from(record.removedNodes)]) {
-            if (node instanceof Element && node.matches(SHOWN)) changes.push(covering(`${record.addedNodes.length > 0 ? 'added' : 'removed'} ${node.getAttribute('data-testid') ?? node.getAttribute('data-task-id') ?? node.tagName}`));
+            if (shown(node)) changes.push(covering(`${record.addedNodes.length > 0 ? 'added' : 'removed'} ${node.getAttribute('data-testid') ?? node.getAttribute('data-task-id') ?? (node.matches(OVERLAY) || node.querySelector(OVERLAY) ? 'drag overlay' : node.tagName)}`));
           }
         }
       }).observe(document, {
@@ -2441,6 +2445,7 @@ for (const scene of CUT_SCENES) {
     const behind = changes.filter((change) => change.phase === 'reset');
     expect(behind.length, 'the reset puts something back').toBeGreaterThan(0);
     expect(behind.filter((change) => change.veil !== '1' || change.cursor !== '0'), 'the reset changes nothing in view').toEqual([]);
+    expect(phases.find((entry) => entry.phase === 'in')?.what, 'a drag the reset dropped has landed before the frame fades back in').toBe('phase');
     expect(changes.filter((change) => change.phase === 'in'), 'nothing changes while the frame fades back in').toEqual([]);
     await expect(page.locator('[data-demo-veil]')).toHaveCSS('opacity', '0');
     await expect(root).not.toHaveAttribute('data-demo-choreography', 'stopped');

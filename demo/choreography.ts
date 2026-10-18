@@ -73,6 +73,12 @@ const DEFAULT_PACING_MS: Record<string, number> = {
 /** The rest a visitor sees before the first cycle, and between cycles. */
 const FIRST_REST_MS = 2500;
 const REST_BETWEEN_CYCLES_MS = 3500;
+/**
+ * A pose that holds the button down (a card carried over a column) is a hand mid-gesture, and a
+ * hand lets go a beat after it reaches the target, never seconds later. So a held drag's pacing is
+ * this beat, and a cycle that ends holding one goes straight on to its drop.
+ */
+const HELD_DRAG_BEAT_MS = 500;
 /** A cut's fade each way, and the frames the reset behind it is given to paint before the frame shows again. */
 const CUT_FADE_MS = 450;
 const CUT_SETTLE_FRAMES = 6;
@@ -690,7 +696,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     }
     if (stopped) return;
     if (step.waitFor) await waitForElement(step.waitFor);
-    await pace(step.ms ?? DEFAULT_PACING_MS[kindOf(step)]);
+    await pace(step.ms ?? ('drag' in step && step.drag.hold ? HELD_DRAG_BEAT_MS : DEFAULT_PACING_MS[kindOf(step)]));
   }
 
   /**
@@ -932,7 +938,9 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
         showCursor(true);
       }
       if (stopped) return;
-      showCursor(false);
+      // A held drag's beat was its pacing; the hand holding it keeps its pointer into the drop.
+      const holding = buttons !== 0;
+      if (!holding) showCursor(false);
       leave();
       cycles += 1;
       const now = restSignature();
@@ -942,7 +950,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
         return;
       }
       setState('rest');
-      await delay(REST_BETWEEN_CYCLES_MS / rate);
+      await delay((holding ? 0 : REST_BETWEEN_CYCLES_MS) / rate);
     }
   }
 
