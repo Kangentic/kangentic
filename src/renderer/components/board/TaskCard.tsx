@@ -25,6 +25,7 @@ import { sendAwayRefusal, type BoardWorkflow } from '../../utils/board-workflow'
 import { boardWorkflowNow, refusedBoardMove } from '../../utils/workflow-refusal';
 import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
 import { describeIpcError } from '../../lib/ipc-error';
+import { runSessionToggle, sessionToggleRowFor, type SessionToggleDirection } from '../../utils/session-toggle';
 
 interface TaskCardProps {
   task: Task;
@@ -149,11 +150,15 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     setConfirmDelete(false);
   };
 
-  // The menu's workflow facts, read when it opens rather than subscribed: an
-  // ordinary card pays nothing, and an open menu is a moment, not a view.
+  // The menu's workflow and lane facts, read when it opens rather than
+  // subscribed: an ordinary card pays nothing, and an open menu is a moment, not
+  // a view. The session row reads the display kind the card already holds.
   const menuWorkflow = contextMenu && task.workflow_id ? boardWorkflowNow(task) : null;
-  const offersNewWorkflow = !!contextMenu && !task.workflow_id && !task.archived_at
-    && useBoardStore.getState().swimlanes.find((lane) => lane.id === task.swimlane_id)?.role === 'todo';
+  const menuLaneRole = contextMenu
+    ? useBoardStore.getState().swimlanes.find((lane) => lane.id === task.swimlane_id)?.role ?? null
+    : null;
+  const offersNewWorkflow = !!contextMenu && !task.workflow_id && !task.archived_at && menuLaneRole === 'todo';
+  const menuSessionToggle = contextMenu ? sessionToggleRowFor(displayState.kind, menuLaneRole, task) : null;
 
   const openTaskWorkflow = (workflow: BoardWorkflow) => {
     useBoardStore.getState().setActiveView('workflows');
@@ -169,6 +174,18 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         message: `Could not ${disable ? 'disable' : 'enable'} automations for "${task.title}": ${describeIpcError(error)}`,
         variant: 'warning',
       });
+    });
+  };
+
+  // No window to close: the card's status bar shows the pause through the
+  // store's optimistic write, and the board reload picks up the task row main
+  // rewrote (its session pointer), as the task detail's board host does.
+  const handleToggleSession = (direction: SessionToggleDirection) => {
+    void runSessionToggle({
+      taskId: task.id,
+      direction,
+      projectId: useProjectStore.getState().currentProject?.id ?? null,
+      onSucceeded: () => { void useBoardStore.getState().loadBoard(); },
     });
   };
 
@@ -260,6 +277,9 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             <OpenWorkflowMenuItem workflow={menuWorkflow} onOpen={() => openTaskWorkflow(menuWorkflow)} onClose={() => setContextMenu(null)} />
           )}
           onToggleAutomations={automationsSwitchRefusal(task) === null ? handleToggleAutomations : undefined}
+          sessionToggle={menuSessionToggle
+            ? { ...menuSessionToggle, onToggle: () => handleToggleSession(menuSessionToggle.direction) }
+            : undefined}
           moveRefusal={menuWorkflow ? (laneId) => refusedBoardMove(task, laneId, useBoardStore.getState().swimlanes) : undefined}
           sendAwayRefusal={sendAwayRefusal(menuWorkflow, task)}
           onNewWorkflow={offersNewWorkflow ? handleNewWorkflow : undefined}

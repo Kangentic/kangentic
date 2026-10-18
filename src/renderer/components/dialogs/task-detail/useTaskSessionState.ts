@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/session-store';
 import { findSessionForTask } from '../../../stores/session-store/session-index';
-import { useTaskProgress, isActiveKind, hasSessionLifecycle, laneHoldsSession } from '../../../utils/task-progress';
+import { useTaskProgress, isActiveKind, hasSessionLifecycle, laneHoldsSession, sessionLifecyclePhase } from '../../../utils/task-progress';
 import { isActive, requiresUserInteraction } from '../../../../shared/activity-state';
 import { isLiveSessionStatus } from '../../../../shared/session-liveness';
-import { resumeBlockReason } from '../../../../shared/session-resume-eligibility';
+import { isSessionToggleLive, sessionToggleOffer } from '../../../../shared/session-resume-eligibility';
 import type { Task, Session, SwimlaneRole } from '../../../../shared/types';
+import { useTaskDetailHost } from './task-detail-host';
 
 interface TaskSessionState {
   session: Session | null;
@@ -81,33 +82,30 @@ export function useTaskSessionState(input: {
     return resolved;
   });
   const reconcileSession = useSessionStore((state) => state.reconcileSession);
+  // The hosted task's own project, which for a monitor-hosted detail is not the
+  // open board's (project-scoped-ipc.md).
+  const { projectId: hostProjectId } = useTaskDetailHost();
 
   const displayState = useTaskProgress(input.task.id, session?.id);
-
-  // Main refuses an in-place resume for To Do, Done, and archived tasks, so the
-  // control must not be offered for them (a completed task in Done otherwise
-  // offers a Play button that recreates the worktree Done deleted and spawns a
-  // live agent on a card the board no longer shows).
-  //
-  // Pausing is deliberately NOT blocked: this one flag gates both directions,
-  // and this button is the only in-window stop for a session that is genuinely
-  // live. A view that drifted to 'suspended' while main holds a live PTY
-  // self-heals through the reconcile probe below, which flips isSessionActive
-  // back to true and restores Pause. To Do stays a separate factor because it
-  // hides both directions (its cards open straight into the edit form).
-  const resumeBlocked = resumeBlockReason({
-    laneRole: input.currentSwimlaneRole,
-    isArchived: input.isArchived,
-  }) !== null;
 
   // Classified through the compile-enforced tables in task-progress.ts rather
   // than literal chains, so a new display kind cannot silently inherit either
   // answer (see the note above TASK_DETAIL_SURFACE).
   const isSessionActive = isActiveKind(displayState.kind);
 
-  const canToggle = !input.isInTodo
-    && (isSessionActive || !resumeBlocked)
-    && hasSessionLifecycle(displayState.kind);
+  // The one Pause / Resume rule, shared with the card menu and the phone
+  // (`sessionToggleOffer`). The header hides a Resume main would refuse (To
+  // Do, Done, archived: a completed task in Done otherwise offers a Play button
+  // that recreates the worktree Done deleted and spawns a live agent on a card
+  // the board no longer shows), and keeps Pause, the only in-window stop for a
+  // live session. A view that drifted to 'suspended' while main holds a live
+  // PTY self-heals through the reconcile probe below, which flips
+  // isSessionActive back to true and restores Pause.
+  const canToggle = isSessionToggleLive(sessionToggleOffer({
+    phase: sessionLifecyclePhase(displayState.kind),
+    laneRole: input.currentSwimlaneRole,
+    task: input.task,
+  }));
   const isQueued = displayState.kind === 'queued';
   const isSuspended = displayState.kind === 'suspended';
   // Activity-while-running, classified the same way the board card does
@@ -180,11 +178,11 @@ export function useTaskSessionState(input: {
     const key = `${input.task.id}:${session.id}`;
     if (probedKeyRef.current === key) return;
     probedKeyRef.current = key;
-    reconcileSession(input.task.id).catch((error) => {
+    reconcileSession(input.task.id, hostProjectId).catch((error) => {
       console.warn('[useTaskSessionState] reconcile probe failed', error);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on session.id/status only; the full session object would re-probe on every flap (loop hazard, see comment above)
-  }, [session?.id, session?.status, input.task.id, reconcileSession]);
+  }, [session?.id, session?.status, input.task.id, reconcileSession, hostProjectId]);
 
   return {
     session,

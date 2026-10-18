@@ -172,9 +172,13 @@ export interface CoreSessionSlice {
   ) => void;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
-  resetSession: (taskId: string) => Promise<void>;
-  suspendSession: (taskId: string) => Promise<void>;
-  resumeSession: (taskId: string, resumePrompt?: string) => Promise<Session | null>;
+  // `projectId` on the four task-session mutations below is the task's own
+  // project, captured where the user acted (project-scoped-ipc.md). A caller
+  // hosting a task of another project (the Agent Monitor, the Workflows canvas)
+  // must pass it; left out, it falls back to the open project.
+  resetSession: (taskId: string, projectId?: string | null) => Promise<void>;
+  suspendSession: (taskId: string, projectId?: string | null) => Promise<void>;
+  resumeSession: (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<Session | null>;
   /**
    * Probe main's registry for the live session of `taskId` and reconcile
    * the renderer cache. If main returns a live Session (running/queued),
@@ -186,7 +190,7 @@ export interface CoreSessionSlice {
    * Used by the task detail dialog on mount to self-heal a stale
    * 'suspended' view.
    */
-  reconcileSession: (taskId: string) => Promise<Session | null>;
+  reconcileSession: (taskId: string, projectId?: string | null) => Promise<Session | null>;
   setActiveSession: (id: string | null) => void;
   /** User-gesture variant of setActiveSession. Updates state, persists the
    *  selection to AppConfig.lastActiveTaskByProject so it survives app restart

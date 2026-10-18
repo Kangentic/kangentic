@@ -555,15 +555,16 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     });
   },
 
-  resetSession: async (taskId) => {
-    await window.electronAPI.sessions.reset(taskId, useProjectStore.getState().currentProject?.id ?? null);
+  resetSession: async (taskId, projectId) => {
+    await window.electronAPI.sessions.reset(taskId, projectId ?? useProjectStore.getState().currentProject?.id ?? null);
     set((s) => {
       const sessions = s.sessions.filter((session) => session.taskId !== taskId);
       return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions) };
     });
   },
 
-  suspendSession: async (taskId) => {
+  suspendSession: async (taskId, projectId) => {
+    const stampedProjectId = projectId ?? useProjectStore.getState().currentProject?.id ?? null;
     // Optimistically mark session as suspended
     set((s) => {
       const sessions = s.sessions.map((sess) =>
@@ -571,11 +572,23 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       );
       return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions) };
     });
-    await window.electronAPI.sessions.suspend(taskId, useProjectStore.getState().currentProject?.id ?? null);
+    try {
+      await window.electronAPI.sessions.suspend(taskId, stampedProjectId);
+    } catch (error) {
+      // A refused suspend leaves the optimistic row claiming a pause main never
+      // made, over an agent that is still running. Ask main for the live
+      // session before rethrowing, so the card stops reading as paused. No
+      // caller is left to run the task detail's reconcile probe: the detail
+      // closes before the suspend settles, and the card menu has no window.
+      await get().reconcileSession(taskId, stampedProjectId).catch((reconcileError) => {
+        console.warn('[session-store] reconcile after a refused suspend failed', reconcileError);
+      });
+      throw error;
+    }
   },
 
-  resumeSession: async (taskId, resumePrompt?) => {
-    const newSession = await window.electronAPI.sessions.resume(taskId, resumePrompt, useProjectStore.getState().currentProject?.id ?? null);
+  resumeSession: async (taskId, resumePrompt, projectId) => {
+    const newSession = await window.electronAPI.sessions.resume(taskId, resumePrompt, projectId ?? useProjectStore.getState().currentProject?.id ?? null);
     // A cancelled resume (a newer one, a phone Resume included, or a suspend,
     // reset or relocation) resolves null. Whatever cancelled it pushes the
     // task's real state, so there is nothing to write here.
@@ -594,8 +607,8 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     return newSession;
   },
 
-  reconcileSession: async (taskId) => {
-    const liveSession = await window.electronAPI.sessions.reconcile(taskId, useProjectStore.getState().currentProject?.id ?? null);
+  reconcileSession: async (taskId, projectId) => {
+    const liveSession = await window.electronAPI.sessions.reconcile(taskId, projectId ?? useProjectStore.getState().currentProject?.id ?? null);
     if (!liveSession) {
       // Main has no LIVE session for this task. That includes the legitimate
       // "session is suspended" case (reconcileTaskSessionRef only returns

@@ -2366,7 +2366,17 @@
         throw new Error('Mock: session spawn not available in UI tests');
       },
       kill: async function () {},
-      suspend: async function (taskId) {
+      // Suspend and resume record, in call order, the project id each was
+      // stamped with to window.__mockSuspendCalls / window.__mockResumeCalls as
+      // { taskId, projectId } (`undefined` normalized to null, as backlog.demote
+      // does with __mockDemoteCalls), so a spec can assert that a surface
+      // hosting another project's task sends that project. Reset and reconcile
+      // record the same way, to __mockResetCalls / __mockReconcileCalls.
+      suspend: async function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockSuspendCalls) window.__mockSuspendCalls = [];
+          window.__mockSuspendCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+        }
         var session = sessions.find(function (s) { return s.taskId === taskId; });
         if (session) {
           session.status = 'suspended';
@@ -2377,7 +2387,11 @@
           task.updated_at = now();
         }
       },
-      resume: async function (taskId, resumePrompt) {
+      resume: async function (taskId, resumePrompt, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockResumeCalls) window.__mockResumeCalls = [];
+          window.__mockResumeCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+        }
         // Main labels a resume "Resuming session..." until the session is up. The
         // mock pushes no spawn-progress label from this or any other method (a
         // move into a spawn column and an unarchive label in main too): it would
@@ -2386,7 +2400,7 @@
         var newSession = {
           id: uuid(),
           taskId: taskId,
-          projectId: currentProjectId || '',
+          projectId: projectId || currentProjectId || '',
           pid: Math.floor(Math.random() * 10000),
           status: 'running',
           shell: 'bash',
@@ -2421,7 +2435,13 @@
         }
         return newSession;
       },
-      reset: async function (taskId) {
+      // Reset records { taskId, projectId } to window.__mockResetCalls, as suspend
+      // does, so a spec can assert the project a task-detail host stamped.
+      reset: async function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockResetCalls) window.__mockResetCalls = [];
+          window.__mockResetCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+        }
         sessions = sessions.filter(function (s) { return s.taskId !== taskId; });
         var task = tasks.find(function (t) { return t.id === taskId; });
         if (task) {
@@ -2433,7 +2453,13 @@
       // session whose taskId matches IF its status is 'running' or 'queued'
       // (the "live registry" view), else null. Tests can override via
       // window.electronAPI.sessions.reconcile = ... to exercise drift cases.
-      reconcile: async function (taskId) {
+      // Every probe records { taskId, projectId } to window.__mockReconcileCalls,
+      // like suspend and resume, so a spec can assert the project it was stamped for.
+      reconcile: async function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockReconcileCalls) window.__mockReconcileCalls = [];
+          window.__mockReconcileCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+        }
         var live = sessions.find(function (s) {
           return s.taskId === taskId && (s.status === 'running' || s.status === 'queued');
         });

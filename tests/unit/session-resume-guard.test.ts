@@ -26,12 +26,15 @@ import {
   isPauseOffered,
   isPausedTaskSession,
   isResumeOffered,
+  isSessionToggleLive,
   isTaskPaused,
   pausedTaskIdsOf,
   resumeBlockMessage,
   resumeBlockReason,
   resumeBlockReasonForTask,
+  sessionToggleOffer,
   taskSessionStatesOf,
+  type SessionLifecyclePhase,
 } from '../../src/shared/session-resume-eligibility';
 import type { Task } from '../../src/shared/types';
 
@@ -239,6 +242,56 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
     expect(isPauseOffered({ hasLiveSession: true, laneRole: 'todo' })).toBe(false);
     expect(isPauseOffered({ hasLiveSession: false, laneRole: null })).toBe(false);
     expect(isPauseOffered({ hasLiveSession: false, laneRole: 'done' })).toBe(false);
+  });
+
+  // The one rule behind the task detail's pill and kebab item, the card menu's
+  // row, and the phone's pausable / resumable. The detail and the menu used to
+  // compute it inline and the phone restated it, so the table pins every cell.
+  it.each<[SessionLifecyclePhase, string | null, string | null | undefined, ReturnType<typeof sessionToggleOffer>]>([
+    // phase, laneRole, archived_at, offer
+    ['active', null, null, { direction: 'pause' }],
+    ['active', 'done', null, { direction: 'pause' }],
+    ['active', null, '2026-01-01T00:00:00.000Z', { direction: 'pause' }],
+    ['active', 'todo', null, null],
+    ['paused', null, null, { direction: 'resume', blockReason: null }],
+    ['paused', 'done', null, { direction: 'resume', blockReason: 'done' }],
+    ['paused', null, '2026-01-01T00:00:00.000Z', { direction: 'resume', blockReason: 'archived' }],
+    // Done outranks archived: its message names the move that restores the task.
+    ['paused', 'done', '2026-01-01T00:00:00.000Z', { direction: 'resume', blockReason: 'done' }],
+    // A row assembled without the column carries `undefined`: not archived.
+    ['paused', null, undefined, { direction: 'resume', blockReason: null }],
+    ['paused', 'todo', null, null],
+    ['ended', null, null, null],
+    ['ended', 'done', null, null],
+  ])('sessionToggleOffer(%s, lane %s, archived_at %s)', (phase, laneRole, archivedAt, expected) => {
+    const task = { archived_at: archivedAt } as Pick<Task, 'archived_at'>;
+    expect(sessionToggleOffer({ phase, laneRole, task })).toEqual(expected);
+  });
+
+  it('isSessionToggleLive is any Pause, or a Resume nothing refuses', () => {
+    expect(isSessionToggleLive(null)).toBe(false);
+    expect(isSessionToggleLive({ direction: 'pause' })).toBe(true);
+    expect(isSessionToggleLive({ direction: 'resume', blockReason: null })).toBe(true);
+    expect(isSessionToggleLive({ direction: 'resume', blockReason: 'done' })).toBe(false);
+    expect(isSessionToggleLive({ direction: 'resume', blockReason: 'archived' })).toBe(false);
+  });
+
+  it('the phone\'s wrappers agree with sessionToggleOffer in every lane', () => {
+    const lanes = [null, 'todo', 'done'];
+    const tasks = [{ archived_at: null }, { archived_at: '2026-01-01T00:00:00.000Z' }];
+    for (const laneRole of lanes) {
+      for (const task of tasks) {
+        for (const live of [true, false]) {
+          const offer = sessionToggleOffer({ phase: live ? 'active' : 'ended', laneRole, task });
+          expect(isPauseOffered({ hasLiveSession: live, laneRole })).toBe(offer?.direction === 'pause');
+        }
+        for (const paused of [true, false]) {
+          const offer = sessionToggleOffer({ phase: paused ? 'paused' : 'ended', laneRole, task });
+          expect(isResumeOffered({ hasPausedSession: paused, task, laneRole }))
+            .toBe(offer?.direction === 'resume' && isSessionToggleLive(offer));
+        }
+      }
+    }
   });
 
   // The archive half of the check had four hand-written copies, each carrying

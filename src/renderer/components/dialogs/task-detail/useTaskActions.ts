@@ -10,6 +10,7 @@ import { hasSessionLifecycle } from '../../../utils/task-progress';
 import { prNumberFromUrl } from '../../../../shared/pr-url';
 import type { useTaskProgress } from '../../../utils/task-progress';
 import { describeIpcError } from '../../../lib/ipc-error';
+import { sessionToggleFailureMessage, toastIfReconnectedResume } from '../../../utils/session-toggle';
 
 /**
  * Surface a send-to-backlog or archive that failed. Both close the window first
@@ -103,6 +104,11 @@ export function useTaskActions(input: {
   // Every project-scoped read and write goes through the host, so this hook works
   // unchanged whether its task belongs to the open board or to another project.
   const host = useTaskDetailHost();
+  // The task's own project, stamped on every session write below: for a
+  // monitor-hosted detail of another project's task, the open board's project
+  // would send main looking for the task in the wrong database. The board host
+  // reports '' with no project open, which falls back to the open project.
+  const taskProjectId = host.projectId || null;
   const [pendingAction, setPendingAction] = useState<null | 'pausing' | 'resuming'>(null);
   const toggling = pendingAction !== null;
   const [saving, setSaving] = useState(false);
@@ -140,7 +146,7 @@ export function useTaskActions(input: {
         // which snapshots the body's branch selector before starting the exit.
         // Skipping the discard guard is safe because the edit-mode title bar
         // carries no pause control, so this gesture cannot fire while editing.
-        const suspending = input.suspendSession(input.task.id);
+        const suspending = input.suspendSession(input.task.id, taskProjectId);
         input.onClose();
         await suspending;
       } else {
@@ -156,30 +162,23 @@ export function useTaskActions(input: {
         // is mid-spawn and reconcileTaskSessionRef finds no live session.
         // So a null priorSessionId always means a real spawn happened.
         const priorSessionId = input.session?.id ?? null;
-        const returned = await input.resumeSession(input.task.id);
+        const returned = await input.resumeSession(input.task.id, undefined, taskProjectId);
         setResumeFailed(false);
         setResumeError('');
-        if (returned && returned.status === 'running' && priorSessionId === returned.id) {
-          useToastStore.getState().addToast({
-            message: 'Reconnected to running session',
-            variant: 'info',
-          });
-        }
+        toastIfReconnectedResume(priorSessionId, returned);
       }
       await host.refresh();
       // pendingAction is cleared by the effect below once the session store
       // actually reflects the target state.
     } catch (err) {
       console.error('Toggle session failed:', err);
-      const reason = err instanceof Error ? err.message : '';
+      const direction = action === 'pausing' ? 'pause' : 'resume';
       if (action === 'resuming') {
         setResumeFailed(true);
-        setResumeError(reason);
+        setResumeError(describeIpcError(err, ''));
       }
       useToastStore.getState().addToast({
-        message: reason
-          ? `Failed to ${action === 'pausing' ? 'suspend' : 'resume'} session: ${reason}`
-          : `Failed to ${action === 'pausing' ? 'suspend' : 'resume'} session`,
+        message: sessionToggleFailureMessage(direction, err),
         variant: 'warning',
       });
       setPendingAction(null);
@@ -210,7 +209,7 @@ export function useTaskActions(input: {
 
   const handleResetSession = async () => {
     try {
-      await useSessionStore.getState().resetSession(input.task.id);
+      await useSessionStore.getState().resetSession(input.task.id, taskProjectId);
       setResumeFailed(false);
       setResumeError('');
       await host.refresh();
@@ -228,8 +227,8 @@ export function useTaskActions(input: {
     setPendingAction('resuming');
     try {
       useSessionStore.getState().setPendingCommandLabel(input.task.id, command.displayName);
-      await input.suspendSession(input.task.id);
-      await input.resumeSession(input.task.id, command.displayName);
+      await input.suspendSession(input.task.id, taskProjectId);
+      await input.resumeSession(input.task.id, command.displayName, taskProjectId);
       await host.refresh();
     } catch (error) {
       console.error('Command invocation failed:', error);

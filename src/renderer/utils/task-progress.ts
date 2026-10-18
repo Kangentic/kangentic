@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useSessionStore } from '../stores/session-store';
 import { useBoardStore } from '../stores/board-store';
 import type { Session, SessionUsage, ActivityState, SessionDisplayState, SwimlaneRole } from '../../shared/types';
+import type { SessionLifecyclePhase } from '../../shared/session-resume-eligibility';
 
 // ---------------------------------------------------------------------------
 // Unified task progress derivation
@@ -188,15 +189,8 @@ export function taskDetailSurfaceFor(
   return TASK_DETAIL_SURFACE[kind];
 }
 
-/** Where a display kind sits in the session lifecycle. */
-export type SessionLifecyclePhase =
-  /** The agent is working or on its way to working. */
-  | 'active'
-  /** Parked, but resumable - it still has a session behind it. */
-  | 'paused'
-  /** No session lifecycle at all (never started, or finished). */
-  | 'ended';
-
+// Where a display kind sits in the session lifecycle. The phase type lives in
+// src/shared so the one Pause / Resume rule (`sessionToggleOffer`) can take it.
 const SESSION_LIFECYCLE_PHASE = {
   running: 'active',
   queued: 'active',
@@ -206,6 +200,11 @@ const SESSION_LIFECYCLE_PHASE = {
   exited: 'ended',
   none: 'ended',
 } satisfies Record<SessionDisplayState['kind'], SessionLifecyclePhase>;
+
+/** The lifecycle phase of a display kind, the input `sessionToggleOffer` takes. */
+export function sessionLifecyclePhase(kind: SessionDisplayState['kind']): SessionLifecyclePhase {
+  return SESSION_LIFECYCLE_PHASE[kind];
+}
 
 /** True while the agent is working or starting: the Pause direction of a toggle. */
 export function isActiveKind(kind: SessionDisplayState['kind']): boolean {
@@ -330,6 +329,22 @@ export function useTaskProgress(taskId: string, sessionId: string | undefined): 
     }),
     [taskSession, usage, activity, spawnProgressLabel],
   );
+}
+
+/**
+ * The display kind of a task's current session, resolved the way the board
+ * card resolves it (the task index, then `useTaskProgress`). For a surface that
+ * holds a task id but no card view model: the Agent Monitor's row menu and the
+ * Workflows canvas card menu.
+ */
+export function useTaskDisplayKind(taskId: string): SessionDisplayState['kind'] {
+  const sessionId = useSessionStore(
+    useCallback(
+      (s: ReturnType<typeof useSessionStore.getState>) => s._sessionByTaskId.get(taskId)?.id,
+      [taskId],
+    ),
+  );
+  return useTaskProgress(taskId, sessionId).kind;
 }
 
 // ---------------------------------------------------------------------------

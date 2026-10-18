@@ -163,6 +163,10 @@ Right-click any task card on the board to open a context menu with:
 - **Copy Task ID** - copies the display ID (e.g., `#42`) to clipboard
 - **Edit** - opens the task detail dialog in edit mode
 - **Show changes** - the task's diff, when it has a worktree
+- **Pause session** / **Resume session** - on any task with a running, queued, or paused session
+  outside To Do. It does what the task window's header toggle does, with no window to open. A
+  paused task in Done or an archived one keeps a disabled Resume row, with the reason as its
+  tooltip; the header shows no toggle for it
 - **Disable automations** / **Enable automations** - on any task outside a workflow, whatever its
   column or state (an archived task's menu does not offer it): holds the task out of every column's automations (see
   [Automations](#automations))
@@ -584,7 +588,7 @@ for you. The bottom terminal panel is hidden in this view and comes back on the 
 **On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
 (Ctrl or Cmd with the wheel zooms). Fit view and Auto layout, which puts moved cards back in the
 automatic layout, sit at the bottom left, and Add task at the bottom right. Right-click a started task's card for
-the board's own menu, with Open on board in its top group, below Edit and Show changes. The selected card wears the accent border, and
+the board's own menu, with Open on board in its top group, below Edit and Show changes, and Pause or Resume session below Show changes. The selected card wears the accent border, and
 its links stand out: what it waits for flows into it (green once that task is done, grey while it
 is not), what waits for it flows out in the accent, and every other link fades back. With reduced
 motion, or Animations off, the links hold still.
@@ -1043,7 +1047,7 @@ If Claude Code has already deleted a conversation (it removes transcripts older 
 
 ### User-Paused Sessions
 
-Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu, or from a paired phone; see [Mobile Bridge](mobile-bridge.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Mobile Bridge](mobile-bridge.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
 ## Graphics failures
 
@@ -1483,7 +1487,7 @@ You choose how it looks, and the choice is remembered (including across a restar
 
 Clicking a row opens that task's full detail - terminal included - **in the monitor**, so several agents across several projects can be watched and driven from one surface without leaving for another project's board. Right-click a row and choose **Open on board** for the old behavior. A task's detail is only ever open in one place: opening it somewhere else moves it rather than making a second copy, and its tab leaves the bottom panel while it is open.
 
-The rest of a row's right-click menu is the board card's own menu. Move to, Backlog, Archive and Delete act on the task's own project. Delete always asks first, and Backlog asks first when the task has a session or worktree to clean up. Both honor the same Don't ask again setting as the board. A change made from the monitor, or from a detail open in it, shows on the board in the main window right away, whichever monitor made it.
+The rest of a row's right-click menu is the board card's own menu. Move to, Backlog, Archive, Delete, and Pause or Resume session act on the task's own project. Delete always asks first, and Backlog asks first when the task has a session or worktree to clean up. Both honor the same Don't ask again setting as the board. A change made from the monitor, or from a detail open in it, shows on the board in the main window right away, whichever monitor made it.
 
 Clicking empty space anywhere in the monitor - its list, header, summary cards, or filter bar - closes a detail open there, following your [Close on Outside Click](#behavior-settings) setting. It is scoped to the monitor, so it never reaches through to a task window open on the board underneath.
 

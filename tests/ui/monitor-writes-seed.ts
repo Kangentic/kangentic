@@ -33,6 +33,10 @@ export interface TaskSeed {
   worktree?: boolean;
   /** A running session, so the monitor-hosted detail shows the task's live view. */
   session?: boolean;
+  /** The session's status when `session` is set: running (the default) or paused. */
+  sessionStatus?: 'running' | 'suspended';
+  /** The task is archived, as a completed task in Done is. */
+  archived?: boolean;
   /** The task belongs to the second project, which the board is NOT open on. */
   otherProject?: boolean;
 }
@@ -55,7 +59,9 @@ export function seedScript(seed: Seed): string {
     columnName: task.lane, commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
     agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'medium', permissionMode: 'auto',
     startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
-    status: 'running', activity: 'thinking', activityReason: null,
+    status: task.sessionStatus ?? 'running',
+    activity: task.sessionStatus === 'suspended' ? null : 'thinking',
+    activityReason: null,
     lastEvent: null, contextPercent: null, isolated: false, isCommandTerminal: false,
   }));
   return `
@@ -85,19 +91,21 @@ export function seedScript(seed: Seed): string {
       var positions = {};
       seed.tasks.forEach(function (entry, index) {
         var sessionId = entry.session ? 'session-' + entry.id : null;
+        var paused = entry.session && entry.sessionStatus === 'suspended';
         positions[entry.lane] = (positions[entry.lane] || 0);
         state.tasks.push({
           id: entry.id, display_id: entry.displayId, title: entry.title, description: '',
           // A task of the other project is tagged, so the open board never lists it.
           projectId: entry.otherProject ? '${OTHER_PROJECT_ID}' : undefined,
           swimlane_id: laneIds[entry.lane], position: positions[entry.lane],
-          agent: entry.session ? 'claude' : null, session_id: sessionId,
+          // A pause clears the task's session pointer and keeps the suspended row, as main does.
+          agent: entry.session ? 'claude' : null, session_id: paused ? null : sessionId,
           worktree_path: entry.worktree ? '/mock/monitor-writes/.kangentic/worktrees/' + entry.id : null,
           branch_name: entry.worktree ? 'feature/' + entry.id : null,
           pr_number: null, pr_url: null, pr_state: null,
           base_branch: entry.worktree ? 'main' : null,
           use_worktree: entry.worktree ? 1 : 0,
-          labels: [], priority: 0, attachment_count: 0, archived_at: null,
+          labels: [], priority: 0, attachment_count: 0, archived_at: entry.archived ? timestamp : null,
           automations_disabled: false, workflow_id: null, workflow_project_id: null,
           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
           canvas_x: null, canvas_y: null, created_at: timestamp, updated_at: timestamp,
@@ -106,10 +114,10 @@ export function seedScript(seed: Seed): string {
         if (entry.session) {
           state.sessions.push({
             id: sessionId, taskId: entry.id, projectId: entry.otherProject ? '${OTHER_PROJECT_ID}' : '${PROJECT_ID}',
-            pid: 9000 + index, status: 'running', shell: 'bash', cwd: '/mock/monitor-writes',
+            pid: 9000 + index, status: paused ? 'suspended' : 'running', shell: 'bash', cwd: '/mock/monitor-writes',
             startedAt: timestamp, exitCode: null, resuming: false, agentSessionId: 'agent-' + entry.id,
           });
-          state.activityCache[sessionId] = 'thinking';
+          if (!paused) state.activityCache[sessionId] = 'thinking';
         }
       });
       return { currentProjectId: '${PROJECT_ID}' };
@@ -117,7 +125,11 @@ export function seedScript(seed: Seed): string {
   `;
 }
 
-export async function launch(seed: Seed): Promise<{ browser: Browser; page: Page }> {
+/**
+ * `extraInitScript` runs after the seed, for a spec that layers more mock state
+ * on it (a workflow around some of the seeded tasks) through `__mockPreConfigure`.
+ */
+export async function launch(seed: Seed, extraInitScript?: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   try {
@@ -125,6 +137,7 @@ export async function launch(seed: Seed): Promise<{ browser: Browser; page: Page
     const page = await context.newPage();
     await page.addInitScript({ path: MOCK_SCRIPT });
     await page.addInitScript(seedScript(seed));
+    if (extraInitScript) await page.addInitScript(extraInitScript);
     await gotoVite(page, VITE_URL);
     await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
     return { browser, page };
@@ -181,6 +194,34 @@ export async function backlogTitles(page: Page): Promise<string[]> {
 /** The project ids `tasks.move` was stamped with, in order. */
 export async function moveProjectIds(page: Page): Promise<Array<string | null>> {
   return page.evaluate(() => (window as unknown as { __mockMoveProjectIds?: Array<string | null> }).__mockMoveProjectIds ?? []);
+}
+
+/** Every `sessions.suspend` the mock received, in order, with the project id it was stamped for. */
+export async function suspendCalls(page: Page): Promise<Array<{ taskId: string; projectId: string | null }>> {
+  return page.evaluate(() => (window as unknown as {
+    __mockSuspendCalls?: Array<{ taskId: string; projectId: string | null }>;
+  }).__mockSuspendCalls ?? []);
+}
+
+/** Every `sessions.resume` the mock received, in order, with the project id it was stamped for. */
+export async function resumeCalls(page: Page): Promise<Array<{ taskId: string; projectId: string | null }>> {
+  return page.evaluate(() => (window as unknown as {
+    __mockResumeCalls?: Array<{ taskId: string; projectId: string | null }>;
+  }).__mockResumeCalls ?? []);
+}
+
+/** Every `sessions.reset` the mock received, in order, with the project id it was stamped for. */
+export async function resetCalls(page: Page): Promise<Array<{ taskId: string; projectId: string | null }>> {
+  return page.evaluate(() => (window as unknown as {
+    __mockResetCalls?: Array<{ taskId: string; projectId: string | null }>;
+  }).__mockResetCalls ?? []);
+}
+
+/** Every `sessions.reconcile` the mock received, in order, with the project id it was stamped for. */
+export async function reconcileCalls(page: Page): Promise<Array<{ taskId: string; projectId: string | null }>> {
+  return page.evaluate(() => (window as unknown as {
+    __mockReconcileCalls?: Array<{ taskId: string; projectId: string | null }>;
+  }).__mockReconcileCalls ?? []);
 }
 
 /** Every `backlog.demote` the mock received, in order, with the project id it was stamped for. */
