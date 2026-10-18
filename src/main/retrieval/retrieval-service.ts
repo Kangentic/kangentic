@@ -1022,9 +1022,9 @@ export const retrievalService = {
       }
     });
     // Task records follow the board. The bus hears agent and MCP edits, every
-    // move, and every desktop task write (`announceTaskWrite`); the refresh a
-    // question asks for (`refreshTaskRecords`) stays as the backstop for a
-    // write that reaches none of those.
+    // move, and the desktop task writes that go through `announceTaskWrite`; the
+    // refresh a question asks for (`refreshRecords`) stays as the backstop for a
+    // write that reaches none of those, such as a label rename.
     context.boardEvents.onBoardChanged((event) => {
       // A column change touches no task record, and a Command Terminal has none.
       if (event.change === 'swimlane-updated' || event.change === 'command-terminals-changed') return;
