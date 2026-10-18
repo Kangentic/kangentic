@@ -31,6 +31,7 @@ const KNOWN_KINDS = new Set([
   'extractTool',
   'extractToolId',
   'extractSubagentId',
+  'extractPlanMode',
   'extractDetail',
   'extractDetailWhenTool',
   'setDetail',

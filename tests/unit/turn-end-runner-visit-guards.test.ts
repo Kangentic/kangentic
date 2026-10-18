@@ -4,10 +4,13 @@
  *
  * - **The visit gate.** A turn that began before the task entered the column did
  *   the last column's work, and `{{agentReply}}` would carry the wrong reply, so
- *   it runs no row. The skip writes no run record, so it logs one line. A plan
- *   approval is the exception: its move (`auto-move`) lands mid-turn and the
- *   agent implements in that same turn, so the turn is the new column's work
- *   and its rows run.
+ *   it runs no row. Each pending row records that skip once a visit, the pass
+ *   logs one line, and the next turn end still runs the rows. A plan exit is the
+ *   exception, since the agent implements in that same turn: a plan approval's
+ *   move (`auto-move`), or a drag into the last column's plan exit target made
+ *   once the agent had left plan mode (kangentic-mobile #119). The gate runs
+ *   after the Frequency and task-switch records, so a spent or held row keeps
+ *   its own reason and only the rows still pending are carried in.
  * - **Once per visit.** A row that already ran since the task entered the column
  *   is not run again at the next turn end. Only a run counts: a skip does not.
  * - **A "not set up" skip is written once per visit.** A column whose Condition
@@ -17,7 +20,9 @@
  *   limit is never checked or run, but says why, and a task that came back
  *   from Done counts its Frequency from there.
  * - **A turn that never settles.** When the wait for idle and a quiet terminal
- *   runs out, no row runs and nothing is recorded, so the pass warns once.
+ *   runs out with the session idle, the rows go on. With it busy on the same
+ *   turn, no row runs, each pending row records why once a visit, and the pass
+ *   warns once. A newer turn is silent: its own turn end judges it.
  *
  * Driven through `registerTurnEndAutomations` and the session manager's
  * 'turn-ended' event, the way the app drives it. The run log and the visit
@@ -40,13 +45,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type DatabaseType from 'better-sqlite3';
-import type { ColumnAutomation, TaskMoveRecordOrigin } from '../../src/shared/types';
+import type { BoardProfile, ColumnAutomation, TaskMoveRecordOrigin } from '../../src/shared/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { RunConditionAnswer } from '../../src/main/db/repositories/automation-run-repository';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 import { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
+import { AUTOMATIONS_DISABLED_REASON } from '../../src/shared/automation-manifest';
 import { supersedeTurnEndWork } from '../../src/main/automations/turn-end/turn-end-passes';
 import { matchFinalLine, TEXT_MATCH_NO_REPLY_REASON } from '../../src/shared/final-line-match';
 import { readFinalReply } from '../../src/main/agent/message-trail-read';
@@ -121,7 +127,11 @@ vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
   deliverMessageAfterMove: vi.fn(),
 }));
 
-const { registerTurnEndAutomations } = await import('../../src/main/automations/turn-end/turn-end-runner');
+const {
+  registerTurnEndAutomations,
+  CARRIED_IN_TURN_REASON,
+  AGENT_NOT_IDLE_REASON,
+} = await import('../../src/main/automations/turn-end/turn-end-runner');
 
 const SESSION_ID = 'session-1';
 const PROJECT_ID = 'project-1';
@@ -134,6 +144,7 @@ const TIMED_OUT_REASON = 'The Automation agent did not answer in time.';
 interface FakeSessionManager extends EventEmitter {
   getActivityCache: () => Record<string, string>;
   isLatestTurn: (sessionId: string, workSerial: number) => boolean;
+  hadLeftPlanModeBy: (sessionId: string, atMs: number) => boolean;
 }
 
 describe('a turn end and the rows it may run', () => {
@@ -146,6 +157,8 @@ describe('a turn end and the rows it may run', () => {
   let sessionManager: FakeSessionManager;
   /** What the engine describes a check's call as: whose ledger, which task and column. */
   let checkCall: { projectId: string; taskId: string; swimlaneId: string; job: 'condition_check' };
+  /** The Board Profiles the board config would hand a task that rides one. None unless a test sets them. */
+  let boardProfiles: BoardProfile[];
 
   afterEach(() => {
     for (const opened of openDatabases.splice(0)) opened.close();
@@ -236,11 +249,15 @@ describe('a turn end and the rows it may run', () => {
     sessionManager = Object.assign(new EventEmitter(), {
       getActivityCache: () => ({ [SESSION_ID]: 'idle' }),
       isLatestTurn: (sessionId: string, workSerial: number) => sessionId === SESSION_ID && workSerial === WORK_SERIAL,
+      hadLeftPlanModeBy: vi.fn((_sessionId: string, _atMs: number) => false),
     });
+    boardProfiles = [];
     registerTurnEndAutomations({
       sessionManager,
       mainWindow: MAIN_WINDOW,
       projectRepo: { getById: () => ({ path: '/mock/project' }) },
+      // Read only for a task with a `profile_id`, which is how a Board Profile re-points a plan exit.
+      boardConfigManager: { getBoardProfiles: () => boardProfiles },
     } as unknown as IpcContext);
   });
 
@@ -264,10 +281,14 @@ describe('a turn end and the rows it may run', () => {
   }
 
   /** Record that the task entered the column at `at`, the boundary a visit counts from. */
-  function enterColumnAt(at: string, origin: TaskMoveRecordOrigin = 'renderer'): void {
+  function enterColumnAt(
+    at: string,
+    origin: TaskMoveRecordOrigin = 'renderer',
+    columns: { from?: string | null; to?: string } = {},
+  ): void {
     database
       .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(randomUUID(), taskId, null, laneId, origin, null, at);
+      .run(randomUUID(), taskId, columns.from ?? null, columns.to ?? laneId, origin, null, at);
   }
 
   /** Fire a turn end and wait for its pass to finish (see the file header). */
@@ -287,13 +308,16 @@ describe('a turn end and the rows it may run', () => {
 
   const secondsAgo = (seconds: number): string => new Date(Date.now() - seconds * 1000).toISOString();
   const skippedRows = () => runs.listForTask(taskId).filter((run) => run.status === 'skipped');
+  /** Each skip as [row id, reason], sorted, so a test pins which row got which reason and how many. */
+  const skipPairs = () => skippedRows().map((run) => [run.automation_id, run.detail]).sort();
 
   describe('the visit gate', () => {
     // Every mover but a plan approval: a drag, the agent moving its own task, a
     // phone, a Move to column row, a workflow step. Each of those turns did the
-    // last column's work.
+    // last column's work, unless a hand move was the plan exit (the plan exit
+    // describe below).
     it.each(['renderer', 'agent', 'mobile', 'automation', 'workflow'] as const)(
-      'runs no row for a turn that began before a %s move into the column, and logs the skip',
+      'runs no row for a turn that began before a %s move into the column, and records and logs the skip',
       async (origin) => {
         const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
         hoisted.rows = [row()];
@@ -306,8 +330,11 @@ describe('a turn end and the rows it may run', () => {
         expect(hoisted.checkConditions).not.toHaveBeenCalled();
         expect(hoisted.executeTransition).not.toHaveBeenCalled();
         expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
-        expect(runs.listForTask(taskId)).toEqual([]);
-        // The skip writes no run record, so the log is the only trace of it.
+        // The task's own run log says why (kangentic-mobile #119): a console line alone landed
+        // in whichever project's log was open.
+        expect(runs.listForTask(taskId).map((run) => [run.automation_id, run.status, run.detail]))
+          .toEqual([['row-on-to-testing', 'skipped', CARRIED_IN_TURN_REASON]]);
+        // The line carries the times, which the reason leaves out.
         const skipLines = logSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('Skipped a carried-in turn'));
         expect(skipLines).toHaveLength(1);
         expect(skipLines[0]).toContain(`before the ${origin} move at ${enteredAt}`);
@@ -375,7 +402,7 @@ describe('a turn end and the rows it may run', () => {
 
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
       expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
-      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(skippedRows().map((run) => run.detail)).toEqual([CARRIED_IN_TURN_REASON]);
     });
 
     it('runs the row for a turn that began after the task entered the column (the control)', async () => {
@@ -387,6 +414,296 @@ describe('a turn end and the rows it may run', () => {
 
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
       expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+    });
+  });
+
+  // A carried-in skip is a record, not a run. `hasRunSince` and `countRuns`
+  // count executed statuses only (#835), so the rows stay pending for the next
+  // turn end of the same visit and no Frequency is spent.
+  describe('a carried-in skip', () => {
+    it('is written once per row per visit, and the next turn end in the visit still runs the rows', async () => {
+      hoisted.rows = [row(), row({ id: 'row-second', name: 'On to Merge', position: 1 })];
+      const enteredAt = secondsAgo(60);
+      enterColumnAt(enteredAt);
+      const carriedInStart = Date.parse(enteredAt) - 1_000;
+
+      await endTurn(carriedInStart);
+      await endTurn(carriedInStart);
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(skippedRows().map((run) => [run.automation_id, run.detail]).sort()).toEqual([
+        ['row-on-to-testing', CARRIED_IN_TURN_REASON],
+        ['row-second', CARRIED_IN_TURN_REASON],
+      ]);
+
+      await endTurn(Date.parse(enteredAt) + 1_000);
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      const [, , , options] = hoisted.executeTransition.mock.calls[0] as [unknown, unknown, string, ExecuteOptions];
+      expect([...options.onlyIds]).toEqual(['row-on-to-testing', 'row-second']);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+      expect(runs.countRuns('row-second', taskId)).toBe(1);
+      // The run wrote no second skip.
+      expect(skippedRows()).toHaveLength(2);
+    });
+
+    it('spends no Frequency: a row limited to one run still runs at the next turn end', async () => {
+      hoisted.rows = [row({ max_runs: 1 })];
+      const enteredAt = secondsAgo(60);
+      enterColumnAt(enteredAt);
+
+      await endTurn(Date.parse(enteredAt) - 1_000);
+      await endTurn(Date.parse(enteredAt) + 1_000);
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+      expect(skippedRows().map((run) => run.detail)).toEqual([CARRIED_IN_TURN_REASON]);
+    });
+
+    // The gate runs after the loop that records why a row is held, and carries
+    // in only the rows still pending. A task whose automations are off has none
+    // pending: every row already says so, and no row says the turn was carried in.
+    it('leaves a task with its automations disabled the disabled reason on every row, and no carried-in skip', async () => {
+      hoisted.task = { ...hoisted.task, automations_disabled: true };
+      hoisted.rows = [row(), row({ id: 'row-second', name: 'On to Merge', position: 1 })];
+      const enteredAt = secondsAgo(60);
+      enterColumnAt(enteredAt);
+      const carriedInStart = Date.parse(enteredAt) - 1_000;
+
+      await endTurn(carriedInStart);
+      await endTurn(carriedInStart);
+
+      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(skipPairs()).toEqual([
+        ['row-on-to-testing', AUTOMATIONS_DISABLED_REASON],
+        ['row-second', AUTOMATIONS_DISABLED_REASON],
+      ]);
+      expect(skippedRows().some((run) => run.detail === CARRIED_IN_TURN_REASON)).toBe(false);
+    });
+  });
+
+  // kangentic-mobile #119. The plan was left in the conversation, not through an
+  // approved ExitPlanMode, so the engine never re-stamped the turn. The user
+  // typed "looks good" in Planning, dragged the card to Executing 96 s into the
+  // turn, and the turn ended there on `Findings: applied`. That drag is the plan
+  // exit, so the turn is Executing's work, but only when the agent had left plan
+  // mode by the drag: a drag made mid-plan ends on a plan reply.
+  //
+  // The real seeded board, so the plan exit target is the one production reads:
+  // Planning's `plan_exit_target_id` is Executing.
+  describe('a drag into the last column\'s plan exit target (kangentic-mobile #119)', () => {
+    let planningId: string;
+    let executingId: string;
+    let codeReviewId: string;
+
+    beforeEach(() => {
+      const lanes = new SwimlaneRepository(database);
+      const idOf = (name: string): string => lanes.list().find((lane) => lane.name === name)!.id;
+      planningId = idOf('Planning');
+      executingId = idOf('Executing');
+      codeReviewId = idOf('Code Review');
+      expect(lanes.getById(planningId)?.plan_exit_target_id).toBe(executingId);
+      hoisted.repos = { ...(hoisted.repos as Record<string, unknown>), swimlanes: lanes };
+      hoisted.task = { ...hoisted.task, workflow_id: null };
+      placeTaskIn(executingId);
+    });
+
+    function placeTaskIn(columnId: string): void {
+      hoisted.task = { ...hoisted.task, swimlane_id: columnId };
+      database.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(columnId, taskId);
+    }
+
+    /** Two rows in the column, so each skip is pinned per row. */
+    function rowsIn(columnId: string): ColumnAutomation[] {
+      return [
+        row({ id: 'row-first', name: 'On to Code Review', swimlane_id: columnId, config: { targetColumn: 'Code Review' } }),
+        row({ id: 'row-second', name: 'On to Testing', swimlane_id: columnId, position: 1 }),
+      ];
+    }
+
+    /** Drag the task from `from` into `to` 12 minutes ago; the turn began 96 s before that. */
+    async function dragMidTurnAndEndTurn(from: string, to: string, origin: TaskMoveRecordOrigin = 'renderer'): Promise<string> {
+      const draggedAt = secondsAgo(12 * 60);
+      enterColumnAt(draggedAt, origin, { from, to });
+      await endTurn(Date.parse(draggedAt) - 96_000);
+      return draggedAt;
+    }
+
+    it.each(['renderer', 'mobile', 'agent'] as const)(
+      'runs the rows when the agent had left plan mode by a %s move',
+      async (origin) => {
+        sessionManager.hadLeftPlanModeBy = vi.fn(() => true);
+        hoisted.rows = rowsIn(executingId);
+
+        const draggedAt = await dragMidTurnAndEndTurn(planningId, executingId, origin);
+
+        // Asked about the moment of the move, on the app's clock.
+        expect(sessionManager.hadLeftPlanModeBy).toHaveBeenCalledWith(SESSION_ID, Date.parse(draggedAt));
+        expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+        expect(runs.countRuns('row-first', taskId)).toBe(1);
+        expect(runs.countRuns('row-second', taskId)).toBe(1);
+        expect(skippedRows()).toEqual([]);
+        expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('skips each row once when the agent was still in plan mode at the drag', async () => {
+      hoisted.rows = rowsIn(executingId);
+
+      const draggedAt = await dragMidTurnAndEndTurn(planningId, executingId);
+
+      expect(sessionManager.hadLeftPlanModeBy).toHaveBeenCalledWith(SESSION_ID, Date.parse(draggedAt));
+      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+      expect(skippedRows().map((run) => [run.automation_id, run.detail]).sort()).toEqual([
+        ['row-first', CARRIED_IN_TURN_REASON],
+        ['row-second', CARRIED_IN_TURN_REASON],
+      ]);
+      expect(runs.countRuns('row-first', taskId)).toBe(0);
+      expect(runs.countRuns('row-second', taskId)).toBe(0);
+    });
+
+    it('does not count a drag into a column that is not the last column\'s plan exit target', async () => {
+      sessionManager.hadLeftPlanModeBy = vi.fn(() => true);
+      placeTaskIn(codeReviewId);
+      hoisted.rows = rowsIn(codeReviewId);
+
+      await dragMidTurnAndEndTurn(planningId, codeReviewId);
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(skippedRows().map((run) => run.detail)).toEqual([CARRIED_IN_TURN_REASON, CARRIED_IN_TURN_REASON]);
+    });
+
+    it.each(['automation', 'workflow'] as const)(
+      'does not count a %s move into the plan exit target, whatever the mode',
+      async (origin) => {
+        sessionManager.hadLeftPlanModeBy = vi.fn(() => true);
+        hoisted.rows = rowsIn(executingId);
+
+        await dragMidTurnAndEndTurn(planningId, executingId, origin);
+
+        expect(sessionManager.hadLeftPlanModeBy).not.toHaveBeenCalled();
+        expect(hoisted.executeTransition).not.toHaveBeenCalled();
+        expect(skippedRows()).toHaveLength(2);
+      },
+    );
+
+    // A move recorded with no source column (`from_swimlane_id` null) has no
+    // column to have left plan mode in, so it is no plan exit: the rows are
+    // carried in and the session is never asked about its mode.
+    it('does not count a move recorded without a source column, and never asks the session about its mode', async () => {
+      sessionManager.hadLeftPlanModeBy = vi.fn(() => true);
+      hoisted.rows = rowsIn(executingId);
+      const movedAt = secondsAgo(12 * 60);
+      enterColumnAt(movedAt, 'renderer', { from: null, to: executingId });
+
+      await endTurn(Date.parse(movedAt) - 96_000);
+
+      expect(sessionManager.hadLeftPlanModeBy).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+      expect(skipPairs()).toEqual([
+        ['row-first', CARRIED_IN_TURN_REASON],
+        ['row-second', CARRIED_IN_TURN_REASON],
+      ]);
+    });
+
+    // A workflow task's plan exit is its route's next column, wherever the
+    // column itself points. The route skips Executing, so a drag from Planning
+    // into Code Review is the plan exit, and a drag into Executing is not.
+    describe('a workflow task', () => {
+      beforeEach(() => {
+        sessionManager.hadLeftPlanModeBy = vi.fn(() => true);
+        hoisted.task = {
+          ...hoisted.task,
+          workflow_id: 'workflow-1',
+          route_start_swimlane_id: null,
+          route_last_swimlane_id: null,
+          skipped_swimlane_ids: [executingId],
+        };
+      });
+
+      it('counts a drag into the next column on its route', async () => {
+        placeTaskIn(codeReviewId);
+        hoisted.rows = rowsIn(codeReviewId);
+
+        await dragMidTurnAndEndTurn(planningId, codeReviewId);
+
+        expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+        expect(skippedRows()).toEqual([]);
+      });
+
+      it('does not count a drag into the column\'s own plan exit target that its route skips', async () => {
+        hoisted.rows = rowsIn(executingId);
+
+        await dragMidTurnAndEndTurn(planningId, executingId);
+
+        expect(hoisted.executeTransition).not.toHaveBeenCalled();
+        expect(skippedRows()).toHaveLength(2);
+      });
+
+      // With no source column the route has no "next" to compute from, and
+      // `nextOnRoute` falls back to the route's first step. Here that step is
+      // the column the task is in, so only the null check keeps this from
+      // reading as a plan exit.
+      it('does not count a move recorded without a source column, though the route starts in this column', async () => {
+        hoisted.task = { ...hoisted.task, route_start_swimlane_id: executingId, skipped_swimlane_ids: [] };
+        hoisted.rows = rowsIn(executingId);
+        const movedAt = secondsAgo(12 * 60);
+        enterColumnAt(movedAt, 'renderer', { from: null, to: executingId });
+
+        await endTurn(Date.parse(movedAt) - 96_000);
+
+        expect(sessionManager.hadLeftPlanModeBy).not.toHaveBeenCalled();
+        expect(hoisted.executeTransition).not.toHaveBeenCalled();
+        expect(skipPairs()).toEqual([
+          ['row-first', CARRIED_IN_TURN_REASON],
+          ['row-second', CARRIED_IN_TURN_REASON],
+        ]);
+      });
+    });
+
+    // A Board Profile re-points a column's plan exit per task, and the runner
+    // reads the same answer the plan-exit listener moves by. This task's profile
+    // sends Planning's plan exit to Code Review instead of Executing.
+    describe('a task on a Board Profile that re-points Planning\'s plan exit to Code Review', () => {
+      beforeEach(() => {
+        sessionManager.hadLeftPlanModeBy = vi.fn(() => true);
+        boardProfiles = [{
+          id: 'profile-review-first',
+          name: 'Review first',
+          columns: { [planningId]: { planExitTarget: 'Code Review' } },
+        }];
+        hoisted.task = { ...hoisted.task, profile_id: 'profile-review-first' };
+      });
+
+      it('counts a drag from Planning into Code Review as the plan exit once the agent had left plan mode', async () => {
+        placeTaskIn(codeReviewId);
+        hoisted.rows = rowsIn(codeReviewId);
+
+        const draggedAt = await dragMidTurnAndEndTurn(planningId, codeReviewId);
+
+        expect(sessionManager.hadLeftPlanModeBy).toHaveBeenCalledWith(SESSION_ID, Date.parse(draggedAt));
+        expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+        expect(runs.countRuns('row-first', taskId)).toBe(1);
+        expect(runs.countRuns('row-second', taskId)).toBe(1);
+        expect(skippedRows()).toEqual([]);
+      });
+
+      it('carries in a drag from Planning into Executing, the board\'s own plan exit target the profile replaced', async () => {
+        hoisted.rows = rowsIn(executingId);
+
+        await dragMidTurnAndEndTurn(planningId, executingId);
+
+        expect(sessionManager.hadLeftPlanModeBy).not.toHaveBeenCalled();
+        expect(hoisted.executeTransition).not.toHaveBeenCalled();
+        expect(skipPairs()).toEqual([
+          ['row-first', CARRIED_IN_TURN_REASON],
+          ['row-second', CARRIED_IN_TURN_REASON],
+        ]);
+      });
     });
   });
 
@@ -724,6 +1041,48 @@ describe('a turn end and the rows it may run', () => {
       expect(skipped[0].automation_id).toBe('row-on-to-testing');
       expect(runs.countRuns('row-after-the-spent-one', taskId)).toBe(1);
     });
+
+    // The carried-in gate runs after this loop and carries in only the rows
+    // still pending. A spent row keeps its limit as its one skip; it is not
+    // also told the turn was carried in, and a carried-in turn does not hide
+    // the limit from the log.
+    it('keeps its limit as its only skip on a carried-in turn, and only the pending row is carried in', async () => {
+      const spentRow = row({ max_runs: 1 });
+      const pendingRow = row({ id: 'row-pending', name: 'Move on after review', position: 1 });
+      hoisted.rows = [spentRow, pendingRow];
+      // The run that spent the limit is from before this visit: one inside it would drop the row with no record.
+      ranAt(spentRow, secondsAgo(120));
+      const enteredAt = secondsAgo(60);
+      enterColumnAt(enteredAt);
+      const carriedInStart = Date.parse(enteredAt) - 1_000;
+
+      await endTurn(carriedInStart);
+
+      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(skipPairs()).toEqual([
+        ['row-on-to-testing', SPENT_REASON],
+        ['row-pending', CARRIED_IN_TURN_REASON],
+      ]);
+
+      // A second carried-in turn end of the visit adds no record for either row.
+      await endTurn(carriedInStart);
+
+      expect(skipPairs()).toHaveLength(2);
+
+      // The skips spent nothing: the next turn end of the visit runs the pending
+      // row, and the spent row is still held without a second record.
+      await endTurn(Date.parse(enteredAt) + 1_000);
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      const [, , , options] = hoisted.executeTransition.mock.calls[0] as [unknown, unknown, string, ExecuteOptions];
+      expect([...options.onlyIds]).toEqual(['row-pending']);
+      expect(runs.countRuns('row-pending', taskId)).toBe(1);
+      expect(skipPairs()).toEqual([
+        ['row-on-to-testing', SPENT_REASON],
+        ['row-pending', CARRIED_IN_TURN_REASON],
+      ]);
+    });
   });
 
   // A turn end holds no task lock, so its check has no time limit, but it is
@@ -793,6 +1152,99 @@ describe('a turn end and the rows it may run', () => {
     });
   });
 
+  // The re-check after the Condition check. A newer turn abandons the pass
+  // silently (pinned in turn-end-runner-workflow-step.test.ts); the same turn
+  // with the session gone off idle holds the rows back and says so, since a
+  // permission prompt with no tool hook before it moves no work serial and no
+  // turn end may follow it.
+  describe('the re-check before the rows', () => {
+    beforeEach(() => {
+      hoisted.rows = [row({ condition: 'The review is clean' })];
+      enterColumnAt(secondsAgo(60));
+      hoisted.checkConditions.mockImplementation(async () => {
+        // The session goes to a permission prompt while the check is out.
+        sessionManager.getActivityCache = () => ({ [SESSION_ID]: 'permission' });
+        return { ok: true, answers: new Map([['row-on-to-testing', { met: true, reason: 'Clean.' }]]) };
+      });
+    });
+
+    it('runs no row when the session is not idle on the same turn, and records why once a visit', async () => {
+      await endTurn();
+      sessionManager.getActivityCache = () => ({ [SESSION_ID]: 'idle' });
+      await endTurn();
+
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(2);
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(skippedRows().map((run) => run.detail)).toEqual([AGENT_NOT_IDLE_REASON]);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(0);
+    });
+
+    // Per row, like the give-up's skip: a conditional row (its check came back
+    // and the session left idle meanwhile) and a plain one each say why, once.
+    it('records the not-idle skip for each row it holds back, and for neither again at the next turn end', async () => {
+      hoisted.rows = [
+        row({ condition: 'The review is clean' }),
+        row({ id: 'row-second', name: 'On to Merge', position: 1 }),
+      ];
+
+      await endTurn();
+
+      expect(skipPairs()).toEqual([
+        ['row-on-to-testing', AGENT_NOT_IDLE_REASON],
+        ['row-second', AGENT_NOT_IDLE_REASON],
+      ]);
+
+      sessionManager.getActivityCache = () => ({ [SESSION_ID]: 'idle' });
+      await endTurn();
+
+      // The second turn end paid for its check again and the session left idle again.
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(2);
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toHaveLength(2);
+      expect(skipPairs()).toEqual([
+        ['row-on-to-testing', AGENT_NOT_IDLE_REASON],
+        ['row-second', AGENT_NOT_IDLE_REASON],
+      ]);
+    });
+
+    // `runnable` leaves out a conditional row whose check is unavailable and that
+    // already carries that skip this visit, since the engine would write nothing
+    // new for it. The not-idle skip goes only to the rows `runnable` still holds,
+    // so that row keeps its one reason and the plain row beside it gets the other.
+    it('writes no not-idle skip for a conditional row already skipped as unavailable this visit', async () => {
+      const conditionalRow = row({ condition: 'The review is clean' });
+      hoisted.rows = [conditionalRow, row({ id: 'row-second', name: 'On to Merge', position: 1 })];
+      // An earlier turn end of this visit found no Automation agent set up.
+      runs.recordSkipped({ id: randomUUID(), automation: conditionalRow, taskId }, SETUP_REASON);
+      hoisted.checkConditions.mockImplementation(async () => {
+        // The session goes to a permission prompt while the check is out.
+        sessionManager.getActivityCache = () => ({ [SESSION_ID]: 'permission' });
+        return { ok: false, reason: SETUP_REASON };
+      });
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(skipPairs()).toEqual([
+        ['row-on-to-testing', SETUP_REASON],
+        ['row-second', AGENT_NOT_IDLE_REASON],
+      ]);
+    });
+
+    it('writes nothing when a newer turn began during the check (the control)', async () => {
+      hoisted.checkConditions.mockImplementation(async () => {
+        sessionManager.isLatestTurn = () => false;
+        return { ok: true, answers: new Map([['row-on-to-testing', { met: true, reason: 'Clean.' }]]) };
+      });
+
+      await endTurn();
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+    });
+  });
+
   // A turn whose terminal never stays quiet before the wait runs out. The CLI
   // paints a status line for its own background work (the repaint rate is in
   // docs/transition-engine.md), and its own agents can run for minutes after
@@ -827,20 +1279,55 @@ describe('a turn end and the rows it may run', () => {
       warnSpy.mockRestore();
     });
 
-    it('runs nothing when the session is not idle at the give-up, since the turn is not over', async () => {
+    // Busy on the same turn: the session left idle with no work reported, as a
+    // permission prompt with no tool hook before it does, and no turn end may
+    // follow. The column was waiting on this turn, so the row says why.
+    it('runs nothing when the session is not idle at the give-up, and the row records why once a visit', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
       sessionManager.getActivityCache = () => ({ [SESSION_ID]: 'thinking' });
 
       await endTurn();
+      await endTurn();
 
       expect(hoisted.checkConditions).not.toHaveBeenCalled();
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
-      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(skippedRows().map((run) => run.detail)).toEqual([AGENT_NOT_IDLE_REASON]);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(0);
       const lines = turnEndWarnings(warnSpy);
-      expect(lines).toHaveLength(1);
+      expect(lines).toHaveLength(2);
       expect(lines[0]).toContain('activity thinking');
       expect(lines[0]).toContain('nothing ran');
+      warnSpy.mockRestore();
+    });
+
+    // The skip is per row, not per task: a conditional row and a plain one each
+    // say why, and a second turn end of the visit adds neither again.
+    it('records the not-idle skip for each pending row, and for neither again at the next turn end', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      hoisted.rows = [
+        row({ condition: 'The review is clean' }),
+        row({ id: 'row-second', name: 'On to Merge', position: 1 }),
+      ];
+      hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+      sessionManager.getActivityCache = () => ({ [SESSION_ID]: 'thinking' });
+
+      await endTurn();
+
+      expect(skipPairs()).toEqual([
+        ['row-on-to-testing', AGENT_NOT_IDLE_REASON],
+        ['row-second', AGENT_NOT_IDLE_REASON],
+      ]);
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toHaveLength(2);
+      expect(skipPairs()).toEqual([
+        ['row-on-to-testing', AGENT_NOT_IDLE_REASON],
+        ['row-second', AGENT_NOT_IDLE_REASON],
+      ]);
       warnSpy.mockRestore();
     });
 
@@ -853,11 +1340,29 @@ describe('a turn end and the rows it may run', () => {
 
       expect(hoisted.checkConditions).not.toHaveBeenCalled();
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
-      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(skippedRows().map((run) => run.detail)).toEqual([AGENT_NOT_IDLE_REASON]);
       const lines = turnEndWarnings(warnSpy);
       expect(lines).toHaveLength(1);
       expect(lines[0]).toContain('activity unknown');
       expect(lines[0]).toContain('nothing ran');
+      warnSpy.mockRestore();
+    });
+
+    // A turn the user began after this turn end is still running at the give-up.
+    // Its own turn end judges it, so this pass writes nothing, and no warning
+    // claims a turn did not settle.
+    it('is silent when a newer turn began, writing neither a warning nor a record', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+      sessionManager.getActivityCache = () => ({ [SESSION_ID]: 'thinking' });
+      sessionManager.isLatestTurn = () => false;
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+      expect(turnEndWarnings(warnSpy)).toEqual([]);
       warnSpy.mockRestore();
     });
 

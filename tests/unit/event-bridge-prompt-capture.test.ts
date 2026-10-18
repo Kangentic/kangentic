@@ -89,9 +89,10 @@ describe('UserPromptSubmit replayed through the real event bridge (buildHooks)',
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe(EventType.Prompt);
     expect(events[0].detail).toBe(FIXTURE.prompt);
-    // Only the prompt is lifted out of the payload. The session id, cwd, and
-    // transcript path must not leak into the event.
-    expect(Object.keys(events[0]).sort()).toEqual(['detail', 'ts', 'type']);
+    // Only the prompt and whether the session is in plan mode are lifted out of
+    // the payload. The session id, cwd, and transcript path must not leak into
+    // the event.
+    expect(Object.keys(events[0]).sort()).toEqual(['detail', 'planMode', 'ts', 'type']);
   });
 
   it('a task session hook leaves the prompt text out of the event', () => {
@@ -105,8 +106,22 @@ describe('UserPromptSubmit replayed through the real event bridge (buildHooks)',
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe(EventType.Prompt);
     expect(events[0].detail).toBeUndefined();
-    expect(Object.keys(events[0]).sort()).toEqual(['ts', 'type']);
+    expect(Object.keys(events[0]).sort()).toEqual(['planMode', 'ts', 'type']);
     expect(fs.readFileSync(eventsPath, 'utf-8')).not.toContain(FIXTURE.prompt);
+  });
+
+  // The real payload's `permission_mode` reaches the engine as a boolean (kangentic-mobile #119),
+  // and the mode string itself stays out of the events file.
+  it('reports whether the session is in plan mode, from the payload\'s permission_mode', () => {
+    const hooks = buildHooks(BRIDGE, eventsPath, {});
+
+    runHookCommand(userPromptSubmitCommand(hooks), FIXTURE_TEXT);
+    runHookCommand(userPromptSubmitCommand(hooks), JSON.stringify({ ...FIXTURE, permission_mode: 'plan' }));
+
+    const events = readEvents(eventsPath);
+    expect(FIXTURE.permission_mode).toBe('default');
+    expect(events.map((event) => event.planMode)).toEqual([false, true]);
+    expect(fs.readFileSync(eventsPath, 'utf-8')).not.toContain('permission_mode');
   });
 
   it('cuts a prompt longer than the bridge field cap to 2000 characters', () => {

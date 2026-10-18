@@ -664,7 +664,9 @@ interrupt, a failed turn, or a background job still running), once the turn has 
 turn that began after the task entered the column counts. A plan approval starts the turn again,
 because the agent implements in the turn that planned, so a plan approved after the task arrived
 counts, whether the approval moved the task (an `auto-move` entry) or someone dragged it in first.
-See [transition-engine.md](transition-engine.md). Rows run top to bottom, each at most
+So does a drag from a column into its plan exit target, when the agent had already left plan mode
+by then. A turn that is dropped records each pending row as skipped, once per visit, and the next
+turn end still runs the rows. See [transition-engine.md](transition-engine.md). Rows run top to bottom, each at most
 once per visit, and only a row that actually runs counts: a row whose Condition answered no is
 checked again at the next turn end. To Do and Done have no turn ends, nor does a column whose agent
 is off or does not report turn ends (agents whose only signal is terminal silence).

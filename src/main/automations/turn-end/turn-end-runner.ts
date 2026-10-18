@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { canColumnRun, canTaskRunAutomations } from '../../../shared/automation-manifest';
-import type { ColumnAutomation, Swimlane, Task } from '../../../shared/types';
+import type { ColumnAutomation, Swimlane, Task, TaskMoveRecordOrigin } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { SessionResumedPayload, TurnEndedPayload } from '../../pty/session-manager';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
+import { planExitTargetFor } from '../../ipc/helpers/plan-exit-target';
 import { createTransitionEngine, resolveInjectionVerifier } from '../../ipc/helpers/agent-spawn';
 import { reportAutomationFailures } from '../../ipc/helpers/automation-failures';
 import { showDesktopNotification } from '../../ipc/handlers/system';
@@ -18,6 +19,7 @@ import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget, routeOf } from '../move-target';
 import { runWorkflowStep, workflowStepApplies } from '../../workflows/workflow-step';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
+import type { TaskVisit } from '../../db/repositories/task-move-repository';
 import { deliverMessageAfterMove, deliverMessageToSession } from './deliver-message';
 import { readSessionFinalReply } from './final-reply-reader';
 import { trackTurnEndGroup } from './turn-end-passes';
@@ -38,16 +40,21 @@ import type { ActivityState, SessionEvent } from '../../../shared/types';
  *   or the wait's whole 120 s with the session idle throughout: a CLI that
  *   paints a status line for its own background work never goes quiet, and
  *   the turn is over all the same (`turnSettled`). Either give-up logs a
- *   warning, since a dropped turn leaves no run record.
+ *   warning. A session still not idle at the give-up, on the same turn, also
+ *   leaves each pending row a skip saying so.
  * - **Only a turn that began in this visit counts.** A task dragged in while
  *   its agent was mid-turn ends that turn here, but the turn did the last
- *   column's work, and `{{agentReply}}` would carry the wrong reply. A plan
- *   approval is the exception: the agent implements in the turn that planned,
- *   so the rest of the turn is this column's work and its reply is the one to
- *   judge. The engine re-stamps the turn's start at the approval, which covers
- *   a task dragged in before its plan was approved. Its own move
- *   (`auto-move`) is exempt as well, because under a busy task lock that move
- *   can be written after the approval's stamp.
+ *   column's work, and `{{agentReply}}` would carry the wrong reply. Each
+ *   pending row records that skip once a visit, and the next turn end still
+ *   runs it. A plan exit is the exception: the agent implements in the turn
+ *   that planned, so the rest of the turn is this column's work and its reply
+ *   is the one to judge (`countsAsThisColumnsTurn`). The engine re-stamps the
+ *   turn's start at an approved ExitPlanMode, which covers a task dragged in
+ *   before its plan was approved. Its own move (`auto-move`) is exempt as
+ *   well, because under a busy task lock that move can be written after the
+ *   approval's stamp. So is a drag into the last column's plan exit target
+ *   once the agent had left plan mode, a plan left in the conversation with no
+ *   approval to re-stamp the turn.
  * - **The reply is the turn's own.** It is read from where the turn began in
  *   the transcript (`transcriptAnchor`, a byte offset the session manager
  *   copies from the message trail when the session goes idle), so a turn that
@@ -79,7 +86,13 @@ import type { ActivityState, SessionEvent } from '../../../shared/types';
  *   turn end of its own, and acting then would act on the old turn's reply.
  *   A newer turn abandons the pass and writes nothing more. A spent
  *   Frequency's skip is written before the wait: it is about the row, not the
- *   turn.
+ *   turn. The same turn with the session not idle at the re-check writes a
+ *   skip for each row it holds back: no turn end may follow it.
+ * - **A turn the column waited on says why its rows did not run; the rest stay
+ *   silent.** Silent: the task left the column or the session is not its own
+ *   (`resolveSubject`), a move superseded the pass, a newer turn began, every
+ *   row already ran or cannot run here, and the recap turn, which asks the
+ *   user to act next.
  * - **Cheap when there is nothing to do.** Every hook agent's every turn ends
  *   here; a column with no turn-end rows costs one indexed query.
  * - **A resume catches up the workflow step, never the rows.** A session that
@@ -163,6 +176,12 @@ async function schedulePass(context: IpcContext, request: PassRequest): Promise<
   }
 }
 
+/** A row's skip when the turn that ended began before the task entered the column. */
+export const CARRIED_IN_TURN_REASON = 'The agent\'s turn began before the task entered this column.';
+
+/** A row's skip when the session was not idle on the same turn when the rows were due. */
+export const AGENT_NOT_IDLE_REASON = 'The agent was not idle when this was due to run.';
+
 /**
  * Record why a row did not run, once per visit: the same reason written at
  * every turn end of a long chat would bury the runs that matter.
@@ -178,11 +197,18 @@ function recordSkipOncePerVisit(
   runs.recordSkipped({ id: randomUUID(), automation: row, taskId }, reason);
 }
 
+/** The task a turn end is for, the column it is in, and that project's repositories. */
+interface TurnEndSubject {
+  task: Task;
+  column: Swimlane;
+  repos: ReturnType<typeof getProjectRepos>;
+}
+
 /** The task and column a turn end is for, or null when it no longer applies. */
 function resolveSubject(
   context: IpcContext,
   payload: TurnEndedPayload,
-): { task: Task; column: Swimlane; repos: ReturnType<typeof getProjectRepos> } | null {
+): TurnEndSubject | null {
   let repos: ReturnType<typeof getProjectRepos>;
   try {
     repos = getProjectRepos(context, payload.projectId);
@@ -217,7 +243,9 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
   if (rows.length === 0 && !stepApplies) return;
 
   if (recapTurn) {
-    // Logged because it leaves no run record.
+    // No run record: the recap asks the agent to wait for the user, so the
+    // user acts next and the turn that answers runs the rows. Nobody waits on
+    // this one. Logged so the skip can still be traced.
     console.log(
       `[turn-end] Skipped the recap turn for task ${task.id.slice(0, 8)} in ${column.name}: `
       + 'it answered an expired conversation\'s recap, which asks the agent to wait for the user.',
@@ -227,20 +255,6 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
 
   const visit = repos.taskMoves.currentVisit(task.id, column.id);
   const visitStartedAt = visit?.at ?? null;
-  if (visit && visit.origin !== 'auto-move'
-    && payload.turnStartedAt !== null && payload.turnStartedAt < Date.parse(visit.at)) {
-    // A turn the task carried in from its last column. Not after a plan
-    // approval: the engine re-stamps the start there, so a turn approved after
-    // the move begins inside the visit, and the approval's own move is exempt
-    // above. Logged because it leaves no run record, and at most once a visit:
-    // only one turn can predate it.
-    console.log(
-      `[turn-end] Skipped a carried-in turn for task ${task.id.slice(0, 8)} in ${column.name}: `
-      + `the turn began ${new Date(payload.turnStartedAt).toISOString()}, before the ${visit.origin} move at ${visit.at}.`,
-    );
-    return;
-  }
-
   const facts = { autoSpawn: column.auto_spawn, role: column.role };
   const runs = repos.automationRuns;
   // A task whose automations are disabled runs none of the column's rows. It is
@@ -269,6 +283,22 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
       recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, spent);
     }
   }
+
+  if (visit && payload.turnStartedAt !== null && payload.turnStartedAt < Date.parse(visit.at)
+    && !countsAsThisColumnsTurn(context, payload, subject, visit)) {
+    // A turn the task carried in from its last column, which the column was
+    // waiting on, so each pending row says why it did not run. A skip is not a
+    // run: the next turn end of the visit still runs them. The workflow step
+    // gets the console line only, since its log row is a check's answer. The
+    // times go in the line, never the reason, which has to match exactly to
+    // be written once a visit.
+    for (const row of pending) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, CARRIED_IN_TURN_REASON);
+    console.log(
+      `[turn-end] Skipped a carried-in turn for task ${task.id.slice(0, 8)} in ${column.name}: `
+      + `the turn began ${new Date(payload.turnStartedAt).toISOString()}, before the ${visit.origin} move at ${visit.at}.`,
+    );
+    return;
+  }
   if (pending.length === 0 && !stepApplies) return;
 
   const controller = new AbortController();
@@ -276,10 +306,12 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
   try {
     // The turn's bytes may still be landing: wait out the CLI's last paint.
     const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal });
-    if (!turnSettled(context, payload, settled, `in ${column.name}`)) return;
-    // Cheap, and ahead of the paid check: a turn begun since this turn end
-    // has left this one with nothing to judge.
-    if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return;
+    const outcome = turnSettled(context, payload, settled, `in ${column.name}`);
+    if (outcome === 'busy') {
+      for (const row of pending) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, AGENT_NOT_IDLE_REASON);
+      return;
+    }
+    if (outcome === 'stop') return;
 
     // One read of the agent's final reply, shared by the rows and the step.
     const sessionRepo = new SessionRepository(getProjectDb(payload.projectId));
@@ -326,11 +358,11 @@ async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promi
   const controller = new AbortController();
   const releaseGroup = trackTurnEndGroup(payload.taskId, controller);
   try {
-    // The resume repaints the conversation: wait for it to settle idle.
+    // The resume repaints the conversation: wait for it to settle idle. Work
+    // begun since the resume is a turn of its own, which its turn end judges,
+    // and a session still busy at the give-up has nothing for the step to judge.
     const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal });
-    if (!turnSettled(context, payload, settled, 'after its resume')) return;
-    // Work begun since the resume is a turn of its own, which its turn end judges.
-    if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return;
+    if (turnSettled(context, payload, settled, 'after its resume') !== 'go') return;
     // Read only now: the resume writes the task's session id after its spawn.
     const subject = resolveSubject(context, payload);
     if (!subject) return;
@@ -429,14 +461,21 @@ async function runRows(
   // still the latest: same session, same column, no turn begun since, and the
   // agent still idle. Idle alone passes a turn the user began meanwhile that
   // failed or was interrupted back to idle, since neither emits a turn end.
+  // The task leaving and a newer turn are silent: the visit is over, or that
+  // turn's own end judges it.
   const current = resolveSubject(context, payload);
   if (!current || current.column.id !== column.id) return none;
   if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) {
     return { messagedAgent: false, newerTurn: true };
   }
   // activity-state-ok: granular, a row must not land on a running turn or a
-  // permission prompt.
-  if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') return none;
+  // permission prompt. On the same turn this is the session leaving idle with
+  // no work reported, as a permission prompt with no tool hook before it does,
+  // and no turn end may follow it, so the rows say why they did not run.
+  if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') {
+    for (const row of runnable) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, AGENT_NOT_IDLE_REASON);
+    return none;
+  }
 
   let messagedAgent = false;
   const summary = await engine.executeTransition(current.task, column, 'turn_end', {
@@ -469,24 +508,40 @@ async function runRows(
 }
 
 /**
- * Whether a pass goes on after its settle wait. A wait that ran out with the
- * session idle goes on: the agent's own Stop ended the turn, and what keeps
- * the terminal from staying quiet is the CLI painting, not the turn. The CLI
- * repaints its status line while its own background agents run, and those can
- * run for minutes after the Stop with no `SubagentStart` and no transcript.
- * The repaint rate is measured in docs/transition-engine.md, under the
- * turn-end trigger. A pass that dropped the turn there left the rows for a
- * user prompt to bring. Nothing here writes to the terminal: a Condition
- * check reads the transcript, a move needs no terminal, and a message's own
- * delivery waits for its own quiet window and fails loudly.
+ * Whether a pass goes on after its settle wait: `'go'`, `'stop'` with nothing
+ * to record, or `'busy'`, which stops it on a turn the column was waiting on.
  *
- * A wait that ran out with the session not idle means the session never went
- * idle, so the turn is not over, and the pass stops. Both write one warning,
- * so the give-up reaches the log file without Persist Console Logs.
+ * A move that superseded the wait, or a session that exited, stops it. So does
+ * a turn begun since this turn end, settled or not: it has left this one with
+ * nothing to judge, and its own turn end judges it. That is cheap, so it runs
+ * ahead of the paid check, and ahead of the give-up warning, which a newer turn
+ * still running at the give-up would otherwise trip.
+ *
+ * A wait that ran out with the session idle goes on: the agent's own Stop
+ * ended the turn, and what keeps the terminal from staying quiet is the CLI
+ * painting, not the turn. The CLI repaints its status line while its own
+ * background agents run, and those can run for minutes after the Stop with no
+ * `SubagentStart` and no transcript. The repaint rate is measured in
+ * docs/transition-engine.md, under the turn-end trigger. A pass that dropped
+ * the turn there left the rows for a user prompt to bring. Nothing here writes
+ * to the terminal: a Condition check reads the transcript, a move needs no
+ * terminal, and a message's own delivery waits for its own quiet window and
+ * fails loudly.
+ *
+ * A wait that ran out with the session not idle, on the same turn, is `'busy'`:
+ * the session left idle without reporting work, which a permission prompt with
+ * no tool hook before it does. Both give-ups write one warning, so they reach
+ * the log file without Persist Console Logs.
  */
-function turnSettled(context: IpcContext, payload: TurnEndedPayload, settled: TurnCompletionResult, where: string): boolean {
-  if (settled === 'completed') return true;
-  if (settled !== 'timeout') return false;
+function turnSettled(
+  context: IpcContext,
+  payload: TurnEndedPayload,
+  settled: TurnCompletionResult,
+  where: string,
+): 'go' | 'stop' | 'busy' {
+  if (settled === 'aborted' || settled === 'exited') return 'stop';
+  if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return 'stop';
+  if (settled === 'completed') return 'go';
   const activity = context.sessionManager.getActivityCache()[payload.sessionId] ?? 'unknown';
   // activity-state-ok: granular, a running turn or a permission prompt must stop the pass.
   const idle = activity === 'idle';
@@ -495,7 +550,46 @@ function turnSettled(context: IpcContext, payload: TurnEndedPayload, settled: Tu
     + `(session ${payload.sessionId.slice(0, 8)}, activity ${activity}), so `
     + (idle ? 'the pass goes on without a quiet terminal.' : 'nothing ran.'),
   );
-  return idle;
+  return idle ? 'go' : 'busy';
+}
+
+/** Who moves a task by hand: a drag, a phone, or the agent moving its own task. */
+const PLAN_EXIT_MOVE_ORIGINS: ReadonlySet<TaskMoveRecordOrigin> = new Set<TaskMoveRecordOrigin>(['renderer', 'mobile', 'agent']);
+
+/**
+ * Whether a turn that began before the task entered this column is this
+ * column's work all the same. Two moves make it so, both because the agent
+ * implements in the turn that planned:
+ *
+ * - A plan approval's own move (`auto-move`). The engine re-stamps the turn's
+ *   start at the approval, which covers a task dragged in before its plan was
+ *   approved, and under a busy task lock the move can be written after that
+ *   stamp.
+ * - A move by hand from a column into that column's plan exit target, made once
+ *   the agent had left plan mode. That is the same plan exit, done by a drag
+ *   (kangentic-mobile #119): a plan left in the conversation, not through an
+ *   approved ExitPlanMode, gets no re-stamp, so the turn the user started with
+ *   "looks good" in Planning ends in Executing. A move made while the agent was still
+ *   planning stays carried in: its turn ends on a plan reply, which this
+ *   column's rows must not judge. So does a session whose agent reports no mode.
+ *
+ * The alternative was to exempt the drag whatever the mode. That needs no
+ * plumbing, but a drag made mid-plan whose plan the user then rejects would run
+ * unconditional rows on that plan reply.
+ */
+function countsAsThisColumnsTurn(
+  context: IpcContext,
+  payload: TurnEndedPayload,
+  subject: TurnEndSubject,
+  visit: TaskVisit,
+): boolean {
+  const { task, column, repos } = subject;
+  if (visit.origin === 'auto-move') return true;
+  if (!PLAN_EXIT_MOVE_ORIGINS.has(visit.origin) || visit.from_swimlane_id === null) return false;
+  const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
+  const target = planExitTargetFor(context, task, visit.from_swimlane_id, repos.swimlanes, projectPath);
+  if (target?.id !== column.id) return false;
+  return context.sessionManager.hadLeftPlanModeBy(payload.sessionId, Date.parse(visit.at));
 }
 
 /**

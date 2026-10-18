@@ -26,6 +26,10 @@
  *   extractToolId              { fields[], nested? } -> event.toolId = first non-null
  *   extractSubagentId          { fields[] }          -> event.subagentId = first non-null
  *                                 top-level field (a subagent's correlation id)
+ *   extractPlanMode            { field, planValues[], unlessField? } -> event.planMode =
+ *                                 whether the top-level string field is one of
+ *                                 planValues. No-op when the field is absent or not a
+ *                                 string, or when unlessField is present.
  *   extractDetail              { fields[], nested? } -> event.detail = first non-null
  *   extractDetailPath          { parents[], fields[] } -> event.detail = first non-null of
  *                                 fields under the nested container at parents
@@ -206,6 +210,18 @@ process.stdin.on('end', () => {
         if (event.subagentId !== undefined) break;
         const value = firstNonNull(ctx, payload.fields);
         if (value !== undefined) event.subagentId = value;
+        break;
+      }
+      case 'extractPlanMode': {
+        // A boolean, not the mode string: the adapter names which values mean
+        // plan mode, so no agent's vocabulary reaches the engine. A field the
+        // payload does not carry reports nothing, which the engine reads as unknown.
+        // `unlessField` marks a payload that is not the session's own (a
+        // subagent's Stop carries its agent id), whose mode may be its own.
+        if (!ctx || !payload.field || !Array.isArray(payload.planValues)) break;
+        if (payload.unlessField && ctx[payload.unlessField] != null) break;
+        const value = ctx[payload.field];
+        if (typeof value === 'string') event.planMode = payload.planValues.includes(value);
         break;
       }
       // `extractDetailWhenTool` is the tool-scoped form. It is a SEPARATE kind

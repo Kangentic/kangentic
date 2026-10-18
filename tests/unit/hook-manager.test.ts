@@ -7,7 +7,7 @@ import {
   removeHooks,
 } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
-import { extractDetail, extractSubagentId, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { extractDetail, extractPlanMode, extractSubagentId, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
@@ -99,6 +99,18 @@ describe('hook-manager', () => {
       // Stop: idle
       expect(hooks.Stop).toHaveLength(1);
       expect(hooks.Stop[0].hooks[0].command).toContain('idle');
+
+      // The session's plan mode rides the main agent's own prompt and turn end,
+      // so a turn-end automation can tell a turn begun after the plan was left
+      // (kangentic-mobile #119). Never a subagent's, which can run in its own mode: not on the
+      // tool or subagent hooks, and a Stop that carries `agent_id` (a
+      // subagent's, through the same hook) reports nothing.
+      const planMode = extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' });
+      expect(hooks.UserPromptSubmit[0].hooks[0].command).toContain(planMode);
+      expect(hooks.Stop[0].hooks[0].command).toContain(planMode);
+      for (const event of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'SubagentStart', 'SubagentStop'] as const) {
+        expect(hooks[event][0].hooks[0].command, event).not.toContain(planMode);
+      }
 
       // StopFailure: turn_failed by default (fires INSTEAD of Stop on an
       // API-error abort), carrying the error type so the activity engine can

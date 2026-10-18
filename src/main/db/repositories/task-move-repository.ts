@@ -1,6 +1,9 @@
 import type Database from 'better-sqlite3';
 import type { TaskMoveRecord, TaskMoveRecordOrigin } from '../../../shared/types';
 
+/** The move that opened a task's current visit to a column (`currentVisit`). */
+export type TaskVisit = Pick<TaskMoveRecord, 'at' | 'origin' | 'from_swimlane_id'>;
+
 /**
  * Reads of `task_moves`, the record of every column a task entered.
  *
@@ -36,15 +39,16 @@ export class TaskMoveRepository {
   }
 
   /**
-   * The move that opened the task's current visit to this column: when, and who
-   * made it. Null under the same condition as `visitStartedAt`.
+   * The move that opened the task's current visit to this column: when, who
+   * made it, and the column it came from. Null under the same condition as
+   * `visitStartedAt`.
    */
-  currentVisit(taskId: string, swimlaneId: string): Pick<TaskMoveRecord, 'at' | 'origin'> | null {
+  currentVisit(taskId: string, swimlaneId: string): TaskVisit | null {
     const row = this.db
       // rowid breaks a tie between two moves stamped in the same millisecond.
-      .prepare('SELECT at, origin FROM task_moves WHERE task_id = ? AND to_swimlane_id = ? ORDER BY at DESC, rowid DESC LIMIT 1')
-      .get(taskId, swimlaneId) as { at: string; origin: string } | undefined;
-    return row ? { at: row.at, origin: row.origin as TaskMoveRecordOrigin } : null;
+      .prepare('SELECT at, origin, from_swimlane_id FROM task_moves WHERE task_id = ? AND to_swimlane_id = ? ORDER BY at DESC, rowid DESC LIMIT 1')
+      .get(taskId, swimlaneId) as { at: string; origin: string; from_swimlane_id: string | null } | undefined;
+    return row ? { at: row.at, origin: row.origin as TaskMoveRecordOrigin, from_swimlane_id: row.from_swimlane_id } : null;
   }
 
   /**

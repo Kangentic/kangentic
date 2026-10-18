@@ -16,6 +16,7 @@ This directory implements Kangentic's activity-detection engine. The full archit
 | `session-telemetry.ts` | Per-session telemetry orchestrator. Wires engine + watcher + PTY tracker + accumulator + PR detector. Owns the per-session event cache, idle-timeout sweep, and agent-session-id capture. Routes parsed events from every telemetry source. |
 | `usage-accumulator.ts` | Token / cost / per-tool stats. Pure transformations of parsed events. |
 | `pr-command-detector.ts` | Detects `gh pr ...` Bash invocations so the orchestrator can scan scrollback for the printed PR URL on the matching ToolEnd. |
+| `plan-mode-trail.ts` | Each session's reported plan-mode changes (`SessionEvent.planMode`), stamped at ingest, so the turn-end runner can ask whether a session had left plan mode by a past move. |
 | `pty-activity-tracker.ts` | PTY-byte fallback for non-hook agents (Aider, Codex, etc.). |
 | `activity-interval-recorder.ts` | Listens for the engine's disposition transitions (`activity`/`exit` events, both active and idle - symmetric, not idle-only) and durably records them - the engine's own state is in-memory only. |
 | `activity-interval-store.ts` | DB access for the `session_activity_intervals` table (open/close/query). |
