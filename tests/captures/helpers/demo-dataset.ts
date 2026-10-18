@@ -3734,7 +3734,7 @@ export function buildDemoPreConfig(options: {
       // A deterministic usage dashboard: ninety days of sessions per project, seeded so every
       // boot draws the same charts, scaled by the project's share of the sample install.
       function seeded(seed) { var value = seed; return function () { value = (value * 1664525 + 1013904223) % 4294967296; return value / 4294967296; }; }
-      window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+      window.electronAPI.usage.__dashboardStatsFixture = function (scope, period, drill, customWindow) {
         var hourMs = 3600000;
         var dayMs = 24 * hourMs;
         var halfHourMs = 30 * 60000;
@@ -3826,6 +3826,28 @@ export function buildDemoPreConfig(options: {
           hourShares.push((recent ? 3 : hour >= 9 && hour < 19 ? 1 : 0.1) * (0.6 + hourRandom() * 0.8));
         }
         var todayHours = split(history[historyDays - 1], hourShares, localHour).slice(0, currentHour + 1);
+        // The ledger holds the running sessions too, each under the hour or day it started: main's
+        // metrics timer upserts their readings, and the renderer's live overlay subtracts what the
+        // window's ledger holds for them (liveLedgerBaseline below). These are the sessions that
+        // overlay layers on, picked as selectLiveSessionIds picks them, with the cost the mock
+        // reports for each (usageBySession). Cost and the session count are what the overlay
+        // corrects; their tokens stay with the history's own draw, since the token tiles read the
+        // turn ledger and a session's context snapshot is on another scale from it.
+        var liveSessions = data.sessions.filter(function (session) {
+          return session.status === 'running' && !(session.transient && !session.workflowId)
+            && (scope.kind === 'all' || session.projectId === scope.projectId)
+            && session.model && session.contextPercent !== null;
+        }).map(function (session) {
+          return { startMs: now - session.startedMinutesAgo * 60000, costUsd: session.costUsd };
+        });
+        liveSessions.forEach(function (live) {
+          var record = live.startMs >= localDay(0)
+            ? todayHours[new Date(live.startMs).getHours()]
+            : history.filter(function (dayRecord) { return dayRecord.startMs <= live.startMs; }).pop();
+          if (!record) return;
+          record.costUsd += live.costUsd;
+          record.sessionCount += 1;
+        });
         history[historyDays - 1] = sum(todayHours, localDay(0));
 
         // Live's five-minute grid: each slice a twelfth of its hour, give or take, today's hours and
@@ -3846,15 +3868,42 @@ export function buildDemoPreConfig(options: {
           }
           return records;
         }
-        function byDay(records) {
+        function localDayOf(epochMs) {
+          var date = new Date(epochMs);
+          return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+        }
+        function localMondayOf(epochMs) {
+          var date = new Date(epochMs);
+          return new Date(date.getFullYear(), date.getMonth(), date.getDate() - (date.getDay() + 6) % 7).getTime();
+        }
+        // Every local day from one start to an end: the history's record, or an empty one before the
+        // history began, so a window's buckets are dense as buildBucketStarts makes them.
+        var historyByStart = {};
+        history.forEach(function (record) { historyByStart[record.startMs] = record; });
+        function dayRecords(fromMs, toMs) {
+          var records = [];
+          for (var start = localDayOf(fromMs); start < toMs; start = localDayOf(start + 36 * hourMs)) {
+            records.push(historyByStart[start] || { startMs: start, costUsd: 0, inputTokens: 0, outputTokens: 0, sessionCount: 0 });
+          }
+          return records;
+        }
+        function group(records, startOf) {
           var groups = [];
           records.forEach(function (record) {
-            var date = new Date(record.startMs);
-            var startMs = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+            var startMs = startOf(record.startMs);
             if (groups.length === 0 || groups[groups.length - 1].startMs !== startMs) groups.push({ startMs: startMs, records: [] });
             groups[groups.length - 1].records.push(record);
           });
-          return groups.map(function (group) { return sum(group.records, group.startMs); });
+          return groups.map(function (entry) { return sum(entry.records, entry.startMs); });
+        }
+        // A day by the hour, for a drill: today as it happened, a past day with the working day
+        // carrying the volume.
+        function hoursOf(dayRecord) {
+          if (dayRecord.startMs === localDay(0)) return todayHours;
+          var shares = [];
+          for (var dayHour = 0; dayHour < 24; dayHour++) shares.push((dayHour >= 9 && dayHour < 19 ? 1 : 0.1) * (0.6 + hourRandom() * 0.8));
+          var date = new Date(dayRecord.startMs);
+          return split(dayRecord, shares, function (index) { return new Date(date.getFullYear(), date.getMonth(), date.getDate(), index).getTime(); });
         }
         // Today's token chart is on main's half-hour grid: each hour in two, or whole in its first
         // half while the second has not begun.
@@ -3867,42 +3916,75 @@ export function buildDemoPreConfig(options: {
           return parts;
         }
 
-        // The period's window, chart grid and comparison window, as resolveBucketing and
-        // resolvePreviousWindow draw them: Live the trailing two hours, Today from local midnight
-        // by the hour, This Week from Monday and This Month from the 1st by the day, All Time every
-        // day there is.
-        var rangeStartMs, tokenBucketMs, costBucketMs, costRecords, tokenRecords, previousRecords, previousSpanMs;
-        if (period === 'live') {
-          rangeStartMs = Math.floor((now - 2 * hourMs) / fiveMinutesMs) * fiveMinutesMs;
-          tokenRecords = fiveMinuteRecords(rangeStartMs, now);
-          costRecords = byDay(tokenRecords);
-          previousRecords = fiveMinuteRecords(rangeStartMs - 2 * hourMs, rangeStartMs);
+        // The window, chart grid and comparison window, as getDashboardStats, resolveBucketing and
+        // resolvePreviousWindow draw them. A drill is one local day by the hour and wins over a
+        // custom window, which reads by the day, and by the week past ninety days. Otherwise Live
+        // is the trailing two hours, Today from local midnight by the hour, This Week from Monday
+        // and This Month from the 1st by the day, and All Time every day there is.
+        var windowStartMs, rangeEndMs = now, tokenBucketMs, costBucketMs, costRecords, tokenRecords, previousRecords, previousSpanMs;
+        if (drill) {
+          windowStartMs = localDayOf(drill.dayStartMs);
+          var drillEndMs = localDayOf(windowStartMs + 36 * hourMs);
+          var dayBeforeMs = localDayOf(windowStartMs - 12 * hourMs);
+          rangeEndMs = Math.min(drillEndMs, now);
+          costRecords = hoursOf(dayRecords(windowStartMs, drillEndMs)[0]);
+          tokenRecords = halves(costRecords);
+          previousRecords = dayRecords(dayBeforeMs, windowStartMs);
+          previousSpanMs = windowStartMs - dayBeforeMs;
+          tokenBucketMs = halfHourMs;
+          costBucketMs = hourMs;
+        } else if (customWindow) {
+          windowStartMs = customWindow.sinceMs;
+          rangeEndMs = Math.min(customWindow.untilMs, now);
+          var spanMs = customWindow.untilMs - customWindow.sinceMs;
+          var weekly = (rangeEndMs - windowStartMs) / dayMs > 90;
+          costRecords = dayRecords(windowStartMs, rangeEndMs);
+          if (weekly) costRecords = group(costRecords, localMondayOf);
+          tokenRecords = costRecords;
+          previousRecords = dayRecords(windowStartMs - spanMs, windowStartMs);
+          previousSpanMs = spanMs;
+          tokenBucketMs = weekly ? 7 * dayMs : dayMs;
+          costBucketMs = tokenBucketMs;
+        } else if (period === 'live') {
+          windowStartMs = Math.floor((now - 2 * hourMs) / fiveMinutesMs) * fiveMinutesMs;
+          tokenRecords = fiveMinuteRecords(windowStartMs, now);
+          costRecords = tokenRecords;
+          previousRecords = fiveMinuteRecords(windowStartMs - 2 * hourMs, windowStartMs);
           previousSpanMs = 2 * hourMs;
           tokenBucketMs = fiveMinutesMs;
           costBucketMs = dayMs;
         } else if (period === 'today') {
-          rangeStartMs = localDay(0);
+          windowStartMs = localDay(0);
           costRecords = todayHours;
           tokenRecords = halves(todayHours);
           previousRecords = [history[historyDays - 2]];
-          previousSpanMs = rangeStartMs - localDay(-1);
+          previousSpanMs = windowStartMs - localDay(-1);
           tokenBucketMs = halfHourMs;
           costBucketMs = hourMs;
         } else {
           var mondayOffset = (nowDate.getDay() + 6) % 7;
-          rangeStartMs = period === 'week' ? localDay(-mondayOffset)
+          windowStartMs = period === 'week' ? localDay(-mondayOffset)
             : period === 'month' ? new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime()
             : history[0].startMs;
           var previousStartMs = period === 'week' ? localDay(-mondayOffset - 7)
             : period === 'month' ? new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1).getTime()
             : null;
-          costRecords = history.filter(function (record) { return record.startMs >= rangeStartMs; });
+          costRecords = dayRecords(windowStartMs, now);
           tokenRecords = costRecords;
-          previousRecords = previousStartMs === null ? null : history.filter(function (record) { return record.startMs >= previousStartMs && record.startMs < rangeStartMs; });
-          previousSpanMs = previousStartMs === null ? 0 : rangeStartMs - previousStartMs;
+          previousRecords = previousStartMs === null ? null : dayRecords(previousStartMs, windowStartMs);
+          previousSpanMs = previousStartMs === null ? 0 : windowStartMs - previousStartMs;
           tokenBucketMs = dayMs;
           costBucketMs = dayMs;
         }
+        // The range the payload reports is bucket-aligned, as main's is: it starts at the first token
+        // bucket, and the burn rates divide by it.
+        var rangeStartMs = tokenRecords.length > 0 ? tokenRecords[0].startMs : windowStartMs;
+        // What the window's ledger holds of the overlay's sessions (sumSessionsRepresented): those
+        // that started inside it. A drill or a custom window is pure ledger accounting, so main
+        // passes no live sessions for one and the renderer layers none.
+        var liveLedgerBaselineCostUsd = drill || customWindow ? 0 : liveSessions
+          .filter(function (live) { return live.startMs >= windowStartMs && live.startMs < rangeEndMs; })
+          .reduce(function (total, live) { return total + live.costUsd; }, 0);
 
         function costPointOf(record) {
           return {
@@ -3958,9 +4040,11 @@ export function buildDemoPreConfig(options: {
             activeSessionsCovered: sessions > 0 ? Math.max(1, Math.round(sessions * 0.72)) : 0,
           };
         }
-        var costSeries = costRecords.map(costPointOf);
+        // Live's session-ledger series is empty, as main sends it: a cost bar per day means nothing
+        // inside a two-hour window. A drill or a custom window bounds its own, so those keep theirs.
+        var costSeries = period === 'live' && !drill && !customWindow ? [] : costRecords.map(costPointOf);
         var tokenSeries = tokenRecords.map(tokenPointOf);
-        var kpis = kpisOf(costRecords, tokenSeries, now - rangeStartMs);
+        var kpis = kpisOf(costRecords, tokenSeries, rangeEndMs - rangeStartMs);
         var previous = previousRecords === null ? null : kpisOf(previousRecords, previousRecords.map(tokenPointOf), previousSpanMs);
         var totalCost = kpis.totalCostUsd, totalInput = kpis.totalInputTokens, totalOutput = kpis.totalOutputTokens, sessionCount = kpis.sessionCount;
         // The model, agent, and effort breakdowns come from the sessions the boards actually show,
@@ -4015,10 +4099,9 @@ export function buildDemoPreConfig(options: {
           { job: 'task_title', modelId: 'claude-haiku-5-5', perDay: 3, input: 800, write: 1000, read: 6000, output: 16, cost: 0.0025, ms: 2400 },
           { job: 'terminal_name', modelId: 'claude-haiku-5-5', perDay: 1, input: 800, write: 1000, read: 6000, output: 16, cost: 0.0025, ms: 2200 },
         ];
-        var backgroundDayCount = period === 'live' || period === 'today' ? 1 : 6;
         var backgroundDays = [];
-        for (var dayOffset = 0; dayOffset < backgroundDayCount; dayOffset++) {
-          var backgroundDayStart = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() - dayOffset).getTime();
+        for (var dayOffset = 0; dayOffset < 6; dayOffset++) {
+          var backgroundDayStart = localDay(-dayOffset);
           backgroundJobShapes.forEach(function (shape) {
             var calls = Math.round(shape.perDay * (scope.kind === 'all' ? 1.6 : 1) * (0.6 + random() * 0.8));
             if (calls === 0) return;
@@ -4030,6 +4113,9 @@ export function buildDemoPreConfig(options: {
             });
           });
         }
+        // Every day is drawn whatever the window, so a day reads the same in each; the window keeps
+        // the days inside it.
+        backgroundDays = backgroundDays.filter(function (row) { return row.dayStartMs >= localDayOf(windowStartMs) && row.dayStartMs < rangeEndMs; });
         // The fold foldBackgroundUsage (src/main/usage-stats/background-usage.ts) does, copied
         // here as the UI mock copies it. Keep the totals' fields in step with BackgroundCallTotals.
         function emptyBackgroundTotals() {
@@ -4055,7 +4141,7 @@ export function buildDemoPreConfig(options: {
           byDay: backgroundDays,
         };
         return {
-          scope: scope, period: period, rangeStartMs: rangeStartMs, rangeEndMs: now, bucketSizeMs: tokenBucketMs, costBucketSizeMs: costBucketMs, generatedAtMs: now,
+          scope: scope, period: period, rangeStartMs: rangeStartMs, rangeEndMs: rangeEndMs, bucketSizeMs: tokenBucketMs, costBucketSizeMs: costBucketMs, generatedAtMs: now,
           kpis: kpis, previousKpis: previous, tokenSeries: tokenSeries, costSeries: costSeries,
           tokenModelSeries: tokenModelSeries, background: background,
           byModel: breakdown(function (session) { return session.model ? session.model.id : null; }, function (session) { return session.model.displayName; }).map(function (row) {
@@ -4081,9 +4167,9 @@ export function buildDemoPreConfig(options: {
                 };
               })
             : undefined,
-          // No live overlay reaches this fixture, so the ledger already holds
-          // everything the renderer would layer on: nothing to subtract.
-          liveLedgerBaseline: { costUsd: 0 },
+          // The renderer layers the running sessions' readings on the Cost tile
+          // and takes this off first, so a session the ledger holds counts once.
+          liveLedgerBaseline: { costUsd: liveLedgerBaselineCostUsd },
           // Per-turn capture starts later than the cost ledger, so a long range
           // shows the Tokens tile's partial-coverage note, as a real install does.
           earliestTurnMs: turnLedgerStartMs,

@@ -969,7 +969,11 @@ Sessions cover every state the app distinguishes (thinking, needs-you, a permiss
 suspended, queued) plus a Command Terminal; Monitor rows are derived from the session rows so the
 two views cannot disagree; the usage dashboard is a seeded, deterministic ninety-day history, and
 each period reads its slice on main's own grid (Today by the hour from local midnight, This Week
-from Monday, This Month from the 1st), so Today's tiles are This Week's last bar.
+from Monday, This Month from the 1st), so Today's tiles are This Week's last bar. A drilled day
+reads by the hour and a Custom window by the day, or by the week past ninety days. The running
+sessions sit in that history under the hour they started, as main's metrics timer writes them, and
+the fixture reports their cost as `liveLedgerBaseline`, so the Cost tile's live overlay counts each
+session once.
 Each archived task carries the stats its last session left (`DEMO_ARCHIVED_SUMMARIES`, what the
 Completed Tasks dialog lists), and that session was run for real.
 `scripts/capture-demo-archived-runs.mjs` gives each archived task one headless Claude Code run of
