@@ -1,16 +1,18 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowIcon, Ban, Columns3Cog } from 'lucide-react';
+import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowIcon, Ban, Columns3Cog, CirclePause, CirclePlay } from 'lucide-react';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
+import type { SessionToggleRow } from '../../utils/session-toggle';
 import { placeContextMenu, type MenuPlacement } from './context-menu-placement';
 import { Tooltip } from '../Tooltip';
 
 /**
  * Inline context menu shown on right-click of a task card. Offers copy-id,
- * then the top group (edit, show changes if a worktree exists, the column
- * automations switch, and the row that takes you to the task elsewhere or
- * starts a workflow from it), move-to (for every non-archived non-ghost target
- * lane), and the bottom group: send-to-backlog, archive, and delete.
+ * then the top group (edit, show changes if a worktree exists, the session's
+ * Pause or Resume, the column automations switch, and the row that takes you
+ * to the task elsewhere or starts a workflow from it), move-to (for every
+ * non-archived non-ghost target lane), and the bottom group: send-to-backlog,
+ * archive, and delete.
  *
  * How a row picks its group: the bottom group holds only the larger,
  * destructive actions that take a task off the active board, ordered from
@@ -23,11 +25,12 @@ import { Tooltip } from '../Tooltip';
  * fixed guess. A menu taller than the window scrolls. Closes on outside click
  * or Escape. The parent owns the `position` prop and the `onClose` callback.
  *
- * A row the task cannot take (a workflow's lock) stays in place, disabled,
- * with the reason as its tooltip: controls never come and go with state. The
- * whole row dims, its text, icon and dot together, as one unavailable item.
- * A row that does not apply to this kind of task at all (the automations
- * switch on a workflow task) is not passed by its host.
+ * A row the task cannot take (a workflow's lock, a Resume main refuses in
+ * Done or on an archived task) stays in place, disabled, with the reason as
+ * its tooltip: controls never come and go with state. The whole row dims, its
+ * text, icon and dot together, as one unavailable item. A row that does not
+ * apply to this kind of task at all (the automations switch on a workflow
+ * task, the session row on a task with no session) is not passed by its host.
  */
 
 const ROW_CLASS = 'w-full px-3 py-1.5 text-sm text-left flex items-center gap-2 text-fg-secondary';
@@ -50,6 +53,7 @@ export function TaskContextMenu({
   sendAwayRefusal,
   onNewWorkflow,
   onToggleAutomations,
+  sessionToggle,
   testId = 'task-context-menu',
 }: {
   /** Root `data-testid`, so each host can address its own instance. */
@@ -82,6 +86,13 @@ export function TaskContextMenu({
    * is in; a workflow task's host leaves it out, since its Pause holds it.
    */
   onToggleAutomations?: () => void;
+  /**
+   * The session's Pause or Resume (`sessionToggleRowFor`), with the host's
+   * handler. One object rather than a bare callback: the label depends on
+   * session state `task` does not carry. A host leaves it out where the rule
+   * offers no row (To Do, or no session lifecycle).
+   */
+  sessionToggle?: SessionToggleRow & { onToggle: () => void };
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -171,6 +182,24 @@ export function TaskContextMenu({
           <GitCompare size={14} className="text-fg-faint" />
           Show changes
         </button>
+      )}
+
+      {sessionToggle && (
+        <Tooltip label={sessionToggle.refusal ?? ''}>
+          <button
+            type="button"
+            onClick={() => { if (sessionToggle.refusal) return; sessionToggle.onToggle(); onClose(); }}
+            aria-disabled={sessionToggle.refusal ? true : undefined}
+            className={sessionToggle.refusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
+            data-testid="context-toggle-session"
+            data-session-state={sessionToggle.sessionState}
+          >
+            {sessionToggle.direction === 'pause'
+              ? <CirclePause size={14} className="text-fg-faint" />
+              : <CirclePlay size={14} className="text-fg-faint" />}
+            {sessionToggle.direction === 'pause' ? 'Pause session' : 'Resume session'}
+          </button>
+        </Tooltip>
       )}
 
       {onToggleAutomations && (

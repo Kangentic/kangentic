@@ -140,40 +140,103 @@ export function isTaskPaused(
   return pausedTaskIdsOf(sessions.filter((session) => session.taskId === taskId)).has(taskId);
 }
 
+/** Where a task's session sits in its lifecycle, as far as Pause and Resume care. */
+export type SessionLifecyclePhase =
+  /** The agent is working or on its way to working. */
+  | 'active'
+  /** Parked, but resumable - it still has a session behind it. */
+  | 'paused'
+  /** No session lifecycle at all (never started, or finished). */
+  | 'ended';
+
+/**
+ * What a task's Pause / Resume control offers. A resume carries the reason main
+ * would refuse it, or null when it would run: the task detail hides a refused
+ * Resume, while the card menu shows it disabled with `resumeBlockMessage` as
+ * its tooltip.
+ */
+export type SessionToggleOffer =
+  | { direction: 'pause' }
+  | { direction: 'resume'; blockReason: ResumeBlockReason | null };
+
+/**
+ * The one rule behind every Pause / Resume control: the task detail's header
+ * pill and kebab item (`canToggle` in `useTaskSessionState.ts`), the card
+ * menu's row (`TaskContextMenu`), and the phone's `pausable` and `resumable`
+ * (`isPauseOffered`, `isResumeOffered`). Null means no control at all.
+ *
+ * To Do offers neither direction: a move into it has already torn the session
+ * down, and its cards open straight into the edit form. Pause is offered in
+ * Done and on an archived task, because it is the only stop for a live agent a
+ * failed Done-move suspend left running; main's `pauseTaskSession` has no Done
+ * or archive gate either. Resume there is refused (`resumeBlockReasonForTask`).
+ *
+ * Callers differ only in the phase they pass. The renderer reads it from the
+ * display kind, so a spawn label with no live session is `active` and offers
+ * Pause (which cancels the in-flight resume or start). The phone reads it from
+ * the registry, where that state has no live session, so it is `ended`.
+ */
+export function sessionToggleOffer(input: {
+  phase: SessionLifecyclePhase;
+  laneRole: string | null | undefined;
+  task: Pick<Task, 'archived_at'>;
+}): SessionToggleOffer | null {
+  if (input.laneRole === 'todo') return null;
+  switch (input.phase) {
+    case 'active':
+      return { direction: 'pause' };
+    case 'paused':
+      return { direction: 'resume', blockReason: resumeBlockReasonForTask(input) };
+    case 'ended':
+      return null;
+  }
+}
+
+/** Whether an offer is one the control can act on: any Pause, or a Resume nothing refuses. */
+export function isSessionToggleLive(offer: SessionToggleOffer | null): boolean {
+  return offer !== null && (offer.direction === 'pause' || offer.blockReason === null);
+}
+
 /**
  * Whether the desktop offers Resume for a task: its session is paused (a
  * `suspended` registry row and no live one, `pausedTaskIdsOf`) and
- * `resumeBlockReasonForTask` refuses nothing. This is the resume direction of
- * `canToggle` in the task detail (`useTaskSessionState.ts`), and the
- * `resumable` the mobile bridge sends, on the board row and the read-stream
- * feed, promising that `start-session` resumes rather than starts.
+ * `resumeBlockReasonForTask` refuses nothing. The resume direction of
+ * `sessionToggleOffer`, and the `resumable` the mobile bridge sends, on the
+ * board row and the read-stream feed, promising that `start-session` resumes
+ * rather than starts.
  */
 export function isResumeOffered(input: {
   hasPausedSession: boolean;
   task: Pick<Task, 'archived_at'>;
   laneRole: string | null | undefined;
 }): boolean {
-  return input.hasPausedSession && resumeBlockReasonForTask(input) === null;
+  const offer = sessionToggleOffer({
+    phase: input.hasPausedSession ? 'paused' : 'ended',
+    laneRole: input.laneRole,
+    task: input.task,
+  });
+  return offer?.direction === 'resume' && offer.blockReason === null;
 }
 
 /**
  * Whether the phone may offer Pause for a task: it has a live session
- * (`taskSessionStatesOf`) and is not in To Do. This is the mobile bridge's
- * `pausable`, the promise that `pause-session` pauses rather than refuses.
- *
- * It follows the pause direction of `canToggle` in the task detail
- * (`useTaskSessionState.ts`): To Do hides Pause, and Done and archived do not,
- * because Pause is the only in-window stop for a live agent. It differs in one
- * state on purpose. The task view also shows Pause while a spawn label is up
- * and no session is live, but that click only cancels an in-flight resume or
- * start, and `pause-session` refuses a task with no live session, so the phone
- * is offered nothing there.
+ * (`taskSessionStatesOf`) and `sessionToggleOffer` offers Pause, so not in To
+ * Do. This is the mobile bridge's `pausable`, the promise that `pause-session`
+ * pauses rather than refuses. A task with a spawn label up and no live session
+ * reaches here as not live, so the phone is offered nothing there:
+ * `pause-session` refuses a task with no live session.
  */
 export function isPauseOffered(input: {
   hasLiveSession: boolean;
   laneRole: string | null | undefined;
 }): boolean {
-  return input.hasLiveSession && input.laneRole !== 'todo';
+  const offer = sessionToggleOffer({
+    phase: input.hasLiveSession ? 'active' : 'ended',
+    laneRole: input.laneRole,
+    // Pause never reads the archive state.
+    task: { archived_at: null },
+  });
+  return offer?.direction === 'pause';
 }
 
 /**

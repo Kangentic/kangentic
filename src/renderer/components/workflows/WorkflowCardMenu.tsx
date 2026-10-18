@@ -6,9 +6,12 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
+import { invalidateProject } from '../../stores/project-cache';
 import { describeIpcError } from '../../lib/ipc-error';
 import { boardMoveRefusal, boardWorkflowOf, sendAwayRefusal } from '../../utils/board-workflow';
 import { findBoardTask } from '../../utils/board-task-index';
+import { useTaskDisplayKind } from '../../utils/task-progress';
+import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
 import { TaskContextMenu } from '../board/TaskContextMenu';
 
 /**
@@ -42,6 +45,7 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
   const summaries = useWorkflowStore((state) => state.summaries);
   const homeSummaries = useWorkflowStore((state) => state.homeSummaries);
   const [elsewhere, setElsewhere] = useState<{ task: Task; swimlanes: Swimlane[] } | null>(null);
+  const displayKind = useTaskDisplayKind(taskId);
 
   useEffect(() => {
     if (onThisBoard) return undefined;
@@ -84,6 +88,11 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
     else onOpenOnBoard(viewTask);
   };
 
+  // A workflow task gets the row too, as its task detail does. "Pause session"
+  // stays the whole label, so it never reads as pausing the workflow.
+  const laneRole = swimlanes.find((lane) => lane.id === task.swimlane_id)?.role ?? null;
+  const sessionToggleRow = sessionToggleRowFor(displayKind, laneRole, task);
+
   return (
     <TaskContextMenu
       testId="workflow-card-menu"
@@ -101,6 +110,22 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
           Open on board
         </button>
       )}
+      sessionToggle={sessionToggleRow ? {
+        ...sessionToggleRow,
+        onToggle: () => {
+          void runSessionToggle({
+            taskId,
+            direction: sessionToggleRow.direction,
+            projectId: viewTask.projectId,
+            // A task of another board: drop that project's warm-switch snapshot,
+            // which still holds the session pointer main just rewrote, as the
+            // Agent Monitor's menu does.
+            onSucceeded: onThisBoard
+              ? () => { void useBoardStore.getState().loadBoard(); }
+              : () => invalidateProject(viewTask.projectId),
+          });
+        },
+      } : undefined}
       moveRefusal={(laneId) => boardMoveRefusal(workflow, task, swimlanes.find((lane) => lane.id === laneId))}
       // Every card here is in a started workflow, so Backlog and Archive are refused.
       sendAwayRefusal={sendAwayRefusal(workflow, task) ?? `Remove #${task.display_id} from its workflow first.`}

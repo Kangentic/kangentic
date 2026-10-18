@@ -282,16 +282,16 @@ from `'activity'`; see [Activity Detection](activity-detection.md), "Turn ends".
 
 ### Where resume is refused
 
-`SESSION_RESUME` (the task detail's Pause/Resume toggle) restarts a suspended session **in
+`SESSION_RESUME` (the task detail's Pause/Resume toggle and the card menu's Resume session row) restarts a suspended session **in
 place**, in the task's current column. Its body is `resumeTaskSession`
 (`handlers/session-resume.ts`), which the phone's `start-session` verb also calls for a paused
 task, so a phone Resume is the same resume: it cancels a resume already in flight for the task,
 labels the task "Resuming session...", resumes the conversation idle, and runs no enter
 automations or column message. The read-stream feed tells the phone when that promise holds
 (`resumable`, see [Mobile Bridge](mobile-bridge.md)). It is refused for three states, resolved by one shared
-predicate (`src/shared/session-resume-eligibility.ts`) that the main-process handler, the task
-detail, and the phone's `startTaskSession` (`handlers/session-start.ts`, the `start-session` verb)
-all read, and whose role set startup recovery shares:
+rule (`sessionToggleOffer` in `src/shared/session-resume-eligibility.ts`, over `resumeBlockReasonForTask`)
+that the main-process handler, the task detail, the card menu row, and the phone's `startTaskSession`
+(`handlers/session-start.ts`, the `start-session` verb) all read, and whose role set startup recovery shares:
 
 | State | Why |
 |---|---|

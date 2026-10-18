@@ -3,8 +3,8 @@
  *
  * This is the BOARD's `TaskContextMenu`, not a second menu. A monitor row is a
  * kanban card as far as the user is concerned, so it offers the same actions in
- * the same order - copy id, Edit, Show changes, the automations switch, Move
- * to, Backlog, Archive, Delete - plus "Open on board" in the menu's
+ * the same order - copy id, Edit, Show changes, Pause or Resume session, the
+ * automations switch, Move to, Backlog, Archive, Delete - plus "Open on board" in the menu's
  * `navigationItem` slot. Rebuilding a thinner lookalike would guarantee the two
  * drift the first time an item is added. Delete and Backlog ask first with the
  * board card's own dialogs, under the same Don't ask again switch.
@@ -38,6 +38,8 @@ import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write
 import { sendToBacklogAsksFirst } from '../../utils/send-to-backlog-confirm';
 import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
 import { describeIpcError } from '../../lib/ipc-error';
+import { useTaskDisplayKind } from '../../utils/task-progress';
+import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
 
 interface MonitorRowContextMenuProps {
   row: MonitorSessionRow;
@@ -60,6 +62,9 @@ export function MonitorRowContextMenu({
   // Read by the menu's own close, in the same click that set it: `TaskContextMenu`
   // runs `onDelete(); onClose();` back to back, before the state above re-renders.
   const pendingConfirmRef = useRef<PendingConfirm | null>(null);
+  // The session store holds every project's sessions, so a row of another
+  // project resolves its display kind the same way a board card does.
+  const displayKind = useTaskDisplayKind(row.taskId);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,6 +190,9 @@ export function MonitorRowContextMenu({
     );
   }
 
+  const laneRole = resolved.swimlanes.find((lane) => lane.id === resolved.task.swimlane_id)?.role ?? null;
+  const sessionToggleRow = sessionToggleRowFor(displayKind, laneRole, resolved.task);
+
   return (
     <TaskContextMenu
       testId="monitor-row-menu"
@@ -193,6 +201,19 @@ export function MonitorRowContextMenu({
       swimlanes={resolved.swimlanes}
       navigationItem={openOnBoard}
       onClose={closeMenu}
+      // Stamped with the row's own project, then the rows and the board catch up
+      // as after every other write here.
+      sessionToggle={sessionToggleRow ? {
+        ...sessionToggleRow,
+        onToggle: () => {
+          void runSessionToggle({
+            taskId: row.taskId,
+            direction: sessionToggleRow.direction,
+            projectId: row.projectId,
+            onSucceeded: refreshRows,
+          }).finally(() => resyncBoardAfterMonitorWrite(row.projectId));
+        },
+      } : undefined}
       onToggleAutomations={automationsSwitchRefusal(resolved.task) === null ? () => {
         const disable = !resolved.task.automations_disabled;
         const input = { id: row.taskId, automations_disabled: disable };
