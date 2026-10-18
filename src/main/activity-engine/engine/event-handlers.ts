@@ -34,20 +34,36 @@ function rememberExemptShellToolId(state: SessionEngineState, toolId: string): v
 
 /**
  * Record a correlated subagent's latest lifecycle event. Deleting first moves
- * the id to the newest position, so the FIFO cap evicts the id written longest
- * ago rather than the one first seen.
+ * the id to the newest position, so the cap evicts by last write rather than
+ * by first sighting.
+ *
+ * At the cap the oldest STOPPED id goes first. A stopped id is kept only to
+ * recognize a duplicate stop seconds later, while a live id is kept for its
+ * whole run so that a re-start takes no second slot (task #835). Evicting the
+ * oldest id regardless of state would drop a long-running live agent once a
+ * large fan-out wrote enough newer ids. Only a ledger that holds no stopped id
+ * evicts a live one.
  */
 function recordSubagentLifecycle(
   state: SessionEngineState,
   subagentId: string,
   lifecycle: SubagentLifecycle,
 ): void {
-  state.subagentLifecycleById.delete(subagentId);
-  if (state.subagentLifecycleById.size >= MAX_TRACKED_SUBAGENT_IDS) {
-    const oldest = state.subagentLifecycleById.keys().next().value;
-    if (oldest !== undefined) state.subagentLifecycleById.delete(oldest);
+  const ledger = state.subagentLifecycleById;
+  ledger.delete(subagentId);
+  if (ledger.size >= MAX_TRACKED_SUBAGENT_IDS) {
+    // `Map` iterates in insertion order, so the first match is the oldest.
+    let evictedId: string | undefined;
+    for (const [trackedId, trackedLifecycle] of ledger) {
+      if (trackedLifecycle === 'stopped') {
+        evictedId = trackedId;
+        break;
+      }
+    }
+    evictedId ??= ledger.keys().next().value;
+    if (evictedId !== undefined) ledger.delete(evictedId);
   }
-  state.subagentLifecycleById.set(subagentId, lifecycle);
+  ledger.set(subagentId, lifecycle);
 }
 
 /**
@@ -85,9 +101,10 @@ export function releaseSubagentSlots(state: SessionEngineState): void {
  *                         turn is done, any unmatched ToolStart events
  *                         are stale by definition (PostToolUse hook
  *                         dropped, tool force-killed, etc.).
- * - `SubagentStart`       increments `subagentDepth` and, with a
- *                         `subagentId`, marks that id live (re-opening a
- *                         continued agent).
+ * - `SubagentStart`       increments `subagentDepth`, EXCEPT a start whose
+ *                         `subagentId` is already live, which holds the slot
+ *                         it has (task #835). With a `subagentId` it marks
+ *                         that id live (re-opening a continued agent).
  * - `SubagentStop`        decrements `subagentDepth` (clamped at zero),
  *                         EXCEPT an empty-string detail ("") which is a
  *                         subagent's spurious inner-loop Stop and is ignored,
@@ -189,7 +206,20 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
       break;
     }
     case EventType.SubagentStart:
-      state.subagentDepth += 1;
+      // A start takes a slot unless its id already holds one. A driver can
+      // re-task an agent with SendMessage before that agent's first run fired
+      // its named stop, and the second start would give one agent two slots
+      // (task #835). That start bumps `duplicateSubagentStart` instead. If the
+      // first run's stop lands after the second start, it releases the one
+      // slot and the continuation's own stop reads as a duplicate. The stream
+      // cannot tell the two stops apart, so the depth reads 0 for the rest of
+      // the continuation. See "Re-started live subagent" in
+      // docs/activity-detection.md.
+      if (event.subagentId && state.subagentLifecycleById.get(event.subagentId) === 'live') {
+        state.compensationCounters.duplicateSubagentStart += 1;
+      } else {
+        state.subagentDepth += 1;
+      }
       // A SendMessage continuation fires a fresh SubagentStart under the SAME
       // id (captured on CLI 2.1.290), so a start always re-marks the id live.
       // Without this, the continued agent's legitimate stop would read as a

@@ -17,6 +17,10 @@
  *   the user can act on.
  * - A switch thrown DURING the paint wait is caught by `runRows` before the paid
  *   check, from a fresh read of the task.
+ * - A switch turned back on takes effect at the next turn end of the same visit.
+ *   `runPass` reads it fresh at every turn end, and `hasRunSince` and the
+ *   Frequency count only executed runs, so the skip recorded while it was off
+ *   neither blocks the row nor spends its limit.
  *
  * Harness mirrors turn-end-runner-visit-guards.test.ts: driven through
  * `registerTurnEndAutomations` and the session manager's 'turn-ended' event,
@@ -42,6 +46,7 @@ import { AutomationRunRepository } from '../../src/main/db/repositories/automati
 import { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { AUTOMATIONS_DISABLED_REASON } from '../../src/shared/automation-manifest';
+import { matchFinalLine } from '../../src/shared/final-line-match';
 import { openTestDatabase } from './helpers/test-database';
 
 interface ExecuteOptions {
@@ -187,11 +192,20 @@ describe('a turn end and a task with its automations disabled', () => {
     }));
     hoisted.conditionCheckInput.mockImplementation(() => ({}));
     hoisted.conditionCheckCall.mockImplementation(() => ({ projectId: PROJECT_ID, taskId, swimlaneId: laneId, job: 'condition_check' }));
-    // The runner's own bookkeeping for the rows it is handed: a run for each.
+    // The runner's own bookkeeping for the rows it is handed: a run for each,
+    // and a skip for a Text match the reply missed.
     hoisted.executeTransition.mockImplementation(async (task: { id: string }, _column: unknown, _trigger: string, options: ExecuteOptions) => {
       for (const row of hoisted.rows as ColumnAutomation[]) {
         if (!options.onlyIds.has(row.id)) continue;
         const started = { id: randomUUID(), automation: row, taskId: task.id };
+        // A Text match is checked in code against the reply, as the runner does.
+        if (row.final_line) {
+          const match = matchFinalLine(row.final_line, options.agentReply);
+          if (!match.met) {
+            runs.recordSkipped(started, match.reason);
+            continue;
+          }
+        }
         runs.start(started);
         runs.finish(started.id, 'succeeded', 'Done.');
       }
@@ -462,6 +476,68 @@ describe('a turn end and a task with its automations disabled', () => {
       expect(skippedRows()).toHaveLength(2);
       expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(1);
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
+    });
+  });
+
+  // The user turns the switch off anywhere on the board, a turn end records
+  // the skip, and the user turns it back on. The next turn end of the same
+  // visit runs the row: the Code Review loop's On to Testing, gated on the
+  // review's last line.
+  describe('a switch turned off and back on in the same visit', () => {
+    const REPLY = 'The review is done.\n\nVerdict: Ready';
+
+    /** The turn's final reply, read the way the runner reads it. */
+    function replyEndingOnVerdictReady(): void {
+      hoisted.findSession.mockImplementation(() => ({ session_type: 'claude_agent', agent_session_id: 'agent-session-1', cwd: '/mock/worktree' }));
+      hoisted.retrievalCall.mockImplementation(async () => ({ text: REPLY, uuid: 'reply-1', ts: Date.now() }));
+    }
+
+    /** Turn the switch back on: a new object, as a fresh read of the row is. */
+    function enableAutomations(): void {
+      hoisted.task = { ...hoisted.task, automations_disabled: false };
+    }
+
+    it('runs the Text match row at the next turn end, and only once', async () => {
+      hoisted.rows = [row({ final_line: 'Verdict: Ready' })];
+      replyEndingOnVerdictReady();
+      enterColumnAt(secondsAgo(60));
+
+      await endTurn();
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(skippedRows().map((run) => run.detail)).toEqual([AUTOMATIONS_DISABLED_REASON]);
+
+      enableAutomations();
+      await endTurn();
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      const [, , trigger, options] = hoisted.executeTransition.mock.calls[0] as [unknown, unknown, string, ExecuteOptions];
+      expect(trigger).toBe('turn_end');
+      expect([...options.onlyIds]).toEqual(['row-on-to-testing']);
+      expect(options.agentReply).toBe(REPLY);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+      // The Text match met, so the skip from the off period is still the only one.
+      expect(skippedRows().map((run) => run.detail)).toEqual([AUTOMATIONS_DISABLED_REASON]);
+
+      await endTurn();
+
+      // It ran this visit, so a later turn end leaves it alone.
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+    });
+
+    it('runs a row limited to one run, because the skip from the off period spent none of its Frequency', async () => {
+      hoisted.rows = [row({ final_line: 'Verdict: Ready', max_runs: 1 })];
+      replyEndingOnVerdictReady();
+      enterColumnAt(secondsAgo(60));
+
+      await endTurn();
+      enableAutomations();
+      await endTurn();
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+      expect(skippedRows().map((run) => run.detail)).toEqual([AUTOMATIONS_DISABLED_REASON]);
     });
   });
 });

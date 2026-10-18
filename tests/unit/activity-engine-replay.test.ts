@@ -1505,6 +1505,7 @@ describe('ActivityEngine replay tests', () => {
         'session-027-preview-watcher-exempt.jsonl',
         'session-028-turn-retrying-wipes-subagent-depth.jsonl',
         'session-030-duplicate-named-subagent-stop.jsonl',
+        'session-032-restarted-live-subagent.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

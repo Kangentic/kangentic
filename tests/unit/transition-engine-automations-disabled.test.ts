@@ -326,6 +326,38 @@ describe('TransitionEngine and a task with its automations disabled', () => {
       expect(before.outcomes.map((outcome) => outcome.status)).toEqual(['succeeded', 'succeeded']);
       expect(after.outcomes.map((outcome) => outcome.status)).toEqual(['skipped', 'skipped']);
     });
+
+    // Off, then on, then a move. The switch turned back on anywhere on the board
+    // takes effect at the next move's On task enter rows.
+    it('runs the enter group on the next move after the switch is turned back on', async () => {
+      const task = createTask(true);
+
+      const whileOff = await engine.executeTransition(task, column, 'enter', groupOptions());
+      tasks.update({ id: task.id, automations_disabled: false });
+      // The next move into the column, still holding the object it read while off.
+      const afterOn = await engine.executeTransition(task, column, 'enter', groupOptions());
+
+      expect(whileOff.outcomes.map((outcome) => outcome.status)).toEqual(['skipped', 'skipped']);
+      expect(afterOn.outcomes.some((outcome) => outcome.detail === AUTOMATIONS_DISABLED_REASON)).toBe(false);
+      expect(afterOn.startedAgent).toBe(true);
+      expect(startAgent).toHaveBeenCalledTimes(1);
+      expect(showNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs a row limited to one run on that move, because the skip from the off period spent none of its Frequency', async () => {
+      const [limitedRow] = automations.replaceForColumn(column.id, [
+        { name: 'Enter once', type: 'notify', trigger: 'enter', enabled: true, config: { title: 'Entered', body: 'Once' }, max_runs: 1 },
+      ]);
+      const task = createTask(true);
+
+      await engine.executeTransition(task, column, 'enter', groupOptions());
+      tasks.update({ id: task.id, automations_disabled: false });
+      const afterOn = await engine.executeTransition(task, column, 'enter', groupOptions());
+
+      expect(afterOn.outcomes.map((outcome) => outcome.status)).toEqual(['succeeded']);
+      expect(showNotification).toHaveBeenCalledTimes(1);
+      expect(runs.countRuns(limitedRow.id, task.id)).toBe(1);
+    });
   });
 
   describe('executeSingleAutomation (Run again) is not gated', () => {

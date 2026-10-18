@@ -1606,6 +1606,122 @@ describe('ActivityEngine', () => {
       expect(state.subagentLifecycleById.has(subagentIds[1])).toBe(false);
       expect(state.subagentLifecycleById.has(subagentIds[2])).toBe(true);
     });
+
+    describe('a SubagentStart for an id that is still live (task #835)', () => {
+      // A /code-review driver re-tasked a finder with SendMessage after the
+      // finder's first run lost its named stop (#832). The re-task fired a
+      // second start under the same id while the ledger still held it live.
+      // Counting that start gave one agent two slots, and its one stop released
+      // one. The parent's Stop then read as a subagent's, and the turn never ended.
+      function duplicateStarts(): number | undefined {
+        return engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.duplicateSubagentStart;
+      }
+
+      it('holds one slot, so its one stop releases it and the parent Stop ends the turn', () => {
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        const state = engine.getState(SESSION_ID)!;
+        expect(state.subagentDepth).toBe(1);
+        expect(state.subagentLifecycleById.get('finder')).toBe('live');
+        expect(duplicateStarts()).toBe(1);
+
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'review-finder', 'finder'));
+        expect(state.subagentDepth).toBe(0);
+        expect(duplicateStops()).toBe(0);
+
+        engine.processEvent(SESSION_ID, event(EventType.Idle));
+        vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+        expect(state.turnActive).toBe(false);
+        expect(state.activity).toBe('idle');
+        expect(transitions.at(-1)?.activity).toBe('idle');
+      });
+
+      it('takes no slot from a live sibling, so the parent Stop is still held while the sibling runs', () => {
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'test-builder', 'builder'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        const state = engine.getState(SESSION_ID)!;
+        expect(state.subagentDepth).toBe(2);
+        expect(duplicateStarts()).toBe(1);
+
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'review-finder', 'finder'));
+        expect(state.subagentDepth).toBe(1);
+        engine.processEvent(SESSION_ID, event(EventType.Idle));
+        vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+        expect(state.turnActive).toBe(true);
+        expect(state.activity).toBe('thinking');
+        expect(transitions.map((transition) => transition.activity)).not.toContain('idle');
+
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'test-builder', 'builder'));
+        expect(state.subagentDepth).toBe(0);
+        expect(duplicateStops()).toBe(0);
+      });
+
+      it('lets a late first-run stop release the slot, so the depth reads 0 while the continuation still runs', () => {
+        // The ordering this fix accepts. The first run's named stop lands after
+        // the continuation's start, and nothing in the stream tells it apart
+        // from the continuation's own stop. It releases the one slot, and the
+        // continuation's stop then reads as a duplicate. The depth ends
+        // balanced, but a parent Stop between the two stops would end the turn.
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'review-finder', 'finder'));
+        const state = engine.getState(SESSION_ID)!;
+        expect(state.subagentDepth).toBe(0);
+        expect(state.subagentLifecycleById.get('finder')).toBe('stopped');
+
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'review-finder', 'finder'));
+        expect(state.subagentDepth).toBe(0);
+        expect(duplicateStops()).toBe(1);
+        // Both counters rising for one agent is this ordering's tell.
+        expect(duplicateStarts()).toBe(1);
+      });
+
+      it('counts no duplicate start for a continuation whose first run stopped, or for id-less starts', () => {
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'general-purpose', 'agent'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'general-purpose', 'agent'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'general-purpose', 'agent'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore'));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', ''));
+        expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(3);
+        expect(duplicateStarts()).toBe(0);
+      });
+
+      it('keeps a long-running live id through a fan-out of stopped ids, so its re-start still takes no slot', () => {
+        // At the cap the oldest STOPPED id is evicted first. Evicting the oldest id
+        // outright dropped this still-running finder once enough newer ids were
+        // written, and its re-start then took a second slot.
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        for (let index = 0; index < MAX_TRACKED_SUBAGENT_IDS; index++) {
+          engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', `agent-${index}`));
+          engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', `agent-${index}`));
+        }
+        const state = engine.getState(SESSION_ID)!;
+        expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
+        expect(state.subagentLifecycleById.get('finder')).toBe('live');
+        expect(state.subagentDepth).toBe(1);
+
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        expect(state.subagentDepth).toBe(1);
+        expect(duplicateStarts()).toBe(1);
+      });
+
+      it('evicts the oldest live id when no stopped id remains, so its re-start takes a second slot', () => {
+        // This is the documented fallback. With every entry live there is
+        // nothing stopped to evict, so the oldest id by last write goes.
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        for (let index = 0; index < MAX_TRACKED_SUBAGENT_IDS; index++) {
+          engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', `agent-${index}`));
+        }
+        const state = engine.getState(SESSION_ID)!;
+        expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
+        expect(state.subagentLifecycleById.has('finder')).toBe(false);
+
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+        expect(state.subagentDepth).toBe(MAX_TRACKED_SUBAGENT_IDS + 2);
+        expect(duplicateStarts()).toBe(0);
+      });
+    });
   });
 
   describe('aborted/errored-turn recovery (StopFailure + idle-hint)', () => {

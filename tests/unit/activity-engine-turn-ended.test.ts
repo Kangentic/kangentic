@@ -392,6 +392,20 @@ describe('onTurnEnded', () => {
     harness.engine.dispose();
   });
 
+  it('a subagent re-started while still live holds one slot, so the parent\'s Stop after its one stop ends the turn', () => {
+    // A SendMessage re-task of an agent whose first run never fired its named
+    // stop (task #835). Counted twice, its one stop left the parent's Stop
+    // reading as a subagent's.
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    harness.send(EventType.SubagentStart, { detail: 'review-finder', subagentId: 'finder' });
+    harness.send(EventType.SubagentStart, { detail: 'review-finder', subagentId: 'finder' });
+    harness.send(EventType.SubagentStop, { detail: 'review-finder', subagentId: 'finder' });
+    harness.send(EventType.Idle);
+    expect(harness.turnEnds).toHaveLength(1);
+    harness.engine.dispose();
+  });
+
   it('PTY silence and a dead agent are not turn ends', () => {
     const harness = createHarness();
     harness.engine.forceThinking(SESSION_ID);
@@ -504,6 +518,81 @@ describe('onTurnEnded', () => {
     it('reports exactly one turn end, at the Stop after "continue"', () => {
       const { turnEnds, stopAt } = replay();
       expect(turnEnds).toEqual([stopAt]);
+    });
+  });
+
+  describe('session-032: #832 Code Review pass, a finder re-tasked before its first run stopped', () => {
+    // Task #835. Trimmed from the #832 review session (0792ee8b) to its
+    // subagent, SubagentHandback, SendMessage, prompt and idle events, with the
+    // session_start reduced to its type. The three background shells a
+    // test-builder started were dropped: the bg-shell watcher drained them in
+    // production, and this harness does not drive the watcher.
+    //
+    // Finder a4ddf500929115e85 started with the fan-out. Its first run called
+    // SubagentHandback, which got no tool_end, and no named stop came for that
+    // run. The driver re-tasked it with SendMessage, which fired a second start
+    // under the same id while the ledger still held it live. Counted twice, it
+    // left the depth at 1 after the last test-builder stopped, so the parent's
+    // final Stop read as a subagent's and the turn-end automations never ran.
+    const FIXTURE = 'session-032-restarted-live-subagent.jsonl';
+    const RESTARTED_ID = 'a4ddf500929115e85';
+
+    function replay(events: SessionEvent[]): {
+      turnEnds: number[];
+      finalDepth: number | undefined;
+      duplicateStarts: number | undefined;
+    } {
+      const turnEnds: number[] = [];
+      let currentTs = 0;
+      const engine = new ActivityEngine(
+        {
+          onActivityChange() {},
+          onTurnEnded() {
+            turnEnds.push(currentTs);
+          },
+        },
+        { idleStabilityWindowMs: 0, bgShellEscapeHatchMs: 1000, staleThinkingTimeoutMs: 60_000 },
+      );
+      engine.initSession(SESSION_ID, true);
+      for (const event of events) {
+        currentTs = event.ts;
+        engine.processEvent(SESSION_ID, event);
+      }
+      const finalDepth = engine.getState(SESSION_ID)?.subagentDepth;
+      const duplicateStarts = engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.duplicateSubagentStart;
+      engine.dispose();
+      return { turnEnds, finalDepth, duplicateStarts };
+    }
+
+    const isNamedStop = (event: SessionEvent): boolean => event.type === EventType.SubagentStop && event.detail !== '';
+
+    it('keeps the restart: 17 starts against 16 named stops, two of the starts for one finder', () => {
+      const events = loadFixture(FIXTURE);
+      expect(events.filter((event) => event.type === EventType.SubagentStart)).toHaveLength(17);
+      expect(events.filter(isNamedStop)).toHaveLength(16);
+      expect(events.filter((event) => event.type === EventType.SubagentStart && event.subagentId === RESTARTED_ID)).toHaveLength(2);
+      expect(events.filter((event) => isNamedStop(event) && event.subagentId === RESTARTED_ID)).toHaveLength(1);
+    });
+
+    it('reports exactly one turn end, at the final Stop', () => {
+      const events = loadFixture(FIXTURE);
+      const finalStop = events.filter((event) => event.type === EventType.Idle).at(-1);
+      if (!finalStop) throw new Error('The fixture lost its Stops');
+      const { turnEnds, finalDepth, duplicateStarts } = replay(events);
+      expect(turnEnds).toEqual([finalStop.ts]);
+      expect(finalDepth).toBe(0);
+      // The SendMessage re-task is the one start that took no slot.
+      expect(duplicateStarts).toBe(1);
+    });
+
+    it('reports no turn end when the ids are stripped (mechanical red-green)', () => {
+      // Without ids the engine counts every start, as it did before the fix.
+      // One slot is left over, and the final Stop reads as a subagent's.
+      const withoutIds = loadFixture(FIXTURE).map(({ subagentId: _subagentId, ...event }) => event);
+      const { turnEnds, finalDepth, duplicateStarts } = replay(withoutIds);
+      expect(turnEnds).toEqual([]);
+      expect(finalDepth).toBe(1);
+      expect(duplicateStarts).toBe(0);
     });
   });
 });

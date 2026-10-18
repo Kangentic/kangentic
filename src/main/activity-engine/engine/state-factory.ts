@@ -44,6 +44,7 @@ export function createSessionEngineState(): SessionEngineState {
       unmatchedBgShellEnd: 0,
       ignoredInnerSubagentStop: 0,
       duplicateSubagentStop: 0,
+      duplicateSubagentStart: 0,
       stuckSubagent: 0,
     },
     recentPtyChunks: [],

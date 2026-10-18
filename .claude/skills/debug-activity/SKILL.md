@@ -47,7 +47,7 @@ Work this order. Each step narrows to a single session, then to a single transit
 
 The trigger-label and counter-delta reference is in `docs/activity-detection.md`, section "Reading a transition trace". Interpretation that is playbook, not reference:
 
-- **All nine compensation counters read 0 in a clean session.** Any non-zero counter names the silent recovery path that fired (`bgShellHatch`, `staleThinking`, `stuckPendingTools`, `stuckSubagent`, `forceThinking`, `forceIdle`, `unmatchedBgShellEnd`, `ignoredInnerSubagentStop`, `duplicateSubagentStop`) - start there.
+- **All ten compensation counters read 0 in a clean session.** Any non-zero counter names the silent recovery path that fired (`bgShellHatch`, `staleThinking`, `stuckPendingTools`, `stuckSubagent`, `forceThinking`, `forceIdle`, `unmatchedBgShellEnd`, `ignoredInnerSubagentStop`, `duplicateSubagentStop`, `duplicateSubagentStart`) - start there.
 - **In a bg-shell incident, the first thing to check is the end-label variant:** `event:bg-shell-ended:<shellId>` is a Tier A PID-exit drain (the watcher saw the OS process leave) OR the output-quiescence reclaim (#225); `event:bg-shell-ended:transcript` is the definitive drain from a tracked shell's own terminal `<task-notification>` observed directly in the durable session transcript (#386); `event:bg-shell-ended:watcher` is the anonymous count-heuristic drain. A named shell that vanished via the cap rather than any of the above is the #216 signature.
 - The counter-delta string on each transition shows what shifted: `prompt` carries `turn yes`, `idle` carries `turn no`, tool/shell changes show signed deltas (`tools +1`, `bg -1`).
 
@@ -124,7 +124,24 @@ because a `SendMessage` continuation reuses it. Events from before the fix carry
 `subagentId`, so the counter reads 0 on them and the type-count mismatch is the only tell.
 Pinned by `session-030-duplicate-named-subagent-stop.jsonl` (ids-stripped red-green).
 
-Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-shell-no-end.jsonl` (#175), `session-012-auto-bg-named-shell-live.jsonl` (#212), `session-005-waiting-for-input-idle-hint.jsonl`, `session-006-ask-user-question-resume.jsonl`, `session-010-subagent-permission-resume.jsonl` (#194), and the directory (trace-bundle) fixtures `session-013-stuck-foreground-e2e/`, `session-020-false-active-parked-housekeeping/` (#294), `session-021-false-active-resume-picker/` (#331), `session-022-false-active-repainting-past-180s/` (#364), and `session-024-fast-heal-hook-less-resume/` (the #331/#364 fast-heal follow-up) - each has separate `events.jsonl`, `pty-chunks.jsonl`, `status-deltas.jsonl`, `meta.json`. Plus `session-025-false-idle-monitor-untracked.jsonl`, `session-026-false-active-injected-ctrl-c-kills-subagent.jsonl`, and `session-030-duplicate-named-subagent-stop.jsonl` (#759).
+**Re-tasked subagent fires two STARTS -> stuck THINKING, the turn end never fires** (task #835).
+Signature in `events.jsonl`: more `subagent_start` events than named `subagent_stop` events for
+one `subagentId`. Between the two starts, that agent's `SubagentHandback` `tool_start` has no
+`tool_end`, and a `SendMessage` `tool_start`/`tool_end` pair comes right before the second start.
+The idle that follows the parent's last Stop is committed by `timer:stuck-subagent` rather than
+`event:idle`, and the column's On agent turn end rows have no run row for the visit, not even a
+skip. The first run never fired its named stop, the driver re-tasked the agent, and the second
+start took a second slot. The parent's Stop then arrived at depth 1 and read as a subagent's.
+Provenance: the #832 Code Review pass, session `0792ee8b`, finder `a4ddf500929115e85`, 17
+starts against 16 named stops. Fix: a start for an id the ledger holds live takes no new slot
+and bumps `duplicateSubagentStart`, which is the tell on a session recorded after the fix; when
+`duplicateSubagentStop` also rose for the same agent, the first run's stop landed late.
+One ordering stays open by design: if the first run's stop lands after the continuation's start,
+the depth reads 0 for the rest of the continuation (see "Re-started live subagent" in
+`docs/activity-detection.md`). Pinned by `session-032-restarted-live-subagent.jsonl`, replayed
+in `activity-engine-turn-ended.test.ts` (ids-stripped red-green).
+
+Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-shell-no-end.jsonl` (#175), `session-012-auto-bg-named-shell-live.jsonl` (#212), `session-005-waiting-for-input-idle-hint.jsonl`, `session-006-ask-user-question-resume.jsonl`, `session-010-subagent-permission-resume.jsonl` (#194), and the directory (trace-bundle) fixtures `session-013-stuck-foreground-e2e/`, `session-020-false-active-parked-housekeeping/` (#294), `session-021-false-active-resume-picker/` (#331), `session-022-false-active-repainting-past-180s/` (#364), and `session-024-fast-heal-hook-less-resume/` (the #331/#364 fast-heal follow-up) - each has separate `events.jsonl`, `pty-chunks.jsonl`, `status-deltas.jsonl`, `meta.json`. Plus `session-025-false-idle-monitor-untracked.jsonl`, `session-026-false-active-injected-ctrl-c-kills-subagent.jsonl`, `session-030-duplicate-named-subagent-stop.jsonl` (#759), and `session-032-restarted-live-subagent.jsonl` (#835).
 
 ## Pinning and verifying a fix
 

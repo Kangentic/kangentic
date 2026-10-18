@@ -451,7 +451,7 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge:
 | `PermissionRequest` | `idle` | Agent hit a permission wall |
 | `SessionStart` | `session_start` | Session began |
 | `SessionEnd` | `session_end` | Session ended |
-| `SubagentStart` | `subagent_start` | Main agent launched a subagent; `agent_type` goes to `detail` and `agent_id` to `subagentId` |
+| `SubagentStart` | `subagent_start` | Main agent launched a subagent; `agent_type` goes to `detail` and `agent_id` to `subagentId`. A start for a `subagentId` that is still live takes no second slot - see [Activity Detection](activity-detection.md) |
 | `SubagentStop` | `subagent_stop` | Subagent finished; same fields. A second stop for a `subagentId` that already stopped is a duplicate the engine ignores - see [Activity Detection](activity-detection.md) |
 | `Notification` | `notification` | Informational notification |
 | `PreCompact` | `compact` | Context compaction starting |
