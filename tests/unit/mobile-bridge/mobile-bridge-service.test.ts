@@ -470,7 +470,7 @@ describe('MobileBridgeService pairing ceremony wiring (real crypto over the mock
 // seeds an identity and roster with one service (the previous run), then boots a
 // FRESH service against them (this run), as a real launch does.
 function attachMinimalContext(service: InstanceType<typeof MobileBridgeService>): void {
-  service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+  service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn(), onBoardChanged: vi.fn(() => () => {}) } } as never);
 }
 
 describe('MobileBridgeService.attachContext() migrates pre-existing devices to the full capability grant', () => {
@@ -875,7 +875,7 @@ describe('MobileBridgeService.notifyWorkflowComplete()', () => {
   const finished = { projectId: 'home', workflowId: 'wf-1', title: 'Usage budgets', taskCount: 9 };
 
   function attachableContext(): never {
-    return { sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never;
+    return { sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn(), onBoardChanged: vi.fn(() => () => {}) } } as never;
   }
 
   afterEach(() => {

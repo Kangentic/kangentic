@@ -15,6 +15,11 @@
  * Freshness is enforced at open time from the sealed-in `sentAt`:
  * a delayed replay older than 24 hours (or claiming to be from more than
  * 5 minutes in the future) is rejected.
+ *
+ * An envelope may also carry `clears`: notifications the desktop saw resolve
+ * since its last message to this device (see PushClearEntry). The standalone
+ * clear message that carries them otherwise lives in push-clear.ts and reuses
+ * this file's construction.
  */
 import { randomBytes, xaeadEncrypt, xaeadDecrypt, concatBytes, XCHACHA_NONCE_LENGTH, AEAD_TAG_LENGTH } from './primitives';
 import { base64UrlEncode, base64UrlDecode } from '../wire/base64url';
@@ -53,6 +58,58 @@ export function isPushSessionKind(value: unknown): value is PushSessionKind {
 }
 
 /**
+ * One notification the desktop saw resolve: a prompt answered at the desk, a
+ * session back at work, a task moved, finished, or deleted. It names the
+ * notification it clears by copying `category`, `projectId`, `taskId`,
+ * `sessionId` and `sessionKind` verbatim from that notification's envelope,
+ * so spawn-stalled's `sessionId` is `''`.
+ *
+ * `notifiedAt` is the `sentAt` of the newest notification the entry clears. A
+ * phone removes a displayed notification only when its category and ids match
+ * AND its own envelope `sentAt` is at or before `notifiedAt`. That bound is
+ * what makes delivery order irrelevant: a normal-priority clear that Doze
+ * holds back can land after a fresh high-priority push for the same session
+ * and category, and without the bound it would remove the new one.
+ */
+export interface PushClearEntry {
+  category: PushCategory;
+  projectId: string;
+  taskId: string;
+  sessionId: string;
+  notifiedAt: number;
+  /** Copied from the cleared envelope; absent for a task's agent. */
+  sessionKind?: PushSessionKind;
+}
+
+/**
+ * Narrows a decrypted `clears` array, tolerantly. A non-array yields no
+ * entries. An entry with an unknown category (from a newer desktop), a
+ * non-string id, or a non-finite `notifiedAt` is dropped on its own; an
+ * unknown `sessionKind` is omitted; unknown fields are ignored. A bad entry
+ * never costs the other entries, or the notification they ride on.
+ */
+export function parsePushClearEntries(value: unknown): PushClearEntry[] {
+  if (!Array.isArray(value)) return [];
+  const entries: PushClearEntry[] = [];
+  for (const candidate of value) {
+    if (!isRecord(candidate)) continue;
+    const { category, projectId, taskId, sessionId, notifiedAt, sessionKind } = candidate;
+    if (!isPushCategory(category)) continue;
+    if (typeof projectId !== 'string' || typeof taskId !== 'string' || typeof sessionId !== 'string') continue;
+    if (typeof notifiedAt !== 'number' || !Number.isFinite(notifiedAt)) continue;
+    entries.push({
+      category,
+      projectId,
+      taskId,
+      sessionId,
+      notifiedAt,
+      ...(isPushSessionKind(sessionKind) ? { sessionKind } : {}),
+    });
+  }
+  return entries;
+}
+
+/**
  * The real notification content, visible only on the sealing desktop and
  * the opening device. Everything the OS-visible push payload carries
  * instead is a static placeholder.
@@ -69,6 +126,14 @@ export interface PushEnvelopePlaintext {
   sentAt: number;
   /** Absent for a task's agent. See PUSH_SESSION_KINDS. */
   sessionKind?: PushSessionKind;
+  /**
+   * Notifications this device should remove, riding on this one. The phone
+   * applies them BEFORE presenting this envelope's own notification, so an
+   * entry naming the same category and ids removes only the older alert it
+   * replaces. Absent when there is nothing to clear, and only ever sent to a
+   * device that registered with `acceptsClears`.
+   */
+  clears?: PushClearEntry[];
 }
 
 function requireEnvelopeString(record: Record<string, unknown>, field: string): string {
@@ -77,13 +142,16 @@ function requireEnvelopeString(record: Record<string, unknown>, field: string): 
   return value;
 }
 
-/** Narrows a decrypted envelope's JSON to PushEnvelopePlaintext. Throws on any malformed field. */
+/** Narrows a decrypted envelope's JSON to PushEnvelopePlaintext. Throws on any malformed field except `clears`. */
 export function parsePushEnvelopePlaintext(value: unknown): PushEnvelopePlaintext {
   if (!isRecord(value)) throw new Error('push envelope plaintext must be an object');
   if (!isPushCategory(value.category)) throw new Error('push envelope plaintext has an unknown "category"');
   if (typeof value.sentAt !== 'number' || !Number.isFinite(value.sentAt)) {
     throw new Error('push envelope plaintext has an invalid "sentAt"');
   }
+  // Tolerant on purpose: a malformed clears list must never cost the
+  // notification it rides on.
+  const clears = parsePushClearEntries(value.clears);
   return {
     category: value.category,
     projectId: requireEnvelopeString(value, 'projectId'),
@@ -95,18 +163,44 @@ export function parsePushEnvelopePlaintext(value: unknown): PushEnvelopePlaintex
     // An unknown kind (from a newer desktop) is dropped, not rejected, so the
     // notification still opens; the tap then routes as a task's would.
     ...(isPushSessionKind(value.sessionKind) ? { sessionKind: value.sessionKind } : {}),
+    ...(clears.length > 0 ? { clears } : {}),
   };
 }
 
 /**
- * Seals a notification into an opaque base64url blob:
+ * The construction every sealed push payload shares:
  * base64url(nonce[24] || XChaCha20-Poly1305(pushKey, nonce, aad=recipientStaticPublicKey, JSON(plaintext))).
+ * Internal to the package: callers seal through sealPushEnvelope or sealPushClear.
  */
-export function sealPushEnvelope(pushKey: Uint8Array, recipientStaticPublicKey: Uint8Array, plaintext: PushEnvelopePlaintext): string {
+export function sealPushJson(pushKey: Uint8Array, recipientStaticPublicKey: Uint8Array, plaintext: object): string {
   const nonce = randomBytes(XCHACHA_NONCE_LENGTH);
   const encodedPlaintext = new TextEncoder().encode(JSON.stringify(plaintext));
   const ciphertext = xaeadEncrypt(pushKey, nonce, recipientStaticPublicKey, encodedPlaintext);
   return base64UrlEncode(concatBytes(nonce, ciphertext));
+}
+
+/** Decrypts a sealPushJson blob and parses its JSON, unvalidated. Throws on a short blob, a tamper, or a wrong key or AAD. */
+export function openPushJson(pushKey: Uint8Array, recipientStaticPublicKey: Uint8Array, blob: string, label: string): unknown {
+  const bytes = base64UrlDecode(blob);
+  if (bytes.length < XCHACHA_NONCE_LENGTH + AEAD_TAG_LENGTH) {
+    throw new Error(`${label} blob is too short`);
+  }
+  const nonce = bytes.subarray(0, XCHACHA_NONCE_LENGTH);
+  const ciphertext = bytes.subarray(XCHACHA_NONCE_LENGTH);
+  const decrypted = xaeadDecrypt(pushKey, nonce, recipientStaticPublicKey, ciphertext);
+  return JSON.parse(new TextDecoder().decode(decrypted));
+}
+
+/** Rejects a sealed `sentAt` outside the freshness window: older than 24h, or more than 5min in the future. */
+export function assertPushFreshness(sentAt: number, label: string): void {
+  const now = Date.now();
+  if (sentAt < now - PUSH_ENVELOPE_MAX_AGE_MS) throw new Error(`${label} is stale`);
+  if (sentAt > now + PUSH_ENVELOPE_MAX_FUTURE_SKEW_MS) throw new Error(`${label} sentAt is in the future`);
+}
+
+/** Seals a notification into an opaque base64url blob (see sealPushJson for the construction). */
+export function sealPushEnvelope(pushKey: Uint8Array, recipientStaticPublicKey: Uint8Array, plaintext: PushEnvelopePlaintext): string {
+  return sealPushJson(pushKey, recipientStaticPublicKey, plaintext);
 }
 
 /**
@@ -118,17 +212,7 @@ export function sealPushEnvelope(pushKey: Uint8Array, recipientStaticPublicKey: 
  * shows the generic placeholder.
  */
 export function openPushEnvelope(pushKey: Uint8Array, recipientStaticPublicKey: Uint8Array, blob: string): PushEnvelopePlaintext {
-  const bytes = base64UrlDecode(blob);
-  if (bytes.length < XCHACHA_NONCE_LENGTH + AEAD_TAG_LENGTH) {
-    throw new Error('push envelope blob is too short');
-  }
-  const nonce = bytes.subarray(0, XCHACHA_NONCE_LENGTH);
-  const ciphertext = bytes.subarray(XCHACHA_NONCE_LENGTH);
-  const decrypted = xaeadDecrypt(pushKey, nonce, recipientStaticPublicKey, ciphertext);
-  const decoded: unknown = JSON.parse(new TextDecoder().decode(decrypted));
-  const plaintext = parsePushEnvelopePlaintext(decoded);
-  const now = Date.now();
-  if (plaintext.sentAt < now - PUSH_ENVELOPE_MAX_AGE_MS) throw new Error('push envelope is stale');
-  if (plaintext.sentAt > now + PUSH_ENVELOPE_MAX_FUTURE_SKEW_MS) throw new Error('push envelope sentAt is in the future');
+  const plaintext = parsePushEnvelopePlaintext(openPushJson(pushKey, recipientStaticPublicKey, blob, 'push envelope'));
+  assertPushFreshness(plaintext.sentAt, 'push envelope');
   return plaintext;
 }

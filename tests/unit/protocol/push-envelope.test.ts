@@ -139,4 +139,45 @@ describe('push envelope', () => {
     expect(isPushSessionKind('task')).toBe(false);
     expect(isPushSessionKind(undefined)).toBe(false);
   });
+
+  describe('piggybacked clears', () => {
+    const CLEAR_ENTRY = {
+      category: 'turn-complete' as const,
+      projectId: 'proj-1',
+      taskId: 'task-1',
+      sessionId: 'sess-0',
+      notifiedAt: Date.now() - 60_000,
+    };
+
+    it('round-trips an envelope carrying clears', () => {
+      const plaintext = plaintextFixture({ clears: [CLEAR_ENTRY, { ...CLEAR_ENTRY, category: 'spawn-stalled', sessionId: '' }] });
+      const blob = sealPushEnvelope(pushKey, recipientKey, plaintext);
+      expect(openPushEnvelope(pushKey, recipientKey, blob)).toEqual(plaintext);
+    });
+
+    it('opens an envelope with no clears without adding the field', () => {
+      const blob = sealPushEnvelope(pushKey, recipientKey, plaintextFixture());
+      expect('clears' in openPushEnvelope(pushKey, recipientKey, blob)).toBe(false);
+    });
+
+    /**
+     * A clears list is a passenger: whatever is wrong with it, the
+     * notification it rides on must still open, or the user loses a real
+     * alert to a bookkeeping error.
+     */
+    it('a malformed clears list is dropped and the notification still opens', () => {
+      const notAnArray = { ...plaintextFixture(), clears: 'everything' } as unknown as PushEnvelopePlaintext;
+      const openedFromString = openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, notAnArray));
+      expect('clears' in openedFromString).toBe(false);
+      expect(openedFromString.taskTitle).toBe('Fix the bug');
+
+      const allBad = { ...plaintextFixture(), clears: [{ category: 'turn-complete' }, 42, null] } as unknown as PushEnvelopePlaintext;
+      expect('clears' in openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, allBad))).toBe(false);
+    });
+
+    it('keeps the well-formed entries of a partly malformed list', () => {
+      const mixed = { ...plaintextFixture(), clears: [CLEAR_ENTRY, { ...CLEAR_ENTRY, notifiedAt: 'yesterday' }] } as unknown as PushEnvelopePlaintext;
+      expect(openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, mixed)).clears).toEqual([CLEAR_ENTRY]);
+    });
+  });
 });

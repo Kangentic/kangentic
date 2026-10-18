@@ -28,6 +28,8 @@ export interface PushRegistration {
   registeredAt: string;
   /** The device's push preferences; undefined means every category (older or default registration). */
   categories?: PushCategory[];
+  /** True when the device opted into sealed clears; undefined means it never did (an older app). */
+  acceptsClears?: boolean;
 }
 
 export interface PushRegistrationEntry extends PushRegistration {
@@ -46,6 +48,7 @@ function isPushRegistration(value: unknown): value is PushRegistration {
   ) {
     return false;
   }
+  if (record.acceptsClears !== undefined && typeof record.acceptsClears !== 'boolean') return false;
   if (record.categories === undefined) return true;
   return Array.isArray(record.categories) && record.categories.every(isPushCategory);
 }

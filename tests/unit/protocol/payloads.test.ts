@@ -332,6 +332,23 @@ describe('parseCapabilityRequestPayload', () => {
     ).toThrow(/categories/);
   });
 
+  it('register-push: acceptsClears is absent by default and threaded through when set', () => {
+    const pushKeyBase64 = 'A'.repeat(43);
+    expect(parseCapabilityRequestPayload('register-push', { action: 'register', expoPushToken: 'tok', pushKeyBase64 })).not.toHaveProperty('acceptsClears');
+    expect(
+      parseCapabilityRequestPayload('register-push', { action: 'register', expoPushToken: 'tok', pushKeyBase64, acceptsClears: true }),
+    ).toMatchObject({ acceptsClears: true });
+    expect(
+      parseCapabilityRequestPayload('register-push', { action: 'register', expoPushToken: 'tok', pushKeyBase64, acceptsClears: false }),
+    ).toMatchObject({ acceptsClears: false });
+  });
+
+  it('register-push: rejects a non-boolean acceptsClears', () => {
+    expect(() =>
+      parseCapabilityRequestPayload('register-push', { action: 'register', expoPushToken: 'tok', pushKeyBase64: 'A'.repeat(43), acceptsClears: 'yes' }),
+    ).toThrow(/acceptsClears/);
+  });
+
   it('rejects a non-object payload for every verb', () => {
     // Looped over the tuple rather than a hand-picked sample, so a verb added
     // with a parser that forgets its isRecord check fails here on arrival.

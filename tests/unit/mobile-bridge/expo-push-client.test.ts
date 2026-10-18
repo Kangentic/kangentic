@@ -3,18 +3,23 @@
  *
  * The client is a single injected-fetch POST: covered are the happy
  * path (including the exact request shape - notification privacy
- * depends on data.blob being the only real content), the one delayed
- * retry on a network error, and DeviceNotRegistered surfacing as a
- * typed result so the notifier can drop the registration.
+ * depends on data.blob being the only real content), the two clear
+ * shapes (data.clear at normal priority, with the iOS background wake),
+ * the one delayed retry on a network error, and DeviceNotRegistered
+ * surfacing as a typed result so the notifier can drop the registration.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EXPO_PUSH_ENDPOINT, sendExpoPush, createExpoWakeChannel, type FetchLike } from '../../../src/main/mobile-bridge/push/expo-push-client';
+
+/** A visible notification's delivery options, as the notifier sends them. */
+const VISIBLE = { dataKey: 'blob', priority: 'high', mutableContent: true, contentAvailable: false } as const;
 
 const message = {
   to: 'ExponentPushToken[abc]',
   title: 'Kangentic',
   body: 'Agent needs your attention',
   dataBlob: 'sealed-blob',
+  ...VISIBLE,
 };
 
 function jsonResponse(body: unknown, ok = true, status = 200): { ok: boolean; status: number; json(): Promise<unknown> } {
@@ -65,7 +70,7 @@ describe('sendExpoPush', () => {
   it('omits title, body, and channelId entirely when the message carries none of them', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ data: { status: 'ok' } })) as FetchLike;
 
-    await sendExpoPush(fetchImpl, { to: message.to, dataBlob: message.dataBlob });
+    await sendExpoPush(fetchImpl, { to: message.to, dataBlob: message.dataBlob, ...VISIBLE });
 
     const [, init] = vi.mocked(fetchImpl).mock.calls[0];
     const parsedBody = JSON.parse(init.body);
@@ -76,6 +81,53 @@ describe('sendExpoPush', () => {
       mutableContent: true,
     });
     expect(Object.keys(parsedBody)).not.toContain('channelId');
+  });
+
+  /**
+   * An Android clear: the sealed clear under data.clear, which is how the
+   * phone tells it apart before decrypting, at normal priority. No
+   * mutableContent and no contentAvailable keys at all, not false ones.
+   */
+  it('sends a clear under data.clear at normal priority, with no alert or iOS keys', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: { status: 'ok' } })) as FetchLike;
+
+    await sendExpoPush(fetchImpl, {
+      to: message.to,
+      dataBlob: 'sealed-clear',
+      dataKey: 'clear',
+      priority: 'normal',
+      mutableContent: false,
+      contentAvailable: false,
+    });
+
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      to: 'ExponentPushToken[abc]',
+      data: { clear: 'sealed-clear' },
+      priority: 'normal',
+    });
+  });
+
+  /** An iOS clear: the same, plus contentAvailable, which Expo maps to aps.content-available for a background wake. */
+  it('adds contentAvailable for an iOS clear', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: { status: 'ok' } })) as FetchLike;
+
+    await sendExpoPush(fetchImpl, {
+      to: message.to,
+      dataBlob: 'sealed-clear',
+      dataKey: 'clear',
+      priority: 'normal',
+      mutableContent: false,
+      contentAvailable: true,
+    });
+
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      to: 'ExponentPushToken[abc]',
+      data: { clear: 'sealed-clear' },
+      priority: 'normal',
+      contentAvailable: true,
+    });
   });
 
   it('accepts the batch-shaped { data: [ticket] } response too', async () => {
@@ -136,6 +188,7 @@ describe('createExpoWakeChannel', () => {
       title: 'Kangentic',
       body: 'Agent needs your attention',
       blob: 'sealed-blob',
+      ...VISIBLE,
     });
 
     expect(result).toEqual({ delivered: true });
@@ -144,6 +197,7 @@ describe('createExpoWakeChannel', () => {
     expect(parsedBody).toMatchObject({
       to: 'ExponentPushToken[abc]',
       data: { blob: 'sealed-blob' },
+      priority: 'high',
       mutableContent: true,
     });
     // toMatchObject alone would not notice an extra key: name the guard
@@ -151,5 +205,27 @@ describe('createExpoWakeChannel', () => {
     // enough for Expo to attach an FCM notification block and skip our
     // handler (see PushNotifier's header).
     expect(Object.keys(parsedBody)).not.toContain('channelId');
+  });
+
+  it('carries a clear message\'s data key, priority and background wake through', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: { status: 'ok' } })) as FetchLike;
+    const wakeChannel = createExpoWakeChannel(fetchImpl);
+
+    await wakeChannel.send({
+      token: 'ExponentPushToken[abc]',
+      blob: 'sealed-clear',
+      dataKey: 'clear',
+      priority: 'normal',
+      mutableContent: false,
+      contentAvailable: true,
+    });
+
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      to: 'ExponentPushToken[abc]',
+      data: { clear: 'sealed-clear' },
+      priority: 'normal',
+      contentAvailable: true,
+    });
   });
 });

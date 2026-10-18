@@ -125,11 +125,22 @@ describe('PushRegistrationStore', () => {
         'device-bad-key': { ...valid, pushKeyHex: 'not-hex' },
         'device-bad-platform': { ...valid, platform: 'windows' },
         'device-bad-categories': { ...valid, categories: ['turn-complete', 'not-a-real-category'] },
+        'device-bad-accepts-clears': { ...valid, acceptsClears: 'yes' },
         'device-not-object': 'nope',
       }),
     );
     const store = new PushRegistrationStore();
     expect(store.list()).toEqual([{ deviceId: 'device-good', ...valid }]);
+  });
+
+  it('loads a stored acceptsClears opt-in, and leaves it absent for a registration that never set it', () => {
+    const optedIn = registrationFixture({ acceptsClears: true });
+    const older = registrationFixture();
+    existsSyncSpy.mockReturnValue(true);
+    readFileSyncSpy.mockReturnValue(JSON.stringify({ 'device-new': optedIn, 'device-old': older }));
+    const store = new PushRegistrationStore();
+    expect(store.list().find((entry) => entry.deviceId === 'device-new')?.acceptsClears).toBe(true);
+    expect(store.list().find((entry) => entry.deviceId === 'device-old')).not.toHaveProperty('acceptsClears');
   });
 
   it('round-trips a registration with categories, and one without', () => {
