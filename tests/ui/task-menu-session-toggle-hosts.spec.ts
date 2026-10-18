@@ -4,6 +4,8 @@
  * Workflows canvas card), the session writes the task detail sends for a task
  * of another project, and the two outcomes of a menu click the user can only
  * see afterwards (a refused pause, a resume that finds the agent still live).
+ * Also the canvas menu's Move to on a card of another board, which shares this
+ * file's two-project canvas setup.
  *
  * Intent:
  * - A workflow task's canvas menu offers the same row, and the click pauses the
@@ -17,6 +19,17 @@
  *   happened: the store asks main for the live session before the failure toast.
  * - A resume that hands back the session the card already showed says so, and
  *   an ordinary resume does not.
+ * - The canvas row's pause brings the task's own board up to date, decided when
+ *   the pause lands, so a board the user switched to or away from meanwhile is
+ *   reloaded or dropped from the warm cache, not left holding the old session.
+ * - That resync runs however the pause settles. Main clears the task's session
+ *   pointer before it stops the agent, and the stop can still fail, so a pause
+ *   that toasts a failure has already changed the task row. The task's own board
+ *   must still drop its warm snapshot.
+ * - Move to on a canvas card of another board brings that board up to date. Main
+ *   sends no push for a move from the main window, and a warm switch only reads
+ *   the snapshot taken when the user left that board, so without the resync the
+ *   card showed in its old column.
  *
  * Assertions read state (the mock's call logs, data attributes, toast text),
  * never pixel geometry (.claude/rules/cross-platform-parity.md). Every test
@@ -25,16 +38,28 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import {
   PROJECT_ID,
+  PROJECT_NAME,
   OTHER_PROJECT_ID,
+  OTHER_PROJECT_NAME,
   sessionIdOf,
   launch,
   byTestId,
+  boardCard,
   cardInLane,
   openMonitor,
+  moveProjectIds,
   suspendCalls,
   resumeCalls,
   resetCalls,
   reconcileCalls,
+  failSuspendAfterCommit,
+  holdNextSuspend,
+  suspendHeld,
+  releaseSuspend,
+  resetIpcCallCounts,
+  tasksListCalls,
+  switchToProject,
+  visitOtherBoardAndBack,
 } from './monitor-writes-seed';
 
 test.describe.configure({ mode: 'parallel' });
@@ -50,13 +75,18 @@ async function openCardMenu(page: Page, lane: string, taskId: string): Promise<L
 }
 
 /**
- * Put the named seeded tasks in one running workflow homed on the open project.
- * A task tagged for the other project keeps its tag, so it stays on the other
- * board and the canvas draws it there, as main does for a cross-board workflow.
+ * Put the named seeded tasks in one workflow homed on the open project, running
+ * unless `state` says otherwise. A task tagged for the other project keeps its
+ * tag, so it stays on the other board and the canvas draws it there, as main does
+ * for a cross-board workflow. The home is pinned, so a spec that switches
+ * projects does not rehome it on the mock's current project.
  */
-function workflowAround(taskIds: string[]): string {
+function workflowAround(taskIds: string[], state: 'running' | 'paused' = 'running'): string {
   return `
-    window.__mockWorkflows = [{ workflow: { id: '${WORKFLOW_ID}', title: 'Session toggle', state: 'running', draft: null, color_slot: 5 } }];
+    window.__mockWorkflows = [{
+      projectId: '${PROJECT_ID}',
+      workflow: { id: '${WORKFLOW_ID}', title: 'Session toggle', state: '${state}', draft: null, color_slot: 5 },
+    }];
     window.__mockPreConfigure(function (state) {
       var inWorkflow = ${JSON.stringify(taskIds)};
       state.tasks.forEach(function (task) {
@@ -130,6 +160,207 @@ test.describe('Task menu session row on the Workflows canvas', () => {
       await row.click();
       await expect(byTestId(page, 'workflow-card-menu')).toHaveCount(0);
       await expect.poll(() => suspendCalls(page)).toEqual([{ taskId, projectId: OTHER_PROJECT_ID }]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Red: the row's `onSucceeded` goes back to a bare `invalidateProject`. The
+  // user switches to the task's board while the pause is in flight, so the warm
+  // restore lands first, and marking the board that is already open as stale
+  // reloads nothing. It keeps the session pointer main just cleared.
+  test('Pause session on a card of another board reloads that board when it is open by the time the pause lands', async () => {
+    const taskId = 'task-hosts-wf-pause-switch-to';
+    const { browser, page } = await launch({
+      tasks: [{
+        id: taskId, displayId: 93, title: 'Paused while its board opens', lane: 'Executing',
+        session: true, otherProject: true,
+      }],
+    }, workflowAround([taskId]));
+    try {
+      await warmOtherBoard(page, taskId);
+      await holdNextSuspend(page);
+      const menu = await openCanvasCardMenu(page, taskId);
+      await menu.getByTestId('context-toggle-session').click();
+      await expect.poll(() => suspendHeld(page)).toBe(true);
+
+      await showOtherBoard(page);
+      await expect(cardInLane(page, 'Executing', taskId)).toBeVisible();
+      await resetIpcCallCounts(page);
+      await releaseSuspend(page);
+      await expect.poll(() => suspendCalls(page)).toEqual([{ taskId, projectId: OTHER_PROJECT_ID }]);
+      await expect.poll(() => tasksListCalls(page)).toBeGreaterThan(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Red: the row's `onSucceeded` goes back to `loadBoard()` for a card of this
+  // board. The user switches away while the pause is in flight, so that reload
+  // reads the other project, and this board's warm snapshot keeps the session
+  // pointer main just cleared. Coming back restores it with no read.
+  test('Pause session on a card of this board drops its snapshot when the user left the board before the pause lands', async () => {
+    const taskId = 'task-hosts-wf-pause-switch-away';
+    const { browser, page } = await launch({
+      tasks: [{ id: taskId, displayId: 94, title: 'Paused while the user moves on', lane: 'Executing', session: true }],
+    }, workflowAround([taskId]));
+    try {
+      await visitOtherBoardAndBack(page);
+      await holdNextSuspend(page);
+      const menu = await openCanvasCardMenu(page, taskId);
+      await menu.getByTestId('context-toggle-session').click();
+      await expect.poll(() => suspendHeld(page)).toBe(true);
+
+      // The title, not the card: the mock lists an untagged task on every board.
+      await showOtherBoard(page);
+      await expect(byTestId(page, 'titlebar-project-name')).toHaveText(OTHER_PROJECT_NAME);
+      await releaseSuspend(page);
+      await expect.poll(() => suspendCalls(page)).toEqual([{ taskId, projectId: PROJECT_ID }]);
+
+      await resetIpcCallCounts(page);
+      await switchToProject(page, PROJECT_ID);
+      await expect(byTestId(page, 'titlebar-project-name')).toHaveText(PROJECT_NAME);
+      await expect(cardInLane(page, 'Executing', taskId)).toBeVisible();
+      await expect.poll(() => tasksListCalls(page)).toBeGreaterThan(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Red: the row goes back to `onSucceeded: () => resyncBoardAfterMonitorWrite(...)`.
+  // `runSessionToggle` returns without calling it when the pause rejects, but
+  // main clears the session pointer before it stops the agent, so a pause can
+  // commit and then fail. The task's board keeps its warm snapshot, and the next
+  // switch to it restores the pointer main just cleared with no read.
+  test('Pause session on a card of another board that commits and then fails still drops that board snapshot', async () => {
+    const taskId = 'task-hosts-wf-pause-commit-fail';
+    const failureReason = 'PTY did not stop after the pause committed';
+    const { browser, page } = await launch({
+      tasks: [{
+        id: taskId, displayId: 95, title: 'Paused then the stop failed', lane: 'Executing',
+        session: true, otherProject: true,
+      }],
+    }, workflowAround([taskId]));
+    try {
+      await warmOtherBoard(page, taskId);
+      await failSuspendAfterCommit(page, failureReason);
+      const menu = await openCanvasCardMenu(page, taskId);
+      await menu.getByTestId('context-toggle-session').click();
+
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to suspend session' })).toContainText(failureReason);
+      // The pause reached the mock before it threw, so the write did commit.
+      expect(await suspendCalls(page)).toEqual([{ taskId, projectId: OTHER_PROJECT_ID }]);
+
+      // Leave the Workflows view before the counter resets: that switch is not
+      // what the test measures, and the other board's cold load is.
+      await byTestId(page, 'view-toggle-board').click();
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await resetIpcCallCounts(page);
+      await switchToProject(page, OTHER_PROJECT_ID);
+      await expect(byTestId(page, 'titlebar-project-name')).toHaveText(OTHER_PROJECT_NAME);
+      await expect.poll(() => tasksListCalls(page)).toBeGreaterThan(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/**
+ * Visit the other board and come back, so it holds a warm snapshot with the card
+ * in Executing. Without this the last switch in each test is a cold load, which
+ * reads the moved card from the mock whatever the menu did.
+ */
+async function warmOtherBoard(page: Page, taskId: string): Promise<void> {
+  await switchToProject(page, OTHER_PROJECT_ID);
+  await expect(cardInLane(page, 'Executing', taskId)).toBeVisible();
+  await switchToProject(page, PROJECT_ID);
+  await expect(boardCard(page, taskId)).toHaveCount(0);
+}
+
+/** Right-click a task's canvas card and pick a column from Move to. */
+async function moveFromCanvas(page: Page, taskId: string, laneName: string): Promise<void> {
+  const menu = await openCanvasCardMenu(page, taskId);
+  await menu.locator('[data-testid="context-move-to"]').filter({ hasText: laneName }).click();
+}
+
+/**
+ * Leave the Workflows view, then switch to the other project. The board view
+ * first, because Workflows folds the sidebar to its icon strip, which covers the
+ * project rows, and `activeView` survives the switch.
+ */
+async function showOtherBoard(page: Page): Promise<void> {
+  await byTestId(page, 'view-toggle-board').click();
+  await switchToProject(page, OTHER_PROJECT_ID);
+}
+
+test.describe('Move to on a Workflows canvas card of another board', () => {
+  // A paused workflow, because a running one locks every by-hand move but the
+  // human gate's. The target is Code Review: Done would archive the card, and
+  // To Do is refused.
+  const launchMoveCase = (taskId: string, displayId: number) => launch({
+    tasks: [{ id: taskId, displayId, title: 'Workflow task moved from the canvas', lane: 'Executing', otherProject: true }],
+  }, workflowAround([taskId], 'paused'));
+
+  // Red: `moveTo`'s other-board branch drops the `.finally` that calls
+  // `resyncBoardAfterMonitorWrite`, so the warm switch restores the old column.
+  test('switching to that board afterwards shows the card in its new column', async () => {
+    const taskId = 'task-hosts-move-then-switch';
+    const { browser, page } = await launchMoveCase(taskId, 90);
+    try {
+      await warmOtherBoard(page, taskId);
+      await moveFromCanvas(page, taskId, 'Code Review');
+      await expect.poll(() => moveProjectIds(page)).toEqual([OTHER_PROJECT_ID]);
+      // The move settles while the open board is still this one.
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Moved "Workflow task moved from the canvas" to Code Review' }))
+        .toHaveCount(1);
+
+      await showOtherBoard(page);
+      await expect(cardInLane(page, 'Code Review', taskId)).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Red: the resync runs in `.then` instead of `.finally`. Main can write the
+  // move and then reject (the destination column's agent fails to start), and
+  // the card is in its new column all the same.
+  test('a move that lands and then fails still reaches that board', async () => {
+    const taskId = 'task-hosts-move-commit-reject';
+    const { browser, page } = await launchMoveCase(taskId, 91);
+    try {
+      await warmOtherBoard(page, taskId);
+      await page.evaluate(() => { window.__mockMoveRejectAfterCommit = 'Agent failed to start'; });
+      await moveFromCanvas(page, taskId, 'Code Review');
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to move' })).toContainText('Agent failed to start');
+
+      await showOtherBoard(page);
+      await expect(cardInLane(page, 'Code Review', taskId)).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Red: a bare `invalidateProject` in place of the resync helper. The user
+  // switches to the task's board while the move is still in flight, so the warm
+  // restore lands first, and marking the board that is already open as stale
+  // reloads nothing.
+  test('switching to that board while the move is in flight reloads it when the move lands', async () => {
+    const taskId = 'task-hosts-move-in-flight';
+    const { browser, page } = await launchMoveCase(taskId, 92);
+    try {
+      await warmOtherBoard(page, taskId);
+      await page.evaluate(() => { window.__mockTaskMoveDeferred = true; });
+      await moveFromCanvas(page, taskId, 'Code Review');
+      await expect.poll(() => moveProjectIds(page)).toEqual([OTHER_PROJECT_ID]);
+
+      await showOtherBoard(page);
+      await expect(cardInLane(page, 'Executing', taskId)).toBeVisible();
+
+      await page.evaluate(() => {
+        if (!window.__mockTaskMoveResolve) throw new Error('the mock is not holding a move');
+        window.__mockTaskMoveResolve();
+      });
+      await expect(cardInLane(page, 'Code Review', taskId)).toBeVisible();
     } finally {
       await browser.close();
     }

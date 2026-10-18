@@ -6,13 +6,13 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
-import { invalidateProject } from '../../stores/project-cache';
 import { describeIpcError } from '../../lib/ipc-error';
 import { boardMoveRefusal, boardWorkflowOf, sendAwayRefusal } from '../../utils/board-workflow';
 import { findBoardTask } from '../../utils/board-task-index';
 import { useTaskDisplayKind } from '../../utils/task-progress';
 import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
 import { TaskContextMenu } from '../board/TaskContextMenu';
+import { resyncBoardAfterMonitorWrite } from '../monitor/resync-board-after-monitor-write';
 
 /**
  * A canvas card's right-click menu (#732 board 1d): the board's own
@@ -80,7 +80,12 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
     }
     void window.electronAPI.tasks.move({ taskId, targetSwimlaneId, targetPosition: 0 }, viewTask.projectId)
       .then(() => useToastStore.getState().addToast({ message: `Moved "${task.title}" to ${targetName}`, variant: 'success' }))
-      .catch((error) => reportFailure('move', error));
+      .catch((error) => reportFailure('move', error))
+      // Main sends no push for a move from this window, and a warm switch reads
+      // that project's snapshot, so bring its board up to date as the Agent
+      // Monitor's menu does. It runs however the move settles, because a move
+      // can commit and then fail.
+      .finally(() => resyncBoardAfterMonitorWrite(viewTask.projectId));
   };
 
   const openHere = (initialEdit: boolean) => {
@@ -113,17 +118,18 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
       sessionToggle={sessionToggleRow ? {
         ...sessionToggleRow,
         onToggle: () => {
+          // Main rewrites the task's session pointer, so bring the task's own
+          // board up to date, as the Agent Monitor's menu does. It runs however
+          // the toggle settles, because a pause clears the pointer before it
+          // stops the agent, and the stop can still fail. Decided when the call
+          // lands, not at the click: the user may have switched boards
+          // meanwhile, and then the board to reload is the open one and the
+          // snapshot to drop is the task's.
           void runSessionToggle({
             taskId,
             direction: sessionToggleRow.direction,
             projectId: viewTask.projectId,
-            // A task of another board: drop that project's warm-switch snapshot,
-            // which still holds the session pointer main just rewrote, as the
-            // Agent Monitor's menu does.
-            onSucceeded: onThisBoard
-              ? () => { void useBoardStore.getState().loadBoard(); }
-              : () => invalidateProject(viewTask.projectId),
-          });
+          }).finally(() => resyncBoardAfterMonitorWrite(viewTask.projectId));
         },
       } : undefined}
       moveRefusal={(laneId) => boardMoveRefusal(workflow, task, swimlanes.find((lane) => lane.id === laneId))}
