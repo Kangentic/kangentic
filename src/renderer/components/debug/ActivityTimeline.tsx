@@ -166,6 +166,7 @@ const COUNTER_LABELS: Record<keyof ActivityStatsSnapshot['compensationCounters']
   unmatchedBgShellEnd: 'unmatched-bg-shell-end',
   ignoredInnerSubagentStop: 'ignored-inner-subagent-stop',
   duplicateSubagentStop: 'duplicate-subagent-stop',
+  duplicateSubagentStart: 'duplicate-subagent-start',
   stuckSubagent: 'stuck-subagent',
 };
 

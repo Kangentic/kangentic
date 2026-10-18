@@ -69,15 +69,19 @@ export const DEFAULT_BG_SHELL_ONLY_GRACE_MS = 30_000;
 export const MAX_PENDING_EXEMPT_SHELL_TOOL_IDS = 16;
 
 /**
- * FIFO cap on `subagentLifecycleById`.
+ * Cap on `subagentLifecycleById`, evicting the oldest stopped id first.
  *
  * The ledger only has to remember a stopped id long enough to recognize its
  * duplicate stop, which in the captured incident (task #759) landed 12.7s
- * after the first. A `/code-review` fan-out runs 9 or 10 subagents, so 64 holds
- * several fan-outs. Evicting an entry is safe in both directions: the evicted
- * id falls back to count-based tracking, which is the behavior before the
- * ledger existed (a live id's stop still decrements; a duplicate of an evicted
- * stopped id decrements once more, as it always did).
+ * after the first. A live id has to stay for its whole run, because a re-start
+ * of a live id takes no second slot (task #835). A `/code-review` pass can start
+ * more than 50 finders in rolling batches of 20, plus test-builders and
+ * SendMessage continuations, so it can write more ids than the cap holds while
+ * one long-running agent stays live. Evicting stopped ids first keeps that
+ * agent, and a live id goes only when the ledger holds no stopped one. An evicted id falls back to count-based tracking, which is the
+ * behavior before the ledger existed. A live id's stop still decrements, a
+ * duplicate of an evicted stopped id decrements once more, and a re-start of an
+ * evicted live id takes a second slot, as each always did.
  */
 export const MAX_TRACKED_SUBAGENT_IDS = 64;
 
@@ -246,7 +250,7 @@ export interface PendingTool {
  * Increments live for the lifetime of the session - never decremented.
  * Surfaced via `ActivityStatsSnapshot` so the debug overlay can render
  * a "click into the timeline to see what happened" cue when the
- * counters go non-zero. In a clean session, all nine read zero.
+ * counters go non-zero. In a clean session, all ten read zero.
  *
  * Reset only on `initSession()` (fresh state) or `dispose()`.
  */
@@ -285,10 +289,22 @@ export interface CompensationCounters {
    * calling SubagentHandback stops, is re-prompted by the CLI, and stops again
    * after the handback; counting the second stop took a live sibling's depth
    * slot and false-idled the session (task #759). Also bumped by a late stop
-   * for a subagent whose slot a reset already released. Non-zero is benign:
-   * it counts duplicates the engine correctly discarded.
+   * for a subagent whose slot a reset already released, and by a SendMessage
+   * continuation's own stop after its first run's late stop already released
+   * the one slot the two share (task #835). Non-zero is benign: it counts
+   * duplicates the engine correctly discarded.
    */
   duplicateSubagentStop: number;
+  /**
+   * A `subagent_start` took no new depth slot because its `subagentId` was
+   * already live. A driver re-tasked an agent with SendMessage after the
+   * agent's first run lost its named stop. Counting the second start gave one
+   * agent two slots, and the parent's Stop never ended the turn (task #835).
+   * Non-zero is benign, because the engine absorbed the restart. When
+   * `duplicateSubagentStop` also rises for that agent, its first run's stop
+   * landed after the restart, and the depth read 0 while the continuation ran.
+   */
+  duplicateSubagentStart: number;
   /**
    * `timer:stuck-subagent` fired: `subagentDepth` was stuck > 0 (a named
    * terminal `subagent_stop` was lost after its empty inner stop was
@@ -345,10 +361,13 @@ export interface SessionEngineState {
    * A stop for an id already marked `'stopped'` is a duplicate and does not
    * decrement (task #759). A start re-marks the id `'live'`, because a
    * SendMessage continuation fires a fresh SubagentStart under the same id
-   * before its next stop. Events with no id, or an empty one, never touch the
-   * ledger.
+   * before its next stop. A start for an id already `'live'` takes no second
+   * slot, because a re-task of an agent whose first run lost its named stop
+   * would otherwise hold two (task #835). Events with no id, or an empty one,
+   * never touch the ledger.
    *
-   * Bounded at `MAX_TRACKED_SUBAGENT_IDS` (FIFO by last write).
+   * Bounded at `MAX_TRACKED_SUBAGENT_IDS`, evicting the stopped id written
+   * longest ago first and a live one only when no stopped id remains.
    */
   subagentLifecycleById: Map<string, SubagentLifecycle>;
   /**

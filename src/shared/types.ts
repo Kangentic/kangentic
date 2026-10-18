@@ -1857,7 +1857,7 @@ export interface ActivityStatsSnapshot {
    * Increments on each watchdog fire or force-* call; never decrements.
    * Used by the debug overlay's counter strip to flag silent
    * compensations that don't visibly flip the activity pill. In a
-   * clean session, all nine fields read 0.
+   * clean session, all ten fields read 0.
    */
   compensationCounters: {
     /** `timer:stale-thinking` watchdog fires (turnActive held alone). */
@@ -1876,6 +1876,8 @@ export interface ActivityStatsSnapshot {
     ignoredInnerSubagentStop: number;
     /** Named `subagent_stop` for an already-stopped `subagentId` ignored (re-prompted subagent, task #759). */
     duplicateSubagentStop: number;
+    /** `subagent_start` for an already-live `subagentId` took no new slot (SendMessage re-task, task #835). */
+    duplicateSubagentStart: number;
     /** `timer:stuck-subagent` fired (a named SubagentStop was dropped, depth reclaimed). */
     stuckSubagent: number;
   };

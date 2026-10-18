@@ -62,6 +62,7 @@ const EMPTY_COMPENSATION_COUNTERS: ActivityStatsSnapshot['compensationCounters']
   unmatchedBgShellEnd: 0,
   ignoredInnerSubagentStop: 0,
   duplicateSubagentStop: 0,
+  duplicateSubagentStart: 0,
   stuckSubagent: 0,
 };
 
@@ -410,6 +411,28 @@ describe('snapshotsContentEqual', () => {
       const holding = makeSnapshot({ backgroundShellIds: ['s1'] });
       const exempt = makeSnapshot({ exemptBackgroundShellIds: ['s1'] });
       expect(snapshotsContentEqual(holding, exempt)).toBe(false);
+    });
+  });
+
+  describe('compensationCounters comparison', () => {
+    // A duplicate subagent start bumps only its counter, so this comparison
+    // is the only thing that re-renders the strip.
+    it('returns true when the counters are separate objects with equal values', () => {
+      const snapshotA = makeSnapshot({ compensationCounters: { ...EMPTY_COMPENSATION_COUNTERS } });
+      const snapshotB = makeSnapshot({ compensationCounters: { ...EMPTY_COMPENSATION_COUNTERS } });
+      expect(snapshotA.compensationCounters).not.toBe(snapshotB.compensationCounters);
+      expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(true);
+    });
+
+    it('returns false when only duplicateSubagentStart differs', () => {
+      const snapshotA = makeSnapshot({
+        compensationCounters: { ...EMPTY_COMPENSATION_COUNTERS, duplicateSubagentStart: 0 },
+      });
+      const snapshotB = makeSnapshot({
+        compensationCounters: { ...EMPTY_COMPENSATION_COUNTERS, duplicateSubagentStart: 1 },
+      });
+      expect(snapshotA.compensationCounters).not.toBe(snapshotB.compensationCounters);
+      expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(false);
     });
   });
 
