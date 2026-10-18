@@ -2,6 +2,51 @@
 
 <!-- releases -->
 
+## [protocol-v0.23.0] - 2026-10-18
+
+Lets the desktop clear notifications that have resolved. Additive on the wire;
+`PROTOCOL_VERSION` stays '3'.
+
+A new sealed clear message (`sealPushClear`, `openPushClear`) is built like the
+notification envelope: XChaCha20-Poly1305 under the device's push key, the
+recipient's static public key as AAD, base64url, and the same 24 hour freshness
+window. It rides the push payload under `data.clear` (`PUSH_CLEAR_DATA_KEY`)
+instead of `data.blob` (`PUSH_ENVELOPE_DATA_KEY`), so a phone tells a clear
+apart before it decrypts anything. `sealedPushBlobLength` returns the length a
+plaintext would seal to, so a sender can fit a message under a push payload
+limit without sealing it first.
+
+Each `PushClearEntry` names the notification it clears by copying `category`,
+`projectId`, `taskId`, `sessionId` and `sessionKind` from that notification's
+envelope (spawn-stalled's `sessionId` is empty), plus `notifiedAt`: the `sentAt`
+of the newest notification it covers. A phone removes a displayed notification
+only when its category and ids match and its own `sentAt` is at or before
+`notifiedAt`. That bound keeps a clear that Doze held back from removing a newer
+alert for the same session and category.
+
+`PushEnvelopePlaintext` gains an optional `clears` list, so pending clears can
+ride the next visible notification. A phone applies them before it shows that
+notification. Entries are parsed tolerantly (`parsePushClearEntries`): an entry
+with an unknown category, a non-string id or a non-finite `notifiedAt` is dropped
+on its own, an unknown `sessionKind` is omitted, and a malformed list never costs
+the notification it rides on.
+
+`register-push` gains an optional `acceptsClears` boolean. The desktop sends a
+standalone clear, or piggybacks `clears`, only to a registration that set it,
+because an older Android app shows the generic placeholder for any message it
+cannot open and a clear would arrive there as a new notification. An older phone
+never sets the flag, so nothing changes for it.
+
+On the desktop side, with no wire change: a clear goes out when a notified
+condition resolves at the desk. The desktop batches a device's clears for a few
+seconds and keeps a message under Expo's 4096 byte payload limit. Android gets a
+data-only message at normal priority. iOS gets a background push (no alert) at
+most once per device every 20 minutes, and keeps its entries pending until a
+visible notification carries them or 24 hours pass.
+
+### Features
+- Send sealed clears when a notified push condition resolves (5331356f)
+
 ## [protocol-v0.22.0] - 2026-10-17
 
 Sends a task's automations switch to the phone. Additive on the wire;
