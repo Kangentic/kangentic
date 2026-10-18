@@ -25,10 +25,13 @@ function plannedTask(key: string, title: string): Record<string, unknown> {
   };
 }
 
-/** A started workflow's two tasks, both in To Do, the second waiting for the first. */
+/**
+ * A started workflow's two tasks, both in To Do, the second waiting for the
+ * first. Planned by its own workflow agent, so the pane starts it on open.
+ */
 function startedSeedScript(): string {
   return `
-    window.__mockWorkflows = [{ workflow: { id: 'wf-running', title: 'Relay reconnect', state: 'running', draft: null } }];
+    window.__mockWorkflows = [{ workflow: { id: 'wf-running', title: 'Relay reconnect', state: 'running', draft: null, agent_name: 'claude' } }];
     window.__mockWorkflowLinks = [{ workflow_id: 'wf-running', blocker_task_id: 'run-task-1', blocked_task_id: 'run-task-2' }];
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -64,7 +67,8 @@ const OTHER_PROJECT_ID = 'workflows-canvas-mobile';
 function seedScript(withWorkflow: boolean, acrossBoards = false): string {
   const workflows = withWorkflow ? [{
     workflow: {
-      id: 'wf-usage', title: 'Usage budgets', state: 'draft',
+      // Planned by its own workflow agent, so the pane starts it on open.
+      id: 'wf-usage', title: 'Usage budgets', state: 'draft', agent_name: 'claude',
       draft: {
         tasks: [
           plannedTask('task-1', 'Budget table and repository'),
