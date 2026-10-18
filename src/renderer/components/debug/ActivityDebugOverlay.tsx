@@ -156,6 +156,11 @@ export function reasonsEqual(a: ActivityReason, b: ActivityReason): boolean {
  * The recentTransitions array is treated as a ring buffer of immutable
  * records: a length change OR a different last-entry signature means
  * the timeline shifted. Middle entries can never mutate in place.
+ *
+ * The compensation counters are compared field by field. A duplicate
+ * subagent start or stop bumps its counter and changes nothing else in
+ * the snapshot, so without this the strip would keep showing the old
+ * count.
  */
 export function snapshotsContentEqual(a: ActivityStatsSnapshot, b: ActivityStatsSnapshot): boolean {
   if (a === b) return true;
@@ -176,6 +181,11 @@ export function snapshotsContentEqual(a: ActivityStatsSnapshot, b: ActivityStats
     if (a.exemptBackgroundShellIds[index] !== b.exemptBackgroundShellIds[index]) return false;
   }
   if (!reasonsEqual(a.reason, b.reason)) return false;
+  const countersA = a.compensationCounters;
+  const countersB = b.compensationCounters;
+  for (const counterName of Object.keys(countersA) as Array<keyof ActivityStatsSnapshot['compensationCounters']>) {
+    if (countersA[counterName] !== countersB[counterName]) return false;
+  }
   if (a.recentTransitions.length !== b.recentTransitions.length) return false;
   const lastA = a.recentTransitions[a.recentTransitions.length - 1];
   const lastB = b.recentTransitions[b.recentTransitions.length - 1];
