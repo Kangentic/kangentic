@@ -143,6 +143,12 @@ interface WorkflowStore {
    */
   agentSetupNeeded: Record<string, true>;
   /**
+   * Workflows whose last open started nothing because no agent has seen their
+   * plan (`WorkflowAgentStatus.startsOnRequest`), by workflow id. The pane offers
+   * Ask for changes while one is here.
+   */
+  agentStartsOnRequest: Record<string, true>;
+  /**
    * Forget main's last refusal for one workflow, either kind (`agentUnavailable`,
    * `agentSetupNeeded`): the user opened Settings, where most reasons are fixed
    * (the Workflow agent, the MCP server, the CLI's path), so the pane may try again.
@@ -347,9 +353,11 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     if (status.session) useSessionStore.getState().upsertSession(status.session);
     const { [workflowId]: _previous, ...rest } = get().agentUnavailable;
     const { [workflowId]: _previousSetup, ...restSetup } = get().agentSetupNeeded;
+    const { [workflowId]: _previousRequest, ...restRequest } = get().agentStartsOnRequest;
     set({
       agentUnavailable: status.unavailable ? { ...rest, [workflowId]: status.unavailable } : rest,
       agentSetupNeeded: status.setupNeeded ? { ...restSetup, [workflowId]: true } : restSetup,
+      agentStartsOnRequest: status.startsOnRequest ? { ...restRequest, [workflowId]: true } : restRequest,
     });
   }
 
@@ -378,6 +386,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     watchedDetails: {},
     agentUnavailable: {},
     agentSetupNeeded: {},
+    agentStartsOnRequest: {},
     agentPaneSessionId: null,
     agentPaneCollapsed: false,
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { Bot, Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, Settings, X } from 'lucide-react';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { workflowAgentChoice, workflowAgentSetupGap } from '../../../shared/workflow-agent-choice';
+import { awaitsFirstAgent } from '../../../shared/workflow-agent-first-open';
 import { openWorkflowAgentSettings } from './open-workflow-agent-settings';
 import { useSessionStore } from '../../stores/session-store';
 import { selectAgentSession, useWorkflowAgentWorking } from '../../hooks/useWorkflowAgentWorking';
@@ -29,11 +30,19 @@ import { startPanelDrag } from '../../hooks/panel-drag';
  * session (a paused one stays paused), otherwise started, which resumes its
  * conversation or, for a new workflow, sends the first message. It keeps
  * running when the view closes, and its terminal mounts only while the pane
- * shows it.
+ * shows it. A plan no workflow agent has seen (another session created and
+ * planned it, or the user planned by hand while its agent could not start)
+ * starts nothing on open: the pane opens folded to its strip, for the plan's
+ * room, and expanded it says so, with Ask for changes to start the agent on that
+ * plan. That fold is this workflow's for the visit, until an agent has run on
+ * it, and never writes the pane's own collapse, the way Workflows folds the
+ * project sidebar.
  *
  * Until the Workflow agent is chosen in Settings > Workflows, nothing starts:
  * the pane asks for the choice where the terminal would be, and starts the agent
- * on its own once the choice is made and Settings is closed.
+ * on its own once the choice is made and Settings is closed. On a plan no agent
+ * has seen, closing Settings starts nothing either, and the pane offers Ask for
+ * changes instead.
  */
 
 /**
@@ -172,6 +181,17 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   // Main refused the last start for want of the setting, which the pane's own
   // read missed (its agent list was out of date, or not in yet).
   const mainSetupNeeded = useWorkflowStore((state) => state.agentSetupNeeded[workflowId] === true);
+  // Main's open started nothing: no agent has seen this workflow's plan.
+  const startsOnRequest = useWorkflowStore((state) => state.agentStartsOnRequest[workflowId] === true);
+  // The same rule read from the picker's summary, which is here before main's
+  // open answers, so the pane is folded on its first frame.
+  const awaitsAgent = useWorkflowStore((state) => {
+    const summary = state.summaries.find((candidate) => candidate.workflow.id === workflowId);
+    return summary ? awaitsFirstAgent(summary.workflow, summary.taskCount) : false;
+  });
+  // The workflow whose fold the user lifted on this visit. The pane remounts on
+  // every visit to the view, so the next visit folds it again.
+  const [unfoldedWorkflowId, setUnfoldedWorkflowId] = useState<string | null>(null);
   const clearAgentRefusal = useWorkflowStore((state) => state.clearAgentRefusal);
   // Main refused the last start, for want of the setting or for a reason it gave.
   const refused = mainSetupNeeded || unavailable !== null;
@@ -218,10 +238,18 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   // A live agent keeps its terminal whatever the setting says. Any other asks
   // for the setting while it is incomplete or main refused for want of it.
   const settingIncomplete = setupGap !== null || mainSetupNeeded;
+  // No agent has seen this workflow's plan, by the summary's rule (here on the
+  // first frame) or main's answer to the open (here once it lands): nothing
+  // starts until the user asks, on an open or on closing Settings.
+  const awaitsRequest = (awaitsAgent || startsOnRequest) && session === null;
   // With no agent yet and Settings open, the open above is held until Settings
   // closes, so the pane says it will start then rather than that it is starting.
-  const heldForSettings = agentListLoaded && settingsOpen && session === null;
+  // A plan no agent has seen is not held: the open on that close starts nothing.
+  const heldForSettings = agentListLoaded && settingsOpen && session === null && !awaitsRequest;
   const showSetup = !live && (settingIncomplete || heldForSettings);
+  const showPlanSaved = awaitsRequest;
+  // Folded for a plan no agent has seen, until the user expands it or an agent runs.
+  const folded = awaitsRequest && unfoldedWorkflowId !== workflowId;
   const working = running && isActive(activity);
   const waiting = running && requiresUserInteraction(activity);
   // Only for the session the pane shows, so a summary that has not caught up
@@ -243,7 +271,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
     else void resumeAgent().finally(done);
   }, [toggling, live, pauseAgent, resumeAgent]);
 
-  if (collapsed) {
+  if (collapsed || folded) {
     const stripMarkLabel = working ? 'Workflow agent is working' : 'Workflow agent is waiting for you';
     return (
       <div
@@ -251,11 +279,16 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         style={{ width: COLLAPSED_WIDTH }}
         data-testid="workflow-agent-pane"
         data-collapsed="true"
+        data-folded={folded ? 'true' : 'false'}
       >
         <Tooltip label="Show the workflow agent">
           <button
             type="button"
-            onClick={() => setCollapsed(false)}
+            onClick={() => {
+              // Lifts this workflow's fold for the visit; the user's own collapse only when it is set.
+              setUnfoldedWorkflowId(workflowId);
+              if (collapsed) setCollapsed(false);
+            }}
             className="rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
             aria-label="Show the workflow agent"
             data-testid="workflow-agent-pane-expand"
@@ -290,7 +323,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
       data-testid="workflow-agent-pane"
       data-collapsed="false"
       data-floating={floating ? 'true' : 'false'}
-      data-agent-state={unavailable ? 'unavailable' : showSetup ? 'setup' : working ? 'working' : waiting ? 'waiting' : session?.status ?? 'starting'}
+      data-agent-state={unavailable ? 'unavailable' : showSetup ? 'setup' : showPlanSaved ? 'starts-on-request' : working ? 'working' : waiting ? 'waiting' : session?.status ?? 'starting'}
     >
       <div className="flex h-10 flex-shrink-0 items-center gap-2 border-b border-edge bg-surface-raised px-3" data-testid="workflow-agent-pane-header">
         {canToggle && (
@@ -383,7 +416,9 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
             Waiting for a free agent slot...
           </PaneNotice>
         ) : showSetup ? (
-          <WorkflowAgentSetup chosen={!settingIncomplete} />
+          <WorkflowAgentSetup chosen={!settingIncomplete} startsOnClose={!awaitsRequest} />
+        ) : showPlanSaved ? (
+          <WorkflowAgentPlanSaved starting={toggling} onAsk={toggle} />
         ) : session ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface/50">
             <button
@@ -440,8 +475,11 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
  * `chosen` is the same place once the setting is complete but Settings is still
  * open, which holds the start: it says when the agent starts, and needs no way
  * into a Settings panel that is already open.
+ *
+ * `startsOnClose` is false on a plan no agent has seen, where closing Settings
+ * starts nothing: the line says the agent starts when the user asks instead.
  */
-function WorkflowAgentSetup({ chosen }: { chosen: boolean }) {
+function WorkflowAgentSetup({ chosen, startsOnClose }: { chosen: boolean; startsOnClose: boolean }) {
   return (
     <div
       className="flex h-full flex-col items-center justify-center gap-3 bg-surface/50 px-12 text-center"
@@ -452,7 +490,11 @@ function WorkflowAgentSetup({ chosen }: { chosen: boolean }) {
       <h2 className="text-base font-semibold text-fg">{chosen ? 'Workflow agent chosen' : 'Choose a workflow agent'}</h2>
       {/* One line at the pane's default width; a narrowed pane wraps it evenly. */}
       <p className="text-balance text-sm text-fg-muted">
-        {chosen ? 'It starts when you close Settings.' : 'It plans your workflows, and starts when you close Settings.'}
+        {chosen
+          ? 'It starts when you close Settings.'
+          : startsOnClose
+            ? 'It plans your workflows, and starts when you close Settings.'
+            : 'It plans your workflows, and starts when you ask for changes.'}
       </p>
       {!chosen && (
         <button
@@ -465,6 +507,38 @@ function WorkflowAgentSetup({ chosen }: { chosen: boolean }) {
           Open Settings
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Where the terminal would be on a plan no workflow agent has seen (another
+ * session created and planned it, or the user planned by hand while its agent
+ * could not start): nothing started on open, so Start and every plan edit are
+ * free from the first frame. Ask for changes starts the agent on the saved plan
+ * (the pane's Resume path). The setup state's shape without its line: the
+ * toolbar's badge already counts the tasks, and the button says how the agent
+ * starts. The heading holds for both origins, since another session's agent
+ * may have written the plan but the workflow's own agent has not read it.
+ */
+function WorkflowAgentPlanSaved({ starting, onAsk }: { starting: boolean; onAsk: () => void }) {
+  return (
+    <div
+      className="flex h-full flex-col items-center justify-center gap-3 bg-surface/50 px-12 text-center"
+      data-testid="workflow-agent-plan-saved"
+    >
+      <Bot size={28} className="text-fg-faint" aria-hidden="true" />
+      <h2 className="text-base font-semibold text-fg">The workflow agent has not seen this plan</h2>
+      <button
+        type="button"
+        onClick={onAsk}
+        disabled={starting}
+        data-testid="workflow-agent-ask-for-changes"
+        className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-accent/40 bg-accent/20 px-6 py-3 text-base text-accent-fg transition-colors hover:bg-accent/30 disabled:opacity-50"
+      >
+        {starting ? <Loader2 size={16} className="animate-spin" /> : <MessageSquare size={16} />}
+        {starting ? 'Starting agent...' : 'Ask for changes'}
+      </button>
     </div>
   );
 }

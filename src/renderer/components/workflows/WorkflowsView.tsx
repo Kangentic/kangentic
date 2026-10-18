@@ -409,8 +409,8 @@ export function WorkflowsView() {
               Browser says an agent is driving: an accent ring at the edge and a
               label, both breathing. No veil: cards stay movable, and only what
               would change the plan waits. Always mounted, opacity-toggled. The
-              label sits top left: Add task holds the bottom center, disabled
-              exactly while this shows. */}
+              label sits top left, clear of the canvas tools along the bottom
+              edge: Add task, bottom right, is disabled exactly while this shows. */}
           <div
             className={`pointer-events-none absolute inset-0 z-10 transition-opacity duration-200 ${planHeld ? 'opacity-100' : 'opacity-0'}`}
             data-testid="workflow-agent-working"

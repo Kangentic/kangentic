@@ -1,7 +1,8 @@
 /**
  * The first message of a new conversation for a workflow that already has a
  * plan (`buildWorkflowAgentContinueMessage`), sent when its agent's earlier
- * conversation cannot be resumed. A save replaces the whole plan, so an agent
+ * conversation cannot be resumed, or when another session saved the plan and no
+ * agent of the workflow has seen it. A save replaces the whole plan, so an agent
  * that planned from the brief again would save over every task the user had
  * shaped; this message hands it the saved plan to build on instead.
  *
@@ -62,7 +63,7 @@ beforeEach(() => {
 
 describe('buildWorkflowAgentContinueMessage', () => {
   it('sends the first message, then the saved plan and what to do with it', async () => {
-    const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE');
+    const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed');
 
     expect(message).not.toBeNull();
     expect(message!.startsWith('FIRST MESSAGE')).toBe(true);
@@ -74,13 +75,13 @@ describe('buildWorkflowAgentContinueMessage', () => {
 
   it('is null when nothing is saved yet, so the caller sends the plain first message', async () => {
     harness.view = { workflow, tasks: [] };
-    expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE')).toBeNull();
+    expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed')).toBeNull();
   });
 
   it('is null when the plan cannot be read', async () => {
     harness.readFails = true;
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE')).toBeNull();
+    expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed')).toBeNull();
   });
 
   // The message rides the command line (8,191 characters under a cmd.exe
@@ -89,11 +90,50 @@ describe('buildWorkflowAgentContinueMessage', () => {
     const longTitle = 'A task whose title runs on for a while to make the plan long'.repeat(2);
     harness.view = { workflow, tasks: Array.from({ length: 40 }, (_unused, index) => plannedTask(`${longTitle} ${index}`)) };
 
-    const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE');
+    const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed');
 
     expect(message).not.toContain('<saved_plan>');
     expect(message).toContain('kangentic_get_workflow');
     expect(message!.length).toBeLessThan(1_000);
+  });
+
+  // A plan no agent of the workflow has seen (saved from a Command Terminal or
+  // an outside CLI, or planned by hand while the agent could not start), opened
+  // in the view: the agent is told the plan came from outside its conversation,
+  // and never that a conversation was lost, since none was.
+  describe('the reason it gives', () => {
+    it('says a plan no agent has seen was saved outside this conversation, inline', async () => {
+      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'saved-elsewhere');
+
+      expect(message).toContain('<saved_plan>');
+      expect(message).toContain('This workflow already has the plan in <saved_plan>, saved outside this conversation.');
+      expect(message).toContain('keep every task you are not changing');
+      expect(message).not.toContain('could not be resumed');
+    });
+
+    it('says the same when the plan is too long to send and the agent reads it itself', async () => {
+      const longTitle = 'A task whose title runs on for a while to make the plan long'.repeat(2);
+      harness.view = { workflow, tasks: Array.from({ length: 40 }, (_unused, index) => plannedTask(`${longTitle} ${index}`)) };
+
+      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'saved-elsewhere');
+
+      expect(message).not.toContain('<saved_plan>');
+      expect(message).toContain('This workflow already has a saved plan, saved outside this conversation. Read it first with kangentic_get_workflow.');
+      expect(message).not.toContain('could not be resumed');
+    });
+
+    it('is null when nothing is saved yet, whichever reason it is given', async () => {
+      harness.view = { workflow, tasks: [] };
+
+      expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'saved-elsewhere')).toBeNull();
+    });
+
+    it('says a lost conversation could not be resumed', async () => {
+      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed');
+
+      expect(message).toContain('from an earlier conversation that could not be resumed.');
+      expect(message).not.toContain('saved outside this conversation');
+    });
   });
 
   // The inline budget (INLINE_PROMPT_BUDGET, agent/shared/prompt-budget.ts) counts the
@@ -109,7 +149,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
 
     /** How much the inline message adds to its first message, for the file's two-task plan. */
     async function measureInlineWrapperLength(): Promise<number> {
-      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'x');
+      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'x', 'not-resumed');
       expect(message).toContain('<saved_plan>');
       return message!.length - 'x'.length;
     }
@@ -122,7 +162,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
       expect(template.length).toBeLessThan(INLINE_BUDGET);
       expect(wrapperLength).toBeLessThan(INLINE_BUDGET);
 
-      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template);
+      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template, 'not-resumed');
 
       expect(message!.startsWith(template)).toBe(true);
       expect(message).not.toContain('<saved_plan>');
@@ -134,7 +174,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
       const wrapperLength = await measureInlineWrapperLength();
       const template = 'x'.repeat(INLINE_BUDGET - wrapperLength);
 
-      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template);
+      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template, 'not-resumed');
 
       expect(message!.length).toBe(INLINE_BUDGET);
       expect(message!.startsWith(template)).toBe(true);
@@ -155,7 +195,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
       expect(template.length + wrapperLength).toBeLessThan(INLINE_BUDGET);
       expect(commandLineLength(template) + wrapperLength).toBeGreaterThan(INLINE_BUDGET);
 
-      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template);
+      const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, template, 'not-resumed');
 
       expect(message!.startsWith(template)).toBe(true);
       expect(message).not.toContain('<saved_plan>');

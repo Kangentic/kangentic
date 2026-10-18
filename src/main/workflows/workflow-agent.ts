@@ -6,6 +6,7 @@ import type { ActivityState, Session, Workflow, WorkflowAgentStatus, WorkflowAge
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
 import { workflowAgentChoice, workflowAgentSetupGap } from '../../shared/workflow-agent-choice';
+import { awaitsFirstAgent } from '../../shared/workflow-agent-first-open';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { isActive } from '../../shared/activity-state';
 import { getExistingProjectDb, getProjectDb } from '../db/database';
@@ -277,17 +278,22 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
 }
 
 function unavailable(reason: string): WorkflowAgentStatus {
-  return { session: null, unavailable: reason, setupNeeded: false };
+  return { session: null, unavailable: reason, setupNeeded: false, startsOnRequest: false };
 }
 
 /** Nothing started because the Workflow agent setting is not complete: the pane asks for it. */
 function setupNeeded(): WorkflowAgentStatus {
-  return { session: null, unavailable: null, setupNeeded: true };
+  return { session: null, unavailable: null, setupNeeded: true, startsOnRequest: false };
+}
+
+/** Nothing started because no agent has seen the workflow's plan (`planNoAgentHasSeen`): the pane offers Ask for changes. */
+function startsOnRequest(): WorkflowAgentStatus {
+  return { session: null, unavailable: null, setupNeeded: false, startsOnRequest: true };
 }
 
 /** The agent as it is: a session (running, queued or paused), or none when a Pause stopped the start. */
 function sessionStatus(session: Session | null): WorkflowAgentStatus {
-  return { session, unavailable: null, setupNeeded: false };
+  return { session, unavailable: null, setupNeeded: false, startsOnRequest: false };
 }
 
 /**
@@ -314,7 +320,8 @@ export function findWorkflowAgentSession(context: IpcContext, workflowId: string
 /**
  * What the view's pane shows when it opens: the agent as it is, or, when it has
  * no session at all (a new workflow, a restart, an agent that exited), started.
- * A paused agent stays paused; Resume is the user's.
+ * A paused agent stays paused; Resume is the user's. A plan no agent has seen
+ * starts nothing until the user asks (`planNoAgentHasSeen`).
  */
 export function openWorkflowAgent(
   context: IpcContext,
@@ -324,13 +331,40 @@ export function openWorkflowAgent(
 ): Promise<WorkflowAgentStatus> {
   const existing = findWorkflowAgentSession(context, workflowId);
   if (existing) return Promise.resolve(sessionStatus(existing));
+  // A start already on its way (Ask for changes, then the pane remounted before
+  // it spawned) has no session or recorded agent yet: join it, rather than
+  // answer that nothing started. Joining starts nothing of its own, so a Pause
+  // pressed during that start stands (`honorPausePressedDuringSpawn`).
+  const pending = opening.get(workflowId);
+  if (pending) return pending;
+  if (planNoAgentHasSeen(context, homeProjectId, workflowId)) return Promise.resolve(startsOnRequest());
   // A Pause recorded with no agent to stop, or for one since gone, is not this
   // new agent's: kept, it would turn away every restart for read access.
   userPaused.delete(workflowId);
   return startOnce(context, homeProjectId, workflowId, grid);
 }
 
-/** The pane's Resume: a paused or exited agent comes back on its conversation. */
+/**
+ * A plan that no workflow agent has seen (`awaitsFirstAgent`). Opening the view
+ * starts nothing for it, since the agent's first turn would hold Start and every
+ * plan edit while it read a plan the user came to run. A missing workflow is
+ * left to the start, which says why it cannot run. The boards are read only for
+ * a started workflow with no agent, since a draft's tasks are on its row.
+ */
+function planNoAgentHasSeen(context: IpcContext, homeProjectId: string, workflowId: string): boolean {
+  const homeDb = getExistingProjectDb(homeProjectId);
+  const workflow = homeDb ? new WorkflowRepository(homeDb).getById(workflowId) : undefined;
+  if (!workflow || workflow.agent_name !== null) return false;
+  const taskCount = workflow.state === 'draft'
+    ? workflow.draft?.tasks.length ?? 0
+    : workflowTasks(context, homeProjectId, workflowId).length;
+  return awaitsFirstAgent(workflow, taskCount);
+}
+
+/**
+ * The pane's Resume: a paused or exited agent comes back on its conversation.
+ * Also its Ask for changes, which starts the agent on a plan no agent has seen.
+ */
 export function resumeWorkflowAgent(
   context: IpcContext,
   homeProjectId: string,
@@ -568,13 +602,17 @@ async function startWorkflowAgent(
   // replaces a failed resume, one that joined it, or a later one after it failed.
   const startsOver = !resume && workflow.agent_name !== null;
   // A resumed agent gets no first message (its conversation holds it), only the
-  // reason Kangentic restarted it, when there is one.
+  // reason Kangentic restarted it, when there is one. Any other start continues
+  // from the saved plan when there is one: after a start-over, or on a plan no
+  // agent has seen (another session saved it, or the user planned by hand). That
+  // one says nothing in the pane, since nothing was lost. With no plan saved yet
+  // the builder answers null, and the agent plans from the first message.
   let prompt: string | undefined = continuation;
   if (!resume) {
     const template = readWorkflowAgentTemplate(context);
-    const continued = startsOver
-      ? await buildWorkflowAgentContinueMessage(context, homeProjectId, workflow, template)
-      : null;
+    const continued = await buildWorkflowAgentContinueMessage(
+      context, homeProjectId, workflow, template, startsOver ? 'not-resumed' : 'saved-elsewhere',
+    );
     prompt = continued ?? buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, template);
   }
   // The other boards' checkouts it may read; an agent whose CLI cannot widen
@@ -729,9 +767,9 @@ async function startWorkflowAgent(
  * A Pause pressed while a start spawned found the row that start replaces,
  * already suspended, or no row at all, so it stopped nothing. It stands: the
  * new agent is suspended as soon as it exists. An open and a Resume clear the
- * Pause before they start and the restart for read access checks it, so one
- * recorded now was pressed during this start, or, for a start-over, during the
- * resume that failed. The row is read from the registry, since a Pause that
+ * Pause before they start (an open that joins this start clears nothing) and
+ * the restart for read access checks it, so one recorded now was pressed during
+ * this start, or, for a start-over, during the resume that failed. The row is read from the registry, since a Pause that
  * reached it suspended it already. Never throws: the start it ends has an agent
  * to report either way.
  */

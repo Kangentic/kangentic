@@ -44,8 +44,12 @@ const harness = vi.hoisted(() => ({
   retrievalCall: vi.fn(async (_method: string, _params: unknown) => ({ outcome: 'indexed' })),
   /** Settings > Workflows > Workflow agent, as `getEffectiveConfig` returns it. */
   workflows: {} as { agent?: string | null; model?: string | null; effort?: string | null },
-  /** What the saved-plan message builder answers: null when the workflow has no saved plan. */
+  /** What the saved-plan message builder answers after a start-over: null when the workflow has no saved plan. */
   continueMessage: 'CONTINUE MESSAGE' as string | null,
+  /** What it answers for a plan another session saved: null by default, as for a workflow with nothing saved. */
+  savedElsewhereMessage: null as string | null,
+  /** The reason each call to the saved-plan message builder gave. */
+  continueReasons: [] as string[],
 }));
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
@@ -77,7 +81,10 @@ vi.mock('../../src/main/agent/shared/shim-launch', () => ({
 }));
 vi.mock('../../src/main/workflows/workflow-agent-prompt', () => ({
   buildWorkflowAgentFirstMessage: () => 'FIRST MESSAGE',
-  buildWorkflowAgentContinueMessage: async () => harness.continueMessage,
+  buildWorkflowAgentContinueMessage: async (_context: unknown, _homeProjectId: string, _workflow: unknown, _template: string, reason: string) => {
+    harness.continueReasons.push(reason);
+    return reason === 'saved-elsewhere' ? harness.savedElsewhereMessage : harness.continueMessage;
+  },
 }));
 vi.mock('../../src/main/workflows/workflow-changed', () => ({
   notifyWorkflowChanged: harness.notifyWorkflowChanged,
@@ -87,6 +94,8 @@ vi.mock('../../src/main/workflows/workflow-changed', () => ({
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
+const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
+const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const agent = await import('../../src/main/workflows/workflow-agent');
 const agentEffort = await import('../../src/main/workflows/workflow-agent-effort');
 
@@ -217,6 +226,8 @@ describe('a workflow\'s own agent starting over', () => {
     harness.notifyWorkflowChanged.mockReset();
     harness.retrievalCall.mockClear();
     harness.continueMessage = 'CONTINUE MESSAGE';
+    harness.savedElsewhereMessage = null;
+    harness.continueReasons.length = 0;
     describeStartupFailure = vi.fn(() => true);
     harness.adapter = {
       name: 'claude',
@@ -280,6 +291,21 @@ describe('a workflow\'s own agent starting over', () => {
     return new WorkflowRepository(harness.dbs.get('home') as Database.Database).create({ title: 'Release notes' }).id;
   }
 
+  /** One planned task, as kangentic_save_workflow stores it. */
+  const PLANNED_TASK = {
+    key: 'task-1', title: 'Token table', description: 'Planned in a Command Terminal.', project_id: null, existing_task_id: null,
+    route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], labels: [], priority: 0,
+    canvas_x: null, canvas_y: null,
+  };
+
+  /** A workflow another session created and planned over MCP: a saved draft, and no agent recorded. */
+  function plannedElsewhere(): string {
+    const repository = new WorkflowRepository(harness.dbs.get('home') as Database.Database);
+    const id = repository.create({ title: 'Clear stale push notifications' }).id;
+    repository.saveDraft(id, { tasks: [PLANNED_TASK], links: [] });
+    return id;
+  }
+
   /** The agent and conversation id the workflow row records. */
   function recordedConversation(id: string): { agent_name: string | null; agent_session_id: string | null } {
     const workflow = new WorkflowRepository(harness.dbs.get('home') as Database.Database).getById(id)!;
@@ -335,6 +361,7 @@ describe('a workflow\'s own agent starting over', () => {
 
     const buildCommand = (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
     expect(buildCommand.mock.calls[1][0]).toMatchObject({ resume: false, prompt: 'CONTINUE MESSAGE' });
+    expect(harness.continueReasons).toEqual(['not-resumed']);
   });
 
   it('sends the first message when nothing is saved yet to continue from', async () => {
@@ -513,6 +540,190 @@ describe('a workflow\'s own agent starting over', () => {
     });
   });
 
+  // The bug: a plan saved with kangentic_save_workflow from a Command Terminal
+  // has no agent recorded, so the view's first open started a new agent with
+  // the planning prompt, which held Start for its whole turn and could save over
+  // the finished plan. That open now starts nothing, and Ask for changes (the
+  // pane's Resume path) starts the agent on the saved plan.
+  describe('a plan another session saved', () => {
+    const buildCommandOf = () => (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
+
+    it('starts nothing on open, before the CLI is even looked for', async () => {
+      const id = plannedElsewhere();
+      const detect = (harness.adapter as { detect: ReturnType<typeof vi.fn> }).detect;
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      expect(status).toEqual({ session: null, unavailable: null, setupNeeded: false, startsOnRequest: true });
+      expect(detect).not.toHaveBeenCalled();
+      expect(manager.spawn).not.toHaveBeenCalled();
+      expect(recordedConversation(id)).toEqual({ agent_name: null, agent_session_id: null });
+    });
+
+    it('starts nothing on open once it was started from that session too, while its tasks are on a board', async () => {
+      const homeDb = harness.dbs.get('home') as Database.Database;
+      const repository = new WorkflowRepository(homeDb);
+      const id = repository.create({ title: 'Clear stale push notifications' }).id;
+      repository.markStarted(id);
+      const todo = new SwimlaneRepository(homeDb).list().find((lane) => lane.role === 'todo')!;
+      new TaskRepository(homeDb).create({
+        title: 'Token table',
+        description: '',
+        swimlane_id: todo.id,
+        workflow: {
+          workflow_id: id, workflow_project_id: 'home', route_start_swimlane_id: null, route_last_swimlane_id: null,
+          skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
+        },
+      });
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      expect(status.startsOnRequest).toBe(true);
+      expect(manager.spawn).not.toHaveBeenCalled();
+    });
+
+    // The control: the plan is what tells the two apart, so a workflow made in
+    // the view, which has no tasks until its agent plans, still starts on open.
+    it('still starts a workflow with no tasks yet on open, with the first message', async () => {
+      const id = newWorkflow();
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      expect(status.startsOnRequest).toBe(false);
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(buildCommandOf().mock.calls[0][0]).toMatchObject({ resume: false, prompt: 'FIRST MESSAGE' });
+      // Every start that is not a resume asks the builder for the saved plan, and
+      // names no lost conversation: with nothing saved it answers null, and the
+      // plain first message goes out.
+      expect(harness.continueReasons).toEqual(['saved-elsewhere']);
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    // A finished workflow has nothing to plan: its board tasks do not make it
+    // one that awaits an agent. The sibling above, with the same seed and not
+    // finished, answers `startsOnRequest`, so the `done` state is the only thing
+    // sending this open on to the start, which refuses it.
+    it('does not hold a finished workflow back for an agent, though its tasks are on a board', async () => {
+      const homeDb = harness.dbs.get('home') as Database.Database;
+      const repository = new WorkflowRepository(homeDb);
+      const id = repository.create({ title: 'Clear stale push notifications' }).id;
+      repository.markStarted(id);
+      const todo = new SwimlaneRepository(homeDb).list().find((lane) => lane.role === 'todo')!;
+      new TaskRepository(homeDb).create({
+        title: 'Token table',
+        description: '',
+        swimlane_id: todo.id,
+        workflow: {
+          workflow_id: id, workflow_project_id: 'home', route_start_swimlane_id: null, route_last_swimlane_id: null,
+          skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
+        },
+      });
+      repository.setState(id, 'done');
+      const detect = (harness.adapter as { detect: ReturnType<typeof vi.fn> }).detect;
+
+      const status = await agent.openWorkflowAgent(context, 'home', id, {});
+
+      expect(status.startsOnRequest).toBe(false);
+      expect(status.session).toBeNull();
+      expect(status.unavailable).toContain('is complete');
+      expect(manager.spawn).not.toHaveBeenCalled();
+      // The start refused it before it looked for the CLI.
+      expect(detect).not.toHaveBeenCalled();
+    });
+
+    it('starts on the saved plan when the user asks, says nothing about starting over, and resumes after that', async () => {
+      harness.savedElsewhereMessage = 'SAVED ELSEWHERE MESSAGE';
+      const id = plannedElsewhere();
+      await agent.openWorkflowAgent(context, 'home', id, {});
+
+      const asked = await agent.resumeWorkflowAgent(context, 'home', id, {});
+
+      expect(asked).toMatchObject({ unavailable: null, setupNeeded: false, startsOnRequest: false });
+      expect(buildCommandOf()).toHaveBeenCalledTimes(1);
+      expect(buildCommandOf().mock.calls[0][0]).toMatchObject({ resume: false, prompt: 'SAVED ELSEWHERE MESSAGE' });
+      expect(harness.continueReasons).toEqual(['saved-elsewhere']);
+      // Nothing was lost, so the pane has no "started a new one" line to show.
+      expect(agent.workflowAgentSummary(context, id)?.startedOverSessionId).toBeNull();
+      expect(harness.notifyWorkflowChanged).not.toHaveBeenCalledWith('home', id);
+
+      // The agent is recorded now, so an open after a restart resumes its conversation.
+      expect(recordedConversation(id).agent_name).toBe('claude');
+      await agent.pauseWorkflowAgent(context, id);
+      manager.sessions = [];
+      const reopened = await agent.openWorkflowAgent(context, 'home', id, {});
+      expect(reopened.session?.resuming).toBe(true);
+      agentEffort.forgetWorkflowAgentEffort(asked.session!.id);
+      agentEffort.forgetWorkflowAgentEffort(reopened.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    // Ask for changes, then the pane remounts (a quick trip to the board and
+    // back) while the agent is still spawning: there is no session and no
+    // recorded agent yet, and an open must not bring the notice back.
+    it('joins the start Ask for changes began, when the pane opens again before it spawned', async () => {
+      const id = plannedElsewhere();
+      let finishSpawn!: () => void;
+      const spawnGate = new Promise<void>((resolve) => {
+        finishSpawn = resolve;
+      });
+      const spawnImmediately = manager.spawn.getMockImplementation()!;
+      manager.spawn.mockImplementationOnce(async (options: SpawnOptions) => {
+        await spawnGate;
+        return spawnImmediately(options);
+      });
+      const asked = agent.resumeWorkflowAgent(context, 'home', id, {});
+      await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(1));
+
+      const reopened = agent.openWorkflowAgent(context, 'home', id, {});
+      finishSpawn();
+      const [askedStatus, reopenedStatus] = await Promise.all([asked, reopened]);
+
+      expect(reopenedStatus.startsOnRequest).toBe(false);
+      expect(reopenedStatus.session?.id).toBe(askedStatus.session!.id);
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      agentEffort.forgetWorkflowAgentEffort(askedStatus.session!.id);
+      await agent.endWorkflowAgent(context, id);
+    });
+
+    // The Pause lands while the start is spawning, when there is no agent to
+    // stop, so it only records itself. The pane then reopens and joins that
+    // start: an open that cleared the Pause on its way in would leave the agent
+    // running that the user had just stopped.
+    it('keeps a Pause pressed during the start it joins: the agent that spawns ends suspended', async () => {
+      const id = plannedElsewhere();
+      let finishSpawn!: () => void;
+      const spawnGate = new Promise<void>((resolve) => {
+        finishSpawn = resolve;
+      });
+      const spawnImmediately = manager.spawn.getMockImplementation()!;
+      manager.spawn.mockImplementationOnce(async (options: SpawnOptions) => {
+        await spawnGate;
+        return spawnImmediately(options);
+      });
+      const asked = agent.resumeWorkflowAgent(context, 'home', id, {});
+      await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(1));
+
+      // No session exists yet: the Pause stops nothing and is only recorded.
+      await agent.pauseWorkflowAgent(context, id);
+      expect(manager.suspend).not.toHaveBeenCalled();
+      // Not awaited, since it returns the start that is waiting on the spawn.
+      const reopened = agent.openWorkflowAgent(context, 'home', id, {});
+      finishSpawn();
+      const [askedStatus, reopenedStatus] = await Promise.all([asked, reopened]);
+
+      const spawnedId = askedStatus.session!.id;
+      expect(reopenedStatus.session?.id).toBe(spawnedId);
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(manager.suspend).toHaveBeenCalledTimes(1);
+      expect(manager.suspend).toHaveBeenCalledWith(spawnedId);
+      expect(manager.getSession(spawnedId)?.status).toBe('suspended');
+      expect(agent.workflowAgentSummary(context, id)).toMatchObject({ state: 'paused' });
+      agentEffort.forgetWorkflowAgentEffort(spawnedId);
+      await agent.endWorkflowAgent(context, id);
+    });
+  });
+
   describe('the end of a workflow while its agent is still opening', () => {
     /**
      * Open the agent with its spawn held, and return the open and the way to let
@@ -595,7 +806,7 @@ describe('a workflow\'s own agent starting over', () => {
 
       const status = await agent.openWorkflowAgent(context, 'home', newWorkflow(), {});
 
-      expect(status).toEqual({ session: null, unavailable: null, setupNeeded: true });
+      expect(status).toEqual({ session: null, unavailable: null, setupNeeded: true, startsOnRequest: false });
       expect(detect).not.toHaveBeenCalled();
       expect(manager.spawn).not.toHaveBeenCalled();
     });
@@ -645,7 +856,7 @@ describe('a workflow\'s own agent starting over', () => {
 
       const resumed = await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
 
-      expect(resumed).toEqual({ session: null, unavailable: null, setupNeeded: true });
+      expect(resumed).toEqual({ session: null, unavailable: null, setupNeeded: true, startsOnRequest: false });
       expect(manager.spawn).toHaveBeenCalledTimes(1);
       expect(agent.findWorkflowAgentSession(context, workflowId)?.status).toBe('suspended');
     });
@@ -683,7 +894,7 @@ describe('a workflow\'s own agent starting over', () => {
 
       const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
 
-      expect(status).toMatchObject({ unavailable: null, setupNeeded: false });
+      expect(status).toMatchObject({ unavailable: null, setupNeeded: false, startsOnRequest: false });
       // The recorded agent's adapter built the command, on its own conversation.
       expect(settingAgent.buildCommand).not.toHaveBeenCalled();
       expect(keptAgent.buildCommand).toHaveBeenCalledTimes(1);
@@ -711,7 +922,7 @@ describe('a workflow\'s own agent starting over', () => {
 
       const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
 
-      expect(status).toMatchObject({ unavailable: null, setupNeeded: false });
+      expect(status).toMatchObject({ unavailable: null, setupNeeded: false, startsOnRequest: false });
       expect(keptAgent.buildCommand).not.toHaveBeenCalled();
       expect(settingAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, prompt: 'CONTINUE MESSAGE' });
       expect(agent.workflowAgentSummary(context, workflowId)?.startedOverSessionId).toBe(status.session!.id);
@@ -733,7 +944,7 @@ describe('a workflow\'s own agent starting over', () => {
 
       const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
 
-      expect(status).toMatchObject({ unavailable: null, setupNeeded: false });
+      expect(status).toMatchObject({ unavailable: null, setupNeeded: false, startsOnRequest: false });
       expect(recordedAgent.buildCommand).not.toHaveBeenCalled();
       expect(settingAgent.buildCommand).toHaveBeenCalledTimes(1);
       expect(settingAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, prompt: 'CONTINUE MESSAGE', model: 'haiku' });
@@ -752,7 +963,7 @@ describe('a workflow\'s own agent starting over', () => {
 
       const status = await agent.openWorkflowAgent(context, 'home', newWorkflow(), {});
 
-      expect(status).toEqual({ session: null, unavailable: reason, setupNeeded: false });
+      expect(status).toEqual({ session: null, unavailable: reason, setupNeeded: false, startsOnRequest: false });
       expect(manager.spawn).not.toHaveBeenCalled();
     });
 
@@ -1157,7 +1368,7 @@ describe('a workflow\'s own agent starting over', () => {
       finishDetect();
       const status = await opened;
 
-      expect(status).toEqual({ session: null, unavailable: 'This workflow no longer exists.', setupNeeded: false });
+      expect(status).toEqual({ session: null, unavailable: 'This workflow no longer exists.', setupNeeded: false, startsOnRequest: false });
       expect(manager.spawn).not.toHaveBeenCalled();
       // The command was built, so a folder-shared adapter took its hold under
       // the start's session id; with no session to release it, the start does.
@@ -1329,7 +1540,7 @@ describe('a workflow\'s own agent starting over', () => {
     it.each(entryPoints)('answers $name with the workflow gone, and neither starts an agent nor opens the home', async ({ start }) => {
       const detect = (harness.adapter as { detect: ReturnType<typeof vi.fn> }).detect;
 
-      await expect(start()).resolves.toEqual({ session: null, unavailable: 'This workflow no longer exists.', setupNeeded: false });
+      await expect(start()).resolves.toEqual({ session: null, unavailable: 'This workflow no longer exists.', setupNeeded: false, startsOnRequest: false });
 
       expect(harness.getProjectDbCalls).not.toContain('deleted-home');
       expect(detect).not.toHaveBeenCalled();

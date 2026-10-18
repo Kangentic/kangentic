@@ -62,7 +62,11 @@ vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: {
 vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: async (options: { agentPath: string; prompt?: string }) => ({ agentPath: options.agentPath, prompt: options.prompt }),
 }));
-vi.mock('../../src/main/workflows/workflow-agent-prompt', () => ({ buildWorkflowAgentFirstMessage: () => 'FIRST MESSAGE' }));
+// Every fresh start asks for the saved-plan message first; these workflows have no plan saved.
+vi.mock('../../src/main/workflows/workflow-agent-prompt', () => ({
+  buildWorkflowAgentFirstMessage: () => 'FIRST MESSAGE',
+  buildWorkflowAgentContinueMessage: async () => null,
+}));
 // The cached agent inventory the Workflow agent setting is checked against.
 vi.mock('../../src/main/agent/agent-list', () => ({
   listAgents: async () => [{ name: 'claude', found: true, supportsWorkflowAgent: true, capabilities: { supportsModelOverride: true } }],

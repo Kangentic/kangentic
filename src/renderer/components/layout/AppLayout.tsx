@@ -118,7 +118,9 @@ export function AppLayout() {
   }, [walkthroughStep]);
 
   // Workflows folds the project sidebar for its canvas and its agent's
-  // terminal, and the user's own choice comes back on the way out.
+  // terminal, and the user's own choice comes back on the way out. Both edges
+  // land in one frame (`suppressTransition`): the view switch is not the user
+  // moving the sidebar, so it does not slide.
   const sidebar = useSidebarResize(globalConfig, activeView === 'workflows');
   // The bottom panel drops a task's tab whenever its detail is open (a board window, the in-app
   // Agent Monitor, or the detached monitor), and collapses once no tab is left - see
@@ -496,10 +498,11 @@ export function AppLayout() {
         {/* Hide sidebar entirely when no projects (welcome screen is primary UI) */}
         {hydrated && projects.length > 0 && (
           <>
-            {/* Sidebar area -- animates between full width and collapsed strip */}
+            {/* Sidebar area. Animates between full width and the collapsed
+                strip, except on a view's fold, which snaps. */}
             <div
               className={`flex-shrink-0 overflow-hidden border-r border-edge relative ${
-                sidebar.ready && !sidebar.isResizing ? 'transition-[width] duration-200 ease-in-out' : ''
+                sidebar.ready && !sidebar.isResizing && !sidebar.suppressTransition ? 'transition-[width] duration-200 ease-in-out' : ''
               }`}
               style={{ width: sidebar.open ? sidebar.width : COLLAPSED_STRIP_WIDTH }}
               data-testid="sidebar-area"
@@ -508,7 +511,7 @@ export function AppLayout() {
               {/* Full sidebar content -- hidden when collapsed */}
               <div
                 className={`h-full ${
-                  sidebar.ready ? 'transition-opacity duration-200 ease-in-out' : ''
+                  sidebar.ready && !sidebar.suppressTransition ? 'transition-opacity duration-200 ease-in-out' : ''
                 } ${sidebar.open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
               >
                 <ProjectSidebar onToggleSidebar={sidebar.toggle} />
@@ -517,7 +520,7 @@ export function AppLayout() {
               {/* Collapsed strip overlay -- visible when closed */}
               <div
                 className={`absolute inset-0 ${
-                  sidebar.ready ? 'transition-opacity duration-200 ease-in-out' : ''
+                  sidebar.ready && !sidebar.suppressTransition ? 'transition-opacity duration-200 ease-in-out' : ''
                 } ${sidebar.open ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
               >
                 <CollapsedRail onExpandSidebar={sidebar.toggle} />

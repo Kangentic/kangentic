@@ -509,7 +509,7 @@ export function WorkflowCanvas({
             onAutoLayout={handleAutoLayout}
           />
         </Panel>
-        <Panel position="bottom-center">
+        <Panel position="bottom-right">
           <AddTaskTool addTaskRefusal={addTaskRefusal} onAddTask={onAddTask} />
         </Panel>
       </ReactFlow>
@@ -557,19 +557,20 @@ function LinkPointerHint({ detail }: { detail: WorkflowDetail }) {
 }
 
 /**
- * Every canvas tool is one width: Fit view and Auto layout side by side, and
- * Add task on its own at the bottom center. The floor clears "Auto layout" in
- * each platform's system font, the widest of the three labels.
+ * Every canvas tool is one width: Fit view and Auto layout side by side at the
+ * bottom left, and Add task on its own in the bottom right corner. The floor
+ * clears "Auto layout" in each platform's system font, the widest of the three
+ * labels.
  *
- * Add task sits centered, so on a canvas narrower than 760px it would run into
- * the pair at the bottom left (the 900px window floor leaves the canvas about
- * 480px). There the pair gives way first, as the header's ladder does: Fit view
- * and Auto layout show their icons alone, named by their tooltips, and Add
- * task, which changes the plan, keeps its word.
+ * The three with their words take about 450px with the panels' margins, so on
+ * a canvas narrower than 480px the pair would run into Add task (the 900px
+ * window floor leaves the canvas about that). There the pair gives way first,
+ * as the header's ladder does: Fit view and Auto layout show their icons alone,
+ * named by their tooltips, and Add task, which changes the plan, keeps its word.
  */
 const TOOL_WIDTH = 'min-w-[136px]';
-const VIEW_TOOL_WIDTH = 'min-w-0 @[760px]:min-w-[136px]';
-const VIEW_TOOL_LABEL = 'hidden @[760px]:inline';
+const VIEW_TOOL_WIDTH = 'min-w-0 @[480px]:min-w-[136px]';
+const VIEW_TOOL_LABEL = 'hidden @[480px]:inline';
 const CANVAS_TOOL_SHAPE = 'inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border shadow-xl text-[13px] disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
 const CANVAS_TOOL_CLASS = `${CANVAS_TOOL_SHAPE} border-edge-input bg-surface-raised text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover`;
 /**
@@ -618,10 +619,12 @@ function ViewTools({ moved, onFitView, onAutoLayout }: {
 }
 
 /**
- * Add task, bottom center, apart from the view tools: it changes the plan
- * where they only arrange it. It uses the To Do column's words and opens the
- * same New Task dialog, and waits, with the reason, while the workflow agent
- * works.
+ * Add task, in the bottom right corner across from the view tools: it changes
+ * the plan where they only arrange it. The corner also keeps it clear of the
+ * agent pane, which floats over the canvas's left edge on a narrow window.
+ *
+ * It uses the To Do column's words and opens the same New Task dialog, and
+ * waits, with the reason, while the workflow agent works.
  */
 function AddTaskTool({ addTaskRefusal, onAddTask }: { addTaskRefusal: string | null; onAddTask: () => void }) {
   return (

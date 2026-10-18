@@ -583,7 +583,7 @@ for you. The bottom terminal panel is hidden in this view and comes back on the 
 
 **On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
 (Ctrl or Cmd with the wheel zooms). Fit view and Auto layout, which puts moved cards back in the
-automatic layout, sit at the bottom left, and Add task at the bottom center. Right-click a started task's card for
+automatic layout, sit at the bottom left, and Add task at the bottom right. Right-click a started task's card for
 the board's own menu, with Open on board in its top group, below Edit and Show changes. The selected card wears the accent border, and
 its links stand out: what it waits for flows into it (green once that task is done, grey while it
 is not), what waits for it flows out in the accent, and every other link fades back. With reduced
@@ -621,12 +621,18 @@ that edit a file or run a command. Any other agent runs in its own default
 mode in your checkout, and its first message tells it to plan only and leave files alone; it is
 asked, not prevented, and an agent that asks before an edit asks in the pane. A conversation kept
 from an earlier agent runs at that CLI's own defaults. Until that is chosen the pane says so in place of the terminal, with an Open
-Settings button, and starts the agent on its own once you choose and close Settings. A new
-workflow's agent starts with the first message (Settings > Workflows > Workflow agent prompt,
+Settings button, and, for a new workflow, starts the agent on its own once you choose and close
+Settings. A new workflow's agent starts with the first message (Settings > Workflows > Workflow agent prompt,
 which you can edit), reads the brief, plans the tasks, and saves them;
-made from nothing, it first asks what you want to build. Talk to it in its terminal to reshape the
-plan. While it works, the canvas says so and the controls that would change its plan (Start, Add
-task, links, routes, Remove) wait until its turn ends; moving cards does not. The toggle in its
+made from nothing, it first asks what you want to build. A workflow another session made, such as
+a Command Terminal or an outside CLI saving a plan with `kangentic_save_workflow`, starts no agent
+when you open it or close Settings, and Start and every edit are yours at once. A workflow whose
+agent could not start, and whose tasks you added by hand, opens the same way. Its pane opens folded
+to its strip for the plan's room, until an agent has run on it; expanded, it says "The workflow
+agent has not seen this plan", and Ask for changes starts the agent on the saved plan, which it
+builds on rather than planning again. Talk to it in its terminal to reshape the plan. While it
+works, the canvas says so and the controls that would change its plan (Start, Add task, links,
+routes, Remove) wait until its turn ends; moving cards does not. The toggle in its
 header pauses and resumes it, and the conversation is kept across a restart. An agent that picks
 its own conversation id reports it once it has one; paused before that, or when its CLI cannot find
 the conversation, it starts a new one from the saved plan, and the pane says it started over. It
@@ -637,8 +643,8 @@ on; any other is told the grant takes effect for an agent that can. The speech-b
 button in its header opens its conversation in the
 transcript viewer, paused or not, and its spend counts in Stats. Drag the pane's right
 edge to widen it; the width is kept. Opening Workflows folds the project sidebar for room, and
-leaving restores it as you had it. It keeps running when you leave the view, and ends when its
-workflow is deleted or finishes.
+leaving restores it as you had it, both at once with no slide. It keeps running when you leave the
+view, and ends when its workflow is deleted or finishes.
 
 **Shaping it.** Drag from a card's right-hand dot onto the card that should wait; the card under
 the pointer says what a release would do, or why it cannot. In the inspector, the route list

@@ -74,9 +74,11 @@ interface SeedExtras {
 }
 
 function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | null = null, extras: SeedExtras = {}): string {
+  // Both planned by their own workflow agent, so the pane starts it on open: a
+  // plan with no agent recorded opens with nothing started.
   const draft = {
     workflow: {
-      id: 'wf-draft', title: 'Theme tokens', state: 'draft', color_slot: 2,
+      id: 'wf-draft', title: 'Theme tokens', state: 'draft', color_slot: 2, agent_name: 'claude',
       draft: seed === 'empty-draft'
         ? { tasks: [], links: [] }
         : seed === 'one-task-draft'
@@ -87,7 +89,7 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
         },
     },
   };
-  const running = { workflow: { id: 'wf-usage', title: 'Usage budgets', state: seed === 'paused' ? 'paused' : 'running', draft: null, color_slot: 5 } };
+  const running = { workflow: { id: 'wf-usage', title: 'Usage budgets', state: seed === 'paused' ? 'paused' : 'running', draft: null, color_slot: 5, agent_name: 'claude' } };
   const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused' || seed === 'across-boards' || seed === 'all-done';
   const workflows = seed === 'running' || seed === 'across-boards' || seed === 'all-done' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
   // A task row and a Done column tagged with the other project are on its board.
@@ -1169,7 +1171,7 @@ test.describe('Workflows canvas tools and search', () => {
   });
 
   test('Fit view, Auto layout and Add task are one width', async () => {
-    // Wide enough that the canvas keeps the tools' words (760px of canvas and up).
+    // Wide enough that the canvas keeps the tools' words (480px of canvas and up).
     const { browser, page } = await launch('draft', { width: 2000 });
     try {
       await expect(byTestId(page, 'workflow-auto-layout')).toContainText('Auto layout');
@@ -1217,7 +1219,9 @@ test.describe('Workflows canvas tools and search', () => {
     }
   });
 
-  test('at every width the view tools stay clear of Add task, giving up their words below 760px of canvas', async () => {
+  // Add task sits in the bottom right corner, across from the view tools at the
+  // bottom left, so they meet only on a narrow canvas: the words go below 480px.
+  test('at every width the view tools stay clear of Add task, giving up their words below 480px of canvas', async () => {
     const { browser, page } = await launch('draft', { width: 2000 });
     try {
       for (const width of [2000, 1700, 1500, 1340, 1200, 1000, 900]) {
@@ -1227,15 +1231,20 @@ test.describe('Workflows canvas tools and search', () => {
           const label = document.querySelector<HTMLElement>('[data-testid="workflow-auto-layout"] span');
           return {
             canvas: box('workflow-canvas').width,
+            canvasRight: box('workflow-canvas').right,
             autoLayoutRight: box('workflow-auto-layout').right,
             addTaskLeft: box('workflow-add-task').left,
+            addTaskRight: box('workflow-add-task').right,
             labelShown: label !== null && getComputedStyle(label).display !== 'none',
           };
         });
         // Settled: the words show exactly when the canvas has the room.
-        await expect.poll(async () => { const state = await read(); return state.labelShown === state.canvas >= 760; }).toBe(true);
+        await expect.poll(async () => { const state = await read(); return state.labelShown === state.canvas >= 480; }).toBe(true);
         const state = await read();
-        expect(state.autoLayoutRight, `at a ${width}px window (canvas ${Math.round(state.canvas)}px)`).toBeLessThan(state.addTaskLeft);
+        const at = `at a ${width}px window (canvas ${Math.round(state.canvas)}px)`;
+        expect(state.autoLayoutRight, at).toBeLessThan(state.addTaskLeft);
+        // In the corner: the panel's margin from the canvas's right edge.
+        expect(state.canvasRight - state.addTaskRight, at).toBeLessThan(24);
       }
       // Without its words a tool keeps its name.
       await expect(byTestId(page, 'workflow-fit-view')).toHaveAttribute('aria-label', 'Fit view');

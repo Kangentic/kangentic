@@ -49,10 +49,11 @@ const runningAgent = { id: 'agent-session', workflowId: 'w', status: 'running' }
 
 const REFUSAL_REASON = 'The workflow agent works through Kangentic\'s MCP server, which is off. Turn it on in Settings, MCP Server.';
 
-const answers: Record<'session' | 'setupNeeded' | 'unavailable', WorkflowAgentStatus> = {
-  session: { session: runningAgent, unavailable: null, setupNeeded: false },
-  setupNeeded: { session: null, unavailable: null, setupNeeded: true },
-  unavailable: { session: null, unavailable: REFUSAL_REASON, setupNeeded: false },
+const answers: Record<'session' | 'setupNeeded' | 'unavailable' | 'startsOnRequest', WorkflowAgentStatus> = {
+  session: { session: runningAgent, unavailable: null, setupNeeded: false, startsOnRequest: false },
+  setupNeeded: { session: null, unavailable: null, setupNeeded: true, startsOnRequest: false },
+  unavailable: { session: null, unavailable: REFUSAL_REASON, setupNeeded: false, startsOnRequest: false },
+  startsOnRequest: { session: null, unavailable: null, setupNeeded: false, startsOnRequest: true },
 };
 
 beforeEach(() => {
@@ -62,6 +63,7 @@ beforeEach(() => {
     selectedWorkflowId: 'w',
     agentUnavailable: {},
     agentSetupNeeded: {},
+    agentStartsOnRequest: {},
   });
 });
 
@@ -134,6 +136,33 @@ describe.each([
     await state()[action]();
     expect(state().agentSetupNeeded).toEqual({ w: true });
     expect(state().agentUnavailable).toEqual({});
+  });
+
+  // A workflow another session created opens with nothing started, and the
+  // pane offers Ask for changes; that press answers with a session.
+  it('remembers an open that started nothing for a plan no agent has seen, and no refusal', async () => {
+    const bridge = installBridge();
+    bridge[bridgeMethod].mockResolvedValue(answers.startsOnRequest);
+
+    await state()[action]();
+
+    expect(state().agentStartsOnRequest).toEqual({ w: true });
+    expect(state().agentSetupNeeded).toEqual({});
+    expect(state().agentUnavailable).toEqual({});
+    expect(harness.upsertSession).not.toHaveBeenCalled();
+  });
+
+  it('forgets that nothing started when the next answer is a session', async () => {
+    const bridge = installBridge();
+    useWorkflowStore.setState({ agentStartsOnRequest: { other: true } });
+    bridge[bridgeMethod].mockResolvedValueOnce(answers.startsOnRequest).mockResolvedValueOnce(answers.session);
+    await state()[action]();
+    expect(state().agentStartsOnRequest).toEqual({ other: true, w: true });
+
+    await state()[action]();
+
+    expect(state().agentStartsOnRequest).toEqual({ other: true });
+    expect(harness.upsertSession).toHaveBeenCalledWith(runningAgent);
   });
 
   it('keeps another workflow\'s refusal when this one is answered', async () => {

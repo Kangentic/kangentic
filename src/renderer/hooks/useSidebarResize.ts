@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import type { AppConfig } from '../../shared/types';
 import { startPanelDrag } from './panel-drag';
+import { SWITCH_SNAP_WINDOW_MS } from './useTerminalResize';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 400;
@@ -16,6 +17,8 @@ export interface SidebarResizeState {
   width: number;
   isResizing: boolean;
   ready: boolean;
+  /** A view's fold or unfold just happened: the width and fade transitions are off, so it lands in one frame. */
+  suppressTransition: boolean;
   toggle: () => void;
   onResizeStart: (event: React.MouseEvent) => void;
 }
@@ -25,7 +28,9 @@ export interface SidebarResizeState {
  * agent's terminal) folds the sidebar to its strip on the way in, and the user's
  * own choice comes back on the way out. It never writes the persisted
  * preference. The user can still open the sidebar there: the toggle, or a drag
- * on the divider, lifts the fold for the rest of that visit.
+ * on the divider, lifts the fold for the rest of that visit. Both edges of the
+ * view's fold snap, since the view switch is not the user moving the sidebar;
+ * the toggle and the drag keep their slide.
  */
 export function useSidebarResize(config: AppConfig, viewCollapse = false): SidebarResizeState {
   const [preferredOpen, setOpen] = useState(config.sidebarVisible !== false);
@@ -35,14 +40,29 @@ export function useSidebarResize(config: AppConfig, viewCollapse = false): Sideb
 
   // Folded for the view: set on the way into a collapsing view, cleared on the
   // way out or when the user opens the sidebar there. A render-time adjustment
-  // on the transition, so the first frame of the view is already folded.
+  // on the transition, so the first frame of the view is already folded. It
+  // raises the snap in the same render, so the commit that folds already lacks
+  // the transition classes: dropping them a commit later would not stop a
+  // transition that commit started (`useTerminalResize`'s project-switch snap).
   const [viewFolded, setViewFolded] = useState(viewCollapse);
   const [syncedViewCollapse, setSyncedViewCollapse] = useState(viewCollapse);
+  const [suppressTransition, setSuppressTransition] = useState(false);
   if (viewCollapse !== syncedViewCollapse) {
     setSyncedViewCollapse(viewCollapse);
     setViewFolded(viewCollapse);
+    setSuppressTransition(true);
   }
   const open = preferredOpen && !viewFolded;
+
+  // Lift the snap after its settle window, so a toggle or a drag in the view
+  // slides again. Keyed on the view as well, so a switch back inside the window
+  // restarts it, and a re-run (Fast Refresh, the StrictMode double mount)
+  // re-arms the timer rather than leaving the sidebar without its slide.
+  useEffect(() => {
+    if (!suppressTransition) return;
+    const timer = setTimeout(() => setSuppressTransition(false), SWITCH_SNAP_WINDOW_MS);
+    return () => clearTimeout(timer);
+  }, [suppressTransition, viewCollapse]);
 
   const latestWidthRef = useRef(width);
   const openRef = useRef(open);
@@ -183,5 +203,5 @@ export function useSidebarResize(config: AppConfig, viewCollapse = false): Sideb
     });
   }, []);
 
-  return { open, width, isResizing, ready, toggle, onResizeStart };
+  return { open, width, isResizing, ready, suppressTransition, toggle, onResizeStart };
 }

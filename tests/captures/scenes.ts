@@ -688,6 +688,9 @@ const WORKFLOW_INVOICE_DRAFT_SEEDS = {
       state: 'draft',
       color_slot: FIRST_WORKFLOW_COLOR_SLOT,
       draft: draftOfRecordedPlan(INVOICE_PDF_PLAN),
+      // Its own agent planned it (the recording), so the pane opens on that agent. A plan with
+      // no agent recorded opens with nothing started, as one another session created does.
+      agent_name: 'claude',
     },
   }],
 };

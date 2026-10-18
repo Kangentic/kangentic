@@ -137,12 +137,30 @@ export function buildWorkflowAgentFirstMessage(
 }
 
 /**
+ * Why a new conversation starts on a plan that is already saved: its agent's
+ * earlier conversation cannot be resumed (`not-resumed`: its id was never
+ * captured, or the CLI could not find it), or no agent of the workflow has seen
+ * the plan (`saved-elsewhere`: another session saved it over MCP, or the user
+ * planned by hand while the agent could not start).
+ */
+export type WorkflowAgentContinueReason = 'not-resumed' | 'saved-elsewhere';
+
+/**
+ * Where the saved plan came from, as the message tells the agent. The
+ * `saved-elsewhere` line holds for every origin that reason covers, so it
+ * names none of them.
+ */
+const CONTINUE_ORIGINS: Record<WorkflowAgentContinueReason, string> = {
+  'not-resumed': 'from an earlier conversation that could not be resumed',
+  'saved-elsewhere': 'saved outside this conversation',
+};
+
+/**
  * The first message of a new conversation for a workflow that already has a
- * plan, because its agent's earlier conversation cannot be resumed (its id was
- * never captured, or the CLI could not find it). The template's message, then
- * the saved plan and what to do with it, so the agent builds on the plan rather
- * than planning from the brief again: a save replaces the whole plan, so a fresh
- * plan saved over it would lose every task the user already shaped.
+ * plan (`WorkflowAgentContinueReason`). The template's message, then the saved
+ * plan and what to do with it, so the agent builds on the plan rather than
+ * planning from the brief again: a save replaces the whole plan, so a fresh plan
+ * saved over it would lose every task the user already shaped.
  *
  * Null when nothing is saved yet: there is nothing to continue, and the caller
  * sends the first message as for a new workflow. Not a template variable, so a
@@ -153,6 +171,7 @@ export async function buildWorkflowAgentContinueMessage(
   homeProjectId: string,
   workflow: Workflow,
   template: string,
+  reason: WorkflowAgentContinueReason,
 ): Promise<string | null> {
   // Loaded on use: the service ends workflow agents, so a static import here
   // would close a cycle through `workflow-agent.ts`.
@@ -167,6 +186,7 @@ export async function buildWorkflowAgentContinueMessage(
     return null;
   }
   const firstMessage = buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, template);
+  const origin = CONTINUE_ORIGINS[reason];
   const toBuildOn = 'Build on it instead of planning again: saving replaces the whole plan, so keep every task you are not changing. Reply in one line that you have the plan, and ask what the user wants to change.';
   const inlineMessage = [
     firstMessage,
@@ -174,20 +194,20 @@ export async function buildWorkflowAgentContinueMessage(
     '<saved_plan>',
     savedPlan,
     '</saved_plan>',
-    `This workflow already has the plan in <saved_plan>, from an earlier conversation that could not be resumed. ${toBuildOn}`,
+    `This workflow already has the plan in <saved_plan>, ${origin}. ${toBuildOn}`,
   ].join('\n');
   // The message rides the command line, 8,191 characters under a cmd.exe
-  // shell, and a long plan would leave the start that recovers a lost
-  // conversation unable to start. The first message counts too: a board with
-  // many columns or a long custom template fills much of that line by itself.
-  // Measured as the command line carries it, where a cmd host writes each `%`
-  // as four characters. Past the budget the agent reads the plan itself;
-  // `kangentic_get_workflow` answers with its own workflow's.
+  // shell, and a long plan would leave the start that continues it unable to
+  // start. The first message counts too: a board with many columns or a long
+  // custom template fills much of that line by itself. Measured as the command
+  // line carries it, where a cmd host writes each `%` as four characters. Past
+  // the budget the agent reads the plan itself; `kangentic_get_workflow`
+  // answers with its own workflow's.
   if (commandLineLength(inlineMessage) > INLINE_PROMPT_BUDGET) {
     return [
       firstMessage,
       '',
-      `This workflow already has a saved plan, from an earlier conversation that could not be resumed. Read it first with kangentic_get_workflow. ${toBuildOn}`,
+      `This workflow already has a saved plan, ${origin}. Read it first with kangentic_get_workflow. ${toBuildOn}`,
     ].join('\n');
   }
   return inlineMessage;

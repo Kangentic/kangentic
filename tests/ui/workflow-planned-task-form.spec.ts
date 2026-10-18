@@ -34,7 +34,8 @@ function plannedTask(key: string, title: string, settings: Record<string, unknow
 function seedScript(): string {
   const workflow = {
     workflow: {
-      id: WORKFLOW_ID, title: 'Theme tokens', state: 'draft', color_slot: 2,
+      // Planned by its own workflow agent, so the pane starts it on open.
+      id: WORKFLOW_ID, title: 'Theme tokens', state: 'draft', color_slot: 2, agent_name: 'claude',
       draft: {
         tasks: [
           plannedTask('task-1', 'Token table'),

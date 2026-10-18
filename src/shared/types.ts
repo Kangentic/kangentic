@@ -5491,6 +5491,10 @@ export interface WorkflowAgentStatus {
   /** True when nothing started because the Workflow agent setting is not complete
    *  (`workflowAgentSetupGap`): the pane asks for it instead. */
   setupNeeded: boolean;
+  /** True when an open started nothing because the workflow has a plan and no workflow agent
+   *  has ever run (another session created it over MCP): the pane offers Ask for changes,
+   *  which starts the agent on the saved plan. */
+  startsOnRequest: boolean;
 }
 
 /** One row of the Workflows picker, with the counts the header shows. */
