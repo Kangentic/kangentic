@@ -2566,6 +2566,17 @@ for (const { scene, held } of HELD_POSES) {
   }
 }
 
+test('a usage still has its bars drawn at ready, since Animations off holds the chart tweens too', async ({ page }) => {
+  // A still turns the Animations setting off, and the poster rig shoots at ready. The charts' tweens
+  // are the chart library's own script, which the setting's `.no-motion` class never reached, so a
+  // poster shot at ready caught every bar at its first frame, a pixel tall, and the axes over an
+  // empty plot.
+  await gotoScene(page, { view: 'usage', embed: '1', still: '1' });
+  const tallestBar = await page.evaluate(() => Math.max(0, ...Array.from(document.querySelectorAll('.recharts-bar-rectangle path'))
+    .map((bar) => bar.getBoundingClientRect().height)));
+  expect(tallestBar, 'the tallest cost bar, in CSS pixels, the moment the frame is ready').toBeGreaterThan(20);
+});
+
 test('a still with a pose plays it without the choreography\'s pointer, and a still without one fetches no player', async ({ page }) => {
   const playerRequests: string[] = [];
   page.on('request', (request) => { if (/\/choreography-[^/]*\.js$/.test(new URL(request.url()).pathname)) playerRequests.push(request.url()); });
