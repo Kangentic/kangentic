@@ -746,8 +746,6 @@ const BRANCH_PICKER = '[data-testid="branch-picker-input"]';
 const branchOption = (position: number): string => `[data-testid="branch-picker-dropdown"] > div:nth-child(2) > button:nth-child(${position})`;
 /** The list gone, not just closing: the popover stays mounted through its exit animation. */
 const BRANCH_PICKER_CLOSED = 'body:not(:has([data-testid="branch-picker-dropdown"]))';
-/** An option of the Task tab's card density choice, by its label. */
-const cardDensity = (label: 'Compact' | 'Default' | 'Comfortable'): string => `[data-testid="card-density-choice"] [role="radio"][aria-label="${label}"]`;
 const mcpGroupToggle = (group: string): string => `[data-testid="mcp-tool-group-${group}-toggle"]`;
 
 /**
@@ -873,18 +871,20 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
       pickSetting(settingChoice('columnWidth', 'Default'), 900),
     ],
   },
-  // Card density through Compact and Comfortable to Default, which redraws the board's cards beside
-  // the panel live, then the context bar's Cost pill switched off. Then the cut, and Cost on again.
+  // The context bar trimmed from the top down: Version, Cost and Tool calls switched off. The site's
+  // Context bar panel crops to these switches, phone crop included, so every step of the story is
+  // in its frame. Then the cut, and the three on again.
   task: {
     ready: '[data-testid="setting-row-cardDensity"]',
     alt: 'Settings on the Task tab: card density, card preview, ticket numbers, and a switch for each pill the context bar shows.',
     choreography: [
-      { click: cardDensity('Compact'), waitFor: `${cardDensity('Compact')}[aria-checked="true"]`, ms: 1800 },
-      { click: cardDensity('Comfortable'), waitFor: `${cardDensity('Comfortable')}[aria-checked="true"]`, ms: 1800 },
-      { click: cardDensity('Default'), waitFor: `${cardDensity('Default')}[aria-checked="true"]`, ms: 1200 },
-      switchSetting('contextBar.showCost', false, 2000),
+      switchSetting('contextBar.showVersion', false, 1200),
+      switchSetting('contextBar.showCost', false, 1200),
+      switchSetting('contextBar.showToolCalls', false, 2200),
       { cut: true },
+      switchSetting('contextBar.showVersion', true),
       switchSetting('contextBar.showCost', true),
+      switchSetting('contextBar.showToolCalls', true),
     ],
   },
   // The diff set to Inline, long lines wrapped, and files sorted by status. Then the cut, and the
