@@ -33,9 +33,10 @@ export interface TaskBoardChange {
  *    the main window's board store never sees those calls, so the card under them
  *    kept its old column (or a deleted task) until something else reloaded the
  *    board. A write from the main window itself needs no push: the board updates
- *    optimistically, and the in-app monitor resyncs the board on its own
- *    (`resyncBoardAfterMonitorWrite`), because the sender check below cannot tell
- *    the in-app monitor from the board. Quiet on purpose (no toast): the user made
+ *    optimistically, and the in-app monitor, the Workflows canvas menu and the
+ *    board card's session row resync the board on their own
+ *    (`resyncBoardAfterMonitorWrite`), because the sender check below sees each
+ *    of them as the main window. Quiet on purpose (no toast): the user made
  *    the change, in the window they are looking at. Carries the resolved project
  *    id so the main window reloads its board for the open project, or invalidates
  *    that project's warm cache.
