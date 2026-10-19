@@ -1254,6 +1254,34 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(target).toHaveAttribute('data-value', '');
   });
 
+  // The option's Tab branch tests only the key, so Shift+Tab takes it too: a
+  // native Shift+Tab from the portaled menu would land on the body, outside both
+  // dialogs, with the menu still open. Focus sits on a second option here, not
+  // the selected one, to show a close that is not a choice.
+  test('Shift+Tab on a Column menu option closes the menu onto its field and leaves the dialogs open', async () => {
+    await openColumn('Executing');
+    await addThroughPicker('turn_end', 'move_to_column');
+
+    const target = card('action').locator('[data-testid="automation-config-targetColumn"]');
+    await target.focus();
+    await page.keyboard.press('ArrowDown');
+    const menu = page.locator('[data-testid="automation-config-targetColumn-menu"]');
+    await expect(menu).toBeVisible();
+    const options = menu.locator('[data-testid="automation-config-targetColumn-option"]');
+    await expect(options.first()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(options.nth(1)).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    // Unmounted, not hidden: the picker renders its menu only while open.
+    await expect(menu).toHaveCount(0);
+    await expect(target).toBeFocused();
+    await expect(editDialog()).toBeVisible();
+    await expect(dialog()).toBeVisible();
+    // Closing without choosing leaves the value where it was.
+    await expect(target).toHaveAttribute('data-value', '');
+  });
+
   test('ArrowUp on the first Column menu option moves focus back to the field, and ArrowDown returns to it', async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'move_to_column');

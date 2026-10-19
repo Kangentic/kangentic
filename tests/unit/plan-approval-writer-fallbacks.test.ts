@@ -9,9 +9,12 @@
  * - a board read that throws approves nothing (the user decides);
  * - an unchanged decision is not rewritten;
  * - a failed write leaves the decision unset and is retried on a bounded budget,
- *   and a new board event gets the whole budget again after a run used it up;
+ *   and a new board event, a session noted for the first time, and a tracked
+ *   session whose agent capability changes each get the whole budget again
+ *   after a run used it up;
  * - a failed rewrite removes a previous answer that approved when the new one
- *   does not, and removes nothing in any other case;
+ *   does not, removes nothing in any other case, and keeps the approving answer
+ *   as the session's decision when the removal itself fails;
  * - an exited or removed session is forgotten, with its spawn record;
  * - a session already live when the writer starts is written at once;
  * - `refreshPlanApprovals` (the Board Profile and settings path) is a no-op
@@ -120,9 +123,18 @@ function session(id: string, status: Session['status'] = 'running'): Session {
   return { id, taskId: 'task-1', projectId: 'project-1', status, transient: false } as unknown as Session;
 }
 
+function decisionFilePath(sessionId: string): string {
+  return path.join(projectRoot, '.kangentic', 'sessions', sessionId, 'plan-approval.json');
+}
+
 function decisionFile(sessionId: string): PlanApprovalDecision | null {
-  const filePath = path.join(projectRoot, '.kangentic', 'sessions', sessionId, 'plan-approval.json');
+  const filePath = decisionFilePath(sessionId);
   return fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8')) : null;
+}
+
+/** Write attempts aimed at one session's decision file. A retry pass rewrites every tracked session, so the total says nothing about one of them. */
+function writeAttemptsFor(sessionId: string): number {
+  return hoisted.writeAttempts.filter((attempt) => attempt.filePath === decisionFilePath(sessionId)).length;
 }
 
 function startWriter(): InstanceType<typeof PlanApprovalWriter> {
@@ -150,6 +162,7 @@ beforeEach(() => {
   hoisted.writeAttempts = [];
   // The spawn registry is module state: a record from another test would point here.
   forgetPlanApprovalSpawn('session-1');
+  forgetPlanApprovalSpawn('session-2');
   projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-approval-fallbacks-'));
   sessionManager = new FakeSessionManager();
   sessionManager.agentNames.set('session-1', 'claude');
@@ -168,6 +181,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
   forgetPlanApprovalSpawn('session-1');
+  forgetPlanApprovalSpawn('session-2');
   fs.rmSync(projectRoot, { recursive: true, force: true });
 });
 
@@ -316,6 +330,54 @@ describe('PlanApprovalWriter, a failed write', () => {
     expect(hoisted.writeAttempts).toHaveLength(2 * (1 + WRITE_RETRY_LIMIT));
     expect(requireWriter().approves('session-1')).toBe(false);
   });
+
+  it('gives a session noted for the first time a fresh first attempt and the whole budget after a run of failures used it up', () => {
+    hoisted.writeSucceeds = false;
+    startWriter();
+    sessionManager.emit('session-changed', 'session-1', session('session-1'));
+    vi.advanceTimersByTime(60_000);
+    // The budget is spent on session-1, which never landed.
+    expect(writeAttemptsFor('session-1')).toBe(1 + WRITE_RETRY_LIMIT);
+
+    sessionManager.agentNames.set('session-2', 'claude');
+    sessionManager.emit('session-changed', 'session-2', session('session-2'));
+    // The new session is written at once, not left waiting on a spent budget.
+    expect(writeAttemptsFor('session-2')).toBe(1);
+    vi.advanceTimersByTime(60_000);
+    // Every retry pass rewrites both sessions, so session-2 is counted on its
+    // own file. It gets its own first attempt plus the whole budget. Without
+    // the reset in `writeForChange` it would have the first attempt alone.
+    expect(writeAttemptsFor('session-2')).toBe(1 + WRITE_RETRY_LIMIT);
+    expect(requireWriter().approves('session-2')).toBe(false);
+  });
+
+  it('gives a tracked session whose agent capability changes a fresh first attempt and the whole budget after a run of failures used it up', () => {
+    hoisted.writeSucceeds = false;
+    // A queued session's row names no agent until its spawn runs.
+    sessionManager.agentNames.delete('session-1');
+    startWriter();
+    sessionManager.emit('session-changed', 'session-1', session('session-1', 'queued'));
+    expect(hoisted.reads.at(-1)?.agentCanApprove).toBe(false);
+    vi.advanceTimersByTime(60_000);
+    // The budget is spent with no success in between.
+    expect(writeAttemptsFor('session-1')).toBe(1 + WRITE_RETRY_LIMIT);
+    const attemptsBeforeChange = writeAttemptsFor('session-1');
+    const readsBeforeChange = hoisted.reads.length;
+
+    // The spawn runs: the session now names an agent that can approve plans.
+    sessionManager.agentNames.set('session-1', 'claude');
+    sessionManager.emit('session-changed', 'session-1', session('session-1', 'running'));
+    // The capability change reached the writer: the next read sees the agent
+    // as able, and is written at once.
+    expect(hoisted.reads.length).toBe(readsBeforeChange + 1);
+    expect(hoisted.reads.at(-1)?.agentCanApprove).toBe(true);
+    expect(writeAttemptsFor('session-1') - attemptsBeforeChange).toBe(1);
+    vi.advanceTimersByTime(60_000);
+    // A fresh first attempt plus the whole budget. Without the reset in
+    // `writeForChange` the change would have the first attempt alone.
+    expect(writeAttemptsFor('session-1') - attemptsBeforeChange).toBe(1 + WRITE_RETRY_LIMIT);
+    expect(requireWriter().approves('session-1')).toBe(false);
+  });
 });
 
 describe('PlanApprovalWriter, a failed rewrite of an answer that approved', () => {
@@ -341,6 +403,44 @@ describe('PlanApprovalWriter, a failed rewrite of an answer that approved', () =
     vi.advanceTimersByTime(WRITE_RETRY_MS + REFRESH_DEBOUNCE_MS);
     expect(decisionFile('session-1')).toEqual({ approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' });
     expect(requireWriter().approves('session-1')).toBe(false);
+  });
+
+  it('keeps the approving answer as the decision, on disk and in the gate, when the rewrite fails and the file cannot be removed', () => {
+    startWriter();
+    sessionManager.emit('session-changed', 'session-1', session('session-1'));
+    const approvingAnswer = { approve: true, mode: 'acceptEdits', detail: 'Moved to Executing' };
+    expect(decisionFile('session-1')).toEqual(approvingAnswer);
+    expect(requireWriter().approves('session-1')).toBe(true);
+
+    // The removal fails for this file only (on Windows a scanner can hold it).
+    const decisionPath = decisionFilePath('session-1');
+    const originalRemove = fs.rmSync;
+    const removeSpy = vi.spyOn(fs, 'rmSync').mockImplementation((target, options) => {
+      if (String(target) === decisionPath) throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+      return originalRemove(target, options);
+    });
+    try {
+      // The board switches to a decision that does not approve, and the rewrite fails.
+      hoisted.writeSucceeds = false;
+      hoisted.decision = { approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' };
+      changeBoard();
+      vi.advanceTimersByTime(REFRESH_DEBOUNCE_MS);
+      expect(hoisted.writeAttempts).toHaveLength(2);
+      // The writer tried to remove the stale file, and could not.
+      expect(removeSpy).toHaveBeenCalledWith(decisionPath, { force: true });
+      // The file is still there and still approves, so the gate keeps mirroring
+      // what the hook will read instead of holding an idle the hook will not answer.
+      expect(decisionFile('session-1')).toEqual(approvingAnswer);
+      expect(requireWriter().approves('session-1')).toBe(true);
+
+      // The retry lands the answer the board gave, and the gate follows the file.
+      hoisted.writeSucceeds = true;
+      vi.advanceTimersByTime(WRITE_RETRY_MS + REFRESH_DEBOUNCE_MS);
+      expect(decisionFile('session-1')).toEqual({ approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' });
+      expect(requireWriter().approves('session-1')).toBe(false);
+    } finally {
+      removeSpy.mockRestore();
+    }
   });
 
   const approving: PlanApprovalDecision = { approve: true, mode: 'acceptEdits', detail: 'Moved to Executing' };
@@ -434,6 +534,7 @@ describe('refreshPlanApprovals', () => {
     expect(decisionFile('session-1')?.approve).toBe(true);
 
     hoisted.decision = { approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' };
+    // Twice on purpose: two refreshes for one board still reload it once.
     refreshPlanApprovals('project-1');
     refreshPlanApprovals('project-1');
     // The re-read and the workflow reload both wait for the one coalesced pass.
