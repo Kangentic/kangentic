@@ -1689,6 +1689,50 @@ describe('Merged Settings -- Local Settings Merge', () => {
     expect(merged.statusLine.refreshInterval).toBeLessThanOrEqual(60);
   });
 
+  it('escapes $, a backtick and a double quote in the status path for a POSIX shell', () => {
+    // Claude hands statusLine.command to sh on macOS and Linux, where all three
+    // stay special inside double quotes: an unescaped `$work` expanded to an empty
+    // string, so the bridge was handed the wrong path.
+    //
+    // quoteBridgePath reads process.platform at call time and this suite also runs
+    // on win32, where it escapes nothing. Pin it to linux for the build call only.
+    //
+    // The specials sit in the status file's NAME, never its directory: the builder
+    // creates dirname(statusOutputPath), and a double quote is illegal in a Windows
+    // directory name. Nothing writes the file itself at build time. The bridge path
+    // is the real resolved one (it differs per checkout), so it is checked only for
+    // being double-quoted.
+    const builder = new CommandBuilder();
+    const sessionDir = path.join(tmpDir, '.kangentic', 'sessions', 'quote-sess');
+    const statusOutput = `${sessionDir}${path.sep}status-$work-\`tick\`-q"uote.json`;
+
+    const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    try {
+      builder.buildClaudeCommand({
+        cliPath: '/usr/bin/claude',
+        taskId: 'quote-task',
+        cwd: tmpDir,
+        permissionMode: 'default',
+        sessionId: 'quote-sess',
+        statusOutputPath: statusOutput,
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+    }
+
+    const merged = JSON.parse(fs.readFileSync(path.join(sessionDir, 'settings.json'), 'utf-8'));
+    const command: string = merged.statusLine.command;
+
+    expect(command).toMatch(/^node "[^"]*status-bridge\.js" "/);
+    const escapedStatusTail = '/status-\\$work-\\`tick\\`-q\\"uote.json"';
+    expect(command.slice(-escapedStatusTail.length)).toBe(escapedStatusTail);
+    expect(command).not.toContain('-$work');
+    // The status path is forward-slashed before it is quoted, so the Windows
+    // separators in tmpDir are not read as escapes and doubled.
+    expect(command).not.toContain('\\\\');
+  });
+
   it('merges user hooks from .claude/settings.local.json into session settings', () => {
     // Set up project with both settings.json and settings.local.json
     const claudeDir = path.join(tmpDir, '.claude');

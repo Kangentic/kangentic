@@ -156,8 +156,7 @@ export class PlanApprovalWriter {
       const agentCanApprove = this.agentCanApprove(sessionId);
       if (agentCanApprove === tracked.agentCanApprove) return;
       tracked.agentCanApprove = agentCanApprove;
-      this.retriesLeft = WRITE_RETRY_LIMIT;
-      this.write(sessionId, newDecisionReadCache());
+      this.writeForChange(sessionId);
       return;
     }
     const spawned = spawnedSessionFor(sessionId);
@@ -175,6 +174,11 @@ export class PlanApprovalWriter {
       bypassAvailable: spawned?.bypassAvailable === true,
       decision: null,
     });
+    this.writeForChange(sessionId);
+  }
+
+  /** One session's write after a change to it, with the whole retry budget. */
+  private writeForChange(sessionId: string): void {
     this.retriesLeft = WRITE_RETRY_LIMIT;
     this.write(sessionId, newDecisionReadCache());
   }

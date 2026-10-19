@@ -39,6 +39,7 @@ import {
   COPILOT_HOOK_EVENTS,
 } from '../../src/main/agent/adapters/copilot';
 import { extractTool, extractDetail } from '../../src/main/agent/shared/directive-builders';
+import { resolveBridgeScript } from '../../src/main/agent/shared/bridge-utils';
 
 let tmpDir: string;
 let configDir: string;
@@ -225,6 +226,40 @@ describe('copilot-hook-manager', () => {
       expect((config.statusLine as { command: string }).command).toContain(STATUS_PATH);
     });
 
+    it('escapes $, a backtick and a double quote in both status line paths for a POSIX shell', () => {
+      // Copilot hands the statusLine command to a POSIX shell on macOS and Linux,
+      // where all three stay special inside double quotes: an unescaped `$work`
+      // expanded to an empty string, so the bridge was handed the wrong path.
+      //
+      // quoteBridgePath reads process.platform at call time and this suite also runs
+      // on win32, where it escapes nothing. Pin it to linux for the write only.
+      //
+      // The builder only embeds both paths in a string, never creates them, so the
+      // specials can sit anywhere. The bridge is keyed by name: buildHooks asks for
+      // event-bridge first and each of settings.json and config.json asks for
+      // status-bridge, so a once-only override would hit the wrong call. The status
+      // path starts as a Windows path: toForwardSlash runs before the quoting, so its
+      // separators arrive as `/` and are not read as escapes and doubled.
+      const defaultBridgePath = (name: string): string => `/fake/scripts/${name}.js`;
+      vi.mocked(resolveBridgeScript).mockImplementation((name: string) => (
+        name === 'status-bridge' ? '/fake/$scripts/st"atus-bridge.js' : defaultBridgePath(name)
+      ));
+      const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      try {
+        writeSessionConfig(configDir, EVENTS_PATH, 'C:\\fake\\$work\\`tick`\\q"uote\\status.json');
+      } finally {
+        Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+        vi.mocked(resolveBridgeScript).mockImplementation(defaultBridgePath);
+      }
+
+      const expectedCommand = 'node "/fake/\\$scripts/st\\"atus-bridge.js" "C:/fake/\\$work/\\`tick\\`/q\\"uote/status.json"';
+      for (const fileName of ['settings.json', 'config.json']) {
+        const statusLine = readJson(path.join(configDir, fileName)).statusLine as { command: string };
+        expect(statusLine.command, fileName).toBe(expectedCommand);
+      }
+    });
+
     it('preserves the user settings.json, including the user\'s own hooks', () => {
       const userHooks = { postToolUse: [{ type: 'command', bash: './format.sh', powershell: './format.ps1' }] };
       writeUserFile('settings.json', JSON.stringify({ model: 'example-model', theme: 'dim', hooks: userHooks }));
@@ -340,6 +375,27 @@ describe('copilot-hook-manager', () => {
 
         expect(readJson(path.join(configDir, 'settings.json'))).toEqual({ banner: 'never' });
         expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('warns once, naming the file, when a user file exists but cannot be read, and still writes the session config', () => {
+      // A directory where settings.json should be: readFileSync fails with EISDIR on
+      // Windows and Linux alike. config.json is absent, which stays silent (ENOENT).
+      fs.mkdirSync(path.join(tmpHome, '.copilot', 'settings.json'), { recursive: true });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        writeSessionConfig(configDir, EVENTS_PATH);
+
+        const warnings = warnSpy.mock.calls.map((callArguments) => String(callArguments[0]));
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('settings.json');
+        expect(warnings[0]).toContain('could not be read');
+        // The session starts without the unreadable file, and with everything else.
+        expect(readJson(path.join(configDir, 'settings.json'))).toEqual({ banner: 'never' });
+        expect(readJson(path.join(configDir, 'config.json'))).toEqual({ banner: 'never' });
+        expect(readJson(hooksFilePath()).hooks).toEqual(buildHooks(EVENTS_PATH));
       } finally {
         warnSpy.mockRestore();
       }
