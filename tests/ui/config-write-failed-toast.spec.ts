@@ -22,7 +22,8 @@ const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
 const WRITE_FAILED_MESSAGE =
-  "Kangentic could not write to its data folder. Changes apply to this session but will not persist.";
+  'Kangentic could not save a change to disk because the file is in use or read-only. '
+  + 'It may be lost when Kangentic restarts.';
 
 async function launch(): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
@@ -52,7 +53,7 @@ test.describe('config:writeFailed push', () => {
     try {
       await fireConfigWriteFailed(page, WRITE_FAILED_MESSAGE);
 
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'could not write to its data folder' });
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: WRITE_FAILED_MESSAGE });
       await expect(toast).toBeVisible({ timeout: 5000 });
       // ToastItem.tsx keys its border/accent classes off toast.variant; App.tsx
       // pushes this one with variant: 'error', which renders as
@@ -71,7 +72,7 @@ test.describe('config:writeFailed push', () => {
 
       await fireConfigWriteFailed(page, WRITE_FAILED_MESSAGE);
 
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'could not write to its data folder' });
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: WRITE_FAILED_MESSAGE });
       await expect(toast).toBeVisible({ timeout: 5000 });
     } finally {
       await browser.close();

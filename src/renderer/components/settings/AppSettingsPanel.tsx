@@ -176,13 +176,14 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
         // Deliberately NOT the same sentence main pushes. That one names the machine
         // condition ("...because the disk is full"); this one names what the user just
         // did. On the first failure of an outage both can be up, and they read as one
-        // cause and one consequence rather than as the same bug twice.
-        reportFailure('This setting did not save. Kangentic could not write to its data folder.');
+        // cause and one consequence rather than as the same bug twice. "Its settings
+        // file" covers the global config and a project's `.kangentic/config.json` alike.
+        reportFailure('This setting did not save. Kangentic could not write its settings file.');
       },
       // A REJECTED write is a different failure from a write that degraded: the two
       // project-scoped channels throw for an unknown or unopened project. It used to
       // land as a silent unhandled rejection, which is the same class of bug as the
-      // one above. No data-folder clause, because that is not what went wrong.
+      // one above. No settings-file clause, because that is not what went wrong.
       //
       // It shares the degraded path's per-key cooldown deliberately, rather than
       // keeping its own. The cooldown is keyed to the fact the user needs ("this

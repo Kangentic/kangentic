@@ -487,9 +487,13 @@ in one Sentry org, one triage surface.
   one that found the process still running after the force kill), and a guarded synchronous write that could not
   reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per
   outage: `config`, `config_dirs`, `config_project_override`, `import_source`, `browser_url`, the
-  three `mobile_bridge_*` stores, `asana_credential`, plus an `errno` tag when the error carries
-  one) - send the real error to Sentry so hidden issues
-  are diagnosable, not just counted. ENOSPC arrives on that last path and is deliberately NOT
+  three `mobile_bridge_*` stores, `asana_credential`, plus `errno` and `syscall` tags when the
+  error carries them) - send the real error to Sentry so hidden issues
+  are diagnosable, not just counted. The guarded write is the one exception to "the real error".
+  Node writes the paths a syscall touched into an fs error's message, and the home-directory
+  redaction cannot reach a project on another drive (Sentry DESKTOP-1Z). So it sends a copy whose
+  message is built from the errno and syscall (`EPERM: rename failed`), with the original frames
+  and no `path` or `dest`. ENOSPC arrives on that last path and is deliberately NOT
   filtered: it is a host condition rather than a defect, but it is also the only evidence the
   user-facing toast fires at all, and the per-source latch already caps the volume at one event
   per outage. The `errno` tag is what makes muting it later a Sentry-UI change rather than a code

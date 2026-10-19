@@ -29,16 +29,33 @@ export function setSyncWriteFailureNotifier(notify: SyncWriteFailureNotifier): v
 const failingSources = new Set<string>();
 
 /**
+ * How Windows refuses a rename onto a file another program holds open without delete
+ * sharing: a file-sync client, a scanner or an indexer, usually for a moment after every
+ * change (Sentry DESKTOP-1Z). A target with the read-only attribute fails the same way,
+ * as EPERM from `rename`, and the error carries nothing that tells the two apart. A local
+ * POSIX filesystem never refuses a rename over an open file, so there these codes keep
+ * the meaning `CAUSE_CLAUSE_BY_ERRNO` gives them. The async writer in
+ * `agent/adapters/claude/trust-manager.ts` also retries on these three codes, with its
+ * own budget and no platform or syscall check.
+ */
+const HELD_FILE_RENAME_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/** Names both causes, because a held file and a read-only one raise the same error. */
+const HELD_FILE_CLAUSE = ' because the file is in use or read-only';
+
+/**
  * What the user can actually do about it, keyed by errno. A full disk, a permissions
  * problem and a read-only volume are three different fixes, and the message used to
  * name none of them - Sentry DESKTOP-1C was an ENOSPC that read as a Kangentic bug.
+ * A rename Windows refused over its target is checked before this table
+ * (`isRenameOntoHeldFile`), because there EPERM and EACCES mean a held or read-only file,
+ * not a permissions problem.
  *
  * `EBADF` is here deliberately: it is the errno from DESKTOP-14/DESKTOP-13, the
  * userData-on-a-removable-volume case this whole subsystem was built for.
  *
- * An unlisted errno gets no clause, so the message falls back to exactly the sentence
- * that shipped before the causes existed. A cause we have not seen degrades to the old
- * wording rather than to a wrong guess.
+ * An unlisted errno gets no clause, so the message falls back to the plain sentence.
+ * A cause we have not seen degrades to no cause rather than to a wrong guess.
  *
  * A `Map` rather than an object literal so an errno that happens to name an
  * `Object.prototype` member (`constructor`, `toString`) misses instead of resolving to
@@ -64,10 +81,67 @@ function readErrnoCode(error: unknown): string | undefined {
   return typeof code === 'string' && code.length > 0 ? code : undefined;
 }
 
+/** The syscall a Node fs error came from (`rename`, `open`, `mkdir`), or undefined. */
+function readSyscall(error: unknown): string | undefined {
+  const syscall = (error as NodeJS.ErrnoException | undefined)?.syscall;
+  return typeof syscall === 'string' && syscall.length > 0 ? syscall : undefined;
+}
+
+/**
+ * True when `error` is Windows refusing a rename because another program holds the
+ * target, or because the target is read-only, which raises the same error. Read from the
+ * error's fields, never its message. `safe-write.ts` retries on it
+ * and the notice names it, so the two cannot disagree about what a held file looks like.
+ * The platform is read per call so a test can switch it.
+ */
+export function isRenameOntoHeldFile(error: unknown): boolean {
+  if (process.platform !== 'win32') return false;
+  if (readSyscall(error) !== 'rename') return false;
+  return HELD_FILE_RENAME_CODES.has(readErrnoCode(error) ?? '');
+}
+
+/**
+ * One wording for every source. "Its data folder" did not describe a project's
+ * `.kangentic/`, and the old consequence ("Changes apply to this session") was false for
+ * a project override, which keeps no in-memory copy and so loses the change outright.
+ */
 function buildUserMessage(error: unknown): string {
-  const causeClause = CAUSE_CLAUSE_BY_ERRNO.get(readErrnoCode(error) ?? '') ?? '';
-  return `Kangentic could not write to its data folder${causeClause}. `
-    + 'Changes apply to this session but will not persist.';
+  const causeClause = isRenameOntoHeldFile(error)
+    ? HELD_FILE_CLAUSE
+    : CAUSE_CLAUSE_BY_ERRNO.get(readErrnoCode(error) ?? '') ?? '';
+  return `Kangentic could not save a change to disk${causeClause}. `
+    + 'It may be lost when Kangentic restarts.';
+}
+
+/**
+ * What goes to Sentry in place of a Node system error. Node writes the paths a syscall
+ * touched into the message (`EPERM: operation not permitted, rename '<temp>' -> '<target>'`)
+ * and the stack's first line repeats it. `redact-event-paths.ts` rewrites only the home
+ * directory, so a project on another drive reached Sentry whole (DESKTOP-1Z).
+ *
+ * The copy's message is built from the errno and syscall fields. It keeps the original
+ * frames when the original stack's first line is exactly the header it is replacing, so the
+ * trace and the issue's grouping stay the same; otherwise it keeps its own frames rather than
+ * risk copying part of the old message. A prefix match is not enough: a message that was
+ * shortened after the stack was captured heads a longer, path-bearing first line, and slicing
+ * at the shorter header would send the rest of that line. `path`, `dest` and `cause` are not
+ * copied.
+ *
+ * An error with no `code` is not a system error and carries no syscall paths, so it is
+ * sent as it is.
+ */
+function toPathFreeError(error: unknown, errno: string | undefined, syscall: string | undefined): unknown {
+  if (!errno) return error;
+  const pathFree = new Error(syscall ? `${errno}: ${syscall} failed` : errno);
+  const original = error as Error;
+  const originalHeader = `${original.name}: ${original.message}`;
+  const originalStack = original.stack;
+  const headerIsWholeFirstLine = typeof originalStack === 'string'
+    && (originalStack === originalHeader || originalStack.startsWith(`${originalHeader}\n`));
+  if (headerIsWholeFirstLine) {
+    pathFree.stack = `${pathFree.name}: ${pathFree.message}${originalStack.slice(originalHeader.length)}`;
+  }
+  return pathFree;
 }
 
 /**
@@ -92,12 +166,16 @@ export function reportSyncWriteFailure(error: unknown, source: string): void {
   if (failingSources.has(source)) return;
   failingSources.add(source);
   const errno = readErrnoCode(error);
-  // The errno rides as a tag so this class stays queryable, and mutable, from the
-  // Sentry UI without a code change. ENOSPC is a host condition rather than a bug,
+  const syscall = readSyscall(error);
+  // The errno and syscall ride as tags so this class stays queryable, and mutable, from
+  // the Sentry UI without a code change. ENOSPC is a host condition rather than a bug,
   // but it is also the only evidence this user-facing path fires at all, so it is
-  // filed rather than filtered. Omitted entirely when the error carries no code,
-  // rather than sent as an empty string.
-  reportHandledError(error, errno ? { source, errno } : { source });
+  // filed rather than filtered. Each is omitted entirely when the error does not carry
+  // it, rather than sent as an empty string.
+  const tags: Record<string, string> = { source };
+  if (errno) tags.errno = errno;
+  if (syscall) tags.syscall = syscall;
+  reportHandledError(toPathFreeError(error, errno, syscall), tags);
   // The notifier is injected, so its body is not ours to trust: the wired one
   // reaches a BrowserWindow whose webContents can be gone even when the window
   // itself is not (a renderer crash). A throw here would escape safeWriteJson's
