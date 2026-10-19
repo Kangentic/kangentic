@@ -300,7 +300,7 @@ describe('Qwen Code - integration harness', () => {
   });
 
   describe('Layer 4: hook injection writes .qwen/settings.json', () => {
-    it('buildCommand with eventsOutputPath creates .qwen/settings.json with the 11 hook events Qwen loads', () => {
+    it('buildCommand with eventsOutputPath creates .qwen/settings.json with the 13 hook events Qwen loads', () => {
       const adapter = new QwenAdapter();
       const eventsPath = path.join(sandbox, 'events.jsonl');
       adapter.buildCommand({
@@ -330,6 +330,8 @@ describe('Qwen Code - integration harness', () => {
         'SessionStart',
         'Stop',
         'StopFailure',
+        'SubagentStart',
+        'SubagentStop',
         'UserPromptSubmit',
       ]);
       // Every entry carries a kangentic- prefixed name, which Qwen uses as

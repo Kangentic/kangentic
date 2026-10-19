@@ -10,10 +10,13 @@
  * whose Stops arrived while background `test-builder` subagents were still
  * running.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { ActivityEngine, type TurnStartCause } from '../../src/main/activity-engine/engine';
+import { buildHooks as buildQwenHooks } from '../../src/main/agent/adapters/qwen-code';
 import { EventType, IdleReason } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
@@ -467,6 +470,85 @@ describe('onTurnEnded', () => {
       for (const heldStop of [676, 1459, 1782, 1868, 2074]) {
         expect(turnEnds).not.toContain(heldStop);
       }
+    });
+  });
+
+  describe('a live Qwen Code 0.25.2 session with a background and a foreground subagent', () => {
+    // The raw hook payloads of one session (tests/fixtures/qwen-hooks/), bridged
+    // here through Qwen's real buildHooks wiring and event-bridge.js, so the
+    // replay follows what the adapter wires today. The main agent's Stop on
+    // line 17 arrived while a background subagent still ran (lines 19 to 21),
+    // and the agent resumed on its own once it finished (line 22). Line 26 is
+    // an Esc interrupt, which idles the session and reports no turn end.
+    const QWEN_CAPTURE = path.join(__dirname, '..', 'fixtures', 'qwen-hooks', 'session-background-and-foreground-subagents.jsonl');
+    const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
+    let bridged: Array<{ line: number; event: SessionEvent }> = [];
+
+    beforeAll(() => {
+      const hooks = buildQwenHooks('/mock/.kangentic/event-bridge.js', '/mock/.kangentic/events.jsonl', {});
+      const capture = fs.readFileSync(QWEN_CAPTURE, 'utf-8').split('\n').filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as { event: string; stdin: Record<string, unknown> });
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-turn-end-'));
+      const eventsFile = path.join(tmpDir, 'events.jsonl');
+      try {
+        bridged = [];
+        capture.forEach((entry, index) => {
+          const entries = hooks[entry.event];
+          // A hook event the adapter does not wire never reaches the engine.
+          if (!entries) return;
+          // `node "<bridge>" "<events>" <eventType> <directive> ...`, with no spaces in the paths.
+          const tokens = entries[entries.length - 1].hooks[0].command.split(' ');
+          fs.rmSync(eventsFile, { force: true });
+          execFileSync(process.execPath, [BRIDGE, eventsFile, tokens[3], ...tokens.slice(4)], {
+            input: JSON.stringify(entry.stdin),
+            timeout: 5000,
+          });
+          const event = JSON.parse(fs.readFileSync(eventsFile, 'utf-8').trim()) as SessionEvent;
+          bridged.push({ line: index + 1, event: { ...event, ts: Date.parse(String(entry.stdin.timestamp)) } });
+        });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+      // One node process per hook payload, so a loaded CI shard gets room.
+    }, 30_000);
+
+    function replayQwen(): { turnEndLines: number[]; stopLines: number[]; finalActivity: string | undefined; finalDepth: number | undefined } {
+      const turnEndLines: number[] = [];
+      let currentLine = 0;
+      const engine = new ActivityEngine(
+        {
+          onActivityChange() {},
+          onTurnEnded() {
+            turnEndLines.push(currentLine);
+          },
+        },
+        { idleStabilityWindowMs: 0, bgShellEscapeHatchMs: 1000, staleThinkingTimeoutMs: 60_000 },
+      );
+      engine.initSession(SESSION_ID, true);
+      for (const { line, event } of bridged) {
+        currentLine = line;
+        engine.processEvent(SESSION_ID, event);
+      }
+      const state = engine.getState(SESSION_ID);
+      engine.dispose();
+      return {
+        turnEndLines,
+        stopLines: bridged.filter(({ event }) => event.type === EventType.Idle && event.detail !== IdleReason.Permission).map(({ line }) => line),
+        finalActivity: state?.activity,
+        finalDepth: state?.subagentDepth,
+      };
+    }
+
+    it('reports a turn end only at the Stops after which no subagent is left', () => {
+      const { turnEndLines, stopLines } = replayQwen();
+      expect(stopLines).toEqual([17, 29, 42]);
+      expect(turnEndLines).toEqual([29, 42]);
+    });
+
+    it('ends idle with no subagent counted', () => {
+      const { finalActivity, finalDepth } = replayQwen();
+      expect(finalActivity).toBe('idle');
+      expect(finalDepth).toBe(0);
     });
   });
 

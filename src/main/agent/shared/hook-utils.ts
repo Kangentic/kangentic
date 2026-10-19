@@ -37,6 +37,29 @@ export function filterKangenticHooks<T>(
 }
 
 /**
+ * Double-quote a path for a bridge command an agent CLI runs (a hook or a
+ * status line), so the bridge receives the path as written.
+ *
+ * On macOS and Linux the CLIs hand the command to sh or bash (`sh -c` for
+ * Claude Code per its hooks reference, `bash -c` in the Gemini and Qwen hook
+ * runners, `bash` for Copilot's cross-platform `command` field; Grok's hooks
+ * and the Claude and Copilot status lines were not checked), where `\`, `"`, `$` and a backtick stay special inside double
+ * quotes. Each is backslash-escaped, so a project under `~/work/$client` no
+ * longer expands to `~/work/`. Without it the plan approval bridge found no
+ * decision file and Automatic did nothing, and every activity event was
+ * written to the wrong path.
+ *
+ * A Windows path is left as it is. The hook shell there differs per CLI and per
+ * environment (Git Bash or PowerShell for Claude Code, PowerShell for Gemini,
+ * Git Bash, cmd or PowerShell for Qwen), each escapes `$` differently, and `\`
+ * is a path separator, so no one escape is right for all of them.
+ */
+export function quoteBridgePath(filePath: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'win32') return `"${filePath}"`;
+  return `"${filePath.replace(/[\\"$`]/g, '\\$&')}"`;
+}
+
+/**
  * Build a `node <bridge> <events> <eventType> [directives...]` command string.
  * Used by all hook-managers when wiring bridge entries.
  */
@@ -46,7 +69,7 @@ export function buildBridgeCommand(
   eventType: string,
   ...directives: string[]
 ): string {
-  const parts = [`node "${eventBridge}" "${eventsPath}" ${eventType}`];
+  const parts = [`node ${quoteBridgePath(eventBridge)} ${quoteBridgePath(eventsPath)} ${eventType}`];
   parts.push(...directives);
   return parts.join(' ');
 }

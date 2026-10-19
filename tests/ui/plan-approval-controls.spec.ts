@@ -168,11 +168,9 @@ test.describe('Column Manager Plan approval', () => {
       await reloadBoard(page);
       await expect.poll(() => readColumn(page, 'Code Review')).toMatchObject({ plan_approval: 'automatic' });
 
-      // Spy on the update the dialog sends. The real repository applies only the
-      // keys that are not undefined (swimlane-repository.ts), but the mock merges
-      // with Object.assign, which would copy an undefined plan_approval over the
-      // stored value. So the spy records what was sent and forwards it as main
-      // reads it, with the undefined keys dropped.
+      // Spy on the update the dialog sends, and forward it untouched. The mock
+      // applies only the keys that are not undefined, as the real repository
+      // does (swimlane-repository.ts).
       await page.evaluate(() => {
         const spy = window as unknown as { __updateInputs?: Array<{ id: string; planApproval: string }> };
         spy.__updateInputs = [];
@@ -182,8 +180,7 @@ test.describe('Column Manager Plan approval', () => {
             id: input.id,
             planApproval: input.plan_approval === undefined ? 'not sent' : String(input.plan_approval),
           });
-          const sent = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as typeof input;
-          return original(sent);
+          return original(input);
         };
       });
 

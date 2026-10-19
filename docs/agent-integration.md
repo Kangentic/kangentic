@@ -469,6 +469,22 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge:
 
 All event-bridge hooks use blank matchers (fire for every invocation regardless of tool name). The one hook with a matcher is the plan approval hook: a second `PermissionRequest` entry, matcher exactly `ExitPlanMode`, registered on every spawn (see [`plan-approval-bridge.js`](#plan-approval-bridgejs)). See [Activity Detection](activity-detection.md) for the full event-to-state mapping and state derivation logic.
 
+#### Paths in hook commands
+
+Each hook and status-line command built by `buildBridgeCommand`, `buildPlanApprovalCommand`, or the
+Claude and Copilot status-line builders double-quotes its paths through `quoteBridgePath`
+(`src/main/agent/shared/hook-utils.ts`). Aider's notifications command quotes for its own shell (see
+the Aider section), and Antigravity's hook commands are unquoted by design, because its hook runner
+keeps quote characters literal. On macOS and Linux the hook runners run the command with `sh -c`
+(Claude Code) or `bash -c` (Gemini, Qwen), and Copilot's `command` field is its cross-platform
+alias for `bash` and `powershell`. In those shells `\`, `"`, `$` and a backtick stay special inside
+double quotes, so each is backslash-escaped. The shell behind Grok's hooks and behind the Claude and
+Copilot status lines was not checked. A project under a folder named `$client` would
+otherwise lose that segment, and the plan approval hook would find no decision file. Windows paths
+are left as they are: the hook shell there is Git Bash or PowerShell for Claude Code, PowerShell for
+Gemini, and Git Bash, cmd or PowerShell for Qwen, and no one escape is right for all of them.
+`tests/unit/event-bridge.test.ts` runs a built command through a real `sh -c`.
+
 #### Hook Identification
 
 Kangentic hooks are identified by two markers in the command string:
@@ -751,15 +767,18 @@ SessionStart, SessionEnd and Notification ever fired. Each event now maps as Cla
 | `UserPromptSubmit` / `Stop` | `prompt` / `idle`, both with the session's plan mode |
 | `StopFailure` | `turn_failed` (an API error or loop detection ended the turn) |
 | `PermissionRequest` | `idle` with detail `permission`, naming the tool |
+| `SubagentStart` / `SubagentStop` | `subagent_start` / `subagent_stop`, with `agent_type` in `detail` and `agent_id` as the subagent id |
 | `PreCompact` | `compact` |
 | `Notification`, `SessionStart`, `SessionEnd` | the same-named events |
 
 A live 0.25.2 session fires `PreToolUse` and then `PermissionRequest`, the same order as Claude. A
 subagent fires no `UserPromptSubmit` or `Stop`, in the foreground or the background. It fires
-`SubagentStart`, `SubagentStop` and its own tool events, which carry `agent_id`. Kangentic does not
-wire `SubagentStart` or `SubagentStop` yet: a background subagent keeps working after the main
-agent's `Stop`, and the engine's subagent count has not been replayed against that order. The
-captured payloads are in `tests/fixtures/qwen-hooks/`. Gemini's `BeforeModel`, `AfterModel` and `BeforeToolSelection` have no
+`SubagentStart`, `SubagentStop` and its own tool events, which carry `agent_id`. A background
+subagent keeps working after the main agent's `Stop`, so the engine needs the subagent count: before
+the two were wired, that `Stop` reported a turn end and ran the column's On agent turn end
+automations while the subagent still worked. The captured payloads are in
+`tests/fixtures/qwen-hooks/`, and `activity-engine-turn-ended.test.ts` replays the whole session
+through the real wiring. Gemini's `BeforeModel`, `AfterModel` and `BeforeToolSelection` have no
 Qwen equivalent and are not wired. `buildHooks` and `removeHooks` strip Kangentic entries from
 every key, so a settings file an older build left with Gemini-named entries is cleaned on the next
 spawn or session exit.

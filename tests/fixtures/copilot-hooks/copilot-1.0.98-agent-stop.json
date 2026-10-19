@@ -1,0 +1,8 @@
+{
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "timestamp": 1792388684816,
+  "cwd": "C:\\Users\\dev\\repo",
+  "transcriptPath": "C:\\Users\\dev\\repo\\.kangentic\\sessions\\00000000-0000-0000-0000-000000000000\\copilot-config\\session-state\\00000000-0000-0000-0000-000000000000\\events.jsonl",
+  "stopReason": "end_turn",
+  "stop_hook_active": false
+}

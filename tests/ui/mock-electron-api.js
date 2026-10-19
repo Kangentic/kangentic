@@ -2184,7 +2184,14 @@
           return s.id === input.id;
         });
         if (idx >= 0) {
-          swimlanes[idx] = Object.assign({}, swimlanes[idx], input);
+          // Main's SwimlaneRepository.update applies only the keys that are not
+          // undefined (null still clears), so a key the renderer sends as
+          // undefined keeps the stored value here too.
+          var applied = {};
+          Object.keys(input).forEach(function (key) {
+            if (input[key] !== undefined) applied[key] = input[key];
+          });
+          swimlanes[idx] = Object.assign({}, swimlanes[idx], applied);
           return swimlanes[idx];
         }
         throw new Error('Swimlane not found: ' + input.id);

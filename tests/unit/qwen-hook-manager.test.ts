@@ -10,6 +10,7 @@ import {
 import { AgentTool, EventType } from '../../src/shared/types';
 import {
   extractPlanMode,
+  extractSubagentId,
   extractTool,
   extractToolId,
   setDetail,
@@ -33,6 +34,8 @@ const QWEN_EVENTS = [
   'SessionStart',
   'Stop',
   'StopFailure',
+  'SubagentStart',
+  'SubagentStop',
   'UserPromptSubmit',
 ];
 
@@ -105,6 +108,8 @@ describe('qwen-hook-manager', () => {
       expect(eventTypeOf('UserPromptSubmit')).toBe(EventType.Prompt);
       expect(eventTypeOf('Stop')).toBe(EventType.Idle);
       expect(eventTypeOf('StopFailure')).toBe(EventType.TurnFailed);
+      expect(eventTypeOf('SubagentStart')).toBe(EventType.SubagentStart);
+      expect(eventTypeOf('SubagentStop')).toBe(EventType.SubagentStop);
       expect(eventTypeOf('PermissionRequest')).toBe(EventType.Idle);
       expect(eventTypeOf('Notification')).toBe(EventType.Notification);
       expect(eventTypeOf('PreCompact')).toBe(EventType.Compact);
@@ -135,6 +140,9 @@ describe('qwen-hook-manager', () => {
       const planMode = extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' });
       expect(kangenticCommand(hooks, 'UserPromptSubmit')).toContain(planMode);
       expect(kangenticCommand(hooks, 'Stop')).toContain(planMode);
+      for (const hookEvent of ['SubagentStart', 'SubagentStop']) {
+        expect(kangenticCommand(hooks, hookEvent)).toContain(extractSubagentId(['agent_id']));
+      }
     });
 
     it('preserves existing user hooks', () => {

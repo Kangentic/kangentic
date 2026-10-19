@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractDetail, extractPlanMode, setDetail, setToolWhen, setTypeWhen } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractDetail, extractPlanMode, extractSubagentId, setDetail, setToolWhen, setTypeWhen } from '../../shared/directive-builders';
 
 /** Hook entry in Qwen Code's settings.json. */
 export interface QwenHookEntry {
@@ -27,6 +27,8 @@ export const QwenHookEvent = {
   UserPromptSubmit: 'UserPromptSubmit',
   Stop: 'Stop',
   StopFailure: 'StopFailure',
+  SubagentStart: 'SubagentStart',
+  SubagentStop: 'SubagentStop',
   PermissionRequest: 'PermissionRequest',
   Notification: 'Notification',
   PreCompact: 'PreCompact',
@@ -122,9 +124,6 @@ function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string,
  * PermissionRequest, the same order as Claude. A subagent fires no
  * UserPromptSubmit or Stop, in the foreground or the background: only
  * SubagentStart, SubagentStop and its own tool events, which carry `agent_id`.
- * SubagentStart and SubagentStop are not wired. A background subagent runs on
- * past the main agent's Stop, and the engine's subagent depth has not been
- * replayed against that order.
  *
  * Strips any stale Kangentic hooks from existingHooks before injecting fresh
  * ones. Qwen Code has no --settings flag, so hooks live in the shared
@@ -179,6 +178,17 @@ export function buildHooks(
     [QwenHookEvent.PermissionRequest]: withBridge(QwenHookEvent.PermissionRequest, EventType.Idle,
       setDetail(IdleReason.Permission),
       extractTool('tool_name')),
+    // A background subagent keeps working after the main agent's Stop, which
+    // is a turn end only once its SubagentStop brings the depth back to zero.
+    // Without these, that Stop ran the column's turn-end automations while the
+    // subagent still worked (the live capture's line 17). Both carry
+    // `agent_id`, as Claude's do.
+    [QwenHookEvent.SubagentStart]: withBridge(QwenHookEvent.SubagentStart, EventType.SubagentStart,
+      extractDetail(['agent_type']),
+      extractSubagentId(['agent_id'])),
+    [QwenHookEvent.SubagentStop]: withBridge(QwenHookEvent.SubagentStop, EventType.SubagentStop,
+      extractDetail(['agent_type']),
+      extractSubagentId(['agent_id'])),
     [QwenHookEvent.Notification]: withBridge(QwenHookEvent.Notification, EventType.Notification, extractDetail(['message', 'notification'])),
     [QwenHookEvent.PreCompact]: withBridge(QwenHookEvent.PreCompact, EventType.Compact),
     [QwenHookEvent.SessionStart]: withBridge(QwenHookEvent.SessionStart, EventType.SessionStart),
