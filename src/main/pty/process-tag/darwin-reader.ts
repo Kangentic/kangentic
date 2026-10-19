@@ -53,6 +53,7 @@
 
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { childProcessEnv } from '../../shared/child-env';
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess } from './process-label';
 import { connectionsToListeners, ipv4FromBytes, ipv6FromBytes, listeningPidsOf, pairLocalConnections, type SocketRow } from './local-connections';
@@ -319,7 +320,7 @@ export function runTool(command: string, args: string[], timeoutMs = TOOL_TIMEOU
     };
     const child = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'ignore'],
-      env: { ...process.env, LC_ALL: 'C' },
+      env: childProcessEnv({ LC_ALL: 'C' }),
     });
     const timer = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch { /* already gone */ }

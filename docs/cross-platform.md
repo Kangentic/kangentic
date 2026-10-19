@@ -218,9 +218,13 @@ Windows resolves taskbar icons by matching the running window's AppUserModelID (
 
 macOS builds use hardened runtime with `build/entitlements.plist` providing JIT, unsigned executable memory, and dyld environment variable entitlements (required by node-pty). Notarization uses `notarytool` via electron-builder, gated on the `APPLE_ID` and `APPLE_APP_SPECIFIC_PASSWORD` environment variables.
 
-### PTY children and mach exception ports
+### PTY children and Crashpad's handler
 
-node-pty never execs a terminal's program itself on macOS. It posix_spawns `prebuilds/darwin-<arch>/spawn-helper`, which attaches the tty, changes directory, and execs the target. Mach exception ports survive both steps. Once `@sentry/electron` starts Electron's `crashReporter`, Crashpad owns Kangentic's task-level crash port, so every process an agent started from a terminal inherited it. Their crashes landed in our crash database: an ffprobe, a headless Chrome, a dotnet, another project's Electron (Sentry DESKTOP-K, -N, -Q, -1D). Linux and Windows are not affected, because Crashpad installs in-process there and exec resets it.
+Once `@sentry/electron` starts Electron's `crashReporter`, Crashpad runs a crash handler for Kangentic, and Chromium tells Kangentic's own child processes how to reach it. On macOS and Windows that hand-off also reached every process an agent or a user started from a terminal, so their crashes landed in our crash database and reached Sentry as the foreign-crash warning (see "Error Reporting" in `docs/analytics.md`). The two platforms leak through different mechanisms, fixed in different places. Linux is not affected: Crashpad installs in-process there, and exec resets it.
+
+#### macOS: mach exception ports
+
+node-pty never execs a terminal's program itself on macOS. It posix_spawns `prebuilds/darwin-<arch>/spawn-helper`, which attaches the tty, changes directory, and execs the target. Mach exception ports survive both steps. Crashpad owns Kangentic's task-level crash port, so every process an agent started from a terminal inherited it. Their crashes landed in our crash database: an ffprobe, a headless Chrome, a dotnet, another project's Electron (Sentry DESKTOP-K, -N, -Q, -1D).
 
 `build/spawn-helper/spawn-helper.c` is upstream's helper plus one `task_set_exception_ports(mach_task_self(), EXC_MASK_ALL | EXC_MASK_CRASH, MACH_PORT_NULL, ...)` call before `execvp`, fenced by `kangentic:` markers. `EXC_MASK_ALL` alone is not enough. xnu leaves `EXC_MASK_CRASH` out of it, and Crashpad installs its task port for `EXC_CRASH` and `EXC_RESOURCE`. The probe's `check` mode reads the same widened mask for the same reason. With no task-level port, a crash falls through to the host-level ReportCrash, as it would for a program started from Terminal.app. The return value is ignored, so a refusal leaves the child exactly as before rather than failing the spawn. Kangentic's own renderer, GPU, and utility processes are launched by Chromium, not node-pty, and still report to Crashpad.
 
@@ -238,6 +242,27 @@ Three gaps remain on purpose:
 - `npm start` uses node-pty's stock helper, for PTYs and for the shell launches above. That is harmless by default, because an unpackaged run leaves Sentry off and there is no Crashpad port to inherit. It stops being harmless once a switch turns Sentry on: `KANGENTIC_ERROR_REPORTING=1`, or `KANGENTIC_TELEMETRY=1` with `KANGENTIC_ERROR_REPORTING` left unset (`resolveErrorReportingEnabled` in `src/main/analytics/error-reporting.ts`).
 - Headless agent runs launch an agent binary, not a shell, from the pty host (`src/main/pty/host/host-cli-processes.ts`), or from `src/main/agent/shared/cli-print.ts` when no host is registered. The host is a utility process Chromium launched, so it holds the Crashpad port and its children inherit it. The helper exits 1 when its target is missing instead of raising ENOENT, and a missing CLI has to keep surfacing as ENOENT, so they stay direct. The docstring on `resolveShellLaunch` says how to route one without losing that.
 - Git runs repository hooks, and git is launched as a plain binary.
+
+#### Windows: the handler's pipe name
+
+Chromium's `components/crash/core/app/crashpad_win.cc` has the browser process put its handler's pipe in its own environment, as `CHROME_CRASHPAD_PIPE_NAME`, so the processes Chromium starts can connect to it. A non-initial Crashpad client that finds the variable registers with that handler. Every child that copied main's `process.env` passed the variable on, and an Electron program started from a terminal registered with our handler. VS Code's `code` CLI is Code.exe in Electron's node mode, and its crash reached Sentry DESKTOP-1S as `module: Code.exe` on 0.45.0. On a packaged build, main exports exactly this one Crashpad variable, and a task terminal inherited the same pipe name.
+
+The variable stays in main's `process.env`. Kangentic's renderer, GPU and utility processes (the pty host, retrieval, embed, dictation, line count) find the handler through it, so deleting it there would silently lose their crash dumps. Instead, `src/main/shared/child-env.ts` builds every child env: `childProcessEnv(overrides)` copies main's environment without the variable, and `withoutCrashpadPipeName(env)` drops it from an env a caller built. The strip runs on every platform and changes no value off Windows. It sits at these chokepoints:
+
+- `buildSpawnEnv` (`src/main/pty/spawn/pty-spawn.ts`): every session and Command Terminal PTY.
+- `spawnOffMainCli` and `execAsync` / `execFileAsync` (`src/main/utility-process/`): everything main ships to the pty host, which is every exec, every headless agent run, and git on a task's lifecycle.
+- `spawnOffMainPty` (the model-picker probe, the Antigravity print runner) and `spawnWithAbort` (the post-worktree init script, and git with or without a host) strip before they choose a route, and `off-main-exec.ts` strips on its local fallback as well.
+- The direct launches: `spawnCli`, `run_script` automations, `SHELL_EXEC` shortcuts, the non-interactive fetch env, and the WSL reap.
+- The git calls outside a lifecycle that run repository hooks, filters or merge drivers: Update from base's `merge --ff-only`, the carry of uncommitted changes into a new worktree (`apply --3way` and the reads before it), and the Command Terminal's cold-start checkout and `merge --ff-only`. They go through `gitAt` (`src/main/git/git-client.ts`, which runs on `execFileAsync`) instead of simple-git. simple-git can only set a child's env through `.env()`, and its unsafe-operations check refuses an env that carries `EDITOR` or `GIT_EDITOR`, which many users export.
+
+`tests/unit/child-env-parity.test.ts` fails on a `...process.env` spread or an `env: process.env` anywhere else in `src/main` (a deliberate exception carries `// crashpad-env-ok: <reason>`), and on a `delete process.env` of the variable.
+
+What still inherits it, by decision:
+
+- The utility processes Kangentic forks. They need it to report their own crashes.
+- Fixed system tools main spawns directly, which start nothing: taskkill and the zombie reaper's PowerShell queries. The pty host's own launches (taskkill, its process listing) inherit the host's env too.
+- Git plumbing that runs no hooks: `git cat-file`, `ls-files`, and simple-git's reads (status, diff, blame, log), plus a task's branch-switch config write. These reads can still run a repository's clean or textconv filters, and that exposure is accepted: moving every read to `gitAt` would not change which program a filter starts.
+- `shell.openPath`, `openExternal` and `showItemInFolder`, `app.relaunch`, and the updater. Electron gives them no env option. `openPath` can open a file in an Electron app that is its default, so this is the one real gap, and its only fix is the global delete ruled out above.
 
 What still leaks shows up as the Sentry warning "Foreign process crash reached Kangentic's crash database", split by its `module` tag and release (see "Error Reporting" in `docs/analytics.md`).
 

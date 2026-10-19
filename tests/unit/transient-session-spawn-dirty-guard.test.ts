@@ -86,8 +86,9 @@ const gitRevparseMock = vi.fn(async () => 'main\n');
 const gitStatusMock = vi.fn(async (): Promise<{ files: MockStatusFile[] }> => ({ files: [] }));
 const gitCheckoutMock = vi.fn(async () => undefined);
 const gitMergeMock = vi.fn(async () => undefined);
-vi.mock('simple-git', () => ({
-  default: vi.fn(() => ({
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => ({
     revparse: gitRevparseMock,
     status: gitStatusMock,
     checkout: gitCheckoutMock,
@@ -96,7 +97,7 @@ vi.mock('simple-git', () => ({
 }));
 
 // Hoisted: the factory below reads it at module-mock time, before a plain
-// module-level const would be initialized (the simple-git mock above gets away
+// module-level const would be initialized (the git-client mock above gets away
 // with plain consts only because its references sit inside a lazily-called
 // arrow function).
 const { fetchIfStaleMock } = vi.hoisted(() => ({

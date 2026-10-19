@@ -138,13 +138,11 @@ describe('pty host out-of-process boundary', () => {
     expect(hostExec).not.toMatch(/\bfork\s*\(/);
     expect(hostExec).toMatch(/launchesOwnBinary\(request\)/);
     // Every promisified exec on main goes through off-main-exec.ts, so its
-    // spawn runs in the host. The exceptions run where no host is reachable.
+    // spawn runs in the host. The exception runs where no host is reachable.
     const allowed = new Set([
       'src/main/utility-process/off-main-exec.ts',
       // Captures the login shell's environment at startup, before the host exists.
       'src/main/shell-env.ts',
-      // Runs in the retrieval worker, which spawns on its own thread.
-      'src/main/retrieval/branch-git.ts',
     ]);
     expect(
       findOutside(/promisify\((exec|execFile)\)/, allowed),

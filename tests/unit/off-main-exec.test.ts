@@ -2,7 +2,8 @@
  * off-main-exec.ts routes one-shot child processes to the pty host, and
  * host-exec.ts runs them there. Pinned: with no executor the call is the
  * plain `promisify` it replaced; with one, the request carries main's current
- * environment and a budget past the child's own timeout; a failed child comes
+ * environment and a budget past the child's own timeout; either way the env
+ * goes without Crashpad's pipe name (child-env.ts); a failed child comes
  * back as the Error `promisify` would have thrown; a host that died with the
  * request in hand rejects instead of running the child twice; and the host
  * refuses to launch its own executable.
@@ -12,7 +13,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
 vi.mock('node:child_process', () => ({
@@ -30,12 +31,50 @@ afterEach(() => {
 });
 
 describe('off-main-exec', () => {
-  it('runs locally, with the caller\'s options untouched, when no executor is registered', async () => {
+  it('runs locally, with the caller\'s options, when no executor is registered', async () => {
     execFileMock.mockImplementation((_file: string, _args: string[], _options: object, callback: (error: Error | null, output: { stdout: string; stderr: string }) => void) => {
       callback(null, { stdout: 'local', stderr: '' });
     });
     await expect(execFileAsync('git', ['status'], { cwd: '/mock/repo' })).resolves.toEqual({ stdout: 'local', stderr: '' });
-    expect(execFileMock).toHaveBeenCalledWith('git', ['status'], { cwd: '/mock/repo' }, expect.any(Function));
+    // Read field by field: the options carry main's whole env, which a failed
+    // match on the raw call would print.
+    const [file, args, options] = execFileMock.mock.calls[0] as [string, string[], { cwd?: string }];
+    expect([file, args, options.cwd]).toEqual(['git', ['status'], '/mock/repo']);
+  });
+
+  describe('Crashpad\'s pipe name', () => {
+    const pipeKey = 'CHROME_CRASHPAD_PIPE_NAME';
+    let savedHostValue: string | undefined;
+
+    beforeEach(() => {
+      savedHostValue = process.env[pipeKey];
+      process.env[pipeKey] = '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP';
+    });
+
+    afterEach(() => {
+      if (savedHostValue === undefined) delete process.env[pipeKey];
+      else process.env[pipeKey] = savedHostValue;
+    });
+
+    it('never reaches a local child, inherited or supplied', async () => {
+      execFileMock.mockImplementation((_file: string, _args: string[], _options: object, callback: (error: Error | null, output: { stdout: string; stderr: string }) => void) => {
+        callback(null, { stdout: '', stderr: '' });
+      });
+      await execFileAsync('git', ['status']);
+      await execFileAsync('git', ['status'], { env: { [pipeKey]: 'supplied', PATH: '/bin' } });
+
+      const environments = execFileMock.mock.calls.map((call) => (call[2] as { env: NodeJS.ProcessEnv }).env);
+      expect(environments[0][pipeKey]).toBeUndefined();
+      expect(environments[1]).toEqual({ PATH: '/bin' });
+      expect(process.env[pipeKey]).toBeDefined();
+    });
+
+    it('never reaches the host with a request', async () => {
+      const executor = vi.fn<OffMainExecutor>(async () => ({ ok: true, stdout: '', stderr: '' }));
+      setOffMainExecutor(executor);
+      await execFileAsync('git', ['status']);
+      expect(executor.mock.calls[0][0].options.env?.[pipeKey]).toBeUndefined();
+    });
   });
 
   it('sends the request to the executor with main\'s environment and a budget past the child\'s timeout', async () => {

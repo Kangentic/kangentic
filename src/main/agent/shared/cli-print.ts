@@ -3,7 +3,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { spawnOffMainCli, toHostEnvironment, type CliChildProcess } from '../../utility-process/off-main-cli';
+import { spawnOffMainCli, type CliChildProcess } from '../../utility-process/off-main-cli';
+import { childProcessEnv } from '../../shared/child-env';
 import { childHasExited, killChildTreeByPid, stopChildTree } from '../../shared/child-tree-stop';
 import { escapePercentForCmd, quoteCmdExecutable } from '../../../shared/shell-quote';
 
@@ -427,11 +428,13 @@ export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Rec
     : cliPath;
   const commandArgs = useShell ? [] : args;
   const leadsGroup = process.platform !== 'win32';
-  const childEnv = env ? { ...process.env, ...env } : process.env;
+  // An agent runs hooks and tools, so its run never carries Crashpad's pipe
+  // name (child-env.ts).
+  const childEnv = childProcessEnv(env);
   const child: CliChildProcess = spawnOffMainCli(command, commandArgs, {
     cwd,
     shell: useShell,
-    env: toHostEnvironment(childEnv),
+    env: childEnv,
     detached: leadsGroup,
   }) ?? spawn(command, commandArgs, {
     cwd,

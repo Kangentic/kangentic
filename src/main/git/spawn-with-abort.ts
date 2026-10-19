@@ -1,7 +1,8 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { resolveShellLaunch } from '../pty/spawn/shell-launch';
+import { withoutCrashpadPipeName } from '../shared/child-env';
 import { killChildTreeByPid } from '../shared/child-tree-stop';
-import { spawnOffMainCli, toHostEnvironment, type CliChildProcess } from '../utility-process/off-main-cli';
+import { spawnOffMainCli, type CliChildProcess } from '../utility-process/off-main-cli';
 
 /**
  * Per-stream cap on captured stdout/stderr. A verbose child (e.g. an
@@ -18,10 +19,10 @@ export interface SpawnWithAbortOptions {
   /** External cancellation, race-combined with the internal timeout. */
   signal?: AbortSignal;
   /**
-   * The child's environment. Omitted, the child inherits `process.env` (Node's
-   * default). A caller that must not be able to prompt (a fetch on a timer)
-   * passes a copy with the prompt-suppressing variables set; see
-   * `nonInteractiveGitEnv` in fetch-throttle.ts.
+   * The child's environment. Omitted, the child gets `process.env`. Either way
+   * without Crashpad's pipe name (child-env.ts). A caller that must not be able
+   * to prompt (a fetch on a timer) passes a copy with the prompt-suppressing
+   * variables set; see `nonInteractiveGitEnv` in fetch-throttle.ts.
    */
   env?: NodeJS.ProcessEnv;
 }
@@ -74,10 +75,11 @@ export function spawnWithAbort(
   options: SpawnWithAbortOptions,
 ): Promise<{ stdout: string; stderr: string }> {
   const { command, args, cwd, label, signalKillAssertsTimeout } = target;
-  const { timeoutMs, signal: externalSignal, env } = options;
-  // Spread only when supplied: an explicit `env: undefined` is also "inherit"
-  // to Node, but leaving the key out keeps that inheritance visible in a test.
-  const envOption = env ? { env } : {};
+  const { timeoutMs, signal: externalSignal } = options;
+  // Always passed, never inherited: git runs repository hooks and the init
+  // script can start anything, so neither gets Crashpad's pipe name
+  // (child-env.ts).
+  const env = withoutCrashpadPipeName(options.env ?? process.env);
   return new Promise((resolve, reject) => {
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
@@ -168,7 +170,7 @@ export function spawnWithAbort(
       : spawnOffMainCli(command, [...args], {
         cwd,
         shell: false,
-        env: toHostEnvironment(env ?? process.env),
+        env,
         detached: false,
       });
     if (remoteChild) {
@@ -210,7 +212,7 @@ export function spawnWithAbort(
       // Windows has no process groups; there `taskkill /T` walks the tree.
       ...(killsTree ? { detached: process.platform !== 'win32' } : { signal: controller.signal }),
       stdio: ['ignore', 'pipe', 'pipe'],
-      ...envOption,
+      env,
     };
     // A shell-string launch keeps its args-free form (no DEP0190).
     const child = launch.shell

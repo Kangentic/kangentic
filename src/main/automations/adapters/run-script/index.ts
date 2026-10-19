@@ -4,6 +4,7 @@ import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
 import { resolveScriptInvocation } from '../../../pty/spawn/script-invocation';
 import { resolveShellLaunch } from '../../../pty/spawn/shell-launch';
+import { childProcessEnv } from '../../../shared/child-env';
 import type { AutomationAdapter, AutomationContext } from '../../shared/automation-adapter';
 import { AutomationTimeoutError } from '../../shared/automation-errors';
 
@@ -111,7 +112,8 @@ function runToCompletion(options: {
     const launch = resolveShellLaunch({ file: exe, args });
     const child = spawn(launch.file, launch.args, {
       cwd: context.cwd,
-      env: { ...process.env, ...scriptEnvironment(context) },
+      // A script can start anything, so no Crashpad pipe name (child-env.ts).
+      env: childProcessEnv(scriptEnvironment(context)),
       // No shell: the invocation is already `<shell> -c <script>`, and letting
       // Node add a second one would re-parse the script through cmd.exe.
       shell: false,

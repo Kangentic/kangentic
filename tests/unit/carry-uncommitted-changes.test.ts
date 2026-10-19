@@ -17,8 +17,9 @@ const mockWorktreeGit = {
   raw: vi.fn(),
 };
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn((cwd: string) =>
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn((cwd: string) =>
     cwd.includes('.kangentic\\worktrees') || cwd.includes('.kangentic/worktrees')
       ? mockWorktreeGit
       : mockProjectGit,
@@ -130,7 +131,7 @@ describe('carryUncommittedChanges', () => {
       'diff --git a/src/index.ts ...',
     );
     expect(mockWorktreeGit.raw).toHaveBeenCalledWith(
-      'apply', '--3way', expect.stringContaining('kangentic-patch-abcd1234.patch'),
+      ['apply', '--3way', expect.stringContaining('kangentic-patch-abcd1234.patch')],
     );
     // Patch file cleaned up
     expect(fs.unlinkSync).toHaveBeenCalledWith(

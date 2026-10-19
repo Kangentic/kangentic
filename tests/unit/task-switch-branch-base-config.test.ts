@@ -59,6 +59,13 @@ vi.mock('simple-git', () => {
   return { simpleGit: gitFactory, default: gitFactory };
 });
 
+// Path B carries uncommitted changes through gitAt (task-branch.ts), so the same
+// two mocks answer there.
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn((cwd: string) => (cwd === worktreeLocation.path ? mockWorktreeGit : mockProjectGit)),
+}));
+
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {

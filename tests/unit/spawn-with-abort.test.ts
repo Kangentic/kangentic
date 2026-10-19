@@ -5,7 +5,8 @@
  * prompt, which it achieves by handing git a copy of the environment with the
  * prompt-suppressing variables set (nonInteractiveGitEnv in fetch-throttle.ts).
  * That only works if the option actually reaches `child_process.spawn`, on
- * BOTH spawn shapes, and if its absence still means "inherit process.env".
+ * BOTH spawn shapes, and if its absence still means "process.env". Either way
+ * the child never gets Crashpad's pipe name (child-env.ts).
  *
  * `node:child_process` is mocked with a fake child that settles on `close`, so
  * no process is spawned.
@@ -27,6 +28,7 @@ vi.mock('../../src/main/pty/spawn/spawn-helper-permissions', () => ({
 }));
 
 import { spawnWithAbort } from '../../src/main/git/spawn-with-abort';
+import { setOffMainCliSpawner, type CliChildProcess, type OffMainCliOptions } from '../../src/main/utility-process/off-main-cli';
 
 type FakeChild = EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
 
@@ -87,15 +89,73 @@ describe('spawnWithAbort env option', () => {
     expect(spawnMock).toHaveBeenCalledWith('npm install', expect.objectContaining({ shell: true, env }));
   });
 
-  it('passes no env key at all when none is supplied, so the child inherits process.env', async () => {
-    const child = fakeChild();
-    spawnMock.mockReturnValue(child);
+  describe('Crashpad\'s pipe name', () => {
+    const pipeKey = 'CHROME_CRASHPAD_PIPE_NAME';
+    let savedHostValue: string | undefined;
 
-    const pending = spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000 });
-    child.emit('close', 0, null);
+    beforeEach(() => {
+      savedHostValue = process.env[pipeKey];
+      process.env[pipeKey] = '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP';
+      process.env.KANGENTIC_SPAWN_WITH_ABORT_PROBE = 'inherited';
+    });
 
-    await pending;
-    expect(spawnOptions()).not.toHaveProperty('env');
+    afterEach(() => {
+      if (savedHostValue === undefined) delete process.env[pipeKey];
+      else process.env[pipeKey] = savedHostValue;
+      delete process.env.KANGENTIC_SPAWN_WITH_ABORT_PROBE;
+      setOffMainCliSpawner(null);
+    });
+
+    it.each([
+      ['git', BINARY_TARGET],
+      ['the init script', SHELL_TARGET],
+    ])('hands %s main\'s environment without it when no env is supplied', async (_label, target) => {
+      const child = fakeChild();
+      spawnMock.mockReturnValue(child);
+
+      const pending = spawnWithAbort(target, { timeoutMs: 1_000 });
+      child.emit('close', 0, null);
+
+      await pending;
+      const env = spawnOptions().env as NodeJS.ProcessEnv;
+      expect(env.KANGENTIC_SPAWN_WITH_ABORT_PROBE).toBe('inherited');
+      expect(env[pipeKey]).toBeUndefined();
+      expect(process.env[pipeKey]).toBeDefined();
+    });
+
+    it('drops it from a supplied env', async () => {
+      const child = fakeChild();
+      spawnMock.mockReturnValue(child);
+
+      const pending = spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000, env: { PATH: '/usr/bin', [pipeKey]: 'supplied' } });
+      child.emit('close', 0, null);
+
+      await pending;
+      expect(spawnOptions().env).toEqual({ PATH: '/usr/bin' });
+    });
+
+    it('never ships it to the pty host', async () => {
+      const shipped: OffMainCliOptions[] = [];
+      setOffMainCliSpawner((_command, _args, options) => {
+        shipped.push(options);
+        const remote = Object.assign(fakeChild(), {
+          exitCode: null,
+          signalCode: null,
+          stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+          kill: () => true,
+        });
+        Object.assign(remote.stdout, { resume: () => undefined });
+        Object.assign(remote.stderr, { resume: () => undefined });
+        queueMicrotask(() => remote.emit('close', 0, null));
+        return remote as unknown as CliChildProcess;
+      });
+
+      await spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000 });
+      expect(shipped).toHaveLength(1);
+      expect(shipped[0].env.KANGENTIC_SPAWN_WITH_ABORT_PROBE).toBe('inherited');
+      expect(shipped[0].env[pipeKey]).toBeUndefined();
+      expect(spawnMock).not.toHaveBeenCalled();
+    });
   });
 });
 

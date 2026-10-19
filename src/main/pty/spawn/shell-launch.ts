@@ -86,7 +86,9 @@ export function findExecutableSpawnHelper(): string | null {
  * Everywhere else, and on macOS with no executable helper, the launch is
  * exactly what the caller would have written: a command string with
  * `shell: true` (an empty args array raises no DEP0190), or the file and args
- * unchanged.
+ * unchanged. Windows leaks the handler through an environment variable
+ * instead, which the caller's env handles: see `childProcessEnv` in
+ * `shared/child-env.ts`.
  */
 export function resolveShellLaunch(
   target: ShellLaunchTarget,

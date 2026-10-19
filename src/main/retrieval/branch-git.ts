@@ -1,14 +1,18 @@
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
+import { execFileAsync } from '../utility-process/off-main-exec';
 
 /**
  * Reading a project's default branch for the index: its head, its tree and
  * its file contents, as committed (never the working copy, which may hold
  * another branch or unfinished work). Every call is a child process, so git's
  * work never runs on main's thread.
+ *
+ * The retrieval worker reads all of it, and main reads the head and the tree
+ * for the Index card's branch sizes (`code/code-status.ts`). `execFileAsync`
+ * starts main's git in the pty host, where the spawn's CreateProcess cannot
+ * hold main; the worker has no host registered, so its git starts locally as
+ * before.
  */
-
-const execFileAsync = promisify(execFile);
 
 export interface BranchHead {
   /** The ref read, short: `origin/main`, `main`, `origin/master` (the remote's

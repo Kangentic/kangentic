@@ -78,6 +78,7 @@ export interface GitClient {
   diffSummary(options: string[]): Promise<GitDiffSummary>;
   show(options: string[]): Promise<string>;
   checkout(ref: string): Promise<string>;
+  merge(options: string[]): Promise<string>;
 }
 
 /** What `execFileAsync` rejects with: promisify's Error, or the host's copy of it. */
@@ -259,6 +260,10 @@ class OffMainGitClient implements GitClient {
 
   checkout(ref: string): Promise<string> {
     return this.raw(['checkout', ref]);
+  }
+
+  merge(options: string[]): Promise<string> {
+    return this.raw(['merge', ...options]);
   }
 }
 
