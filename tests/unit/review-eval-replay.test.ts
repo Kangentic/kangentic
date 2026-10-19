@@ -2,13 +2,14 @@
  * Pins the E4 verdict replay in scripts/review-eval/run-verdict-replay.mjs:
  *
  * 1. reportForPass turns each historical item into the finding the real verdict function accepts:
- *    every `mappedTo` value lands in the right status, an unrecognized severity reads as low, and
- *    the macOS reroute fires on mac, macOS and darwin but not on a word that merely starts with
+ *    every `mappedTo` value lands in the right status (a `followUp` item as blocked, with a step),
+ *    the report carries no followUps or followUpTask key, an unrecognized severity reads as low,
+ *    and the macOS reroute fires on mac, macOS and darwin but not on a word that merely starts with
  *    "mac".
  * 2. replay counts the bounces a pass avoided, which passes stay blocked, the old-Clean passes that
  *    would now block, and the same counts per level, over a small inline corpus.
  * 3. replay over the committed verdict-replay.json returns the exact numbers
- *    docs/code-review-fanout-audit.md section 15.2 cites, so that claim stays reproducible.
+ *    docs/code-review-fanout-audit.md section 17 cites, so that claim stays reproducible.
  *
  * Never import scripts/review-eval/prepare.mjs from a test: its top-level code runs git and exits.
  */
@@ -16,6 +17,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { replay, reportForPass } from '../../scripts/review-eval/run-verdict-replay.mjs';
+import { validateFindings } from '../../scripts/review-verdict.mjs';
 
 interface ReplayItem {
   ref?: string;
@@ -39,6 +41,7 @@ interface ReplayFinding {
   id: number;
   severity: string;
   status: string;
+  mechanism?: string;
   reason?: string;
   step?: string;
   decision?: { chosen: string; alternative: string };
@@ -47,8 +50,6 @@ interface ReplayFinding {
 interface ReplayReport {
   checks: { typecheck: string; hmrVitest: string; scopedTests: string };
   findings: ReplayFinding[];
-  followUps: Array<{ title: string; location: string; why: string }>;
-  followUpTask?: string;
 }
 
 function singleItemPass(item: ReplayItem): ReplayPass {
@@ -56,7 +57,7 @@ function singleItemPass(item: ReplayItem): ReplayPass {
 }
 
 describe('reportForPass', () => {
-  it('maps every mappedTo value to its finding status or a follow-up', () => {
+  it('maps every mappedTo value to its finding status, a follow-up to blocked', () => {
     const pass: ReplayPass = {
       task: 'T1',
       pass: 1,
@@ -67,7 +68,7 @@ describe('reportForPass', () => {
         { ref: 'finding 2', severity: 'Low', skipReason: 'not a defect', mappedTo: 'refuted', why: 'the caller already guards it' },
         { ref: 'finding 3', severity: 'Medium', skipReason: 'needs a person to run it', mappedTo: 'blocked', why: 'run it on the shared runner' },
         { ref: 'finding 4', severity: 'Medium', skipReason: 'two valid designs', mappedTo: 'decision', why: 'decision: pick one' },
-        { ref: 'finding 5', severity: 'Low', skipReason: 'out of scope for this change', mappedTo: 'followUp' },
+        { ref: 'finding 5', severity: 'Low', skipReason: 'out of scope for this change', mappedTo: 'followUp', why: 'spans several files' },
       ],
     };
 
@@ -78,23 +79,38 @@ describe('reportForPass', () => {
       [2, 'refuted'],
       [3, 'blocked'],
       [4, 'fixed'],
+      [5, 'blocked'],
     ]);
     expect(report.findings[1].reason).toBe('the caller already guards it');
     expect(report.findings[2].reason).toBe('needs a person to run it');
     expect(report.findings[2].step).toBe('run it on the shared runner');
     expect(report.findings[3].decision).toEqual({ chosen: 'the recommended option', alternative: 'the other option' });
     expect(report.findings[0].decision).toBeUndefined();
-    expect(report.followUps).toEqual([
-      { title: 'finding 5', location: 'finding 5', why: 'out of scope for this change' },
-    ]);
-    expect(report.followUpTask).toBe('replay');
+    expect(report.findings[4].reason).toBe('out of scope for this change');
+    expect(report.findings[4].step).toBe('do this out-of-diff item in this task: spans several files');
   });
 
-  it('records no followUpTask when a pass raised no follow-up', () => {
-    const report: ReplayReport = reportForPass(singleItemPass({ ref: 'finding 1', severity: 'Low', skipReason: 'done', mappedTo: 'fixed' }));
+  it('never carries the retired followUps or followUpTask key, with or without a follow-up item', () => {
+    const withFollowUp: ReplayReport = reportForPass(singleItemPass({ ref: 'finding 1', severity: 'Low', skipReason: 'outside the diff', mappedTo: 'followUp' }));
+    const withoutFollowUp: ReplayReport = reportForPass(singleItemPass({ ref: 'finding 1', severity: 'Low', skipReason: 'done', mappedTo: 'fixed' }));
 
-    expect(report.followUps).toEqual([]);
-    expect('followUpTask' in report).toBe(false);
+    for (const report of [withFollowUp, withoutFollowUp]) {
+      expect('followUps' in report).toBe(false);
+      expect('followUpTask' in report).toBe(false);
+    }
+    expect(withFollowUp.findings[0].step).toBe('do this out-of-diff item in this task: finding 1');
+  });
+
+  it('falls back to the follow-up defaults when a follow-up item has no skipReason or why', () => {
+    // No skipReason key at all: the reason fallback ('outside the diff') and the mechanism fallback
+    // ('historical skip') are different strings, so dropping or swapping either one fails here.
+    const report: ReplayReport = reportForPass(singleItemPass({ ref: 'finding 1', severity: 'Low', mappedTo: 'followUp' }));
+
+    expect(report.findings[0].status).toBe('blocked');
+    expect(report.findings[0].reason).toBe('outside the diff');
+    expect(report.findings[0].mechanism).toBe('historical skip');
+    expect(report.findings[0].step).toBe('do this out-of-diff item in this task: finding 1');
+    expect(validateFindings(report)).toEqual([]);
   });
 
   it.each([
@@ -162,7 +178,7 @@ describe('reportForPass', () => {
 
 describe('replay over an inline corpus', () => {
   const passes: ReplayPass[] = [
-    // Needs revision then, Ready now: fixed, refuted, decision and follow-up items never block.
+    // Needs revision then, Ready now: fixed, refuted and decision items never block.
     {
       task: 'T1',
       pass: 1,
@@ -171,8 +187,7 @@ describe('replay over an inline corpus', () => {
       items: [
         { ref: 'finding 1', severity: 'High', skipReason: 'fixed in place', mappedTo: 'fixed' },
         { ref: 'finding 2', severity: 'n/a', skipReason: 'not a defect', mappedTo: 'refuted', why: 'the caller already guards it' },
-        { ref: 'finding 3', severity: 'Medium', skipReason: 'two valid designs', mappedTo: 'decision', why: 'decision: pick one' },
-        { ref: 'finding 4', severity: 'Low, coverage', skipReason: 'out of scope for this change', mappedTo: 'followUp' },
+        { ref: 'finding 3', severity: 'Low, coverage', skipReason: 'two valid designs', mappedTo: 'decision', why: 'decision: pick one' },
       ],
     },
     // Needs revision then, still Blocked now: a blocked item that does not name macOS.
@@ -199,13 +214,14 @@ describe('replay over an inline corpus', () => {
       oldVerdict: 'Needs revision',
       items: [{ ref: 'finding 1', severity: 'Low', skipReason: 'needs a person', mappedTo: 'blocked', why: 'a person must decide' }],
     },
-    // Clean then, Blocked now: counted in oldCleanNowBlocked, never in the Needs revision totals.
+    // Clean then, Blocked now: its out-of-diff item reaches the task agent as a step instead of a
+    // follow-up task. Counted in oldCleanNowBlocked, never in the Needs revision totals.
     {
       task: 'T5',
       pass: 1,
       level: 'verdict-line',
       oldVerdict: 'Clean',
-      items: [{ ref: 'finding 1', severity: 'Low', skipReason: 'needs a person', mappedTo: 'blocked', why: 'a person must decide' }],
+      items: [{ ref: 'finding 1', severity: 'Low', skipReason: 'outside the diff', mappedTo: 'followUp', why: 'spans several files' }],
     },
     // Clean then, Ready now.
     {
@@ -276,16 +292,25 @@ describe('replay over the committed verdict-replay.json', () => {
   const corpusPath = path.resolve(__dirname, '../../scripts/review-eval/verdict-replay.json');
   const corpus: { passes: ReplayPass[] } = JSON.parse(fs.readFileSync(corpusPath, 'utf8'));
 
-  it('validates every pass and returns the numbers docs section 15.2 cites', () => {
+  it('validates every pass and returns the numbers docs section 17 cites', () => {
     const result = replay(corpus.passes);
 
     expect(result.passes).toBe(59);
     expect(result.oldNeedsRevision).toBe(41);
-    expect(result.bouncesAvoided).toBe(35);
-    expect(result.stillBlocked).toEqual(['task 736 1', 'task 736 4', 'task 736 5', 'task 749 1', 'task 749 2', 'task 758 1']);
-    expect(result.oldCleanNowBlocked).toBe(0);
+    expect(result.bouncesAvoided).toBe(34);
+    expect(result.stillBlocked).toEqual([
+      'task 736 1',
+      'task 736 4',
+      'task 736 5',
+      'task 749 1',
+      'task 749 2',
+      'task 749 4',
+      'task 758 1',
+    ]);
+    // Task 741 pass 2 and task 751 pass 1 ended Clean and each carried a follow-up item.
+    expect(result.oldCleanNowBlocked).toBe(2);
     expect(result.byLevel).toEqual([
-      { level: 'item', oldNeedsRevision: 18, bouncesAvoided: 13 },
+      { level: 'item', oldNeedsRevision: 18, bouncesAvoided: 12 },
       { level: 'verdict-line', oldNeedsRevision: 23, bouncesAvoided: 22 },
     ]);
   });
@@ -293,9 +318,9 @@ describe('replay over the committed verdict-replay.json', () => {
   it('counts the three macOS-only skips as runnable with macosRunnable', () => {
     const result = replay(corpus.passes, { macosRunnable: true });
 
-    expect(result.bouncesAvoided).toBe(38);
-    expect(result.stillBlocked).toEqual(['task 749 1', 'task 749 2', 'task 758 1']);
+    expect(result.bouncesAvoided).toBe(37);
+    expect(result.stillBlocked).toEqual(['task 749 1', 'task 749 2', 'task 749 4', 'task 758 1']);
     const levelBounces = result.byLevel.reduce((total: number, level: { bouncesAvoided: number }) => total + level.bouncesAvoided, 0);
-    expect(levelBounces).toBe(38);
+    expect(levelBounces).toBe(37);
   });
 });

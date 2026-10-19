@@ -920,6 +920,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 840, pre-PR | 111f +2999 -1096 plus 18 new files, all uncommitted | 612KB, 10068 lines | 19 (3) | 110 | 0 | 17: 7 correctness shards from `--shard-lines 1500`, 5 universal finders (performance, maintainability, conventions, coverage, integration on the delta), 5 gated auditors (ipc-auditor, hmr-parity, platform-guard, session-debugger, migration-safety); one wave, no queue | about 50 of 16 pack-carrying, mostly greps: session-debugger 7 ranges (the exit handler, suspend, the spawn sites), shard 7 six, platform-guard six, ipc-auditor five, shard 3 eight with greps, coverage test files only; 4 finders told to read the whole pack read only part of it (performance, hmr-parity, migration-safety, session-debugger) | 44 raised, 46 recorded with 2 found in verification / 30 fixed (3 by decision, 6 quick), 9 refuted, 1 blocked (no captured Qwen or Copilot hook payload), 1 follow-up; 189 cases (184 unit in 14 new files, 5 UI in 1 new spec) from 4 parallel test-builder batches, each shown red by a toggle of its production line. Shard 4 and session-debugger both found the gate dropping a plan prompt's idle on the marker alone, which the CLI can refuse; only session-debugger found a held idle released after the session ended. The driver's neutral summary wrongly said Copilot and Qwen register the plan approval hook, and the integration finder caught it. An inline node script's `$1` was expanded by the shell and blanked the Qwen hook keys mid-pass; the driver restored them from the diff. Nearly every fix landed on an already-dirty path, so only adapter-lifecycle.ts, the demo seed, the new tests and this row committed |
 | task 840, second pass | 151f +9179 -1102, all committed | 824KB, 14071 lines | 12 (2) | 139 | 0 | 21: 11 correctness shards from `--shard-lines 1500` (the last 77 lines), 5 universal finders (performance, maintainability, conventions, coverage, integration on the delta), 5 gated auditors (ipc-auditor, hmr-parity, platform-guard, session-debugger, migration-safety); 20 in the first wave, shard 11 from the queue. The since-review pack equalled the full pack, because the first pass's commits sit on the merge base and the task's own work was committed after them | about 70 of 20 pack-carrying, plus greps: shard 4 nine, shard 9 nine, session-debugger 8 ranges, ipc-auditor 9, shard 3 seven, shards 1 and 8 five each, migration-safety 4, coverage 4 test files, the rest 2 to 4 or greps only; hmr-parity read only the renderer sections and session-debugger lines 1-5000 plus ranges; platform-guard hit the Read token cap twice and fell back to 500-line reads; the integration finder grepped only | 63 raised, 59 recorded plus 2 follow-ups, with 1 found by test-builder / 34 fixed (1 by decision, 7 quick), 24 refuted, 1 blocked (live Qwen hook captures for `is_interrupt` and `agent_id`); about 67 cases across 4 parallel test-builder batches, 3 of them UI, each shown red by a toggle or a mutant probe except a stale-revision pre-check whose run a permission check denied. Only session-debugger found the queued session whose placeholder names no agent, so the writer never approved it; shard 5 raised the same frozen capability with no live trigger. Only a test-builder batch found the three register-all unit files red on the task's own commit, the real writer meeting a fake SessionManager. The driver's fix for the gate's ended mark broke two tests the first pass wrote, and was reverted and refuted: the flushed idle lands after session_end either way. Nothing was dirty when the pass began, so every path committed |
 | task 840, third pass | 171f +10819 -1100 committed, 14f +293 -34 uncommitted, 4 new files | 987KB, 16221 lines; since-review 270KB, 3949 lines | 11 (1); since-review 13 (8) | 166; since-review 52 | 0 | 19: 12 correctness shards from `--shard-lines 1500` on the full pack, 5 universal finders on the since-review pack (performance, maintainability, conventions, coverage, integration on the delta), 2 gated auditors on the since-review files (ipc-auditor, platform-guard); hmr-parity, session-debugger and migration-safety gated off; one wave, no queue | about 31 of 18 pack-carrying, mostly greps: ipc-auditor 6 ranges, shard 4 four, shards 1, 7 and 10 two or three each, the rest one, two or greps only; performance none; platform-guard hit the Read token cap on one range; the integration finder grepped and read narrow ranges | 16 raised, 16 recorded / 8 fixed (2 quick), 8 refuted, 0 blocked, no follow-up; 6 unit cases and 1 UI case from 3 parallel test-builder batches, each shown red by a toggle of its production line. Shard 1 answered shard 5's stale decision file on its own: every spawn mints a fresh session directory. Only conventions found that Copilot's settings reader swallowed a read failure other than a missing file. Coverage found neither status line's new quoting pinned, and test-builder found the backslash branch unreachable through either builder, since both convert to forward slashes first. Platform-guard's Windows concern about the `sh -c` test was refuted by running it here. Three findings repeated an earlier ledger line or a documented design. The fixes to the Copilot hook manager, `hook-utils.ts` and the integration doc landed on already-dirty paths |
+| task 846, pre-PR | 8f +197 -128, all uncommitted | 118KB, 1424 lines | 6 (4) | 2 | 0 | 6: 1 correctness shard from `--shard-lines 1500` (1412 lines), 4 universal finders (performance, maintainability, conventions, coverage), integration on the delta; no gated auditor matched; one wave, no queue | 3 of 5 pack-carrying, plus greps: the correctness shard 1 (the `validateFindings` gap), maintainability 1 (a `SKILL.md` gap), conventions 1 (the skill-authoring rule), performance and coverage none; the integration finder read 2 narrow ranges (audit section 15.6 and the skill's blocked bullet) | 5 raised, 5 recorded / 4 fixed (1 by decision, 2 quick), 1 refuted, 0 blocked; 1 unit case in 1 existing file from 1 test-builder batch, shown red by dropping the fallback it pins. Only the integration finder caught that the skill said Back for revisions hands the task agent only the steps, when `kangentic.json` sends the whole reply after the instruction, and that section 15.6 still stated the retired rule. Every fix landed on an already-dirty path, so the pass committed only an empty ledger commit |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1547,7 +1548,8 @@ mapped by the pre-registered rule and run through the real verdict function
 No pass whose old report did not say Needs revision becomes Blocked. The six still Blocked: task 736 passes 1, 4 and 5
 (each needs a Mac to verify a reader change), and task 749 passes 1 and 2 and task 758 pass 1 (each
 needs a live CLI reply captured). The replay is counterfactual: fixing a skip can raise new
-findings. E3 (15.5) tested a delta round built to catch them, and it caught none.
+findings. E3 (15.5) tested a delta round built to catch them, and it caught none. Section 17
+replays the same passes with follow-up items counted as blocked, which changes these counts.
 
 ### 15.3 E1: correctness lane
 
@@ -1654,7 +1656,8 @@ a fix touched.
   it in the dogfood record.
 - **Step 7 runs the existing tests a fix could break,** scoped: the unit test files that import a
   touched module, or only those named after it when more than five do. A file that also fails with
-  the fix reverted was already broken and becomes a follow-up, not a Blocked verdict.
+  the fix reverted was already broken and becomes a follow-up, not a Blocked verdict. Section 17
+  replaced that rule. Such a file is now fixed in the pass or becomes a blocked step.
 - **Read calls of at most 1000 lines.** Several Phase 0 finders hit the `Read` tool's 25k-token cap
   on 2000-line calls over dense packs.
 - **Not shipped:** the precision bar and its bundle (15.4), and the delta loop (15.5).
@@ -1809,3 +1812,78 @@ Caveats:
 - E6's plants are single mechanical gaps in a small diff; an auditor in a real review sees more.
   Two runs per model.
 - The ipc-auditor prompt named the two edited namespaces, as a review pack's hunks would.
+
+## 17. Out-of-diff items go back to Executing, not to a follow-up task (2026-10-19)
+
+A pass used to put a verified item it could not fix in place into `followUps` and file one grouped
+To Do task per pass ("Follow-ups from code review: <title>"). The Executing column's Apply findings
+message already told the task agent to apply findings "here in this task, not as follow-up tasks",
+so the review was the last path still filing them. Task 846 retired the field.
+
+### 17.1 Evidence
+
+- 25 "Follow-ups from code review" tasks were filed from 2026-10-07 to 2026-10-19. Three are
+  follow-ups of follow-ups (tasks 783, 789 and 801), because a review of a follow-up task files its
+  own. One parent task spawned four (tasks 782, 784, 785 and 786), one per pass.
+- Task 840 went from Code Review back to Executing twice and left tasks 843 and 845 behind. Its
+  second pass (`af4193eb8`) ended Blocked and still filed task 845, so the card went to Executing
+  while its out-of-diff items went to To Do.
+- Neither task needed a person. Task 843 is a mock fix whose only open check is the UI tier, which
+  `/pull-request` runs on CI in Testing. Task 845's first item is an escaping helper and a unit
+  test.
+
+### 17.2 What changed
+
+- A verified item ends fixed in the pass or as a non-quick `blocked` finding with a `step`. An
+  out-of-diff item the pass understands is fixed there, with a decision when it has more than one
+  valid design. A fix whose only unrun check is an unscoped test tier counts as fixed, because
+  `/pull-request` runs that tier on CI behind the pass.
+- `blocked` is the only route to the task agent. "Back for revisions" sends "Do the numbered steps
+  above its verdict", and that block lists only what `computeVerdict` counts as a blocker.
+  `followUps` never reached `computeVerdict`, so rewording the skill alone would still have ended
+  `Verdict: Ready` and sent the items nowhere.
+- `scripts/review-verdict.mjs` refuses a `followUps` key, even an empty one, and a `followUpTask`
+  key, with a message that says where the items go instead. A driver on stale instructions fails
+  at the script rather than filing a task. `kangentic_create_task` is out of the skill's
+  `allowed-tools`, but that only drops its pre-approval. The root `.claude/settings.json` allows
+  every `mcp__kangentic` tool, which task agents need, so a review session can still call it. The
+  script refusal and the skill's rule are what stop a pass from filing a task. A deny rule written
+  into the Code Review column's per-session settings would close that, and was left out of this
+  change because it is a board feature, not a skill edit.
+- A test file that already fails on the base is fixed in the pass or becomes a step to fix it in
+  this task. This replaces the 15.6 rule that made it a follow-up.
+- Not chosen: keep `followUps` and have `computeVerdict` count each one as a blocker. That leaves
+  two fields with one meaning.
+
+### 17.3 Replay
+
+`run-verdict-replay.mjs` now replays an item mapped `followUp` as a blocked finding. The mapping in
+`verdict-replay.json` is unchanged. Four of the 59 passes carried one, and task 749 pass 2 was
+already Blocked for a live CLI capture.
+
+| Reading | Ready (of 59) | Bounces avoided (of 41) | Still Blocked | Old Clean now Blocked |
+|---|---|---|---|---|
+| As mapped, follow-ups not blocking (15.2) | 53 | 35 | 6 | 0 |
+| As mapped, follow-ups blocked | 50 | 34 | 7 (adds task 749 pass 4) | 2 (task 741 pass 2, task 751 pass 1) |
+| macOS-only checks runnable, follow-ups not blocking | 56 | 38 | 3 | 0 |
+| macOS-only checks runnable, follow-ups blocked | 53 | 37 | 4 | 2 |
+
+This replaces 15.2's statement that no pass that did not say Needs revision becomes Blocked: two
+passes that ended Clean now do. The corpus predates the follow-up habit, so the live cost is
+higher. It is up to 25 extra Executing rounds over 2026-10-07 to 2026-10-19, less the passes that
+were already Blocked, such as task 840's second. Fixing more out-of-diff items in the pass is what
+keeps that number down.
+
+### 17.4 Loop termination
+
+"Back for revisions" stays at `maxRuns: 3`. A fourth Blocked leaves the card in Code Review with
+its verdict and steps showing, which is where a person should step in. Two cases will reach the cap
+more often now: a step the task agent cannot do either, such as task 840's live Qwen captures, and
+a test file that already fails on the base. The task agent says so in its turn, and the card stops
+at the cap waiting on a person instead of on a To Do task nobody watches. Raising the cap waits
+until the dogfood record shows passes hitting it.
+
+No ledger line records a step. A step the task agent finished is gone from the code, and one it did
+not finish should be raised again. That depends on a later finder seeing it, and neither the full
+pack nor the since-review pack carries out-of-diff code nobody touched. So a step the task agent
+skipped without saying so can end in a Ready pass. The task agent's own turn is the record.

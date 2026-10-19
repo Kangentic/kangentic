@@ -16,10 +16,13 @@ import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 const MACOS_PATTERN = /\bmac(os)?\b|\bdarwin\b/i;
 
-/** One historical pass as a findings report: every mapped item becomes a finding or a follow-up. */
+/**
+ * One historical pass as a findings report: every mapped item becomes a finding. A `followUp` item
+ * keeps its pre-registered mapping in verdict-replay.json but replays as a blocked finding, because
+ * a pass no longer files follow-up tasks and hands the task agent a step instead (audit section 17).
+ */
 export function reportForPass(pass, { macosRunnable = false } = {}) {
   const findings = [];
-  const followUps = [];
   (pass.items || []).forEach((item, itemIndex) => {
     let mapped = item.mappedTo;
     if (mapped === 'blocked' && macosRunnable && MACOS_PATTERN.test(item.skipReason || '')) mapped = 'fixed';
@@ -35,7 +38,12 @@ export function reportForPass(pass, { macosRunnable = false } = {}) {
       mechanism: item.skipReason || 'historical skip',
     };
     if (mapped === 'followUp') {
-      followUps.push({ title: base.location, location: base.location, why: base.mechanism });
+      findings.push({
+        ...base,
+        status: 'blocked',
+        reason: item.skipReason || 'outside the diff',
+        step: `do this out-of-diff item in this task: ${item.why || base.location}`,
+      });
     } else if (mapped === 'blocked') {
       findings.push({ ...base, status: 'blocked', reason: item.skipReason || 'blocked', step: item.why || 'needs a person' });
     } else if (mapped === 'refuted') {
@@ -47,12 +55,7 @@ export function reportForPass(pass, { macosRunnable = false } = {}) {
     }
   });
   const failed = pass.checkFailed === true ? 'fail' : 'pass';
-  return {
-    checks: { typecheck: failed, hmrVitest: 'pass', scopedTests: 'pass' },
-    findings,
-    followUps,
-    ...(followUps.length > 0 ? { followUpTask: 'replay' } : {}),
-  };
+  return { checks: { typecheck: failed, hmrVitest: 'pass', scopedTests: 'pass' }, findings };
 }
 
 export function replay(passes, options = {}) {

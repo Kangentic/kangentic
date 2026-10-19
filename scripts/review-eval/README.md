@@ -89,7 +89,9 @@ glob in another session once removed a temp folder that session had not created.
     generate is NOT blocked, because the pass can run it.
   - `fixed` with a decision: the skip waits on a human call (a design or product choice, a
     trade-off, UX copy, a policy).
-  - follow-up: the skip is outside the diff AND needs its own design (more than one site).
+  - follow-up: the skip is outside the diff AND needs its own design (more than one site). Since
+    2026-10-19 the runner replays this category as `blocked`, because a pass no longer files a
+    follow-up task (audit section 17).
   - `refuted`: the skip says no change is needed (deliberate, documented, informational).
   - `fixed`: everything else that names a concrete change (optional, style, a small refactor, a
     comment, a coverage hole in any tier, a one-site out-of-diff fix).

@@ -8,7 +8,8 @@
     "Task 752 pass 1 'real image sample': docs/code-review-fanout-audit.md section 14.5 says a later follow-up in the same session produced a sanitized real image tool result, so the session could get it. Mapped fixed.",
     "Verdict-line pass numbers are the order the passes appear in the verdict-tally file, counting excluded passes.",
     "Task 765 session d42739e9 appears twice in the verdict-tally file with identical text; it is counted once.",
-    "checkFailed is false for every pass: no report states a failed typecheck or HMR vitest at the end of the pass."
+    "checkFailed is false for every pass: no report states a failed typecheck or HMR vitest at the end of the pass.",
+    "mappedTo followUp is the pre-registered classification and stays. From 2026-10-19 the runner replays a followUp item as a blocked finding, because a pass files no follow-up task and hands the task agent a step instead (docs/code-review-fanout-audit.md section 17)."
   ],
   "excluded": [
     { "task": "735", "session": "6b90bcf7", "why": "no final report" },
