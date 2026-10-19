@@ -14,7 +14,7 @@
  * adapter and assert on the exit code and the wall clock.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import { runScriptAdapter } from '../../src/main/automations/adapters/run-script';
 import { resolveScriptInvocation } from '../../src/main/pty/spawn/script-invocation';
@@ -106,6 +106,47 @@ describe('run_script', () => {
       : '[ "$KANGENTIC_TO_COLUMN" = "Executing" ] || exit 9';
     const result = await runScriptAdapter.execute({ script: probe, timeoutMinutes: 1 }, makeContext());
     expect(result.detail).toBe('exit 0');
+  });
+
+  describe('the script\'s environment and Crashpad\'s pipe name', () => {
+    // Chromium's Crashpad puts its handler's pipe name in main's environment on
+    // Windows (child-env.ts). A script can start an Electron program, which
+    // would register with our crash handler through it, so the adapter hands the
+    // child `childProcessEnv(...)`, not main's environment as it is.
+    //
+    // The script is the probe: it runs in a real child and exits with a distinct
+    // code per check, so a failure reads "Script exited with code 7." and never
+    // prints an environment, which holds a developer's secrets.
+    const PIPE_KEY = 'CHROME_CRASHPAD_PIPE_NAME';
+    const PROBE_KEY = 'KANGENTIC_RUN_SCRIPT_ENV_PROBE';
+    const savedValues = new Map<string, string | undefined>();
+
+    beforeEach(() => {
+      for (const key of [PIPE_KEY, PROBE_KEY]) savedValues.set(key, process.env[key]);
+      process.env[PIPE_KEY] = '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP';
+      process.env[PROBE_KEY] = 'present';
+    });
+
+    afterEach(() => {
+      for (const [key, savedValue] of savedValues) {
+        if (savedValue === undefined) delete process.env[key];
+        else process.env[key] = savedValue;
+      }
+      savedValues.clear();
+    });
+
+    it('leaves out the pipe name, and keeps main\'s own variables and the template variables', async () => {
+      // 7: the pipe name reached the child. 8: main's environment did not (the
+      // positive control that an environment arrived at all). 9: the adapter's
+      // KANGENTIC_ variables did not.
+      const probe = process.platform === 'win32'
+        ? `if defined ${PIPE_KEY} (exit 7) else if not "%${PROBE_KEY}%"=="present" (exit 8) else if not "%KANGENTIC_TO_COLUMN%"=="Executing" (exit 9) else (exit 0)`
+        : `[ -z "\${${PIPE_KEY}+x}" ] || exit 7; [ "$${PROBE_KEY}" = present ] || exit 8; [ "$KANGENTIC_TO_COLUMN" = Executing ] || exit 9`;
+
+      const result = await runScriptAdapter.execute({ script: probe, timeoutMinutes: 1 }, makeContext());
+
+      expect(result.detail).toBe('exit 0');
+    });
   });
 });
 

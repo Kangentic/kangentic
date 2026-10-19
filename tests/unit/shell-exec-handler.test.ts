@@ -118,6 +118,28 @@ function invokeShellExec(command: string, cwd: string): { pid: number } {
   return handler(undefined, command, cwd) as { pid: number };
 }
 
+/** The options `spawn` was called with. `env` is the child's whole environment. */
+interface SpawnOptionsSeen {
+  cwd?: string;
+  env?: Record<string, string>;
+  shell?: boolean | string;
+  detached?: boolean;
+  stdio?: unknown;
+}
+
+/**
+ * The last `spawn` call, split into its three arguments. The options carry a
+ * copy of main's environment, so the tests below read single fields from them:
+ * a failed `toHaveBeenCalledWith(..., objectContaining(...))` on the options
+ * would print every variable on the machine (tokens included) into the log.
+ */
+function lastSpawnCall(): { file: string; args: string[]; options: SpawnOptionsSeen } {
+  const lastCall = spawnMock.mock.calls.at(-1) as unknown as [string, string[], SpawnOptionsSeen] | undefined;
+  if (!lastCall) throw new Error('spawn was never called');
+  const [file, args, options] = lastCall;
+  return { file, args, options };
+}
+
 describe('SHELL_EXEC IPC handler', () => {
   const originalPlatform = process.platform;
   // A real directory, because the handler checks the cwd exists.
@@ -143,13 +165,15 @@ describe('SHELL_EXEC IPC handler', () => {
 
     const result = invokeShellExec('npm run dev', projectDirectory);
 
-    expect(spawnMock).toHaveBeenCalledWith(
-      process.execPath,
-      ['', '/bin/sh', '-c', 'npm run dev'],
-      // `ignore` matters: the helper opens stdin's terminal, which a detached
-      // child would otherwise adopt as its controlling terminal.
-      expect.objectContaining({ cwd: projectDirectory, shell: false, detached: true, stdio: 'ignore' }),
-    );
+    const { file, args, options } = lastSpawnCall();
+    expect(file).toBe(process.execPath);
+    expect(args).toEqual(['', '/bin/sh', '-c', 'npm run dev']);
+    expect(options.cwd).toBe(projectDirectory);
+    expect(options.shell).toBe(false);
+    expect(options.detached).toBe(true);
+    // `ignore` matters: the helper opens stdin's terminal, which a detached
+    // child would otherwise adopt as its controlling terminal.
+    expect(options.stdio).toBe('ignore');
     // The helper execs in place, so this pid is the shell's.
     expect(result).toEqual({ pid: 4321 });
   });
@@ -160,11 +184,66 @@ describe('SHELL_EXEC IPC handler', () => {
 
     invokeShellExec('npm run dev', projectDirectory);
 
-    expect(spawnMock).toHaveBeenCalledWith(
-      'npm run dev',
-      [],
-      expect.objectContaining({ cwd: projectDirectory, shell: true, detached: true, stdio: 'ignore' }),
-    );
+    const { file, args, options } = lastSpawnCall();
+    expect(file).toBe('npm run dev');
+    expect(args).toEqual([]);
+    expect(options.cwd).toBe(projectDirectory);
+    expect(options.shell).toBe(true);
+    expect(options.detached).toBe(true);
+    expect(options.stdio).toBe('ignore');
     expect(helperCandidatesMock).not.toHaveBeenCalled();
+  });
+
+  describe('the shortcut\'s environment', () => {
+    // Chromium's Crashpad puts its handler's pipe name in main's environment on
+    // Windows (child-env.ts). A shortcut can start an Electron program, which
+    // would register with our crash handler through it. The handler passes
+    // `env: childProcessEnv()`; with no `env` key at all the child inherits
+    // main's environment whole, pipe name included, and only this assertion on
+    // the options the spawn received can tell.
+    const PIPE_KEY = 'CHROME_CRASHPAD_PIPE_NAME';
+    const PROBE_KEY = 'KANGENTIC_SHELL_EXEC_ENV_PROBE';
+    const savedValues = new Map<string, string | undefined>();
+
+    beforeEach(() => {
+      for (const key of [PIPE_KEY, PROBE_KEY]) savedValues.set(key, process.env[key]);
+      process.env[PIPE_KEY] = '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP';
+      process.env[PROBE_KEY] = 'present';
+    });
+
+    afterEach(() => {
+      for (const [key, savedValue] of savedValues) {
+        if (savedValue === undefined) delete process.env[key];
+        else process.env[key] = savedValue;
+      }
+      savedValues.clear();
+    });
+
+    it.each(['win32', 'linux', 'darwin'] as const)('hands the child main\'s environment without the pipe name on %s', (platform) => {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+
+      invokeShellExec('npm run dev', projectDirectory);
+
+      const { env } = lastSpawnCall().options;
+      // Positive controls: an environment did reach the spawn and it is main's
+      // own, so a missing pipe name is the strip's doing and not an empty env.
+      expect(env).toBeDefined();
+      expect(env![PROBE_KEY]).toBe('present');
+      expect(PIPE_KEY in env!).toBe(false);
+    });
+
+    it('strips the pipe name on the macOS spawn-helper route too', () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      helperCandidatesMock.mockReturnValue([process.execPath]);
+
+      invokeShellExec('npm run dev', projectDirectory);
+
+      const { file, options } = lastSpawnCall();
+      // The helper route was taken, so this is the other branch of the handler.
+      expect(file).toBe(process.execPath);
+      expect(options.env).toBeDefined();
+      expect(options.env![PROBE_KEY]).toBe('present');
+      expect(PIPE_KEY in options.env!).toBe(false);
+    });
   });
 });

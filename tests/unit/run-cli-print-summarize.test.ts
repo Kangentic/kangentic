@@ -502,30 +502,43 @@ describe('runCliPrintSummarize - env merge (#4)', () => {
       || Object.keys(spawnOptions.env).length > 2).toBe(true);
   });
 
-  it('uses process.env directly (no copy) when no env option is provided', async () => {
+  it('hands the spawn a copy of process.env without Crashpad\'s pipe name when no env option is provided', async () => {
+    const pipeKey = 'CHROME_CRASHPAD_PIPE_NAME';
+    const savedHostValue = process.env[pipeKey];
+    process.env[pipeKey] = '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP';
+    process.env.KANGENTIC_SUMMARIZE_ENV_PROBE = 'inherited';
     const child = makeFakeChild();
     mockSpawn.mockReturnValue(child);
 
-    const resultPromise = runCliPrintSummarize({
-      cliPath: '/usr/bin/fake',
-      args: [],
-      prompt: 'prompt',
-      cwd: '/tmp',
-      timeoutMs: 30_000,
-      // no env option
-    });
+    try {
+      const resultPromise = runCliPrintSummarize({
+        cliPath: '/usr/bin/fake',
+        args: [],
+        prompt: 'prompt',
+        cwd: '/tmp',
+        timeoutMs: 30_000,
+        // no env option
+      });
 
-    child.stdout.emit('data', Buffer.from('Build Something Better'));
-    child.emit('close', 0);
+      child.stdout.emit('data', Buffer.from('Build Something Better'));
+      child.emit('close', 0);
 
-    await resultPromise;
+      await resultPromise;
+    } finally {
+      if (savedHostValue === undefined) delete process.env[pipeKey];
+      else process.env[pipeKey] = savedHostValue;
+      delete process.env.KANGENTIC_SUMMARIZE_ENV_PROBE;
+    }
 
     const spawnCall = mockSpawn.mock.calls[0];
     const spawnOptions = spawnCall[2] as { env: Record<string, string | undefined> };
 
-    // When no env overlay is provided the production code passes process.env
-    // directly. Compared as a boolean so a failure never prints either env.
-    expect(spawnOptions.env === process.env).toBe(true);
+    // An agent run starts hooks and tools, so it gets main's environment as a
+    // copy without the pipe name (child-env.ts). Each check reads one key or a
+    // boolean, so a failure never prints an env.
+    expect(spawnOptions.env === process.env).toBe(false);
+    expect(spawnOptions.env.KANGENTIC_SUMMARIZE_ENV_PROBE).toBe('inherited');
+    expect(pipeKey in spawnOptions.env).toBe(false);
   });
 });
 

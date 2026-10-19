@@ -164,7 +164,9 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     const replacesWorker = this.forkedBefore;
     this.forkedBefore = true;
     // The worker inherits main's environment as it is now, and its commit and
-    // code sweeps run `git` from PATH. Startup extends PATH from the login
+    // code sweeps run `git` from PATH. That includes Crashpad's pipe name on
+    // Windows, on purpose: the worker reports its own crashes through it
+    // (shared/child-env.ts). Startup extends PATH from the login
     // shell (`restoreShellEnv`, macOS and Linux) before it creates the window,
     // and every call that forks comes after that.
     let child: UtilityProcess;

@@ -170,6 +170,19 @@ function setupExecFile(handler: (cmd: string, args: string[]) => void) {
   });
 }
 
+/**
+ * Every execFile call as `[file, args, cwd]`. The options also carry the
+ * child's env, which is main's whole environment (child-env.ts), so an
+ * assertion on the raw calls would print it when it fails.
+ */
+function execFileCalls(): Array<[string, string[], string | undefined]> {
+  return mockExecFile.mock.calls.map(([file, args, options]) => [
+    file as string,
+    args as string[],
+    (options as { cwd?: string } | undefined)?.cwd,
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -267,11 +280,8 @@ describe('cleanupStaleResources', () => {
     expect(sessionRepo.deleteByTaskId).toHaveBeenCalledWith('bbbb2222-0000-0000-0000-000000000000');
 
     // Directory removed via git worktree remove --force
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git',
-      ['worktree', 'remove', '--force', '/home/dev/my-project/.kangentic/worktrees/fix-login-bug-bbbb2222'],
-      { cwd: projectPath },
-      expect.any(Function),
+    expect(execFileCalls()).toContainEqual(
+      ['git', ['worktree', 'remove', '--force', '/home/dev/my-project/.kangentic/worktrees/fix-login-bug-bbbb2222'], projectPath],
     );
 
     // DB fields cleared. `pushed_branch` is absent on purpose: a remote fact
@@ -287,14 +297,10 @@ describe('cleanupStaleResources', () => {
     });
 
     // git worktree prune called once (catch-all for metadata)
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git', ['worktree', 'prune'], { cwd: projectPath }, expect.any(Function),
-    );
+    expect(execFileCalls()).toContainEqual(['git', ['worktree', 'prune'], projectPath]);
 
     // Branch deleted
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git', ['branch', '-D', 'fix-login-bug-bbbb2222'], { cwd: projectPath }, expect.any(Function),
-    );
+    expect(execFileCalls()).toContainEqual(['git', ['branch', '-D', 'fix-login-bug-bbbb2222'], projectPath]);
   });
 
   /**
@@ -387,9 +393,7 @@ describe('cleanupStaleResources', () => {
     expect(taskRepo.update).toHaveBeenCalledTimes(1);
     expect(taskRepo.update.mock.calls[0][0]).not.toHaveProperty('head_sha');
     // The checkout itself is still cleaned, branch included.
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git', ['branch', '-D', 'cut-the-release-cccc3333'], { cwd: projectPath }, expect.any(Function),
-    );
+    expect(execFileCalls()).toContainEqual(['git', ['branch', '-D', 'cut-the-release-cccc3333'], projectPath]);
   });
 
   // One case per column, so a predicate that dropped any one of them would read
@@ -628,9 +632,7 @@ describe('cleanupStaleResources', () => {
       sessionManager as never,
     );
 
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git', ['branch', '-D', 'moved-back-in-abab7777'], { cwd: projectPath }, expect.any(Function),
-    );
+    expect(execFileCalls()).toContainEqual(['git', ['branch', '-D', 'moved-back-in-abab7777'], projectPath]);
     expect(taskRepo.update).toHaveBeenCalledWith(expect.objectContaining({
       id: 'abab7777-0000-0000-0000-000000000000',
       worktree_path: null,
@@ -783,20 +785,13 @@ describe('cleanupStaleResources', () => {
     );
 
     // Directory removed via git worktree remove --force
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git',
-      ['worktree', 'remove', '--force', expectedPath],
-      { cwd: projectPath },
-      expect.any(Function),
-    );
+    expect(execFileCalls()).toContainEqual(['git', ['worktree', 'remove', '--force', expectedPath], projectPath]);
 
     // Session records still cleaned (defensive)
     expect(sessionRepo.deleteByTaskId).toHaveBeenCalledWith('cccc3333-0000-0000-0000-000000000000');
 
     // Branch deleted
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git', ['branch', '-D', 'add-dark-mode-cccc3333'], { cwd: projectPath }, expect.any(Function),
-    );
+    expect(execFileCalls()).toContainEqual(['git', ['branch', '-D', 'add-dark-mode-cccc3333'], projectPath]);
 
     // DB update NOT called (no stale DB fields to clear)
     expect(taskRepo.update).not.toHaveBeenCalled();
@@ -836,19 +831,10 @@ describe('cleanupStaleResources', () => {
       sessionManager as never,
     );
 
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git',
-      ['worktree', 'remove', '--force', numericPath],
-      { cwd: projectPath },
-      expect.any(Function),
-    );
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git', ['branch', '-D', 'add-dark-mode-eeee5555'], { cwd: projectPath }, expect.any(Function),
-    );
+    expect(execFileCalls()).toContainEqual(['git', ['worktree', 'remove', '--force', numericPath], projectPath]);
+    expect(execFileCalls()).toContainEqual(['git', ['branch', '-D', 'add-dark-mode-eeee5555'], projectPath]);
     // Never the folder name.
-    expect(mockExecFile).not.toHaveBeenCalledWith(
-      'git', ['branch', '-D', '460'], { cwd: projectPath }, expect.any(Function),
-    );
+    expect(execFileCalls()).not.toContainEqual(['git', ['branch', '-D', '460'], projectPath]);
   });
 
   it('handles session removal failure gracefully', async () => {
@@ -933,12 +919,7 @@ describe('cleanupStaleResources', () => {
     );
 
     // git worktree remove --force attempted
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'git',
-      ['worktree', 'remove', '--force', worktreePath],
-      { cwd: projectPath },
-      expect.any(Function),
-    );
+    expect(execFileCalls()).toContainEqual(['git', ['worktree', 'remove', '--force', worktreePath], projectPath]);
     // Async rm fallback
     expect(mockRm).toHaveBeenCalledWith(worktreePath, expect.objectContaining({ recursive: true, force: true }));
   });

@@ -14,7 +14,7 @@
  */
 
 import { isDeepStrictEqual } from 'node:util';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockRunGitWithTimeout, mockIsGitTimeoutError } = vi.hoisted(() => ({
   mockRunGitWithTimeout: vi.fn(),
@@ -275,6 +275,60 @@ describe('fetchIfStale nonInteractive', () => {
     const options = lastGitRunOptions();
     expect(options.signal).toBe(controller.signal);
     expect(promptVariables(options.env)).toEqual({ GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
+  });
+});
+
+describe('nonInteractiveGitEnv and Crashpad\'s pipe name', () => {
+  // Chromium's Crashpad puts its handler's pipe name in main's environment on
+  // Windows (child-env.ts). Git runs credential helpers and askpass programs,
+  // any of which can start an Electron program that would register with our
+  // crash handler through it, so the background fetch's env never carries it. The comparison in 'runs the fetch with nonInteractiveGitEnv()
+  // as its env' above checks the helper against itself, so it cannot see this.
+  //
+  // The env is a copy of process.env: every assertion here reads one key, so a
+  // failure never prints a variable on the machine (tokens included).
+  const PIPE_KEY = 'CHROME_CRASHPAD_PIPE_NAME';
+  const PROBE_KEY = 'KANGENTIC_FETCH_THROTTLE_ENV_PROBE';
+  const savedValues = new Map<string, string | undefined>();
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    clearFetchCache();
+    mockRunGitWithTimeout.mockReset();
+    mockIsGitTimeoutError.mockClear();
+    mockRunGitWithTimeout.mockResolvedValue({ stdout: '', stderr: '' });
+    for (const key of [PIPE_KEY, PROBE_KEY]) savedValues.set(key, process.env[key]);
+    process.env[PIPE_KEY] = '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP';
+    process.env[PROBE_KEY] = 'present';
+  });
+
+  afterEach(() => {
+    for (const [key, savedValue] of savedValues) {
+      if (savedValue === undefined) delete process.env[key];
+      else process.env[key] = savedValue;
+    }
+    savedValues.clear();
+  });
+
+  it('drops the pipe name, keeps the two prompt variables and the rest of main\'s environment', () => {
+    const env = nonInteractiveGitEnv();
+
+    // Positive controls: the prompt variables and a variable of main's own
+    // arrived, so the missing pipe name is the strip's doing.
+    expect(env.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(env.GCM_INTERACTIVE).toBe('never');
+    expect(env[PROBE_KEY]).toBe('present');
+    expect(PIPE_KEY in env).toBe(false);
+  });
+
+  it('hands a non-interactive fetch that env, so the git it runs never sees the pipe name', async () => {
+    await fetchIfStale(stubGit, PROJECT_PATH, BRANCH, { nonInteractive: true });
+
+    expect(mockRunGitWithTimeout).toHaveBeenCalledTimes(1);
+    const options = mockRunGitWithTimeout.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
+    expect(options.env).toBeDefined();
+    expect(options.env![PROBE_KEY]).toBe('present');
+    expect(PIPE_KEY in options.env!).toBe(false);
   });
 });
 

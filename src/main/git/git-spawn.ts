@@ -16,7 +16,7 @@ export interface GitSpawnOptions {
   timeoutMs: number;
   /** External cancellation. Race-combined with the internal timeout. */
   signal?: AbortSignal;
-  /** The child's environment; omitted inherits `process.env` (see spawn-with-abort.ts). */
+  /** The child's environment; omitted is main's, without Crashpad's pipe name (see spawn-with-abort.ts). */
   env?: NodeJS.ProcessEnv;
 }
 

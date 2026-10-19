@@ -4,12 +4,14 @@
  * the order of the fallbacks and how each is named are the whole behaviour.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { listTree, parseBatch, parseRefList, parseTree, readBlobs, readBranchHead } from '../../src/main/retrieval/branch-git';
+import { setOffMainExecutor } from '../../src/main/utility-process/off-main-exec';
+import type { HostExecRequest, HostExecResult } from '../../src/main/pty/host/protocol';
 
 let root = '';
 
@@ -75,6 +77,59 @@ describe('readBranchHead', () => {
     const plain = path.join(root, 'plain-folder');
     fs.mkdirSync(plain);
     expect(await readBranchHead(plain, 'main')).toBeNull();
+  });
+});
+
+describe('git through the off-main executor', () => {
+  // Main reads the head and the tree for the Index card's branch sizes, and each
+  // read used to be a local `promisify(execFile)`: a CreateProcess on main's
+  // thread, 15 to 30 ms on Windows. `runGit` goes through `execFileAsync`, which
+  // starts the child in the pty host once an executor is registered. The real-git
+  // cases above run with none registered, so they cannot see the routing. The
+  // directory below does not exist: a local git there would fail, so an answer
+  // can only have come from the executor.
+  const HEAD_SHA = 'a'.repeat(40);
+  const BLOB_SHA = 'b'.repeat(40);
+
+  afterEach(() => {
+    setOffMainExecutor(null);
+  });
+
+  function registerExecutor(stdout: string): HostExecRequest[] {
+    const requests: HostExecRequest[] = [];
+    setOffMainExecutor(async (request: HostExecRequest): Promise<HostExecResult> => {
+      requests.push(request);
+      return { ok: true, stdout, stderr: '' };
+    });
+    return requests;
+  }
+
+  it('asks the executor to run git for a head read, and reads the answer it gives', async () => {
+    const requests = registerExecutor(`refs/heads/main\t${HEAD_SHA}\t\n`);
+
+    const head = await readBranchHead('/mock/repo', 'main');
+
+    expect(head).toEqual({ ref: 'main', sha: HEAD_SHA });
+    expect(requests).toHaveLength(1);
+    const request = requests[0];
+    if (request.kind !== 'execFile') throw new Error(`expected an execFile request, got ${request.kind}`);
+    expect(request.file).toBe('git');
+    expect(request.args[0]).toBe('for-each-ref');
+    expect(request.options.cwd).toBe('/mock/repo');
+  });
+
+  it('asks the executor to run git for a tree read too', async () => {
+    const requests = registerExecutor(`100644 blob ${BLOB_SHA}      12\tsrc/main.ts\0`);
+
+    const entries = await listTree('/mock/repo', HEAD_SHA);
+
+    expect(entries).toEqual([{ path: 'src/main.ts', blob: BLOB_SHA, size: 12 }]);
+    expect(requests).toHaveLength(1);
+    const request = requests[0];
+    if (request.kind !== 'execFile') throw new Error(`expected an execFile request, got ${request.kind}`);
+    expect(request.file).toBe('git');
+    expect(request.args[0]).toBe('ls-tree');
+    expect(request.options.cwd).toBe('/mock/repo');
   });
 });
 

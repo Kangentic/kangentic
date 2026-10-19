@@ -26,11 +26,29 @@ vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn(), sanitizeErrorMessage: (message: string) => message }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError: vi.fn() }));
 
+// Every `execFileAsync` call SessionManager makes, as it makes it. The drop-in
+// strips Crashpad's pipe name from the environment itself (child-env.ts), so the
+// request a fake executor receives is clean whatever SessionManager passed; only
+// the call into the drop-in shows what the reap built. Everything still runs
+// through the real drop-in and the fake executor below. A plain array rather than
+// a `vi.fn`, so `vi.restoreAllMocks()` cannot touch it.
+const execFileAsyncCalls = vi.hoisted(() => [] as Array<{ file: string; args: readonly string[]; options: OffMainExecOptions }>);
+vi.mock('../../src/main/utility-process/off-main-exec', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/utility-process/off-main-exec')>();
+  return {
+    ...actual,
+    execFileAsync: (file: string, args: readonly string[] = [], options: OffMainExecOptions = {}) => {
+      execFileAsyncCalls.push({ file, args, options });
+      return actual.execFileAsync(file, args, options);
+    },
+  };
+});
+
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 import type { HostExecRequest, HostExecResult } from '../../src/main/pty/host/protocol';
-import { setOffMainExecutor } from '../../src/main/utility-process/off-main-exec';
+import { setOffMainExecutor, type OffMainExecOptions } from '../../src/main/utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV } from '../../src/main/pty/process-tag/task-process-tag';
 
 const LIVE_TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
@@ -44,6 +62,7 @@ const realPlatform = process.platform;
 
 beforeEach(() => {
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  execFileAsyncCalls.length = 0;
 });
 
 afterEach(() => {
@@ -252,6 +271,35 @@ describe('the environment of the WSL reap\'s wsl.exe calls', () => {
       expect(environment!.WSL_UTF8).toBe('1');
       expect(environment![PROBE_VARIABLE]).toBe('present');
       expect(Object.keys(environment!).filter((name) => name.toUpperCase() === TASK_PROCESS_TAG_ENV)).toEqual([]);
+    }
+  });
+
+  it('never carries Crashpad\'s pipe name into the call the reap makes, though main holds it and the rest of main\'s environment is passed on', async () => {
+    // On Windows main's environment holds the handler's pipe name (child-env.ts),
+    // and a `wsl.exe` that inherited it would pass it to whatever it starts. This
+    // reads the options the reap handed to `execFileAsync`: the drop-in strips the
+    // name again before the executor sees a request, so that request cannot tell a
+    // reap that built a clean environment from one that did not.
+    const { manager } = setup();
+    const pipeKey = 'CHROME_CRASHPAD_PIPE_NAME';
+
+    await withEnvironmentVariables({ [pipeKey]: '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP', [PROBE_VARIABLE]: 'present' }, async () => {
+      await manager.reapTaskProcesses(os.tmpdir(), allTasks, { stop: true });
+    });
+
+    // One running-distro listing, then the script: at least both must be here, or
+    // the loop below would pass over nothing.
+    const wslCalls = execFileAsyncCalls.filter((call) => call.file === 'wsl.exe');
+    expect(wslCalls.length).toBeGreaterThanOrEqual(2);
+    for (const call of wslCalls) {
+      const environment = call.options.env;
+      expect(environment).toBeDefined();
+      // Positive controls: an environment did reach the call, `WSL_UTF8` from the
+      // reap and the probe from main's own, so the missing name is the strip's doing.
+      expect(environment!.WSL_UTF8).toBe('1');
+      expect(environment![PROBE_VARIABLE]).toBe('present');
+      // Key names only: the failure prints no value.
+      expect(Object.keys(environment!).filter((name) => name.toUpperCase() === pipeKey)).toEqual([]);
     }
   });
 });
