@@ -61,6 +61,10 @@ export class SessionLifecycleBoardFeed {
     // no terminal list entry for it.
     if (isWorkflowAgentSession(session)) return;
     if (session.transient) {
+      // An exited row is no start. A terminal whose shell never started
+      // arrives already exited (spawn-failure-handler.ts) and is removed at
+      // once, and every terminal's end reaches a phone through its removal.
+      if (session.status === 'exited') return;
       this.noteCommandTerminalChanged(sessionId, session);
       return;
     }

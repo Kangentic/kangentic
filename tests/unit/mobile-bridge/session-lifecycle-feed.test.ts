@@ -193,6 +193,15 @@ describe('SessionLifecycleBoardFeed', () => {
       expect(eventsEmitted()).toHaveLength(3);
     });
 
+    it('announces a terminal whose shell never started once, at its removal, never as a start', () => {
+      // The spawn-failure handler pushes the exited placeholder on
+      // session-changed, then startCommandTerminal ends the row.
+      sessionManager.emit('session-changed', 'term-1', terminalFixture({ status: 'exited', exitCode: -1 }));
+      expect(eventsEmitted()).toEqual([]);
+      sessionManager.emit('session-removed', 'term-1', terminalFixture({ status: 'exited', exitCode: -1 }));
+      expect(eventsEmitted()).toEqual([{ projectId: 'proj-1', change: 'command-terminals-changed', ids: ['term-1'] }]);
+    });
+
     it('does not subscribe to activity: a terminal\'s activity rides its own read-stream', () => {
       expect(sessionManager.listenerCount('activity')).toBe(0);
     });

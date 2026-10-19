@@ -1556,8 +1556,9 @@ describe('handleReadStream', () => {
       sessionManager.emit('exit', 'sess-9', -1);
       expect(subscriptions.has('stream:sess-1')).toBe(true);
 
-      // spawn-failure-handler: the paused row is gone, the successor is
-      // registered 'exited' and reports only 'exit'.
+      // The paused row is gone and the successor is registered 'exited'. The
+      // spawn-failure handler announces it on 'session-changed' first (pinned
+      // below by the exited-newcomer case); this exit alone is the backstop.
       sessionManager.getSession.mockImplementation((id: string) => (
         id === 'sess-2' ? { id, taskId: 'task-1', status: 'exited', resuming: true } : undefined
       ));
