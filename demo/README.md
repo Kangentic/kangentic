@@ -100,6 +100,61 @@ Two one-time repository settings, both manual because the default token cannot m
 
 Adding the `demo` CI job to the required checks is a third, optional setting.
 
+## Browser extensions
+
+A visitor's extensions run inside the frame. No web API turns them off, and a content script
+ignores the page's CSP, so Grammarly once drew its button into the New Task description while
+`new-task` typed. Electron runs no extensions, so all of this lives in `demo/boot.js` and none of
+it in `src/renderer`.
+
+Our own shots are clean by construction. Every capture, poster, measurement and demo-tier run is
+Playwright's bundled Chromium, whose default switches include `--disable-extensions`.
+`tests/unit/demo-launches-no-extensions.test.ts` fails on a launch under `demo/`, `tests/captures/`,
+`tests/demo/` or `scripts/` that takes that back: a persistent context, a `channel`, a
+`--load-extension`, or an `ignoreDefaultArgs` that is `true` or names the switch. It also reads the
+switch out of the installed `playwright-core`, so an upgrade that drops it fails there.
+
+In a visitor's browser the frame does two things:
+
+- **Each vendor's opt-out on every text field**, stamped as the field mounts and again on focus,
+  before an extension attaches. These are Grammarly's `data-gramm`, `data-gramm_editor` and
+  `data-enable-grammarly`, LanguageTool's `data-lt-active`, 1Password's `data-1p-ignore`,
+  Bitwarden's `data-bwignore`, and Dashlane's `data-form-type="other"`, each the attribute its
+  vendor documents for a site owner. LastPass documents none. `<html translate="no">` keeps a
+  translate extension, or the browser's own translate, off the UI text.
+- **A sweep for what has no opt-out**, so an extension nobody has tested is covered too. A content
+  script runs in an isolated world, which leaves two marks. The world has no custom element
+  registry, so the host element an extension adds (`grammarly-extension`, LanguageTool's `lt-*`)
+  is a hyphenated tag the page never defined. And the world has its own DOM prototypes, so an
+  element it appends under `<html>` or `<body>` never went through the page's `createElement`,
+  which `boot.js` wraps as its first statement to record what the page makes. A marked element
+  gets `data-demo-foreign` and a `display: none` rule. It is never removed, because an extension
+  that sees its node go tends to add it again. The second signal starts at DOMContentLoaded, when
+  the parser's own children are adopted as the page's.
+
+The Browser pane's guest page is a document of its own and extensions inject there too, so
+`demo/webview-shim.js` installs the same opt-outs and sweep each time it loads.
+
+The demo tier holds both halves. Every scene boots, and every choreography plays a cycle, with
+nothing marked: Playwright runs no extension, so a mark there would be the sweep hiding part of
+the app. Another test runs a script in an isolated world over CDP, the way Chrome runs a content
+script, in the New Task dialog and in the guest page. It checks that what that script adds is
+hidden, that the page's own nodes in the same places are not, and that every text field carries
+every opt-out.
+
+Three gaps are known:
+
+- An extension that runs its script in the page's own world (an MV3 `world: 'MAIN'` script)
+  passes both signals. Only its own opt-out keeps it out.
+- A plain element an extension appends under `<body>` before DOMContentLoaded is adopted as the
+  page's. Extensions inject at document end or later, after that point, so this is rare.
+- `stage.html` is not shielded. It holds no field and runs no `boot.js`.
+
+The demo tier runs Chromium only. Firefox reaches the page through Xray wrappers, so check the
+sweep there by hand, as you would a change to the choreography. A quick check in a browser with
+Grammarly: the G button never shows while `new-task` types, and
+`Boolean(document.querySelector('[data-gramm="false"]'))`, run in the frame's console, is `true`.
+
 ## The URL contract
 
 All parameters are optional; `demo/boot.js` reads them once, before the mock loads.

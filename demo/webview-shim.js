@@ -59,6 +59,13 @@
       currentUrl = url || '';
       var guest = guestFor(currentUrl);
       frame.onload = function () {
+        // Extensions inject into every frame, and the guest is a document of its own, so it gets
+        // the same opt-outs and sweep as the app (demo/boot.js, Browser extensions). Each load is
+        // a new document, which is why this runs here and not once.
+        var boot = window.__demoBoot;
+        if (boot && typeof boot.shieldGuestDocument === 'function') {
+          try { boot.shieldGuestDocument(frame.contentDocument); } catch (error) { console.error('[kangentic-demo] the guest page could not be shielded:', error); }
+        }
         fire(node, 'dom-ready');
         fire(node, 'did-navigate');
         fire(node, 'did-stop-loading');

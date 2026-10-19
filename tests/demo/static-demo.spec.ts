@@ -134,6 +134,51 @@ async function gotoScene(page: Page, params: Record<string, string>): Promise<vo
 const BOOTABLE_SCENES = Object.values(SCENES);
 
 /**
+ * What demo/boot.js's extension sweep hid, in every frame of the page (the Browser pane's guest is
+ * one). Playwright runs no extension, so anything listed here is the sweep hiding part of the app.
+ */
+async function sweptNodes(page: Page): Promise<string[]> {
+  const swept: string[] = [];
+  for (const frame of page.frames()) {
+    swept.push(...await frame.evaluate(() => Array.from(document.querySelectorAll('[data-demo-foreign]')).map((element) => {
+      const testId = element.getAttribute('data-testid');
+      return `${element.localName}${element.id ? `#${element.id}` : ''}${testId ? `[data-testid="${testId}"]` : ''} under ${element.parentElement?.localName ?? 'nothing'}`;
+    })));
+  }
+  return swept;
+}
+
+/**
+ * Run a script the way an extension's content script runs: in an isolated world of the frame, with
+ * its own globals and its own DOM prototypes, so nothing it creates goes through the page's code.
+ */
+async function runAsExtension(page: Page, frameUrlPart: string | null, expression: string): Promise<void> {
+  const client = await page.context().newCDPSession(page);
+  type FrameTreeNode = { frame: { id: string; url: string }; childFrames?: FrameTreeNode[] };
+  const { frameTree } = await client.send('Page.getFrameTree') as { frameTree: FrameTreeNode };
+  const all: FrameTreeNode[] = [];
+  const walk = (node: FrameTreeNode): void => { all.push(node); (node.childFrames ?? []).forEach(walk); };
+  walk(frameTree);
+  const target = frameUrlPart === null ? frameTree : all.find((node) => node.frame.url.includes(frameUrlPart));
+  expect(target, `no frame whose URL holds ${frameUrlPart}`).toBeDefined();
+  const world = await client.send('Page.createIsolatedWorld', { frameId: target!.frame.id, worldName: 'demo-extension-probe' });
+  const result = await client.send('Runtime.evaluate', { expression, contextId: world.executionContextId });
+  expect(result.exceptionDetails, 'the content script threw').toBeUndefined();
+  await client.detach();
+}
+
+/** The opt-outs demo/boot.js stamps on every text field, as attribute and value. */
+const FIELD_OPT_OUTS: Array<[string, string]> = [
+  ['data-gramm', 'false'],
+  ['data-gramm_editor', 'false'],
+  ['data-enable-grammarly', 'false'],
+  ['data-lt-active', 'false'],
+  ['data-1p-ignore', ''],
+  ['data-bwignore', 'true'],
+  ['data-form-type', 'other'],
+];
+
+/**
  * The text of every element matching `selector` that a drawn frame has shown. The Knowledge Graph's
  * labels sit at zero inline opacity until a frame of the WebGL scene places them.
  */
@@ -534,9 +579,75 @@ for (const scene of BOOTABLE_SCENES) {
       expect(focusArea, `${scene.name}.focus is an empty box`).toBeGreaterThan(0);
       expect(focusArea, `${scene.name}.focus is the whole frame`).toBeLessThan(0.95);
     }
+    expect(await sweptNodes(page), `${scene.name}: the extension sweep hid part of the app`).toEqual([]);
     expect(getUnexpectedErrors()).toEqual([]);
   });
 }
+
+test('an extension\'s nodes are hidden and every text field carries the opt-outs', async ({ page }) => {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'new-task', embed: '1', still: '1' });
+  await expect(page.locator('html')).toHaveAttribute('translate', 'no');
+  const fields = await page.evaluate((optOuts) => Array.from(document.querySelectorAll('input, textarea, [contenteditable]:not([contenteditable="false"])'))
+    .map((field) => ({
+      field: field.getAttribute('data-testid') ?? field.getAttribute('placeholder') ?? field.localName,
+      missing: optOuts.filter(([name, value]) => field.getAttribute(name) !== value).map(([name]) => name),
+    })), FIELD_OPT_OUTS);
+  // The dialog's title, description and labels fields at least, so the check cannot pass on none.
+  expect(fields.length).toBeGreaterThanOrEqual(3);
+  expect(fields.filter((entry) => entry.missing.length > 0), 'a text field without every opt-out').toEqual([]);
+
+  // What Grammarly does: a hyphenated host element beside the field. What a floating widget does:
+  // a plain element under body. Neither is the page's, and both must be hidden.
+  await runAsExtension(page, null, `(() => {
+    const description = document.querySelector('[data-testid="task-description"]');
+    const host = document.createElement('grammarly-extension');
+    host.id = 'probe-extension-host';
+    host.textContent = 'G';
+    description.insertAdjacentElement('afterend', host);
+    const widget = document.createElement('div');
+    widget.id = 'probe-extension-widget';
+    widget.textContent = 'widget';
+    document.body.appendChild(widget);
+  })()`);
+  for (const id of ['probe-extension-host', 'probe-extension-widget']) {
+    await expect(page.locator(`#${id}`)).toHaveAttribute('data-demo-foreign', '');
+    await expect(page.locator(`#${id}`)).toBeHidden();
+  }
+  // The page's own nodes in the same two places stay, including a hyphenated tag it never defined.
+  await page.evaluate(() => {
+    const own = document.createElement('x-page-own');
+    own.id = 'probe-page-host';
+    own.textContent = 'own';
+    document.querySelector('[data-testid="task-description"]')?.insertAdjacentElement('afterend', own);
+    const ownWidget = document.createElement('div');
+    ownWidget.id = 'probe-page-widget';
+    ownWidget.textContent = 'own';
+    document.body.appendChild(ownWidget);
+  });
+  for (const id of ['probe-page-host', 'probe-page-widget']) {
+    await expect(page.locator(`#${id}`)).toBeVisible();
+    await expect(page.locator(`#${id}`)).not.toHaveAttribute('data-demo-foreign', '');
+  }
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('an extension\'s node in the Browser pane\'s guest page is hidden', async ({ page }) => {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'browser', embed: '1', still: '1' });
+  const guest = page.frameLocator('[data-testid="browser-webview"] iframe');
+  // The shim shields the guest when it loads, which stamps its root.
+  await expect(guest.locator('html')).toHaveAttribute('translate', 'no');
+  await runAsExtension(page, '/guest/', `(() => {
+    const widget = document.createElement('div');
+    widget.id = 'probe-guest-widget';
+    widget.textContent = 'widget';
+    document.body.appendChild(widget);
+  })()`);
+  await expect(guest.locator('#probe-guest-widget')).toHaveAttribute('data-demo-foreign', '');
+  await expect(guest.locator('#probe-guest-widget')).toBeHidden();
+  expect(getUnexpectedErrors()).toEqual([]);
+});
 
 test('scenes.json is served unhashed, matches the registry, and names the build version', async ({ page, request }) => {
   const response = await request.get(`${server.url}scenes.json`);
@@ -2366,6 +2477,7 @@ for (const { scene, cycles } of CHOREOGRAPHED_SCENES) {
     } else {
       await expect(page.locator(scene.ready).first()).toBeVisible();
     }
+    expect(await sweptNodes(page), `${scene.name}: the extension sweep hid part of the app during a cycle`).toEqual([]);
     expect(getUnexpectedErrors()).toEqual([]);
   });
 }
