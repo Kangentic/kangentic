@@ -560,9 +560,10 @@
   // The microphone is never requested: dictation's capture (src/renderer/audio/audio-capture.ts)
   // opens the mic with getUserMedia and runs it through the app's own worklet, and here the mic
   // is a silent stream from an audio graph, so the renderer's whole pipeline runs with no
-  // permission prompt and nothing heard. The chip then shows its real listening state; the
-  // words themselves land in the terminal on release, which is the CLI's echo and cannot be
-  // shown here (demo/README.md, Dictation).
+  // permission prompt. The chip then shows its real listening state. What the engine "hears" is
+  // a recorded utterance the seed replays from the press, typed into a focused text field as it
+  // streams; in a terminal the words are the CLI's echo of what main typed, which cannot be shown
+  // here (demo/README.md, Dictation).
   var silentMicrophone = null;
   function silentMicrophoneStream() {
     if (!silentMicrophone) {

@@ -70,8 +70,10 @@ three things staying in step, and each is enforced rather than remembered.
   presentation, the layout and the styling, is the one authored part: the scaffold's
   `src/App.tsx` renders a bare heading and list, and rebuilding it would invalidate the
   recordings that edit that file (`demo/README.md`, Browser guest). The microphone is a silent
-  stream so dictation's real pipeline runs, and no transcript is authored. A silent microphone
-  transcribes to nothing, so `dictation.stop` answers empty. The Dictation tab's model list is
+  stream so dictation's real pipeline runs, and no transcript is authored. What the engine "hears"
+  is one recorded utterance: `scripts/record-dictation-demo.mjs` runs the dictation worker's own
+  engine code, on the models the Dictation tab names, over a synthesized clip, and the seed replays
+  its partials and its refined final on the recording's clock. The Dictation tab's model list is
   main's own `buildDictationInfo` over a seeded machine. Git history is a real repository built
   from a commit plan and read with git. The line is the same one the terminal rule draws: mock the bridge, record or
   derive the content, and where content cannot be honest, show the surface without it. Every entry carries the three fields that leave this repo: `alt`, the
@@ -220,6 +222,11 @@ three things staying in step, and each is enforced rather than remembered.
   either in its dropdown's list, or stops reporting both as cached. It is the same guard as the
   message trail's, for the Dictation tab: the mock's own answer lists no models, so every structural
   check passed while both model rows read None. Runs via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/demo-dictation-recording-seeded.test.ts` fails when the
+  dictation recording is missing, has no partials or no final, streams out of order or after the
+  mic closed, was recorded on other models than the Dictation tab names, commits a final that names
+  no Dictation setting, or stops reaching the seed (which then answered `stop` with nothing). Runs
+  via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-transcript-seeded.test.ts` fails when the session
   the `conversation` scene opens has no transcript file, when the file is not a whole conversation
   in the parser's shape, when its entries are not the run the card's trail came from (the trail's

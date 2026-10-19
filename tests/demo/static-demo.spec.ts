@@ -22,7 +22,7 @@ import { PLANNED_BILLING_PAGE, SCENES, playsCycle } from '../captures/scenes';
 import INVOICE_PDF_PLAN from '../captures/fixtures/demo/workflow-plans/wf-cw-invoice-pdf.json';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
-  DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
+  DEMO_ARCHIVED_SUMMARIES, DEMO_DICTATION_RECORDING, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
   SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET,
   DEMO_SCENE_TASKS, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
@@ -1130,33 +1130,56 @@ test('the board scene makes no request off the serving origin', async ({ page })
   expect(offOrigin).toEqual([]);
 });
 
-test('releasing push-to-talk over the focused Settings search box lands no text in it', async ({ page }) => {
-  // The dictation-field scene's own steps only PRESS Mouse:Back over the Settings search box and
-  // never release it (tests/captures/scenes.ts), so nothing before this exercised the release.
-  // demo-dataset.ts overrides window.electronAPI.dictation.stop to resolve '' rather than the
-  // mock's stock 'This is a test of dictation.' (tests/ui/mock-electron-api.js), because a
-  // silent microphone transcribes to nothing and no transcript is authored here - so releasing
-  // over a focused field must leave it exactly as the visitor found it.
-  const getUnexpectedErrors = collectUnexpectedErrors(page);
-  await gotoScene(page, { view: 'dictation-field', embed: '1', still: '1' });
-  const searchInput = page.locator('[data-testid="settings-search"]');
-  await expect(searchInput).toHaveValue('');
-
-  // The release half of the same gesture boot.js's pressCombo started: a pointerup on the same
-  // button (Mouse:Back is button 3, src/shared/keybindings.ts), dispatched on `document` the way
-  // boot.js dispatches its pointerdown, which useDictation's capture-phase `window` listener
-  // (src/renderer/hooks/useDictation.ts) matches via matchesMouseRelease(event, 'Mouse:Back').
+/**
+ * Let go of push-to-talk the way a visitor's mouse does: a pointerup on the button the pose's
+ * hotkeyDown pressed (Mouse:Back is button 3, src/shared/keybindings.ts), dispatched on `document`
+ * as boot.js dispatches its pointerdown, which useDictation's capture-phase `window` listener
+ * matches through matchesMouseRelease(event, 'Mouse:Back').
+ */
+async function releasePushToTalk(page: Page): Promise<void> {
   await page.evaluate(() => {
     document.dispatchEvent(new PointerEvent('pointerup', {
       button: 3, buttons: 0, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true,
     }));
   });
+}
 
+test('a still holds push-to-talk over the empty Settings search box, and a release there lands no text', async ({ page }) => {
+  // A still arms no timer, so the held key hears none of the recorded utterance: the poster is the
+  // press itself. Letting go then commits what was heard, which is nothing.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'dictation-field', embed: '1', still: '1' });
+  const searchInput = page.locator('[data-testid="settings-search"]');
+  await expect(searchInput).toHaveValue('');
+  await releasePushToTalk(page);
   // LiveDictationChip renders null once the dictation store is back to 'idle', which
   // finalizeOnRelease reaches only after stop() has resolved and the input sink's submit() has
   // run - the observable end of the release, not a fixed wait for it.
   await expect(page.locator('[data-testid="dictation-live-chip"]')).toHaveCount(0, { timeout: 5000 });
   await expect(searchInput).toHaveValue('');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('the held key types the recorded utterance into the Settings search, and the release lands its refined final', async ({ page }) => {
+  // The live frame replays DEMO_DICTATION_RECORDING from the press: each partial the live model
+  // streamed is typed into the focused box on the recording's clock, and the release commits the
+  // refinement's text. The Settings search narrows to the rows the words name. Auto-submit is on
+  // (the default), so the release also presses Enter on the box, which submits nothing there: the
+  // panel stays open with the text in place.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'dictation-field', embed: '1' });
+  const searchInput = page.locator('[data-testid="settings-search"]');
+  const lastPartial = DEMO_DICTATION_RECORDING.partials[DEMO_DICTATION_RECORDING.partials.length - 1].text;
+  await expect(searchInput).toHaveValue(lastPartial, { timeout: 10_000 });
+  await expect(page.locator('[data-testid="dictation-live-chip"]')).toBeVisible();
+  await releasePushToTalk(page);
+  await expect(page.locator('[data-testid="dictation-live-chip"]')).toHaveCount(0, { timeout: 5000 });
+  await expect(searchInput).toHaveValue(DEMO_DICTATION_RECORDING.final.text);
+  // "Push to talk." names the Dictation card's push-to-talk rows, so its Release buffer stays and
+  // the Transcription card goes. A final whose closing period broke the match would hide both.
+  await expect(page.locator('[data-testid="dictation-release-buffer"]')).toBeVisible();
+  await expect(page.locator('[data-testid="dictation-model-lines"]')).toBeHidden();
+  await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

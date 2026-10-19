@@ -22,10 +22,8 @@
 // Run: node scripts/measure-dictation-models.mjs [model names...]
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { createKokoroTts, ensureKokoro, fetchTo } from './lib/dictation-tts.mjs';
 import {
   CACHE_FOLDERS,
   COHERE_TRANSCRIBE_FILES,
@@ -121,36 +119,6 @@ const MODELS = {
   },
 };
 
-async function fetchTo(url, dest) {
-  if (fs.existsSync(dest)) return;
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  process.stdout.write(`downloading ${path.basename(dest)}...\n`);
-  const partPath = `${dest}.part`;
-  try {
-    const response = await fetch(url, { redirect: 'follow' });
-    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(partPath));
-  } catch (error) {
-    fs.rmSync(partPath, { force: true });
-    throw error;
-  }
-  await renameWithRetry(partPath, dest);
-}
-
-// Windows antivirus and the search indexer can hold a large file that was just
-// written, so the rename retries on a lock before it gives up.
-async function renameWithRetry(fromPath, toPath) {
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      fs.renameSync(fromPath, toPath);
-      return;
-    } catch (error) {
-      if (attempt >= 5 || (error.code !== 'EPERM' && error.code !== 'EBUSY')) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
-    }
-  }
-}
-
 async function modelDir(name, spec) {
   // The smoke test's folder names, so the two scripts share one download.
   const directory = path.join(root, spec.cacheFolder ?? name);
@@ -162,24 +130,7 @@ async function modelDir(name, spec) {
 }
 
 async function dictatedClips() {
-  const kokoro = path.join(root, 'kokoro-en-v0_19');
-  // Written once tar returns, so an extraction cut short runs again rather than
-  // passing on whichever file happened to land first.
-  const extractedMarker = path.join(kokoro, '.extracted');
-  if (!fs.existsSync(extractedMarker)) {
-    const archive = path.join(root, 'kokoro-en-v0_19.tar.bz2');
-    await fetchTo('https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2', archive);
-    // A relative archive name: GNU tar (Git Bash) reads `C:` in an absolute
-    // Windows path as a remote host.
-    try {
-      execFileSync('tar', ['-xjf', path.basename(archive)], { cwd: root });
-    } catch (error) {
-      // Windows 10 and later ship a bsdtar that reads bzip2; a minimal Linux
-      // image may have tar without bzip2, which fails with no hint.
-      throw new Error(`Extracting ${path.basename(archive)} needs tar with bzip2 support on PATH: ${error.message}`, { cause: error });
-    }
-    fs.writeFileSync(extractedMarker, '');
-  }
+  const kokoro = await ensureKokoro();
   const clipDir = path.join(root, 'measure-clips');
   fs.mkdirSync(clipDir, { recursive: true });
   let tts = null;
@@ -188,13 +139,7 @@ async function dictatedClips() {
     for (const voice of VOICES) {
       const file = path.join(clipDir, `prompt-${index}-voice-${voice}.wav`);
       if (!fs.existsSync(file)) {
-        tts ??= new sherpa.OfflineTts({
-          model: {
-            kokoro: { model: path.join(kokoro, 'model.onnx'), voices: path.join(kokoro, 'voices.bin'), tokens: path.join(kokoro, 'tokens.txt'), dataDir: path.join(kokoro, 'espeak-ng-data') },
-            numThreads: 4, provider: 'cpu', debug: false,
-          },
-          maxNumSentences: 1,
-        });
+        tts ??= createKokoroTts(sherpa, kokoro);
         const audio = tts.generate({ text, generationConfig: new sherpa.GenerationConfig({ sid: voice, speed: 1.0 }) });
         // A quarter second of silence either side, as a push-to-talk capture has.
         const pad = Math.round(audio.sampleRate * 0.25);

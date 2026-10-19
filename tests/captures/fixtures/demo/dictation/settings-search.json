@@ -1,0 +1,28 @@
+{
+  "source": {
+    "kind": "tts",
+    "model": "kokoro-en-v0_19",
+    "voice": 0,
+    "text": "Push to talk."
+  },
+  "liveModelId": "nemotron-streaming-0.6b-en",
+  "finalModelId": "parakeet-tdt-0.6b-v3",
+  "language": "en",
+  "frameMs": 20,
+  "releaseMs": 1760,
+  "releaseBufferMs": 250,
+  "partials": [
+    {
+      "t": 1200,
+      "text": "Push to"
+    },
+    {
+      "t": 1760,
+      "text": "Push to talk"
+    }
+  ],
+  "final": {
+    "text": "Push to talk.",
+    "decodeMs": 91
+  }
+}
