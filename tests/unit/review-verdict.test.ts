@@ -11,7 +11,8 @@
  * 2. A failed check is Blocked on its own, with a step that names the command to run.
  * 3. A quick fix never changes the verdict, even when it could not be applied.
  * 4. Validation refuses `skipped`, a refuted or blocked finding with no reason, a blocked finding
- *    with no step, a decision with no alternative, and follow-ups with no filed task.
+ *    with no step, a decision with no alternative, and the retired followUps and followUpTask keys,
+ *    even an empty followUps, so a driver on stale instructions fails instead of filing a task.
  * 5. The closing block's LAST line is exactly `Verdict: Ready` or `Verdict: Blocked`, a Blocked
  *    verdict lists one numbered step per blocker above it, no `Next:` line follows, and the
  *    default output ends with the block, so the message's final line is the verdict the board's
@@ -60,11 +61,13 @@ interface Finding {
 interface Report {
   checks: { typecheck: string; hmrVitest: string; scopedTests: string };
   findings: Finding[];
-  followUps?: Array<{ title: string; location: string; why: string }>;
-  followUpTask?: string;
 }
 
 const PASSING_CHECKS = { typecheck: 'pass', hmrVitest: 'pass', scopedTests: 'pass' };
+const FOLLOW_UPS_RETIRED =
+  'followUps is retired: fix each out-of-diff item in this pass, or record it as a blocked finding with a step for the task agent';
+const FOLLOW_UP_TASK_RETIRED =
+  'followUpTask is retired: a review pass files no board task; record the item as a blocked finding with a step for the task agent';
 
 function findingOf(id: number, overrides: Partial<Finding> = {}): Finding {
   return {
@@ -216,14 +219,21 @@ describe('review-verdict.mjs: verdict rules', () => {
     expect(renderSummary(report)).toContain('- Quick fixes: 1');
   });
 
-  it('renders follow-ups and never blocks on them', () => {
-    const report = reportOf([findingOf(1)], {
-      followUps: [{ title: 'Split the reap scheduler', location: 'src/main/pty/reap.ts', why: 'needs its own design' }],
-      followUpTask: 'task 812',
-    });
+  it('turns an out-of-diff item the pass did not finish into a numbered step above Verdict: Blocked', () => {
+    const report = reportOf([
+      findingOf(1),
+      findingOf(2, {
+        severity: 'medium',
+        location: 'src/main/pty/reap.ts:40',
+        file: 'src/main/pty/reap.ts',
+        status: 'blocked',
+        reason: 'outside the diff and spans every reap caller',
+        step: 'split the reap scheduler in this task',
+      }),
+    ]);
     expect(validateFindings(report)).toEqual([]);
-    expect(computeVerdict(report).verdict).toBe('Ready');
-    expect(renderSummary(report)).toContain('- Follow-up task: task 812 (1 item)');
+    expect(closingBlockLines(report)).toEqual(['1. src/main/pty/reap.ts:40: split the reap scheduler in this task', 'Verdict: Blocked']);
+    expect(renderSummary(report)).not.toContain('Follow-up');
   });
 
   it('is Ready with no findings at all', () => {
@@ -265,12 +275,19 @@ describe('review-verdict.mjs: validation', () => {
     expect(problems).toContain('findings[1].decision is only valid on a fixed finding');
   });
 
-  it('requires the filed task when there are follow-ups', () => {
-    const problems = validateFindings(
-      reportOf([], { followUps: [{ title: 'Split it', location: 'src/a.ts', why: 'own design' }] }),
-    );
-    expect(problems).toEqual([
-      'followUpTask is required with followUps: file the one grouped follow-up task first, then record its board id',
+  it('refuses the retired followUps key by name, even when it is empty', () => {
+    const emptyFollowUps = { ...reportOf([findingOf(1)]), followUps: [] };
+    const filledFollowUps = { ...reportOf([findingOf(1)]), followUps: [{ title: 'Split it', location: 'src/a.ts', why: 'own design' }] };
+    for (const report of [emptyFollowUps, filledFollowUps]) {
+      expect(validateFindings(report)).toEqual([FOLLOW_UPS_RETIRED]);
+    }
+  });
+
+  it('refuses the retired followUpTask key by name, alone and beside followUps', () => {
+    expect(validateFindings({ ...reportOf([]), followUpTask: 'task 812' })).toEqual([FOLLOW_UP_TASK_RETIRED]);
+    expect(validateFindings({ ...reportOf([]), followUps: [], followUpTask: 'task 812' })).toEqual([
+      FOLLOW_UPS_RETIRED,
+      FOLLOW_UP_TASK_RETIRED,
     ]);
   });
 
@@ -314,11 +331,6 @@ function reportWithRawFinding(finding: unknown): unknown {
 const CHECKS_PROBLEM = 'checks must be an object with typecheck, hmrVitest and scopedTests';
 const FINDINGS_PROBLEM = 'findings must be an array (empty when nothing was raised)';
 const SEVERITY_PROBLEM = 'findings[0].severity must be one of critical, high, medium, low';
-const VALID_FOLLOW_UP = { title: 'Split it', location: 'src/a.ts', why: 'own design' };
-
-function reportWithRawFollowUp(followUp: unknown): unknown {
-  return { checks: { ...PASSING_CHECKS }, findings: [], followUps: [followUp], followUpTask: 'task 812' };
-}
 
 const VALIDATION_CASES: ValidationCase[] = [
   { name: 'a null report', report: null, expectedProblem: 'the findings file must hold a JSON object' },
@@ -343,22 +355,12 @@ const VALIDATION_CASES: ValidationCase[] = [
   {
     name: 'followUps that is a string',
     report: { checks: { ...PASSING_CHECKS }, findings: [], followUps: 'later' },
-    expectedProblem: 'followUps must be an array when present',
+    expectedProblem: FOLLOW_UPS_RETIRED,
   },
   {
-    name: 'a follow-up with no title',
-    report: reportWithRawFollowUp({ location: VALID_FOLLOW_UP.location, why: VALID_FOLLOW_UP.why }),
-    expectedProblem: 'followUps[0].title is required',
-  },
-  {
-    name: 'a follow-up with no location',
-    report: reportWithRawFollowUp({ title: VALID_FOLLOW_UP.title, why: VALID_FOLLOW_UP.why }),
-    expectedProblem: 'followUps[0].location is required',
-  },
-  {
-    name: 'a follow-up with no why',
-    report: reportWithRawFollowUp({ title: VALID_FOLLOW_UP.title, location: VALID_FOLLOW_UP.location }),
-    expectedProblem: 'followUps[0].why is required',
+    name: 'followUps that is null',
+    report: { checks: { ...PASSING_CHECKS }, findings: [], followUps: null },
+    expectedProblem: FOLLOW_UPS_RETIRED,
   },
 ];
 
@@ -369,19 +371,10 @@ describe('review-verdict.mjs: validation of malformed input', () => {
 
   it('accepts the control report the table rows are mutated from', () => {
     expect(validateFindings(reportWithRawFinding(findingOf(1)))).toEqual([]);
-    expect(validateFindings(reportWithRawFollowUp(VALID_FOLLOW_UP))).toEqual([]);
   });
 
   it('accepts a severity in any letter case, the way the Summary counts it', () => {
     expect(validateFindings(reportWithRawFinding({ ...findingOf(1), severity: 'HIGH' }))).toEqual([]);
-  });
-
-  it('names title, location and why for a follow-up that is not an object', () => {
-    expect(validateFindings(reportWithRawFollowUp(null))).toEqual([
-      'followUps[0].title is required',
-      'followUps[0].location is required',
-      'followUps[0].why is required',
-    ]);
   });
 });
 
@@ -433,16 +426,6 @@ describe('review-verdict.mjs: summary counts', () => {
     expect(renderSummary(report).split('\n')).toContain(
       '- Checks: typecheck fail, hmr vitest pass, scoped runs of added tests none',
     );
-  });
-
-  it('renders the follow-up item count, plural for two and absent for none', () => {
-    const twoFollowUps = reportOf([findingOf(1)], {
-      followUps: [VALID_FOLLOW_UP, { title: 'Rename the helper', location: 'src/b.ts', why: 'touches every caller' }],
-      followUpTask: 'task 812',
-    });
-    expect(validateFindings(twoFollowUps)).toEqual([]);
-    expect(renderSummary(twoFollowUps).split('\n')).toContain('- Follow-up task: task 812 (2 items)');
-    expect(renderSummary(reportOf([findingOf(1)])).split('\n')).toContain('- Follow-up task: none');
   });
 });
 
@@ -573,5 +556,13 @@ describe('review-verdict.mjs: command line', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('invalid findings file (1 problem):');
     expect(result.stderr).toContain('(got "skipped")');
+  });
+
+  it('exits 2 for a findings file a stale driver wrote with an empty followUps', () => {
+    const result = runScript({ ...reportOf([findingOf(1)]), followUps: [] });
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('invalid findings file (1 problem):');
+    expect(result.stderr).toContain(FOLLOW_UPS_RETIRED);
   });
 });

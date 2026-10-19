@@ -34,14 +34,16 @@
  *       "location": "src/a.ts:42", "file": "src/a.ts", "symbol": "parseFoo" (optional),
  *       "mechanism": "short phrase naming the defect", "status": "fixed|refuted|blocked",
  *       "reason": "required for refuted and blocked",
- *       "step": "required for a blocked finding: what a person or the task agent must do",
+ *       "step": "required for a blocked finding: what the task agent must do in this task",
  *       "decision": { "chosen": "...", "alternative": "..." } (optional, fixed and not quick only),
  *       "quick": true (optional; a quick fix never affects the verdict and carries no decision),
  *       "reRaise": { "of": "the ledger line", "newEvidence": "..." } (optional)
- *     }],
- *     "followUps": [{ "title": "...", "location": "...", "why": "..." }],
- *     "followUpTask": "the board id of the one grouped follow-up task; required with followUps"
+ *     }]
  *   }
+ *
+ * There is no followUps or followUpTask key, and the script refuses both. An item outside the diff
+ * is fixed in the pass or recorded as a blocked finding whose step reaches the task agent, because
+ * a pass files no board task (docs/code-review-fanout-audit.md section 17).
  */
 import fs from 'node:fs';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';
@@ -120,7 +122,7 @@ export function validateFindings(report) {
         problems.push(`${label}.reason is required for a ${finding.status} finding`);
       }
       if (finding.status === 'blocked' && finding.quick !== true && !isNonEmptyString(finding.step)) {
-        problems.push(`${label}.step is required for a blocked finding: name what a person or the task agent must do`);
+        problems.push(`${label}.step is required for a blocked finding: name what the task agent must do in this task`);
       }
       if (finding.decision !== undefined) {
         const decision = finding.decision;
@@ -140,20 +142,13 @@ export function validateFindings(report) {
       }
     });
   }
-  const followUps = report.followUps === undefined ? [] : report.followUps;
-  if (!Array.isArray(followUps)) {
-    problems.push('followUps must be an array when present');
-  } else {
-    followUps.forEach((followUp, followUpIndex) => {
-      for (const field of ['title', 'location', 'why']) {
-        if (followUp === null || typeof followUp !== 'object' || !isNonEmptyString(followUp[field])) {
-          problems.push(`followUps[${followUpIndex}].${field} is required`);
-        }
-      }
-    });
-    if (followUps.length > 0 && !isNonEmptyString(report.followUpTask)) {
-      problems.push('followUpTask is required with followUps: file the one grouped follow-up task first, then record its board id');
-    }
+  // Refused even when empty, so a driver on stale instructions fails here instead of filing a task.
+  // Each message says where the items go, so the fix is to convert them, never to delete the key.
+  if (report.followUps !== undefined) {
+    problems.push('followUps is retired: fix each out-of-diff item in this pass, or record it as a blocked finding with a step for the task agent');
+  }
+  if (report.followUpTask !== undefined) {
+    problems.push('followUpTask is retired: a review pass files no board task; record the item as a blocked finding with a step for the task agent');
   }
   return problems;
 }
@@ -180,7 +175,6 @@ export function computeVerdict(report) {
 /** The Summary block, the Decisions made list, then the closing verdict block. */
 export function renderSummary(report) {
   const findings = report.findings;
-  const followUps = report.followUps === undefined ? [] : report.followUps;
   const countBySeverity = (severity) =>
     findings.filter((finding) => String(finding.severity).toLowerCase() === severity).length;
   const countByStatus = (status) => findings.filter((finding) => finding.status === status && finding.quick !== true).length;
@@ -198,11 +192,6 @@ export function renderSummary(report) {
   lines.push(`- Re-raised with new evidence: ${reRaises.length}`);
   lines.push(
     `- Checks: ${CHECKS.map((check) => `${check.label.toLowerCase()} ${report.checks[check.key]}`).join(', ')}`,
-  );
-  lines.push(
-    followUps.length === 0
-      ? '- Follow-up task: none'
-      : `- Follow-up task: ${oneLine(report.followUpTask)} (${followUps.length} item${followUps.length === 1 ? '' : 's'})`,
   );
   lines.push('');
   lines.push(`### Decisions made (${decisions.length})`);
