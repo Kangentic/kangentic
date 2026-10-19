@@ -143,7 +143,7 @@ describe('the workflow step and the turn it judged', () => {
     } as unknown as IpcContext;
   });
 
-  function runStep(columnId = 'lane-executing'): Promise<void> {
+  function runStep(columnId = 'lane-executing'): ReturnType<typeof runWorkflowStep> {
     return runWorkflowStep(context, {
       payload: PAYLOAD,
       columnId,
@@ -153,7 +153,8 @@ describe('the workflow step and the turn it judged', () => {
   }
 
   it('moves the task on when the turn it judged is still the latest (the control)', async () => {
-    await runStep();
+    // Nothing overtook the turn, so the step reports no newer turn.
+    await expect(runStep()).resolves.toBeUndefined();
 
     expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
     expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ met: true }));
@@ -177,7 +178,10 @@ describe('the workflow step and the turn it judged', () => {
       return { ok: true, answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: true, reason: 'The work is done.' }]]) };
     });
 
-    await runStep();
+    // The step says a newer turn overtook it, so the runner can judge this
+    // reply again if that newer work never ends in a turn end of its own
+    // (abandoned-turns.ts). The check ran, and that is all it did.
+    await expect(runStep()).resolves.toBe('newer-turn');
 
     expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
     expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
@@ -187,11 +191,43 @@ describe('the workflow step and the turn it judged', () => {
   it('asks nothing when a newer turn began before the step could check', async () => {
     currentWorkSerial = NEXT_TURN_WORK_SERIAL;
 
-    await runStep();
+    // Overtaken before the check: no paid check ran, and the step still says so.
+    await expect(runStep()).resolves.toBe('newer-turn');
 
     expect(hoisted.checkAutomationConditions).not.toHaveBeenCalled();
     expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
     expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+  });
+
+  // The turn is still the session's latest, so nothing overtook it, but the
+  // agent is not idle on it (working, or waiting on a permission prompt). The
+  // step leaves it to a later turn end and reports no newer turn: undefined, so
+  // the runner does not keep this reply to judge again.
+  describe('when the turn is still the latest but the agent is not idle', () => {
+    it.each(['thinking', 'permission'] as const)('asks nothing and reports no newer turn when the agent is %s before the check', async (busyState) => {
+      activity[SESSION_ID] = busyState;
+
+      await expect(runStep()).resolves.toBeUndefined();
+
+      expect(hoisted.checkAutomationConditions).not.toHaveBeenCalled();
+      expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
+
+    it.each(['thinking', 'permission'] as const)('moves nothing and reports no newer turn when the agent is %s again once the check lands', async (busyState) => {
+      // The same turn is still the latest, but the agent picked up work again
+      // while the check was out (no new work serial, no turn end).
+      hoisted.checkAutomationConditions.mockImplementation(async () => {
+        activity[SESSION_ID] = busyState;
+        return { ok: true, answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: true, reason: 'The work is done.' }]]) };
+      });
+
+      await expect(runStep()).resolves.toBeUndefined();
+
+      expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
   });
 
   it('moves nothing when the workflow was paused while the check was out', async () => {

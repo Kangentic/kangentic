@@ -289,12 +289,18 @@ export async function handleTaskMove(
   //
   // `moverIsTaskAgent` says an `'agent'` move comes from the task's own agent
   // session, which a running workflow lets through (`workflowMoveRefusal`).
+  //
+  // `expectedFromSwimlaneId` refuses the move unless the task is still in that
+  // column once the lock lets it through. A Move to column row resolves its
+  // target from its own column outside the lock, so a move that landed while
+  // this one waited must not send the task on from a column it has left.
   options?: {
     continuationPrompt?: string;
     onCommitted?: () => void;
     moveReason?: string;
     fromTurnEndGroup?: boolean;
     moverIsTaskAgent?: boolean;
+    expectedFromSwimlaneId?: string;
   },
 ): Promise<void> {
   // A workflow task's lock, asked BEFORE anything below aborts work in flight:
@@ -410,6 +416,11 @@ export async function handleTaskMove(
       const { task } = reconcileTaskSessionRef(context, resolvedProjectId, input.taskId);
 
       const fromSwimlaneId = task.swimlane_id;
+      const expectedFromSwimlaneId = options?.expectedFromSwimlaneId;
+      if (expectedFromSwimlaneId !== undefined && fromSwimlaneId !== expectedFromSwimlaneId) {
+        const expectedName = swimlanes.getById(expectedFromSwimlaneId)?.name ?? 'its column';
+        throw new Error(`The task left ${expectedName} before it could be moved.`);
+      }
       const originalPosition = task.position;
       const fromLane = swimlanes.getById(fromSwimlaneId);
       // Board Profiles: fold the task's profile over the destination column

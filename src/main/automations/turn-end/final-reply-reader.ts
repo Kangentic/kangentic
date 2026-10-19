@@ -25,10 +25,26 @@ export async function readSessionFinalReply(
   session: { sessionId: string; agentSessionId?: string | null; transcriptAnchor?: TranscriptAnchor | null },
   sessionRepo: SessionRepository,
 ): Promise<AgentReply | null> {
+  const read = await tryReadSessionFinalReply(session, sessionRepo);
+  return read.ok ? read.reply : null;
+}
+
+/** A final-reply read that keeps a failed read apart from a turn that wrote no reply. */
+export type FinalReplyRead = { ok: true; reply: AgentReply | null } | { ok: false };
+
+/**
+ * `readSessionFinalReply`, for a caller that must not read a failure as no
+ * reply: a reclaimed turn end, which judges an earlier reply only when the
+ * newer work wrote none. No session record or agent session id is a failure.
+ */
+export async function tryReadSessionFinalReply(
+  session: { sessionId: string; agentSessionId?: string | null; transcriptAnchor?: TranscriptAnchor | null },
+  sessionRepo: SessionRepository,
+): Promise<FinalReplyRead> {
   try {
     const record = sessionRepo.findByAnyId(session.sessionId);
     const agentSessionId = record?.agent_session_id ?? session.agentSessionId;
-    if (!record || !agentSessionId) return null;
+    if (!record || !agentSessionId) return { ok: false };
     const reply = await retrievalClient.call(
       'transcript.finalReply',
       {
@@ -38,10 +54,10 @@ export async function readSessionFinalReply(
       },
       { timeoutMs: AGENT_REPLY_TIMEOUT_MS },
     );
-    return reply ?? null;
+    return { ok: true, reply: reply ?? null };
   } catch (error) {
     // Not `[turn-end]`: Run again reads through here too.
     console.warn(`[automations] Could not read the agent's reply for ${session.sessionId.slice(0, 8)}:`, error);
-    return null;
+    return { ok: false };
   }
 }
