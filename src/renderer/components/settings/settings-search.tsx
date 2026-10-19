@@ -11,6 +11,13 @@ export interface SearchResults {
 
 /* ── Search Matching ── */
 
+/**
+ * Sentence punctuation and quotes at either end of a word. Dictation types the refinement
+ * model's text, which closes the sentence ("Push to talk."), and "talk." is a substring of no
+ * entry. A mark inside a word ("kangentic.json") stays, since it is part of what is searched for.
+ */
+const WORD_EDGE_MARKS = /^["'.,!?;:]+|["'.,!?;:]+$/g;
+
 /** Compute which setting IDs match a search query. All tokens must appear in at least one searchable field. */
 export function computeSearchResults(query: string, registry: SettingDefinition[]): SearchResults {
   const matchingIds = new Set<string>();
@@ -21,7 +28,11 @@ export function computeSearchResults(query: string, registry: SettingDefinition[
     return { matchingIds, tabMatchCounts };
   }
 
-  const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+  const tokens = normalizedQuery.split(/\s+/).map((token) => token.replace(WORD_EDGE_MARKS, '')).filter(Boolean);
+  // A query of marks alone names nothing, rather than everything an empty token list would match.
+  if (tokens.length === 0) {
+    return { matchingIds, tabMatchCounts };
+  }
 
   for (const entry of registry) {
     const searchableFields = [

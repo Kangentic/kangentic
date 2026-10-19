@@ -1528,7 +1528,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'dictation-field': {
     name: 'dictation-field',
     reach: 'boot',
-    description: 'Push-to-talk held with the caret in the Settings search box, the live chip anchored under the field and the Dictation tab\'s options around it. Dictation types into any text field, not only a terminal. The click on the search box focuses it (boot.js focuses a text field it clicks), and the target is resolved from that focus on the press. A bottom-panel terminal cannot take the focus back once a field holds it (arrival focus denies it as occupied). No transcript lands on release: the dataset answers stop with nothing, which is what a silent microphone transcribes to.',
+    description: 'Push-to-talk held with the caret in the Settings search box, the live chip anchored under the field and the Dictation tab\'s options around it. Dictation types into any text field, not only a terminal. The click on the search box focuses it (boot.js focuses a text field it clicks), and the target is resolved from that focus on the press. A bottom-panel terminal cannot take the focus back once a field holds it (arrival focus denies it as occupied). Live, the held key hears the recorded utterance (DEMO_DICTATION_RECORDING): the engine\'s partials type "Push to talk" into the box as it streams, the tab narrows with each, and on release the refined final lands and the chip closes. A still holds the press itself, with the box empty.',
     alt: 'The Settings panel on the Dictation tab with its search box focused and the dictation chip under it: a live dot beside Listening, a hint that releasing the key sends the words, and a Clear control, over dictation settings in Best mode.',
     config: { dictation: DICTATION_ON },
     // Below the field, which fails on the fallback: had the search box not held focus, the press
@@ -1544,13 +1544,19 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="settings-button"]', waitFor: `${SETTINGS_PANEL}:not(.overlay-panel-in)` },
       { click: '[data-testid="settings-tab-dictation"]', waitFor: '[data-testid="dictation-model-lines"]' },
       { click: '[data-testid="settings-search"]' },
-      { press: 'Mouse:Back', waitFor: '[data-testid="dictation-live-chip"]' },
     ],
-    // The key let go, so the chip finalizes over the silent microphone and closes with nothing to
-    // insert, then held again, so it opens under the field again. No words: none were spoken.
+    // The press is the pose, so the poster, a still and the rest are the chip listening over an
+    // empty box. Held, the key hears the recorded utterance, whose partials stream into the box
+    // during the pose's rest (the seed replays them from the press, after the frame reveals). Let
+    // go, the refined final lands, the tab narrows to the rows it names and the chip closes: the
+    // dictated text is the scene's edit, so it plays forward. The cut clears the box behind the
+    // veil, and the frame fades in on the empty box for the next press.
     choreography: [
-      { hotkeyUp: 'Mouse:Back', waitFor: gone('[data-testid="dictation-live-chip"]'), ms: 1600 },
-      { hotkeyDown: 'Mouse:Back', waitFor: DICTATION_FIELD_LISTENING, ms: 3200 },
+      { hotkeyDown: 'Mouse:Back', waitFor: DICTATION_FIELD_LISTENING },
+      { pose: true },
+      { hotkeyUp: 'Mouse:Back', waitFor: gone('[data-testid="dictation-live-chip"]'), ms: 2600 },
+      { cut: true },
+      { type: { into: '[data-testid="settings-search"]', text: '' } },
     ],
   },
 

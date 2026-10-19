@@ -360,7 +360,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `windows-tiled` | state | `workspaceByProject` with two `tiled` windows under one horizontal split, in the footprint a dock produces; both sessions have a recording at the tiled width (Terminal recordings below) |
 | `conversation` | state | `workspaceByProject` with one `conversation` window anchored on the middleware session id; the transcript is the one recorded beside the session (Transcripts below). Under `loop=1` a search is typed and its matches stepped through, then the frame cuts, and behind it the search is cleared and the viewer's own Jump to latest brings the closing message back |
 | `dictation` | boot | `config.dictation.enabled` and a held `press` of `Mouse:Back` (Dictation below) |
-| `dictation-field` | boot | the same config, the gear and the Dictation tab, a `click` on the Settings search box (which focuses it), then the held `Mouse:Back`, so the chip anchors under a text field instead of a terminal (Dictation below). Under `loop=1` it lets the key go, so the chip finalizes over the silent microphone and closes with nothing to insert, and holds it again |
+| `dictation-field` | boot | the same config, the gear and the Dictation tab, and a `click` on the Settings search box (which focuses it); then a choreography whose pose is the held `Mouse:Back`, so the chip anchors under a text field instead of a terminal, over the empty box (Dictation below). Live, the held key hears the recorded utterance, its partials typed into the box as they stream. Under `loop=1` it lets the key go, the refined "Push to talk." lands and the tab narrows to the rows it names, then the cut clears the box and the press plays again |
 | `changes`, `changes-working`, `changes-staged`, `changes-history` | state | a maximized window plus `detail_view_state` (`changesScope`, `changesSelectedFile`, `changesViewedFiles`, `changesHistoryOpen`, `changesSelectedCommit`); the scopes, the graph, and the commit diff come from the seed (Git history below). Under `loop=1` `changes` opens the new middleware file, routes.ts again, and marks routes.ts viewed, then the frame cuts and the mark comes off behind it; `changes-working` looks at the Staged tab and comes back to Working, `changes-staged` looks at Working and comes back to Staged, and `changes-history` hovers the rate limiting commit, then opens the routes commit's other file and routes.ts again. It never selects another commit: a restored selection's header has no subject line until its row is clicked, so coming back would not be the poster |
 | `changes-blame` | boot | the View options menu, then Show blame (blame is per-file view state, never persisted) |
 | `monitor`, `monitor-table` | boot | one click; the layout is `config.monitor.layout`, which persists. Under `loop=1` `monitor` types a filter that narrows its cards and regroups them by status, then the frame cuts, and behind it the grouping goes back to project and the filter is cleared. A card with a message trail draws the trail, never its output peek, so tighter peek sampling would move almost nothing here; the cycle is what moves the page between the agents' messages. `monitor-table` clicks its Column header through ascending, descending, and back to unsorted, each step waiting on the header's `aria-sort`, which only the sorted header carries |
@@ -794,13 +794,35 @@ Settings search box in `dictation-field`. The second one is the point of having 
 types into any text field in the app, and a figure of the terminal alone reads as a terminal
 feature.
 
-Nothing is transcribed and nothing authored ships. The dataset answers `dictation.stop` with an
-empty string, which is what a silent microphone transcribes to. The mock's stock answer is a
-sentence, and in `dictation-field` a visitor who released the button would have it typed into the
-search box, filtering the tab away. In a terminal the words would be the CLI's own echo of what
-main typed into the PTY, which no mock can draw either. So a visitor who presses the button sees
-the chip and, on release, nothing typed, which is the one place the frame is quieter than the
-desktop.
+What the engine "hears" is one recorded utterance, not authored text.
+`node scripts/record-dictation-demo.mjs` bundles the dictation worker's own engine code
+(`engine-build.ts` and the engines it builds) with esbuild, resolves the selection the demo's
+Dictation tab shows, and feeds it a clip of "push to talk" the way the renderer's worklet does:
+20 ms frames of 16 kHz mono PCM. The clip is synthesized with sherpa-onnx's Kokoro TTS, so it is
+regenerated rather than committed, and `--wav` takes a recorded clip instead. The script writes
+each live partial with the audio time that produced it, measured from the press, and the refined
+final with its decode time, to `tests/captures/fixtures/demo/dictation/settings-search.json`
+(`DEMO_DICTATION_RECORDING`). Nemotron streamed "Push to" at 1.2 s and "Push to talk" at 1.76 s,
+and Parakeet v3 closed it as "Push to talk." in under 100 ms.
+
+The seed replays it on a press. Each partial goes out through the mock's partial push on the
+recording's clock, and the renderer types it into the focused field, so the Settings search
+narrows as the words arrive. `dictation.stop` sends main's final push and answers the refined
+text after the recorded decode time. A visitor who lets go before the last partial gets what the
+live model had heard by then. The clock starts when the frame is revealed, so a key held in the
+scene's pose does not spend the utterance behind the boot veil. A still plays none of it, and the
+choreography's pacing divisor divides this clock too, so the demo tier's divided cycle still lets
+go after the last word. The phrase names a Dictation tab row on purpose: a random sentence would
+filter the tab to nothing. `tests/unit/demo-dictation-recording-seeded.test.ts` fails when the
+recording is missing or empty, comes from other models than the tab names, commits a final that
+names no Dictation setting, or stops reaching the seed.
+
+The final's closing period found a desktop bug on the way. Settings search matched each word as a
+raw substring, so "talk." matched nothing and the panel switched to No results on release. It now
+strips sentence punctuation and quotes from each end of a word (`settings-search.tsx`).
+
+In a terminal the words are the CLI's own echo of what main typed into the PTY, which no mock can
+draw, so `dictation` still shows the chip and nothing typed.
 
 The Dictation tab reads `dictation.getInfo`, and the mock's own answer lists no models, so both
 model rows read None whatever the config says. The dataset answers it instead with main's
@@ -1786,7 +1808,7 @@ every bridge method (`tests/unit/mock-electron-api-parity.test.ts` keeps that tr
 | Task-detail Browser pane | The pane is the real renderer; its `<webview>` is stood in for by `demo/webview-shim.js`, an iframe onto a bundled page with the project's own data at its dev URL (Browser guest below). Inspect finds nothing, capture rejects, and history is empty. |
 | Folder pill, PR links, external links | Inert: `shell.openPath` and `openExternal` are logged by the mock. |
 | Pop-out (Monitor, Changes, Stats) | Inert: the in-app surface stays where it is. |
-| Dictation | The whole renderer pipeline runs on a press, over a silent microphone `demo/boot.js` supplies (the mic is never requested), and the chip shows its live state over a terminal or a text field. A silent mic transcribes to nothing, so release types nothing (Dictation below). |
+| Dictation | The whole renderer pipeline runs on a press, over a silent microphone `demo/boot.js` supplies (the mic is never requested), and the chip shows its live state over a terminal or a text field. What it hears is one recorded utterance, typed into a focused text field as it streams; a terminal shows nothing typed (Dictation below). |
 | Updater | Silent: no update is ever "downloaded". |
 
 Two things stay out of reach of a live frame: the Browser pane's REAL guest (a page the agent is driving) and a dictated transcript landing in the terminal.

@@ -78,6 +78,36 @@ describe('settings search: hosted relay preset rename back-compat', () => {
   });
 });
 
+describe('settings search: sentence punctuation around a word', () => {
+  // Dictation into the search box commits the refinement model's text, which closes the
+  // sentence: saying "push to talk" types "Push to talk.". Every word must still match, so a
+  // period, comma, question or exclamation mark, colon or semicolon at either end of a word is
+  // not part of it. The bug this pins: "talk." is a substring of no entry, so the panel switched
+  // to No results the moment the key was let go.
+  it('matches a dictated "Push to talk." exactly as it matches "push to talk"', () => {
+    const plain = computeSearchResults('push to talk', SETTINGS_REGISTRY).matchingIds;
+    const dictated = computeSearchResults('Push to talk.', SETTINGS_REGISTRY).matchingIds;
+    expect(plain.has('dictation.releaseBufferMs')).toBe(true);
+    expect([...dictated].sort()).toEqual([...plain].sort());
+  });
+
+  it.each(['release, buffer', 'release buffer?', '"release buffer"!', 'release: buffer;'])('ignores the marks in %j', (query) => {
+    expect(computeSearchResults(query, SETTINGS_REGISTRY).matchingIds.has('dictation.releaseBufferMs')).toBe(true);
+  });
+
+  it('keeps a mark inside a word', () => {
+    // A dot inside a token is part of the word (a file name, a version, "e.g."), so it still
+    // has to match as written.
+    const { matchingIds } = computeSearchResults('kangentic.json', SETTINGS_REGISTRY);
+    const plainWords = computeSearchResults('kangentic json', SETTINGS_REGISTRY).matchingIds;
+    expect([...matchingIds].every((id) => plainWords.has(id))).toBe(true);
+  });
+
+  it('matches nothing for a query that is only punctuation', () => {
+    expect(computeSearchResults(' . ? ', SETTINGS_REGISTRY).matchingIds.size).toBe(0);
+  });
+});
+
 describe('useAnySettingVisible', () => {
   // The four branches straight from the function's own JSDoc contract
   // (settings-search.tsx): not searching -> visible; searching with no/empty

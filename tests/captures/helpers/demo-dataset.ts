@@ -28,6 +28,7 @@ import { NO_SOURCE, sourceStatusOf, sumIndexCounts, summaryStatusOf } from '../.
 import archivedRunsFixture from '../fixtures/demo/archived/runs.json';
 import historyFixture from '../fixtures/demo/archived/history.json';
 import knowledgeGraphFixture from '../fixtures/demo/graph/knowledge-graph.json';
+import dictationRecordingFixture from '../fixtures/demo/dictation/settings-search.json';
 
 export interface DemoScrollbackMap {
   /** Session id to the serialized terminal stream replayed into that session's xterm. */
@@ -770,6 +771,36 @@ export const DEMO_DICTATION_INFO = buildDictationInfo(
   [DEMO_DICTATION_SELECTION.liveModelId, DEMO_DICTATION_SELECTION.finalModelId]
     .filter((modelId): modelId is string => modelId !== null),
 );
+/** The live and refinement models the default config runs on the sample install's machine. */
+export const DEMO_DICTATION_MODELS = {
+  liveModelId: DEMO_DICTATION_SELECTION.liveModelId,
+  finalModelId: DEMO_DICTATION_SELECTION.finalModelId,
+};
+
+/** One recorded utterance: what the engine streamed while the key was held, and what it committed on release. */
+export interface DemoDictationRecording {
+  source: { kind: string; model?: string; voice?: number; text?: string };
+  liveModelId: string;
+  finalModelId: string;
+  language: string;
+  frameMs: number;
+  /** When the key was let go, from the press. */
+  releaseMs: number;
+  releaseBufferMs: number;
+  /** Each live partial and the audio time, from the press, of the frame that produced it. */
+  partials: Array<{ t: number; text: string }>;
+  /** The refined text the release commits, and how long the refinement took. */
+  final: { text: string; decodeMs: number };
+}
+
+/**
+ * What the demo's silent microphone "hears": one utterance recorded by
+ * scripts/record-dictation-demo.mjs, which runs the dictation worker's own engine code on the
+ * models above over a synthesized clip of someone saying a Dictation tab row's name. Nothing in it
+ * is written by hand. The seed replays it on a press (the dictation section of the applier below),
+ * and tests/unit/demo-dictation-recording-seeded.test.ts holds it to these models.
+ */
+export const DEMO_DICTATION_RECORDING: DemoDictationRecording = dictationRecordingFixture;
 
 // ---------------------------------------------------------------- the Knowledge Graph
 /**
@@ -1067,6 +1098,7 @@ export function buildDemoPreConfig(options: {
     labelColors: DEMO_LABEL_COLORS,
     agentOverrides: DEMO_AGENT_OVERRIDES,
     dictationInfo: DEMO_DICTATION_INFO,
+    dictationRecording: DEMO_DICTATION_RECORDING,
     modelByAgent: MODEL_BY_AGENT,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
     currentProjectId: options.currentProjectId ?? PROJECT_CONTOSO,
@@ -1501,14 +1533,11 @@ export function buildDemoPreConfig(options: {
 
       // Dictation runs the renderer's whole pipeline for real on a press (the hotkey, the mic
       // request the mock grants, the engine start, the audio worklet over the silent stream
-      // demo/boot.js supplies), and the chip shows its live state. Two answers are seeded.
-      // getInfo is main's own selection for this machine (DEMO_DICTATION_INFO), so the Dictation
-      // tab lists the models the desktop would. stop resolves to nothing, which is what a silent
-      // microphone transcribes to. The mock's stock sentence would otherwise be typed into a
-      // focused field on release, and no transcript is authored here. In a terminal the words
-      // are the CLI's own echo, which no mock can draw either.
+      // demo/boot.js supplies), and the chip shows its live state. getInfo is main's own
+      // selection for this machine (DEMO_DICTATION_INFO), so the Dictation tab lists the models
+      // the desktop would. What the engine hears is the recorded utterance the dictation section
+      // below replays.
       window.__mockDictationInfoOverrides = data.dictationInfo;
-      window.electronAPI.dictation.stop = function () { return Promise.resolve(''); };
 
       // Quick Find answers from the sample install itself: a keyword match over the tasks, the
       // backlog, and each session's events, scoped the way the palette asks (this project or all
@@ -3537,6 +3566,68 @@ export function buildDemoPreConfig(options: {
           }
           return result;
         });
+      };
+
+      // ---- dictation -------------------------------------------------------------------
+      // The silent microphone hears one recorded utterance (DEMO_DICTATION_RECORDING): the
+      // desktop's own engine over a clip of someone saying a Dictation tab row's name. A press
+      // replays it on its own clock, from the press. Each live partial goes out the way main
+      // forwards one, and the renderer types it into the focused field. On release, stop sends
+      // main's final push and answers the refined text after the decode time the recording
+      // measured, as TranscriptionService.finalize does. A visitor who lets go before the last
+      // partial gets what the live model had heard by then, which is what the desktop commits when
+      // no refinement runs. The clock starts once the frame is revealed, so a key held in the
+      // boot's pose does not spend the utterance behind the veil, and a still plays none of it.
+      // The choreography's pacing divisor (a test's __demoChoreographyRate) divides this clock
+      // too, so a divided cycle still lets go after the last word.
+      var dictationRecording = data.dictationRecording;
+      var dictationPlayback = null;
+      function dictationRate() {
+        var configured = Number(window.__demoChoreographyRate);
+        return configured > 0 ? configured : 1;
+      }
+      function endDictationPlayback() {
+        var playback = dictationPlayback;
+        if (playback) playback.timers.forEach(function (timer) { clearTimeout(timer); });
+        dictationPlayback = null;
+        return playback;
+      }
+      var originalDictationStart = window.electronAPI.dictation.start;
+      window.electronAPI.dictation.start = function () {
+        return originalDictationStart.apply(this, arguments).then(function (result) {
+          endDictationPlayback();
+          var playback = { dictationSessionId: result.dictationSessionId, timers: [], heard: -1 };
+          dictationPlayback = playback;
+          if (!live || !dictationRecording) return result;
+          whenFrameRevealed(function () {
+            if (dictationPlayback !== playback) return;
+            dictationRecording.partials.forEach(function (partial, index) {
+              playback.timers.push(setTimeout(function () {
+                playback.heard = index;
+                if (window.__emitDictationPartial) window.__emitDictationPartial(playback.dictationSessionId, partial.text);
+              }, partial.t / dictationRate()));
+            });
+          });
+          return result;
+        });
+      };
+      window.electronAPI.dictation.stop = function (dictationSessionId) {
+        var playback = endDictationPlayback();
+        var partials = dictationRecording ? dictationRecording.partials : [];
+        var heard = playback ? playback.heard : -1;
+        var text = heard < 0 ? '' : heard === partials.length - 1 ? dictationRecording.final.text : partials[heard].text;
+        var decodeMs = text && heard === partials.length - 1 ? dictationRecording.final.decodeMs / dictationRate() : 0;
+        return new Promise(function (resolve) {
+          setTimeout(function () {
+            if (window.__emitDictationFinal) window.__emitDictationFinal(dictationSessionId, text);
+            resolve(text);
+          }, decodeMs);
+        });
+      };
+      var originalDictationCancel = window.electronAPI.dictation.cancel;
+      window.electronAPI.dictation.cancel = function () {
+        endDictationPlayback();
+        return originalDictationCancel.apply(this, arguments);
       };
 
       // A workflow's own agent, which the Workflows view's pane opens (workflows.agentOpen). Where
