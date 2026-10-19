@@ -33,11 +33,11 @@ test.describe.configure({ mode: 'parallel' });
  * its bottom edge. The tests still measure rather than trust this.
  */
 const TALL_MESSAGE =
-  'Kangentic could not write to its data folder, so the column layout, the board '
-  + 'profiles and the per-project settings you just changed apply to this session '
-  + 'but will not persist across a restart. Check the folder permissions and try again.';
+  'Kangentic could not save a change to disk because the file is in use or read-only, '
+  + 'so the column layout, the board profiles and the per-project settings you just '
+  + 'changed may be lost when Kangentic restarts. Close the program holding the file.';
 
-const SHORT_MESSAGE = 'Kangentic could not write to its data folder.';
+const SHORT_MESSAGE = 'Kangentic could not save a change to disk.';
 
 interface Rect { left: number; top: number; right: number; bottom: number }
 
