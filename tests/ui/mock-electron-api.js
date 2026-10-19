@@ -5434,13 +5434,16 @@
       // visit is Automatic on an agent that can approve plans; and where no plan
       // column's agent can approve, it is Manual and Automatic is not offered.
       // The mock folds no Board Profile, since no UI spec seeds one on a workflow task.
+      // Each column's agent resolves as resolveTargetAgent does: the task's
+      // override, then the column's, then the project's default.
       function planApprovalOf(entry, routedTasks) {
         var workflow = entry.workflow;
         var planColumns = [];
         routedTasks.forEach(function (routed) {
+          var project = projects.find(function (candidate) { return candidate.id === routed.projectId; });
           routeColumns(routed.task, routed.projectId).forEach(function (lane) {
             if (lane.permission_mode !== 'plan') return;
-            var agentName = lane.agent_override || routed.task.agent_override || 'claude';
+            var agentName = routed.task.agent_override || lane.agent_override || (project && project.default_agent) || 'claude';
             planColumns.push({ planApproval: lane.plan_approval || 'manual', agentCanApprove: PLAN_APPROVING_AGENTS.indexOf(agentName) !== -1 });
           });
         });
@@ -5513,7 +5516,8 @@
           links: links.filter(function (link) {
             return link.workflow_id === workflow.id && keys.indexOf(link.blocker_task_id) !== -1 && keys.indexOf(link.blocked_task_id) !== -1;
           }).map(function (link) { return { blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }; }),
-          planApproval: planApprovalOf(entry, created.map(function (task) {
+          // A task already done visits nothing more, so its route no longer counts.
+          planApproval: planApprovalOf(entry, created.filter(function (task) { return placeOf(task) !== 'done'; }).map(function (task) {
             return { task: task, projectId: boardOf(entry, task) };
           })),
         };

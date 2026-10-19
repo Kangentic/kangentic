@@ -98,10 +98,9 @@ describe('Copilot hooks through the real event bridge (1.0.97 payload shapes)', 
   });
 
   it('a rejected plan exit stays Copilot\'s own tool, so the card does not move', () => {
-    // The rejection text exit_plan_mode.rs builds in 1.0.97. Its resultType is
-    // not in the bundle's strings, and postToolUse fires only for a success
-    // (CLI 1.0.15), so a live rejection may send no postToolUse at all. This
-    // pins what the bridge does if it does.
+    // The rejection text exit_plan_mode.rs builds in 1.0.97. A live 1.0.98
+    // rejection sent it as a `success` postToolUse
+    // (tests/fixtures/plan-exit/copilot-1.0.98-post-tool-use-rejected.json).
     const emitted = runCopilotHook('postToolUse', {
       ...SESSION_FIELDS,
       toolName: 'exit_plan_mode',

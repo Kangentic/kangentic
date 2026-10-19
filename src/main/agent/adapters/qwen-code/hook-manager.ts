@@ -135,10 +135,15 @@ export function buildHooks(
   existingHooks: Record<string, QwenHookEntry[]>,
 ): Record<string, QwenHookEntry[]> {
   const userHooks = userHooksOnly(existingHooks);
-  const withBridge = (hookEvent: QwenHookEvent, eventType: string, ...directives: string[]): QwenHookEntry[] => [
-    ...(userHooks[hookEvent] ?? []),
-    bridgeEntry(eventBridge, eventsPath, eventType, ...directives),
-  ];
+  const withBridge = (hookEvent: QwenHookEvent, eventType: string, ...directives: string[]): QwenHookEntry[] => {
+    // A hand-edited value that is not an entry list (Qwen rejects one) is
+    // replaced, not spread: a string would split and an object would throw.
+    const userEntries: unknown = userHooks[hookEvent];
+    return [
+      ...(Array.isArray(userEntries) ? userEntries : []),
+      bridgeEntry(eventBridge, eventsPath, eventType, ...directives),
+    ];
+  };
   // The session's mode at each prompt and turn end (SessionEvent.planMode),
   // never a subagent's, whose payload carries `agent_id`.
   const planMode = extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' });

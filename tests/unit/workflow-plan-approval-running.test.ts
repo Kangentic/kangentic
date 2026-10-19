@@ -335,8 +335,24 @@ describe('a running workflow\'s plan approval', () => {
         expect(() => notifyWorkflowsReadingBoard(context, 'mobile')).not.toThrow();
 
         expect(notifyWorkflowChanged).not.toHaveBeenCalled();
+        // Once for the board's own task list, once for its project's drafts.
+        expect(warn).toHaveBeenCalledTimes(2);
+        for (const [message] of warn.mock.calls) expect(String(message)).toContain('[plan-approval]');
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('still reads every other project when one project\'s database will not read', () => {
+      const draftId = draftWith([{ key: 'api', title: 'Budgets API' }]);
+      // The unreadable project is listed ahead of the draft's home.
+      projects = [projects[1], projects[0]];
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        harness.throwFor.add('mobile');
+
+        expect(notifiedFor('home')).toEqual([['home', draftId]]);
         expect(warn).toHaveBeenCalledTimes(1);
-        expect(String(warn.mock.calls[0][0])).toContain('[plan-approval]');
       } finally {
         warn.mockRestore();
       }

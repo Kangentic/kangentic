@@ -3,8 +3,8 @@
  * driven through the real SessionTelemetry ingest so every consumer it feeds
  * (the activity engine, the event log, the turn-start stamp) is the real one.
  *
- * The event order is the one measured on Claude Code 2.1.302 in the task 840
- * probe: PreToolUse(ExitPlanMode), then the catch-all PermissionRequest's
+ * The event order is the one measured on Claude Code 2.1.302 in a probe:
+ * PreToolUse(ExitPlanMode), then the catch-all PermissionRequest's
  * permission idle 24 to 31 ms BEFORE the approver's marker, then the plan
  * exit's PostToolUse 130 to 170 ms after the marker. The marker-first order
  * was not observed but the two hooks run in parallel, so it is pinned too.

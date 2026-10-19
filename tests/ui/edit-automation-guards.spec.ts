@@ -1230,6 +1230,55 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(editDialog()).toBeVisible();
   });
 
+  // The menu is a body portal at the end of the document, so a native Tab from an
+  // option would leave focus outside both dialogs with the menu still open. The
+  // option's own Tab handler closes it onto the field instead.
+  test('Tab on a Column menu option closes the menu onto its field and leaves the dialogs open', async () => {
+    await openColumn('Executing');
+    await addThroughPicker('turn_end', 'move_to_column');
+
+    const target = card('action').locator('[data-testid="automation-config-targetColumn"]');
+    await target.focus();
+    await page.keyboard.press('ArrowDown');
+    const menu = page.locator('[data-testid="automation-config-targetColumn-menu"]');
+    await expect(menu).toBeVisible();
+    await expect(menu.locator('[data-testid="automation-config-targetColumn-option"]').first()).toBeFocused();
+
+    await page.keyboard.press('Tab');
+    // Unmounted, not hidden: the picker renders its menu only while open.
+    await expect(menu).toHaveCount(0);
+    await expect(target).toBeFocused();
+    await expect(editDialog()).toBeVisible();
+    await expect(dialog()).toBeVisible();
+    // Closing without choosing leaves the value where it was.
+    await expect(target).toHaveAttribute('data-value', '');
+  });
+
+  test('ArrowUp on the first Column menu option moves focus back to the field, and ArrowDown returns to it', async () => {
+    await openColumn('Executing');
+    await addThroughPicker('turn_end', 'move_to_column');
+
+    const target = card('action').locator('[data-testid="automation-config-targetColumn"]');
+    await target.focus();
+    await page.keyboard.press('ArrowDown');
+    const menu = page.locator('[data-testid="automation-config-targetColumn-menu"]');
+    await expect(menu).toBeVisible();
+    const options = menu.locator('[data-testid="automation-config-targetColumn-option"]');
+    // Next column is both the current choice and the first option.
+    await expect(options.first()).toBeFocused();
+
+    await page.keyboard.press('ArrowUp');
+    await expect(target).toBeFocused();
+    // The menu stays open, so the field's ArrowDown goes back into it.
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('ArrowDown');
+    await expect(options.first()).toBeFocused();
+
+    // Closed again, since the open menu sits over the dialog's footer.
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+  });
+
   test('a Column the board no longer has stays listed, marked, and without a glyph', async () => {
     await seedColumn('Executing', [
       { name: 'Hand off', type: 'move_to_column', trigger: 'turn_end', config: { targetColumn: 'Gone' } },

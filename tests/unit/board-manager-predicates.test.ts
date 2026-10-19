@@ -8,6 +8,7 @@ import {
   getReorderedColumnIds,
   buildUpdateInput,
   buildCreateInput,
+  planExitChoices,
 } from '../../src/renderer/components/dialogs/BoardManagerDialog';
 import type { Swimlane } from '../../src/shared/types';
 
@@ -352,5 +353,96 @@ describe('buildCreateInput', () => {
   it('omits plan_exit_target_id when not in plan mode', () => {
     const draft = makeSwimlane({ id: 'new:abc', permission_mode: null, plan_exit_target_id: 'tests' });
     expect(buildCreateInput(draft).plan_exit_target_id).toBeUndefined();
+  });
+
+  // Plan approval is only meaningful while the column runs in plan mode, so a
+  // new column sends it there and nowhere else. The non-plan draft carries
+  // Automatic on purpose: without it, "not sent" would hold even with the gate gone.
+  it('sends plan_approval for a plan-mode draft', () => {
+    const draft = makeSwimlane({ id: 'new:abc', permission_mode: 'plan', plan_approval: 'automatic' });
+    expect(buildCreateInput(draft).plan_approval).toBe('automatic');
+  });
+
+  it('omits plan_approval when not in plan mode, even if the draft holds Automatic', () => {
+    const draft = makeSwimlane({ id: 'new:abc', permission_mode: null, plan_approval: 'automatic' });
+    expect(buildCreateInput(draft).plan_approval).toBeUndefined();
+  });
+});
+
+describe('planExitChoices', () => {
+  // Position values and the insertion order of `drafts` both differ from the
+  // order the tests pass as `laneOrder`, so a result that followed either of
+  // them would read wrong.
+  const todo = makeSwimlane({ id: 'todo', name: 'To Do', role: 'todo', position: 0, color: '#6b7280', icon: 'layers' });
+  const planning = makeSwimlane({ id: 'planning', name: 'Planning', permission_mode: 'plan', position: 1, color: '#8b5cf6', icon: 'map' });
+  const executing = makeSwimlane({ id: 'executing', name: 'Executing', position: 2, color: '#3b82f6', icon: 'square-terminal' });
+  const review = makeSwimlane({ id: 'review', name: 'Code Review', position: 3, color: '#f59e0b', icon: 'code' });
+  const done = makeSwimlane({ id: 'done', name: 'Done', role: 'done', position: 4, color: '#10b981', icon: 'check' });
+  const unsaved = makeSwimlane({ id: 'new:draft', name: 'New column', position: 0, color: '#ef4444', icon: null });
+
+  const drafts: Record<string, Swimlane> = {
+    review,
+    done,
+    [unsaved.id]: unsaved,
+    planning,
+    todo,
+    executing,
+  };
+  const noNewDrafts: ReadonlySet<string> = new Set();
+
+  function idsOf(choices: ReturnType<typeof planExitChoices>): string[] {
+    return choices.map((choice) => choice.value);
+  }
+
+  it('lists every saved column but To Do and Done, in laneOrder', () => {
+    const laneOrder = ['todo', 'executing', 'planning', 'review', 'done'];
+    expect(idsOf(planExitChoices(laneOrder, drafts, planning, noNewDrafts)))
+      .toEqual(['executing', 'planning', 'review']);
+  });
+
+  it('follows laneOrder, not position or the order of the drafts record', () => {
+    const laneOrder = ['review', 'planning', 'executing'];
+    expect(idsOf(planExitChoices(laneOrder, drafts, planning, noNewDrafts)))
+      .toEqual(['review', 'planning', 'executing']);
+  });
+
+  it('values each choice by column id and carries its name, color, icon and role', () => {
+    const choices = planExitChoices(['planning', 'review'], drafts, planning, noNewDrafts);
+    expect(choices).toEqual([
+      { value: 'planning', name: 'Planning', color: '#8b5cf6', icon: 'map', role: null },
+      { value: 'review', name: 'Code Review', color: '#f59e0b', icon: 'code', role: null },
+    ]);
+  });
+
+  it('lists the column itself, which is how a plan column keeps the task where it is', () => {
+    // An unsaved column fails the general test (it is in `newDraftIds`), so only
+    // the "is the column itself" clause can list it.
+    const column = makeSwimlane({ id: 'new:self', name: 'Scratch', permission_mode: 'plan' });
+    const withSelf = { ...drafts, [column.id]: column };
+    const laneOrder = ['planning', 'new:self', 'executing'];
+    expect(idsOf(planExitChoices(laneOrder, withSelf, column, new Set(['new:self']))))
+      .toEqual(['planning', 'new:self', 'executing']);
+  });
+
+  it('leaves out an unsaved new column that is not the column being edited', () => {
+    const laneOrder = ['planning', 'new:draft', 'executing'];
+    expect(idsOf(planExitChoices(laneOrder, drafts, planning, new Set(['new:draft']))))
+      .toEqual(['planning', 'executing']);
+  });
+
+  it('keeps a saved target the list would otherwise drop, so opening the dialog never re-points it', () => {
+    const pointedAtDone = makeSwimlane({ id: 'planning', name: 'Planning', permission_mode: 'plan', plan_exit_target_id: 'done' });
+    const withPointer = { ...drafts, planning: pointedAtDone };
+    const laneOrder = ['todo', 'planning', 'executing', 'done'];
+    // Done is listed because it is the saved target; To Do is not, which shows
+    // the exception is for that one column and not a general admission of role columns.
+    expect(idsOf(planExitChoices(laneOrder, withPointer, pointedAtDone, noNewDrafts)))
+      .toEqual(['planning', 'executing', 'done']);
+  });
+
+  it('skips a laneOrder id that has no draft', () => {
+    const laneOrder = ['planning', 'removed', 'executing'];
+    expect(idsOf(planExitChoices(laneOrder, drafts, planning, noNewDrafts)))
+      .toEqual(['planning', 'executing']);
   });
 });

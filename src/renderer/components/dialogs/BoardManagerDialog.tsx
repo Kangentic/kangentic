@@ -151,11 +151,11 @@ const PLAN_APPROVAL_OPTIONS: readonly SegmentedControlOption<PlanApproval>[] = [
  * never by name), and nowhere under a Board Profile, since the value is the
  * column's own and every profile shares it.
  */
-function planApprovalOptionsFor(
-  agentCanApprove: boolean,
-  agentDisplayName: string,
-  underProfile: boolean,
-): readonly SegmentedControlOption<PlanApproval>[] {
+function planApprovalOptionsFor({ agentCanApprove, agentDisplayName, underProfile }: {
+  agentCanApprove: boolean;
+  agentDisplayName: string;
+  underProfile: boolean;
+}): readonly SegmentedControlOption<PlanApproval>[] {
   if (underProfile) {
     return PLAN_APPROVAL_OPTIONS.map((option) => ({
       ...option,
@@ -1195,7 +1195,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const agentPermissions = effectiveAgentInfo?.permissions ?? DEFAULT_PERMISSIONS;
   const columnAgentApprovesPlans = agentApprovesPlans(agentList, effectiveAgent);
   const planApprovalOptions = useMemo(
-    () => planApprovalOptionsFor(columnAgentApprovesPlans, effectiveAgentInfo?.displayName ?? effectiveAgent, activeProfileId !== null),
+    () => planApprovalOptionsFor({
+      agentCanApprove: columnAgentApprovesPlans,
+      agentDisplayName: effectiveAgentInfo?.displayName ?? effectiveAgent,
+      underProfile: activeProfileId !== null,
+    }),
     [columnAgentApprovesPlans, effectiveAgentInfo?.displayName, effectiveAgent, activeProfileId],
   );
 
@@ -1815,7 +1819,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // The tallest page is a PLAN-permission column with Start an agent on: its
   // Agent card carries the Plan approval and After Plan Mode row. Measured on
   // Planning at the 2000px width, where the px cap is the only one that can
-  // bind (task 840, after that row moved its descriptions into info tips and
+  // bind (after that row moved its descriptions into info tips and
   // Session became one line): General 250 + Agent 317 + Conversation 179, plus
   // the two 24px gaps, is 794px of settings content, which with the body's own
   // 28px top and bottom needs an 850px scroll area. At 1120 the scroll area was

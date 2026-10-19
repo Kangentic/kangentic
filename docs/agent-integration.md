@@ -413,7 +413,7 @@ claude --settings <mergedSettingsPath> --resume <uuid>
 
 Every mode also passes `--settings <path>`, the merged settings file in the session directory, whenever the spawn has a status output path.
 
-A `plan` spawn whose approved plan would continue in `bypassPermissions` (`planApprovalModeForSpawn`) also passes `--allow-dangerously-skip-permissions` (`CommandOptions.bypassAvailable`), so the approval can switch the session to bypass. See [`plan-approval-bridge.js`](#plan-approval-bridgejs).
+A `plan` spawn whose approved plan would continue in `bypassPermissions` (`planApprovalModeForSpawn`) also passes `--allow-dangerously-skip-permissions` (`CommandOptions.bypassAvailable`), so the approval can switch the session to bypass. The flag is a launch option, so bypass stays reachable from that session's own mode cycle for its whole life, even after its column is switched back to Manual. See [`plan-approval-bridge.js`](#plan-approval-bridgejs).
 
 #### Permission Mode Resolution (Priority Order)
 
@@ -740,7 +740,7 @@ The fork swapped Gemini's `auto_edit` (underscore) flag value for `auto-edit` (h
 
 Qwen's `HookEventName` uses Claude Code's names (read from the 0.21.7 and 0.24.0 bundles, and the
 same in upstream v0.12.0 and v0.15.3), and Qwen skips any other key with an "Invalid hook event
-name" warning. The adapter wrote Gemini's names until task 840, so on those versions only
+name" warning. The adapter wrote Gemini's names before plan approval shipped, so on those versions only
 SessionStart, SessionEnd and Notification ever fired. Each event now maps as Claude's does:
 
 | Qwen event | Kangentic event |
@@ -1057,7 +1057,7 @@ The `CopilotStatusParser` reads a `status.json` written by Copilot's `statusLine
 - No `transcript-cleanup.ts` despite being a TUI agent (`\x1b[?25l` cursor hide). Handoff transcripts may contain rendering artifacts.
 - `locateSessionHistoryFile` returns null - file location is not yet empirically verified.
 - Trust is handled at runtime via `--add-dir`, not pre-approved.
-- Plan exit detection is read from the 1.0.97 bundle, not a live session. Copilot's plan exit tool is `exit_plan_mode`, and its `postToolUse` result at `toolResult.textResultForLlm` starts "Plan approved! Exited plan mode." for an approved plan and "Plan not approved." otherwise. The `postToolUse` entry carries `setToolWhen({ whenTool: 'exit_plan_mode', toolField: 'toolName', nested: ['toolResult', 'textResultForLlm'], startsWith: 'Plan approved', to: 'ExitPlanMode' })`, so only an approved plan moves the card to the After Plan Mode target. Whether a rejection reaches `postToolUse` at all (it fires only for successful results) is unconfirmed; either way it never moves the card.
+- Plan exit detection was read from the 1.0.97 bundle and confirmed on a live 1.0.98 session (`tests/fixtures/plan-exit/copilot-1.0.98-post-tool-use-*.json`). Copilot's plan exit tool is `exit_plan_mode`, and its `postToolUse` result at `toolResult.textResultForLlm` starts "Plan approved! Exited plan mode." for an approved plan and "Plan not approved." otherwise. A rejection does reach `postToolUse`, as a `success` result with the "Plan not approved." text. The `postToolUse` entry carries `setToolWhen({ whenTool: 'exit_plan_mode', toolField: 'toolName', nested: ['toolResult', 'textResultForLlm'], startsWith: 'Plan approved', to: 'ExitPlanMode' })`, so only an approved plan moves the card to the After Plan Mode target.
 
 ## Oz CLI (Warp)
 

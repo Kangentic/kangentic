@@ -3471,6 +3471,54 @@ describe('ActivityEngine', () => {
     });
   });
 
+  // Plan approval bookkeeping is in LOG_ONLY_EVENTS, so neither marker moves the
+  // stale-thinking anchor. The observable is WHEN the watchdog fires: a marker
+  // that refreshed the anchor would push the idle out past the original deadline.
+  // Only a Prompt precedes it, because a pending tool would hand the hold to the
+  // 5 s stuck-pending-tools watchdog instead.
+  //
+  // Red trigger: remove EventType.PlanApprovalSent (or PlanAutoApproved) from
+  // LOG_ONLY_EVENTS in engine/shapes.ts. The matching case then sees the session
+  // still thinking past the deadline and staleThinking at 0.
+  describe('plan approval markers are log-only (they leave the stale-thinking anchor alone)', () => {
+    it.each([
+      EventType.PlanApprovalSent,
+      EventType.PlanAutoApproved,
+    ])('%s does not refresh the anchor, so the watchdog still fires at the original deadline', (markerType) => {
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      const anchorBeforeMarker = engine.getState(SESSION_ID)!.lastSignalAt;
+
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS - 200);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+
+      engine.processEvent(SESSION_ID, event(markerType, { detail: 'Moved to Executing' }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getState(SESSION_ID)!.lastSignalAt).toBe(anchorBeforeMarker);
+
+      // 100 ms past the original deadline (the Prompt plus TEST_STALE_TIMEOUT_MS).
+      vi.advanceTimersByTime(300);
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.staleThinking).toBe(1);
+    });
+
+    it('control: a non-log-only event at the same point does refresh the anchor and defers the watchdog', () => {
+      // Shows the sequence above is sensitive to the anchor, so its idle comes
+      // from the original deadline and not from a timer that fires regardless.
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS - 200);
+
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      vi.advanceTimersByTime(300);
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.staleThinking).toBe(0);
+    });
+  });
+
   describe('getStatsSnapshot (Subsystem E)', () => {
     beforeEach(() => {
       engine.initSession(SESSION_ID);

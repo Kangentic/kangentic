@@ -62,6 +62,7 @@ export function notifyWorkflowsReadingBoard(context: IpcContext, boardProjectId:
     notified.add(workflowId);
     notifyWorkflowChanged(homeProjectId, workflowId);
   };
+  // A database that will not read skips only itself; the next change catches up.
   try {
     const boardDb = getExistingProjectDb(boardProjectId);
     if (boardDb) {
@@ -69,7 +70,18 @@ export function notifyWorkflowsReadingBoard(context: IpcContext, boardProjectId:
         notify(membership.workflow_project_id ?? boardProjectId, membership.workflow_id);
       }
     }
-    for (const project of context.projectRepo.list()) {
+  } catch (error) {
+    console.warn('[plan-approval] Could not read the workflows with a task on a board:', error);
+  }
+  let projects: ReturnType<IpcContext['projectRepo']['list']>;
+  try {
+    projects = context.projectRepo.list();
+  } catch (error) {
+    console.warn('[plan-approval] Could not list the projects for a board change:', error);
+    return;
+  }
+  for (const project of projects) {
+    try {
       const homeDb = getExistingProjectDb(project.id);
       if (!homeDb) continue;
       for (const workflow of new WorkflowRepository(homeDb).listOpen()) {
@@ -77,10 +89,9 @@ export function notifyWorkflowsReadingBoard(context: IpcContext, boardProjectId:
         const onBoard = (workflow.draft?.tasks ?? []).some((planned) => (planned.project_id ?? project.id) === boardProjectId);
         if (onBoard) notify(project.id, workflow.id);
       }
+    } catch (error) {
+      console.warn(`[plan-approval] Could not read the draft workflows of project ${project.id.slice(0, 8)}:`, error);
     }
-  } catch (error) {
-    // A board that will not read reloads nothing; the next change catches up.
-    console.warn('[plan-approval] Could not find the workflows reading a board:', error);
   }
 }
 

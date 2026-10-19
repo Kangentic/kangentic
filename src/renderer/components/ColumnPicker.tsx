@@ -116,9 +116,12 @@ export function ColumnPicker({ value, columns, onChange, leadingOption, testId, 
     focusSelectedOption();
   }, [open]);
 
+  // Up from the first option goes back to the trigger, which ArrowDown leaves again.
   const moveFocus = (current: HTMLButtonElement, step: 1 | -1): void => {
     const options = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
-    options[options.indexOf(current) + step]?.focus();
+    const next = options[options.indexOf(current) + step];
+    if (next) next.focus();
+    else if (step === -1) triggerRef.current?.focus();
   };
 
   const listed: ListedChoice[] = [
@@ -189,6 +192,13 @@ export function ColumnPicker({ value, columns, onChange, leadingOption, testId, 
                       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                         event.preventDefault();
                         moveFocus(event.currentTarget, event.key === 'ArrowDown' ? 1 : -1);
+                      } else if (event.key === 'Tab') {
+                        // The menu sits at the end of the body, so Tab would
+                        // leave it open with focus outside the dialog: it
+                        // closes onto its trigger instead.
+                        event.preventDefault();
+                        setOpen(false);
+                        triggerRef.current?.focus();
                       }
                     }}
                     className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-surface-hover"

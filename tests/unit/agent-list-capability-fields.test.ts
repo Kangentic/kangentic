@@ -95,3 +95,26 @@ describe('listAgents - supportsWorkflowAgent and kangenticMcp', () => {
     expect(mcpByName['no-mcp']).toBeUndefined();
   });
 });
+
+// A plan column's Plan approval offers Automatic only for an agent the entry
+// flags. The flag is the adapter's own declaration as a strict boolean, so an
+// adapter that does not declare it reads false rather than a missing key.
+describe('listAgents - supportsPlanAutoApproval', () => {
+  it('carries true for an adapter that declares it and false, not undefined, for one that does not', async () => {
+    const adaptersByName: Record<string, object> = {
+      'declares-it': { ...buildFakeAdapter(), supportsPlanAutoApproval: true },
+      'declares-false': { ...buildFakeAdapter(), supportsPlanAutoApproval: false },
+      'silent': buildFakeAdapter(),
+    };
+    mockRegistryList.mockReturnValue(Object.keys(adaptersByName));
+    mockGetOrThrow.mockImplementation((name: string) => adaptersByName[name]);
+
+    const agents = await listAgents({});
+
+    const flagByName = Object.fromEntries(agents.map((entry) => [entry.name, entry.supportsPlanAutoApproval]));
+    expect(flagByName['declares-it']).toBe(true);
+    expect(flagByName['declares-false']).toBe(false);
+    // `toBe(false)` rejects undefined: the stamp is `=== true`, not a pass-through.
+    expect(flagByName['silent']).toBe(false);
+  });
+});

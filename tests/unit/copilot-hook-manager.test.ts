@@ -284,6 +284,67 @@ describe('copilot-hook-manager', () => {
       expect(readJson(path.join(configDir, 'config.json')).hooks).toEqual({ postToolUse: [userEntry] });
     });
 
+    it('keeps the user\'s own empty hook list but drops a key whose only entries were Kangentic\'s', () => {
+      const kangenticEntry = buildHooks(EVENTS_PATH).agentStop[0];
+      writeUserFile('settings.json', JSON.stringify({
+        hooks: { postToolUse: [], agentStop: [kangenticEntry] },
+      }));
+
+      writeSessionConfig(configDir, EVENTS_PATH);
+
+      // The user wrote `postToolUse: []` themselves, so it stays. `agentStop`
+      // held nothing but Kangentic's own entry, so the sweep empties it and it goes.
+      expect(readJson(path.join(configDir, 'settings.json')).hooks).toEqual({ postToolUse: [] });
+    });
+
+    describe('a user settings.json or config.json that is not valid JSON', () => {
+      it('starts each session copy from an empty object and warns once per file, naming it', () => {
+        // A truncated write, as an editor crash or a full disk leaves it.
+        writeUserFile('settings.json', '{"model":"example-model",');
+        writeUserFile('config.json', '{"lastLoggedInUser":');
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          writeSessionConfig(configDir, EVENTS_PATH);
+
+          // Only the session's own `banner: never` is left; nothing from the broken files.
+          expect(readJson(path.join(configDir, 'settings.json'))).toEqual({ banner: 'never' });
+          expect(readJson(path.join(configDir, 'config.json'))).toEqual({ banner: 'never' });
+          const warnings = warnSpy.mock.calls.map((callArguments) => String(callArguments[0]));
+          expect(warnings).toHaveLength(2);
+          expect(warnings.filter((warning) => warning.includes('settings.json'))).toHaveLength(1);
+          expect(warnings.filter((warning) => warning.includes('config.json'))).toHaveLength(1);
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      it('warns for a file that holds valid JSON which is not an object', () => {
+        writeUserFile('settings.json', '["not", "an", "object"]');
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          writeSessionConfig(configDir, EVENTS_PATH);
+
+          expect(readJson(path.join(configDir, 'settings.json'))).toEqual({ banner: 'never' });
+          expect(warnSpy.mock.calls.map((callArguments) => String(callArguments[0]))
+            .filter((warning) => warning.includes('settings.json'))).toHaveLength(1);
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+    });
+
+    it('logs nothing when the user has no settings.json or config.json', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        writeSessionConfig(configDir, EVENTS_PATH);
+
+        expect(readJson(path.join(configDir, 'settings.json'))).toEqual({ banner: 'never' });
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
     it('copies the user mcp-config.json', () => {
       writeUserFile('mcp-config.json', JSON.stringify({ mcpServers: { example: { type: 'http', url: 'https://example.com/mcp' } } }));
       writeSessionConfig(configDir, EVENTS_PATH);

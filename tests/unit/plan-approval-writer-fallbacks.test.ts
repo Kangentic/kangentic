@@ -8,7 +8,10 @@
  *
  * - a board read that throws approves nothing (the user decides);
  * - an unchanged decision is not rewritten;
- * - a failed write leaves the decision unset and is retried on a bounded budget;
+ * - a failed write leaves the decision unset and is retried on a bounded budget,
+ *   and a new board event gets the whole budget again after a run used it up;
+ * - a failed rewrite removes a previous answer that approved when the new one
+ *   does not, and removes nothing in any other case;
  * - an exited or removed session is forgotten, with its spawn record;
  * - a session already live when the writer starts is written at once;
  * - `refreshPlanApprovals` (the Board Profile and settings path) is a no-op
@@ -297,6 +300,74 @@ describe('PlanApprovalWriter, a failed write', () => {
     // one retry left over from before the success would run.
     expect(hoisted.writeAttempts).toHaveLength(3 + 1 + WRITE_RETRY_LIMIT);
   });
+
+  it('gives a new board event a fresh first attempt and the whole budget after a run of failures used it up', () => {
+    hoisted.writeSucceeds = false;
+    startWriter();
+    sessionManager.emit('session-changed', 'session-1', session('session-1'));
+    vi.advanceTimersByTime(60_000);
+    // The budget is spent with no success in between.
+    expect(hoisted.writeAttempts).toHaveLength(1 + WRITE_RETRY_LIMIT);
+
+    changeBoard();
+    vi.advanceTimersByTime(60_000);
+    // A change after the budget ran out is not left with the first attempt
+    // alone: it gets its own first attempt and the whole budget again.
+    expect(hoisted.writeAttempts).toHaveLength(2 * (1 + WRITE_RETRY_LIMIT));
+    expect(requireWriter().approves('session-1')).toBe(false);
+  });
+});
+
+describe('PlanApprovalWriter, a failed rewrite of an answer that approved', () => {
+  it('removes the stale approving file, so a column switched to Manual stops approving, and writes the new answer once a retry lands', () => {
+    startWriter();
+    sessionManager.emit('session-changed', 'session-1', session('session-1'));
+    expect(decisionFile('session-1')?.approve).toBe(true);
+    expect(requireWriter().approves('session-1')).toBe(true);
+
+    // The board switches to a decision that does not approve, and the rewrite fails.
+    hoisted.writeSucceeds = false;
+    hoisted.decision = { approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' };
+    changeBoard();
+    vi.advanceTimersByTime(REFRESH_DEBOUNCE_MS);
+    expect(hoisted.writeAttempts).toHaveLength(2);
+    // The hook finds no file and the user decides, instead of the stale answer
+    // approving a plan the board no longer approves.
+    expect(decisionFile('session-1')).toBeNull();
+    expect(requireWriter().approves('session-1')).toBe(false);
+
+    // The retry lands the answer the board gave.
+    hoisted.writeSucceeds = true;
+    vi.advanceTimersByTime(WRITE_RETRY_MS + REFRESH_DEBOUNCE_MS);
+    expect(decisionFile('session-1')).toEqual({ approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' });
+    expect(requireWriter().approves('session-1')).toBe(false);
+  });
+
+  const approving: PlanApprovalDecision = { approve: true, mode: 'acceptEdits', detail: 'Moved to Executing' };
+  const declining: PlanApprovalDecision = { approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' };
+
+  it.each([
+    ['the new decision also approves', approving, { ...approving, mode: 'bypassPermissions' }, true],
+    ['the previous decision did not approve, and the new one does', declining, approving, false],
+    ['neither decision approves', declining, { ...declining, detail: 'Moved to Review' }, false],
+  ] as Array<[string, PlanApprovalDecision, PlanApprovalDecision, boolean]>)(
+    'keeps the previous answer on disk, and the gate mirroring it, when the rewrite fails and %s',
+    (_case, previous, next, previousApproves) => {
+      hoisted.decision = previous;
+      startWriter();
+      sessionManager.emit('session-changed', 'session-1', session('session-1'));
+      expect(decisionFile('session-1')).toEqual(previous);
+
+      hoisted.writeSucceeds = false;
+      hoisted.decision = next;
+      changeBoard();
+      vi.advanceTimersByTime(REFRESH_DEBOUNCE_MS);
+      // The rewrite was tried and failed, and removed nothing.
+      expect(hoisted.writeAttempts).toHaveLength(2);
+      expect(decisionFile('session-1')).toEqual(previous);
+      expect(requireWriter().approves('session-1')).toBe(previousApproves);
+    },
+  );
 });
 
 describe('PlanApprovalWriter, a session that ends', () => {
@@ -364,12 +435,14 @@ describe('refreshPlanApprovals', () => {
 
     hoisted.decision = { approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' };
     refreshPlanApprovals('project-1');
-    // The workflow reload is immediate, the re-read is coalesced.
-    expect(hoisted.notifiedBoards).toEqual(['project-1']);
+    refreshPlanApprovals('project-1');
+    // The re-read and the workflow reload both wait for the one coalesced pass.
+    expect(hoisted.notifiedBoards).toEqual([]);
     expect(decisionFile('session-1')?.approve).toBe(true);
     vi.advanceTimersByTime(REFRESH_DEBOUNCE_MS);
     expect(decisionFile('session-1')?.approve).toBe(false);
     expect(writer.approves('session-1')).toBe(false);
+    expect(hoisted.notifiedBoards).toEqual(['project-1']);
   });
 
   it('only reschedules the re-read when it names no board', () => {

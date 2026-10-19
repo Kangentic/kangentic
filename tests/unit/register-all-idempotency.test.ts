@@ -234,6 +234,18 @@ vi.mock('../../src/main/mobile-bridge/mobile-bridge-service', () => ({
   },
 }));
 
+// registerAllIpc starts the plan approval writer once. The real writer calls
+// sessionManager.setPlanApprovalLookup and attaches its own session listeners,
+// which the fake SessionManager above does not model, and which would change
+// the 'activity' / 'exit' listener counts attributed below. A spy stands in so
+// the registration itself is what this suite pins.
+const startPlanApprovalWriterSpy = vi.fn();
+vi.mock('../../src/main/plan-approval/plan-approval-writer', () => ({
+  startPlanApprovalWriter: startPlanApprovalWriterSpy,
+  refreshPlanApprovals: vi.fn(),
+  PlanApprovalWriter: class {},
+}));
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function makeMockWindow(id: number) {
@@ -308,6 +320,12 @@ describe('registerAllIpc idempotency', () => {
 
     // Context is initialized (wrappers don't throw)
     expect(() => getSessionManager()).not.toThrow();
+
+    // The plan approval writer is started once at registration, with the
+    // IpcContext itself (not a copy), so every live task session gets its
+    // decision file for the agent's plan approval hook to read.
+    expect(startPlanApprovalWriterSpy).toHaveBeenCalledTimes(1);
+    expect(startPlanApprovalWriterSpy.mock.calls[0][0] === getOptionalIpcContext()).toBe(true);
 
     // The desktop notifier is constructed, wired into IpcContext, and
     // start()-ed exactly once, attaching one 'activity' and one 'exit'
@@ -393,6 +411,10 @@ describe('registerAllIpc idempotency', () => {
     // The second call short-circuits before reaching retrievalService.attach,
     // so it stays called exactly once total across both registerAllIpc calls.
     expect(retrievalService.attach).toHaveBeenCalledTimes(1);
+
+    // Nor does it start a second plan approval writer, which would write
+    // every decision file twice and attach a second set of session listeners.
+    expect(startPlanApprovalWriterSpy).toHaveBeenCalledTimes(1);
 
     // Same idempotency guarantee for the mobile bridge: a re-activate on
     // macOS must not construct a second MobileBridgeService (which would

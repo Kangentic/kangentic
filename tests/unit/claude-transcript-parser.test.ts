@@ -101,8 +101,8 @@ describe('parseClaudeTranscript', () => {
     expect(entries).toEqual([]);
   });
 
-  // The `permissionDecision` shapes Claude Code 2.1.302 wrote in the task 840
-  // probe (a hook approval) and in a real session (a user approval), on the
+  // The `permissionDecision` shapes Claude Code 2.1.302 wrote in a probe (a
+  // hook approval) and in a real session (a user approval), on the
   // entry carrying the plan exit's result.
   it('records who approved a call from the result entry\'s permissionDecision', async () => {
     const planResult = (uuid: string, toolUseId: string, permissionDecision: object | undefined) => ({
@@ -128,7 +128,7 @@ describe('parseClaudeTranscript', () => {
     expect(approvalOf('plan-none')).not.toHaveProperty('approval');
   });
 
-  // Claude Code 2.1.303 (task 840 preview) calls ExitPlanMode with `{}` and
+  // Claude Code 2.1.303 (measured in a preview) calls ExitPlanMode with `{}` and
   // writes the plan to the result line's `toolUseResult`.
   it('carries the plan an approved plan exit returned onto its result', async () => {
     tmpFile = writeFixture([
@@ -153,6 +153,46 @@ describe('parseClaudeTranscript', () => {
       .find((entry) => entry.kind === 'tool_result' && entry.toolUseId === toolUseId);
     expect(resultOf('plan-1')).toMatchObject({ approval: 'automatic', plan: '# Plan: probe\n\n1. Create the file.\n' });
     expect(resultOf('write-1')).not.toHaveProperty('plan');
+  });
+
+  // `permissionDecision` and `toolUseResult` sit on the user entry, not on a
+  // block. With two results in one entry they cannot say which one they describe,
+  // so neither result gets an approval or a plan.
+  it('stamps no approval or plan when one user entry holds two tool_result blocks', async () => {
+    const hookDecision = { decision: 'accept', source: 'hook', reasonType: 'hook' };
+    const approvedPlan = { plan: '# Plan: probe\n\n1. Create the file.\n', isAgent: false, filePath: '/mock/plans/probe.md' };
+    tmpFile = writeFixture([
+      {
+        type: 'user', uuid: 'r-pair', timestamp: '2026-10-19T02:10:00Z',
+        permissionDecision: hookDecision,
+        toolUseResult: approvedPlan,
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'pair-1', content: 'User has approved your plan.' },
+            { type: 'tool_result', tool_use_id: 'pair-2', content: 'File created successfully.' },
+          ],
+        },
+      },
+      // The control: the same decision and plan on an entry with one result do land,
+      // so the pair above is bare because of its count and not because of its shape.
+      {
+        type: 'user', uuid: 'r-single', timestamp: '2026-10-19T02:10:05Z',
+        permissionDecision: hookDecision,
+        toolUseResult: approvedPlan,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'single-1', content: 'User has approved your plan.' }] },
+      },
+    ]);
+    const entries = await parseClaudeTranscript(tmpFile);
+    const resultOf = (toolUseId: string) => entries
+      .find((entry) => entry.kind === 'tool_result' && entry.toolUseId === toolUseId);
+
+    expect(entries.filter((entry) => entry.kind === 'tool_result' && entry.uuid === 'r-pair')).toHaveLength(2);
+    for (const toolUseId of ['pair-1', 'pair-2']) {
+      expect(resultOf(toolUseId)).toBeDefined();
+      expect(resultOf(toolUseId)).not.toHaveProperty('approval');
+      expect(resultOf(toolUseId)).not.toHaveProperty('plan');
+    }
+    expect(resultOf('single-1')).toMatchObject({ approval: 'automatic', plan: approvedPlan.plan });
   });
 
   it('parses user, assistant, and tool_result entries', async () => {
