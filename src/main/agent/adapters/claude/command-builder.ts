@@ -9,6 +9,7 @@ import { peekModelPickerAliasIds } from './model-picker-probe';
 import { buildHooks, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
 import { buildPlanApprovalCommand, planApprovalDecisionPath } from '../../shared/plan-approval-hook';
+import { quoteBridgePath } from '../../shared/hook-utils';
 import type { CommandOptions } from '../../agent-adapter';
 
 /**
@@ -351,7 +352,7 @@ export class CommandBuilder {
       ...baseSettings,
       statusLine: {
         type: 'command',
-        command: `node "${statusBridge}" "${statusPath}"`,
+        command: `node ${quoteBridgePath(statusBridge)} ${quoteBridgePath(statusPath)}`,
         refreshInterval: STATUS_LINE_REFRESH_INTERVAL_SECONDS,
       },
     };

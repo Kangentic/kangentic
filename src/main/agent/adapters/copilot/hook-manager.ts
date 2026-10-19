@@ -4,7 +4,7 @@ import path from 'node:path';
 import { toForwardSlash } from '../../../../shared/paths';
 import { AgentTool, EventType } from '../../../../shared/types';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
-import { buildBridgeCommand, isKangenticHookCommand } from '../../shared/hook-utils';
+import { buildBridgeCommand, isKangenticHookCommand, quoteBridgePath } from '../../shared/hook-utils';
 import { extractTool, extractDetail, setToolWhen } from '../../shared/directive-builders';
 
 /**
@@ -51,6 +51,10 @@ const APPROVED_PLAN_EXIT = setToolWhen({
  * preToolUse:  { sessionId, timestamp, cwd, toolName, toolArgs }
  * postToolUse: { sessionId, timestamp, cwd, toolName, toolArgs, toolResult }
  * agentStop:   { timestamp, cwd, sessionId, transcriptPath, stopReason }
+ *
+ * A live 1.0.98 session (tests/fixtures/copilot-hooks/) sends the same, plus a
+ * snake_case `stop_hook_active` on agentStop. Its preCompact carries
+ * `transcriptPath`, `trigger` ("manual" for /compact) and `customInstructions`.
  *
  * Note: Copilot uses camelCase `toolName` (not snake_case `tool_name`). Only a
  * hook registered under a PascalCase event name gets snake_case fields
@@ -125,7 +129,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * Read a Copilot JSON file as an object. Returns an empty object if the file
- * does not exist or is not a JSON object.
+ * does not exist, cannot be read, or is not a JSON object, and warns for the
+ * last two.
  *
  * Whole-line `//` comments are skipped: Copilot 1.0.97 writes config.json with
  * a "// User settings belong in settings.json." header, and a plain
@@ -135,8 +140,10 @@ function readJsonObject(filePath: string): Record<string, unknown> {
   let fileText: string;
   try {
     fileText = fs.readFileSync(filePath, 'utf-8');
-  } catch {
-    // No existing file - start with empty
+  } catch (error) {
+    // No existing file: start with empty, and nothing of the user's is lost.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    console.warn(`[copilot] ${path.basename(filePath)} could not be read; the session starts without it`);
     return {};
   }
   try {
@@ -206,7 +213,7 @@ function withSessionSettings(
     const statusPath = toForwardSlash(statusOutputPath);
     next.statusLine = {
       type: 'command',
-      command: `node "${statusBridge}" "${statusPath}"`,
+      command: `node ${quoteBridgePath(statusBridge)} ${quoteBridgePath(statusPath)}`,
     };
   }
   return next;

@@ -8,12 +8,13 @@
  * the emitted event shape.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { EventType } from '../../src/shared/types';
-import { buildBridgeCommand } from '../../src/main/agent/shared/hook-utils';
+import { buildBridgeCommand, quoteBridgePath } from '../../src/main/agent/shared/hook-utils';
+import { buildPlanApprovalCommand } from '../../src/main/agent/shared/plan-approval-hook';
 import {
   captureHookContext,
   extractTool,
@@ -694,5 +695,71 @@ describe('event-bridge directives survive real shell execution (shell form)', ()
       ],
     );
     expect(emitted.type).toBe('background_shell_start');
+  });
+});
+
+describe('bridge paths reach the bridge as written through the POSIX hook shell', () => {
+  // Claude Code runs a hook with `sh -c` on macOS and Linux, and the Gemini and
+  // Qwen hook runners with `bash -c`. A path is double-quoted on the command
+  // line, where `$`, a backtick, `"` and `\` stay special, so each must arrive
+  // escaped or the bridge writes to (or reads from) the wrong path.
+  const TRICKY = 'a $HOME `echo hi` "quoted" back\\slash end';
+  const shAvailable = spawnSync('sh', ['-c', 'exit 0']).status === 0;
+  let stubDir: string;
+
+  beforeEach(() => {
+    stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-path-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  });
+
+  /** A stand-in bridge that prints the arguments it received. */
+  function writeArgvStub(directory: string): string {
+    fs.mkdirSync(directory, { recursive: true });
+    const stub = path.join(directory, 'print-argv.js');
+    fs.writeFileSync(stub, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));');
+    return stub;
+  }
+
+  function argvThroughSh(command: string): string[] {
+    return JSON.parse(execFileSync('sh', ['-c', command], { encoding: 'utf-8', timeout: 10000 })) as string[];
+  }
+
+  it('escapes the four characters POSIX double quotes keep special, on macOS and Linux', () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      expect(quoteBridgePath('/home/dev/$work/a`b"c\\d.js', platform)).toBe('"/home/dev/\\$work/a\\`b\\"c\\\\d.js"');
+    }
+  });
+
+  it('leaves a Windows path as it is, separators included', () => {
+    expect(quoteBridgePath('C:/Users/dev/$repo/events.jsonl', 'win32')).toBe('"C:/Users/dev/$repo/events.jsonl"');
+    expect(quoteBridgePath('C:\\Users\\dev\\repo\\events.jsonl', 'win32')).toBe('"C:\\Users\\dev\\repo\\events.jsonl"');
+  });
+
+  it.skipIf(!shAvailable)('a path with $, a backtick, a quote, a backslash and spaces arrives intact through sh -c', () => {
+    const stub = writeArgvStub(stubDir);
+    const command = `${quoteBridgePath(process.execPath, 'linux')} ${quoteBridgePath(stub, 'linux')} ${quoteBridgePath(TRICKY, 'linux')}`;
+    expect(argvThroughSh(command)).toEqual([TRICKY]);
+  });
+
+  // The builders escape for the platform they run on, so this runs where that
+  // is POSIX (CI's Linux tier). The stub itself sits under a directory with the
+  // same characters, so the bridge path is checked as well as the data paths.
+  it.skipIf(!shAvailable || process.platform === 'win32')('both hook builders deliver every path intact through sh -c', () => {
+    const stub = writeArgvStub(path.join(stubDir, 'my $HOME `x` "q" back\\slash'));
+
+    const eventCommand = buildBridgeCommand(stub, `${TRICKY}/events.jsonl`, 'tool_start');
+    expect(argvThroughSh(eventCommand)).toEqual([`${TRICKY}/events.jsonl`, 'tool_start']);
+
+    const planCommand = buildPlanApprovalCommand(stub, `${TRICKY}/plan-approval.json`, `${TRICKY}/events.jsonl`, {
+      toolField: 'tool_name',
+      tool: 'ExitPlanMode',
+      inputField: 'tool_input',
+      reply: {},
+    });
+    const planArgv = argvThroughSh(planCommand);
+    expect(planArgv.slice(0, 2)).toEqual([`${TRICKY}/plan-approval.json`, `${TRICKY}/events.jsonl`]);
   });
 });

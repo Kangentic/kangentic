@@ -250,11 +250,12 @@ function replay(hookEvent: QwenHookEvent, fileName: string): Record<string, unkn
  * PermissionRequest, for every tool that asked.
  */
 describe('Qwen live 0.25.2 payloads (tests/fixtures/qwen-hooks/)', () => {
-  it('an Esc interrupt of a running shell tool ends the turn, under the id its PreToolUse started', () => {
+  it('an Esc interrupt of a running shell tool is an interrupt, under the id its PreToolUse started', () => {
     const start = replay(QwenHookEvent.PreToolUse, 'pre-tool-use-shell.json');
     expect(start).toMatchObject({ type: EventType.ToolStart, tool: 'run_shell_command', detail: 'ping -n 60 127.0.0.1' });
 
-    // No Stop follows an interrupt, so this event is the turn's only end.
+    // No Stop follows an interrupt. This event idles the session, and the
+    // engine reports no turn end for it, as for any interrupt.
     const interrupt = replay(QwenHookEvent.PostToolUseFailure, 'post-tool-use-failure-interrupt.json');
     expect(interrupt).toMatchObject({ type: EventType.Interrupted, tool: 'run_shell_command' });
     expect(interrupt.toolId).toBe(start.toolId);
@@ -304,10 +305,17 @@ describe('Qwen live 0.25.2 payloads (tests/fixtures/qwen-hooks/)', () => {
     expect(replay(QwenHookEvent.PreToolUse, 'subagent-pre-tool-use.json'))
       .toMatchObject({ type: EventType.ToolStart, tool: 'glob', toolId: subagentToolStart.tool_use_id });
 
-    // Not wired yet: a background subagent works on past the main Stop, and
-    // the engine's subagent depth has not been replayed against that order.
-    const hooks = buildHooks('/mock/.kangentic/event-bridge.js', '/mock/.kangentic/events.jsonl', {});
-    expect(Object.keys(hooks)).not.toContain(subagentStart.hook_event_name);
-    expect(Object.keys(hooks)).not.toContain(subagentStop.hook_event_name);
+    // The engine counts the subagent by its id, so the main agent's Stop
+    // while a background one runs is no turn end (activity-engine-turn-ended).
+    expect(replay(QwenHookEvent.SubagentStart, 'subagent-start.json')).toMatchObject({
+      type: EventType.SubagentStart,
+      subagentId: subagentStart.agent_id,
+      detail: 'general-purpose',
+    });
+    expect(replay(QwenHookEvent.SubagentStop, 'subagent-stop.json')).toMatchObject({
+      type: EventType.SubagentStop,
+      subagentId: subagentStart.agent_id,
+      detail: 'general-purpose',
+    });
   });
 });

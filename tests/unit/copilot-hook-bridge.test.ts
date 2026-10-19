@@ -1,8 +1,10 @@
 /**
  * Runs the REAL event-bridge.js with the directives Copilot's real buildHooks
- * emits, fed with hook payloads shaped like Copilot CLI 1.0.97's.
+ * emits, fed with Copilot CLI hook payloads.
  *
- * The payloads are built from the 1.0.97 bundle, not a live capture. Field
+ * The last describe replays payloads captured from a live Copilot CLI 1.0.98
+ * session (tests/fixtures/copilot-hooks/, paths and ids sanitized). The first
+ * builds its payloads from the 1.0.97 bundle instead, not a live capture. Field
  * names come from the SDK's hook input types (copilot-sdk/types.d.ts:
  * PreToolUseHookInput, PostToolUseHookInput with its ToolResultObject,
  * AgentStopHookInput) and the runtime's vendored hooks.rs input structs, which
@@ -136,5 +138,36 @@ describe('Copilot hooks through the real event bridge (1.0.97 payload shapes)', 
       toolResult: { resultType: 'success', textResultForLlm: 'Plan approved! Exited plan mode.' },
     });
     expect(emitted).toMatchObject({ type: 'tool_end', tool: 'create' });
+  });
+});
+
+/** A payload captured from a live Copilot CLI 1.0.98 session. */
+function livePayload(fileName: string): Record<string, unknown> {
+  const fixture = path.resolve(__dirname, '../fixtures/copilot-hooks', fileName);
+  return JSON.parse(fs.readFileSync(fixture, 'utf-8')) as Record<string, unknown>;
+}
+
+/**
+ * One Copilot CLI 1.0.98 session in Manual Approval: a prompt that read a file
+ * with `view` and ended its turn, then `/compact`.
+ */
+describe('Copilot live 1.0.98 payloads (tests/fixtures/copilot-hooks/)', () => {
+  it('preToolUse reports a tool_start with Copilot\'s tool name', () => {
+    expect(runCopilotHook('preToolUse', livePayload('copilot-1.0.98-pre-tool-use.json')))
+      .toMatchObject({ type: 'tool_start', tool: 'view' });
+  });
+
+  it('agentStop reports the turn end as idle with its stop reason', () => {
+    // 1.0.98 sends `stop_hook_active` in snake_case beside camelCase fields.
+    // The bridge reads only `stopReason`, so the mix changes nothing.
+    const payload = livePayload('copilot-1.0.98-agent-stop.json');
+    expect(payload.stop_hook_active).toBe(false);
+    expect(runCopilotHook('agentStop', payload)).toMatchObject({ type: 'idle', detail: 'end_turn' });
+  });
+
+  it('preCompact from /compact reports a compact', () => {
+    const payload = livePayload('copilot-1.0.98-pre-compact.json');
+    expect(payload.trigger).toBe('manual');
+    expect(runCopilotHook('preCompact', payload)).toMatchObject({ type: 'compact' });
   });
 });

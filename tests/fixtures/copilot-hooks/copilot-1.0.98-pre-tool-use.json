@@ -1,0 +1,13 @@
+{
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "timestamp": 1792388681896,
+  "cwd": "C:\\Users\\dev\\repo",
+  "toolName": "view",
+  "toolArgs": {
+    "path": "C:\\Users\\dev\\repo\\README.md",
+    "view_range": [
+      1,
+      1
+    ]
+  }
+}
