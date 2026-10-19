@@ -71,6 +71,7 @@ export function StatsDashboardBody() {
   const setMetric = useUsageDashboardStore((state) => state.setMetric);
   const loading = useUsageDashboardStore((state) => state.loading);
   const error = useUsageDashboardStore((state) => state.error);
+  const indexRestarting = useUsageDashboardStore((state) => state.indexRestarting);
   const loadDashboardStats = useUsageDashboardStore((state) => state.loadDashboardStats);
 
   const currentProject = useProjectStore((state) => state.currentProject);
@@ -123,7 +124,9 @@ export function StatsDashboardBody() {
   const data = useStatsData(effectiveMetric);
   const payload = data.payload;
 
-  const coldLoading = loading && !payload;
+  // With the index restarting and nothing cached, there are no figures yet:
+  // keep the skeletons rather than claim the range recorded nothing.
+  const coldLoading = (loading || indexRestarting) && !payload;
   // A drill or custom window bounds its own range, so live-specific
   // presentation (empty cost cards, token-series-derived chart data) does not apply.
   const isLivePeriod = period === 'live' && !drill && !customWindow;
@@ -230,6 +233,14 @@ export function StatsDashboardBody() {
               Retry
             </button>
           </div>
+        )}
+
+        {/* Not an error banner: the worker comes back on its own, and the
+            polling above picks it up with no click. */}
+        {indexRestarting && (
+          <p className="text-xs text-fg-muted" data-testid="stats-index-restarting">
+            The Knowledge Graph index is restarting. The figures refresh when it is back.
+          </p>
         )}
 
         <KpiTiles

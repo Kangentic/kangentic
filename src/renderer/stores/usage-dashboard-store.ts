@@ -81,6 +81,14 @@ export interface UsageDashboardStore {
   /** True while background-refreshing a key that already has cached data on screen. */
   refreshing: boolean;
   error: string | null;
+  /** The active key's last answer from main came back flagged
+   *  `indexRestarting`: the retrieval worker that runs the reads was down. Its
+   *  figures are incomplete, so they never enter the cache and the figures
+   *  already on screen stay. The flag describes the figures on screen, so only
+   *  an answer for the active key sets or clears it, and moving to another key
+   *  clears it until that key's own answer lands. The dashboard's own polling
+   *  is the retry. */
+  indexRestarting: boolean;
 
   open: () => void;
   close: () => void;
@@ -171,6 +179,7 @@ function createUsageDashboardStore() {
     loading: false,
     refreshing: false,
     error: null,
+    indexRestarting: false,
 
     open: () => {
       if (get().statsOpen) return;
@@ -261,8 +270,17 @@ function createUsageDashboardStore() {
       const cached = state.cache[key];
 
       // Point the UI at this key immediately: a cached payload repaints in the
-      // same frame; only a truly-cold key shows a loading state.
-      set({ activeKey: key, loading: !cached, refreshing: Boolean(cached), error: null });
+      // same frame; only a truly-cold key shows a loading state. The restart
+      // notice was about the old key's figures, so a new key starts without
+      // it. A same-key poll keeps it, or the notice would blink off and on
+      // with every refetch while the worker is down.
+      set({
+        activeKey: key,
+        loading: !cached,
+        refreshing: Boolean(cached),
+        error: null,
+        ...(state.activeKey === key ? {} : { indexRestarting: false }),
+      });
 
       if (cached && !options?.force && Date.now() - cached.fetchedAt < STALE_MS) {
         set({ loading: false, refreshing: false });
@@ -278,20 +296,31 @@ function createUsageDashboardStore() {
       const fetchPromise = (async () => {
         try {
           const payload = await window.electronAPI.usage.getDashboardStats(scope, state.period, state.drill, state.customWindow);
+          if (payload.indexRestarting) {
+            // Not cached: the figures are an undercount, and caching them would
+            // paint over the good ones for STALE_MS. A late answer for a key
+            // the user has left says nothing about the figures on screen.
+            set((current) =>
+              current.activeKey === key
+                ? { indexRestarting: true, loading: false, refreshing: false, error: null }
+                : {},
+            );
+            return;
+          }
           set((current) => ({
             cache: boundCache({
               ...current.cache,
               [key]: { payload, fetchedAt: Date.now() },
             }),
             ...(current.activeKey === key
-              ? { loading: false, refreshing: false, error: null }
+              ? { loading: false, refreshing: false, error: null, indexRestarting: false }
               : {}),
           }));
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           set((current) =>
             current.activeKey === key
-              ? { loading: false, refreshing: false, error: message }
+              ? { loading: false, refreshing: false, error: message, indexRestarting: false }
               : {},
           );
         } finally {

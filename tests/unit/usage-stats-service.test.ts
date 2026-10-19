@@ -18,6 +18,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { createUsageStatsService, type ProjectUsageReader } from '../../src/main/usage-stats/usage-stats-service';
 import { COST_GROUP_MS, LIVE_WINDOW_MS, TURN_GROUP_MS } from '../../src/main/usage-stats/bucketing';
 import { computePeriodCutoff } from '../../src/shared/period-cutoff';
+// The real class, not a vi.mock stand-in: the service imports this same module,
+// so its `instanceof` check sees the error the fake reader throws.
+import { RetrievalUnavailableError } from '../../src/main/retrieval/retrieval-client';
 import type {
   UsageCostGroupRow,
   UsageRollupRow,
@@ -280,6 +283,16 @@ interface FakeProject {
   /** Background call groups this project's ledger returns, whatever the window. */
   backgroundGroups?: BackgroundCallGroupRow[];
   throws?: boolean;
+  /** One read that throws, the way the worker-backed reader fails: on a call,
+   *  never in `openReader`. It throws on EVERY call of that method unless `when`
+   *  is given: `when` sees the call's arguments and returns whether this call
+   *  throws, so a method read once per window can fail on one window only (the
+   *  other calls reach the normal fake). */
+  readError?: {
+    method: ReaderCall['method'];
+    error: Error;
+    when?: (callArguments: unknown[]) => boolean;
+  };
 }
 
 interface ReaderCall {
@@ -313,7 +326,7 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
     if (project.throws) throw new Error('corrupt database');
     const allRows = project.rows ?? [];
     const allGroups = project.groups ?? [];
-    return {
+    const reader: ProjectUsageReader = {
       getUsageTotals: (sinceIso, untilIso) => {
         readerCalls.push({ projectId, method: 'getUsageTotals', sinceIso, untilIso });
         return computeTotals(allRows.filter((row) => inWindow(row, sinceIso, untilIso)));
@@ -384,6 +397,17 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
         return project.backgroundGroups ?? [];
       },
     };
+    const readError = project.readError;
+    if (!readError) return reader;
+    const normalRead = reader[readError.method] as (...callArguments: unknown[]) => unknown;
+    return {
+      ...reader,
+      [readError.method]: (...callArguments: unknown[]) => {
+        if (readError.when && !readError.when(callArguments)) return normalRead(...callArguments);
+        readerCalls.push({ projectId, method: readError.method });
+        throw readError.error;
+      },
+    };
   });
   const service = createUsageStatsService({
     openReader,
@@ -442,24 +466,24 @@ describe('usage-stats service: the Tokens view by-model series', () => {
   });
 });
 
-describe('usage-stats service: background calls', () => {
-  const backgroundGroup = (overrides: Partial<BackgroundCallGroupRow> = {}): BackgroundCallGroupRow => ({
-    bucketStartMs: Date.now() - 60_000,
-    job: 'condition_check',
-    agent: 'claude',
-    modelId: 'claude-haiku-5-5',
-    calls: 3,
-    failedCalls: 0,
-    reportedCalls: 3,
-    inputTokens: 300,
-    cacheCreationInputTokens: 7000,
-    cacheReadInputTokens: 1500,
-    outputTokens: 90,
-    costUsd: 0.0015,
-    durationMs: 3600,
-    ...overrides,
-  });
+const backgroundGroup = (overrides: Partial<BackgroundCallGroupRow> = {}): BackgroundCallGroupRow => ({
+  bucketStartMs: Date.now() - 60_000,
+  job: 'condition_check',
+  agent: 'claude',
+  modelId: 'claude-haiku-5-5',
+  calls: 3,
+  failedCalls: 0,
+  reportedCalls: 3,
+  inputTokens: 300,
+  cacheCreationInputTokens: 7000,
+  cacheReadInputTokens: 1500,
+  outputTokens: 90,
+  costUsd: 0.0015,
+  durationMs: 3600,
+  ...overrides,
+});
 
+describe('usage-stats service: background calls', () => {
   it('merges every project\'s calls into the Background figures and never into the session KPIs', async () => {
     const { service, readerCalls } = makeService([
       { id: 'p1', name: 'One', backgroundGroups: [backgroundGroup()] },
@@ -588,6 +612,281 @@ describe('usage-stats service: app-wide rollup', () => {
       expect(stats.skippedProjects).toEqual([{ projectId: 'p2', projectName: 'Corrupt' }]);
       expect(stats.perProject).toHaveLength(1);
       expect(stats.kpis.sessionCount).toBe(1);
+      expect(stats.indexRestarting).toBeUndefined();
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it('a project that fails on a later read is skipped whole: none of its earlier reads reach the totals', async () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { service } = makeService([
+        { id: 'p1', name: 'Good', rows: [makeRow({ sessionRecordId: 'a', totalCostUsd: 2 })] },
+        {
+          id: 'p2',
+          name: 'Corrupt',
+          rows: [makeRow({ sessionRecordId: 'b', totalCostUsd: 3 })],
+          readError: { method: 'listSubagentTotals', error: new Error('database disk image is malformed') },
+        },
+      ]);
+      const stats = await service.getDashboardStats({ kind: 'all' }, 'all');
+
+      expect(stats.skippedProjects).toEqual([{ projectId: 'p2', projectName: 'Corrupt' }]);
+      // p2's totals were read before its subagent read threw; they must not count.
+      expect(stats.kpis.sessionCount).toBe(1);
+      expect(stats.kpis.totalCostUsd).toBe(2);
+      expect(stats.perProject?.map((project) => project.projectId)).toEqual(['p1']);
+      expect(stats.indexRestarting).toBeUndefined();
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  describe('a project that fails after its other reads answered', () => {
+    // The part-way test above fails p2 on listSubagentTotals under 'all'. That
+    // pins only the totals, rollup, cost-group, turn-group and subagent pushes
+    // (everything after that read never ran in the old push-as-you-go code
+    // either), and 'all' has no previous window. A regression that pushed any
+    // later accumulator as it is read would still pass: the previous-window
+    // lists, background groups, active time, the earliest turn, the live
+    // session count and the live ledger baseline. So p2 here carries data for
+    // every one of them, in both windows of 'today', and fails on one of its
+    // LAST reads, after every earlier read has answered. Each aggregate must
+    // equal what p1 alone produces.
+    function buildFixture() {
+      const nowMs = Date.now();
+      // Yesterday noon sits inside the 'today' previous window at any local time.
+      const yesterdayNoon = new Date(nowMs);
+      yesterdayNoon.setDate(yesterdayNoon.getDate() - 1);
+      yesterdayNoon.setHours(12, 0, 0, 0);
+      const previousMs = yesterdayNoon.getTime();
+      const previousIso = new Date(previousMs).toISOString();
+      const previousBucketStartMs = Math.floor(previousMs / TURN_GROUP_MS) * TURN_GROUP_MS;
+      const subagentRow = (overrides: Partial<FixtureSubagentRow> = {}): FixtureSubagentRow => ({
+        tsMs: nowMs,
+        agentType: 'review-finder',
+        inputTokens: 100,
+        outputTokens: 10,
+        cacheCreationTokens: 1,
+        cacheReadTokens: 500,
+        turnCount: 4,
+        subagentCount: 2,
+        nestedTurnCount: 0,
+        nestedSubagentCount: 0,
+        maxSpawnDepth: 1,
+        ...overrides,
+      });
+
+      const healthyProject: FakeProject = {
+        id: 'p1',
+        name: 'Good',
+        rows: [
+          makeRow({ sessionRecordId: 'a', totalCostUsd: 2 }),
+          makeRow({ sessionRecordId: 'a-yesterday', sessionStartedAt: previousIso, totalCostUsd: 1.5 }),
+        ],
+        groups: [
+          makeGroup({ sessionId: 'a' }),
+          makeGroup({ sessionId: 'a-yesterday', bucketStartMs: previousBucketStartMs }),
+        ],
+        subagents: [subagentRow(), subagentRow({ tsMs: previousMs, inputTokens: 40 })],
+        activeIntervals: [
+          { tsMs: nowMs, activeMs: 600_000, sessionId: 'a' },
+          { tsMs: previousMs, activeMs: 300_000, sessionId: 'a-yesterday' },
+        ],
+        // p1's is the larger one, p2's the smaller: the fold is a min, so a
+        // leaked p2 value changes the answer.
+        earliestTurnMs: 5000,
+        backgroundGroups: [backgroundGroup({ calls: 3 })],
+      };
+      const corruptProject = (readError?: FakeProject['readError']): FakeProject => ({
+        id: 'p2',
+        name: 'Corrupt',
+        rows: [
+          makeRow({ sessionRecordId: 'b', totalCostUsd: 3 }),
+          makeRow({ sessionRecordId: 'b-yesterday', sessionStartedAt: previousIso, totalCostUsd: 7 }),
+        ],
+        groups: [
+          makeGroup({ sessionId: 'b', inputTokens: 70, outputTokens: 35 }),
+          makeGroup({ sessionId: 'b-yesterday', bucketStartMs: previousBucketStartMs, inputTokens: 90, outputTokens: 45 }),
+        ],
+        subagents: [
+          subagentRow({ agentType: 'planner', inputTokens: 200 }),
+          subagentRow({ tsMs: previousMs, agentType: 'planner', inputTokens: 60 }),
+        ],
+        activeIntervals: [
+          { tsMs: nowMs, activeMs: 400_000, sessionId: 'b-1' },
+          { tsMs: nowMs, activeMs: 500_000, sessionId: 'b-2' },
+          { tsMs: previousMs, activeMs: 450_000, sessionId: 'b-yesterday' },
+        ],
+        earliestTurnMs: 2000,
+        backgroundGroups: [backgroundGroup({ job: 'task_title', calls: 5 })],
+        readError,
+      });
+      // Each project has one live session its ledger already holds (so the
+      // baseline sum runs and is non-zero) and one it does not (so the live
+      // session count is non-zero after the dedup).
+      const liveSessions = [
+        makeLiveSession({ sessionRecordId: 'a', projectId: 'p1' }),
+        makeLiveSession({ sessionRecordId: 'a-live-new', projectId: 'p1' }),
+        makeLiveSession({ sessionRecordId: 'b', projectId: 'p2' }),
+        makeLiveSession({ sessionRecordId: 'b-live-new', projectId: 'p2' }),
+      ];
+      return { nowMs, healthyProject, corruptProject, liveSessions };
+    }
+
+    function readTodayStats(projects: FakeProject[], nowMs: number, liveSessions: LiveSessionRow[]) {
+      return makeService(projects, nowMs).service.getDashboardStats({ kind: 'all' }, 'today', null, null, liveSessions);
+    }
+
+    it('the fixture gives p2 a distinct share of every aggregate, so any leak would move a number', async () => {
+      const { nowMs, healthyProject, corruptProject, liveSessions } = buildFixture();
+      const alone = await readTodayStats([healthyProject], nowMs, liveSessions);
+      const together = await readTodayStats([healthyProject, corruptProject()], nowMs, liveSessions);
+
+      // p1 alone, from the fixture's own numbers: one ledger row and one live
+      // session the ledger lacks; yesterday one row.
+      expect(alone.kpis).toMatchObject({
+        sessionCount: 2,
+        totalCostUsd: 2,
+        activeMs: 600_000,
+        activeSessionsCovered: 1,
+        subagentInputTokens: 100,
+      });
+      expect(alone.previousKpis).toMatchObject({
+        sessionCount: 1,
+        totalCostUsd: 1.5,
+        activeMs: 300_000,
+        activeSessionsCovered: 1,
+        turnInputTokens: 50,
+        subagentInputTokens: 40,
+      });
+      expect(alone.earliestTurnMs).toBe(5000);
+      expect(alone.liveLedgerBaseline).toEqual({ costUsd: 2 });
+      expect(alone.background?.totals.calls).toBe(3);
+      expect(alone.bySubagentType.map((row) => row.agentType)).toEqual(['review-finder']);
+
+      // p1 and a healthy p2: every one of those moves.
+      expect(together.skippedProjects).toBeUndefined();
+      expect(together.kpis).toMatchObject({
+        sessionCount: 4,
+        totalCostUsd: 5,
+        activeMs: 1_500_000,
+        activeSessionsCovered: 3,
+        subagentInputTokens: 300,
+      });
+      expect(together.previousKpis).toMatchObject({
+        sessionCount: 2,
+        totalCostUsd: 8.5,
+        activeMs: 750_000,
+        activeSessionsCovered: 2,
+        turnInputTokens: 140,
+        subagentInputTokens: 100,
+      });
+      expect(together.earliestTurnMs).toBe(2000);
+      expect(together.liveLedgerBaseline).toEqual({ costUsd: 5 });
+      expect(together.background?.totals.calls).toBe(8);
+      expect(together.bySubagentType.map((row) => row.agentType).sort()).toEqual(['planner', 'review-finder']);
+    });
+
+    // A second-window read has a non-null `untilMs` (the current 'today' window
+    // is open-ended), which is how `when` picks the previous window's call.
+    const failingReads: Array<{ label: string; readError: NonNullable<FakeProject['readError']> }> = [
+      {
+        label: 'sumSessionsRepresented, the last read',
+        readError: { method: 'sumSessionsRepresented', error: new Error('database disk image is malformed') },
+      },
+      {
+        label: 'countSessionsRepresented, after every previous-window read',
+        readError: { method: 'countSessionsRepresented', error: new Error('database disk image is malformed') },
+      },
+      {
+        label: 'the previous window getActiveTotals, after the current one answered',
+        readError: {
+          method: 'getActiveTotals',
+          error: new Error('database disk image is malformed'),
+          when: (callArguments) => callArguments[1] !== null,
+        },
+      },
+      {
+        label: 'the previous window listSubagentTotals, after its totals and turn groups answered',
+        readError: {
+          method: 'listSubagentTotals',
+          error: new Error('database disk image is malformed'),
+          when: (callArguments) => callArguments[1] !== null,
+        },
+      },
+    ];
+
+    it.each(failingReads)('fails on $label: the project is skipped whole and every aggregate equals p1 alone', async ({ readError }) => {
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { nowMs, healthyProject, corruptProject, liveSessions } = buildFixture();
+        const alone = await readTodayStats([healthyProject], nowMs, liveSessions);
+        const stats = await readTodayStats([healthyProject, corruptProject(readError)], nowMs, liveSessions);
+
+        expect(stats.skippedProjects).toEqual([{ projectId: 'p2', projectName: 'Corrupt' }]);
+        expect(stats.indexRestarting).toBeUndefined();
+        expect(stats.perProject?.map((project) => project.projectId)).toEqual(['p1']);
+        expect(stats.kpis).toEqual(alone.kpis);
+        expect(stats.previousKpis).toEqual(alone.previousKpis);
+        expect(stats.earliestTurnMs).toBe(alone.earliestTurnMs);
+        expect(stats.liveLedgerBaseline).toEqual(alone.liveLedgerBaseline);
+        expect(stats.background).toEqual(alone.background);
+        expect(stats.bySubagentType).toEqual(alone.bySubagentType);
+        expect(stats.byModel).toEqual(alone.byModel);
+        expect(stats.tokenSeries).toEqual(alone.tokenSeries);
+        expect(stats.costSeries).toEqual(alone.costSeries);
+      } finally {
+        consoleWarn.mockRestore();
+      }
+    });
+  });
+
+  it('a down retrieval worker stops the read and flags the payload instead of blaming each project', async () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // As at quit: the worker is disposed, so every project's first read fails.
+      const shutDown = () => ({
+        method: 'getUsageTotals' as const,
+        error: new RetrievalUnavailableError('The retrieval worker was shut down'),
+      });
+      const { service, openReader } = makeService([
+        { id: 'p1', name: 'One', rows: [makeRow()], readError: shutDown() },
+        { id: 'p2', name: 'Two', rows: [makeRow()], readError: shutDown() },
+        { id: 'p3', name: 'Three', rows: [makeRow()], readError: shutDown() },
+      ]);
+      const stats = await service.getDashboardStats({ kind: 'all' }, 'all');
+
+      expect(stats.skippedProjects).toBeUndefined();
+      expect(stats.indexRestarting).toBe(true);
+      // The loop stopped at the first project rather than failing each in turn.
+      expect(openReader).toHaveBeenCalledTimes(1);
+      // One line, and no Error object handed to the console, so no stack.
+      expect(consoleWarn).toHaveBeenCalledTimes(1);
+      for (const argument of consoleWarn.mock.calls[0]) {
+        expect(argument).not.toBeInstanceOf(Error);
+      }
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it('a down retrieval worker flags a single-project read too, rather than answering zeros', async () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { service } = makeService([
+        {
+          id: 'p1',
+          name: 'One',
+          rows: [makeRow()],
+          readError: { method: 'listTurnGroups', error: new RetrievalUnavailableError('The retrieval worker exited') },
+        },
+      ]);
+      const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+      expect(stats.indexRestarting).toBe(true);
+      expect(stats.skippedProjects).toBeUndefined();
     } finally {
       consoleWarn.mockRestore();
     }

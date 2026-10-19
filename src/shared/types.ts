@@ -2721,8 +2721,16 @@ export interface UsageDashboardStats {
   earliestTurnMs: number | null;
   /** Present only for scope.kind === 'all'. */
   perProject?: ProjectUsageSummary[];
-  /** Projects whose DB was missing or unreadable and were skipped (app-wide scope). */
+  /** Projects whose DB could not be read and were skipped (app-wide scope). A
+   *  project with no DB file is not listed: it has no usage to read. */
   skippedProjects?: Array<{ projectId: string; projectName: string }>;
+  /**
+   * The retrieval worker, which runs every usage read, could not answer, so the
+   * read stopped at the first project that hit it and every figure here is
+   * incomplete. Set in both scopes. The dashboard keeps the figures it already
+   * shows and the MCP tool answers with an error, so neither reports these.
+   */
+  indexRestarting?: true;
   /**
    * Headless calls Kangentic made on the user's behalf in the range (Condition
    * checks, workflow step checks, task summaries, task titles, terminal names),
