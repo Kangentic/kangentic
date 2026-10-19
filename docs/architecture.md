@@ -1183,9 +1183,9 @@ src/main/workflows/
   `gitAt`'s env drops Crashpad's pipe name (see "PTY children and Crashpad's handler" in
   `docs/cross-platform.md`). They are Update from base's merge, the carry of uncommitted changes
   into a new worktree, and the Command Terminal's cold-start checkout and merge. Still on main
-  through simple-git, and outside a workflow's lifecycle: the Changes panel's header and its
-  watcher, blame, file history, the commit graph, the worktree list, a task's branch switch config
-  write, the Command Terminal's branch reads, and the pending-changes probe of a Done drop.
+  through simple-git, and outside a workflow's lifecycle: the Changes panel's ahead and behind count
+  and its watcher, blame, file history, the commit graph, the worktree list, a task's branch switch
+  config write, and the pending-changes probe of a Done drop.
 - **A start** is `handleTaskMove` with origin `workflow`, into the first column of the task's route,
   after `forgetRecentFetches` so the worktree is cut from the blockers' merged code. Starts go in To
   Do order, up to `SessionManager.getFreeAgentSlots()`.

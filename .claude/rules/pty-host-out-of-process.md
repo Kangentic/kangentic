@@ -158,7 +158,7 @@ against 49 with 45 on main before. Three calls off the lifecycle use the git cli
 they run repository hooks, filters or merge drivers and `gitAt`'s env drops Crashpad's pipe name
 (`src/main/shared/child-env.ts`): Update from base's merge, the carry of uncommitted changes into a
 new worktree, and the Command Terminal's cold-start checkout and merge. Still on main, because none
-runs in a lifecycle: the branch summary, the diff watcher, blame, file history, the commit graph,
-the worktree list, a task's branch switch config write, the Command Terminal's branch reads, and
-the Done drop's pending-changes probe. A new git call on the lifecycle path uses the git client;
+runs in a lifecycle: the branch summary's ahead and behind count, the diff watcher, blame, file
+history, the commit graph, the worktree list, a task's branch switch config write, and the Done
+drop's pending-changes probe. A new git call on the lifecycle path uses the git client;
 the lifecycle test fails when one lands on main.

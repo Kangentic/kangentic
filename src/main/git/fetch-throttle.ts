@@ -151,7 +151,7 @@ export function forgetRecentFetches(projectPath: string): void {
  * a GUI helper that does not read stdin, from raising a credentials dialog
  * for a repo whose token has expired. The failure classifies as `auth`, the
  * throttle cache stays unset, and the repo degrades to "no refresh" rather
- * than a dialog or a retry loop. User-driven fetches keep the inherited env:
+ * than a dialog or a retry loop. User-driven fetches keep main's env, minus Crashpad's pipe name:
  * a prompt that follows a click is at least explicable.
  *
  * Those two variables cover git's own prompt and GCM only. An inherited
