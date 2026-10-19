@@ -43,8 +43,14 @@ describe('{{columns}}', () => {
 
   it('names each column a task can visit, and no counts before any task has finished', () => {
     const lines = describeColumnsForPlanning('home').split('\n');
-    expect(lines[0]).toMatch(/^1\. Planning: An agent in plan mode\.$/);
+    expect(lines[0]).toMatch(/^1\. Planning: An agent in plan mode, whose plan the user approves\.$/);
     expect(lines.some((line) => line.includes('finished tasks'))).toBe(false);
+  });
+
+  it('says when Kangentic approves a plan column\'s plans', () => {
+    new SwimlaneRepository(db).update({ id: lane('Planning'), plan_approval: 'automatic' });
+    const lines = describeColumnsForPlanning('home').split('\n');
+    expect(lines[0]).toMatch(/^1\. Planning: An agent in plan mode, whose plan Kangentic approves\.$/);
   });
 
   it('counts how many of the last finished tasks went through each column', () => {

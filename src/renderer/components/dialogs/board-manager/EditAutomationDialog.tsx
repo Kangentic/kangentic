@@ -22,7 +22,7 @@ import { SegmentedControl, type SegmentedControlOption } from '../../SegmentedCo
 import { NumberStepper } from '../../NumberStepper';
 import { OptionalTag } from '../../OptionalTag';
 import { AutomationTypePicker } from './AutomationTypePicker';
-import { AutomationColumnPicker, type AutomationColumnChoice } from './AutomationColumnPicker';
+import { ColumnPicker, type ColumnPickerChoice } from '../../ColumnPicker';
 import { AutomationIcon } from './automation-icons';
 import { WildcardExamplesTip } from './WildcardExamplesTip';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
@@ -34,6 +34,9 @@ import {
   spliceAtRange,
   type AutomationDraft,
 } from './automation-drafts';
+
+/** Move to column's first choice: the next column on the task's route, else the board. */
+const NEXT_COLUMN_OPTION = { value: '', label: 'Next column' };
 
 /**
  * The ONE place an automation is edited, laid out as the rule reads: a Name,
@@ -204,11 +207,11 @@ export interface EditAutomationDialogProps {
   /** Whether the column's agent reports a turn end. Undefined while unknown. */
   reportsTurnEnd?: boolean;
   /**
-   * The board's other columns in board order, for a Column field: the Board
-   * Manager's drafts, so a column added or recolored in this unsaved session
-   * shows its own dot.
+   * The board's other columns in board order, for a Column field, valued by
+   * NAME: the Board Manager's drafts, so a column added, recolored or given a
+   * new icon in this unsaved session shows its own glyph.
    */
-  columns: AutomationColumnChoice[];
+  columns: ColumnPickerChoice[];
   /**
    * Whether the Automation agent is set up (Settings > Workflows). Until it
    * is, a Condition cannot be switched on: nothing could check it.
@@ -699,7 +702,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
   value: unknown;
   onChange: (value: unknown) => void;
   templatePicker: EditAutomationDialogProps['templatePicker'];
-  columns: readonly AutomationColumnChoice[];
+  columns: readonly ColumnPickerChoice[];
   /** The row's trigger, which decides whether the field applies (`unavailableOn`). */
   trigger: AutomationTrigger;
 }) {
@@ -848,15 +851,17 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
       )}
 
       {field.kind === 'column' && (
-        // The board's columns by NAME, each with its color dot, Next column
-        // (empty) first. A name the board no longer has (the column was
-        // deleted) stays listed and marked, so opening the dialog never
-        // silently re-points the row.
-        <AutomationColumnPicker
+        // The board's columns by NAME, each with its own glyph, and Next column
+        // (empty) first, set apart: it follows the task's route in a workflow,
+        // else the board, so it is not one column. A name the board no longer
+        // has (the column was deleted) stays listed and marked, so opening the
+        // dialog never silently re-points the row.
+        <ColumnPicker
           testId={testId}
           ariaLabel={field.label}
           value={text}
           columns={columns}
+          leadingOption={NEXT_COLUMN_OPTION}
           onChange={onChange}
         />
       )}

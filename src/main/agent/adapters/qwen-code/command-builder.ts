@@ -33,6 +33,61 @@ export interface QwenCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /**
+   * The detected `qwen --version`, or null when detection has not run. Only
+   * picks how Kangentic's MCP server is delivered (see `supportsMcpConfigFlag`).
+   */
+  cliVersion?: string | null;
+}
+
+/**
+ * How a spawn hands Qwen Kangentic's MCP server.
+ *
+ * - `'flag'`: `--mcp-config <sessionDir>/mcp.json`.
+ * - `'settings'`: an `mcpServers.kangentic` entry in the folder's
+ *   `.qwen/settings.json`, for a Qwen too old to have the flag.
+ * - `'none'`: no server (switched off, or no URL or token).
+ */
+type QwenMcpDelivery = 'flag' | 'settings' | 'none';
+
+/**
+ * The first Qwen Code minor release with `--mcp-config`: the option is absent
+ * from v0.15.3's `packages/cli/src/config/config.ts` and present in v0.16.0's.
+ * Qwen's top-level yargs is `.strict()`, so an older CLI exits on the unknown
+ * flag instead of ignoring it.
+ */
+const MCP_CONFIG_FLAG_MIN_MINOR = 16;
+
+/**
+ * True when this Qwen takes `--mcp-config`. An unknown or unparsable version
+ * takes the flag: every Qwen with the workspace MCP approval gate (0.20 and
+ * later) has it, and the settings fallback is what that gate stops on.
+ */
+export function supportsMcpConfigFlag(cliVersion: string | null | undefined): boolean {
+  const match = cliVersion ? /^v?(\d+)\.(\d+)/.exec(cliVersion.trim()) : null;
+  if (!match) return true;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 0 || minor >= MCP_CONFIG_FLAG_MIN_MINOR;
+}
+
+/** Kangentic's own server entry, in Qwen's native shape (`httpUrl` is streamable HTTP). */
+function kangenticServerEntry(url: string, token: string): { httpUrl: string; headers: Record<string, string> } {
+  return { httpUrl: url, headers: { 'X-Kangentic-Token': token } };
+}
+
+/**
+ * The user's own servers: `mcpServers` with any `kangentic` entry removed. An
+ * older Kangentic wrote that entry into `.qwen/settings.json`, and a crash
+ * before `removeHooks` leaves it in the baseline with a dead token. Returns the
+ * object unchanged when it has no such entry, and undefined when removing it
+ * leaves nothing.
+ */
+function withoutKangenticEntry(servers: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!servers || !Object.prototype.hasOwnProperty.call(servers, 'kangentic')) return servers;
+  const userServers = { ...servers };
+  delete userServers.kangentic;
+  return Object.keys(userServers).length > 0 ? userServers : undefined;
 }
 
 export class QwenCommandBuilder {
@@ -55,18 +110,17 @@ export class QwenCommandBuilder {
   buildQwenCommand(options: QwenCommandOptions): string {
     const { shell } = options;
     const parts = [quoteArg(options.qwenPath, shell)];
+    const mcpDelivery = this.mcpDelivery(options);
+    const writesSettings = this.shouldWriteMergedSettings(options);
 
-    // Write merged settings whenever event-bridge hooks OR the kangentic
-    // MCP server entry need to land in `.qwen/settings.json`. Either alone
-    // is sufficient - hooks need eventsOutputPath, MCP needs the URL+token
-    // pair. Seed .git/info/exclude BEFORE the write so the settings.json
+    // Seed .git/info/exclude BEFORE any write so the settings.json
     // pre-existence check reflects the user's file, not ours: the merged
     // file otherwise sits untracked in the worktree for the whole session,
     // polluting git status and riding along with any `git add -A` an agent
-    // runs - which would commit the per-launch plaintext token.
-    this.seedGitExcludes(options);
-    if (this.shouldWriteMergedSettings(options)) {
-      this.createMergedSettings(options);
+    // runs.
+    this.seedGitExcludes(options, mcpDelivery, writesSettings);
+    if (writesSettings) {
+      this.createMergedSettings(options, mcpDelivery);
     }
 
     // Permission mode mapping to Qwen Code --approval-mode flags.
@@ -107,6 +161,15 @@ export class QwenCommandBuilder {
       parts.push('--model', quoteArg(options.model.trim(), shell));
     }
 
+    // Kangentic's MCP server, on a fresh start and on a resume alike. A file
+    // path, never inline JSON, so the token stays out of the command line.
+    if (mcpDelivery === 'flag') {
+      const mcpConfigPath = this.writeMcpConfigFile(options);
+      if (mcpConfigPath) {
+        parts.push('--mcp-config', quoteArg(toForwardSlash(mcpConfigPath), shell));
+      }
+    }
+
     // Prompt delivery: Qwen Code requires an explicit flag for prompts.
     // A bare positional argument is treated as headless / one-shot
     // (equivalent to -p) and exits after printing a single response, so
@@ -145,16 +208,63 @@ export class QwenCommandBuilder {
   }
 
   /**
-   * True when the build writes the folder-shared `.qwen/settings.json`. The
-   * adapter takes its session's hold on the file under the same test.
+   * True when the build writes the folder-shared `.qwen/settings.json`: for
+   * the event-bridge hooks, or for the MCP entry on a Qwen without
+   * `--mcp-config`. The adapter takes its session's hold on the file under
+   * the same test.
    */
   shouldWriteMergedSettings(options: QwenCommandOptions): boolean {
     if (options.eventsOutputPath) return true;
-    return (
-      options.mcpServerEnabled !== false &&
-      Boolean(options.mcpServerUrl) &&
-      Boolean(options.mcpServerToken)
-    );
+    return this.mcpDelivery(options) === 'settings';
+  }
+
+  /**
+   * How this spawn delivers Kangentic's MCP server.
+   *
+   * The flag is the default because of Qwen's workspace MCP approval gate
+   * (0.20 and later). Qwen tags a server from the folder's
+   * `.qwen/settings.json` with scope `workspace` (and one from `.mcp.json`
+   * with `project`), and `useMcpApproval` holds every server of those two
+   * scopes behind an "Untrusted MCP server" dialog until
+   * `~/.qwen/mcpApprovals.json` records an approval for that folder, name,
+   * and a hash of the server's exact config. Kangentic's URL and token change
+   * every spawn, so an approval never matched and every board session waited
+   * on the dialog. A `--mcp-config` server carries no scope, so the gate
+   * never sees it, and the CLI tier is merged last, so it also replaces a
+   * same-named entry a settings file still holds. The user's own servers
+   * keep their gate.
+   */
+  private mcpDelivery(options: QwenCommandOptions): QwenMcpDelivery {
+    if (options.mcpServerEnabled === false || !options.mcpServerUrl || !options.mcpServerToken) {
+      return 'none';
+    }
+    return supportsMcpConfigFlag(options.cliVersion) ? 'flag' : 'settings';
+  }
+
+  /**
+   * Write the session's `mcp.json` beside its status and events files and
+   * return its path, or null (logged) when the build has no session directory,
+   * which every production spawn path supplies.
+   */
+  private writeMcpConfigFile(options: QwenCommandOptions): string | null {
+    const sessionFile = options.statusOutputPath ?? options.eventsOutputPath;
+    if (!sessionFile || !options.mcpServerUrl || !options.mcpServerToken) {
+      console.warn('[qwen] MCP server enabled but no session directory to write mcp.json into - skipping MCP wiring');
+      return null;
+    }
+    const sessionDir = path.dirname(sessionFile);
+    // sync-write-ok: this must throw, not degrade - the file below is named by
+    // --mcp-config, and Qwen exits with a FatalConfigError when that path does
+    // not exist. The spawn preamble already reports and notifies
+    // (notifySpawnBlocked) on any throw from buildCommand.
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const mcpConfigPath = path.join(sessionDir, 'mcp.json');
+    const mcpConfig = {
+      mcpServers: { kangentic: kangenticServerEntry(options.mcpServerUrl, options.mcpServerToken) },
+    };
+    // sync-write-ok: same reason as the mkdir above.
+    fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+    return mcpConfigPath;
   }
 
   /**
@@ -165,20 +275,20 @@ export class QwenCommandBuilder {
    * Ignore rules never affect tracked files, so a committed settings.json
    * keeps its normal git visibility either way.
    */
-  private seedGitExcludes(options: QwenCommandOptions): void {
-    if (!this.shouldWriteMergedSettings(options)) return;
+  private seedGitExcludes(options: QwenCommandOptions, mcpDelivery: QwenMcpDelivery, writesSettings: boolean): void {
+    if (!writesSettings && mcpDelivery !== 'flag') return;
     const patterns = ['.kangentic/'];
-    if (!fs.existsSync(path.join(options.cwd, '.qwen', 'settings.json'))) {
+    if (writesSettings && !fs.existsSync(path.join(options.cwd, '.qwen', 'settings.json'))) {
       patterns.push('.qwen/settings.json');
     }
     ensureLocalGitExcludes(options.cwd, patterns);
   }
 
   /**
-   * Create a merged Qwen settings file that includes event-bridge hooks
-   * and / or the Kangentic MCP server entry. Writes to
-   * `.qwen/settings.json` in the cwd since Qwen Code reads settings from
-   * the project directory (no --settings flag available).
+   * Create a merged Qwen settings file that includes the event-bridge hooks
+   * (and, on a Qwen without `--mcp-config`, the Kangentic MCP server entry).
+   * Writes to `.qwen/settings.json` in the cwd since Qwen Code reads settings
+   * from the project directory (no --settings flag available).
    *
    * Qwen Code (like Gemini) has no --settings flag, so hooks live in a
    * project-shared file. Concurrent sessions in the same cwd are
@@ -188,24 +298,16 @@ export class QwenCommandBuilder {
    * affecting user-defined hooks. On crash / force-quit, stripping on
    * the next spawn (buildHooks) cleans up.
    *
-   * MCP server entry: Qwen Code natively supports inline `mcpServers`
-   * in settings.json (Gemini-fork format with `httpUrl`, not the
-   * Anthropic/fastmcp `url` convention used by Claude/Kimi). We inject
-   * a single `kangentic` entry pointing at the in-process MCP HTTP
-   * server, with the per-launch token in the `X-Kangentic-Token`
-   * header. User-defined `mcpServers` are preserved via spread.
-   *
-   * Security trade-off: `.qwen/settings.json` is project-shared and may
-   * be intentionally committed by users (team-wide model defaults, MCP
-   * servers, etc.), so we cannot blanket-gitignore it like
-   * `.kangentic/`. The injected token is therefore plaintext on disk
-   * during the active session. Mitigations: tokens rotate per app
-   * launch (see `mcp-http-server.ts`), and `removeHooks()` strips the
-   * entry on session exit / suspend. Consequence: do not commit
-   * `.qwen/settings.json` while a Kangentic-spawned Qwen session is
-   * running.
+   * MCP server entry: a current Qwen gets Kangentic's server through
+   * `--mcp-config` (see `mcpDelivery`), so this file carries no `kangentic`
+   * entry, and a stale one an older build or a crash left in the baseline is
+   * dropped. Only a Qwen before 0.16 gets the entry here, in the Gemini-fork
+   * `httpUrl` shape with the per-launch token in the `X-Kangentic-Token`
+   * header. That copy is plaintext in a file users may commit, so
+   * `removeHooks()` strips it on session exit / suspend. User-defined
+   * `mcpServers` are preserved either way.
    */
-  private createMergedSettings(options: QwenCommandOptions): void {
+  private createMergedSettings(options: QwenCommandOptions, mcpDelivery: QwenMcpDelivery): void {
     const projectRoot = options.projectRoot || options.cwd;
     const baseSettings = this.readBaseSettings(projectRoot);
 
@@ -217,18 +319,16 @@ export class QwenCommandBuilder {
       merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {});
     }
 
-    if (
-      options.mcpServerEnabled !== false &&
-      options.mcpServerUrl &&
-      options.mcpServerToken
-    ) {
+    const userMcpServers = withoutKangenticEntry(baseSettings.mcpServers);
+    if (mcpDelivery === 'settings' && options.mcpServerUrl && options.mcpServerToken) {
       merged.mcpServers = {
-        ...(baseSettings.mcpServers ?? {}),
-        kangentic: {
-          httpUrl: options.mcpServerUrl,
-          headers: { 'X-Kangentic-Token': options.mcpServerToken },
-        },
+        ...(userMcpServers ?? {}),
+        kangentic: kangenticServerEntry(options.mcpServerUrl, options.mcpServerToken),
       };
+    } else if (userMcpServers) {
+      merged.mcpServers = userMcpServers;
+    } else {
+      delete merged.mcpServers;
     }
 
     // Write merged settings into the cwd's .qwen/settings.json

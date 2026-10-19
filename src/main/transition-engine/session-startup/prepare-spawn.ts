@@ -11,6 +11,7 @@ import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
+import { notePlanApprovalSpawn, planSpawnNeedsBypass } from '../../plan-approval/plan-approval-spawns';
 import { reconcileResumeAgentSessionId } from '../resume-id-reconcile';
 import { assessResumeConversation, resolveResumeLineage, type StartOverReason } from '../resume-conversation-guard';
 import type { SessionRepository } from '../../db/repositories/session-repository';
@@ -298,6 +299,14 @@ export async function prepareAgentSpawn(input: {
   // aborts recovery for every other task.
   fs.mkdirSync(sessionDir, { recursive: true });
   const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
+  // As the board path does: a plan approved into a bypass column needs bypass
+  // available at launch, and the writer reads the directory and that fact here.
+  const bypassAvailable = planSpawnNeedsBypass({
+    permissionMode,
+    agentApprovesPlans: adapter.supportsPlanAutoApproval === true,
+    projectId,
+    taskId: task.id,
+  });
 
   const commandOptions = {
     agentPath: launch.agentPath,
@@ -336,9 +345,11 @@ export async function prepareAgentSpawn(input: {
     // held under. A caller that does not spawn this command releases it
     // (releaseCommandHold).
     ptySessionId: sessionRecordId,
+    bypassAvailable,
   };
 
   const command = adapter.buildCommand(commandOptions);
+  notePlanApprovalSpawn(sessionRecordId, { sessionDir, bypassAvailable });
   let extraEnv: Record<string, string> | null;
   try {
     extraEnv = adapter.buildEnv?.(commandOptions) ?? null;

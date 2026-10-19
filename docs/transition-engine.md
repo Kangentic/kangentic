@@ -257,7 +257,7 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{toColumn}}` | The column the task moved into. Automations only |
 | `{{trigger}}` | When this automation runs: `enter`, `turn_end` or `exit`. Automations only |
 | `{{agentReply}}` | The agent's reply at the end of its last turn in this column: the final message, full text with its line breaks. Empty on task enter, and for an agent whose transcript Kangentic cannot read. A Claude turn that wrote no text of its own is empty too (see the note below the table). Automations only |
-| `{{columns}}` | One line per column between To Do and Done, in board order: what it runs (an agent, plan mode, its own session, a slash command), its enabled automations, and how many of the last 10 finished tasks went through it (from `task_moves`; left out until a task has finished). Names escaped. Workflow agent only |
+| `{{columns}}` | One line per column between To Do and Done, in board order: what it runs (an agent, plan mode and whether the user or Kangentic approves the plan, its own session, a slash command), its enabled automations, and how many of the last 10 finished tasks went through it (from `task_moves`; left out until a task has finished). Names escaped. Workflow agent only |
 | `{{brief_xml}}` | What the workflow was made from: a `<brief>` block with the source task's `<source_task>#N</source_task>`, `<title>` and `<description>`, laid out and escaped like `{{task_xml}}`. Empty, and dropped, for a workflow made from nothing. Workflow agent only |
 
 The five marked **automations only** and the two marked **workflow agent only** are limited because each entry declares
@@ -356,7 +356,7 @@ Two special roles affect behavior:
 
 Both roles still run their On EXIT group (in Phase 1, before the kill or the suspend), and neither runs an On enter group: the Column Manager offers only the exit group there, and `canColumnRun` blocks an enter row written by hand.
 
-All other columns (including Planning, Executing, Code Review, etc.) are custom columns with no special role. Their behavior is controlled by `auto_spawn`, their automations, `permission_mode`, and `plan_exit_target_id`.
+All other columns (including Planning, Executing, Code Review, etc.) are custom columns with no special role. Their behavior is controlled by `auto_spawn`, their automations, `permission_mode`, `plan_exit_target_id`, and `plan_approval`.
 
 ## auto_spawn Flag
 
@@ -407,7 +407,11 @@ focused one.
 
 ## plan_exit_target_id
 
-When a column has `permission_mode='plan'`, Claude runs in plan mode. When the agent completes planning and fires `ExitPlanMode`, Kangentic detects this via the event bridge and automatically moves the task to the column specified by `plan_exit_target_id`.
+When a column has `permission_mode='plan'`, Claude runs in plan mode. When the plan is approved, Kangentic moves the task to the column specified by `plan_exit_target_id`, folded through the task's Board Profile. A workflow task goes to the next column on its route instead (`planExitTargetFor`, `src/main/ipc/helpers/plan-exit-target.ts`). No target means the task stays.
+
+The move is keyed on the approval, not on the agent calling `ExitPlanMode`. The `plan-exit` listener (`ipc/handlers/sessions.ts`) fires on the tool's completion (`PostToolUse`), which the CLI sends only for an approved plan, so a rejected plan moves nothing. That holds whoever approves.
+
+Who approves is the column's `plan_approval`. `manual` (the default) waits for the user in the agent's terminal. `automatic` has Kangentic answer the prompt through the agent's plan approval hook, for an agent that declares `supportsPlanAutoApproval` (see [Agent Integration](agent-integration.md#plan-approval-bridgejs)). A task in a running workflow follows the workflow's `plan_approval` instead, and an agent that cannot approve plans always waits for the user. Kangentic's approval also switches the session to the permission mode it would spawn with in the destination column, with fallbacks when that is `plan` (see [Agent Integration](agent-integration.md#plan-approval-bridgejs)). Only the plan prompt is answered: a question the agent asks the user still waits.
 
 Default setup: Planning column has `plan_exit_target_id` pointing to the Executing column.
 

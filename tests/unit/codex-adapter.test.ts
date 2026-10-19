@@ -367,10 +367,21 @@ describe('Codex Adapter', () => {
       expect(command).toContain('--ask-for-approval never');
     });
 
-    it("maps 'default' to --sandbox workspace-write --ask-for-approval untrusted", () => {
+    it("maps 'default' to --sandbox workspace-write --ask-for-approval on-request, never the untrusted Codex 0.154 refuses", () => {
       const command = adapter.buildCommand(makeOptions({ permissionMode: 'default' }));
       expect(command).toContain('--sandbox workspace-write');
-      expect(command).toContain('--ask-for-approval untrusted');
+      expect(command).toContain('--ask-for-approval on-request');
+      expect(command).not.toContain('untrusted');
+    });
+
+    // Codex 0.154.0's own possible values; anything else exits 2 before the TUI starts.
+    it('passes only an --ask-for-approval value Codex accepts, in every mode', () => {
+      const modes = ['plan', 'dontAsk', 'default', 'acceptEdits', 'auto', 'bypassPermissions'] as const;
+      for (const permissionMode of modes) {
+        const command = adapter.buildCommand(makeOptions({ permissionMode }));
+        const match = /--ask-for-approval (\S+)/.exec(command);
+        if (match) expect(['on-request', 'never']).toContain(match[1]);
+      }
     });
 
     it("maps 'acceptEdits' to --sandbox workspace-write --ask-for-approval never", () => {

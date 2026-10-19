@@ -270,7 +270,8 @@ permission mode, auto-command, auto-command mode, auto-spawn, handoff context, s
 session spawn strategy, plan-exit target). A task selects one and rides its ladder as it moves - so one task can run Planning
 in Opus xhigh and Merge in Sonnet high while another runs the same board more cheaply. Column
 *identity* (which columns exist, their name, order, role, color, icon) is singular across profiles;
-only strategy is profile-scoped.
+only strategy is profile-scoped. Plan approval is not part of a profile either: it is the column's
+own, every profile shares it, and the Column Manager disables it while a profile is selected.
 
 Profiles are authored in the Column Manager and stored under a `profiles` key in
 `kangentic.json`. Unlike shortcuts they are **team-only** - never `kangentic.local.json` - because
@@ -633,6 +634,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 | `auto_command` | string \| null | null | RETIRED. The column's message to its agent is a `send_message` automation now, in `column_automations`. The migration moved every existing value into one and nulled this field; nothing reads it. See [Column automations](#column-automations). |
 | `auto_command_mode` | `'immediate'` \| `'deferred'` | `'immediate'` | RETIRED with `auto_command`, and reset by the same migration. The delivery choice is the `send_message` automation's own `mode` field. |
 | `plan_exit_target_id` | string \| null | null | Target column when plan-mode agent exits |
+| `plan_approval` | `'automatic'` \| `'manual'` | `'manual'` | Who approves a plan made in this column, read only while `permission_mode` is `plan`. `manual` waits for the user in the agent's terminal; `automatic` has Kangentic approve it, for an agent that declares `supportsPlanAutoApproval`, so the task moves on by itself. A question the agent asks the user still waits. A task in a running workflow follows the workflow's own value. See [transition-engine.md](transition-engine.md#plan_exit_target_id). |
 | `agent_override` | string \| null | null | Agent CLI override for sessions spawned in this column |
 | `model_override` | string \| null | null | Adapter-specific model identifier passed at spawn time (e.g. Claude `--model opus`), stored exactly as written. A column transition into a different concrete model restarts a live session with the new flag. |
 | `effort_override` | string \| null | null | Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude `--effort xhigh`). A column transition into a different concrete effort restarts a live session with the new flag. |
@@ -865,6 +867,13 @@ picker has listed that family, so a gateway model named `"Workhorse"` reaches th
 before the first picker scan on a machine, write the alias in lowercase. What an alias means is
 decided by the CLI on each machine: the provider and variables such as
 `ANTHROPIC_DEFAULT_OPUS_MODEL` can point it at a different version.
+
+**`planApproval` is written only when it is `"automatic"`** (`"planApproval": "automatic"` on a
+column whose `permissionMode` is `"plan"`). The export omits it at `"manual"`, and
+the apply reads an absent key as Manual rather than keeping the database's value. That is
+deliberate: a teammate who turns Automatic off removes the key, and keeping the old value would
+leave plans approving on every other machine. To Do and Done always apply as Manual. A Board Profile
+cannot change it.
 
 **Automations nest under the column that owns them, as three named arrays** (`onEnter`,
 `onTurnEnd`, `onExit`). Array order IS the run order within its group, an empty group is an absent

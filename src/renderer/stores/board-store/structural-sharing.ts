@@ -176,6 +176,7 @@ function swimlaneContentsMatch(previous: Swimlane, next: Swimlane): boolean {
     previous.auto_command === next.auto_command &&
     previous.auto_command_mode === next.auto_command_mode &&
     previous.plan_exit_target_id === next.plan_exit_target_id &&
+    previous.plan_approval === next.plan_approval &&
     previous.agent_override === next.agent_override &&
     previous.model_override === next.model_override &&
     previous.effort_override === next.effort_override &&

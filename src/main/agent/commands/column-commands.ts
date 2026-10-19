@@ -11,6 +11,7 @@ import {
   VALID_SESSION_TARGETS,
   VALID_SESSION_SPAWN_STRATEGIES,
   VALID_AUTO_COMMAND_MODES,
+  VALID_PLAN_APPROVALS,
   parseEnumParam,
 } from './column-enums';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -176,11 +177,17 @@ export const handleUpdateColumn: CommandHandler = (
     }
     changedFields.push('planExitTargetColumn');
   }
+  if (params.planApproval !== undefined && params.planApproval !== null) {
+    const parsed = parseEnumParam(params.planApproval, VALID_PLAN_APPROVALS, 'planApproval');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    updates.plan_approval = parsed.value;
+    changedFields.push('planApproval');
+  }
 
   if (changedFields.length === 0) {
     return {
       success: false,
-      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn.',
+      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval.',
     };
   }
 
@@ -230,6 +237,7 @@ export const handleUpdateColumn: CommandHandler = (
       sessionTarget: updated.session_target,
       sessionSpawnStrategy: updated.session_spawn_strategy,
       planExitTargetId: updated.plan_exit_target_id,
+      planApproval: updated.plan_approval,
     },
   };
 };
@@ -332,6 +340,11 @@ export const handleCreateColumn: CommandHandler = (
     }
     input.plan_exit_target_id = targetResolution.swimlane.id;
   }
+  if (params.planApproval !== undefined && params.planApproval !== null) {
+    const parsed = parseEnumParam(params.planApproval, VALID_PLAN_APPROVALS, 'planApproval');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    input.plan_approval = parsed.value;
+  }
 
   // Placement. With `position` omitted, the repository already inserts before
   // Done and shifts the lanes at or after it, so the common case needs nothing.
@@ -409,6 +422,7 @@ export const handleCreateColumn: CommandHandler = (
       sessionTarget: created.session_target,
       sessionSpawnStrategy: created.session_spawn_strategy,
       planExitTargetId: created.plan_exit_target_id,
+      planApproval: created.plan_approval,
     },
   };
 };

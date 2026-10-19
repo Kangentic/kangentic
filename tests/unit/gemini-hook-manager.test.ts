@@ -61,9 +61,10 @@ describe('gemini-hook-manager', () => {
       expect(hooks.BeforeAgent).toHaveLength(1);
       expect(hooks.BeforeAgent[0].hooks[0].command).toContain('prompt');
 
-      // Notification: notification
-      expect(hooks.Notification).toHaveLength(1);
+      // Notification: notification, plus the permission idle for a tool confirmation
+      expect(hooks.Notification).toHaveLength(2);
       expect(hooks.Notification[0].hooks[0].command).toContain('notification');
+      expect(hooks.Notification[1].hooks[0].name).toBe('kangentic-idle');
 
       // PreCompress: compact
       expect(hooks.PreCompress).toHaveLength(1);

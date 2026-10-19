@@ -37,7 +37,7 @@ interface ToggleCardProps {
  * is what made an earlier attempt at this fail - the fill was never the
  * problem, the faint text on it was.
  */
-const TOGGLE_CARD_SURFACE = {
+export const TOGGLE_CARD_SURFACE = {
   enabled: 'bg-surface-control border-edge-input hover:border-fg-faint',
   disabled: 'bg-surface-control border-edge-input',
 } as const;

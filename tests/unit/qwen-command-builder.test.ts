@@ -12,8 +12,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { quoteArg } from '../../src/shared/paths';
-import { QwenCommandBuilder } from '../../src/main/agent/adapters/qwen-code';
+import { quoteArg, toForwardSlash } from '../../src/shared/paths';
+import { QwenCommandBuilder, supportsMcpConfigFlag } from '../../src/main/agent/adapters/qwen-code';
 import type { QwenCommandOptions } from '../../src/main/agent/adapters/qwen-code';
 
 /** Minimal options for tests that don't need hooks/settings. */
@@ -202,11 +202,14 @@ describe('QwenCommandBuilder', () => {
     let tmpDir: string;
 
     const excludePath = () => path.join(tmpDir, '.git', 'info', 'exclude');
+    const sessionFile = (name: string) => path.join(tmpDir, '.kangentic', 'sessions', 's1', name);
 
     const build = (overrides: Partial<QwenCommandOptions> = {}) =>
       new QwenCommandBuilder().buildQwenCommand(baseOptions({
         cwd: tmpDir,
         projectRoot: tmpDir,
+        statusOutputPath: sessionFile('status.json'),
+        eventsOutputPath: sessionFile('events.jsonl'),
         mcpServerEnabled: true,
         mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
         mcpServerToken: 'test-token-abc',
@@ -244,37 +247,71 @@ describe('QwenCommandBuilder', () => {
       expect(content).toContain('.kangentic/');
     });
 
-    it('seeds nothing when no settings write happens', () => {
-      build({ mcpServerEnabled: false });
+    it('seeds nothing when nothing is written', () => {
+      build({ mcpServerEnabled: false, statusOutputPath: undefined, eventsOutputPath: undefined });
       expect(fs.existsSync(excludePath())).toBe(false);
     });
 
     it('an events-only spawn (no MCP) still seeds .qwen/settings.json and .kangentic/', () => {
-      // shouldWriteMergedSettings / seedGitExcludes are OR-gated on
-      // eventsOutputPath OR mcp wiring - either alone must trigger seeding.
-      // Regression guard against the two conditions drifting apart.
       build({
         mcpServerEnabled: false,
         mcpServerUrl: undefined,
         mcpServerToken: undefined,
-        eventsOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 's1', 'events.jsonl'),
       });
       const content = fs.readFileSync(excludePath(), 'utf-8');
       expect(content).toContain('.qwen/settings.json');
       expect(content).toContain('.kangentic/');
     });
+
+    it('an MCP-only spawn seeds .kangentic/ but not .qwen/settings.json, which it never writes', () => {
+      build({ eventsOutputPath: undefined });
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).toContain('.kangentic/');
+      expect(content).not.toContain('.qwen/settings.json');
+      expect(fs.existsSync(path.join(tmpDir, '.qwen', 'settings.json'))).toBe(false);
+    });
+  });
+
+  describe('supportsMcpConfigFlag', () => {
+    it.each([
+      ['0.15.3', false],
+      ['v0.14.1', false],
+      ['0.16.0', true],
+      ['0.21.7', true],
+      ['0.25.2', true],
+      ['0.16.0-nightly.20260101', true],
+      ['1.0.0', true],
+    ] as const)('%s -> %s', (version, expected) => {
+      expect(supportsMcpConfigFlag(version)).toBe(expected);
+    });
+
+    it('takes the flag when the version is unknown or unreadable', () => {
+      expect(supportsMcpConfigFlag(null)).toBe(true);
+      expect(supportsMcpConfigFlag(undefined)).toBe(true);
+      expect(supportsMcpConfigFlag('')).toBe(true);
+      expect(supportsMcpConfigFlag('unknown')).toBe(true);
+    });
   });
 
   /**
-   * MCP server config tests touch the filesystem (`createMergedSettings`
-   * writes `.qwen/settings.json` into options.cwd), so each test gets a
-   * fresh tmpdir as cwd.
+   * MCP server config tests touch the filesystem (the session's `mcp.json`,
+   * and `createMergedSettings` writes `.qwen/settings.json` into
+   * options.cwd), so each test gets a fresh tmpdir as cwd.
+   *
+   * Qwen 0.20 and later hold every server from `.qwen/settings.json` (scope
+   * `workspace`) behind an "Untrusted MCP server" dialog until an approval of
+   * its exact config is recorded. Kangentic's URL and token change every
+   * spawn, so its server goes through `--mcp-config`, whose servers carry no
+   * scope and are never gated.
    */
   describe('MCP server config', () => {
+    const MCP_URL = 'http://127.0.0.1:51234/mcp/proj-1';
     let tmpDir: string;
+    let sessionDir: string;
 
     beforeEach(() => {
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cmd-mcp-'));
+      sessionDir = path.join(tmpDir, '.kangentic', 'sessions', 's1');
     });
 
     afterEach(() => {
@@ -289,108 +326,146 @@ describe('QwenCommandBuilder', () => {
       return fs.existsSync(path.join(tmpDir, '.qwen', 'settings.json'));
     }
 
-    function buildWithCwd(overrides: Partial<QwenCommandOptions> = {}): void {
+    function mcpConfigPath(): string {
+      return path.join(sessionDir, 'mcp.json');
+    }
+
+    function readMcpConfig(): { mcpServers: Record<string, Record<string, unknown>> } {
+      return JSON.parse(fs.readFileSync(mcpConfigPath(), 'utf-8'));
+    }
+
+    function seedUserSettings(mcpServers: Record<string, unknown>): void {
+      fs.mkdirSync(path.join(tmpDir, '.qwen'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, '.qwen', 'settings.json'), JSON.stringify({ mcpServers }, null, 2));
+    }
+
+    function buildWithCwd(overrides: Partial<QwenCommandOptions> = {}): string {
       const builder = new QwenCommandBuilder();
-      builder.buildQwenCommand({
+      return builder.buildQwenCommand({
         ...baseOptions(),
         cwd: tmpDir,
         projectRoot: tmpDir,
+        statusOutputPath: path.join(sessionDir, 'status.json'),
         ...overrides,
       });
     }
 
-    it('writes mcpServers.kangentic with httpUrl and X-Kangentic-Token header', () => {
-      buildWithCwd({
+    it('hands the kangentic server to --mcp-config as a session file, never as inline JSON', () => {
+      const command = buildWithCwd({
         mcpServerEnabled: true,
-        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+        mcpServerUrl: MCP_URL,
+        mcpServerToken: 'test-token-abc',
+      });
+
+      expect(command).toContain(`--mcp-config ${quoteArg(toForwardSlash(mcpConfigPath()))}`);
+      // The token and URL stay out of argv (process listings show it).
+      expect(command).not.toContain('test-token-abc');
+      expect(command).not.toContain(MCP_URL);
+
+      const kangentic = readMcpConfig().mcpServers.kangentic;
+      // Qwen's native shape: httpUrl is streamable HTTP, a bare `url` would be SSE.
+      expect(kangentic).toEqual({ httpUrl: MCP_URL, headers: { 'X-Kangentic-Token': 'test-token-abc' } });
+      // No scope key: a scoped server is the one the approval gate holds.
+      expect(kangentic.scope).toBeUndefined();
+    });
+
+    it('passes --mcp-config on a resume too', () => {
+      const command = buildWithCwd({
+        resume: true,
+        sessionId: 'abc-123',
+        mcpServerUrl: MCP_URL,
+        mcpServerToken: 'test-token-abc',
+      });
+      expect(command).toContain('--resume');
+      expect(command).toContain('--mcp-config');
+      expect(fs.existsSync(mcpConfigPath())).toBe(true);
+    });
+
+    it('keeps the kangentic entry out of .qwen/settings.json', () => {
+      buildWithCwd({
+        eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
+        mcpServerEnabled: true,
+        mcpServerUrl: MCP_URL,
         mcpServerToken: 'test-token-abc',
       });
 
       const settings = readSettings();
-      const mcpServers = settings.mcpServers as Record<string, { httpUrl: string; headers: Record<string, string> }>;
-      expect(mcpServers.kangentic).toBeDefined();
-      expect(mcpServers.kangentic.httpUrl).toBe('http://127.0.0.1:51234/mcp/proj-1');
-      expect(mcpServers.kangentic.headers['X-Kangentic-Token']).toBe('test-token-abc');
+      expect(settings.hooks).toBeDefined();
+      expect(settings.mcpServers).toBeUndefined();
+      expect(fs.readFileSync(path.join(tmpDir, '.qwen', 'settings.json'), 'utf-8')).not.toContain('test-token-abc');
     });
 
-    it('omits mcpServers entirely when mcpServerEnabled is false', () => {
-      buildWithCwd({
-        eventsOutputPath: path.join(tmpDir, 'events.jsonl'),
-        mcpServerEnabled: false,
-        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
-        mcpServerToken: 'test-token-abc',
+    it('writes no settings file for an MCP-only spawn', () => {
+      buildWithCwd({ mcpServerUrl: MCP_URL, mcpServerToken: 'token-only' });
+      expect(settingsExists()).toBe(false);
+      expect(fs.existsSync(mcpConfigPath())).toBe(true);
+    });
+
+    it('drops a stale kangentic entry from the baseline and keeps the user servers', () => {
+      seedUserSettings({
+        kangentic: { httpUrl: 'http://127.0.0.1:40000/mcp/old', headers: { 'X-Kangentic-Token': 'stale-token' } },
+        'user-server': { httpUrl: 'http://example.com/mcp', headers: { Authorization: 'Bearer xyz' } },
       });
 
-      const settings = readSettings();
-      expect(settings.mcpServers).toBeUndefined();
-    });
-
-    it('omits mcpServers when token is missing', () => {
       buildWithCwd({
-        eventsOutputPath: path.join(tmpDir, 'events.jsonl'),
-        mcpServerEnabled: true,
-        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
-        // mcpServerToken intentionally missing
-      });
-
-      expect(settingsExists()).toBe(true);
-      const settings = readSettings();
-      expect(settings.mcpServers).toBeUndefined();
-    });
-
-    it('omits mcpServers when url is missing', () => {
-      buildWithCwd({
-        eventsOutputPath: path.join(tmpDir, 'events.jsonl'),
-        mcpServerEnabled: true,
-        // mcpServerUrl intentionally missing
-        mcpServerToken: 'test-token-abc',
-      });
-
-      expect(settingsExists()).toBe(true);
-      const settings = readSettings();
-      expect(settings.mcpServers).toBeUndefined();
-    });
-
-    it('preserves user-defined mcpServers alongside the kangentic entry', () => {
-      const qwenDir = path.join(tmpDir, '.qwen');
-      fs.mkdirSync(qwenDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(qwenDir, 'settings.json'),
-        JSON.stringify({
-          mcpServers: {
-            'user-server': { httpUrl: 'http://example.com/mcp', headers: { Authorization: 'Bearer xyz' } },
-          },
-        }, null, 2),
-      );
-
-      buildWithCwd({
-        mcpServerEnabled: true,
-        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+        eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
+        mcpServerUrl: MCP_URL,
         mcpServerToken: 'fresh-token',
       });
 
-      const settings = readSettings();
-      const mcpServers = settings.mcpServers as Record<string, { httpUrl: string; headers: Record<string, string> }>;
-      expect(mcpServers['user-server']).toBeDefined();
+      const mcpServers = readSettings().mcpServers as Record<string, { httpUrl: string; headers: Record<string, string> }>;
+      expect(mcpServers.kangentic).toBeUndefined();
       expect(mcpServers['user-server'].httpUrl).toBe('http://example.com/mcp');
-      expect(mcpServers.kangentic).toBeDefined();
-      expect(mcpServers.kangentic.httpUrl).toBe('http://127.0.0.1:51234/mcp/proj-1');
-      expect(mcpServers.kangentic.headers['X-Kangentic-Token']).toBe('fresh-token');
+      expect(mcpServers['user-server'].headers.Authorization).toBe('Bearer xyz');
     });
 
-    it('writes settings file when only MCP is configured (no events output)', () => {
-      buildWithCwd({
-        mcpServerEnabled: true,
-        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
-        mcpServerToken: 'token-only',
-        // eventsOutputPath intentionally missing
-      });
+    it('removes mcpServers when the stale kangentic entry was its only server', () => {
+      seedUserSettings({ kangentic: { httpUrl: 'http://127.0.0.1:40000/mcp/old' } });
+      buildWithCwd({ eventsOutputPath: path.join(sessionDir, 'events.jsonl') });
+      expect(readSettings().mcpServers).toBeUndefined();
+    });
 
-      expect(settingsExists()).toBe(true);
-      const settings = readSettings();
-      expect(settings.hooks).toBeUndefined();
-      const mcpServers = settings.mcpServers as Record<string, { httpUrl: string }>;
-      expect(mcpServers.kangentic.httpUrl).toBe('http://127.0.0.1:51234/mcp/proj-1');
+    it('leaves a baseline with no kangentic entry as the user wrote it', () => {
+      seedUserSettings({});
+      buildWithCwd({ eventsOutputPath: path.join(sessionDir, 'events.jsonl') });
+      expect(readSettings().mcpServers).toEqual({});
+    });
+
+    it('omits --mcp-config when mcpServerEnabled is false', () => {
+      const command = buildWithCwd({
+        mcpServerEnabled: false,
+        mcpServerUrl: MCP_URL,
+        mcpServerToken: 'test-token-abc',
+      });
+      expect(command).not.toContain('--mcp-config');
+      expect(fs.existsSync(mcpConfigPath())).toBe(false);
+    });
+
+    it('omits --mcp-config when the token is missing', () => {
+      const command = buildWithCwd({ mcpServerEnabled: true, mcpServerUrl: MCP_URL });
+      expect(command).not.toContain('--mcp-config');
+      expect(fs.existsSync(mcpConfigPath())).toBe(false);
+    });
+
+    it('omits --mcp-config when the url is missing', () => {
+      const command = buildWithCwd({ mcpServerEnabled: true, mcpServerToken: 'test-token-abc' });
+      expect(command).not.toContain('--mcp-config');
+      expect(fs.existsSync(mcpConfigPath())).toBe(false);
+    });
+
+    it('mcpServerEnabled defaults to true when undefined', () => {
+      const command = buildWithCwd({ mcpServerUrl: MCP_URL, mcpServerToken: 'token-default-on' });
+      expect(command).toContain('--mcp-config');
+    });
+
+    it('skips the wiring, without throwing, when the build has no session directory', () => {
+      const command = buildWithCwd({
+        statusOutputPath: undefined,
+        mcpServerUrl: MCP_URL,
+        mcpServerToken: 'test-token-abc',
+      });
+      expect(command).not.toContain('--mcp-config');
+      expect(settingsExists()).toBe(false);
     });
 
     it('does not write settings when neither MCP nor events are configured', () => {
@@ -398,65 +473,28 @@ describe('QwenCommandBuilder', () => {
       expect(settingsExists()).toBe(false);
     });
 
-    it('mcpServerEnabled defaults to true when undefined', () => {
-      buildWithCwd({
-        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
-        mcpServerToken: 'token-default-on',
-      });
-
-      const settings = readSettings();
-      const mcpServers = settings.mcpServers as Record<string, unknown>;
-      expect(mcpServers.kangentic).toBeDefined();
-    });
-
-    it('gap-3: reads user baseline from projectRoot, writes merged settings to cwd when they differ', () => {
-      // Two separate tmpdirs: one is the project root (where the user's
-      // .qwen/settings.json lives) and one is a worktree cwd (where the
-      // merged result must be written). This exercises the two-directory
-      // split that is currently untested for the MCP path.
+    it('reads the user baseline from projectRoot and writes merged settings to cwd when they differ', () => {
       const projectRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cmd-mcp-root-'));
       try {
-        // Seed the user's baseline in projectRoot - a user-defined MCP
-        // server that must survive the merge.
-        const projectQwenDir = path.join(projectRootDir, '.qwen');
-        fs.mkdirSync(projectQwenDir, { recursive: true });
+        fs.mkdirSync(path.join(projectRootDir, '.qwen'), { recursive: true });
         fs.writeFileSync(
-          path.join(projectQwenDir, 'settings.json'),
-          JSON.stringify({
-            mcpServers: {
-              'user-server': { httpUrl: 'http://example.com/mcp' },
-            },
-          }, null, 2),
+          path.join(projectRootDir, '.qwen', 'settings.json'),
+          JSON.stringify({ mcpServers: { 'user-server': { httpUrl: 'http://example.com/mcp' } } }, null, 2),
         );
 
         // tmpDir (from the outer beforeEach) is the worktree cwd.
-        const builder = new QwenCommandBuilder();
-        builder.buildQwenCommand({
-          ...baseOptions(),
-          cwd: tmpDir,
+        buildWithCwd({
           projectRoot: projectRootDir,
-          mcpServerEnabled: true,
+          eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
           mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-99',
           mcpServerToken: 'token-gap3',
         });
 
-        // Merged file must be written to cwd (tmpDir), not to projectRoot.
-        expect(settingsExists()).toBe(true);
-        expect(
-          fs.existsSync(path.join(projectRootDir, '.qwen', 'settings.json')),
-        ).toBe(true);
+        const cwdServers = readSettings().mcpServers as Record<string, { httpUrl: string }>;
+        expect(cwdServers['user-server'].httpUrl).toBe('http://example.com/mcp');
+        expect(cwdServers.kangentic).toBeUndefined();
 
-        // cwd settings contains both the user-server (from projectRoot
-        // baseline) and the injected kangentic entry.
-        const cwdSettings = readSettings();
-        const mcpServers = cwdSettings.mcpServers as Record<string, { httpUrl: string }>;
-        expect(mcpServers['user-server']).toBeDefined();
-        expect(mcpServers['user-server'].httpUrl).toBe('http://example.com/mcp');
-        expect(mcpServers.kangentic).toBeDefined();
-        expect(mcpServers.kangentic.httpUrl).toBe('http://127.0.0.1:51234/mcp/proj-99');
-
-        // The user's projectRoot settings.json must remain untouched - no
-        // kangentic injection written back into the source file.
+        // The user's projectRoot settings.json is never written back to.
         const rootSettings = JSON.parse(
           fs.readFileSync(path.join(projectRootDir, '.qwen', 'settings.json'), 'utf-8'),
         ) as { mcpServers?: Record<string, unknown> };
@@ -467,74 +505,41 @@ describe('QwenCommandBuilder', () => {
       }
     });
 
-    it('gap-4: second buildQwenCommand for the same projectRoot does not see first spawn\'s mcpServers.kangentic in baseline', () => {
-      // Two sequential spawns with MCP options for the same projectRoot
-      // (tmpDir). The cache must store the user's pre-injection snapshot
-      // so the second spawn does not inherit the first spawn's injected
-      // kangentic entry in its baseSettings.
-      //
-      // If the cache stored the merged result instead of the original
-      // baseline, readBaseSettings() on the second call would return an
-      // object that already contains mcpServers.kangentic, and the
-      // spread in createMergedSettings would carry it forward - producing
-      // a second kangentic key or stale token.
-      //
-      // To make the cache-vs-disk distinction visible, we seed the user
-      // baseline BEFORE the first spawn so the cache captures it. After
-      // the first spawn, the merged file on disk contains kangentic. The
-      // second spawn must NOT read kangentic back from disk - it must use
-      // the cached snapshot (user-server only).
+    describe('a Qwen before 0.16 (no --mcp-config)', () => {
+      it('gets the kangentic entry in .qwen/settings.json and no flag', () => {
+        const command = buildWithCwd({
+          cliVersion: '0.15.3',
+          mcpServerUrl: MCP_URL,
+          mcpServerToken: 'legacy-token',
+        });
 
-      // Seed user baseline in projectRoot before any spawn.
-      const qwenDir = path.join(tmpDir, '.qwen');
-      fs.mkdirSync(qwenDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(qwenDir, 'settings.json'),
-        JSON.stringify({
-          mcpServers: {
-            'user-server': { httpUrl: 'http://example.com/mcp' },
-          },
-        }, null, 2),
-      );
-
-      const builder = new QwenCommandBuilder();
-
-      // First spawn - cache is populated from the file above (user-server
-      // only). Merged result written to disk: user-server + kangentic.
-      builder.buildQwenCommand({
-        ...baseOptions(),
-        cwd: tmpDir,
-        projectRoot: tmpDir,
-        mcpServerEnabled: true,
-        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
-        mcpServerToken: 'first-token',
+        expect(command).not.toContain('--mcp-config');
+        expect(fs.existsSync(mcpConfigPath())).toBe(false);
+        const mcpServers = readSettings().mcpServers as Record<string, { httpUrl: string; headers: Record<string, string> }>;
+        expect(mcpServers.kangentic).toEqual({ httpUrl: MCP_URL, headers: { 'X-Kangentic-Token': 'legacy-token' } });
       });
 
-      // Second spawn with a rotated token on the same builder instance
-      // (same cache). readBaseSettings returns the cached snapshot
-      // (user-server only, no kangentic). The merge overwrites the disk
-      // file with: user-server + kangentic(second-token).
-      builder.buildQwenCommand({
-        ...baseOptions(),
-        cwd: tmpDir,
-        projectRoot: tmpDir,
-        mcpServerEnabled: true,
-        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
-        mcpServerToken: 'second-token',
+      it('a second spawn for the same projectRoot does not carry the first spawn\'s entry from the cache', () => {
+        // The cache holds the user's pre-injection snapshot, so the second
+        // spawn writes exactly one kangentic entry with its own token.
+        seedUserSettings({ 'user-server': { httpUrl: 'http://example.com/mcp' } });
+        const builder = new QwenCommandBuilder();
+        const legacyOptions = (token: string): QwenCommandOptions => ({
+          ...baseOptions(),
+          cwd: tmpDir,
+          projectRoot: tmpDir,
+          cliVersion: '0.15.3',
+          mcpServerUrl: MCP_URL,
+          mcpServerToken: token,
+        });
+
+        builder.buildQwenCommand(legacyOptions('first-token'));
+        builder.buildQwenCommand(legacyOptions('second-token'));
+
+        const mcpServers = readSettings().mcpServers as Record<string, { headers?: Record<string, string> }>;
+        expect(Object.keys(mcpServers).sort()).toEqual(['kangentic', 'user-server']);
+        expect(mcpServers.kangentic.headers?.['X-Kangentic-Token']).toBe('second-token');
       });
-
-      const settings = readSettings();
-      const mcpServers = settings.mcpServers as Record<string, { httpUrl: string; headers: Record<string, string> }>;
-
-      // Exactly one kangentic entry - the first-spawn entry must not
-      // bleed through the cache and produce a duplicate.
-      expect(Object.keys(mcpServers).filter((key) => key === 'kangentic')).toHaveLength(1);
-
-      // The entry carries the second spawn's token, not the first.
-      expect(mcpServers.kangentic.headers['X-Kangentic-Token']).toBe('second-token');
-
-      // User server preserved from the original snapshot.
-      expect(mcpServers['user-server']).toBeDefined();
     });
   });
 

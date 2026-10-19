@@ -64,10 +64,13 @@ vi.mock('../../src/renderer/components/settings/shared', () => ({
 //   ToolEnd            - too noisy; tool start already shows the action.
 //   BackgroundShellStart - internal plumbing; not meaningful to display.
 //   BackgroundShellEnd   - internal plumbing; not meaningful to display.
+//   PlanApprovalSent     - the approver's marker, sent before the CLI accepts the
+//                          answer; PlanAutoApproved is the line that says it did.
 const NON_RENDERABLE_EVENT_TYPES = new Set<string>([
   EventType.ToolEnd,
   EventType.BackgroundShellStart,
   EventType.BackgroundShellEnd,
+  EventType.PlanApprovalSent,
 ]);
 
 // Deferred import so vi.mock calls are hoisted before the import resolves.

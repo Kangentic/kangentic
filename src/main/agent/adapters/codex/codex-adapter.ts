@@ -31,7 +31,7 @@ export class CodexAdapter implements AgentAdapter {
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Safe Read-Only Browsing' },
     { mode: 'dontAsk', label: 'Read-Only Non-Interactive (CI)' },
-    { mode: 'default', label: 'Automatically Edit, Ask for Untrusted' },
+    { mode: 'default', label: 'Automatically Edit, Ask When Needed' },
     { mode: 'acceptEdits', label: 'Auto (Preset)' },
     { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
   ];

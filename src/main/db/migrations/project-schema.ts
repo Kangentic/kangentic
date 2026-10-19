@@ -1611,6 +1611,16 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec("ALTER TABLE swimlanes ADD COLUMN auto_command_mode TEXT NOT NULL DEFAULT 'immediate'");
   }
 
+  // Migration: add plan_approval to swimlanes. Who answers a plan column's plan
+  // approval prompt: 'manual' (the user, in the agent's terminal) or 'automatic'
+  // (Kangentic, through the agent's approval hook). Defaults to 'manual', which is
+  // what every existing column already does, so no backfill is needed.
+  const hasPlanApproval = (db.pragma('table_info(swimlanes)') as Array<{ name: string }>)
+    .some((column) => column.name === 'plan_approval');
+  if (!hasPlanApproval) {
+    db.exec("ALTER TABLE swimlanes ADD COLUMN plan_approval TEXT NOT NULL DEFAULT 'manual'");
+  }
+
   // Migration: record the outcome of a task's most recent auto_command
   // injection, so a failure is observable instead of being a console warning
   // nobody sees. Written by the injection reporter; read by the renderer to
@@ -2065,5 +2075,12 @@ function migrateWorkflows(db: Database.Database): void {
   // column existed reads as paused with no time.
   if (!workflowColumnNames.has('paused_at')) {
     db.exec('ALTER TABLE workflows ADD COLUMN paused_at TEXT DEFAULT NULL');
+  }
+
+  // Who approves plans for the workflow's tasks: 'manual' or 'automatic' once
+  // picked. NULL follows the plan columns on its tasks' routes, so every
+  // existing workflow keeps doing what its columns already do.
+  if (!workflowColumnNames.has('plan_approval')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN plan_approval TEXT DEFAULT NULL');
   }
 }

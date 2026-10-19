@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  PlanApproval,
   Workflow,
   WorkflowAgentStatus,
   WorkflowCanvasPosition,
@@ -56,6 +57,8 @@ interface WorkflowStore {
 
   createWorkflow: (sourceTaskId: string | null) => Promise<Workflow | null>;
   renameWorkflow: (title: string) => Promise<boolean>;
+  /** Who approves plans for the selected workflow's tasks. */
+  setPlanApproval: (planApproval: PlanApproval) => Promise<boolean>;
   deleteWorkflow: () => Promise<boolean>;
   startWorkflow: () => Promise<boolean>;
   pauseWorkflow: () => Promise<boolean>;
@@ -650,6 +653,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     renameWorkflow: async (title) =>
       (await onSelected('Could not rename the workflow', (projectId, workflowId) =>
         window.electronAPI.workflows.rename(projectId, workflowId, title))).ok,
+
+    // The WORKFLOW_CHANGED push that follows reloads the detail, so the
+    // inspector shows the stored value rather than an optimistic copy.
+    setPlanApproval: async (planApproval) =>
+      (await onSelected('Could not change plan approval', (projectId, workflowId) =>
+        window.electronAPI.workflows.setPlanApproval(projectId, workflowId, planApproval))).ok,
 
     deleteWorkflow: async () => {
       const deletedId = get().selectedWorkflowId;

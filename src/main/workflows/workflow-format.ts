@@ -20,6 +20,10 @@ export function formatWorkflow(view: WorkflowView): string {
     `Workflow "${workflow.title}" (id ${workflow.id}), ${describeState(workflow)}, revision ${workflow.revision}.`,
   ];
   if (workflow.brief) lines.push(`Brief: ${workflow.brief}`);
+  // As save_workflow's own `planApproval`, so a plan read and sent back keeps it.
+  lines.push(workflow.plan_approval
+    ? `Plan approval: planApproval "${workflow.plan_approval}".`
+    : 'Plan approval: follows the plan columns on the tasks\' routes (planApproval null).');
   if (view.tasks.length === 0) {
     lines.push('No tasks yet.');
   } else {

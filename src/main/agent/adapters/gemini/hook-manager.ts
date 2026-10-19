@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { EventType } from '../../../../shared/types';
+import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
-import { extractTool, extractDetail } from '../../shared/directive-builders';
+import { extractTool, extractDetail, setToolWhen, emitOnlyWhenDetailMatches, setDetail } from '../../shared/directive-builders';
 
 /** Hook entry in Gemini CLI's settings.json. */
 export interface GeminiHookEntry {
@@ -26,6 +26,27 @@ export const GeminiHookEvent = {
   Notification: 'Notification',
 } as const;
 export type GeminiHookEvent = (typeof GeminiHookEvent)[keyof typeof GeminiHookEvent];
+
+/** Gemini CLI's plan exit tool, the one that raises its plan approval dialog. */
+const GEMINI_PLAN_EXIT_TOOL = 'exit_plan_mode';
+
+/** The `notification_type` of the Notification Gemini sends for a tool confirmation dialog. */
+const GEMINI_TOOL_PERMISSION_NOTIFICATION = 'ToolPermission';
+
+/**
+ * Reports Gemini's plan exit as Kangentic's (`AgentTool.ExitPlanMode`) only for
+ * an approved plan, so the card moves to the column's After Plan Mode target as
+ * Claude's does. Measured on Gemini CLI 0.63.0 (task 840): `exit_plan_mode`
+ * fires AfterTool for a rejected plan too, and only `tool_response.llmContent`
+ * tells them apart: "Plan approved. Switching to Auto-Edit mode ..." against
+ * "Plan rejected. User feedback: ...".
+ */
+const APPROVED_PLAN_EXIT = setToolWhen({
+  whenTool: GEMINI_PLAN_EXIT_TOOL,
+  nested: ['tool_response', 'llmContent'],
+  startsWith: 'Plan approved.',
+  to: AgentTool.ExitPlanMode,
+});
 
 /** Filter out Kangentic-injected entries, keeping only user-defined hooks. */
 function filterOurHooks(entries: GeminiHookEntry[] | undefined): GeminiHookEntry[] {
@@ -77,7 +98,7 @@ export function buildHooks(
     ],
     [H.AfterTool]: [
       ...filterOurHooks(existingHooks[H.AfterTool]),
-      bridgeEntry(eventBridge, eventsPath, E.ToolEnd, extractTool('tool_name')),
+      bridgeEntry(eventBridge, eventsPath, E.ToolEnd, extractTool('tool_name'), APPROVED_PLAN_EXIT),
     ],
     [H.SessionStart]: [
       ...filterOurHooks(existingHooks[H.SessionStart]),
@@ -98,6 +119,15 @@ export function buildHooks(
     [H.Notification]: [
       ...filterOurHooks(existingHooks[H.Notification]),
       bridgeEntry(eventBridge, eventsPath, E.Notification, extractDetail(['message', 'notification'])),
+      // A tool confirmation dialog (the plan prompt included) is a permission
+      // wait, so the card shows the session needs you. Gemini 0.63.0 has no
+      // permission hook: it reports each dialog as a Notification whose
+      // `notification_type` is "ToolPermission" (`fireToolNotificationEvent`),
+      // and the AfterTool that follows the answer clears it.
+      bridgeEntry(eventBridge, eventsPath, E.Idle,
+        extractDetail(['notification_type']),
+        emitOnlyWhenDetailMatches(`^${GEMINI_TOOL_PERMISSION_NOTIFICATION}$`),
+        setDetail(IdleReason.Permission)),
     ],
     [H.PreCompress]: [
       ...filterOurHooks(existingHooks[H.PreCompress]),

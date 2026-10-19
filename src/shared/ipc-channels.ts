@@ -413,6 +413,7 @@ export const IPC = {
   WORKFLOW_GET: 'workflow:get',
   WORKFLOW_CREATE: 'workflow:create',
   WORKFLOW_RENAME: 'workflow:rename',
+  WORKFLOW_SET_PLAN_APPROVAL: 'workflow:setPlanApproval',
   WORKFLOW_DELETE: 'workflow:delete',
   WORKFLOW_START: 'workflow:start',
   WORKFLOW_PAUSE: 'workflow:pause',

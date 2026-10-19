@@ -68,6 +68,7 @@ import { DesktopNotifier } from '../notifications/desktop-notifier';
 import { ActivityIntervalRecorder } from '../activity-engine/activity-interval-recorder';
 import { CommandTerminalNamer } from '../agent/shared/command-terminal-namer';
 import { CommandTerminalLeftoverReaper } from './helpers/command-terminal-leftovers';
+import { startPlanApprovalWriter } from '../plan-approval/plan-approval-writer';
 import { reapTaskLeftovers } from './helpers/task-cleanup';
 import { isShuttingDown } from '../shutdown-state';
 import { resolveAutomationAgent } from '../automations/automation-agent';
@@ -307,6 +308,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     isShuttingDown,
   });
   commandTerminalLeftovers.start();
+
+  // Each live task session's plan approval decision, which the agent's plan
+  // approval hook reads when the plan prompt appears.
+  startPlanApprovalWriter(context);
 
   const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath ?? undefined);
   mobileBridgeService.reconcile({

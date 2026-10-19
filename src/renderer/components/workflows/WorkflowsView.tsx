@@ -131,6 +131,7 @@ export function WorkflowsView() {
   const removeTask = useWorkflowStore((state) => state.removeTask);
   const createWorkflow = useWorkflowStore((state) => state.createWorkflow);
   const renameWorkflow = useWorkflowStore((state) => state.renameWorkflow);
+  const setPlanApproval = useWorkflowStore((state) => state.setPlanApproval);
   const deleteWorkflow = useWorkflowStore((state) => state.deleteWorkflow);
   const startWorkflow = useWorkflowStore((state) => state.startWorkflow);
   const pauseWorkflow = useWorkflowStore((state) => state.pauseWorkflow);
@@ -458,6 +459,7 @@ export function WorkflowsView() {
             onSetRoute={setRouteFromInspector}
             onSetLink={setLinkFromInspector}
             onRefuse={refuse}
+            onSetPlanApproval={(next) => { void setPlanApproval(next); }}
           />
         )}
       </div>

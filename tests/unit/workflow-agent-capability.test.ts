@@ -41,7 +41,7 @@ describe('canBeWorkflowAgent', () => {
   it('offers the registered agents that reach the MCP server per session and can resume', async () => {
     const { agentRegistry } = await import('../../src/main/agent/agent-registry');
     const eligible = agentRegistry.list().filter((name) => canBeWorkflowAgent(agentRegistry.getOrThrow(name))).sort();
-    expect(eligible).toEqual(['claude', 'codex', 'copilot', 'cursor', 'grok', 'kimi', 'opencode']);
+    expect(eligible).toEqual(['claude', 'codex', 'copilot', 'cursor', 'grok', 'kimi', 'opencode', 'qwen']);
   });
 
   // `capturesInteractiveSessionId` is declared, not inferred, and it is what lets

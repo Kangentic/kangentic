@@ -563,16 +563,19 @@ Read the agent's native session history file for a task. Returns the raw file co
 
 ### kangentic_get_column_detail
 
-Get detailed column configuration: description, auto-spawn, permission mode, session track, plan exit target, and visual settings.
+Get detailed column configuration: description, auto-spawn, permission mode, session track, plan approval, plan exit target, and visual settings.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `column` | string | Yes | Column name (case-insensitive) |
 
-`Session`, `On enter`, and `Handoff context` always print, even at their defaults. The overrides
-below them print only when set, because "no override" is the absence of a value; a session track is
-never absent, so hiding the default would leave a caller unable to tell a main-session column from a
-failed write. `Auto-command timing` is the one middle case: it prints only alongside an
+`Session`, `On enter`, `Handoff context`, and `Plan approval` always print, even at their defaults.
+The overrides below them print only when set, because "no override" is the absence of a value; a
+session track is never absent, so hiding the default would leave a caller unable to tell a
+main-session column from a failed write. `Plan approval` reads `Plan approval: manual` or
+`Plan approval: automatic`, with `(applies only while permission mode is plan)` after it on a
+column that is not in plan mode, and `data.planApproval` carries the value. `Auto-command timing`
+is the one middle case: it prints only alongside an
 `autoCommand`, since it does nothing without one.
 
 Also returns `taskOrder`: the column's tasks top to bottom, each with its `position` (the
@@ -741,8 +744,12 @@ The role columns (To Do, Done) are editable here like any other: rename, describ
 | `sessionTarget` | string | No | `main` or `isolated`. Which session a task runs on here: `main` continues the task's own conversation, `isolated` gives the column its own, keyed to the column. Not nullable, since the underlying column is NOT NULL: pass `"main"` to go back to the default. |
 | `sessionSpawnStrategy` | string | No | `create_or_resume` or `always_spawn_new`. What the column does with that session on entry. Not nullable; pass `"create_or_resume"` to go back to the default. |
 | `planExitTargetColumn` | string \| null | No | Column to auto-move the task to when an agent in plan mode exits planning. `null` disables. |
+| `planApproval` | string | No | `automatic` or `manual`. Who approves a plan when the agent in this column finishes planning; only matters while `permissionMode` is `plan`. `manual` waits for the user in the agent's terminal; `automatic` has Kangentic approve it, so the task moves on to `planExitTargetColumn` by itself. A question the agent asks the user still waits. A task in a running workflow follows the workflow's plan approval instead. Not nullable; pass `"manual"` to go back to the default. |
 
 At least one updatable field is required.
+
+**`planApproval: "automatic"` is stored for any agent.** The tool does not refuse it for an agent
+that cannot have its plans approved, but that agent's plans still wait for the user.
 
 **Changing `sessionTarget` carries `sessionSpawnStrategy` with it** unless you pass one explicitly.
 Switching to `isolated` also switches the column to `always_spawn_new`, and switching back to `main`
@@ -786,6 +793,7 @@ every lane, including the archived Done lane.
 | `sessionTarget` | string | No | `main` (default) or `isolated`. `isolated` gives the column its own conversation instead of continuing the task's. |
 | `sessionSpawnStrategy` | string | No | `create_or_resume` or `always_spawn_new`. Defaults to `always_spawn_new` when `sessionTarget` is `isolated`, `create_or_resume` otherwise. |
 | `planExitTargetColumn` | string | No | Column to auto-move the task to when an agent in plan mode exits planning |
+| `planApproval` | string | No | `automatic` or `manual` (default). Who approves a plan when the agent in this column finishes planning; only matters while `permissionMode` is `plan`. See [kangentic_update_column](#kangentic_update_column). |
 | `position` | number | No | Zero-based ordinal slot among the board's columns (not a raw stored `position`); later columns shift right. Clamped between the role columns: a value below the lowest legal slot lands immediately after To Do (so `position: 0` does not come first), and a value at or past Done lands immediately before Done, never after it. Omit for the default placement just before Done. |
 
 Roles are structural and cannot be set: every board already has its To Do and Done columns.
@@ -1075,6 +1083,10 @@ link to a deleted task, to one in a removed project, or to one that has left the
 out: the engine drops it on its next pass. `data`
 carries every task's `runSettings` in the task row's shape.
 
+A `Plan approval:` line follows the header and brief, in `kangentic_save_workflow`'s own terms, so
+a plan read and sent back keeps it: `Plan approval: planApproval "automatic".` (or `"manual"`) once
+someone picked, else `Plan approval: follows the plan columns on the tasks' routes (planApproval null).`
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workflow` | string | Yes | The workflow's id or exact title (case-insensitive). |
@@ -1093,6 +1105,7 @@ task, and the links. Omit `workflow` to create one. Nothing reaches a board unti
 | `tasks` | array | Yes | Every planned task (at most 100). See below. |
 | `links` | array | No | `{ blocker, blocked }` by key: blocked waits for blocker to reach Done. |
 | `revision` | number | No | The revision `kangentic_get_workflow` reported. A save over a newer one is refused, so the user's edits win. |
+| `planApproval` | string \| null | No | Who approves each task's plan once the workflow runs: `automatic` has Kangentic approve it, so the task moves on by itself (a question the agent asks the user still waits); `manual` waits for the user. `null` follows the plan columns on the tasks' routes: Automatic only when every one is Automatic and runs an agent that can approve plans. Omit to leave it as it is. It adds no revision of its own; the save's own bump still applies. After Start, only the Workflows inspector changes it. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
 Each planned task takes `key` (unique in the plan), `title`, `description`, and optionally

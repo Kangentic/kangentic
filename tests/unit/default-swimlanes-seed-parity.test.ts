@@ -51,6 +51,7 @@ interface SeededLaneRow {
   handoff_context: number;
   session_target: string;
   session_spawn_strategy: string;
+  plan_approval: string;
 }
 
 interface MockLane {
@@ -72,6 +73,7 @@ interface MockLane {
   handoff_context: boolean;
   session_target: string;
   session_spawn_strategy: string;
+  plan_approval: string;
 }
 
 function seededLanes(): SeededLaneRow[] {
@@ -137,6 +139,7 @@ describe('default swimlane seed parity (default-data.ts vs mock-electron-api.js)
       expect(Number(mockLane.handoff_context), where).toBe(lane.handoff_context);
       expect(mockLane.session_target, where).toBe(lane.session_target);
       expect(mockLane.session_spawn_strategy, where).toBe(lane.session_spawn_strategy);
+      expect(mockLane.plan_approval, where).toBe(lane.plan_approval);
     });
   });
 

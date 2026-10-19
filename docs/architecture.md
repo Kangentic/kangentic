@@ -217,7 +217,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `backlogAttachment:getDataUrl` | invoke | Get data URL for display |
 | `backlogAttachment:open` | invoke | Open attachment in the system default application. Same answer-or-timeout contract and file-manager fallback as `attachment:open` |
 
-### Workflows (19 channels)
+### Workflows (20 channels)
 
 The Workflows view. Every call names the workflow's home project; a task is addressed by its view key (its draft key before Start, its task id after). The handler routes reads and plan edits (list, supersessions, get, create, add, update and remove a task, link, route, positions) through `src/main/workflows/workflow-view-service.ts`, which shapes the read model and edits a planned workflow by key; every rule a started workflow has is enforced once, in `workflow-service.ts`, which the view service calls and the MCP tools reach directly (start, pause, resume, rename and delete go there straight).
 
@@ -225,9 +225,10 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 |---------|---------|---------|
 | `workflow:list` | invoke | The picker's rows: every unfinished workflow with its done, in progress, queued and blocked counts |
 | `workflow:listSupersessions` | invoke | Every task of the project a workflow replaced at Start, by the workflow's current title and color, finished workflows included: the Done row's "Superseded by" line (`WorkflowRepository.listSupersessions`) |
-| `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions, and each board's name and To Do and Done columns |
+| `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions, each board's name and To Do and Done columns, and its plan approval (`planApproval`: the value, whether the user picked it, and whether any plan column on the routes runs an agent whose plans Kangentic can approve) |
 | `workflow:create` | invoke | New workflow, from a To Do task (its brief) or from nothing |
 | `workflow:rename` | invoke | Rename a workflow |
+| `workflow:setPlanApproval` | invoke | The inspector's Plan approval: `automatic`, `manual`, or null to follow the plan columns (`WorkflowRepository.setPlanApproval`); any other value is refused; changes no plan revision |
 | `workflow:delete` | invoke | Delete a workflow; once started, its unfinished tasks stay as ordinary tasks |
 | `workflow:start` | invoke | Create the planned tasks in To Do and their links |
 | `workflow:pause` | invoke | Pause every task's agent |
@@ -420,7 +421,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, kangenticMcp, supportsWorkflowAgent, capabilities, remoteExecution, launchOptions) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, kangenticMcp, supportsWorkflowAgent, supportsPlanAutoApproval, capabilities, remoteExecution, launchOptions) |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 
 ### Handoffs (1 channel)

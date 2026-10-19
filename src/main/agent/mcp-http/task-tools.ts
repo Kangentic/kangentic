@@ -40,6 +40,18 @@ const SESSION_SPAWN_STRATEGY_SCHEMA = z.enum(['create_or_resume', 'always_spawn_
 const AUTO_COMMAND_MODE_SCHEMA = z.enum(['immediate', 'deferred']);
 
 /**
+ * Who answers a plan column's plan approval prompt. NOT NULL like the three
+ * above, so not nullable. Literals pinned by tests/unit/mcp-column-field-parity.test.ts.
+ */
+const PLAN_APPROVAL_SCHEMA = z.enum(['automatic', 'manual']);
+const PLAN_APPROVAL_DESCRIPTION =
+  'Who approves a plan when the agent in this column finishes planning. Only matters while permissionMode is "plan". '
+  + '"manual" (default) waits for the user in the agent\'s terminal; "automatic" has Kangentic approve it, so the task '
+  + 'moves on to planExitTargetColumn by itself. Only the plan prompt is answered: a question the agent asks the user '
+  + 'still waits, and an agent that cannot have its plans approved stays manual. A task in a running workflow follows '
+  + 'the workflow\'s plan approval instead.';
+
+/**
  * Written to lead a caller to the right answer rather than to name the enum. An
  * agent asked to "set up a Code Review column" has only this text to tell it
  * that a reviewer sharing the task's main session IS the agent that wrote the
@@ -835,11 +847,12 @@ export function registerTaskTools(
         sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
         sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
+        planApproval: PLAN_APPROVAL_SCHEMA.optional().describe(PLAN_APPROVAL_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ column, name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
+    async ({ column, name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
       name: name ?? undefined,
       description: description === undefined ? undefined : description,
@@ -856,6 +869,7 @@ export function registerTaskTools(
       sessionTarget: sessionTarget ?? undefined,
       sessionSpawnStrategy: sessionSpawnStrategy ?? undefined,
       planExitTargetColumn: planExitTargetColumn === undefined ? undefined : planExitTargetColumn,
+      planApproval,
     }, ctx, 'Failed to update column')),
   );
 
@@ -880,12 +894,13 @@ export function registerTaskTools(
         sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
         sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning.'),
+        planApproval: PLAN_APPROVAL_SCHEMA.optional().describe(PLAN_APPROVAL_DESCRIPTION),
         position: z.number().int().min(0).optional().describe('Zero-based ordinal slot among the board\'s columns (not a raw stored position); later columns shift right. Clamped between the role columns: a value below the lowest legal slot lands immediately after To Do, and a value at or past Done lands immediately before Done, never after it. Omit for the default placement just before Done.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
+    async ({ name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
       name,
       description,
       color,
@@ -901,6 +916,7 @@ export function registerTaskTools(
       sessionTarget,
       sessionSpawnStrategy,
       planExitTargetColumn,
+      planApproval,
       position,
     }, ctx, 'Failed to create column'), { alwaysAnnotate: true }),
   );

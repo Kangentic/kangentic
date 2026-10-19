@@ -73,6 +73,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `transcriptToolCounts?(input)` | `({ transcriptPath?, agentSessionId?, cwd?, sinceMs?, untilMs? }) => Promise<TranscriptToolCounts \| null>` | Sibling of `transcriptUsage`: parse a cumulative tool-call count + per-tool breakdown from the agent's own transcript. Backfills the live `UsageAccumulator` count for sessions whose ToolStart/ToolEnd hook events never reached it (e.g. a parked/suspended session that reports 0 despite real cost/tokens). Counts DISTINCT `tool_use` ids (parallel tool calls in one message count separately; a streamed re-emission of the same message does not double-count). Rows may carry an optional `resultTokens` estimate, which the run-end backfill merges onto a healthy live breakdown. `sinceMs` (the run's start) scopes the answer to one run, since Claude appends every `--resume` to the same transcript, and `untilMs` closes the window (the run-end backfill passes the moment the run ended); an adapter that cannot scope ignores both. A call with no timestamp counts in an open window and is left out of a closed one. Same location contract as `transcriptUsage`; must not throw, returns `null` on a missing/tool-less transcript so the caller keeps the live count. Implemented by Claude, Grok (counting distinct `tool_call` ids in `updates.jsonl`), and Antigravity; only Claude fills `resultTokens` and honors `sinceMs` and `untilMs`. |
 | `transcriptToolResultTokens?(input)` | `({ transcriptPath?, agentSessionId?, cwd?, sinceMs?, untilMs? }) => Promise<Record<string, number> \| null>` | Estimated result tokens per tool name for the calls made at or after `sinceMs` and before `untilMs`, behind `session:getToolResultTokens` and the tool-call popover's Tokens column. The live run reads an open window from its start. An earlier run whose record has no estimates (one that ended at app quit) reads a closed window, from its own start to the next run's, and the estimates are written onto its record; that fill reads only from an adapter that declares `scopesTranscriptReadsByTime`. Return null only when the transcript cannot be read: a null makes the fill try the next recorded cwd of the conversation, while an object (even an empty one) is an answer the record keeps. The popover refetches on every tool call, so an implementation must be cheap to repeat: Claude sizes each `tool_result` matched by id (text at chars/4, images by their header dimensions) from a resumable per-path cursor that reads only appended bytes. An adapter without it is never asked, so its transcript is not read for the popover. Implemented by Claude. |
 | `supportsReadOnlyLaunch?` | `boolean` | True when `buildCommand` honours `CommandOptions.readOnly`: the agent reads files and calls Kangentic's MCP tools, and has no tool that edits a file or runs a shell command. A workflow's own agent gets it where it is declared; an agent without it can still be one, launched in its default mode and asked by the first message to leave files alone. Declared only once the CLI's flags were measured to hold, since a CLI can let a user's own approval settings outrank them. Set only by Claude. |
+| `supportsPlanAutoApproval?` | `boolean` | True when every command `buildCommand` makes registers Kangentic's plan approval hook (`plan-approval-bridge.js`, see [Bridge Scripts](#bridge-scripts)) on the CLI's plan approval prompt and on nothing else, so a plan column or workflow set to Automatic approves its plans. A question the agent asks the user always waits. Mirrored as `AgentDetectionInfo.supportsPlanAutoApproval`; without it the Column Manager disables Automatic for the agent and main never approves its plans. Declare it only when the hook was measured to answer the plan prompt alone against the real CLI, with the plan exit's `tool_end` reported only for an approved plan. Set only by Claude. |
 | `kangenticMcp?` | `'per-session' \| 'shared-folder'` | How the adapter connects the agent to Kangentic's MCP server when `mcpServerEnabled` is on. `'per-session'`: each session gets its own URL (a flag, an env var, or a file in its session directory). `'shared-folder'`: the URL is written literally into a config file in the working directory, which every session in that folder shares, so the last to start decides the URL the others read. Absent: not wired. Read by `canBeWorkflowAgent` (only `'per-session'` can carry the workflow agent's caller scope) and by handoff prompts. Pinned against the real builders by `tests/unit/kangentic-mcp-delivery.test.ts`. |
 | `kangenticMcpBlockedReason?(workingDirectory)` | `string \| null` | Why a session started in that folder would not reach Kangentic's MCP server although the adapter wires it, in the agent's own words, or null. For a CLI that loads the wiring only under a condition Kangentic never decides for the user. A workflow's agent refuses to start with this reason instead of starting without the tools it saves its plan with. Grok: its project MCP loads only in a folder the user trusted in Grok (`isFolderTrusted`, `adapters/grok/trust-manager.ts`, which reads the decision on the folder's real path first). Cursor: the folder's `.cursor/mcp.json` is one Kangentic cannot merge its entry into (`cursorProjectMcpConfigProblem`). |
 | `capturesInteractiveSessionId?` | `boolean` | True when an interactive session's own id is captured after launch (its hook, its output, or a folder scan in `runtime.sessionId`), for an adapter whose `supportsCallerSessionId` is false. Declared, not inferred: Cursor's only capture is headless stream-json. With any kind of id (chosen, created or captured) a workflow's agent can resume its conversation. |
@@ -124,7 +125,7 @@ All implementations are best-effort and never throw: a help-read or history-scan
 
 `src/main/agent/agent-adapter.ts`
 
-Nine recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
+Ten recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -134,6 +135,7 @@ Nine recently-added optional fields drive per-spawn overrides. Adapters consume 
 | `launchOptions?` | `Record<string, boolean>` | Fully-defaulted boolean launch-option values for this agent, keyed by `AgentLaunchOptionInfo.id` (e.g. Codex's `disableApps` -> `--disable apps`). `undefined` for adapters that declare no launch options. Resolved by `resolveLaunchOptions()` and populated at both spawn chokepoints (`transition-engine.ts`, `session-startup/prepare-spawn.ts`). |
 | `taskProcessTag?` | `string` | The task's `KANGENTIC_TASK_ID` value, the tag a terminal transition reaps by (see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree)). The PTY env already carries it; an adapter whose CLI can strip inherited variables from its tool shells re-injects it (Codex: `-c shell_environment_policy.set.KANGENTIC_TASK_ID=<id>`). Populated at both task spawn chokepoints, and by a Command Terminal's start with the terminal's own made-up task id. |
 | `ptySessionId?` | `string` | Kangentic's id for the session this command is built for: the `id` the build site then hands `sessionManager.spawn` (not the agent's own `sessionId`). An adapter that writes a file every session in a folder shares holds it under this id, and the session layer releases it with `removeHooks(directory, ptySessionId)`. Set by all four build sites (`transition-engine.ts`, `session-startup/prepare-spawn.ts`, a Command Terminal's start, a workflow's agent); `spawn-entry-point-parity.test.ts` fails a build site without it. A built command that never becomes a session releases its hold through `releaseCommandHold`. |
+| `bypassAvailable?` | `boolean` | Launch with the bypass permission mode available but not on, so a plan Kangentic approves can continue in it. Set only for a plan-mode spawn whose approved plan would continue in `bypassPermissions` (`planApprovalModeForSpawn`), at both task spawn chokepoints, and only for an adapter that declares `supportsPlanAutoApproval`. Claude maps it to `--allow-dangerously-skip-permissions`: measured on 2.1.302, the approval's mode switch reaches bypass only in a session launched with it. Adapters without such a launch option ignore it. |
 | `capturePromptText?` | `boolean` | Carry the submitted prompt's text in the Prompt event's `detail`. Set only by a Command Terminal's start, whose namer (`command-terminal-namer.ts`) names the terminal from its first prompt; a task spawn never sets it, so task sessions' events keep no prompt text. An adapter whose prompt hook carries no text ignores it. |
 | `readOnly?` | `boolean` | Launch with no tool that edits a file or runs a shell command, and with Kangentic's MCP server as the only one. Set only for a workflow's own agent, and only on an adapter that declares `supportsReadOnlyLaunch`. Claude maps it to `--tools Read,Grep,Glob,ToolSearch`, `--strict-mcp-config` and `--no-chrome` (`READ_ONLY_TOOLS` in `adapters/claude/command-builder.ts`). |
 | `readableDirectories?` | `readonly string[]` | More directories the agent may read beyond its `cwd`: other projects' checkouts, for a workflow agent planning tasks on their boards. Set only on an adapter that declares `supportsReadableDirectories`. Claude emits one `--add-dir` per directory. |
@@ -181,9 +183,9 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude and Grok 
 | Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](adapter-session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
 | Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Partial (events.jsonl only) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
 | Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) | Yes (`~/.gemini/trustedFolders.json`) |
-| Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `mcpServers` in `.qwen/settings.json` (`httpUrl`) | Yes (`~/.qwen/trustedFolders.json`) |
+| Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `--mcp-config <sessionDir>/mcp.json` (`httpUrl`; `.qwen/settings.json` before 0.16) | Yes (`~/.qwen/trustedFolders.json`) |
 | Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | No | No | `<cwd>/.cursor/mcp.json` with `${env:...}` url/token + `buildEnv` + `--approve-mcps` | No |
-| GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--resume <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | Runtime `--add-dir` |
+| GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | Runtime `--add-dir` |
 | Aider | `aider-adapter.ts` | `aider` | No | No | No | Not possible (CLI has no MCP client) | No |
 | Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | No | No | Not wired | No |
 | Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | Yes (`wire.jsonl`) | No | `--mcp-config-file <sessionDir>/mcp.json` | No |
@@ -194,13 +196,15 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude and Grok 
 | Antigravity CLI | `antigravity-adapter.ts` | `agy` | `--conversation <id>` | Yes (events.jsonl via `.agents/hooks.json`) | Yes (`.agents/hooks.json`, named-hook merge) | Workspace plugin `.agents/plugins/kangentic/` (`serverUrl` + token header) | Yes (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`) |
 | Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | No (PTY-only) | No | Not wired | No |
 
-The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok and
-Cursor are `'per-session'`; Gemini, Qwen, Droid and Antigravity are `'shared-folder'`, because each
-writes the session's literal URL into a file in the working directory. Moving those four to a fixed
+The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok, Cursor
+and Qwen are `'per-session'`; Gemini, Droid and Antigravity are `'shared-folder'`, because each
+writes the session's literal URL into a file in the working directory. Moving those three to a fixed
 file entry whose URL is an environment reference (Grok's and Cursor's pattern) is documented for
-Gemini (every `settings.json` string expands `$VAR` / `${VAR}`) and Qwen, and undocumented for
-Droid's `url` and Antigravity; each waits on a live run before it changes, since it alters every
-session on that agent. Cursor's interactive and print sessions use the same static
+Gemini (every `settings.json` string expands `$VAR` / `${VAR}`), and undocumented for Droid's `url`
+and Antigravity; each waits on a live run before it changes, since it alters every session on that
+agent. Qwen moved to `--mcp-config` because its workspace MCP approval gate stopped every session
+on a dialog (see [Qwen's MCP approval gate](#kangentic-mcp-server-and-the-approval-gate)); that move also made it eligible as a Workflow
+agent, which has not been run live. Cursor's interactive and print sessions use the same static
 `${env:...}` entry its answer path measured; the interactive path has not been run live yet.
 Goose's `streamable_http` extensions take `headers` with `${VAR}` (its source), but its CLI flag
 takes only a URL, and a config-file entry has not been run live, so it stays unwired.
@@ -409,6 +413,8 @@ claude --settings <mergedSettingsPath> --resume <uuid>
 
 Every mode also passes `--settings <path>`, the merged settings file in the session directory, whenever the spawn has a status output path.
 
+A `plan` spawn whose approved plan would continue in `bypassPermissions` (`planApprovalModeForSpawn`) also passes `--allow-dangerously-skip-permissions` (`CommandOptions.bypassAvailable`), so the approval can switch the session to bypass. See [`plan-approval-bridge.js`](#plan-approval-bridgejs).
+
 #### Permission Mode Resolution (Priority Order)
 
 See [Permission Mode Resolution](configuration.md#permission-mode-resolution-priority-order) in configuration.md.
@@ -448,7 +454,7 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge:
 | `UserPromptSubmit` | `prompt` | User submitted a prompt. Carries `planMode`, whether the payload's `permission_mode` is `plan` (`extractPlanMode`), as `Stop` does; see [Activity Detection](activity-detection.md). A Command Terminal's settings also copy the payload's `prompt` into `detail` (capped at the bridge's `FIELD_CAP`, 2000 characters, `capturePromptText`), which is what names the terminal; a task session's events carry no prompt text |
 | `Stop` | `idle` | Agent stopped naturally. Carries `planMode`, as `UserPromptSubmit` does, except on a subagent's Stop, which arrives through the same hook with an `agent_id` (`unlessField`). The tool and subagent hooks carry none: a subagent can run in its own mode while the session plans |
 | `StopFailure` | `turn_failed` or `turn_retrying` | Fires instead of `Stop` on a service/API error; carries the error type in `detail`. A TERMINAL error stays `turn_failed` (routed through the Interrupted bypass to reset stale counters and idle at once); a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error) is reclassified to `turn_retrying`, which holds the session thinking through a live retry instead of force-idling it - see [Activity Detection](activity-detection.md) |
-| `PermissionRequest` | `idle` | Agent hit a permission wall |
+| `PermissionRequest` | `idle` | Agent hit a permission wall. The payload's `tool_name` goes to `tool`, which is how the plan approval gate tells the plan prompt from every other one (see [Activity Detection](activity-detection.md#plan-approval-gate)) |
 | `SessionStart` | `session_start` | Session began |
 | `SessionEnd` | `session_end` | Session ended |
 | `SubagentStart` | `subagent_start` | Main agent launched a subagent; `agent_type` goes to `detail` and `agent_id` to `subagentId`. A start for a `subagentId` that is still live takes no second slot - see [Activity Detection](activity-detection.md) |
@@ -461,15 +467,15 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge:
 | `WorktreeCreate` | `worktree_create` | Worktree created |
 | `WorktreeRemove` | `worktree_remove` | Worktree removed |
 
-All hooks use blank matchers (fire for every invocation regardless of tool name). See [Activity Detection](activity-detection.md) for the full event-to-state mapping and state derivation logic.
+All event-bridge hooks use blank matchers (fire for every invocation regardless of tool name). The one hook with a matcher is the plan approval hook: a second `PermissionRequest` entry, matcher exactly `ExitPlanMode`, registered on every spawn (see [`plan-approval-bridge.js`](#plan-approval-bridgejs)). See [Activity Detection](activity-detection.md) for the full event-to-state mapping and state derivation logic.
 
 #### Hook Identification
 
 Kangentic hooks are identified by two markers in the command string:
 - Contains `.kangentic` (path component)
-- Contains a known bridge name (`activity-bridge` or `event-bridge`)
+- Contains a known bridge name (`activity-bridge`, `event-bridge` or `plan-approval-bridge`)
 
-Both must match. This two-marker pattern prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories - the current bridge script is `event-bridge`.
+Both must match. This two-marker pattern prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories - the current bridge scripts are `event-bridge` and `plan-approval-bridge`.
 
 #### Hook Cleanup
 
@@ -586,10 +592,13 @@ Codex declares one `AgentLaunchOptionInfo` (see [Agent Adapter Interface - Optio
 |------|-------|--------------|
 | `plan` | `--sandbox read-only --ask-for-approval on-request` | Safe Read-Only Browsing |
 | `dontAsk` | `--sandbox read-only --ask-for-approval never` | Read-Only Non-Interactive (CI) |
-| `default` | `--sandbox workspace-write --ask-for-approval untrusted` | Automatically Edit, Ask for Untrusted |
+| `default` | `--sandbox workspace-write --ask-for-approval on-request` | Automatically Edit, Ask When Needed |
 | `acceptEdits` | `--sandbox workspace-write --ask-for-approval never` | Auto (Preset) |
 | `auto` | `--sandbox workspace-write --ask-for-approval on-request` | Not exposed in the settings dropdown |
 | `bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` | Dangerous Full Access |
+
+`default` and `auto` launch alike: Codex 0.154.0 accepts only `on-request` and `never` for
+`--ask-for-approval` and exits on `untrusted`, which `default` passed before.
 
 The Codex Preset column is the adapter's `AgentPermissionEntry.label`, which is what the Agent
 settings dropdown shows. Codex declares five entries, so `auto` has no preset of its own. It still
@@ -641,6 +650,32 @@ gemini --resume <sessionId>
 | `acceptEdits` / `auto` | `--approval-mode auto_edit` | Auto Edit (Auto-Approve Edits) |
 | `bypassPermissions` | `--approval-mode yolo` | YOLO (Auto-Approve All) |
 
+### Plan exit
+
+A plan column's task moves to its After Plan Mode target when Gemini's plan is approved, as a
+Claude task does. Gemini's `exit_plan_mode` fires `AfterTool` for an approved plan and a rejected
+one alike, so the `AfterTool` hook carries a `setToolWhen` directive that reports it as
+`ExitPlanMode` only when `tool_response.llmContent` starts with "Plan approved." (measured on
+Gemini CLI 0.63.0: a rejection reads "Plan rejected. User feedback: ...").
+
+### Confirmation prompts
+
+Gemini has no permission hook. It reports each tool confirmation dialog, the plan prompt included,
+as a `Notification` whose `notification_type` is `ToolPermission`. A second `Notification` entry
+turns that one into the permission `idle` (`extractDetail(['notification_type'])`, then
+`emitOnlyWhenDetailMatches('^ToolPermission$')`, then `setDetail('permission')`), so the card
+shows the task needs you. The `AfterTool` that follows your answer clears it. Any other
+notification writes no idle.
+
+Gemini does not declare `supportsPlanAutoApproval`, so its plans always wait for you. Three things
+stand in the way:
+
+- Its approval always continues in Auto Edit or Default, never in the destination column's mode.
+- An approval would have to be armed at spawn, so a column switched to Manual mid-plan could not
+  stop it.
+- Nothing would write the marker the [plan approval gate](activity-detection.md#plan-approval-gate)
+  pairs with the plan exit.
+
 ### Settings Merge
 
 Gemini reads settings from `.gemini/settings.json` in the project directory. Unlike Claude's `--settings` flag, Gemini has no way to point to a per-session settings file. Kangentic writes merged settings (event-bridge hooks and / or the Kangentic MCP server entry) directly to `.gemini/settings.json` in the CWD.
@@ -660,7 +695,7 @@ Two things make this work that are easy to miss:
 
 ## Qwen Code
 
-Qwen Code (https://github.com/QwenLM/qwen-code) is a soft fork of Google's gemini-cli published by the Alibaba Qwen team. The Kangentic adapter mirrors the Gemini adapter: same hook event schema, same session JSON layout, same TUI behavior. Three deltas matter for users.
+Qwen Code (https://github.com/QwenLM/qwen-code) is a soft fork of Google's gemini-cli published by the Alibaba Qwen team. The Kangentic adapter mirrors the Gemini adapter in shape (a shared `.qwen/settings.json`, the same TUI behavior), but Qwen replaced Gemini's hook system with Claude Code's event names and payloads, and moved its session files.
 
 ### CLI Detection
 
@@ -699,11 +734,73 @@ qwen --resume <sessionId>
 
 The fork swapped Gemini's `auto_edit` (underscore) flag value for `auto-edit` (hyphen). The unit tests guard against the underscore form regressing.
 
+### Hooks
+
+`src/main/agent/adapters/qwen-code/hook-manager.ts`
+
+Qwen's `HookEventName` uses Claude Code's names (read from the 0.21.7 and 0.24.0 bundles, and the
+same in upstream v0.12.0 and v0.15.3), and Qwen skips any other key with an "Invalid hook event
+name" warning. The adapter wrote Gemini's names until task 840, so on those versions only
+SessionStart, SessionEnd and Notification ever fired. Each event now maps as Claude's does:
+
+| Qwen event | Kangentic event |
+|------------|-----------------|
+| `PreToolUse` | `tool_start` (tool, `tool_use_id`, file path or command) |
+| `PostToolUse` | `tool_end` (fires only for a result with no error) |
+| `PostToolUseFailure` | `tool_end`, or `interrupted` when `is_interrupt` is true |
+| `UserPromptSubmit` / `Stop` | `prompt` / `idle`, both with the session's plan mode |
+| `StopFailure` | `turn_failed` (an API error or loop detection ended the turn) |
+| `PermissionRequest` | `idle` with detail `permission`, naming the tool |
+| `PreCompact` | `compact` |
+| `Notification`, `SessionStart`, `SessionEnd` | the same-named events |
+
+Qwen fires `PermissionRequest` before the tool runs and `PreToolUse` only once you approve it, the
+reverse of Claude's order. Gemini's `BeforeModel`, `AfterModel` and `BeforeToolSelection` have no
+Qwen equivalent and are not wired. `buildHooks` and `removeHooks` strip Kangentic entries from
+every key, so a settings file an older build left with Gemini-named entries is cleaned on the next
+spawn or session exit.
+
+### Plan exit
+
+A plan column's task moves to its After Plan Mode target when Qwen's plan is approved, as a Claude
+task does. `exit_plan_mode` also fires `PostToolUse` with no error for a plan it did not act on
+("Plan execution was not approved. Remaining in plan mode." or a stale approval), so the
+`PostToolUse` hook carries a `setToolWhen` directive that reports it as `ExitPlanMode` only when
+`tool_response.llmContent` starts with "User approved." Qwen's own approved-prefix list also holds
+"Leader approved.", which is left out on purpose: only a plan-required teammate's plan, approved
+by the session's agent, produces it, and the session is still planning. A rejection in the dialog
+never runs the tool, so it fires no `PostToolUse`.
+
+Qwen does not declare `supportsPlanAutoApproval`. Its scheduler ignores a hook's allow for a tool
+that requires user interaction, which the plan prompt does, so no hook can answer it.
+
 ### Settings Merge
 
-Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same folder are serialized by per-session holds in `QwenAdapter.hookHolds`, identical to the Gemini implementation.
+Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same folder are serialized by per-session holds in `QwenAdapter.hookHolds`, identical to the Gemini implementation. When Kangentic creates the file the builder seeds `.qwen/settings.json` and `.kangentic/` into `.git/info/exclude` (created-by-us carve-out: a pre-existing user file keeps its git visibility).
 
-The security trade-off is also identical to Gemini's: the merged file carries the per-launch MCP token in plaintext while the session runs. The same mitigations apply - tokens rotate per app launch, `removeHooks` strips the entry when the folder's last session ends, and when Kangentic creates the file the builder seeds `.qwen/settings.json` and `.kangentic/` into `.git/info/exclude` (created-by-us carve-out: a pre-existing user file keeps its git visibility). Do not commit `.qwen/settings.json` while a Kangentic-spawned Qwen session is running.
+### Kangentic MCP server and the approval gate
+
+Qwen 0.20 and later hold MCP servers from two sources behind an "Untrusted MCP server" dialog: the
+folder's `.qwen/settings.json` (Qwen tags them scope `workspace`) and `.mcp.json` (scope
+`project`). An approval is recorded in `~/.qwen/mcpApprovals.json` under the folder, the server
+name, and a hash of the server's exact config, so a change to the config asks again. Read from the
+0.24.0 and 0.25.2 bundles: `useMcpApproval` filters on `isGatedMcpScope`, `--approval-mode yolo`
+skips the gate, and user-level and system settings are not gated.
+
+Kangentic's entry changes its URL and token every spawn, so an approval never matched and every
+board-driven session stopped on the dialog. The builder now writes the entry (`httpUrl` plus the
+`X-Kangentic-Token` header) to `<sessionDir>/mcp.json` and passes `--mcp-config <path>`. Servers
+from that flag carry no scope, so the gate never sees them, and Qwen merges them last, so they also
+replace a same-named entry in any settings file. The path goes on the command line, never inline
+JSON, so the token stays out of argv. `.qwen/settings.json` no longer carries a `kangentic` entry,
+and the builder drops a stale one an older build or a crash left in the baseline. Your own servers
+in `.mcp.json` or `.qwen/settings.json` still ask for approval, which is Qwen's decision to put to
+you, not Kangentic's.
+
+`--mcp-config` arrived in Qwen 0.16.0, and Qwen rejects unknown flags, so a detected version before
+0.16 falls back to the old `mcpServers.kangentic` entry in `.qwen/settings.json` (those versions
+have no gate). That copy holds the token in plaintext in a file users may commit; `removeHooks`
+strips it when the folder's last session ends. An undetected version takes the flag.
 
 ### Trust
 
@@ -928,9 +1025,15 @@ Detection follows the standard pattern: check `config.agent.cliPaths.copilot`, f
 
 `src/main/agent/adapters/copilot/command-builder.ts`
 
-Copilot CLI v1.0+ supports caller-owned session IDs via `--resume <uuid>` (same semantics as Claude's `--session-id`): passing a new UUID starts a fresh session with that ID, passing an existing UUID resumes it.
+Copilot CLI 1.0.51+ supports caller-owned session IDs via `--session-id <uuid>` (same semantics as Claude's `--session-id`): passing a new UUID starts a fresh session with that ID, passing an existing UUID resumes it. The builder used `--resume <uuid>`, which 1.0.97 refuses for an id it has not seen ("No session, task, or name matched"), so no new Copilot task started.
 
-Per-session config is written to `<eventsOutputPath dir>/copilot-config/`, enabling inline hooks (`preToolUse`, `postToolUse`, `agentStop`, `preCompact`) and `statusLine`. The adapter tracks these directories keyed by the session's own id (`CommandOptions.ptySessionId`), so `removeHooks(directory, sessionId?)` removes that session's directory and never the one of the task's next session. The project-delete sweep (no `sessionId`) removes every directory recorded for its folder.
+Per-session config is written to `<eventsOutputPath dir>/copilot-config/` and passed with `--config-dir`, which Copilot 1.0.97 still honors by setting `COPILOT_HOME` (it prints a deprecation line). Three files go there:
+
+- `hooks/kangentic.json` holds the hooks (`preToolUse`, `postToolUse`, `agentStop`, `preCompact`) as `{ "version": 1, "hooks": ... }`. Copilot reads every `*.json` in `<COPILOT_HOME>/hooks/` as user hooks, and has since 0.0.422, so one file covers every version.
+- `settings.json` is a copy of the user's `~/.copilot/settings.json` plus the `statusLine` bridge and `banner: never`. Copilot 1.0.93 reads user settings only from this file.
+- `config.json` is a copy of the user's (signed-in account, trusted folders) with the same two settings for older versions. It never carries hooks: 1.0.8 through 1.0.92 read config.json hooks as well as the hooks folder, so hooks in both would fire twice. Earlier Kangentic versions wrote their hooks there, which 1.0.93 ignores.
+
+The adapter tracks these directories keyed by the session's own id (`CommandOptions.ptySessionId`), so `removeHooks(directory, sessionId?)` cleans that session's directory and never the one of the task's next session. It deletes Kangentic's files one by one and never recursively, because Copilot keeps the session's `session-state/` in the same config home and the next resume by `--session-id` needs it. The project-delete sweep (no `sessionId`) cleans every directory recorded for its folder.
 
 ### Permission Modes
 
@@ -954,6 +1057,7 @@ The `CopilotStatusParser` reads a `status.json` written by Copilot's `statusLine
 - No `transcript-cleanup.ts` despite being a TUI agent (`\x1b[?25l` cursor hide). Handoff transcripts may contain rendering artifacts.
 - `locateSessionHistoryFile` returns null - file location is not yet empirically verified.
 - Trust is handled at runtime via `--add-dir`, not pre-approved.
+- Plan exit detection is read from the 1.0.97 bundle, not a live session. Copilot's plan exit tool is `exit_plan_mode`, and its `postToolUse` result at `toolResult.textResultForLlm` starts "Plan approved! Exited plan mode." for an approved plan and "Plan not approved." otherwise. The `postToolUse` entry carries `setToolWhen({ whenTool: 'exit_plan_mode', toolField: 'toolName', nested: ['toolResult', 'textResultForLlm'], startsWith: 'Plan approved', to: 'ExitPlanMode' })`, so only an approved plan moves the card to the After Plan Mode target. Whether a rejection reaches `postToolUse` at all (it fires only for successful results) is unconfirmed; either way it never moves the card.
 
 ## Oz CLI (Warp)
 
@@ -1577,7 +1681,7 @@ Shortcut commands use a separate set of template variables. See [Configuration](
 
 ## Bridge Scripts
 
-Two standalone Node.js scripts in `src/main/agent/`:
+Three standalone Node.js scripts in `src/main/agent/`:
 
 ### `status-bridge.js`
 
@@ -1595,7 +1699,16 @@ Two standalone Node.js scripts in `src/main/agent/`:
 - **Watched by:** SessionManager with 50ms debounce, incremental byte-offset reads
 - **Supported by:** Claude Code (18 hook points), Codex CLI (via config.toml hooks), Gemini CLI (via .gemini/settings.json hooks), Qwen Code, Aider, GitHub Copilot CLI, Grok Build (via `.grok/hooks/kangentic.json`, with the events path resolved through the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Grok Build](#grok-build)), and Antigravity CLI (via a per-spawn workspace copy, `<cwd>/.kangentic/agy-event-bridge.cjs` - see [Antigravity](#antigravity))
 
-Both scripts are stateless (no persistent process), read JSON from stdin, write to their output file, and exit. All writes are try/catch wrapped for non-fatal failures.
+### `plan-approval-bridge.js`
+
+- **Hook point:** a second `PermissionRequest` entry, matcher exactly `ExitPlanMode`, beside the event bridge's catch-all one. Registered on every spawn of an adapter that declares `supportsPlanAutoApproval`, whatever the column says, so a column or workflow switched to Automatic while the agent plans needs no hook reload. A question the agent asks (`AskUserQuestion`) never reaches it.
+- **Input:** the session's decision file, `.kangentic/sessions/<ptySessionId>/plan-approval.json` (`{ approve, mode, detail }`), and a base64 spec (`PlanApprovalHookSpec` in `src/main/agent/shared/plan-approval-hook.ts`) naming the tool, where its input sits, and the reply the CLI expects. All agent knowledge is in the spec, never in the script.
+- **Output:** to approve, the reply on stdout, after one `plan_approval_sent` line appended to `events.jsonl`. Claude's reply (`CLAUDE_PLAN_APPROVAL_SPEC` in `adapters/claude/hook-manager.ts`) is `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedInput":<tool_input>,"updatedPermissions":[{"type":"setMode","mode":<mode>,"destination":"session"}]}}}`. The input is echoed exactly, since Claude 2.1.300 and later deny a call whose input changed. `setMode` is needed because a hook approval otherwise restores the mode the session had before plan mode, and a session launched in plan mode has none.
+- **Fails closed:** another tool, no decision file, `approve: false`, or any error prints nothing and exits 0, so the CLI shows its own dialog and the user decides. Diagnostics go to `plan-approval-bridge.error.log` beside the decision file, never to stdout.
+- **Decision writer:** `PlanApprovalWriter` (`src/main/plan-approval/plan-approval-writer.ts`) writes the file through `safeWriteJson` (source `plan_approval`) when a task session first appears, and rewrites every live session's file, coalesced at 100 ms, on any board change and on a Board Profile edit, a settings change or a `kangentic.json` apply (`refreshPlanApprovals`). The decision comes from `resolvePlanApprovalDecision` (`src/main/plan-approval/resolve-decision.ts`): a running workflow's value, else the column's own while it runs in plan mode, and never an approval where the session's agent cannot approve plans. `mode` is the destination's effective permission mode (the After Plan Mode target, or the next column on a workflow task's route); where that is `plan`, or `bypassPermissions` in a session launched without bypass available, it falls back to the task's own mode, then the global mode, then `default`. A plan-mode spawn whose approval would continue in `bypassPermissions` launches with `CommandOptions.bypassAvailable`. Transient sessions (a Command Terminal, a workflow's own agent) get no decision file, so their plans always wait.
+- **Supported by:** Claude Code (measured on 2.1.302: `acceptEdits` and `auto` apply through `setMode`; `bypassPermissions` applies only to a session launched with bypass available)
+
+All three scripts are stateless (no persistent process), read JSON from stdin, and exit. All writes are try/catch wrapped for non-fatal failures.
 
 ## CWD Strategy
 

@@ -41,10 +41,15 @@ export interface CodexCommandOptions {
  * pair `--sandbox <mode>` and `--ask-for-approval <policy>`. Mappings:
  *   plan        → Safe read-only browsing (model can request escalation)
  *   dontAsk     → Read-only non-interactive (CI; failures returned to model)
- *   default     → Workspace-write, escalate on untrusted commands
+ *   default     → Workspace-write, model decides when to ask
  *   acceptEdits → Workspace-write, never ask (replaces old --full-auto)
  *   auto        → Workspace-write, model decides when to ask
  *   bypass      → Dangerous full access (no sandbox, no approval)
+ *
+ * `default` and `auto` launch alike. Codex 0.154.0 accepts only `on-request`
+ * and `never` for `--ask-for-approval` and exits 2 on `untrusted` ("invalid
+ * value 'untrusted'"), which `default` used to pass, so no Default-mode Codex
+ * task started at all.
  */
 function mapPermissionMode(mode: PermissionMode): string[] {
   switch (mode) {
@@ -53,7 +58,7 @@ function mapPermissionMode(mode: PermissionMode): string[] {
     case 'dontAsk':
       return ['--sandbox', 'read-only', '--ask-for-approval', 'never'];
     case 'default':
-      return ['--sandbox', 'workspace-write', '--ask-for-approval', 'untrusted'];
+      return ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request'];
     case 'acceptEdits':
       return ['--sandbox', 'workspace-write', '--ask-for-approval', 'never'];
     case 'auto':

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
 import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
+import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 
 /** All Claude Code hook event names (settings.json keys). */
 export const ClaudeHookEvent = {
@@ -57,7 +58,43 @@ export interface BuildHooksOptions {
    * name itself; task sessions keep prompt text out of their events file.
    */
   capturePromptText?: boolean;
+  /**
+   * The plan approval hook's command (`buildPlanApprovalCommand`), registered
+   * on PermissionRequest with the matcher EXACTLY `ExitPlanMode`, so it never
+   * runs for a question the agent asks (AskUserQuestion) or any other prompt.
+   * Claude runs it beside the catch-all entry below; the decision file decides
+   * whether it answers.
+   */
+  planApprovalCommand?: string;
 }
+
+/** Claude's plan exit tool, the only prompt the plan approval hook answers. */
+const CLAUDE_PLAN_EXIT_TOOL = 'ExitPlanMode';
+
+/**
+ * Claude's plan approval reply (code.claude.com/docs/en/hooks, PermissionRequest):
+ * allow, with the tool input echoed EXACTLY (since 2.1.300 a changed input
+ * denies the call), and `setMode` so the session continues in the destination
+ * column's mode. A hook approval otherwise restores the mode the session had
+ * before plan mode, and a session launched in plan mode has none. Probed on
+ * 2.1.302: acceptEdits and auto apply; bypassPermissions applies only to a
+ * session launched with bypass available.
+ */
+export const CLAUDE_PLAN_APPROVAL_SPEC: PlanApprovalHookSpec = {
+  toolField: 'tool_name',
+  tool: CLAUDE_PLAN_EXIT_TOOL,
+  inputField: 'tool_input',
+  reply: {
+    hookSpecificOutput: {
+      hookEventName: 'PermissionRequest',
+      decision: {
+        behavior: 'allow',
+        updatedInput: PLAN_APPROVAL_TOOL_INPUT,
+        updatedPermissions: [{ type: 'setMode', mode: PLAN_APPROVAL_MODE, destination: 'session' }],
+      },
+    },
+  },
+};
 
 export function buildHooks(
   eventBridge: string,
@@ -278,8 +315,14 @@ export function buildHooks(
     ],
     [H.PermissionRequest]: [
       ...(existingHooks[H.PermissionRequest] || []),
+      // The tool name rides along so the plan approval gate can tell the plan
+      // prompt's idle from every other one (plan-approval-gate.ts).
       { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.Idle,
-        setDetail('permission')) }] },
+        setDetail('permission'),
+        extractTool('tool_name')) }] },
+      ...(options.planApprovalCommand
+        ? [{ matcher: CLAUDE_PLAN_EXIT_TOOL, hooks: [{ type: 'command', command: options.planApprovalCommand }] }]
+        : []),
     ],
     [H.SessionStart]: [
       ...(existingHooks[H.SessionStart] || []),

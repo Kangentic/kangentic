@@ -5,6 +5,7 @@ import { runAutomationAgain } from '../helpers/automation-run-again';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
 import { propagateStrategyToLiveSessions, propagateBoardProfileChange, buildColumnStrategyChanges } from './strategy-propagation';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
+import { refreshPlanApprovals } from '../../plan-approval/plan-approval-writer';
 import type { AutomationRunAgainResult, BoardProfile, ShortcutConfig } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -223,6 +224,8 @@ export function registerBoardHandlers(context: IpcContext): void {
     // project regardless of which board the user is looking at.
     return runWithProjectLogContext(project.name, () => {
       const result = context.boardConfigManager.applyFileChange(projectId, project.path);
+      // A teammate's kangentic.json can turn a column's Plan approval on or off.
+      refreshPlanApprovals(projectId);
       return result.warnings;
     });
   });
@@ -249,6 +252,9 @@ export function registerBoardHandlers(context: IpcContext): void {
     const previousProfiles = context.boardConfigManager.getBoardProfiles();
     context.boardConfigManager.setBoardProfiles(profiles);
     propagateBoardProfileChange(context, previousProfiles, profiles, projectId);
+    // A profile can re-point a column's mode, agent or plan exit target, each
+    // of which decides who approves the next plan. The board bus carries none.
+    refreshPlanApprovals(projectId);
   });
 
   ipcMain.handle(IPC.BOARD_CONFIG_GET_SHORTCUTS, () => {

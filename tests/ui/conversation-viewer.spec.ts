@@ -259,7 +259,33 @@ function preConfig(): string {
         sessions: [{ sessionId: 'sess-conv-widetable', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'running' }],
       };
 
+      // A presented plan, approved by Kangentic's hook (the parser's
+      // 'automatic'), then one the user approved: each reads as a Plan card.
+      // The first is Claude 2.1.303's shape, an empty input with the plan on
+      // the result; the second carries the plan in its input.
+      var transcriptPlan = {
+        sessionId: 'sess-conv-plan', taskId: null, taskTitle: 'Plan card',
+        agentName: 'Claude Code', startedAt: ts, sessionStatus: 'exited', source: 'live', sourcePath: '/mock/plan.jsonl',
+        entries: [
+          { kind: 'assistant', uuid: 'turn-plan-auto', ts: nowMs, model: 'claude-opus-4-8',
+            blocks: [
+              { type: 'text', text: 'The plan is ready.' },
+              { type: 'tool_use', id: 'tool-plan-auto', name: 'ExitPlanMode', input: {} },
+            ] },
+          { kind: 'tool_result', uuid: 'turn-plan-auto-result', ts: nowMs + 1, toolUseId: 'tool-plan-auto',
+            content: 'User has approved your plan.', isError: false, approval: 'automatic',
+            plan: '## Context\\nPLAN_CONTEXT_ALPHA\\n\\n## Approach\\n- PLAN_STEP_ALPHA' },
+          { kind: 'assistant', uuid: 'turn-plan-user', ts: nowMs + 2, model: 'claude-opus-4-8',
+            blocks: [{ type: 'tool_use', id: 'tool-plan-user', name: 'ExitPlanMode', input: { plan: 'PLAN_BRAVO_BODY', planFilePath: '/mock/plans/bravo.md' } }] },
+          { kind: 'tool_result', uuid: 'turn-plan-user-result', ts: nowMs + 3, toolUseId: 'tool-plan-user',
+            content: 'User has approved your plan.', isError: false, approval: 'user' },
+        ],
+        degraded: false,
+        sessions: [{ sessionId: 'sess-conv-plan', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
+      };
+
       var transcriptSeeds = {};
+      transcriptSeeds['sess-conv-plan'] = transcriptPlan;
       // Both of the task's session ids resolve to the SAME unified response -
       // the real backend always returns a task's full lifecycle regardless of
       // which of its sessions was asked for.
@@ -416,6 +442,31 @@ test.describe('Conversation Viewer', () => {
       // Both the removed and added lines render (lossless from old/new strings).
       await expect(diff).toContainText('const value = 1;');
       await expect(diff).toContainText('const value = 2;');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a presented plan renders as an open Plan card, tagged with who approved it', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, 'sess-conv-plan');
+      const cards = page.getByTestId('conversation-plan-card');
+      await expect(cards).toHaveCount(2);
+      // Rendered as markdown and open by default, not the tool's JSON.
+      const first = cards.nth(0);
+      await expect(first.getByTestId('conversation-plan-body')).toBeVisible();
+      await expect(first.getByRole('heading', { name: 'Context' })).toBeVisible();
+      await expect(first.getByText('PLAN_STEP_ALPHA')).toBeVisible();
+      await expect(cards.nth(1)).not.toContainText('planFilePath');
+      await expect(first.getByTestId('conversation-plan-approval')).toHaveText('Approved automatically');
+      await expect(cards.nth(1).getByTestId('conversation-plan-approval')).toHaveText('Approved by you');
+      // No generic tool card for either.
+      await expect(page.getByTestId('conversation-tool-card')).toHaveCount(0);
+
+      // It folds like the other cards.
+      await first.getByTestId('conversation-plan-toggle').click();
+      await expect(first.getByTestId('conversation-plan-body')).toHaveCount(0);
     } finally {
       await browser.close();
     }

@@ -215,6 +215,9 @@ export interface AgentDetectionInfo {
    *  server with a URL of its own, and its conversation can be resumed. The Workflow agent
    *  setting offers only these. */
   supportsWorkflowAgent?: boolean;
+  /** True if Kangentic can approve the agent's plans for it (`AgentAdapter.supportsPlanAutoApproval`).
+   *  A plan column's Plan approval offers Automatic only for these. */
+  supportsPlanAutoApproval?: boolean;
   /** Discovered at detection time; absent for adapters that do not implement discovery. */
   capabilities?: AgentCapabilities;
   /** Present when the adapter can attach to a user-run server instead of spawning locally.
@@ -811,6 +814,17 @@ export type SessionTarget = 'main' | 'isolated';
  */
 export type SessionSpawnStrategy = 'create_or_resume' | 'always_spawn_new';
 
+/**
+ * Who answers a plan column's plan approval prompt (Claude's ExitPlanMode).
+ * - 'manual' (default): the user approves each plan in the agent's terminal.
+ * - 'automatic': Kangentic approves it, for an agent that declares
+ *   `supportsPlanAutoApproval`. Only the plan prompt is answered; a question the
+ *   agent asks the user always waits.
+ * A task in a running workflow follows the workflow's value instead
+ * (`Workflow.plan_approval`, see `src/shared/plan-approval.ts`).
+ */
+export type PlanApproval = 'automatic' | 'manual';
+
 export interface Swimlane {
   id: string;
   name: string;
@@ -828,6 +842,8 @@ export interface Swimlane {
   /** When this column's auto_command fires (see AutoCommandMode). Defaults to 'immediate'. */
   auto_command_mode: AutoCommandMode;
   plan_exit_target_id: string | null;
+  /** Who approves a plan in this column (see PlanApproval). Only meaningful while `permission_mode` is 'plan'. Defaults to 'manual'. */
+  plan_approval: PlanApproval;
   agent_override: string | null;
   /** Free-form model identifier (e.g. "opus", "sonnet", "claude-opus-4-7"). Adapter-specific; null inherits the agent default. */
   model_override: string | null;
@@ -1990,6 +2006,22 @@ export const EventType = {
   ModelEnd: 'model_end',
   /** Fired when the agent is choosing which tool to invoke next. Log-only. */
   ToolSelectionStart: 'tool_selection_start',
+  /**
+   * Kangentic's plan approval hook answered the agent's plan approval prompt
+   * (`src/main/agent/plan-approval-bridge.js`). Written by the hook, before the
+   * agent acts on the answer, so it proves only that the answer was SENT: the
+   * CLI can still refuse it. Lets the activity pipeline drop the permission
+   * idle that the same prompt raised, so an approved plan never shows as
+   * "needs you". Log-only and not rendered.
+   */
+  PlanApprovalSent: 'plan_approval_sent',
+  /**
+   * The plan the hook approved was accepted: main emits this right after the
+   * plan exit tool's `tool_end` that follows a `plan_approval_sent`. `detail`
+   * says where the task went ("Moved to Executing"). The activity log draws it;
+   * the engine re-stamps the turn's start, as for a plan the user approved.
+   */
+  PlanAutoApproved: 'plan_auto_approved',
 } as const;
 export type EventType = (typeof EventType)[keyof typeof EventType];
 
@@ -2042,6 +2074,8 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
   [EventType.ModelStart]: null,
   [EventType.ModelEnd]: null,
   [EventType.ToolSelectionStart]: null,
+  [EventType.PlanApprovalSent]: null,
+  [EventType.PlanAutoApproved]: null,
 };
 
 // === Session Events (Claude Code Hooks → Activity Log) ===
@@ -5401,6 +5435,14 @@ export interface Workflow {
    * its tasks are on, which it always reads. Kept, so a resume reads them too.
    */
   agent_read_project_ids: string[];
+  /**
+   * Who approves plans for this workflow's tasks while it runs, as the user (or
+   * the workflow agent, before Start) picked it. Null until picked: the
+   * workflow then follows its plan columns, Automatic only when every one is
+   * (`workflowPlanApproval`, `src/shared/plan-approval.ts`). Changing it changes
+   * no plan, so it does not move `revision`.
+   */
+  plan_approval: PlanApproval | null;
 }
 
 /**
@@ -5490,6 +5532,15 @@ export interface WorkflowDetail {
    * own board's, not the open board's).
    */
   boardEnds: Record<string, WorkflowBoardEnds>;
+  /**
+   * The plan approval its tasks get: `value` is what happens, `picked` says
+   * whether someone chose it or it follows the plan columns on its tasks'
+   * routes. The inspector shows `value` either way. `canApprove` is false when
+   * no plan column on the routes runs an agent whose plans Kangentic can
+   * approve: `value` is then Manual whatever was picked, and Automatic is not
+   * offered.
+   */
+  planApproval: { value: PlanApproval; picked: boolean; canApprove: boolean };
 }
 
 /** What the Workflows view's agent pane shows: the workflow's own agent, or why it has none. */
@@ -5685,6 +5736,7 @@ export interface SwimlaneCreateInput {
   auto_command?: string | null;
   auto_command_mode?: AutoCommandMode;
   plan_exit_target_id?: string | null;
+  plan_approval?: PlanApproval;
   agent_override?: string | null;
   model_override?: string | null;
   effort_override?: string | null;
@@ -5707,6 +5759,7 @@ export interface SwimlaneUpdateInput {
   auto_command?: string | null;
   auto_command_mode?: AutoCommandMode;
   plan_exit_target_id?: string | null;
+  plan_approval?: PlanApproval;
   agent_override?: string | null;
   model_override?: string | null;
   effort_override?: string | null;
@@ -6318,6 +6371,9 @@ export interface AssistantMessageTrailEntry {
   text: string;
 }
 
+/** Who approved a tool call, as a transcript records it (`TranscriptEntry` tool_result). */
+export type TranscriptToolApproval = 'automatic' | 'user';
+
 /**
  * One entry in a parsed agent transcript. Distinct from `SessionEvent`
  * (telemetry only) - this preserves the actual conversation content for
@@ -6336,7 +6392,13 @@ export type TranscriptEntry =
   // captured so consumption/burn-rate analysis can read it straight off the
   // conversation. Absent when the agent/turn reported no usage.
   | { kind: 'assistant'; uuid: string; ts: number; model?: string; agentName?: string; usage?: TranscriptTurnUsage; blocks: TranscriptBlock[] }
-  | { kind: 'tool_result'; uuid: string; ts: number; toolUseId: string; content: string; isError?: boolean }
+  // approval: who let the call run, where the agent records it: 'automatic' for
+  // a hook (Kangentic's plan approval), 'user' for the person. Absent when the
+  // agent records nothing, or a rule or mode allowed it.
+  // plan: the plan an approved plan exit returned, for an agent whose call
+  // carried none in its input (Claude 2.1.303 calls ExitPlanMode with `{}` and
+  // records the plan on the result line).
+  | { kind: 'tool_result'; uuid: string; ts: number; toolUseId: string; content: string; isError?: boolean; approval?: TranscriptToolApproval; plan?: string }
   // Non-conversation events surfaced explicitly instead of being rendered as
   // misleading "## User" turns: conversation-compaction boundaries/summaries,
   // slash-command invocations and their local stdout, and (session_boundary)
@@ -6489,6 +6551,8 @@ export interface BoardColumnConfig {
   autoSpawn?: boolean;
   permissionMode?: PermissionMode | null;
   planExitTarget?: string; // name of target column
+  /** Who approves a plan in this column (see PlanApproval). Omitted = 'manual'. */
+  planApproval?: PlanApproval;
   archived?: boolean;
   /**
    * LEGACY. The column's message to its agent, before automations existed.
@@ -7658,6 +7722,8 @@ export interface ElectronAPI {
     /** A new workflow, from a To Do task (its brief) or from nothing. */
     create: (projectId: string, sourceTaskId: string | null) => Promise<Workflow>;
     rename: (projectId: string, workflowId: string, title: string) => Promise<Workflow>;
+    /** Who approves plans for the workflow's tasks; null follows its plan columns. */
+    setPlanApproval: (projectId: string, workflowId: string, planApproval: PlanApproval | null) => Promise<void>;
     delete: (projectId: string, workflowId: string) => Promise<void>;
     start: (projectId: string, workflowId: string) => Promise<void>;
     pause: (projectId: string, workflowId: string) => Promise<void>;

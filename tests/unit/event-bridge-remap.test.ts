@@ -26,9 +26,10 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { EventType } from '../../src/shared/types';
+import { AgentTool, EventType } from '../../src/shared/types';
 import { buildHooks } from '../../src/main/agent/adapters/claude';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { buildHooks as buildGeminiHooks } from '../../src/main/agent/adapters/gemini';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, setToolWhen, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 
@@ -751,5 +752,86 @@ describe('event-bridge setTypeWhenDetailMatches: malformed regex is a no-op (eve
     const errorLog = path.join(tmpDir, 'events-bridge.error.log');
     expect(fs.existsSync(errorLog)).toBe(true);
     expect(fs.readFileSync(errorLog, 'utf-8')).toContain('invalid setTypeWhenDetailMatches pattern');
+  });
+});
+
+describe('Gemini plan exit (AfterTool, setToolWhen)', () => {
+  // The two AfterTool payloads Gemini CLI 0.63.0 sent for one plan, rejected
+  // with feedback and then approved (task 840 preview), paths sanitized. Both
+  // fire AfterTool; only the response text tells them apart.
+  const planExitPayload = (llmContent: string) => JSON.stringify({
+    session_id: '00000000-0000-0000-0000-000000000000',
+    cwd: 'C:\\Users\\dev\\repo',
+    hook_event_name: 'AfterTool',
+    timestamp: '2026-10-19T01:58:32.418Z',
+    tool_name: 'exit_plan_mode',
+    tool_input: { plan_filename: 'gemini-probe-plan.md' },
+    tool_response: { llmContent, returnDisplay: 'Plan approved: C:\\Users\\dev\\.gemini\\tmp\\1\\plans\\gemini-probe-plan.md' },
+  });
+  const APPROVED = 'Plan approved. Switching to Auto-Edit mode (edits will be applied automatically).\n\nThe approved implementation plan is stored at: C:\\Users\\dev\\.gemini\\tmp\\1\\plans\\gemini-probe-plan.md\nRead and follow the plan strictly during implementation.';
+  const REJECTED = 'Plan rejected. User feedback: Also add a second line that says bye.\n\nThe plan is stored at: C:\\Users\\dev\\.gemini\\tmp\\1\\plans\\gemini-probe-plan.md\nRevise the plan based on the feedback.';
+
+  // The directives Gemini's AfterTool hook really carries.
+  const afterToolDirectives = () => {
+    const hooks = buildGeminiHooks('/mock/event-bridge.js', '/mock/events.jsonl', {});
+    return directivesOf(hooks.AfterTool[hooks.AfterTool.length - 1].hooks[0].command);
+  };
+
+  it('reports an approved plan exit as ExitPlanMode, which moves the card', () => {
+    runBridge(planExitPayload(APPROVED), [outputFile, 'tool_end', ...afterToolDirectives()]);
+    expect(readEvent()).toMatchObject({ type: 'tool_end', tool: AgentTool.ExitPlanMode });
+  });
+
+  it('leaves a rejected plan exit as Gemini\'s own tool, so the card stays', () => {
+    runBridge(planExitPayload(REJECTED), [outputFile, 'tool_end', ...afterToolDirectives()]);
+    expect(readEvent()).toMatchObject({ type: 'tool_end', tool: 'exit_plan_mode' });
+  });
+
+  it('renames no other tool whose response happens to start the same way', () => {
+    const other = JSON.parse(planExitPayload(APPROVED)) as Record<string, unknown>;
+    other.tool_name = 'write_file';
+    runBridge(JSON.stringify(other), [outputFile, 'tool_end', ...afterToolDirectives()]);
+    expect(readEvent()).toMatchObject({ tool: 'write_file' });
+  });
+
+  it('encodes as its own kind, so a stale bridge no-ops instead of renaming every outcome', () => {
+    const directive = setToolWhen({ whenTool: 'exit_plan_mode', nested: ['tool_response', 'llmContent'], startsWith: 'Plan approved.', to: AgentTool.ExitPlanMode });
+    expect(directive.slice(0, directive.indexOf(':'))).toBe('setToolWhen');
+  });
+});
+
+describe('Gemini tool confirmation (Notification ToolPermission)', () => {
+  // The Notification Gemini CLI 0.63.0 sends for a tool confirmation dialog
+  // (`fireToolNotificationEvent`, `notification_type: "ToolPermission"`); the
+  // plan prompt and a shell command both raised one in the task 840 preview.
+  const notification = (notificationType: string, message: string) => JSON.stringify({
+    session_id: '00000000-0000-0000-0000-000000000000',
+    cwd: 'C:\\Users\\dev\\repo',
+    hook_event_name: 'Notification',
+    notification_type: notificationType,
+    message,
+    details: { type: 'exec', title: 'Confirm Shell Command' },
+  });
+
+  // Gemini's real Notification entries: the logged notification, then the permission idle.
+  const notificationEntries = () => buildGeminiHooks('/mock/event-bridge.js', '/mock/events.jsonl', {}).Notification
+    .map((entry) => ({ eventType: entry.hooks[0].command.split(' ')[3], directives: directivesOf(entry.hooks[0].command) }));
+
+  it('turns a tool confirmation into the permission idle that shows the task needs you', () => {
+    const permissionEntry = notificationEntries()[1];
+    runBridge(notification('ToolPermission', 'Tool Confirm Shell Command requires execution'), [outputFile, permissionEntry.eventType, ...permissionEntry.directives]);
+    expect(readEvent()).toMatchObject({ type: 'idle', detail: 'permission' });
+  });
+
+  it('writes nothing for any other notification', () => {
+    const permissionEntry = notificationEntries()[1];
+    runBridge(notification('SomethingElse', 'Update available'), [outputFile, permissionEntry.eventType, ...permissionEntry.directives]);
+    expect(outputEmitted()).toBe(false);
+  });
+
+  it('still logs the confirmation as a notification', () => {
+    const logEntry = notificationEntries()[0];
+    runBridge(notification('ToolPermission', 'Tool requires confirmation'), [outputFile, logEntry.eventType, ...logEntry.directives]);
+    expect(readEvent()).toMatchObject({ type: 'notification', detail: 'Tool requires confirmation' });
   });
 });

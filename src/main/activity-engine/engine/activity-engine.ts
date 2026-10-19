@@ -372,6 +372,15 @@ export class ActivityEngine {
       }
     }
 
+    // A plan Kangentic approved never raised a permission pause (the pipeline
+    // drops that idle, see `plan-approval-gate.ts`), so the branch above never
+    // sees it. The auto-approval event that follows the plan exit's ToolEnd
+    // stamps the same restart instead.
+    if (event.type === EventType.PlanAutoApproved && state.turnActive) {
+      state.turnStartedAt = this.now();
+      this.callbacks.onTurnStarted?.(sessionId, state.turnStartedAt, 'plan-approval');
+    }
+
     // TurnRetrying (a transient StopFailure error the agent is auto-retrying,
     // classified at the source by the adapter - see EventType.TurnRetrying) is
     // deliberately NOT in TURN_ENDING_EVENTS (the live-retry path below must

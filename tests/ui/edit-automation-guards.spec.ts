@@ -1128,9 +1128,9 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(options).toHaveCount(0);
   });
 
-  // 5b - The Column picker carries each column's color ──────────────────────
+  // 5b - The Column picker carries each column's glyph ──────────────────────
 
-  test("the Column picker shows each column's color dot, and Next column has none", async () => {
+  test("the Column picker shows each column's icon in its color, and Next column a muted arrow apart from them", async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'move_to_column');
 
@@ -1140,30 +1140,33 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(menu).toBeVisible();
     const options = menu.locator('[data-testid="automation-config-targetColumn-option"]');
 
-    // Next column is not one column, so it has no color of its own.
-    await expect(options.first().locator('[data-testid="automation-column-dot"]')).toHaveCount(0);
+    // Next column is not one column: a muted arrow, no column glyph, and a
+    // divider between it and the named columns.
+    await expect(options.first().locator('[data-testid="column-picker-leading-glyph"]')).toHaveCount(1);
+    await expect(options.first().locator('[data-testid="column-picker-glyph"]')).toHaveCount(0);
+    await expect(menu.locator('[data-testid="automation-config-targetColumn-divider"]')).toHaveCount(1);
 
-    // Testing's dot is Testing's own color, read from the board, as the
-    // browser resolves it (so a hex and its rgb() compare equal).
+    // Testing's icon is drawn in Testing's own color, read from the board, as
+    // the browser resolves it (so a hex and its rgb() compare equal).
     const testingOption = options.filter({ hasText: 'Testing' });
-    const colors = await testingOption.locator('[data-testid="automation-column-dot"]').evaluate(async (dot) => {
+    const colors = await testingOption.locator('[data-testid="column-picker-glyph"] svg').evaluate(async (icon) => {
       const lanes = await window.electronAPI.swimlanes.list();
       const lane = lanes.find((swimlane) => swimlane.name === 'Testing');
       const probe = document.createElement('span');
-      probe.style.backgroundColor = lane?.color ?? '';
+      probe.style.color = lane?.color ?? '';
       document.body.appendChild(probe);
-      const expected = getComputedStyle(probe).backgroundColor;
+      const expected = getComputedStyle(probe).color;
       probe.remove();
-      return { actual: getComputedStyle(dot).backgroundColor, expected };
+      return { actual: getComputedStyle(icon).color, expected };
     });
     expect(colors.actual).toBe(colors.expected);
 
-    // Choosing it closes the menu and the field shows the name with its dot.
+    // Choosing it closes the menu and the field shows the name with its glyph.
     await testingOption.click();
     await expect(menu).toBeHidden();
     await expect(target).toHaveAttribute('data-value', 'Testing');
     await expect(target).toHaveText('Testing');
-    await expect(target.locator('[data-testid="automation-column-dot"]')).toHaveCount(1);
+    await expect(target.locator('[data-testid="column-picker-glyph"]')).toHaveCount(1);
 
     // Escape closes the menu, not the editor under it.
     await target.click();
@@ -1173,9 +1176,9 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(editDialog()).toBeVisible();
   });
 
-  test('a column renamed in the open Board Manager keeps its dot in the Column picker', async () => {
+  test('a column renamed in the open Board Manager keeps its glyph in the Column picker', async () => {
     // The choices come from the Board Manager's drafts, not the saved board, so
-    // a rename that is not saved yet still carries the column's color.
+    // a rename that is not saved yet still carries the column's icon and color.
     await openColumn('Testing');
     await dialog().locator('[data-testid="board-manager-name"]').fill('Verify');
     await dialog().locator('[data-testid="board-manager-tab"][data-tab-name="Executing"]').click();
@@ -1186,15 +1189,15 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(options.filter({ hasText: 'Testing' })).toHaveCount(0);
     const renamed = options.filter({ hasText: 'Verify' });
     await expect(renamed).toHaveCount(1);
-    const colors = await renamed.locator('[data-testid="automation-column-dot"]').evaluate(async (dot) => {
+    const colors = await renamed.locator('[data-testid="column-picker-glyph"] svg').evaluate(async (icon) => {
       const lanes = await window.electronAPI.swimlanes.list();
       const lane = lanes.find((swimlane) => swimlane.name === 'Testing');
       const probe = document.createElement('span');
-      probe.style.backgroundColor = lane?.color ?? '';
+      probe.style.color = lane?.color ?? '';
       document.body.appendChild(probe);
-      const expected = getComputedStyle(probe).backgroundColor;
+      const expected = getComputedStyle(probe).color;
       probe.remove();
-      return { actual: getComputedStyle(dot).backgroundColor, expected };
+      return { actual: getComputedStyle(icon).color, expected };
     });
     expect(colors.actual).toBe(colors.expected);
     await page.keyboard.press('Escape');
@@ -1227,7 +1230,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(editDialog()).toBeVisible();
   });
 
-  test('a Column the board no longer has stays listed, marked, and without a dot', async () => {
+  test('a Column the board no longer has stays listed, marked, and without a glyph', async () => {
     await seedColumn('Executing', [
       { name: 'Hand off', type: 'move_to_column', trigger: 'turn_end', config: { targetColumn: 'Gone' } },
     ]);
@@ -1239,7 +1242,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     // Opening the dialog never re-points the row.
     await expect(target).toHaveAttribute('data-value', 'Gone');
     await expect(target).toHaveText('Gone (not on this board)');
-    await expect(target.locator('[data-testid="automation-column-dot"]')).toHaveCount(0);
+    await expect(target.locator('[data-testid="column-picker-glyph"]')).toHaveCount(0);
 
     await target.click();
     const options = page.locator('[data-testid="automation-config-targetColumn-option"]');
@@ -1247,7 +1250,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(stale).toHaveAttribute('data-value', 'Gone');
     await expect(stale).toHaveText('Gone (not on this board)');
     await expect(stale).toHaveAttribute('aria-selected', 'true');
-    await expect(stale.locator('[data-testid="automation-column-dot"]')).toHaveCount(0);
+    await expect(stale.locator('[data-testid="column-picker-glyph"]')).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(options).toHaveCount(0);
   });

@@ -1,4 +1,4 @@
-import type { EventType } from '../../../shared/types';
+import type { AgentTool, EventType } from '../../../shared/types';
 
 /**
  * Typed builders for event-bridge directives.
@@ -186,6 +186,38 @@ export function setTypeWhen(rule: TypeWhenRule): string {
     throw new Error('setTypeWhen: `nested` and `field` are mutually exclusive');
   }
   return encodeDirective('setTypeWhen', rule);
+}
+
+/**
+ * A tool rename for the one outcome of a tool that counts as something
+ * Kangentic reacts to: when `ctx.tool_name === whenTool` AND the nested string
+ * field starts with `startsWith`, the emitted event's `tool` becomes `to`.
+ *
+ * Gemini's `exit_plan_mode` fires AfterTool for an approved plan and a rejected
+ * one alike, and only its response text tells them apart, while Kangentic's plan
+ * exit (`AgentTool.ExitPlanMode` on a ToolEnd) must mean approved. Its own kind,
+ * so a stale bridge copy no-ops instead of renaming every outcome.
+ */
+export interface ToolWhenRule {
+  /** Apply only when the top-level tool name field equals this. */
+  whenTool: string;
+  /**
+   * The top-level stdin field holding the tool name. Defaults to `tool_name`;
+   * Copilot sends `toolName`. A stale bridge copy ignores it and reads
+   * `tool_name`, which a camelCase payload lacks, so it renames nothing.
+   */
+  toolField?: string;
+  /** The nested string field to test, as `[parent, field]`. */
+  nested: [parent: string, field: string];
+  /** The text the field must start with. */
+  startsWith: string;
+  /** The tool name to set when the rule matches. */
+  to: AgentTool;
+}
+
+/** Change `event.tool` to `rule.to` when the rule's field starts with `rule.startsWith`. */
+export function setToolWhen(rule: ToolWhenRule): string {
+  return encodeDirective('setToolWhen', rule);
 }
 
 /**

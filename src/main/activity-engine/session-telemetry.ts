@@ -12,6 +12,7 @@ import { UsageAccumulator } from './usage-accumulator';
 import { PRCommandDetector } from './pr-command-detector';
 import { PushCommandDetector } from './push-command-detector';
 import { PlanModeTrail } from './plan-mode-trail';
+import { PlanApprovalGate } from './plan-approval-gate';
 import { UserInterruptCoordinator } from './user-interrupt-coordinator';
 
 const MAX_EVENTS_PER_SESSION = 500;
@@ -109,6 +110,12 @@ interface SessionTelemetryCallbacks {
    */
   reportRejectedPermissionTools?(sessionId: string, toolIds: string[], sinceMs: number): string[];
   /**
+   * Whether the session's plan approval decision approves its next plan, so
+   * the plan approval gate holds a plan-exit permission idle for the
+   * approver's marker. Optional, and false when unwired: nothing is held.
+   */
+  approvesPlanAutomatically?(sessionId: string): boolean;
+  /**
    * May the bg-shell watcher's agent-absence sweep judge this session? See
    * `SessionManager.isAgentAbsenceCandidate` for the arms. Optional, and it
    * defaults to FALSE below: unwired, the sweep never fires at all.
@@ -178,6 +185,7 @@ export class SessionTelemetry {
   private readonly prCommandDetector = new PRCommandDetector();
   private readonly pushCommandDetector = new PushCommandDetector();
   private readonly planModeTrail = new PlanModeTrail();
+  private readonly planApprovalGate: PlanApprovalGate;
   /**
    * Live snapshot writer. Recreated on demand when the resolver returns a
    * different path so toggle changes (e.g. `developer.activityDebugOverlay`)
@@ -233,6 +241,12 @@ export class SessionTelemetry {
     options: SessionTelemetryOptions = {},
   ) {
     this.callbacks = callbacks;
+    this.planApprovalGate = new PlanApprovalGate({
+      approvesPlans: (sessionId) => callbacks.approvesPlanAutomatically?.(sessionId) ?? false,
+      // A held idle the approver never answered: it reaches the pipeline late,
+      // and the session shows as waiting on the user, as it is.
+      release: (sessionId, event) => this.processAdmittedEvents(sessionId, [event]),
+    });
     const activityEngineOptions = options.activityEngineOptions ?? {};
     // Two equivalent forms: a literal string path (legacy / test usage) or
     // a resolver function (production hookup, lets the path follow a
@@ -759,6 +773,9 @@ export class SessionTelemetry {
    * end.
    */
   emitSessionEnd(sessionId: string): void {
+    // Before the early return: whichever path ended the session, a held plan
+    // prompt idle must never be released after it.
+    this.planApprovalGate.end(sessionId);
     let events = this.eventCache.get(sessionId);
     if (events && events.length > 0 && events[events.length - 1].type === EventType.SessionEnd) {
       return;
@@ -802,6 +819,7 @@ export class SessionTelemetry {
     this.ptyTracker.clearSession(sessionId);
     // A suspend ends the agent's process; a resume reports its mode afresh.
     this.planModeTrail.removeSession(sessionId);
+    this.planApprovalGate.clear(sessionId);
     this.notifySessionEnded(sessionId);
     // deleteSession removes engine state directly - it never commits a
     // transition, so onActivityChange never fires to clear this session out
@@ -824,6 +842,7 @@ export class SessionTelemetry {
     this.prCommandDetector.removeSession(sessionId);
     this.pushCommandDetector.removeSession(sessionId);
     this.planModeTrail.removeSession(sessionId);
+    this.planApprovalGate.clear(sessionId);
     this.notifySessionEnded(sessionId);
     // Same reasoning as clearSessionTracking above.
     if (this.permissionPendingSessions.delete(sessionId)) {
@@ -847,6 +866,7 @@ export class SessionTelemetry {
     }
     this.userInterrupts.dispose();
     this.ptyTracker.dispose();
+    this.planApprovalGate.dispose();
     if (this.bgShellWatcher) this.bgShellWatcher.dispose();
     this.activityEngine.dispose();
   }
@@ -970,8 +990,17 @@ export class SessionTelemetry {
    *   - the plan-mode trail records a changed `planMode` report
    *   - activity engine processes the event (counters + predicate)
    *   - bg-shell watcher baseline re-anchors on BackgroundShellStart
+   *
+   * Every event passes the plan approval gate first (`plan-approval-gate.ts`),
+   * which can drop, hold, or follow one with another, so nothing downstream
+   * ever sees the permission idle of a plan Kangentic approved.
    */
   ingestEvents(sessionId: string, events: SessionEvent[]): void {
+    if (events.length === 0) return;
+    this.processAdmittedEvents(sessionId, events.flatMap((event) => this.planApprovalGate.admit(sessionId, event)));
+  }
+
+  private processAdmittedEvents(sessionId: string, events: SessionEvent[]): void {
     if (events.length === 0) return;
     let cached = this.eventCache.get(sessionId);
     if (!cached) {

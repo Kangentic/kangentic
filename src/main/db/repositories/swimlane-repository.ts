@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput, SwimlaneRole, PermissionMode, SessionTarget, SessionSpawnStrategy } from '../../../shared/types';
 import { normalizeSwimlaneRole } from '../../../shared/types';
+import { isPlanApproval } from '../../../shared/plan-approval';
 import { writeTransaction } from '../transaction';
 import { renameAutomationColumnReferences } from './automation-repository';
 
@@ -33,6 +34,8 @@ interface SwimlaneRow {
   // NOT NULL DEFAULT in the schema; mapRow keeps a defensive `?? default` for
   // rows read mid-migration.
   auto_command_mode: string;
+  // NOT NULL DEFAULT 'manual'; narrowed in mapRow.
+  plan_approval: string;
 }
 
 /**
@@ -120,6 +123,7 @@ export class SwimlaneRepository {
       auto_command: input.auto_command ?? null,
       auto_command_mode: input.auto_command_mode ?? 'immediate',
       plan_exit_target_id: input.plan_exit_target_id ?? null,
+      plan_approval: input.plan_approval ?? 'manual',
       agent_override: input.agent_override ?? null,
       model_override: input.model_override ?? null,
       effort_override: input.effort_override ?? null,
@@ -130,8 +134,8 @@ export class SwimlaneRepository {
     };
 
     this.db.prepare(
-      'INSERT INTO swimlanes (id, name, description, role, position, color, icon, is_archived, is_ghost, permission_mode, auto_spawn, auto_command, auto_command_mode, plan_exit_target_id, agent_override, model_override, effort_override, handoff_context, session_target, session_spawn_strategy, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(swimlane.id, swimlane.name, swimlane.description, swimlane.role, swimlane.position, swimlane.color, swimlane.icon, swimlane.is_archived ? 1 : 0, swimlane.is_ghost ? 1 : 0, swimlane.permission_mode, swimlane.auto_spawn ? 1 : 0, swimlane.auto_command, swimlane.auto_command_mode, swimlane.plan_exit_target_id, swimlane.agent_override, swimlane.model_override, swimlane.effort_override, swimlane.handoff_context ? 1 : 0, swimlane.session_target, swimlane.session_spawn_strategy, swimlane.created_at);
+      'INSERT INTO swimlanes (id, name, description, role, position, color, icon, is_archived, is_ghost, permission_mode, auto_spawn, auto_command, auto_command_mode, plan_exit_target_id, plan_approval, agent_override, model_override, effort_override, handoff_context, session_target, session_spawn_strategy, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(swimlane.id, swimlane.name, swimlane.description, swimlane.role, swimlane.position, swimlane.color, swimlane.icon, swimlane.is_archived ? 1 : 0, swimlane.is_ghost ? 1 : 0, swimlane.permission_mode, swimlane.auto_spawn ? 1 : 0, swimlane.auto_command, swimlane.auto_command_mode, swimlane.plan_exit_target_id, swimlane.plan_approval, swimlane.agent_override, swimlane.model_override, swimlane.effort_override, swimlane.handoff_context ? 1 : 0, swimlane.session_target, swimlane.session_spawn_strategy, swimlane.created_at);
 
     return swimlane;
   }
@@ -153,6 +157,7 @@ export class SwimlaneRepository {
     if (input.auto_command !== undefined) updated.auto_command = input.auto_command;
     if (input.auto_command_mode !== undefined) updated.auto_command_mode = input.auto_command_mode;
     if (input.plan_exit_target_id !== undefined) updated.plan_exit_target_id = input.plan_exit_target_id;
+    if (input.plan_approval !== undefined) updated.plan_approval = input.plan_approval;
     if (input.agent_override !== undefined) updated.agent_override = input.agent_override;
     if (input.model_override !== undefined) updated.model_override = input.model_override;
     if (input.effort_override !== undefined) updated.effort_override = input.effort_override;
@@ -168,8 +173,8 @@ export class SwimlaneRepository {
     // repaired by the catch-all in runProjectMigrations, not from here.
     writeTransaction(this.db, () => {
       this.db.prepare(
-        'UPDATE swimlanes SET name = ?, description = ?, color = ?, icon = ?, position = ?, is_archived = ?, is_ghost = ?, permission_mode = ?, auto_spawn = ?, auto_command = ?, auto_command_mode = ?, plan_exit_target_id = ?, agent_override = ?, model_override = ?, effort_override = ?, handoff_context = ?, session_target = ?, session_spawn_strategy = ? WHERE id = ?'
-      ).run(updated.name, updated.description, updated.color, updated.icon, updated.position, updated.is_archived ? 1 : 0, updated.is_ghost ? 1 : 0, updated.permission_mode, updated.auto_spawn ? 1 : 0, updated.auto_command, updated.auto_command_mode, updated.plan_exit_target_id, updated.agent_override, updated.model_override, updated.effort_override, updated.handoff_context ? 1 : 0, updated.session_target, updated.session_spawn_strategy, updated.id);
+        'UPDATE swimlanes SET name = ?, description = ?, color = ?, icon = ?, position = ?, is_archived = ?, is_ghost = ?, permission_mode = ?, auto_spawn = ?, auto_command = ?, auto_command_mode = ?, plan_exit_target_id = ?, plan_approval = ?, agent_override = ?, model_override = ?, effort_override = ?, handoff_context = ?, session_target = ?, session_spawn_strategy = ? WHERE id = ?'
+      ).run(updated.name, updated.description, updated.color, updated.icon, updated.position, updated.is_archived ? 1 : 0, updated.is_ghost ? 1 : 0, updated.permission_mode, updated.auto_spawn ? 1 : 0, updated.auto_command, updated.auto_command_mode, updated.plan_exit_target_id, updated.plan_approval, updated.agent_override, updated.model_override, updated.effort_override, updated.handoff_context ? 1 : 0, updated.session_target, updated.session_spawn_strategy, updated.id);
       // An automation that names this column (Move to column's Column) follows
       // the rename, in the same transaction, so a renamed column never strands
       // a row that pointed at it.
@@ -266,6 +271,8 @@ export class SwimlaneRepository {
       // defined behavior rather than an accident of the comparison operator.
       auto_command_mode: row.auto_command_mode === 'deferred' ? 'deferred' : 'immediate',
       plan_exit_target_id: row.plan_exit_target_id || null,
+      // Narrowed like auto_command_mode: anything unknown is the safe default.
+      plan_approval: isPlanApproval(row.plan_approval) ? row.plan_approval : 'manual',
       agent_override: row.agent_override || null,
       model_override: row.model_override || null,
       effort_override: row.effort_override || null,

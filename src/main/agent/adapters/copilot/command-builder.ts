@@ -69,10 +69,10 @@ export class CopilotCommandBuilder {
   buildCopilotCommand(options: CopilotCommandOptions): string {
     const { shell } = options;
 
-    // Write per-session Copilot config with hooks and statusLine.
-    // The config merges the user's existing ~/.copilot/config.json with
-    // our hooks/statusLine/banner overrides, then is placed in a
-    // session-specific directory passed via --config-dir.
+    // Write the per-session Copilot config home: the event-bridge hooks in
+    // hooks/kangentic.json, plus copies of the user's settings.json and
+    // config.json carrying our statusLine/banner overrides (see
+    // writeSessionConfig). The directory is passed via --config-dir.
     let sessionConfigDir: string | null = null;
     if (options.eventsOutputPath) {
       // Place copilot config alongside the events file
@@ -86,15 +86,18 @@ export class CopilotCommandBuilder {
 
     const parts: string[] = [quoteArg(options.copilotPath, shell)];
 
-    // Resume existing session or start new with caller-specified UUID.
-    // Copilot --resume <uuid> works for both cases:
-    //   - Existing session: resumes the session with that ID
-    //   - New UUID: starts a fresh session with that ID
+    // Resume an existing session or start a new one with the caller's UUID.
+    // `--session-id <uuid>` does both (added in 1.0.51). `--resume <uuid>` no
+    // longer starts a new session: 1.0.97 exits with "No session, task, or
+    // name matched" for an id it has not seen, so no new Copilot task started.
     if (options.sessionId) {
-      parts.push('--resume', quoteArg(options.sessionId, shell));
+      parts.push('--session-id', quoteArg(options.sessionId, shell));
     }
 
-    // Per-session config directory (merged user config + hooks + statusLine)
+    // Per-session config home (hooks file + merged user settings). Copilot
+    // 1.0.40+ prints a deprecation line for --config-dir but still honors it
+    // (1.0.97 assigns it to COPILOT_HOME), and older versions know no
+    // COPILOT_HOME, so the flag stays.
     if (sessionConfigDir) {
       parts.push('--config-dir', quoteArg(toForwardSlash(sessionConfigDir), shell));
     }

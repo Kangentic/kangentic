@@ -101,6 +101,60 @@ describe('parseClaudeTranscript', () => {
     expect(entries).toEqual([]);
   });
 
+  // The `permissionDecision` shapes Claude Code 2.1.302 wrote in the task 840
+  // probe (a hook approval) and in a real session (a user approval), on the
+  // entry carrying the plan exit's result.
+  it('records who approved a call from the result entry\'s permissionDecision', async () => {
+    const planResult = (uuid: string, toolUseId: string, permissionDecision: object | undefined) => ({
+      type: 'user',
+      uuid,
+      timestamp: '2026-10-18T20:13:00Z',
+      ...(permissionDecision ? { permissionDecision } : {}),
+      message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'User has approved your plan.' }] },
+    });
+    tmpFile = writeFixture([
+      planResult('r-hook', 'plan-hook', { decision: 'accept', source: 'hook', reasonType: 'hook' }),
+      planResult('r-user', 'plan-user', { decision: 'accept', source: 'user_temporary' }),
+      planResult('r-config', 'plan-config', { decision: 'accept', source: 'config', reasonType: 'mode' }),
+      planResult('r-none', 'plan-none', undefined),
+    ]);
+    const entries = await parseClaudeTranscript(tmpFile);
+    const approvalOf = (toolUseId: string) => entries
+      .find((entry) => entry.kind === 'tool_result' && entry.toolUseId === toolUseId);
+    expect(approvalOf('plan-hook')).toMatchObject({ approval: 'automatic' });
+    expect(approvalOf('plan-user')).toMatchObject({ approval: 'user' });
+    // A rule or the mode allowing it is nobody's approval, and none recorded is none.
+    expect(approvalOf('plan-config')).not.toHaveProperty('approval');
+    expect(approvalOf('plan-none')).not.toHaveProperty('approval');
+  });
+
+  // Claude Code 2.1.303 (task 840 preview) calls ExitPlanMode with `{}` and
+  // writes the plan to the result line's `toolUseResult`.
+  it('carries the plan an approved plan exit returned onto its result', async () => {
+    tmpFile = writeFixture([
+      {
+        type: 'assistant', uuid: 'a-plan', timestamp: '2026-10-19T01:37:47Z',
+        message: { model: 'claude-haiku-5-5', content: [{ type: 'tool_use', id: 'plan-1', name: 'ExitPlanMode', input: {} }] },
+      },
+      {
+        type: 'user', uuid: 'r-plan', timestamp: '2026-10-19T01:37:48Z',
+        permissionDecision: { decision: 'accept', source: 'hook', reasonType: 'hook' },
+        toolUseResult: { plan: '# Plan: probe\n\n1. Create the file.\n', isAgent: false, filePath: '/mock/plans/probe.md' },
+        message: { content: [{ type: 'tool_result', tool_use_id: 'plan-1', content: 'User has approved your plan.' }] },
+      },
+      {
+        type: 'user', uuid: 'r-write', timestamp: '2026-10-19T01:37:50Z',
+        toolUseResult: { type: 'create', filePath: '/mock/plan-probe.txt', content: 'hi\n' },
+        message: { content: [{ type: 'tool_result', tool_use_id: 'write-1', content: 'File created successfully.' }] },
+      },
+    ]);
+    const entries = await parseClaudeTranscript(tmpFile);
+    const resultOf = (toolUseId: string) => entries
+      .find((entry) => entry.kind === 'tool_result' && entry.toolUseId === toolUseId);
+    expect(resultOf('plan-1')).toMatchObject({ approval: 'automatic', plan: '# Plan: probe\n\n1. Create the file.\n' });
+    expect(resultOf('write-1')).not.toHaveProperty('plan');
+  });
+
   it('parses user, assistant, and tool_result entries', async () => {
     tmpFile = writeFixture([
       { type: 'user', uuid: 'u1', timestamp: '2026-04-09T00:00:00Z', message: { content: 'hello there' } },

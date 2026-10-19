@@ -7,6 +7,7 @@ import type {
   TranscriptUsage,
   TranscriptTurnUsage,
   TranscriptToolCounts,
+  TranscriptToolApproval,
   PerToolStat,
 } from '../../../../shared/types';
 import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
@@ -135,6 +136,8 @@ function parseTranscriptLine(
       userText = messageContent;
     } else if (Array.isArray(messageContent)) {
       const textParts: string[] = [];
+      const approval = toolApprovalOf(raw.permissionDecision);
+      const plan = approvedPlanOf(raw.toolUseResult);
       for (const block of messageContent) {
         if (!isRecord(block)) continue;
         if (block.type === 'tool_result') {
@@ -145,6 +148,8 @@ function parseTranscriptLine(
             toolUseId: typeof block.tool_use_id === 'string' ? block.tool_use_id : '',
             content: stringifyToolResultContent(block.content),
             isError: block.is_error === true,
+            ...(approval ? { approval } : {}),
+            ...(plan ? { plan } : {}),
           });
         } else if (block.type === 'text' && typeof block.text === 'string') {
           textParts.push(block.text);
@@ -1079,6 +1084,32 @@ export function locateClaudeTranscriptFile(agentSessionId: string, cwd: string):
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Who let a tool call run, from the `permissionDecision` Claude writes on the
+ * entry carrying its result: `source` is "hook" for a PermissionRequest hook
+ * (Kangentic's plan approval among them; 2.1.302, task 840 probe) and
+ * "user_temporary" (or another "user_" form) for the person. "config", a rule or
+ * the mode allowing it, says nobody decided, so it reads as no approval.
+ */
+function toolApprovalOf(permissionDecision: unknown): TranscriptToolApproval | null {
+  if (!isRecord(permissionDecision) || permissionDecision.decision !== 'accept') return null;
+  const source = permissionDecision.source;
+  if (source === 'hook') return 'automatic';
+  if (typeof source === 'string' && source.startsWith('user')) return 'user';
+  return null;
+}
+
+/**
+ * The plan an approved ExitPlanMode returned. Claude 2.1.303 calls the tool with
+ * an empty input and writes the plan to the result line's `toolUseResult`
+ * (`{ plan, isAgent, filePath }`; task 840 preview), so the viewer would
+ * otherwise have no plan to show.
+ */
+function approvedPlanOf(toolUseResult: unknown): string | null {
+  if (!isRecord(toolUseResult) || typeof toolUseResult.plan !== 'string') return null;
+  return toolUseResult.plan.trim() === '' ? null : toolUseResult.plan;
 }
 
 /** Finite number or 0 (for tolerant transcript `usage` field reads). */

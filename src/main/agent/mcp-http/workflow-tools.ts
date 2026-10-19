@@ -94,13 +94,14 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
           blocked: z.string().describe('The key of the task that waits for it.'),
         })).optional().describe('"blocked waits for blocker to reach Done". No loops.'),
         revision: z.number().int().optional().describe('The revision kangentic_get_workflow reported. Required when saving an existing workflow you read.'),
+        planApproval: z.enum(['automatic', 'manual']).nullable().optional().describe('Who approves each task\'s plan once the workflow runs: "automatic" has Kangentic approve it so the task moves on by itself (a question the agent asks the user still waits), "manual" waits for the user. Null follows the plan columns on the tasks\' routes (Automatic only when every one is). Set it only when the user asks; omit it to leave it as it is.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ workflow, title, brief, tasks, links, revision, project }) => withProject(resolver, project, (ctx) => callHandler(
+    async ({ workflow, title, brief, tasks, links, revision, planApproval, project }) => withProject(resolver, project, (ctx) => callHandler(
       'save_workflow',
-      { workflow: workflow ?? null, title: title ?? null, brief: brief ?? null, tasks, links: links ?? [], revision: revision ?? null },
+      { workflow: workflow ?? null, title: title ?? null, brief: brief ?? null, tasks, links: links ?? [], revision: revision ?? null, planApproval },
       ctx,
       'Failed to save the workflow',
     )),

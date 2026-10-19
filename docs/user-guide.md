@@ -444,9 +444,10 @@ automations on the right.
 | **Model** / **Effort** | Override the project's default model and reasoning effort for agents in this column. The Model dropdown has the same **Latest** and **Specific versions** layout as the New Task dialog. A column set to `Opus` follows each new Opus release, while one set to a specific version stays put. In **All columns**, a column pinned to an older version shows a small mark naming the newer one. |
 | **Permission Mode** | Override the global permission mode for agents in this column |
 | **Auto Spawn** ("Start an agent here") | Whether moving a task here spawns an agent (default: on). Turning it off also stops any **Send message to agent** automation on the column, since there is no agent to type at; those rows show as off with a disabled switch and the reason. |
-| **Hand off context when the agent changes** | On a move that changes the agent, hand the previous agent's conversation to the new one instead of starting it with just the task title and description |
-| **Session** | Whether the column runs the task's main session or its own isolated one. An isolated session is separate from the main one and starts clean on every entry, which suits an adversarial code review |
-| **Plan Exit Target** | For plan-mode columns: where tasks move when planning completes |
+| **Plan approval** | For plan-mode columns: whether you approve each plan (**Manual**, the default) or Kangentic does (**Automatic**). Automatic answers only the plan prompt; a question the agent asks still waits. A workflow can change it for its own tasks. Automatic is disabled for an agent Kangentic cannot approve plans for ("Kangentic can't approve Codex CLI's plans, so they wait for you."), and both options are disabled while a Board Profile is selected, since every profile shares the column's value |
+| **After Plan Mode** | For plan-mode columns: where the task goes when the plan is approved. Pick a column, shown with its icon in its color; picking the column itself keeps the task where it is |
+| **Hand off context when the agent changes** | The new agent picks up the previous agent's conversation instead of starting from the task description |
+| **Session** | Main continues the task's conversation, and Isolated starts clean on every entry. An isolated session suits a code review or any pass that should not inherit the work before it |
 
 The column's message to its agent is no longer a field here. It is an automation, and it lives in
 the list on the right: see [Automations](#automations) below.
@@ -578,8 +579,9 @@ stops waiting for it.
 (Mod+Shift+L). Its header picks the workflow and holds Rename, the lifecycle button (Start,
 Running, which pauses it, or Resume), Delete, the progress, and New workflow. The canvas in the
 middle draws each task as its card with the links between them, and the inspector on the right
-shows the run order, or the selected task's route, what it waits for, and what waits for it, with
-Open task (Open on its board, for a task on another project's board) at the bottom. The board's
+shows the workflow's Plan approval above the run order, or the selected task's route, what it waits
+for, and what waits for it, with Open task (Open on its board, for a task on another project's
+board) at the bottom. The board's
 search and filter apply to the canvas too. While one of the project's workflows runs, the
 Workflows segment carries the working mark; a paused or not-started workflow shows none. In the
 picker's list, a line under each name says what that workflow's agent
@@ -662,8 +664,15 @@ blocker; a step it has reached cannot change). Remove takes a task out of the wo
 **Moving on.** When a task's agent finishes a turn, the Automation agent (Settings > Workflows)
 judges whether that column's work is done and the agent is not waiting on you. Done moves the task
 to the next column on its route, and the last one to Done; not done leaves it where it is. A task
-that finishes a plan moves on when you approve the plan. Without an Automation agent, or in a
-column with no agent, you drag the card on yourself.
+that finishes a plan moves on when its plan is approved. Who approves is the workflow's **Plan
+approval**, in the inspector with no task selected: **Automatic** has Kangentic approve every plan
+in the workflow (a question the agent asks still waits), and **Manual** leaves each one to you.
+Until you pick, it shows what the plan columns on its tasks' routes give together: Automatic only
+when every one is set to Automatic and runs an agent Kangentic can approve plans for, Manual
+otherwise. A pick holds from then on. When no plan column on the routes runs an agent Kangentic can
+approve plans for, it shows Manual and Automatic is disabled. Before Start, an agent can set it too, with `kangentic_save_workflow`'s
+`planApproval`. Without an Automation agent, or in a column with no agent, you drag the card on
+yourself.
 
 **On the board.** A workflow task's card carries a strip with its workflow's name and a step
 track, and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
@@ -1116,6 +1125,8 @@ A read-only window on the same layer as task detail windows: drag, resize, snap,
 
 The viewer opens positioned at the latest message, or centered on the turn matching where you had scrolled in the live terminal, so it lands where you were looking. A search bar at the top does debounced substring search across the transcript with snippet results and prev/next navigation; press **Mod+F** (Ctrl+F on Windows/Linux, Cmd+F on macOS) to focus it, and click a result to jump straight to that turn. Very long transcripts (tens of thousands of messages) stay smooth via row virtualization and a custom overlay scrollbar with a "jump to latest" pill.
 
+A plan the agent submitted for approval shows as a **Plan** card, open, with the plan as formatted text. It is tagged **Approved automatically** when Kangentic approved it, or **Approved by you** when you did, as the agent's own transcript records it. A plan whose transcript does not say who approved it has no tag. A copied plan carries the same tag. Claude Code 2.1.303 records the plan only once it is approved, so a plan still waiting for you shows as a plain ExitPlanMode tool call until you approve it.
+
 When the agent has deleted its own transcript, the viewer shows Kangentic's saved copy under a banner that names the agent. The copy is written on each settled turn, a suspend, and an exit, so it stays readable after the agent's cleanup.
 
 ## Command Terminal
@@ -1550,7 +1561,7 @@ Terminal:
 
 ## Tips
 
-- **Plan mode workflow:** Use a Planning column with `permission_mode='plan'` and `plan_exit_target_id` pointing to your Executing column. The agent plans first, then auto-moves to execution.
+- **Plan mode workflow:** Use a Planning column with Permission Mode set to Plan and **After Plan Mode** pointing to your Executing column. The agent plans first, then auto-moves to execution when the plan is approved. Set **Plan approval** to Automatic to have Kangentic approve each plan, so the task moves on without waiting for you.
 - **Column messages:** Add a **Send message to agent** automation on a Code Review column to automatically ask the agent to review its own code when tasks arrive. Prose works: "Review the diff on this branch and fix what you would change."
 - **Concurrent agents:** Increase `maxConcurrentSessions` to run more agents in parallel. Each needs its own worktree to avoid conflicts.
 - **Resume from Done:** Unarchive a completed task and drag it back to an active column. Kangentic recreates the worktree from the preserved branch on the fly, and the agent picks up exactly where it left off. If the agent deleted that conversation in the meantime, it starts a new one from a recap instead (see Session Persistence).

@@ -125,6 +125,7 @@ const SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, FieldSharing> = {
   handoff_context: 'team',
   session_target: 'team',
   session_spawn_strategy: 'team',
+  plan_approval: 'team',
   // DB-only: identity / ordering / runtime state / timestamp - never team config.
   id: 'db-only',
   position: 'db-only',
@@ -151,6 +152,7 @@ const ROUNDTRIP_CASES: Array<{ field: keyof Swimlane; configKey: keyof BoardColu
   { field: 'handoff_context', configKey: 'handoffContext', dbValue: true, configValue: true },
   { field: 'session_target', configKey: 'sessionTarget', dbValue: 'isolated', configValue: 'isolated' },
   { field: 'session_spawn_strategy', configKey: 'sessionSpawnStrategy', dbValue: 'always_spawn_new', configValue: 'always_spawn_new' },
+  { field: 'plan_approval', configKey: 'planApproval', dbValue: 'automatic', configValue: 'automatic' },
 ];
 
 /**
@@ -183,6 +185,7 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
     handoff_context: false,
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',
+    plan_approval: 'manual',
     created_at: '2025-01-01T00:00:00.000Z',
     ...overrides,
   };
@@ -426,5 +429,24 @@ describe('board-config parity: apply (kangentic.json -> DB)', () => {
       (updated as Record<string, unknown>).description,
       'apply-config.ts must fall back to existing.description when config omits the description key',
     ).toBe('Pre-existing description text');
+  });
+
+  it('update turns plan approval back to Manual when the config omits the key', () => {
+    // The deliberate exception to the description rule above. Build omits
+    // `planApproval` at its default, so a teammate switching a column back to
+    // Manual removes the key; falling back to the receiving machine's value would
+    // keep approving plans there.
+    //
+    // Red trigger: change the update path to `columnConfig.planApproval ?? existing.plan_approval`.
+    hoisted.lanes = [
+      makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+      makeSwimlane({ id: 'lane-review', name: 'Review', plan_approval: 'automatic' }),
+      makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+    ];
+
+    applyBoardConfigToDb('p', makeConfig({ id: 'lane-review', name: 'Review' }));
+
+    const updated = hoisted.updateCalls.find((call) => call.id === 'lane-review');
+    expect((updated as Record<string, unknown>).plan_approval).toBe('manual');
   });
 });

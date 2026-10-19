@@ -20,14 +20,17 @@
 import type {
   AutoCommandMode,
   PermissionMode,
+  PlanApproval,
   SessionSpawnStrategy,
   SessionTarget,
 } from '../../../shared/types';
+import { PLAN_APPROVALS } from '../../../shared/plan-approval';
 
 export const VALID_PERMISSION_MODES: PermissionMode[] = ['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto'];
 export const VALID_SESSION_TARGETS: SessionTarget[] = ['main', 'isolated'];
 export const VALID_SESSION_SPAWN_STRATEGIES: SessionSpawnStrategy[] = ['create_or_resume', 'always_spawn_new'];
 export const VALID_AUTO_COMMAND_MODES: AutoCommandMode[] = ['immediate', 'deferred'];
+export const VALID_PLAN_APPROVALS: PlanApproval[] = [...PLAN_APPROVALS];
 
 /**
  * Every enum-valued field a caller can set on a column, paired with its allowed
@@ -42,6 +45,7 @@ export const COLUMN_ENUM_FIELDS: Readonly<Record<string, readonly string[]>> = {
   sessionTarget: VALID_SESSION_TARGETS,
   sessionSpawnStrategy: VALID_SESSION_SPAWN_STRATEGIES,
   autoCommandMode: VALID_AUTO_COMMAND_MODES,
+  planApproval: VALID_PLAN_APPROVALS,
 };
 
 /** Membership test written as a type predicate, so the success path needs no cast. */

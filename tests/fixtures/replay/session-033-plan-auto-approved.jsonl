@@ -1,0 +1,16 @@
+{"ts":1792374495114,"type":"session_start","hookContext":"{\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"transcript_path\":\"C:\\\\Users\\\\dev\\\\.claude\\\\projects\\\\C--Users-dev-repo\\\\00000000-0000-0000-0000-000000000000.jsonl\",\"cwd\":\"C:\\\\Users\\\\dev\\\\repo\",\"scratchpad_dir\":\"C:\\\\Users\\\\dev\\\\repo\\\\scratchpad\",\"hook_event_name\":\"SessionStart\",\"source\":\"startup\",\"model\":\"claude-haiku-5-5\"}"}
+{"ts":1792374495609,"type":"prompt","planMode":true}
+{"ts":1792374498761,"type":"tool_start","tool":"ToolSearch","toolId":"toolu_012oNGHhjirpB6VTmAy2C5qf","detail":"select:ExitPlanMode"}
+{"ts":1792374498896,"type":"tool_end","tool":"ToolSearch","toolId":"toolu_012oNGHhjirpB6VTmAy2C5qf"}
+{"ts":1792374500767,"type":"tool_start","tool":"Write","toolId":"toolu_01RLoUy34wZLDoYz2VH66gXW","detail":"C:\\Users\\dev\\.claude\\plans\\plan.md"}
+{"ts":1792374500956,"type":"tool_end","tool":"Write","toolId":"toolu_01RLoUy34wZLDoYz2VH66gXW"}
+{"ts":1792374501095,"type":"tool_start","tool":"ExitPlanMode","toolId":"toolu_012ZBRZfZzDCxdnjf3HcvcSP"}
+{"ts":1792374501230,"type":"idle","detail":"permission","tool":"ExitPlanMode"}
+{"ts":1792374501259,"type":"plan_approval_sent","detail":"Moved to Executing"}
+{"ts":1792374501402,"type":"tool_end","tool":"ExitPlanMode","toolId":"toolu_012ZBRZfZzDCxdnjf3HcvcSP"}
+{"ts":1792374504107,"type":"tool_start","tool":"Write","toolId":"toolu_01RoJgHFdQPSzFNjRmUSpmpX","detail":"C:\\Users\\dev\\repo\\card-probe.txt"}
+{"ts":1792374504365,"type":"tool_end","tool":"Write","toolId":"toolu_01RoJgHFdQPSzFNjRmUSpmpX"}
+{"ts":1792374506158,"type":"idle","planMode":false}
+{"ts":1792374507623,"type":"subagent_stop","detail":"","subagentId":"ab14638034e729468"}
+{"ts":1792374566279,"type":"idle_hint","detail":"Claude is waiting for your input"}
+{"ts":1792374688074,"type":"subagent_stop","detail":"","subagentId":"a27ebbea721cf5a9c"}

@@ -204,6 +204,9 @@ describe('MCP column-field parity', () => {
       // acts as the default.
       expect(enumOptionsFor(config, 'autoCommandMode', toolName))
         .toEqual(readStringUnionMembers('AutoCommandMode'));
+      // Same collapse in mapRow: anything but 'automatic' reads back as 'manual'.
+      expect(enumOptionsFor(config, 'planApproval', toolName))
+        .toEqual(readStringUnionMembers('PlanApproval'));
     }
   });
 
@@ -230,6 +233,8 @@ describe('MCP column-field parity', () => {
       .toEqual(readStringUnionMembers('SessionSpawnStrategy'));
     expect([...COLUMN_ENUM_FIELDS.autoCommandMode].sort())
       .toEqual(readStringUnionMembers('AutoCommandMode'));
+    expect([...COLUMN_ENUM_FIELDS.planApproval].sort())
+      .toEqual(readStringUnionMembers('PlanApproval'));
   });
 
   it('the enum fields are not nullable, because their DB columns are NOT NULL', () => {
@@ -242,7 +247,7 @@ describe('MCP column-field parity', () => {
       const config = configs.get(toolName);
       if (!config) throw new Error(`Tool "${toolName}" was not registered`);
       const shape = readZodDefinition(config.inputSchema).shape;
-      for (const fieldName of ['sessionTarget', 'sessionSpawnStrategy', 'autoCommandMode']) {
+      for (const fieldName of ['sessionTarget', 'sessionSpawnStrategy', 'autoCommandMode', 'planApproval']) {
         const fieldSchema = shape?.[fieldName];
         if (!fieldSchema) throw new Error(`${toolName} has no "${fieldName}" parameter`);
         // `.optional()` is expected and unwrapped; a `nullable` anywhere in the

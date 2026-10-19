@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CircleCheckBig, Folder, Layers, Plus, SquareTerminal, Workflow as WorkflowIcon, X } from 'lucide-react';
-import type { Task, WorkflowBoardEnds, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
+import type { PlanApproval, Task, WorkflowBoardEnds, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
@@ -10,6 +10,7 @@ import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { OverlayPopover } from '../OverlayPopover';
 import { ToggleSwitch } from '../settings/shared';
+import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { useTaskCardViewModel } from '../board/task-card-view';
 import {
   addBlockerRefusal,
@@ -412,6 +413,8 @@ export interface WorkflowInspectorProps {
   onRefuse: (message: string) => void;
   /** taskDetail only: the footer's Open workflow. */
   onOpenWorkflow?: () => void;
+  /** Who approves plans for the workflow's tasks; the control is read-only without it. */
+  onSetPlanApproval?: (planApproval: PlanApproval) => void;
 }
 
 export function WorkflowInspector(props: WorkflowInspectorProps) {
@@ -441,12 +444,50 @@ function RunOrderRowMark({ task }: { task: Task }) {
   );
 }
 
-function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorProps) {
+/** Module scope: SegmentedControl keys its measuring effect on the options array. */
+const WORKFLOW_PLAN_APPROVAL_OPTIONS: readonly SegmentedControlOption<PlanApproval>[] = [
+  { value: 'automatic', label: 'Automatic', tip: 'Approve every plan in this workflow for you. Questions the agent asks still wait.', testId: 'workflow-plan-approval-automatic' },
+  { value: 'manual', label: 'Manual', tip: 'You approve every plan in this workflow.', testId: 'workflow-plan-approval-manual' },
+];
+
+/** For a workflow whose plan columns all run agents Kangentic cannot approve plans for. */
+const WORKFLOW_PLAN_APPROVAL_OPTIONS_MANUAL_ONLY: readonly SegmentedControlOption<PlanApproval>[] = WORKFLOW_PLAN_APPROVAL_OPTIONS.map((option) => (
+  option.value === 'automatic'
+    ? { ...option, disabled: true, disabledReason: 'Kangentic can\'t approve plans for the agents in these plan columns, so they wait for you.' }
+    : option
+));
+
+/**
+ * Who approves plans for every task in the workflow. What is lit is what
+ * happens: until someone picks, that is the answer its plan columns give
+ * together (`WorkflowDetail.planApproval`), and a pick holds from then on.
+ * Where no plan column's agent can approve plans, that is Manual.
+ */
+function PlanApprovalSection({ detail, onSetPlanApproval }: Pick<WorkflowInspectorProps, 'detail' | 'onSetPlanApproval'>) {
+  return (
+    <section className="shrink-0 border-b border-edge px-4 py-3.5" data-testid="workflow-plan-approval-section" data-picked={detail.planApproval.picked}>
+      <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-faint">Plan approval</div>
+      <SegmentedControl
+        options={detail.planApproval.canApprove ? WORKFLOW_PLAN_APPROVAL_OPTIONS : WORKFLOW_PLAN_APPROVAL_OPTIONS_MANUAL_ONLY}
+        value={detail.planApproval.value}
+        onChange={(next) => onSetPlanApproval?.(next)}
+        disabled={!onSetPlanApproval}
+        fullWidth
+        quiet
+        ariaLabel="Plan approval"
+        testId="workflow-plan-approval"
+      />
+    </section>
+  );
+}
+
+function RunOrderPanel({ detail, visibleKeys, onSelectTask, onSetPlanApproval }: WorkflowInspectorProps) {
   const groups = useMemo(() => runOrder(detail)
     .map((group) => group.filter((task) => !visibleKeys || visibleKeys.has(task.key)))
     .filter((group) => group.length > 0), [detail, visibleKeys]);
   return (
     <>
+      <PlanApprovalSection detail={detail} onSetPlanApproval={onSetPlanApproval} />
       <div className="shrink-0 px-4 pt-3.5 pb-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-faint">Run order</div>
       <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3" data-testid="workflow-run-order">
         {groups.length === 0 && (

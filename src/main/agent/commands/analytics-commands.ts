@@ -667,6 +667,7 @@ export const handleGetColumnDetail: CommandHandler = (
     `  Session: ${matched.session_target === 'isolated' ? 'isolated (own conversation)' : 'main (task conversation)'}`,
     `  On enter: ${matched.session_spawn_strategy === 'always_spawn_new' ? 'always spawn new' : 'create or resume'}`,
     `  Handoff context: ${matched.handoff_context ? 'yes' : 'no'}`,
+    `  Plan approval: ${matched.plan_approval}${matched.permission_mode === 'plan' ? '' : ' (applies only while permission mode is plan)'}`,
   ];
   if (completedCount !== null) lines.push(`  Completed: ${completedCount}`);
   if (matched.description) lines.push(`  Description: ${matched.description}`);
@@ -755,6 +756,7 @@ export const handleGetColumnDetail: CommandHandler = (
       sessionTarget: matched.session_target,
       sessionSpawnStrategy: matched.session_spawn_strategy,
       planExitTarget: planExitTargetName,
+      planApproval: matched.plan_approval,
       color: matched.color,
       icon: matched.icon,
       isArchived: matched.is_archived,

@@ -48,6 +48,7 @@ import {
   type ExpiredConversationRecapSources,
 } from '../agent/shared/expired-conversation-recap';
 import { sessionOutputPaths } from './session-paths';
+import { notePlanApprovalSpawn, planSpawnNeedsBypass } from '../plan-approval/plan-approval-spawns';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { AttachmentRepository } from '../db/repositories/attachment-repository';
@@ -744,6 +745,14 @@ export class TransitionEngine {
       throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
     }
     const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
+    // A plan Kangentic approves into a bypass column can switch to bypass only
+    // in a session launched with it available. The writer reads both facts.
+    const bypassAvailable = planSpawnNeedsBypass({
+      permissionMode,
+      agentApprovesPlans: adapter.supportsPlanAutoApproval === true,
+      projectId: appConfig.projectId,
+      taskId: task.id,
+    });
 
     const shell = await this.sessionManager.getShell();
     // A `.cmd` head under a PowerShell or Git Bash host hands the multi-line
@@ -780,8 +789,10 @@ export class TransitionEngine {
       taskProcessTag: task.id,
       // The session's own id, which a folder-shared adapter file is held under.
       ptySessionId,
+      bypassAvailable,
     };
     const command = adapter.buildCommand(commandOptions);
+    notePlanApprovalSpawn(ptySessionId, { sessionDir, bypassAvailable });
 
     let extraEnv: Record<string, string> | null;
     try {

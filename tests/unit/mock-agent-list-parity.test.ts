@@ -144,6 +144,19 @@ describe('mock-electron-api agents.list() fixture stays in sync with the agent r
     expect(actual, 'tests/ui/mock-electron-api.js agent entries drifted from the adapters\' kangenticMcp / canBeWorkflowAgent').toEqual(expected);
   });
 
+  // The Column Manager offers Automatic plan approval only where this is true,
+  // and the mock's workflow detail derives a workflow's value from it too.
+  it('every mock entry carries its adapter\'s plan auto-approval capability', async () => {
+    const mockAgents = await readMockAgentList();
+    const expected: Record<string, boolean> = {};
+    const actual: Record<string, boolean> = {};
+    for (const name of agentRegistry.list()) {
+      expected[name] = agentRegistry.getOrThrow(name).supportsPlanAutoApproval === true;
+      actual[name] = mockAgents.find((entry) => entry.name === name)?.supportsPlanAutoApproval === true;
+    }
+    expect(actual, 'tests/ui/mock-electron-api.js agent entries drifted from the adapters\' supportsPlanAutoApproval').toEqual(expected);
+  });
+
   it('sanity: the extraction itself finds a plausible number of mock agent entries', () => {
     // Guards the marker-bounded extraction against silent drift (e.g. the
     // fixture is refactored and the regex starts matching zero names), which

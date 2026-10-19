@@ -66,6 +66,7 @@ async function buildAgentList(
         answerCapabilities: adapter.answerCapabilities,
         kangenticMcp: adapter.kangenticMcp,
         supportsWorkflowAgent: canBeWorkflowAgent(adapter),
+        supportsPlanAutoApproval: adapter.supportsPlanAutoApproval === true,
         capabilities,
         remoteExecution: adapter.remoteExecution?.info,
         launchOptions: adapter.launchOptions,

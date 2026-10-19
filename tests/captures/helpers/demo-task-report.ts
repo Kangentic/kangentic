@@ -110,7 +110,7 @@ const SWIMLANES: Swimlane[] = DEMO_LANES_BY_PROJECT[PROJECT_CONTOSO].map((lane, 
   id: demoLaneId(PROJECT_CONTOSO, lane.slug), name: lane.name, description: null, role: lane.role, position,
   color: lane.color, icon: lane.icon, is_archived: lane.is_archived, is_ghost: false, permission_mode: null,
   auto_spawn: lane.auto_spawn, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null,
-  agent_override: lane.agent, model_override: null, effort_override: null, handoff_context: false,
+  plan_approval: 'manual', agent_override: lane.agent, model_override: null, effort_override: null, handoff_context: false,
   session_target: lane.slug === 'review' ? 'isolated' : 'main', session_spawn_strategy: 'create_or_resume',
   created_at: timestampAt(-ONE_DAY_MS),
 }));
