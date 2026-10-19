@@ -1,9 +1,11 @@
 /**
  * Runs the REAL event-bridge.js with the directives Qwen's real `buildHooks`
- * emits, fed with hook payloads shaped like Qwen Code 0.24.0's.
+ * emits, fed with Qwen Code hook payloads.
  *
- * The payloads are built from the 0.24.0 bundle, NOT a live capture: field
- * names from `HookEventHandler.createBaseInput` and the `fire*Event` methods
+ * The last describe replays payloads captured from a live Qwen Code 0.25.2
+ * session (tests/fixtures/qwen-hooks/, paths and ids sanitized). The two
+ * before it build their payloads from the 0.24.0 bundle instead: field names
+ * from `HookEventHandler.createBaseInput` and the `fire*Event` methods
  * (packages/core/src/hooks/hookEventHandler.ts), the PostToolUse
  * `tool_response` from the scheduler (`{ llmContent, returnDisplay }`), and
  * the plan exit texts from `ExitPlanModeToolInvocation`
@@ -203,7 +205,10 @@ describe('Qwen tool and turn hooks', () => {
     })).toMatchObject({ type: EventType.Idle, planMode: false });
   });
 
-  it('a subagent\'s Stop reports no plan mode', () => {
+  // A guard, not a live shape: a 0.25.2 subagent sends no Stop at all (see the
+  // live replays below), but a Stop carrying `agent_id` must still never
+  // report the subagent's mode as the session's.
+  it('a Stop carrying a subagent\'s agent_id reports no plan mode', () => {
     const event = runHook(QwenHookEvent.Stop, {
       ...baseInput('Stop', 'plan'),
       agent_id: 'agent-3f2a',
@@ -222,5 +227,87 @@ describe('Qwen tool and turn hooks', () => {
       last_assistant_message: '',
     });
     expect(event).toMatchObject({ type: EventType.TurnFailed, detail: 'rate_limit' });
+  });
+});
+
+const LIVE_FIXTURES = path.resolve(__dirname, '../fixtures/qwen-hooks');
+
+/** A payload captured from a live Qwen Code 0.25.2 session. */
+function livePayload(fileName: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(path.join(LIVE_FIXTURES, fileName), 'utf-8')) as Record<string, unknown>;
+}
+
+/** Replay a live payload through `hookEvent`'s wiring, on an empty events file. */
+function replay(hookEvent: QwenHookEvent, fileName: string): Record<string, unknown> {
+  fs.rmSync(outputFile, { force: true });
+  return runHook(hookEvent, livePayload(fileName));
+}
+
+/**
+ * One Qwen Code 0.25.2 session in Default mode: a subagent run, then a shell
+ * command whose permission prompt was answered and which was interrupted with
+ * Esc while it ran, then one more prompt. The session fired PreToolUse, then
+ * PermissionRequest, for every tool that asked.
+ */
+describe('Qwen live 0.25.2 payloads (tests/fixtures/qwen-hooks/)', () => {
+  it('an Esc interrupt of a running shell tool ends the turn, under the id its PreToolUse started', () => {
+    const start = replay(QwenHookEvent.PreToolUse, 'pre-tool-use-shell.json');
+    expect(start).toMatchObject({ type: EventType.ToolStart, tool: 'run_shell_command', detail: 'ping -n 60 127.0.0.1' });
+
+    // No Stop follows an interrupt, so this event is the turn's only end.
+    const interrupt = replay(QwenHookEvent.PostToolUseFailure, 'post-tool-use-failure-interrupt.json');
+    expect(interrupt).toMatchObject({ type: EventType.Interrupted, tool: 'run_shell_command' });
+    expect(interrupt.toolId).toBe(start.toolId);
+    expect(interrupt.toolId).toBe(livePayload('pre-tool-use-shell.json').tool_use_id);
+  });
+
+  it('the permission prompt is the permission idle, naming the tool that waits', () => {
+    expect(replay(QwenHookEvent.PermissionRequest, 'permission-request-shell.json')).toMatchObject({
+      type: EventType.Idle,
+      detail: 'permission',
+      tool: 'run_shell_command',
+    });
+  });
+
+  // The session ran in Default mode, so planMode is false. A plan-mode
+  // session's true has no live fixture; the synthetic test above pins it.
+  it('the main agent\'s prompt and turn end report the session\'s plan mode', () => {
+    expect(replay(QwenHookEvent.UserPromptSubmit, 'user-prompt-submit-main.json'))
+      .toMatchObject({ type: EventType.Prompt, planMode: false });
+    expect(replay(QwenHookEvent.Stop, 'stop-main.json'))
+      .toMatchObject({ type: EventType.Idle, planMode: false });
+  });
+
+  it('the empty prompt Qwen submits after each tool result is a prompt in the same mode', () => {
+    expect(livePayload('user-prompt-submit-continuation.json').prompt).toBe('');
+    expect(replay(QwenHookEvent.UserPromptSubmit, 'user-prompt-submit-continuation.json'))
+      .toMatchObject({ type: EventType.Prompt, planMode: false });
+  });
+
+  // Qwen sends this right after almost every PreToolUse, mid-turn, so it is
+  // never a turn end and must not become an idle hint.
+  it('the mid-turn "waiting for your input" notification stays a log-only notification', () => {
+    const event = replay(QwenHookEvent.Notification, 'notification-idle-prompt-mid-turn.json');
+    expect(event).toMatchObject({ type: EventType.Notification, detail: 'Qwen Code is waiting for your input' });
+    expect(event.type).not.toBe(EventType.IdleHint);
+  });
+
+  it('a subagent sends its own tool events, and SubagentStart and SubagentStop in place of UserPromptSubmit and Stop', () => {
+    const subagentStart = livePayload('subagent-start.json');
+    const subagentStop = livePayload('subagent-stop.json');
+    const subagentToolStart = livePayload('subagent-pre-tool-use.json');
+    expect(subagentStart.hook_event_name).toBe('SubagentStart');
+    expect(subagentStop.hook_event_name).toBe('SubagentStop');
+    expect(subagentToolStart.agent_id).toBe(subagentStart.agent_id);
+    expect(subagentStop.agent_id).toBe(subagentStart.agent_id);
+
+    expect(replay(QwenHookEvent.PreToolUse, 'subagent-pre-tool-use.json'))
+      .toMatchObject({ type: EventType.ToolStart, tool: 'glob', toolId: subagentToolStart.tool_use_id });
+
+    // Not wired yet: a background subagent works on past the main Stop, and
+    // the engine's subagent depth has not been replayed against that order.
+    const hooks = buildHooks('/mock/.kangentic/event-bridge.js', '/mock/.kangentic/events.jsonl', {});
+    expect(Object.keys(hooks)).not.toContain(subagentStart.hook_event_name);
+    expect(Object.keys(hooks)).not.toContain(subagentStop.hook_event_name);
   });
 });

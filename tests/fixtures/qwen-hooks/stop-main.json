@@ -1,0 +1,24 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\c--users-dev-repo\\chats\\00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "Stop",
+  "timestamp": "2026-10-19T05:16:44.343Z",
+  "permission_mode": "default",
+  "prompt_id": "00000000-0000-0000-0000-000000000000########1",
+  "stop_hook_active": false,
+  "last_assistant_message": "done",
+  "background_tasks": [
+    {
+      "id": "general-purpose-toolu_01Ux4srM7jZSSATKqCD95pyx",
+      "status": "completed",
+      "agent_type": "general-purpose",
+      "started_at": "2026-10-19T05:15:37.466Z",
+      "description": "List files and count total"
+    }
+  ],
+  "crons": [],
+  "context_usage": 0.14615,
+  "context_limit": 200000,
+  "input_tokens": 29230
+}

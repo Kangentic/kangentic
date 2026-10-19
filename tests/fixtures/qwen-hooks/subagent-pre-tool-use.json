@@ -1,0 +1,17 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\c--users-dev-repo\\chats\\00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "PreToolUse",
+  "timestamp": "2026-10-19T05:20:25.319Z",
+  "permission_mode": "auto-edit",
+  "agent_id": "general-purpose-toolu_01NFMzeGd81h1LwFa3nXr9VF",
+  "prompt_id": "00000000-0000-0000-0000-000000000000########2",
+  "tool_name": "glob",
+  "tool_input": {
+    "pattern": "*.json",
+    "path": "C:\\Users\\dev\\repo"
+  },
+  "tool_use_id": "toolu_1792387225319_08l9wafk4",
+  "tool_call_id": "toolu_01NiMVsKbNfsi2qQcg7qr87M"
+}
