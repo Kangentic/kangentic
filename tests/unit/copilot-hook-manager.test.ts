@@ -40,6 +40,15 @@ import {
 } from '../../src/main/agent/adapters/copilot';
 import { extractTool, extractDetail } from '../../src/main/agent/shared/directive-builders';
 import { resolveBridgeScript } from '../../src/main/agent/shared/bridge-utils';
+import {
+  buildForPlatform,
+  CLI_ENVIRONMENT_REFERENCE,
+  HOOK_PROBE_SEGMENT,
+  installedShOrPowerShellHosts,
+  runAsHookShell,
+} from './helpers/shell-argv-probe';
+
+const defaultBridgePath = (name: string): string => `/fake/scripts/${name}.js`;
 
 let tmpDir: string;
 let configDir: string;
@@ -226,39 +235,81 @@ describe('copilot-hook-manager', () => {
       expect((config.statusLine as { command: string }).command).toContain(STATUS_PATH);
     });
 
-    it('escapes $, a backtick and a double quote in both status line paths for a POSIX shell', () => {
+    it('puts $, a backtick and a double quote in both status line paths in single quotes for sh', () => {
       // Copilot hands the statusLine command to a POSIX shell on macOS and Linux,
-      // where all three stay special inside double quotes: an unescaped `$work`
+      // where all three stay special inside double quotes: an unquoted `$work`
       // expanded to an empty string, so the bridge was handed the wrong path.
       //
       // quoteBridgePath reads process.platform at call time and this suite also runs
-      // on win32, where it escapes nothing. Pin it to linux for the write only.
+      // on win32, where the status line goes to cmd. Pin it to linux for the write only.
       //
       // The builder only embeds both paths in a string, never creates them, so the
       // specials can sit anywhere. The bridge is keyed by name: buildHooks asks for
       // event-bridge first and each of settings.json and config.json asks for
       // status-bridge, so a once-only override would hit the wrong call. The status
       // path starts as a Windows path: toForwardSlash runs before the quoting, so its
-      // separators arrive as `/` and are not read as escapes and doubled.
-      const defaultBridgePath = (name: string): string => `/fake/scripts/${name}.js`;
+      // separators arrive as `/` and are not single-quoted one by one.
       vi.mocked(resolveBridgeScript).mockImplementation((name: string) => (
         name === 'status-bridge' ? '/fake/$scripts/st"atus-bridge.js' : defaultBridgePath(name)
       ));
-      const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
-      Object.defineProperty(process, 'platform', { value: 'linux' });
       try {
-        writeSessionConfig(configDir, EVENTS_PATH, 'C:\\fake\\$work\\`tick`\\q"uote\\status.json');
+        buildForPlatform('linux', () => writeSessionConfig(configDir, EVENTS_PATH, 'C:\\fake\\$work\\`tick`\\q"uote\\status.json'));
       } finally {
-        Object.defineProperty(process, 'platform', originalPlatformDescriptor);
         vi.mocked(resolveBridgeScript).mockImplementation(defaultBridgePath);
       }
 
-      const expectedCommand = 'node "/fake/\\$scripts/st\\"atus-bridge.js" "C:/fake/\\$work/\\`tick\\`/q\\"uote/status.json"';
+      const expectedCommand = `node "/fake/"'$'"scripts/st"'"'"atus-bridge.js" "C:/fake/"'$'"work/"'\`'"tick"'\`'"/q"'"'"uote/status.json"`;
       for (const fileName of ['settings.json', 'config.json']) {
         const statusLine = readJson(path.join(configDir, fileName)).statusLine as { command: string };
         expect(statusLine.command, fileName).toBe(expectedCommand);
       }
     });
+
+    it('quotes a Windows status line for verbatim cmd and the hooks for pwsh', () => {
+      // On Windows the status line runs as `cmd /d /s /c "<command>"` (Node's
+      // `shell: true`), and each hook's `command` as `pwsh -nop -nol -c`.
+      vi.mocked(resolveBridgeScript).mockImplementation((name: string) => `C:/fake/$scripts/${name}.js`);
+      try {
+        buildForPlatform('win32', () => writeSessionConfig(configDir, 'C:\\Users\\dev\\$work\\events.jsonl', 'C:\\Users\\dev\\$work\\%OS%\\status.json'));
+      } finally {
+        vi.mocked(resolveBridgeScript).mockImplementation(defaultBridgePath);
+      }
+
+      const statusLine = readJson(path.join(configDir, 'settings.json')).statusLine as { command: string };
+      expect(statusLine.command).toBe('node "C:/fake/"$"scripts/status-bridge.js" "C:/Users/dev/"$"work/"^%"OS"^%"/status.json"');
+      const hooks = (readJson(hooksFilePath()).hooks ?? {}) as Record<string, Array<{ command: string }>>;
+      for (const [event, entries] of Object.entries(hooks)) {
+        expect(entries[0].command.startsWith(`node C:"/fake/"'$'"scripts/event-bridge.js" C:"/Users/dev/"'$'"work/events.jsonl" `), event).toBe(true);
+      }
+      for (const command of [statusLine.command, ...Object.values(hooks).map((entries) => entries[0].command)]) {
+        expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
+      }
+    });
+
+    it.runIf(process.platform === 'win32')('a Windows status line and hook reach their real bridges through cmd and pwsh', () => {
+      const realBridge = (name: string): string => path.resolve(__dirname, '../../src/main/agent', `${name}.js`);
+      const trickyDirectory = path.join(tmpDir, HOOK_PROBE_SEGMENT);
+      fs.mkdirSync(trickyDirectory, { recursive: true });
+      const statusOutput = path.join(trickyDirectory, 'status.json');
+      const eventsOutput = path.join(trickyDirectory, 'events.jsonl');
+      vi.mocked(resolveBridgeScript).mockImplementation(realBridge);
+      try {
+        writeSessionConfig(configDir, eventsOutput, statusOutput);
+      } finally {
+        vi.mocked(resolveBridgeScript).mockImplementation(defaultBridgePath);
+      }
+
+      const statusCommand = (readJson(path.join(configDir, 'settings.json')).statusLine as { command: string }).command;
+      runAsHookShell('cmd-verbatim', statusCommand, { input: '{"model":"probe-model"}' });
+      expect(fs.readFileSync(statusOutput, 'utf-8')).toContain('probe-model');
+
+      const preToolUse = (readJson(hooksFilePath()).hooks as Record<string, Array<{ command: string }>>).preToolUse[0].command;
+      for (const host of installedShOrPowerShellHosts()) {
+        fs.rmSync(eventsOutput, { force: true });
+        runAsHookShell(host, preToolUse, { input: JSON.stringify({ toolName: 'view', toolArgs: {} }) });
+        expect(fs.readFileSync(eventsOutput, 'utf-8'), host).toContain('"tool_start"');
+      }
+    }, 120_000);
 
     it('preserves the user settings.json, including the user\'s own hooks', () => {
       const userHooks = { postToolUse: [{ type: 'command', bash: './format.sh', powershell: './format.ps1' }] };

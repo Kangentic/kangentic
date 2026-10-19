@@ -44,6 +44,11 @@
  * POSIX the probe adds `posixAgentPath`, an executable script in a directory
  * whose name has a space, so the agent's own path is quoted the way a Homebrew
  * `node@22` path is, and nushell has to run a quoted command head.
+ *
+ * `runAsHookShell` covers a different entry point: an agent CLI handing a whole
+ * hook or status-line command to a shell as one argument, never a prompt line.
+ * It runs on every platform (sh and bash off Windows), and on Windows finds Git
+ * Bash at its install path.
  */
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs';
@@ -213,7 +218,10 @@ export function typeAtCmdPrompt(lines: readonly string[]): string[][] {
   return readProbeOutput(result.stdout).printed;
 }
 
-let cachedPowerShellHosts: string[] | undefined;
+/** A PowerShell host, by the program name it runs as. */
+export type PowerShellHost = 'powershell.exe' | 'pwsh';
+
+let cachedPowerShellHosts: PowerShellHost[] | undefined;
 
 /**
  * The PowerShell hosts installed here: Windows PowerShell always, pwsh when on
@@ -222,9 +230,9 @@ let cachedPowerShellHosts: string[] | undefined;
  * lost pwsh fails there instead of quietly halving what it checks. The answer
  * is kept for the test file, so pwsh starts once per file, not once per test.
  */
-export function installedPowerShellHosts(): string[] {
+export function installedPowerShellHosts(): PowerShellHost[] {
   if (cachedPowerShellHosts) return cachedPowerShellHosts;
-  const hosts = ['powershell.exe'];
+  const hosts: PowerShellHost[] = ['powershell.exe'];
   const pwsh = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], {
     windowsHide: true,
     timeout: PROBE_RUN_TIMEOUT_MS,
@@ -301,6 +309,147 @@ export function installedPosixShells(): PosixProbeShell[] {
   }
   cachedPosixShells = shells;
   return shells;
+}
+
+/**
+ * The shells an agent CLI hands a whole hook or status-line command to, each
+ * entered the way a CLI was measured to enter it (docs/agent-integration.md,
+ * "Paths in hook commands"):
+ * - `sh`, `bash`: `-c <command>` (macOS and Linux).
+ * - `git-bash`: `bash.exe -c <command>` (Claude Code on Windows with Git Bash).
+ * - `powershell.exe`, `pwsh`: `-NoProfile -NonInteractive -Command <command>`
+ *   (Claude Code without Git Bash, Gemini, Copilot hooks, grok).
+ * - `cmd-verbatim`: `cmd /d /s /c "<command>"` passed verbatim (Node's
+ *   `shell: true`: the Copilot status line).
+ * - `cmd-escaped`: `cmd /d /s /c <command>` with Node's normal argument
+ *   escaping, which turns each `"` into `\"` (Qwen's hooks).
+ */
+export type HookShellHost = 'sh' | 'bash' | 'git-bash' | PowerShellHost | 'cmd-verbatim' | 'cmd-escaped';
+
+/**
+ * A folder name every hook round trip puts its paths under. Each shell or CLI
+ * that expands `$KNG_PROBE`, `${KNG_PROBE}` or `%KNG_PROBE%` shows EXPANDED,
+ * and the adjacent `$$`, `` `$ `` and curly pair catch a quoting that writes two
+ * single-quoted runs back to back, which PowerShell reads as one with a quote
+ * in it. Legal in a Windows file name, so it runs on every platform.
+ */
+export const HOOK_PROBE_SEGMENT = "k $KNG_PROBE `t %KNG_PROBE% & 'q ${KNG_PROBE} “c” $$KNG_PROBE `$KNG_PROBE “”";
+
+/**
+ * Matches what Gemini, Qwen and grok replace in a hook command before any shell
+ * sees it: `$NAME`, `${NAME}` and `${NAME:-default}`. Copied from Gemini CLI
+ * 0.64.0's `resolveEnvVarsInString`. A built command must never match it.
+ */
+export const CLI_ENVIRONMENT_REFERENCE = /\$(?:(\w+)|{([^}]+?)(?::-([^}]*))?})/;
+
+let cachedGitBash: string | null | undefined;
+let cachedShOrPowerShellHosts: HookShellHost[] | undefined;
+
+/**
+ * Git Bash at its install path, or null. Looked up there only, because a bare
+ * `which bash` on Windows can return the WSL launcher in System32. The Windows
+ * workflow sets KANGENTIC_SHELL_PROBE_REQUIRE_ALL_HOSTS, so a runner that lost
+ * Git Bash fails instead of skipping its round trips.
+ */
+export function gitBashPath(): string | null {
+  if (cachedGitBash !== undefined) return cachedGitBash;
+  const candidate = path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
+  if (fs.existsSync(candidate)) {
+    cachedGitBash = candidate;
+  } else if (process.env.KANGENTIC_SHELL_PROBE_REQUIRE_ALL_HOSTS === '1') {
+    throw new Error(`Git Bash is not at ${candidate}, and KANGENTIC_SHELL_PROBE_REQUIRE_ALL_HOSTS requires it`);
+  } else {
+    cachedGitBash = null;
+  }
+  return cachedGitBash;
+}
+
+/** Whether `shell -c` runs here (sh and bash off Windows). */
+function posixShellRuns(shell: 'sh' | 'bash'): boolean {
+  return spawnSync(shell, ['-c', 'exit 0'], { windowsHide: true, timeout: PROBE_RUN_TIMEOUT_MS }).status === 0;
+}
+
+/**
+ * The hosts that run a command quoted for `sh-or-powershell` here: Git Bash and
+ * both PowerShells on Windows, sh and bash elsewhere. Only those installed.
+ * Cached for the test file, like the hosts it is built from.
+ */
+export function installedShOrPowerShellHosts(): HookShellHost[] {
+  if (cachedShOrPowerShellHosts) return cachedShOrPowerShellHosts;
+  if (process.platform !== 'win32') {
+    cachedShOrPowerShellHosts = (['sh', 'bash'] as const).filter((shell) => posixShellRuns(shell));
+  } else {
+    cachedShOrPowerShellHosts = [...(gitBashPath() ? ['git-bash' as const] : []), ...installedPowerShellHosts()];
+  }
+  return cachedShOrPowerShellHosts;
+}
+
+/**
+ * Run `build` with `process.platform` reading `platform`. The bridge builders
+ * read it at call time, so this pins a Windows command's string on Linux CI.
+ */
+export function buildForPlatform<T>(platform: NodeJS.Platform, build: () => T): T {
+  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  if (!originalPlatformDescriptor) throw new Error('process.platform has no property descriptor');
+  Object.defineProperty(process, 'platform', { value: platform });
+  try {
+    return build();
+  } finally {
+    Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+  }
+}
+
+/** Write the argv printer into `directory` and return its path. */
+export function writeArgvPrinter(directory: string, fileName = 'print-argv.cjs'): string {
+  fs.mkdirSync(directory, { recursive: true });
+  const printerPath = path.join(directory, fileName);
+  fs.writeFileSync(printerPath, ARGV_PRINTER);
+  return printerPath;
+}
+
+/**
+ * Run a whole hook command through `host` the way a CLI does, with KNG_PROBE
+ * and `env` set and `input` on stdin (the CLI's payload), and return every argv
+ * the printer printed with any other output.
+ */
+export function runAsHookShell(
+  host: HookShellHost,
+  command: string,
+  options: { cwd?: string; input?: string; env?: Record<string, string> } = {},
+): ProbeRun {
+  const spawnOptions = {
+    encoding: 'utf8' as const,
+    cwd: options.cwd,
+    input: options.input ?? '',
+    env: { ...process.env, ...PROBE_ENVIRONMENT_OVERRIDES, ...options.env },
+    windowsHide: true,
+    timeout: PROBE_RUN_TIMEOUT_MS,
+  };
+  let result: SpawnSyncReturns<string>;
+  switch (host) {
+    case 'sh':
+    case 'bash':
+      result = spawnSync(host, ['-c', command], spawnOptions);
+      break;
+    case 'git-bash': {
+      const bash = gitBashPath();
+      if (!bash) throw new Error('Git Bash is not installed here');
+      result = spawnSync(bash, ['-c', command], spawnOptions);
+      break;
+    }
+    case 'powershell.exe':
+    case 'pwsh':
+      result = spawnSync(host, ['-NoProfile', '-NonInteractive', '-Command', command], spawnOptions);
+      break;
+    case 'cmd-verbatim':
+      result = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${command}"`], { ...spawnOptions, windowsVerbatimArguments: true });
+      break;
+    case 'cmd-escaped':
+      result = spawnSync('cmd.exe', ['/d', '/s', '/c', command], spawnOptions);
+      break;
+  }
+  assertRunFinished(result, host);
+  return readProbeOutput(`${result.stdout}\n${result.stderr}`);
 }
 
 /**

@@ -112,9 +112,11 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   `npm run test:unit`.
 - **Windows shell quoting:** `.github/workflows/shell-quoting-windows.yml` runs the live cmd.exe
   and PowerShell round trips in `command-builder.test.ts` and `auto-name-clean.test.ts` on
-  `windows-latest` when the escapes or their tests change. The Linux unit tier skips those blocks,
-  and string pins alone stayed green for a `%%` escape cmd never honored. Path-filtered and not a
-  required check, like `task-reap-real-processes.yml`.
+  `windows-latest` when the escapes or their tests change, and the hook and status-line round
+  trips (`event-bridge.test.ts` and each hook manager's test), which run each CLI's bridge
+  commands through Git Bash, both PowerShells and cmd as that CLI does. The Linux unit tier skips
+  those blocks, and string pins alone stayed green for a `%%` escape cmd never honored.
+  Path-filtered and not a required check, like `task-reap-real-processes.yml`.
 - **nushell and fish quoting:** `.github/workflows/shell-quoting-posix.yml` installs both on
   `ubuntu-24.04` and runs the live round trip in `command-builder.test.ts` that types the Claude
   builder's output into each. Neither quotes like POSIX sh, so `quoteArg` has a branch for each,

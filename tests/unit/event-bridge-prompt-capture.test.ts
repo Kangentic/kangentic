@@ -17,19 +17,26 @@
  * source is named here instead. It is fed to the bridge as the raw file text,
  * not re-serialized, so it stays a replay of the real wire shape.
  *
- * The hook command runs in shell form through the real platform shell, the way
- * Claude Code runs it (see the shell-form block in event-bridge.test.ts), so no
- * directive is parsed back out of the command string here.
+ * The hook command runs in shell form through the shell Claude Code runs it in
+ * (Git Bash or PowerShell on Windows, sh elsewhere), with its paths
+ * forward-slashed as the command builder passes them, so no directive is parsed
+ * back out of the command string here.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventType } from '../../src/shared/types';
-import { buildHooks, ClaudeAdapter } from '../../src/main/agent/adapters/claude';
+import { toForwardSlash } from '../../src/shared/paths';
+import { buildHooks as buildClaudeHooks, ClaudeAdapter } from '../../src/main/agent/adapters/claude';
+import { installedShOrPowerShellHosts, runAsHookShell } from './helpers/shell-argv-probe';
 
-const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
+const BRIDGE = toForwardSlash(path.resolve(__dirname, '../../src/main/agent/event-bridge.js'));
+
+/** Claude's hooks for the forward-slashed paths its command builder passes. */
+function buildHooks(...[eventBridge, events, existingHooks, options]: Parameters<typeof buildClaudeHooks>): ReturnType<typeof buildClaudeHooks> {
+  return buildClaudeHooks(eventBridge, toForwardSlash(events), existingHooks, options);
+}
 const FIXTURE_PATH = path.resolve(__dirname, '../fixtures/claude-user-prompt-submit.json');
 
 /** The bridge cuts every extracted field at this many characters (FIELD_CAP in event-bridge.js). */
@@ -59,9 +66,10 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** Run a hook command string through the platform shell with `stdin` piped in, as Claude Code does. */
+/** Run a hook command string through the shell Claude Code uses here, with `stdin` piped in. */
 function runHookCommand(command: string, stdin: string): void {
-  execSync(command, { input: stdin, stdio: ['pipe', 'ignore', 'pipe'], timeout: 10000 });
+  const [host] = installedShOrPowerShellHosts();
+  runAsHookShell(host, command, { input: stdin });
 }
 
 function readEvents(filePath: string): Array<Record<string, unknown>> {

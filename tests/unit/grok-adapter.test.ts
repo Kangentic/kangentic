@@ -43,6 +43,14 @@ import { discoverGrokCapabilities, clearGrokCapabilityMemo } from '../../src/mai
 import { ensureAnswerHomeTrust, ensureWorktreeTrust, isFolderTrusted, normalizeForCompare, removeWorktreeTrust } from '../../src/main/agent/adapters/grok/trust-manager';
 import { migrateGrokProjectData } from '../../src/main/agent/adapters/grok/project-relocation';
 import type { PermissionMode } from '../../src/shared/types';
+import { toForwardSlash } from '../../src/shared/paths';
+import {
+  buildForPlatform,
+  CLI_ENVIRONMENT_REFERENCE,
+  HOOK_PROBE_SEGMENT,
+  installedPowerShellHosts,
+  runAsHookShell,
+} from './helpers/shell-argv-probe';
 
 const SESSION_ID = '01a00b63-e666-71b3-8a30-a1829680cfdc';
 
@@ -429,6 +437,40 @@ describe('buildGrokHooks', () => {
       }
     }
   });
+
+  // grok runs a hook with `pwsh -NoProfile -NonInteractive -Command` on Windows
+  // (measured on 1.0.0) and `sh -c` elsewhere, and replaces `$NAME` and
+  // `${NAME}` in the command with the environment's values before either.
+  it('quotes a Windows bridge path for PowerShell, with no $NAME left for grok to replace', () => {
+    const windowsHooks = buildForPlatform('win32', () => buildGrokHooks('C:/Users/dev/$work/event-bridge.js'));
+    for (const entries of Object.values(windowsHooks)) {
+      const command = entries[0].hooks[0].command;
+      expect(command.startsWith(`node C:"/Users/dev/"'$'"work/event-bridge.js" "env:KANGENTIC_EVENTS_PATH" `), command).toBe(true);
+      expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
+    }
+  });
+
+  it.runIf(process.platform === 'win32')('a Windows hook writes its event through both PowerShells, wherever the bridge lives', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-hook-shell-'));
+    try {
+      const trickyDirectory = path.join(scratch, HOOK_PROBE_SEGMENT);
+      fs.mkdirSync(trickyDirectory, { recursive: true });
+      const bridgeCopy = path.join(trickyDirectory, 'event-bridge.js');
+      fs.copyFileSync(path.resolve(__dirname, '../../src/main/agent/event-bridge.js'), bridgeCopy);
+      const eventsOutput = path.join(trickyDirectory, 'events.jsonl');
+      const preToolUse = buildGrokHooks(toForwardSlash(bridgeCopy)).PreToolUse[0].hooks[0].command;
+      for (const host of installedPowerShellHosts()) {
+        fs.rmSync(eventsOutput, { force: true });
+        runAsHookShell(host, preToolUse, {
+          input: JSON.stringify({ toolName: 'read_file', toolUseId: 'tool-1', toolInput: { target_file: 'a.ts' } }),
+          env: { KANGENTIC_EVENTS_PATH: eventsOutput },
+        });
+        expect(fs.readFileSync(eventsOutput, 'utf-8'), host).toContain('"tool_start"');
+      }
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("extracts grok's camelCase payload fields on tool events", () => {
     // Command shape: node "<bridge>" "env:KANGENTIC_EVENTS_PATH" <type> <directives...>

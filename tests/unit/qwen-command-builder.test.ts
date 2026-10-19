@@ -15,6 +15,16 @@ import path from 'node:path';
 import { quoteArg, toForwardSlash } from '../../src/shared/paths';
 import { QwenCommandBuilder, supportsMcpConfigFlag } from '../../src/main/agent/adapters/qwen-code';
 import type { QwenCommandOptions } from '../../src/main/agent/adapters/qwen-code';
+import { QWEN_BRIDGE_COPY_NAME } from '../../src/main/agent/adapters/qwen-code/hook-manager';
+import { EVENTS_PATH_FROM_ENVIRONMENT, isKangenticHookCommand } from '../../src/main/agent/shared/hook-utils';
+import {
+  buildForPlatform,
+  CLI_ENVIRONMENT_REFERENCE,
+  HOOK_PROBE_SEGMENT,
+  installedShOrPowerShellHosts,
+  runAsHookShell,
+  type HookShellHost,
+} from './helpers/shell-argv-probe';
 
 /** Minimal options for tests that don't need hooks/settings. */
 function baseOptions(overrides: Partial<QwenCommandOptions> = {}): QwenCommandOptions {
@@ -560,6 +570,116 @@ describe('QwenCommandBuilder', () => {
         expect(mcpServers.kangentic.headers?.['X-Kangentic-Token']).toBe('second-token');
       });
     });
+  });
+
+  /**
+   * On Windows Qwen runs a hook as `%ComSpec% /d /s /c <command>` with Node's
+   * normal argument escaping, so every `"` reaches node as part of the path
+   * (QWEN_HOOK_SHELL). The command there carries bare tokens only: a copy of the
+   * bridge relative to the cwd Qwen runs hooks in, and the events path from the
+   * session's environment. On macOS and Linux it is `bash -c` and the paths are
+   * quoted.
+   */
+  describe('event-bridge hook paths', () => {
+    let tmpDir: string;
+    let projectDirectory: string;
+    let eventsOutput: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cmd-hooks-'));
+      projectDirectory = path.join(tmpDir, HOOK_PROBE_SEGMENT);
+      fs.mkdirSync(projectDirectory, { recursive: true });
+      eventsOutput = path.join(projectDirectory, '.kangentic', 'sessions', 's1', 'events.jsonl');
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function buildHooksIn(platform: NodeJS.Platform): string[] {
+      buildForPlatform(platform, () => new QwenCommandBuilder().buildQwenCommand({
+        ...baseOptions(),
+        cwd: projectDirectory,
+        projectRoot: projectDirectory,
+        eventsOutputPath: eventsOutput,
+      }));
+      const settings = JSON.parse(fs.readFileSync(path.join(projectDirectory, '.qwen', 'settings.json'), 'utf-8')) as {
+        hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+      };
+      return Object.values(settings.hooks).flat().flatMap((entry) => entry.hooks.map((hook) => hook.command));
+    }
+
+    it('on Windows names the workspace bridge copy and the events path from the environment, all bare', () => {
+      const commands = buildHooksIn('win32');
+      expect(commands.length).toBeGreaterThan(0);
+      for (const command of commands) {
+        expect(command.startsWith(`node .kangentic/${QWEN_BRIDGE_COPY_NAME} ${EVENTS_PATH_FROM_ENVIRONMENT} `), command).toBe(true);
+        expect(command).not.toContain('"');
+        expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
+        expect(isKangenticHookCommand(command)).toBe(true);
+      }
+      const copy = path.join(projectDirectory, '.kangentic', QWEN_BRIDGE_COPY_NAME);
+      expect(fs.readFileSync(copy, 'utf-8')).toBe(fs.readFileSync(path.resolve(__dirname, '../../src/main/agent/event-bridge.js'), 'utf-8'));
+    });
+
+    it('on Windows a failed bridge copy throws out of buildQwenCommand instead of spawning without hooks', () => {
+      // The throw is deliberate: the Windows hook command names the workspace
+      // copy, so Qwen cannot run its hooks without it, and the throw reaches
+      // spawnAgent's catch, which reports the blocked spawn. Swallowing it would
+      // spawn Qwen with a session that reads as permanently idle.
+      //
+      // The failure is a FILE named .kangentic in the project: the copy cannot
+      // create its directory. Nothing earlier in the build touches that path.
+      // The git exclude seeding only looks for <cwd>/.git (absent here, and it
+      // never throws), and no MCP server is configured, so the copy's mkdir is
+      // the first step to reach .kangentic. The control at the end removes the
+      // file and shows the same build then succeeds, so the throw is the copy's.
+      const kangenticPath = path.join(projectDirectory, '.kangentic');
+      const settingsPath = path.join(projectDirectory, '.qwen', 'settings.json');
+      const buildOnWindows = (): string => buildForPlatform('win32', () => new QwenCommandBuilder().buildQwenCommand({
+        ...baseOptions(),
+        cwd: projectDirectory,
+        projectRoot: projectDirectory,
+        eventsOutputPath: eventsOutput,
+      }));
+      fs.writeFileSync(kangenticPath, 'a file, not a directory');
+
+      expect(buildOnWindows).toThrow(/\.kangentic/);
+      expect(fs.statSync(kangenticPath).isFile()).toBe(true);
+      expect(fs.existsSync(settingsPath)).toBe(false);
+
+      fs.rmSync(kangenticPath);
+      expect(buildOnWindows).not.toThrow();
+      expect(fs.existsSync(settingsPath)).toBe(true);
+    });
+
+    it('on macOS and Linux quotes the real paths, leaving no $NAME for Qwen to replace', () => {
+      const commands = buildHooksIn('linux');
+      for (const command of commands) {
+        expect(command).toContain(`'$'"KNG_PROBE`);
+        expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
+        expect(isKangenticHookCommand(command)).toBe(true);
+      }
+      expect(fs.existsSync(path.join(projectDirectory, '.kangentic', QWEN_BRIDGE_COPY_NAME))).toBe(false);
+    });
+
+    // The launch Qwen was measured to make, and Git Bash for a Qwen started
+    // from an MSYS shell, with the real bridge copy writing the real events file.
+    it.runIf(process.platform === 'win32')('a Windows hook writes its event through escaped cmd and Git Bash', () => {
+      const preToolUse = buildHooksIn('win32').find((command) => command.includes(' tool_start '));
+      expect(preToolUse).toBeDefined();
+      const hosts: HookShellHost[] = ['cmd-escaped', ...installedShOrPowerShellHosts()];
+      for (const host of hosts) {
+        fs.rmSync(eventsOutput, { force: true });
+        fs.mkdirSync(path.dirname(eventsOutput), { recursive: true });
+        runAsHookShell(host, preToolUse!, {
+          cwd: projectDirectory,
+          input: JSON.stringify({ tool_name: 'read_file', tool_input: { file_path: 'a.ts' } }),
+          env: { KANGENTIC_EVENTS_PATH: eventsOutput },
+        });
+        expect(fs.readFileSync(eventsOutput, 'utf-8'), host).toContain('"tool_start"');
+      }
+    }, 120_000);
   });
 
   // ── Multiline prompt preservation (regression guard) ─────────────────────

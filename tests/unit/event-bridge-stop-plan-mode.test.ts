@@ -26,19 +26,20 @@
  *   its Stop must still report plan mode. Keying the skip on `agent_type`
  *   instead of `agent_id` would blind such a session to its own plan mode.
  *
- * The hook command runs in shell form through the real platform shell, the way
- * Claude Code runs it (see event-bridge-prompt-capture.test.ts), so no directive
- * is parsed back out of the command string here.
+ * The hook command runs in shell form through the shell Claude Code runs it in
+ * (see event-bridge-prompt-capture.test.ts), so no directive is parsed back out
+ * of the command string here.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventType } from '../../src/shared/types';
+import { toForwardSlash } from '../../src/shared/paths';
 import { buildHooks } from '../../src/main/agent/adapters/claude';
+import { installedShOrPowerShellHosts, runAsHookShell } from './helpers/shell-argv-probe';
 
-const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
+const BRIDGE = toForwardSlash(path.resolve(__dirname, '../../src/main/agent/event-bridge.js'));
 const FIXTURE_PATH = path.resolve(__dirname, '../fixtures/claude-stop.json');
 
 interface StopBackgroundTask {
@@ -85,9 +86,10 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** Run a hook command string through the platform shell with `stdin` piped in, as Claude Code does. */
+/** Run a hook command string through the shell Claude Code uses here, with `stdin` piped in. */
 function runHookCommand(command: string, stdin: string): void {
-  execSync(command, { input: stdin, stdio: ['pipe', 'ignore', 'pipe'], timeout: 10000 });
+  const [host] = installedShOrPowerShellHosts();
+  runAsHookShell(host, command, { input: stdin });
 }
 
 function readEvents(filePath: string): Array<Record<string, unknown>> {
@@ -107,7 +109,7 @@ function stopCommand(hooks: ReturnType<typeof buildHooks>): string {
 
 /** Replay `stdin` through the registered Stop command and return the one event it wrote. */
 function replayStop(stdin: string): Record<string, unknown> {
-  const hooks = buildHooks(BRIDGE, eventsPath, {});
+  const hooks = buildHooks(BRIDGE, toForwardSlash(eventsPath), {});
   runHookCommand(stopCommand(hooks), stdin);
   const events = readEvents(eventsPath);
   expect(events).toHaveLength(1);

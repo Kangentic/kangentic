@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { toForwardSlash } from '../../../../shared/paths';
-import { buildBridgeCommand } from '../../shared/hook-utils';
+import {
+  buildBridgeCommand,
+  EVENTS_PATH_ENVIRONMENT_VARIABLE,
+  EVENTS_PATH_FROM_ENVIRONMENT,
+  type HookShell,
+} from '../../shared/hook-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { extractTool, extractToolId, extractDetail } from '../../shared/directive-builders';
 import { setTypeWhenDetailContains } from '../../shared/directive-builders';
@@ -66,9 +71,16 @@ import { setTypeWhenDetailContains } from '../../shared/directive-builders';
  *   which grok payloads do not carry.
  */
 
-/** The events-path sentinel the bridge resolves from the hook process env. */
-export const KANGENTIC_EVENTS_PATH_ENV = 'KANGENTIC_EVENTS_PATH';
-const EVENTS_PATH_SENTINEL = `env:${KANGENTIC_EVENTS_PATH_ENV}`;
+/** The variable `EVENTS_PATH_FROM_ENVIRONMENT` names, which the command builder sets. */
+export const KANGENTIC_EVENTS_PATH_ENV = EVENTS_PATH_ENVIRONMENT_VARIABLE;
+
+/**
+ * The shell grok runs hooks in on Windows: PowerShell, as
+ * `pwsh -NoProfile -NonInteractive -Command "<command>"` (measured on 1.0.0).
+ * Like Gemini, grok replaces `$NAME` and `${NAME}` in the command with the
+ * environment's values before the shell runs it.
+ */
+const GROK_HOOK_SHELL: HookShell = 'sh-or-powershell';
 
 /** Grok hook event names (Claude-compatible, verified in 10-hooks.md). */
 const GrokHookEvent = {
@@ -104,7 +116,7 @@ export function buildGrokHooks(eventBridge: string): Record<string, GrokHookEntr
   const H = GrokHookEvent;
   const E = EventType;
   const bridge = (eventType: string, ...directives: string[]): string =>
-    buildBridgeCommand(eventBridge, EVENTS_PATH_SENTINEL, eventType, ...directives);
+    buildBridgeCommand(GROK_HOOK_SHELL, eventBridge, EVENTS_PATH_FROM_ENVIRONMENT, eventType, ...directives);
 
   return {
     [H.PreToolUse]: [commandEntry(bridge(E.ToolStart,

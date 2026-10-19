@@ -8,6 +8,7 @@ import {
 } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
 import { extractDetail, extractPlanMode, extractSubagentId, extractTool, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { buildForPlatform, CLI_ENVIRONMENT_REFERENCE } from './helpers/shell-argv-probe';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
@@ -48,6 +49,23 @@ describe('hook-manager', () => {
     it('adds no approver when none is given', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
       expect(hooks.PermissionRequest.map((entry) => entry.matcher)).toEqual(['']);
+    });
+  });
+
+  describe('buildHooks for a Windows path', () => {
+    it('quotes every hook for Git Bash and PowerShell at once, leaving no $NAME for anything to replace', () => {
+      const hooks = buildForPlatform('win32', () => buildHooks(
+        'C:/Users/dev/$work/event-bridge.js',
+        'C:/Users/dev/$work/.kangentic/sessions/abc/events.jsonl',
+        {},
+      ));
+      const commands = Object.values(hooks).flat().flatMap((entry) => entry.hooks.map((hook) => hook.command));
+      expect(commands).toHaveLength(18);
+      const head = `node C:"/Users/dev/"'$'"work/event-bridge.js" C:"/Users/dev/"'$'"work/.kangentic/sessions/abc/events.jsonl" `;
+      for (const command of commands) {
+        expect(command.startsWith(head), command).toBe(true);
+        expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
+      }
     });
   });
 

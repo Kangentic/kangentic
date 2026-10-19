@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
-import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
+import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractDetail, setToolWhen, emitOnlyWhenDetailMatches, setDetail } from '../../shared/directive-builders';
 
 /** Hook entry in Gemini CLI's settings.json. */
@@ -53,6 +53,15 @@ function filterOurHooks(entries: GeminiHookEntry[] | undefined): GeminiHookEntry
   return filterKangenticHooks(entries, (entry: GeminiHookEntry) => entry.hooks?.map((hook) => hook.command) ?? []);
 }
 
+/**
+ * The shell Gemini runs hooks in on Windows: PowerShell, as
+ * `pwsh.exe -NoProfile -Command "<command>"` (measured on 0.64.0), or
+ * powershell.exe when there is no pwsh. On every platform Gemini first replaces
+ * `$NAME` and `${NAME}` in the settings file's strings with the environment's
+ * values (`resolveEnvVarsInString`), which the quoting also keeps away from.
+ */
+const GEMINI_HOOK_SHELL: HookShell = 'sh-or-powershell';
+
 /** Build a single Gemini hook entry for the event bridge. */
 function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string, ...directives: string[]): GeminiHookEntry {
   return {
@@ -60,7 +69,7 @@ function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string,
     hooks: [{
       name: `kangentic-${eventType}`,
       type: 'command',
-      command: buildBridgeCommand(eventBridge, eventsPath, eventType, ...directives),
+      command: buildBridgeCommand(GEMINI_HOOK_SHELL, eventBridge, eventsPath, eventType, ...directives),
     }],
   };
 }

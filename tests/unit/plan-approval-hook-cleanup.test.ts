@@ -20,10 +20,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { isKangenticHookCommand, filterKangenticHooks } from '../../src/main/agent/shared/hook-utils';
 import { buildPlanApprovalCommand } from '../../src/main/agent/shared/plan-approval-hook';
-import { CLAUDE_PLAN_APPROVAL_SPEC, buildHooks, removeHooks } from '../../src/main/agent/adapters/claude/hook-manager';
+import { CLAUDE_BRIDGE_SHELL, CLAUDE_PLAN_APPROVAL_SPEC, buildHooks, removeHooks } from '../../src/main/agent/adapters/claude/hook-manager';
 
 /** The command as Kangentic registers it: a session directory under `<project>/.kangentic/`. */
 const KANGENTIC_APPROVER = buildPlanApprovalCommand(
+  CLAUDE_BRIDGE_SHELL,
   '/opt/app/plan-approval-bridge.js',
   '/work/project/.kangentic/sessions/session-1/plan-approval.json',
   '/work/project/.kangentic/sessions/session-1/events.jsonl',
@@ -32,6 +33,7 @@ const KANGENTIC_APPROVER = buildPlanApprovalCommand(
 
 /** The same command with every `.kangentic` taken out of its paths, as a user's own script would be. */
 const FOREIGN_APPROVER = buildPlanApprovalCommand(
+  CLAUDE_BRIDGE_SHELL,
   '/opt/app/plan-approval-bridge.js',
   '/work/project/sessions/session-1/plan-approval.json',
   '/work/project/sessions/session-1/events.jsonl',

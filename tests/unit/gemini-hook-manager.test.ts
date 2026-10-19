@@ -7,6 +7,14 @@ import {
   removeHooks,
 } from '../../src/main/agent/adapters/gemini';
 import { extractDetail } from '../../src/main/agent/shared/directive-builders';
+import { toForwardSlash } from '../../src/shared/paths';
+import {
+  buildForPlatform,
+  CLI_ENVIRONMENT_REFERENCE,
+  HOOK_PROBE_SEGMENT,
+  installedPowerShellHosts,
+  runAsHookShell,
+} from './helpers/shell-argv-probe';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
@@ -30,6 +38,48 @@ afterEach(() => {
 });
 
 describe('gemini-hook-manager', () => {
+  // Gemini runs a hook with `pwsh -NoProfile -Command` on Windows and `bash -c`
+  // elsewhere, and before either it replaces `$NAME` and `${NAME}` in every
+  // settings string with the environment's values (`resolveEnvVarsInString`).
+  describe('buildHooks for paths a shell or Gemini could expand', () => {
+    function allCommands(hooks: ReturnType<typeof buildHooks>): string[] {
+      return Object.values(hooks).flat().flatMap((entry) => entry.hooks.map((hook) => hook.command));
+    }
+
+    it('quotes a Windows path for PowerShell, with no $NAME left for Gemini to replace', () => {
+      const hooks = buildForPlatform('win32', () => buildHooks('C:/Users/dev/$work/event-bridge.js', 'C:/Users/dev/$work/events.jsonl', {}));
+      const head = `node C:"/Users/dev/"'$'"work/event-bridge.js" C:"/Users/dev/"'$'"work/events.jsonl" `;
+      for (const command of allCommands(hooks)) {
+        expect(command.startsWith(head), command).toBe(true);
+        expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
+      }
+    });
+
+    it('quotes a macOS or Linux path for bash the same way', () => {
+      const hooks = buildForPlatform('linux', () => buildHooks('/home/dev/$work/event-bridge.js', '/home/dev/$work/events.jsonl', {}));
+      const head = `node "/home/dev/"'$'"work/event-bridge.js" "/home/dev/"'$'"work/events.jsonl" `;
+      for (const command of allCommands(hooks)) {
+        expect(command.startsWith(head), command).toBe(true);
+        expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
+      }
+    });
+
+    it.runIf(process.platform === 'win32')('a Windows hook writes its event to the real path through both PowerShells', () => {
+      const realBridge = toForwardSlash(path.resolve(__dirname, '../../src/main/agent/event-bridge.js'));
+      const trickyDirectory = path.join(tmpDir, HOOK_PROBE_SEGMENT);
+      fs.mkdirSync(trickyDirectory, { recursive: true });
+      const eventsOutput = path.join(trickyDirectory, 'events.jsonl');
+      const beforeTool = buildHooks(realBridge, toForwardSlash(eventsOutput), {}).BeforeTool[0].hooks[0].command;
+      for (const host of installedPowerShellHosts()) {
+        fs.rmSync(eventsOutput, { force: true });
+        runAsHookShell(host, beforeTool, {
+          input: JSON.stringify({ tool_name: 'read_file', tool_input: { file_path: 'a.ts' } }),
+        });
+        expect(fs.readFileSync(eventsOutput, 'utf-8'), host).toContain('"tool_start"');
+      }
+    }, 60_000);
+  });
+
   describe('buildHooks', () => {
     it('produces correct hook entries for all 11 mapped event types', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});

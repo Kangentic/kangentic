@@ -6,7 +6,7 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { toClaudeModelArgument } from './model-display-name';
 import { peekModelPickerAliasIds } from './model-picker-probe';
-import { buildHooks, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
+import { buildHooks, CLAUDE_BRIDGE_SHELL, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
 import { buildPlanApprovalCommand, planApprovalDecisionPath } from '../../shared/plan-approval-hook';
 import { quoteBridgePath } from '../../shared/hook-utils';
@@ -352,7 +352,7 @@ export class CommandBuilder {
       ...baseSettings,
       statusLine: {
         type: 'command',
-        command: `node ${quoteBridgePath(statusBridge)} ${quoteBridgePath(statusPath)}`,
+        command: `node ${quoteBridgePath(statusBridge, CLAUDE_BRIDGE_SHELL)} ${quoteBridgePath(statusPath, CLAUDE_BRIDGE_SHELL)}`,
         refreshInterval: STATUS_LINE_REFRESH_INTERVAL_SECONDS,
       },
     };
@@ -366,6 +366,7 @@ export class CommandBuilder {
       // to Automatic while this session plans is honored with no hook reload.
       // Without a decision file it answers nothing and the dialog shows.
       const planApprovalCommand = buildPlanApprovalCommand(
+        CLAUDE_BRIDGE_SHELL,
         toForwardSlash(resolveBridgeScript('plan-approval-bridge')),
         toForwardSlash(planApprovalDecisionPath(path.dirname(options.statusOutputPath!))),
         eventsPath,
