@@ -417,6 +417,12 @@ function conversationWindowWorkspace() {
 /** The first Command Terminal slot; the window's durable anchor (CommandTerminalLayer.tsx). */
 const COMMAND_TERMINAL_SLOT = 'slot-1';
 
+/** The title bar's open/close toggle for the Command Terminal layer, and the windows it opens. */
+const COMMAND_TERMINAL_TOGGLE = '[data-testid="quick-session-button"]';
+const COMMAND_TERMINAL_WINDOW = '[data-testid="command-terminal-window"]';
+const COMMAND_TERMINAL_SECOND = '[data-command-slot="slot-2"]';
+const COMMAND_TERMINAL_SECOND_MODEL = `${COMMAND_TERMINAL_SECOND} [data-testid^="context-bar-model-"]`;
+
 /**
  * The GLOBAL Command Terminal layout blob (`AppConfig.commandTerminalWorkspace`), one floating
  * window. The layer restores this on its first open and re-pairs the slot to the live session.
@@ -1716,35 +1722,56 @@ export const SCENES: Record<string, SceneDefinition> = {
   'command-terminal': {
     name: 'command-terminal',
     reach: 'boot',
-    description: 'One Command Terminal window over the blurred board, on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click; the window\'s rect is the global layout blob (commandTerminalWorkspace), restored on that open and fitted to the session\'s recording like the task window.',
+    description: 'One Command Terminal window over the blurred board, on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the window\'s rect is the global layout blob (commandTerminalWorkspace), restored on that open and fitted to the session\'s recording like the task window.',
     alt: 'A Command Terminal window open over the blurred board, running Claude Code in the project root, which has just summarized the repository and listed its npm scripts; the header carries the branch pill and the window controls.',
     config: { commandTerminalWorkspace: commandTerminalWorkspace(true) },
-    ready: '[data-testid="command-terminal-window"]',
-    steps: [{ click: '[data-testid="quick-session-button"]', waitFor: '[data-testid="command-terminal-window"]' }],
-    // The window maximized and restored to its fitted rect, its terminal repainting at each size.
-    // Its session finished its recording, so the terminal itself holds; restarting it would take a
-    // working stretch the scene does not have an opening frame for.
+    ready: COMMAND_TERMINAL_WINDOW,
+    // A person opening one: the pointer rests on the title bar's toggle, whose tip names the
+    // Command Terminal with its shortcut, and clicks it. The open window is the pose, so the
+    // poster, a still and the rest are that window, as they were when the click was a boot step.
+    // Then the window is maximized, and the cut restores it and hides the layer behind the veil
+    // (its session keeps running, as on the desktop), so the frame fades in on the board and the
+    // next cycle opens it again. Its session finished its recording, so the terminal holds;
+    // restarting it would take a working stretch the scene has no opening frame for.
     choreography: [
+      { hover: COMMAND_TERMINAL_TOGGLE, ms: 1800 },
+      { click: COMMAND_TERMINAL_TOGGLE, waitFor: COMMAND_TERMINAL_WINDOW },
+      { hover: `${COMMAND_TERMINAL_WINDOW} .xterm`, ms: 600 },
+      { pose: true },
       { click: '[data-testid="command-bar-maximize"]', ms: 2600 },
-      { click: '[data-testid="command-bar-maximize"]', ms: 1400 },
+      { cut: true },
+      { click: '[data-testid="command-bar-maximize"]' },
+      { click: COMMAND_TERMINAL_TOGGLE, waitFor: gone(COMMAND_TERMINAL_WINDOW) },
     ],
   },
   'command-terminal-tiled': {
     name: 'command-terminal-tiled',
     reach: 'boot',
-    description: 'Two Command Terminals tiled in one footprint: the toggle reattaches the contoso terminal session, then New terminal docks a second beside it and boots the project default agent from the boot recorded at the tiled width. The first window switches to its own tiled recording as it narrows (the seed\'s layoutFor), so both are at native type. The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
+    description: 'Two Command Terminals tiled in one footprint, opened the way a person opens them: the toggle reattaches the contoso terminal session, then New terminal docks a second beside it and boots the project default agent from the boot recorded at the tiled width. The first window switches to its own tiled recording as it narrows (the seed\'s layoutFor), so both are at native type. The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
     alt: 'Two Command Terminal windows tiled side by side: on the left Claude Code has summarized the repository and listed its npm scripts in a table, on the right a second Claude Code has just started in the same project root and waits at its prompt.',
     config: { commandTerminalWorkspace: commandTerminalWorkspace(false) },
     // The second window's model pill, which the context bar shows only once the session's first
     // usage lands, a beat after its terminal mounts (the seed pushes it 1.2 s after the boot's
     // first output, as main's status-line push would): a still shot before that would show the
     // "Starting agent" spinner in the bar rather than the pills.
-    ready: '[data-command-slot="slot-2"] [data-testid^="context-bar-model-"]',
-    steps: [
-      { click: '[data-testid="quick-session-button"]', waitFor: '[data-testid="command-terminal-window"]' },
-      { click: '[data-testid="quick-session-new-terminal"]', waitFor: '[data-command-slot="slot-2"] [data-testid^="context-bar-model-"]' },
+    ready: COMMAND_TERMINAL_SECOND_MODEL,
+    // The toggle opens the first window and New terminal docks a second beside it, each after the
+    // pointer rests on it long enough for its tip. The pair is the pose. Then the pointer looks
+    // at the second window's model pill, and the cut stops that terminal (Stop ends it for good,
+    // so the next New terminal takes slot-2 again) and hides the layer behind the veil, so the
+    // frame fades in on the board and the next cycle opens both again.
+    choreography: [
+      { hover: COMMAND_TERMINAL_TOGGLE, ms: 1800 },
+      { click: COMMAND_TERMINAL_TOGGLE, waitFor: COMMAND_TERMINAL_WINDOW },
+      { hover: '[data-testid="quick-session-new-terminal"]', ms: 1800 },
+      { click: '[data-testid="quick-session-new-terminal"]', waitFor: COMMAND_TERMINAL_SECOND_MODEL },
+      { hover: `${COMMAND_TERMINAL_SECOND} .xterm`, ms: 600 },
+      { pose: true },
+      { hover: COMMAND_TERMINAL_SECOND_MODEL, ms: 2400 },
+      { cut: true },
+      { click: `${COMMAND_TERMINAL_SECOND} [data-testid="command-bar-terminate-button"]`, waitFor: gone(COMMAND_TERMINAL_SECOND) },
+      { click: COMMAND_TERMINAL_TOGGLE, waitFor: gone(COMMAND_TERMINAL_WINDOW) },
     ],
-    motion: 'Both terminals replay their recordings, the second from its agent\'s recorded boot.',
   },
 
   // ---------------------------------------------------------------- views and dialogs

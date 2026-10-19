@@ -3520,6 +3520,24 @@ export function buildDemoPreConfig(options: {
           return result;
         });
       };
+      // Stop ends a Command Terminal for good (main's endCommandTerminal): its row goes, and with
+      // it the Monitor's row, since main's snapshot reads the live sessions. Its replay ends too,
+      // or a stopped terminal's clock would go on emitting into nothing, one more each time a
+      // visitor (or the tiled scene's loop) starts and stops one.
+      var originalKillTransient = window.electronAPI.sessions.killTransient;
+      window.electronAPI.sessions.killTransient = function (sessionId) {
+        return originalKillTransient.apply(this, arguments).then(function (result) {
+          clearReplayTimers(sessionId);
+          stopEmulator(sessionId);
+          delete replays[sessionId];
+          var rows = window.__mockMonitorRows || [];
+          if (rows.some(function (monitorRow) { return monitorRow.sessionId === sessionId; })) {
+            window.__mockMonitorRows = rows.filter(function (monitorRow) { return monitorRow.sessionId !== sessionId; });
+            if (window.__mockFireMonitorChanged) window.__mockFireMonitorChanged(window.__mockMonitorRows);
+          }
+          return result;
+        });
+      };
 
       // A workflow's own agent, which the Workflows view's pane opens (workflows.agentOpen). Where
       // the capture matrix recorded that workflow's agent planning it (workflow-<id>.json), the
