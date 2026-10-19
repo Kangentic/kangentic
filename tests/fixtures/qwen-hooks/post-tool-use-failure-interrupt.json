@@ -1,0 +1,18 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\c--users-dev-repo\\chats\\00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "PostToolUseFailure",
+  "timestamp": "2026-10-19T05:16:28.885Z",
+  "permission_mode": "default",
+  "tool_use_id": "toolu_1792386951059_33r4wlkiv",
+  "tool_call_id": "toolu_01UVhkR419oLa3nHswckudnZ",
+  "tool_name": "run_shell_command",
+  "tool_input": {
+    "command": "ping -n 60 127.0.0.1",
+    "description": "Ping localhost 60 times"
+  },
+  "error": "The tool had already completed; its output was discarded. User intentionally cancelled. Stop and await further instructions; do not retry.",
+  "is_interrupt": true,
+  "duration_ms": 13398
+}

@@ -118,8 +118,13 @@ function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string,
  * UserPromptSubmit and Stop, so the plan mode report is absent there and the
  * engine reads it as unknown.
  *
- * Qwen fires PermissionRequest before the tool runs and PreToolUse only after
- * the user approves, the reverse of Claude's order.
+ * A live 0.25.2 session (tests/fixtures/qwen-hooks/) fires PreToolUse, then
+ * PermissionRequest, the same order as Claude. A subagent fires no
+ * UserPromptSubmit or Stop, in the foreground or the background: only
+ * SubagentStart, SubagentStop and its own tool events, which carry `agent_id`.
+ * SubagentStart and SubagentStop are not wired. A background subagent runs on
+ * past the main agent's Stop, and the engine's subagent depth has not been
+ * replayed against that order.
  *
  * Strips any stale Kangentic hooks from existingHooks before injecting fresh
  * ones. Qwen Code has no --settings flag, so hooks live in the shared

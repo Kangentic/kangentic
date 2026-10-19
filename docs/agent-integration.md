@@ -754,8 +754,12 @@ SessionStart, SessionEnd and Notification ever fired. Each event now maps as Cla
 | `PreCompact` | `compact` |
 | `Notification`, `SessionStart`, `SessionEnd` | the same-named events |
 
-Qwen fires `PermissionRequest` before the tool runs and `PreToolUse` only once you approve it, the
-reverse of Claude's order. Gemini's `BeforeModel`, `AfterModel` and `BeforeToolSelection` have no
+A live 0.25.2 session fires `PreToolUse` and then `PermissionRequest`, the same order as Claude. A
+subagent fires no `UserPromptSubmit` or `Stop`, in the foreground or the background. It fires
+`SubagentStart`, `SubagentStop` and its own tool events, which carry `agent_id`. Kangentic does not
+wire `SubagentStart` or `SubagentStop` yet: a background subagent keeps working after the main
+agent's `Stop`, and the engine's subagent count has not been replayed against that order. The
+captured payloads are in `tests/fixtures/qwen-hooks/`. Gemini's `BeforeModel`, `AfterModel` and `BeforeToolSelection` have no
 Qwen equivalent and are not wired. `buildHooks` and `removeHooks` strip Kangentic entries from
 every key, so a settings file an older build left with Gemini-named entries is cleaned on the next
 spawn or session exit.

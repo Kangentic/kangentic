@@ -1,0 +1,12 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\c--users-dev-repo\\chats\\00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "Notification",
+  "timestamp": "2026-10-19T05:15:51.119Z",
+  "permission_mode": "default",
+  "prompt_id": "00000000-0000-0000-0000-000000000000########1",
+  "message": "Qwen Code is waiting for your input",
+  "notification_type": "idle_prompt",
+  "title": "Waiting for input"
+}

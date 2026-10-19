@@ -1,0 +1,11 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\c--users-dev-repo\\chats\\00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "SubagentStart",
+  "timestamp": "2026-10-19T05:20:22.121Z",
+  "permission_mode": "auto_edit",
+  "prompt_id": "00000000-0000-0000-0000-000000000000########2",
+  "agent_id": "general-purpose-toolu_01NFMzeGd81h1LwFa3nXr9VF",
+  "agent_type": "general-purpose"
+}
