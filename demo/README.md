@@ -1315,10 +1315,11 @@ overlay's polls and counts up. A still keeps the snapshot the seed built, which 
 same frame every time.
 
 Most of the rest has a documented correct value rather than a derived one, which is not a shortcut.
-`compensationCounters` is "in a clean session, all ten fields read 0", and no seeded session has
-had a watchdog fire. `recentPtyChunks` is "empty in production builds where the recorder is
-dead-code-eliminated", which is the build this renderer IS. The background-shell and subagent
-counters are zero because no seeded session runs either.
+In `compensationCounters`, "in a clean session every watchdog and forced-transition field reads 0",
+and no seeded session has had a watchdog fire. `recentPtyChunks` is "empty in production builds
+where the recorder is dead-code-eliminated", which is the build this renderer IS. The
+background-shell, subagent and internal-agent counters are zero because no seeded session runs any
+of them.
 
 One field is a placeholder and is named as one rather than faked. `permissionAwaitedToolId` wants
 the tool_use_id a PermissionRequest hook carried, and a recording keeps the agent's BYTES, not its
