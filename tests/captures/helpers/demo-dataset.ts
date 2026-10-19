@@ -1402,7 +1402,7 @@ export function buildDemoPreConfig(options: {
               name: lane.name, role: lane.role, color: lane.color, icon: lane.icon,
               is_archived: lane.is_archived, is_ghost: false,
               permission_mode: lane.permission_mode, permission_strategy: null,
-              auto_spawn: lane.auto_spawn, auto_command: null, plan_exit_target_id: null,
+              auto_spawn: lane.auto_spawn, auto_command: null, plan_exit_target_id: null, plan_approval: 'manual',
               agent_override: lane.agent || null, handoff_context: false,
               position: index, created_at: daysAgo(project.createdDaysAgo),
             });

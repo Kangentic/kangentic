@@ -1,4 +1,5 @@
 import type { AgentParser, SessionAttachment, SessionContext } from '../../../shared/types';
+import { forgetPlanApprovalSpawn } from '../../plan-approval/plan-approval-spawns';
 
 /**
  * Minimal session shape required by the adapter lifecycle helpers. The
@@ -74,6 +75,10 @@ export function releaseCommandHold(
   commandCwd: string,
   sessionId: string,
 ): void {
+  // The plan approval writer's record of the spawn ends with the hold: a
+  // chokepoint notes it right after buildCommand, so every path that never
+  // spawns the command passes through here.
+  forgetPlanApprovalSpawn(sessionId);
   try {
     agentParser?.removeHooks?.(commandCwd, sessionId);
   } catch (error) {
