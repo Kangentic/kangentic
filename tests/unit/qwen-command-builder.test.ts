@@ -468,6 +468,25 @@ describe('QwenCommandBuilder', () => {
       expect(settingsExists()).toBe(false);
     });
 
+    it('writes mcp.json beside the events file when the build has no status file', () => {
+      // The events file sits in its own directory, apart from the default sessionDir,
+      // so the path pins `dirname(eventsOutputPath)` and not a coincidence.
+      const eventsDir = path.join(tmpDir, '.kangentic', 'sessions', 'events-only');
+      const command = buildWithCwd({
+        cliVersion: '0.25.2',
+        statusOutputPath: undefined,
+        eventsOutputPath: path.join(eventsDir, 'events.jsonl'),
+        mcpServerEnabled: true,
+        mcpServerUrl: MCP_URL,
+        mcpServerToken: 'test-token-abc',
+      });
+
+      const eventsDirMcpConfig = path.join(eventsDir, 'mcp.json');
+      expect(command).toContain(`--mcp-config ${quoteArg(toForwardSlash(eventsDirMcpConfig))}`);
+      expect(fs.existsSync(eventsDirMcpConfig)).toBe(true);
+      expect(fs.existsSync(mcpConfigPath())).toBe(false);
+    });
+
     it('does not write settings when neither MCP nor events are configured', () => {
       buildWithCwd();
       expect(settingsExists()).toBe(false);

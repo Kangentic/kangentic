@@ -20,6 +20,10 @@
  * for the passthrough of 'automatic' and for the absent key on an UPDATE. What
  * it cannot reach, and this file does, is the absent key on a CREATE and the
  * To Do / Done pin.
+ *
+ * The DB -> file leg (`buildBoardConfigFromDb`) is covered at the bottom, on the same
+ * in-memory database: an Automatic plan column writes `planApproval`, a Manual one
+ * omits it, and a To Do or Done column never writes it, whatever it holds.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
@@ -35,6 +39,7 @@ vi.mock('../../src/main/db/database', () => ({
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { applyBoardConfigToDb } from '../../src/main/config/board-config/apply-config';
+import { buildBoardConfigFromDb } from '../../src/main/config/board-config/build-config';
 import type { BoardColumnConfig, BoardConfig } from '../../src/shared/types';
 
 describe('applyBoardConfigToDb: planApproval (real SQLite)', () => {
@@ -161,6 +166,56 @@ describe('applyBoardConfigToDb: planApproval (real SQLite)', () => {
       expect(storedPlanApproval(done.id!)).toBe('manual');
       // The control: an existing custom column in the same file is updated to Automatic.
       expect(storedPlanApproval(laneNamed('Planning').id)).toBe('automatic');
+    });
+  });
+
+  describe('the DB -> file leg (buildBoardConfigFromDb)', () => {
+    function exportedColumns(): BoardColumnConfig[] {
+      return buildBoardConfigFromDb({ projectId: 'project-x', existingTeamConfig: null, fingerprint: 'test' }).columns;
+    }
+
+    it('writes "planApproval": "automatic" for an Automatic plan column', () => {
+      const planning = laneNamed('Planning');
+      repository.update({ id: planning.id, plan_approval: 'automatic' });
+      expect(storedPlanApproval(planning.id)).toBe('automatic');
+
+      const planningColumn = exportedColumns().find((column) => column.id === planning.id);
+
+      expect(planningColumn?.planApproval).toBe('automatic');
+    });
+
+    it('omits the key for a Manual column, its default', () => {
+      const planning = laneNamed('Planning');
+      expect(storedPlanApproval(planning.id)).toBe('manual');
+
+      const planningColumn = exportedColumns().find((column) => column.id === planning.id);
+
+      expect(planningColumn).toBeDefined();
+      expect(planningColumn).not.toHaveProperty('planApproval');
+    });
+
+    it('never writes the key for a To Do or Done column, even one that holds "automatic"', () => {
+      // apply-config forces these two to Manual, so a stored Automatic is stale
+      // local state (an older build, or a hand edit) that must not reach the team file.
+      const planning = laneNamed('Planning');
+      repository.update({ id: planning.id, plan_approval: 'automatic' });
+      db.prepare("UPDATE swimlanes SET plan_approval = 'automatic' WHERE role IN ('todo', 'done')").run();
+      const todo = repository.list().find((lane) => lane.role === 'todo')!;
+      const done = repository.list().find((lane) => lane.role === 'done')!;
+      expect(storedPlanApproval(todo.id)).toBe('automatic');
+      expect(storedPlanApproval(done.id)).toBe('automatic');
+
+      const columns = exportedColumns();
+      const todoColumn = columns.find((column) => column.id === todo.id);
+      const doneColumn = columns.find((column) => column.id === done.id);
+
+      expect(todoColumn).toBeDefined();
+      expect(doneColumn).toBeDefined();
+      expect(todoColumn).not.toHaveProperty('planApproval');
+      expect(doneColumn).not.toHaveProperty('planApproval');
+      // The control: a plan column holding "automatic" in the same export still writes it,
+      // so the two omissions above come from the role and not from a blanket omit.
+      expect(columns.find((column) => column.id === planning.id)?.planApproval).toBe('automatic');
     });
   });
 

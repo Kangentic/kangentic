@@ -36,7 +36,7 @@ const GEMINI_TOOL_PERMISSION_NOTIFICATION = 'ToolPermission';
 /**
  * Reports Gemini's plan exit as Kangentic's (`AgentTool.ExitPlanMode`) only for
  * an approved plan, so the card moves to the column's After Plan Mode target as
- * Claude's does. Measured on Gemini CLI 0.63.0 (task 840): `exit_plan_mode`
+ * Claude's does. Measured on Gemini CLI 0.63.0: `exit_plan_mode`
  * fires AfterTool for a rejected plan too, and only `tool_response.llmContent`
  * tells them apart: "Plan approved. Switching to Auto-Edit mode ..." against
  * "Plan rejected. User feedback: ...".

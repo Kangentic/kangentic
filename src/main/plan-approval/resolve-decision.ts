@@ -2,6 +2,21 @@ import type { PermissionMode, PlanApproval } from '../../shared/types';
 import { resolveEffectivePermissionMode } from '../transition-engine/spawn-preamble';
 import type { PlanApprovalDecision } from '../agent/shared/plan-approval-hook';
 
+/** What `readPlanApprovalDecision` gathers for one session. */
+export interface PlanApprovalDecisionInput {
+  agentCanApprove: boolean;
+  /** The session was launched with bypass available (`CommandOptions.bypassAvailable`). */
+  bypassAvailable: boolean;
+  /** The task's column, folded through its Board Profile. */
+  column: { name: string; permission_mode: PermissionMode | null; plan_approval: PlanApproval };
+  /** The task's workflow value, when the workflow is running; null otherwise. */
+  runningWorkflowValue: PlanApproval | null;
+  /** Where the plan exit sends the task (folded through its profile); null means it stays. */
+  target: { name: string; permission_mode: PermissionMode | null } | null;
+  taskPermissionMode: PermissionMode | null;
+  globalPermissionMode: PermissionMode;
+}
+
 /**
  * Whether Kangentic approves a session's next plan, and the mode it continues
  * in. Pure over what `readPlanApprovalDecision` gathers, so the rules are
@@ -22,20 +37,6 @@ import type { PlanApprovalDecision } from '../agent/shared/plan-approval-hook';
  * replaces bypassPermissions for a session launched without bypass available,
  * where Claude would ignore the switch and leave the session in `default`.
  */
-export interface PlanApprovalDecisionInput {
-  agentCanApprove: boolean;
-  /** The session was launched with bypass available (`CommandOptions.bypassAvailable`). */
-  bypassAvailable: boolean;
-  /** The task's column, folded through its Board Profile. */
-  column: { name: string; permission_mode: PermissionMode | null; plan_approval: PlanApproval };
-  /** The task's workflow value, when the workflow is running; null otherwise. */
-  runningWorkflowValue: PlanApproval | null;
-  /** Where the plan exit sends the task (folded through its profile); null means it stays. */
-  target: { name: string; permission_mode: PermissionMode | null } | null;
-  taskPermissionMode: PermissionMode | null;
-  globalPermissionMode: PermissionMode;
-}
-
 export function resolvePlanApprovalDecision(input: PlanApprovalDecisionInput): PlanApprovalDecision {
   const value: PlanApproval = input.runningWorkflowValue
     ?? (input.column.permission_mode === 'plan' ? input.column.plan_approval : 'manual');

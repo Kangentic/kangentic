@@ -44,6 +44,10 @@ vi.mock('../../src/main/safe-write', async () => {
 const { PlanApprovalWriter } = await import('../../src/main/plan-approval/plan-approval-writer');
 const { forgetPlanApprovalSpawn, notePlanApprovalSpawn, planApprovalModeForSpawn } = await import('../../src/main/plan-approval/plan-approval-spawns');
 
+// Mirrors the writer's private constant. A change there is a deliberate change
+// to the coalescing contract and should show up here.
+const REFRESH_DEBOUNCE_MS = 100;
+
 class FakeSessionManager extends EventEmitter {
   lookup: ((sessionId: string) => boolean) | null = null;
   agentNames = new Map<string, string>();
@@ -159,5 +163,94 @@ describe('PlanApprovalWriter', () => {
     expect(planApprovalModeForSpawn('project-1', 'task-1')).toBe('bypassPermissions');
     hoisted.decision = { approve: false, mode: 'bypassPermissions', detail: null };
     expect(planApprovalModeForSpawn('project-1', 'task-1')).toBeNull();
+  });
+
+  it('reads a plan spawn\'s mode as an agent that can approve with bypass reachable, and stops answering once disposed', () => {
+    hoisted.decision = { approve: true, mode: 'bypassPermissions', detail: 'Moved to Executing' };
+    // The session does not exist yet at spawn time, so the writer assumes the
+    // best case: the answer is what the spawn should make possible.
+    expect(planApprovalModeForSpawn('project-1', 'task-1')).toBe('bypassPermissions');
+    expect(hoisted.reads.at(-1)).toEqual({ projectId: 'project-1', taskId: 'task-1', agentCanApprove: true, bypassAvailable: true });
+
+    // The same approving board would still answer, so a null here comes from
+    // the resolver having been unregistered, not from the decision.
+    writer.dispose();
+    expect(planApprovalModeForSpawn('project-1', 'task-1')).toBeNull();
+  });
+});
+
+describe('PlanApprovalWriter, a session that is first seen queued', () => {
+  it('re-derives what its agent can do once it is running, and writes the decision then', () => {
+    // A queued placeholder row names no agent until its spawn runs, so the
+    // session is first tracked as unable to approve and its read says no.
+    sessionManager.agentNames.delete('session-1');
+    hoisted.decision = { approve: false, mode: 'default', detail: null };
+    sessionManager.emit('session-changed', 'session-1', session('session-1', 'queued'));
+    expect(hoisted.reads).toHaveLength(1);
+    expect(hoisted.reads[0].agentCanApprove).toBe(false);
+    expect(decisionFile('session-1')).toEqual({ approve: false, mode: 'default', detail: null });
+    expect(sessionManager.lookup?.('session-1')).toBe(false);
+
+    // The spawn ran: the agent is named, and the same session now reads as able.
+    sessionManager.agentNames.set('session-1', 'claude');
+    hoisted.decision = { approve: true, mode: 'acceptEdits', detail: 'Moved to Executing' };
+    sessionManager.emit('session-changed', 'session-1', session('session-1', 'running'));
+    expect(hoisted.reads).toHaveLength(2);
+    expect(hoisted.reads.at(-1)?.agentCanApprove).toBe(true);
+    expect(decisionFile('session-1')).toEqual({ approve: true, mode: 'acceptEdits', detail: 'Moved to Executing' });
+    expect(sessionManager.lookup?.('session-1')).toBe(true);
+  });
+
+  it('does not read or rewrite again when a running session reports with its agent unchanged', () => {
+    sessionManager.emit('session-changed', 'session-1', session('session-1'));
+    expect(hoisted.reads).toHaveLength(1);
+
+    // A different answer is waiting on the board, so a wrongful re-read shows
+    // up both in the read count and in the file.
+    hoisted.decision = { approve: true, mode: 'acceptEdits', detail: 'Moved to Review' };
+    sessionManager.emit('session-changed', 'session-1', session('session-1'));
+    sessionManager.emit('session-changed', 'session-1', session('session-1'));
+    expect(hoisted.reads).toHaveLength(1);
+    expect(decisionFile('session-1')?.detail).toBe('Moved to Executing');
+  });
+});
+
+describe('PlanApprovalWriter, the workflow reload after a pass', () => {
+  it('reloads the workflows reading a board once for a burst of column edits, and only after the debounce', () => {
+    boardEvents.emit({ projectId: 'project-1', change: 'swimlane-updated', ids: [] });
+    boardEvents.emit({ projectId: 'project-1', change: 'swimlane-updated', ids: [] });
+    vi.advanceTimersByTime(REFRESH_DEBOUNCE_MS - 1);
+    expect(hoisted.notifiedBoards).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(hoisted.notifiedBoards).toEqual(['project-1']);
+
+    // Nothing is pending after the pass: a quiet board does not reload again.
+    vi.advanceTimersByTime(60_000);
+    expect(hoisted.notifiedBoards).toEqual(['project-1']);
+  });
+
+  it('reloads no workflow for a task change, though the pass still re-reads the sessions', () => {
+    sessionManager.emit('session-changed', 'session-1', session('session-1'));
+    expect(hoisted.reads).toHaveLength(1);
+    boardEvents.emit({ projectId: 'project-1', change: 'task-updated', ids: [] });
+    vi.advanceTimersByTime(REFRESH_DEBOUNCE_MS);
+    // The pass ran (so the empty list below is not just a pass that never came).
+    expect(hoisted.reads).toHaveLength(2);
+    expect(hoisted.notifiedBoards).toEqual([]);
+  });
+
+  it('reloads each changed board once when two projects change inside one debounce window', () => {
+    boardEvents.emit({ projectId: 'project-2', change: 'swimlane-updated', ids: [] });
+    boardEvents.emit({ projectId: 'project-1', change: 'swimlane-updated', ids: [] });
+    boardEvents.emit({ projectId: 'project-2', change: 'swimlane-updated', ids: [] });
+    vi.advanceTimersByTime(REFRESH_DEBOUNCE_MS);
+    expect([...hoisted.notifiedBoards].sort()).toEqual(['project-1', 'project-2']);
+  });
+
+  it('reloads nothing when the writer is disposed before the debounce elapses', () => {
+    boardEvents.emit({ projectId: 'project-1', change: 'swimlane-updated', ids: [] });
+    writer.dispose();
+    vi.advanceTimersByTime(60_000);
+    expect(hoisted.notifiedBoards).toEqual([]);
   });
 });

@@ -73,7 +73,10 @@ async function reloadBoard(page: Page): Promise<void> {
     const stores = (window as unknown as {
       __zustandStores?: { board: { getState: () => { loadBoard: () => Promise<void> } } };
     }).__zustandStores;
-    await stores?.board.getState().loadBoard();
+    // Without the store the dialog would draft from the stale board and the
+    // spec would pass for the wrong reason.
+    if (!stores) throw new Error('window.__zustandStores is not exposed');
+    await stores.board.getState().loadBoard();
   });
 }
 
@@ -212,12 +215,21 @@ test.describe('Column Manager Plan approval', () => {
 const WORKFLOW_PROJECT_ID = 'plan-approval-proj';
 const WORKFLOW_ID = 'wf-plan-approval';
 
+interface PlanningSeed {
+  /** The Planning column's own agent override. */
+  agentOverride: string | null;
+  planApproval: 'manual' | 'automatic';
+  /** An agent override set on each of the workflow's tasks. Left out, the tasks carry none. */
+  taskAgentOverride?: string | null;
+}
+
 /**
  * One running workflow whose three tasks wait in To Do, so every column on their
  * default route is "ahead", Planning among them. The Planning lane is seeded with
- * the given agent and Plan approval, before the app loads.
+ * the given agent and Plan approval, and each task with the given agent override,
+ * before the app loads.
  */
-function workflowSeedScript(planning: { agentOverride: string | null; planApproval: 'manual' | 'automatic' }): string {
+function workflowSeedScript(planning: PlanningSeed): string {
   const workflow = { workflow: { id: WORKFLOW_ID, title: 'Plan approval', state: 'running', draft: null, color_slot: 5 } };
   const taskRows: Array<[number, string]> = [[501, 'First task'], [502, 'Second task'], [503, 'Third task']];
   return `
@@ -242,7 +254,7 @@ function workflowSeedScript(planning: { agentOverride: string | null; planApprov
       ${JSON.stringify(taskRows)}.forEach(function (row, index) {
         state.tasks.push({
           id: 't' + row[0], display_id: row[0], title: row[1], description: 'Planned by the workflow agent.',
-          swimlane_id: 'lane-0', position: index, agent: 'claude', session_id: null, worktree_path: null, branch_name: null,
+          swimlane_id: 'lane-0', position: index, agent: 'claude', agent_override: ${JSON.stringify(planning.taskAgentOverride ?? null)}, session_id: null, worktree_path: null, branch_name: null,
           pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: 0, labels: [], priority: 0,
           attachment_count: 0, archived_at: null, workflow_id: '${WORKFLOW_ID}', workflow_project_id: '${WORKFLOW_PROJECT_ID}',
           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
@@ -256,7 +268,7 @@ function workflowSeedScript(planning: { agentOverride: string | null; planApprov
 
 /** The Workflows view on the seeded workflow, with the inspector showing its run order and Plan approval. */
 async function launchWorkflowInspector(
-  planning: { agentOverride: string | null; planApproval: 'manual' | 'automatic' },
+  planning: PlanningSeed,
 ): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
@@ -297,6 +309,33 @@ test.describe('Workflow inspector Plan approval availability', () => {
       // gives it no setter, which would disable Manual too.
       await expect(manual).toBeEnabled();
       await expect(manual).toHaveAccessibleDescription('You approve every plan in this workflow.');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("a task's own agent beats the plan column's: Claude tasks on a Codex column still offer Automatic", async () => {
+    // The agent that runs a task in a column is the task's override first, then
+    // the column's, then the project's default. The column runs Codex, which
+    // cannot approve plans, but every task is pinned to Claude, which can. Were
+    // the column's agent to win, no plan column could approve and Automatic would
+    // be disabled with the reason.
+    const { browser, page } = await launchWorkflowInspector({
+      agentOverride: 'codex',
+      planApproval: 'automatic',
+      taskAgentOverride: 'claude',
+    });
+    try {
+      const section = page.locator('[data-testid="workflow-plan-approval-section"]');
+      const automatic = page.locator('[data-testid="workflow-plan-approval-automatic"]');
+      const manual = page.locator('[data-testid="workflow-plan-approval-manual"]');
+
+      await expect(automatic).toBeEnabled();
+      await expect(automatic).toHaveAccessibleDescription(WORKFLOW_AUTOMATIC_TIP);
+      // Nobody picked: the value is the plan column's own Automatic, which now takes effect.
+      await expect(automatic).toHaveAttribute('aria-checked', 'true');
+      await expect(manual).toHaveAttribute('aria-checked', 'false');
+      await expect(section).toHaveAttribute('data-picked', 'false');
     } finally {
       await browser.close();
     }

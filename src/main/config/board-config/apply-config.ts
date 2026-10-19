@@ -145,7 +145,7 @@ export function applyBoardConfigToDb(
       // teammate turning Automatic off removes the key, and keeping the old
       // value would leave plans approving on every other machine. An absent
       // key is Manual.
-      const planApproval: PlanApproval = (isTodo || isDone) ? 'manual' : (columnConfig.planApproval === 'automatic' ? 'automatic' : 'manual');
+      const planApproval: PlanApproval = !isTodo && !isDone && columnConfig.planApproval === 'automatic' ? 'automatic' : 'manual';
 
       if (existing) {
         swimlaneRepo.update({

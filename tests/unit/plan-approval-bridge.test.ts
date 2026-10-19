@@ -5,9 +5,11 @@
  * `CLAUDE_PLAN_APPROVAL_SPEC` the Claude adapter registers, so the spec under
  * test is the shipped one.
  *
- * Payload shapes are Claude Code 2.1.302's PermissionRequest, captured in the
- * task 840 probe (paths replaced): ExitPlanMode carries `{plan, planFilePath}`,
- * AskUserQuestion `{questions}`.
+ * The ExitPlanMode payload is Claude Code 2.1.302's PermissionRequest, captured
+ * in a probe (paths replaced) and kept in
+ * tests/fixtures/plan-exit/claude-2.1.302-permission-request-exit-plan-mode.json:
+ * ExitPlanMode carries `{plan, planFilePath}`. Every other tool's request is
+ * that capture with its tool swapped (AskUserQuestion takes `{questions}`).
  *
  * What it pins: the hook answers ExitPlanMode and nothing else, only when the
  * decision says to, with the tool input echoed exactly and the decision's mode,
@@ -24,21 +26,17 @@ import { PLAN_APPROVAL_FILE_NAME } from '../../src/main/agent/shared/plan-approv
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/plan-approval-bridge.js');
 
-const PLAN_INPUT = {
-  plan: '1. Create probe.txt containing the word "hi".\n2. Stop once the file is written.',
-  planFilePath: 'C:\\Users\\dev\\.claude\\plans\\plan-this-create-a-jaunty-church.md',
-};
+const CAPTURED_REQUEST_TEXT = fs.readFileSync(
+  path.resolve(__dirname, '../fixtures/plan-exit/claude-2.1.302-permission-request-exit-plan-mode.json'),
+  'utf8',
+);
+const CAPTURED_REQUEST = JSON.parse(CAPTURED_REQUEST_TEXT) as Record<string, unknown>;
+const PLAN_INPUT = CAPTURED_REQUEST.tool_input;
 
+/** The captured request as Claude sent it, or with another tool in its place. */
 function permissionRequest(toolName: string, toolInput: unknown): string {
-  return JSON.stringify({
-    session_id: '3f0b6c1e-0000-4000-8000-000000000000',
-    transcript_path: 'C:\\Users\\dev\\.claude\\projects\\probe\\3f0b6c1e.jsonl',
-    cwd: 'C:\\Users\\dev\\probe',
-    permission_mode: 'plan',
-    hook_event_name: 'PermissionRequest',
-    tool_name: toolName,
-    tool_input: toolInput,
-  });
+  if (toolName === CAPTURED_REQUEST.tool_name && toolInput === PLAN_INPUT) return CAPTURED_REQUEST_TEXT;
+  return JSON.stringify({ ...CAPTURED_REQUEST, tool_name: toolName, tool_input: toolInput });
 }
 
 let sessionDir: string;

@@ -201,6 +201,30 @@ describe('qwen-hook-manager', () => {
       expect(hooks.notifications).toEqual({ enabled: false });
     });
 
+    it('replaces a hand-edited event value that is not an entry list with the bridge entry alone', () => {
+      // Qwen rejects such a value. Spreading an object throws and spreading a
+      // string splits it into one entry per character, so the list for the event
+      // is just Kangentic's bridge entry. Keyed on events buildHooks writes, since
+      // a non-event key with a non-list value passes through by design.
+      const existing = {
+        PreToolUse: {},
+        Stop: 'echo user-stop',
+      } as unknown as Record<string, QwenHookEntry[]>;
+
+      let hooks: Record<string, QwenHookEntry[]> = {};
+      expect(() => { hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, existing); }).not.toThrow();
+
+      for (const hookEvent of ['PreToolUse', 'Stop']) {
+        expect(hooks[hookEvent]).toHaveLength(1);
+        expect(hooks[hookEvent][0].hooks[0].name).toMatch(/^kangentic-/);
+        expect(hooks[hookEvent][0].hooks[0].command).toContain('event-bridge');
+      }
+      // The other events are untouched by the bad neighbours.
+      for (const hookEvent of QWEN_EVENTS.filter((name) => name !== 'PreToolUse' && name !== 'Stop')) {
+        expect(hooks[hookEvent]).toHaveLength(1);
+      }
+    });
+
     it('hook entries carry a kangentic- name (Qwen dedupes hooks by name)', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
 

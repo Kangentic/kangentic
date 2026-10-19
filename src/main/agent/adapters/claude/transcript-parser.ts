@@ -136,8 +136,11 @@ function parseTranscriptLine(
       userText = messageContent;
     } else if (Array.isArray(messageContent)) {
       const textParts: string[] = [];
-      const approval = toolApprovalOf(raw.permissionDecision);
-      const plan = approvedPlanOf(raw.toolUseResult);
+      // `permissionDecision` and `toolUseResult` describe the entry's one
+      // result. An entry holding several cannot say which, so none gets them.
+      const resultCount = messageContent.filter((block) => isRecord(block) && block.type === 'tool_result').length;
+      const approval = resultCount === 1 ? toolApprovalOf(raw.permissionDecision) : null;
+      const plan = resultCount === 1 ? approvedPlanOf(raw.toolUseResult) : null;
       for (const block of messageContent) {
         if (!isRecord(block)) continue;
         if (block.type === 'tool_result') {
@@ -1089,7 +1092,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Who let a tool call run, from the `permissionDecision` Claude writes on the
  * entry carrying its result: `source` is "hook" for a PermissionRequest hook
- * (Kangentic's plan approval among them; 2.1.302, task 840 probe) and
+ * (Kangentic's plan approval among them; measured on 2.1.302) and
  * "user_temporary" (or another "user_" form) for the person. "config", a rule or
  * the mode allowing it, says nobody decided, so it reads as no approval.
  */
@@ -1104,7 +1107,7 @@ function toolApprovalOf(permissionDecision: unknown): TranscriptToolApproval | n
 /**
  * The plan an approved ExitPlanMode returned. Claude 2.1.303 calls the tool with
  * an empty input and writes the plan to the result line's `toolUseResult`
- * (`{ plan, isAgent, filePath }`; task 840 preview), so the viewer would
+ * (`{ plan, isAgent, filePath }`, measured in a preview), so the viewer would
  * otherwise have no plan to show.
  */
 function approvedPlanOf(toolUseResult: unknown): string | null {

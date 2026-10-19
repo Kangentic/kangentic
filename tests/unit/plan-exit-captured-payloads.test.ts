@@ -1,7 +1,7 @@
 /**
  * Replays REAL plan-exit hook payloads through the real event-bridge.js, with
  * the directives each adapter's buildHooks emits. The fixtures under
- * tests/fixtures/plan-exit/ are live captures from a task 840 preview, with
+ * tests/fixtures/plan-exit/ are live captures from a preview, with
  * paths and ids made generic:
  *
  * - Qwen Code 0.25.2, an approved plan ("Yes, and auto-accept edits"). A plan

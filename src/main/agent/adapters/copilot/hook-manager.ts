@@ -132,8 +132,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * JSON.parse of that file would drop the signed-in account and trusted folders.
  */
 function readJsonObject(filePath: string): Record<string, unknown> {
+  let fileText: string;
   try {
-    const fileText = fs.readFileSync(filePath, 'utf-8');
+    fileText = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    // No existing file - start with empty
+    return {};
+  }
+  try {
     // A byte order mark (U+FEFF) fails JSON.parse; editors on Windows can add one.
     const raw = fileText.charCodeAt(0) === 0xfeff ? fileText.slice(1) : fileText;
     const withoutCommentLines = raw
@@ -143,8 +149,11 @@ function readJsonObject(filePath: string): Record<string, unknown> {
     const parsed: unknown = JSON.parse(withoutCommentLines);
     if (isPlainObject(parsed)) return parsed;
   } catch {
-    // No existing file or invalid JSON - start with empty
+    // Invalid JSON - start with empty, below
   }
+  // The session then runs without the user's settings in this file (the
+  // signed-in account and trusted folders, for config.json).
+  console.warn(`[copilot] ${path.basename(filePath)} is not a JSON object; the session starts without it`);
   return {};
 }
 
@@ -177,7 +186,8 @@ function withoutKangenticHooks(config: Record<string, unknown>): Record<string, 
       continue;
     }
     const keptEntries = entries.filter((entry) => !commandsOfHookEntry(entry).some(isKangenticHookCommand));
-    if (keptEntries.length > 0) keptHooks[event] = keptEntries;
+    // A key the sweep empties is dropped; the user's own empty list is kept.
+    if (keptEntries.length > 0 || entries.length === 0) keptHooks[event] = keptEntries;
   }
   const next: Record<string, unknown> = { ...config };
   delete next.hooks;

@@ -45,6 +45,7 @@ const { handleSaveWorkflow, handleGetWorkflow } = await import('../../src/main/a
 import { openTestDatabase } from './helpers/test-database';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import type { PlanApproval } from '../../src/shared/types';
 
 describe('kangentic_save_workflow planApproval', () => {
   let database: Database.Database;
@@ -187,6 +188,80 @@ describe('kangentic_save_workflow planApproval', () => {
       expect(storedPlanApproval(workflowId)).toBe('automatic');
       expect(after.revision).toBe(before.revision);
       expect(after.title).toBe(before.title);
+      expect(after.draft?.tasks.map((task) => task.key)).toEqual(['api']);
+    });
+
+    // A valid pick on a save that is refused for its revision must not land.
+    // `savePlan` refuses a stale revision up front, before it writes anything, and
+    // again inside the transaction through `saveDraft`'s expectedRevision. The first
+    // test below pins the contract the agent sees (the pre-check). The second gets
+    // past the pre-check so it pins the transaction itself: the pick is written
+    // BEFORE the draft, so only the rollback keeps it from outliving the refusal.
+    it.each([
+      ['manual', 'automatic'],
+      ['automatic', 'manual'],
+    ])('a stale revision refuses a valid "%s" pick over a stored "%s" one and writes nothing', async (newPick, storedPick) => {
+      const workflowId = await createThroughHandler({ planApproval: storedPick });
+      const readRevision = new WorkflowRepository(database).getById(workflowId)!.revision;
+      // The user edits the plan after the agent read it, so what the agent holds is stale.
+      await handleSaveWorkflow({ workflow: workflowId, tasks, title: 'User edit' }, commandContext);
+      const before = new WorkflowRepository(database).getById(workflowId)!;
+      expect(before.revision).toBeGreaterThan(readRevision);
+
+      const response = await handleSaveWorkflow(
+        { workflow: workflowId, tasks: [{ key: 'ui', title: 'Budgets UI' }], title: 'Agent edit', revision: readRevision, planApproval: newPick },
+        commandContext,
+      );
+
+      expect(response.success).toBe(false);
+      expect(response.error).toMatch(/changed since you read it/);
+      const after = new WorkflowRepository(database).getById(workflowId)!;
+      expect(storedPlanApproval(workflowId)).toBe(storedPick);
+      expect(after.revision).toBe(before.revision);
+      expect(after.title).toBe('User edit');
+      expect(after.draft?.tasks.map((task) => task.key)).toEqual(['api']);
+    });
+
+    it.each([
+      ['manual', 'automatic'],
+      ['automatic', 'manual'],
+    ])('rolls a "%s" pick back over a stored "%s" one when the draft write finds the revision stale', async (newPick, storedPick) => {
+      const workflowId = await createThroughHandler({ planApproval: storedPick });
+      const before = new WorkflowRepository(database).getById(workflowId)!;
+      // The pre-check reads the CURRENT revision, so it passes. A real edit can land
+      // just after that check and before the transaction opens (another process, as
+      // transaction.ts describes), so saveDraft finds the revision moved. Once the
+      // transaction is open no other writer gets in; the spy bumps the revision
+      // after the pick is stored only because that is the point the rollback has to
+      // cover, and the outcome is the same as an edit that landed just before BEGIN.
+      const originalSetPlanApproval = WorkflowRepository.prototype.setPlanApproval;
+      const setPlanApprovalSpy = vi.spyOn(WorkflowRepository.prototype, 'setPlanApproval').mockImplementation(
+        function (this: InstanceType<typeof WorkflowRepository>, id: string, planApproval: PlanApproval | null) {
+          originalSetPlanApproval.call(this, id, planApproval);
+          database.prepare('UPDATE workflows SET revision = revision + 1 WHERE id = ?').run(id);
+        },
+      );
+      let response: Awaited<ReturnType<typeof handleSaveWorkflow>>;
+      let setPlanApprovalCalls: number;
+      try {
+        response = await handleSaveWorkflow(
+          { workflow: workflowId, tasks: [{ key: 'ui', title: 'Budgets UI' }], revision: before.revision, planApproval: newPick },
+          commandContext,
+        );
+        setPlanApprovalCalls = setPlanApprovalSpy.mock.calls.length;
+      } finally {
+        // The spy sits on the shared prototype, so it never outlives this test.
+        setPlanApprovalSpy.mockRestore();
+      }
+
+      // The pick really was written inside the save before the draft refused it.
+      expect(setPlanApprovalCalls).toBe(1);
+      expect(response.success).toBe(false);
+      expect(response.error).toMatch(/changed since it was read/);
+      const after = new WorkflowRepository(database).getById(workflowId)!;
+      expect(storedPlanApproval(workflowId)).toBe(storedPick);
+      // The simulated edit rolled back with the rest, so nothing of the save is left.
+      expect(after.revision).toBe(before.revision);
       expect(after.draft?.tasks.map((task) => task.key)).toEqual(['api']);
     });
   });

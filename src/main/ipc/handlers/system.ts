@@ -232,6 +232,9 @@ export function registerSystemHandlers(context: IpcContext): void {
     if (!context.currentProjectPath) throw new Error('No project open');
     const persisted = context.configManager.saveProjectOverrides(context.currentProjectPath, overrides);
     applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
+    // The project's permission mode is what an approved plan continues in when
+    // its task stays in plan mode, as in CONFIG_SET.
+    if (overrides?.agent) refreshPlanApprovals();
     // A per-project override changes the EFFECTIVE config open pop-outs read (the Changes
     // surface reads git.defaultBaseBranch, which is project-overridable), so fan the same
     // bare signal CONFIG_SET does so they re-fetch instead of diffing a stale base branch.
@@ -250,6 +253,9 @@ export function registerSystemHandlers(context: IpcContext): void {
     const project = context.projectRepo.list().find((p) => p.path === projectPath);
     if (!project) throw new Error('Unknown project path');
     const persisted = context.configManager.saveProjectOverrides(projectPath, overrides);
+    // Every project's live sessions keep a decision file, a background
+    // project's too, so this one does not wait for the project to open.
+    if (overrides?.agent) refreshPlanApprovals();
     // Background projects pick up changes when they next open; only the
     // currently-open project needs its in-memory state refreshed now.
     if (projectPath === context.currentProjectPath) {

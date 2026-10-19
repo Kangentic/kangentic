@@ -205,6 +205,14 @@ vi.mock('../../src/main/mobile-bridge/mobile-bridge-service', () => ({
     on = vi.fn();
   },
 }));
+// registerAllIpc starts the plan approval writer, which calls
+// sessionManager.setPlanApprovalLookup. The fake SessionManager above does not
+// model that, and the registration is pinned in register-all-idempotency.test.ts.
+vi.mock('../../src/main/plan-approval/plan-approval-writer', () => ({
+  startPlanApprovalWriter: vi.fn(),
+  refreshPlanApprovals: vi.fn(),
+  PlanApprovalWriter: class {},
+}));
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');

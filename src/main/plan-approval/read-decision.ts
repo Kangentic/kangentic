@@ -25,10 +25,12 @@ export interface DecisionReadCache {
   boards: Map<string, BoardColumns>;
 }
 
-/** One board's columns, read once per pass, in the shape `planExitTargetFor` reads them. */
+/**
+ * One board's columns, read once per pass. `getById` and `list` are the
+ * repository methods `planExitTargetFor` calls.
+ */
 interface BoardColumns {
   projectPath: string | null;
-  lanes: Swimlane[];
   getById(id: string): Swimlane | undefined;
   list(): Swimlane[];
 }
@@ -49,7 +51,6 @@ function boardColumnsOf(
   const lanesById = new Map(lanes.map((lane) => [lane.id, lane]));
   const board: BoardColumns = {
     projectPath: context.projectRepo.getById(projectId)?.path ?? null,
-    lanes,
     getById: (id) => lanesById.get(id),
     list: () => lanes,
   };
@@ -75,7 +76,8 @@ export function readPlanApprovalDecision(
   const task = tasks.getById(input.taskId);
   if (!task || task.archived_at) return null;
   const board = boardColumnsOf(context, input.projectId, swimlanes, cache);
-  const { projectPath, lanes } = board;
+  const { projectPath } = board;
+  const lanes = board.list();
   const profile = loadTaskProfile(context, task, projectPath);
   const column = applyProfileToLane(board.getById(task.swimlane_id), profile, lanes);
   if (!column) return null;

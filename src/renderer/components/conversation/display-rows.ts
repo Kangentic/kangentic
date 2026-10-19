@@ -23,19 +23,12 @@
  * or changed row gets a new object.
  */
 
-import type { TranscriptEntry, TranscriptToolApproval } from '../../../shared/types';
-import { buildResultsByUseId } from '../../../shared/transcript-format';
+import type { TranscriptEntry } from '../../../shared/types';
+import { buildResultsByUseId, type ToolResultForUse } from '../../../shared/transcript-format';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 
-export interface DisplayRowResult {
-  content: string;
-  isError: boolean;
-  /** Who approved the call (a plan's tag); absent when the transcript does not say. */
-  approval?: TranscriptToolApproval;
-  ts?: number;
-  /** The plan an approved plan exit returned, where its input carried none. */
-  plan?: string;
-}
+/** A tool_use's paired result, as `buildResultsByUseId` builds it. */
+export type DisplayRowResult = ToolResultForUse;
 
 /** A span of `searchText` that came from a specific renderable part of the
  *  row. `expandKey` is the same key `ConversationView`'s `expandedKeys` set
