@@ -19,7 +19,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CommandContext } from '../../src/main/agent/commands/types';
-import type { UsageDashboardStats, UsageKpis, SubagentUsageTotals } from '../../src/shared/types';
+import type { SubagentUsageTotals } from '../../src/shared/types';
+import { makeUsageKpis as makeKpis, makeUsageStats as makeStats } from './helpers/usage-stats-fixture';
 
 const { mockGetDashboardStats } = vi.hoisted(() => ({
   mockGetDashboardStats: vi.fn(),
@@ -30,59 +31,6 @@ vi.mock('../../src/main/usage-stats/usage-stats-service', () => ({
 }));
 
 import { handleGetUsageStats } from '../../src/main/agent/commands/usage-commands';
-
-function makeKpis(overrides: Partial<UsageKpis> = {}): UsageKpis {
-  return {
-    totalCostUsd: 12.34,
-    costKnown: true,
-    totalInputTokens: 1000,
-    totalOutputTokens: 500,
-    totalTokens: 1500,
-    sessionCount: 3,
-    toolCallCount: 20,
-    linesAdded: 10,
-    linesRemoved: 5,
-    filesChanged: 2,
-    compactionCount: 0,
-    totalDurationMs: 60000,
-    turnInputTokens: 1000,
-    turnOutputTokens: 500,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
-    subagentInputTokens: 0,
-    subagentOutputTokens: 0,
-    subagentCacheCreationTokens: 0,
-    subagentCacheReadTokens: 0,
-    subagentTurnCount: 0,
-    subagentCount: 0,
-    subagentNestedCount: 0,
-    burnRateTokensPerHour: null,
-    burnRateUsdPerHour: null,
-    ...overrides,
-  };
-}
-
-function makeStats(overrides: Partial<UsageDashboardStats> = {}): UsageDashboardStats {
-  return {
-    scope: { kind: 'all' },
-    period: 'all',
-    rangeStartMs: 0,
-    rangeEndMs: 1,
-    bucketSizeMs: 1,
-    costBucketSizeMs: 1,
-    generatedAtMs: 1,
-    kpis: makeKpis(),
-    previousKpis: null,
-    tokenSeries: [],
-    costSeries: [],
-    byModel: [],
-    byAgent: [],
-    byEffort: [],
-    bySubagentType: [],
-    subagentBlindAgents: [],
-    ...overrides,
-  };
-}
 
 function makeContext(): CommandContext {
   return {} as unknown as CommandContext;

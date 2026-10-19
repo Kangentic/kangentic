@@ -31,8 +31,8 @@ import type {
   CostSeriesPoint,
   TokenSeriesPoint,
   UsageDashboardStats,
-  UsageKpis,
 } from '../../src/shared/types';
+import { makeUsageKpis, makeUsageStats } from './helpers/usage-stats-fixture';
 
 const { mockGetDashboardStats } = vi.hoisted(() => ({
   mockGetDashboardStats: vi.fn(),
@@ -45,36 +45,6 @@ vi.mock('../../src/main/usage-stats/usage-stats-service', () => ({
 import { handleGetUsageStats } from '../../src/main/agent/commands/usage-commands';
 
 const BACKGROUND_LINE_PREFIX = '  Background (not in the totals above):';
-
-function makeKpis(): UsageKpis {
-  return {
-    totalCostUsd: 12.34,
-    costKnown: true,
-    totalInputTokens: 1000,
-    totalOutputTokens: 500,
-    totalTokens: 1500,
-    sessionCount: 3,
-    toolCallCount: 20,
-    linesAdded: 10,
-    linesRemoved: 5,
-    filesChanged: 2,
-    compactionCount: 0,
-    totalDurationMs: 60000,
-    turnInputTokens: 1000,
-    turnOutputTokens: 500,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
-    subagentInputTokens: 0,
-    subagentOutputTokens: 0,
-    subagentCacheCreationTokens: 0,
-    subagentCacheReadTokens: 0,
-    subagentTurnCount: 0,
-    subagentCount: 0,
-    subagentNestedCount: 0,
-    burnRateTokensPerHour: null,
-    burnRateUsdPerHour: null,
-  };
-}
 
 const TOKEN_SERIES: TokenSeriesPoint[] = [
   { bucketStartMs: 1000, inputTokens: 10, outputTokens: 5, cacheCreationTokens: 1, cacheReadTokens: 2, allocatedCostUsd: 0.5, turnCount: 1 },
@@ -154,27 +124,14 @@ function makeBackground(overrides: Partial<BackgroundUsage> = {}): BackgroundUsa
   };
 }
 
+/** Every series the handler strips is filled (see the file header). */
 function makeStats(overrides: Partial<UsageDashboardStats> = {}): UsageDashboardStats {
-  return {
-    scope: { kind: 'all' },
-    period: 'all',
-    rangeStartMs: 0,
-    rangeEndMs: 1,
-    bucketSizeMs: 1,
-    costBucketSizeMs: 1,
-    generatedAtMs: 1,
-    kpis: makeKpis(),
-    previousKpis: null,
+  return makeUsageStats({
     tokenSeries: TOKEN_SERIES,
     costSeries: COST_SERIES,
     tokenModelSeries: TOKEN_MODEL_SERIES,
-    byModel: [],
-    byAgent: [],
-    byEffort: [],
-    bySubagentType: [],
-    subagentBlindAgents: [],
     ...overrides,
-  };
+  });
 }
 
 function makeContext(): CommandContext {
@@ -319,7 +276,7 @@ describe('handleGetUsageStats includeSeries', () => {
     expect(data.background).toEqual({ totals: background.totals, byJob: background.byJob });
     expect(data.background).not.toHaveProperty('byDay');
     // The KPI and breakdown reads the strip must leave alone.
-    expect(data.kpis).toEqual(makeKpis());
+    expect(data.kpis).toEqual(makeUsageKpis());
     expect(data).toHaveProperty('byModel');
   });
 
