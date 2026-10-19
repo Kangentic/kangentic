@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
-import simpleGit, { type SimpleGit } from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
@@ -13,6 +12,7 @@ import {
   commandTerminalTitle,
 } from '../../../shared/command-terminal-name';
 import { fetchIfStale } from '../../git/fetch-throttle';
+import { gitAt, type GitClient } from '../../git/git-client';
 import { resolveProjectDefaultBaseBranch } from '../helpers/default-base-branch';
 import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -357,13 +357,18 @@ export async function startCommandTerminal(
  * Never throws: every failure falls back to whatever is checked out, with the
  * reason in `checkoutError`, because a terminal that will not launch over a git
  * problem is worse than one on the wrong branch.
+ *
+ * The checkout and merge run repository hooks, so git starts through `gitAt`
+ * (`execFileAsync`), whose env never carries Crashpad's pipe name
+ * (child-env.ts). simple-git can only be given an env through `.env()`, which
+ * refuses one carrying `EDITOR` or `GIT_EDITOR`.
  */
 async function checkOutStartBranch(
   context: IpcContext,
   projectRoot: string,
   input: StartCommandTerminalInput,
 ): Promise<{ branch: string; checkoutError?: string }> {
-  const git = simpleGit(projectRoot);
+  const git = gitAt(projectRoot);
   // The board-overlaid default, the same chain every task spawn and the
   // renderer's branch pill resolve, so main's checkout target and the pill's
   // default cannot disagree when kangentic.json sets the base.
@@ -540,7 +545,7 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
  * build artifact appears. The same filter `WorktreeManager.checkoutBranch` and
  * `TASK_UPDATE_FROM_BASE` use.
  */
-async function hasTrackedChanges(git: SimpleGit): Promise<boolean> {
+async function hasTrackedChanges(git: Pick<GitClient, 'status'>): Promise<boolean> {
   const status = await git.status();
   return status.files.some((file) => file.index !== '?' && file.working_dir !== '?');
 }

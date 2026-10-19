@@ -65,6 +65,29 @@ describe('spawnCli with a pty host registered', () => {
     expect(Object.keys(calls[0].options.env).length).toBeGreaterThan(1);
   });
 
+  it('never hands the run Crashpad\'s pipe name, from main\'s environment or the caller\'s', () => {
+    const pipeKey = 'CHROME_CRASHPAD_PIPE_NAME';
+    const savedHostValue = process.env[pipeKey];
+    process.env[pipeKey] = '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP';
+    const calls: OffMainCliOptions[] = [];
+    setOffMainCliSpawner((_command, _args, options) => {
+      calls.push(options);
+      return fakeRemoteChild();
+    });
+    try {
+      spawnCli('/usr/local/bin/agent', ['-p'], '/work/tree');
+      spawnCli('/usr/local/bin/agent', ['-p'], '/work/tree', { [pipeKey]: 'supplied', KANGENTIC_RUN: 'yes' });
+    } finally {
+      if (savedHostValue === undefined) delete process.env[pipeKey];
+      else process.env[pipeKey] = savedHostValue;
+    }
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].env[pipeKey]).toBeUndefined();
+    expect(calls[1].env[pipeKey]).toBeUndefined();
+    expect(calls[1].env.KANGENTIC_RUN).toBe('yes');
+  });
+
   it('hands a Windows .cmd shim to the host as one cmd command line with every % broken out of the quotes', () => {
     // The shim's head is quoted by quoteCmdExecutable and each arg by
     // quoteForCmdShell, so cmd never expands a %NAME% in the path or the text.

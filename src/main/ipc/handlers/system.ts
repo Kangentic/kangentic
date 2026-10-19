@@ -25,6 +25,7 @@ import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/ext
 import { readClipboardImage, writePastedImage } from '../helpers/clipboard-image';
 import { openPathBounded } from '../helpers/open-path';
 import { resolveShellLaunch } from '../../pty/spawn/shell-launch';
+import { childProcessEnv } from '../../shared/child-env';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../../shared/notification-constants';
 import type {
   NotificationInput,
@@ -615,10 +616,12 @@ export function registerSystemHandlers(context: IpcContext): void {
     }
     console.log(`[shell:exec] command="${command}" cwd="${cwd}"`);
     // Detached and never killed, so a dev server started here can outlive the
-    // app. resolveShellLaunch keeps it from holding Crashpad's port on macOS.
+    // app. resolveShellLaunch keeps it from holding Crashpad's port on macOS,
+    // and childProcessEnv from carrying its pipe name on Windows.
     const launch = resolveShellLaunch({ command });
     const child = spawn(launch.file, launch.args, {
       cwd,
+      env: childProcessEnv(),
       shell: launch.shell,
       detached: true,
       stdio: 'ignore',

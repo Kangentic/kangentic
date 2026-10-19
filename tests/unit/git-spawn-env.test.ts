@@ -58,14 +58,21 @@ describe('runGitWithTimeout env forwarding', () => {
     );
   });
 
-  it('passes no env key at all when none is supplied, so the child inherits process.env', async () => {
+  it('hands git main\'s environment when none is supplied, without Crashpad\'s pipe name', async () => {
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
+    process.env.KANGENTIC_GIT_SPAWN_ENV_PROBE = 'inherited';
 
-    const pending = runGitWithTimeout('/mock/repo', ['status'], { timeoutMs: 1_000 });
-    child.emit('close', 0, null);
+    try {
+      const pending = runGitWithTimeout('/mock/repo', ['status'], { timeoutMs: 1_000 });
+      child.emit('close', 0, null);
+      await pending;
+    } finally {
+      delete process.env.KANGENTIC_GIT_SPAWN_ENV_PROBE;
+    }
 
-    await pending;
-    expect(spawnOptions()).not.toHaveProperty('env');
+    const env = spawnOptions().env as NodeJS.ProcessEnv;
+    expect(env.KANGENTIC_GIT_SPAWN_ENV_PROBE).toBe('inherited');
+    expect(env.CHROME_CRASHPAD_PIPE_NAME).toBeUndefined();
   });
 });

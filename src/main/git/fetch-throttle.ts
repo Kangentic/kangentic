@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { runGitWithTimeout, isGitTimeoutError } from './git-spawn';
 import type { GitClient } from './git-client';
+import { childProcessEnv } from '../shared/child-env';
 
 /**
  * Fetch throttle cache - avoids redundant `git fetch` calls for the
@@ -159,7 +160,7 @@ export function forgetRecentFetches(projectPath: string): void {
  * here; the 5s timeout is what bounds those.
  */
 export function nonInteractiveGitEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+  return childProcessEnv({ GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
 }
 
 export interface FetchAllRemotesOptions {

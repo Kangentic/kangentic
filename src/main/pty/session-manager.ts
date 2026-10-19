@@ -62,6 +62,7 @@ import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec } from './process-tag/task-process-tag';
 import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
+import { childProcessEnv } from '../shared/child-env';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
 import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessResult, type TaggedReapResult } from './process-tag/tagged-reap';
@@ -2571,7 +2572,7 @@ export class SessionManager extends EventEmitter {
             // Main holds a task tag when Kangentic runs from a task's terminal.
             // Passed on, it would tag the script's own subshells, which its
             // scan would then read as that task's processes.
-            const environment: NodeJS.ProcessEnv = { ...process.env, ...execOptions.env };
+            const environment: NodeJS.ProcessEnv = childProcessEnv(execOptions.env);
             delete environment[TASK_PROCESS_TAG_ENV];
             const output = await execFileAsync(file, args, {
               timeout: execOptions.timeoutMs,

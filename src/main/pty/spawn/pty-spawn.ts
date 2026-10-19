@@ -5,6 +5,7 @@ import { escapeForPowerShellSingleQuoted, escapePercentForCmd } from '../../../s
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
 import { parseWslShellSpec } from '../process-tag/task-process-tag';
+import { childProcessEnv } from '../../shared/child-env';
 
 /** Shell executable + args, split from a user-facing shell spec. */
 export interface ShellInvocation {
@@ -167,7 +168,9 @@ export function buildSpawnEnv(
   inputEnv: Record<string, string> | undefined,
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
-  const merged = { ...process.env, ...inputEnv };
+  // Without Crashpad's pipe name, which a program the terminal starts would
+  // otherwise use to write its crash into our database (child-env.ts).
+  const merged = childProcessEnv(inputEnv);
   // Read the parentage signal before the loop strips CLAUDECODE itself. An
   // explicit caller-supplied NO_COLOR survives: the heuristic targets only
   // the inherited leak, never a deliberate per-spawn choice.

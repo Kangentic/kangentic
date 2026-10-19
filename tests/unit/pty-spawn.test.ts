@@ -362,6 +362,40 @@ describe('buildSpawnEnv TERM default', () => {
   });
 });
 
+// On Windows Chromium's Crashpad puts its handler pipe in the browser
+// process's environment so Kangentic's own children can reach it. A terminal
+// that inherited it handed it to every program it started, and an Electron
+// program among them (VS Code's `code` CLI) registered with our handler, so
+// its crash landed in our database (Sentry DESKTOP-1S).
+describe('buildSpawnEnv Crashpad pipe name', () => {
+  const pipeKey = 'CHROME_CRASHPAD_PIPE_NAME';
+  const pipeName = '\\\\.\\pipe\\crashpad_1234_ABCDEFGHIJKLMNOP';
+  let savedHostValue: string | undefined;
+
+  beforeEach(() => {
+    savedHostValue = process.env[pipeKey];
+    delete process.env[pipeKey];
+  });
+
+  afterEach(() => {
+    if (savedHostValue === undefined) delete process.env[pipeKey];
+    else process.env[pipeKey] = savedHostValue;
+  });
+
+  it('drops it when it arrives in inputEnv', () => {
+    const env = buildSpawnEnv({ [pipeKey]: pipeName, OTHER: 'kept' }, 'win32');
+    expect(env[pipeKey]).toBeUndefined();
+    expect(env.OTHER).toBe('kept');
+  });
+
+  it('drops the one main inherited, and leaves main its own copy', () => {
+    process.env[pipeKey] = pipeName;
+    const env = buildSpawnEnv(undefined, 'win32');
+    expect(env[pipeKey]).toBeUndefined();
+    expect(process.env[pipeKey]).toBe(pipeName);
+  });
+});
+
 describe('resolveSpawnCwd', () => {
   afterEach(() => {
     vi.restoreAllMocks();

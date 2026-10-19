@@ -23,9 +23,10 @@
  * `/usr/local`, which shares that root with Intel Homebrew and `.NET`.
  *
  * A directory missing from these lists degrades to `user-binary`, the safe
- * direction. Foreign dumps have only ever arrived from macOS, where exception
- * ports are inherited across exec; the Linux and Windows entries cover the same
- * question for paths from those systems.
+ * direction. Foreign dumps have arrived mostly from macOS, where exception
+ * ports are inherited across exec, and once from Windows, where Crashpad's
+ * pipe-name variable leaked (Code.exe, see shared/child-env.ts); the Linux
+ * entries cover the same question for paths from that system.
  */
 
 export const USER_BINARY_MODULE = 'user-binary';

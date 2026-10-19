@@ -1178,11 +1178,14 @@ src/main/workflows/
   on every spawn: 49 git processes with 45 on main before, 37 with none on main after. The 12
   saved are the share at its best case, both captures fired together; at a quiet Done the exit
   handler's read can settle before the Done branch asks, and then both run. The Changes
-  panel's diff and file reads moved too, since they share `DiffService` with the churn capture. Still on
-  main through simple-git, and outside a workflow's lifecycle: the Changes panel's header and its
-  watcher, blame, file history, the commit graph, the worktree list, a task's branch switch and
-  update from base, the Command Terminal's branch calls, and the pending-changes probe of a Done
-  drop.
+  panel's diff and file reads moved too, since they share `DiffService` with the churn capture. So
+  did three calls that run repository hooks, filters or merge drivers, for a different reason:
+  `gitAt`'s env drops Crashpad's pipe name (see "PTY children and Crashpad's handler" in
+  `docs/cross-platform.md`). They are Update from base's merge, the carry of uncommitted changes
+  into a new worktree, and the Command Terminal's cold-start checkout and merge. Still on main
+  through simple-git, and outside a workflow's lifecycle: the Changes panel's header and its
+  watcher, blame, file history, the commit graph, the worktree list, a task's branch switch config
+  write, the Command Terminal's branch reads, and the pending-changes probe of a Done drop.
 - **A start** is `handleTaskMove` with origin `workflow`, into the first column of the task's route,
   after `forgetRecentFetches` so the worktree is cut from the blockers' merged code. Starts go in To
   Do order, up to `SessionManager.getFreeAgentSlots()`.

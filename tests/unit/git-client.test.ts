@@ -54,6 +54,7 @@ describe('gitAt routing', () => {
     await client.diff(['--name-status', 'abc123']);
     await client.show(['HEAD:README.md']);
     await client.checkout('feature');
+    await client.merge(['origin/main', '--ff-only']);
 
     const requests = executor.mock.calls.map(([request]) => request);
     expect(requests.map((request) => (request.kind === 'execFile' ? [request.file, ...request.args] : []))).toEqual([
@@ -64,6 +65,7 @@ describe('gitAt routing', () => {
       ['git', 'diff', '--name-status', 'abc123'],
       ['git', 'show', 'HEAD:README.md'],
       ['git', 'checkout', 'feature'],
+      ['git', 'merge', 'origin/main', '--ff-only'],
     ]);
     for (const request of requests) {
       expect(request.options).toMatchObject({ cwd: workspace, windowsHide: true, maxBuffer: GIT_OUTPUT_MAX_BUFFER });

@@ -10,6 +10,8 @@
  * importing a probe never loads the native binding.
  */
 
+import { withoutCrashpadPipeName } from '../shared/child-env';
+
 export interface OffMainPtyOptions {
   name: string;
   cols: number;
@@ -45,7 +47,10 @@ export function setOffMainPtySpawner(next: OffMainPtySpawner | null): void {
   spawner = next;
 }
 
-export async function spawnOffMainPty(file: string, args: string[], options: OffMainPtyOptions): Promise<OffMainPty> {
+export async function spawnOffMainPty(file: string, args: string[], requested: OffMainPtyOptions): Promise<OffMainPty> {
+  // A probe drives an agent CLI, which can start anything, so its env never
+  // carries Crashpad's pipe name (child-env.ts).
+  const options: OffMainPtyOptions = { ...requested, env: withoutCrashpadPipeName(requested.env) };
   const spawnInHost = spawner;
   if (spawnInHost) {
     try {

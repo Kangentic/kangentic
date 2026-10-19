@@ -20,6 +20,7 @@
 // The print run's PTY runs in the pty host; node-pty loads only there, or
 // lazily here when no host is registered (the model-picker-probe precedent).
 import { spawnOffMainPty, type OffMainPtyOptions } from '../../../utility-process/off-main-pty';
+import { childProcessEnv } from '../../../shared/child-env';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -111,7 +112,7 @@ export async function runAntigravityPrint(
     cols: 200,
     rows: 50,
     cwd: scratch,
-    env: { ...process.env } as Record<string, string>,
+    env: childProcessEnv(),
   };
   const args = ['-p', flatPrompt, '--output-format', 'json', ...flags];
   const printProcess = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath)

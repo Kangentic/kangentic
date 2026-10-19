@@ -61,8 +61,9 @@ const gitRevparseMock = vi.fn(async () => 'main\n');
 const gitStatusMock = vi.fn(async () => ({ files: [] }));
 const gitCheckoutMock = vi.fn(async () => undefined);
 const gitMergeMock = vi.fn(async () => undefined);
-vi.mock('simple-git', () => ({
-  default: vi.fn(() => ({
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => ({
     revparse: gitRevparseMock,
     status: gitStatusMock,
     checkout: gitCheckoutMock,

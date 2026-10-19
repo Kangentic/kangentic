@@ -25,9 +25,13 @@ import { BROWSER_GUEST_RENDERER_NAME } from './renderer-classification';
  *    launches that go through pty/spawn/shell-launch.ts, so this check is the
  *    backstop for older builds, for an unpackaged run with error reporting
  *    switched on (`npm start` keeps node-pty's stock helper), and for anything
- *    else started outside those paths. Such a crash is still a Kangentic
- *    defect, since it is our port that leaked, so it becomes one grouped Sentry
- *    warning rather than a fatal, and its dump never uploads.
+ *    else started outside those paths. On Windows the leak is an environment
+ *    variable instead: the browser process puts its handler's pipe name in
+ *    `CHROME_CRASHPAD_PIPE_NAME`, and an Electron program a terminal started
+ *    (Code.exe, on 0.45.0) registered with our handler through it. Every child
+ *    env now drops it (shared/child-env.ts). Such a crash is still a Kangentic
+ *    defect, since it is our handler that leaked, so it becomes one grouped
+ *    Sentry warning rather than a fatal, and its dump never uploads.
  * 2. A dump uploaded after an upgrade wears the UPLOADING build's release tag and
  *    scope. DESKTOP-M crashed on 0.38.0 and is filed under 0.39.0, with
  *    breadcrumbs from a launch 21 minutes after the crash.

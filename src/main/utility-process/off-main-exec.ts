@@ -18,7 +18,7 @@
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { HostExecFailure, HostExecOptions, HostExecRequest, HostExecResult } from '../pty/host/protocol';
-import { toHostEnvironment } from './off-main-cli';
+import { withoutCrashpadPipeName } from '../shared/child-env';
 
 export interface OffMainExecOptions {
   cwd?: string;
@@ -48,14 +48,25 @@ export function setOffMainExecutor(next: OffMainExecutor | null): void {
 
 // Promisified per call, not at load: a module that only ever runs execFile
 // should not need exec to exist (unit tests mock one or the other). The
-// caller's options pass through untouched, so this path is exactly the
-// `promisify` call it replaced; utf8 is already the default encoding.
+// caller's options pass through as the `promisify` call it replaced had them,
+// except the env, which always comes without Crashpad's pipe name
+// (child-env.ts); utf8 is already the default encoding.
 function localExec(command: string, options: OffMainExecOptions): Promise<ExecOutput> {
-  return promisify(exec)(command, options) as Promise<ExecOutput>;
+  return promisify(exec)(command, toLocalOptions(options)) as Promise<ExecOutput>;
 }
 
 function localExecFile(file: string, args: string[], options: OffMainExecOptions): Promise<ExecOutput> {
-  return promisify(execFile)(file, args, options) as Promise<ExecOutput>;
+  return promisify(execFile)(file, args, toLocalOptions(options)) as Promise<ExecOutput>;
+}
+
+function toLocalOptions(options: OffMainExecOptions): OffMainExecOptions {
+  return { ...options, env: childEnvironment(options) };
+}
+
+/** The caller's env, or main's current one, without Crashpad's pipe name and
+ *  with unset entries dropped, so the host can receive it as plain data. */
+function childEnvironment(options: OffMainExecOptions): Record<string, string> {
+  return withoutCrashpadPipeName(options.env ?? process.env);
 }
 
 /** Longest a request may wait on the host when the child has no timeout of
@@ -69,7 +80,7 @@ function toHostOptions(options: OffMainExecOptions): HostExecOptions {
   // can change after that, so every request carries main's current one.
   return {
     cwd: options.cwd,
-    env: toHostEnvironment(options.env ?? process.env),
+    env: childEnvironment(options),
     timeout: options.timeout,
     maxBuffer: options.maxBuffer,
     windowsHide: options.windowsHide,

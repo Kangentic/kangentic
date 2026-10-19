@@ -353,7 +353,11 @@ in one Sentry org, one triage surface.
   events; DESKTOP-N was a Puppeteer `chrome-headless-shell`; DESKTOP-Q was
   `/usr/local/share/dotnet/dotnet`, ten more. None loaded a single Kangentic image. DESKTOP-1D was
   another project's dev Electron Helper, killed mid-launch. It loaded Electron Framework like every
-  Electron app does, but from that project's own `node_modules/electron/dist/Electron.app`.
+  Electron app does, but from that project's own `node_modules/electron/dist/Electron.app`. On
+  Windows the leak is an environment variable instead: the browser process puts its handler's pipe
+  name in `CHROME_CRASHPAD_PIPE_NAME`, a child that copied main's environment passed it on, and an
+  Electron program a terminal started registered with our handler through it. The first Windows
+  one reached the grouped issue (DESKTOP-1S) as `module: Code.exe`, crashed on 0.45.0.
   - **Telling them apart.** This class cannot go in `ignoreErrors`, which is the
     `eventFiltersIntegration` and matches only an event's message and its exception type and value:
     a minidump event has none of those, so the matcher sees an empty candidate list and does
@@ -394,10 +398,15 @@ in one Sentry org, one triage surface.
   - **Where the port leaks now, and the before-and-after.** PTY children no longer inherit it: the
     packaged macOS app ships its own node-pty `spawn-helper`, which clears the task's exception
     ports before exec, and the four `child_process` shell launches (the login-shell probe,
-    shortcuts, `run_script` automations, the post-worktree init script) run through it too (see
-    "PTY children and mach exception ports" in `docs/cross-platform.md`). This check stays as the
-    backstop for older builds, for an unpackaged run with error reporting switched on (`npm start`
-    keeps node-pty's stock helper), and for anything else started outside those paths. Earlier
+    shortcuts, `run_script` automations, the post-worktree init script) run through it too. On
+    Windows every child env Kangentic builds for a program it did not write drops the pipe-name
+    variable (`src/main/shared/child-env.ts`; the pty host's own launches and a few fixed system
+    tools are listed in `docs/cross-platform.md`), so a program a terminal, an agent run, a script or a git
+    hook starts finds no handler to register with. "PTY children and Crashpad's handler"
+    in `docs/cross-platform.md` covers both platforms and what each still leaves out. This check
+    stays as the backstop for older builds, for an unpackaged macOS run with error reporting
+    switched on (`npm start` keeps node-pty's stock helper), and for anything else started outside
+    those paths. Earlier
     builds dropped these events and counted them as the Aptabase event `foreign_minidump_dropped`
     instead, with a bare-basename `module`. That counter is the "before": 33 events over 0.41.0 to
     0.43.0, all macOS, 27 of them from one command-line tool. The Sentry issue is the "after", so

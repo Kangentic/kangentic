@@ -21,6 +21,7 @@ import { WorktreeManager, writeWorktreeBaseBranch } from '../../git/worktree-man
 import { WORKTREE_EXCLUDED_DIRECTORY } from '../../git/sparse-exclusion';
 import { fetchIfStale, type FetchFailureReason } from '../../git/fetch-throttle';
 import { refResolvesLocally } from '../../git/base-branch';
+import { gitAt } from '../../git/git-client';
 import type { IpcContext } from '../ipc-context';
 import type { Task, TaskSwitchBranchInput, TaskUpdateFromBaseInput, TaskUpdateFromBaseResult } from '../../../shared/types';
 
@@ -48,7 +49,10 @@ export async function carryUncommittedChanges(
   };
 
   try {
-    const mainGit = simpleGit(projectPath);
+    // Through `gitAt` (`execFileAsync`), whose env never carries Crashpad's
+    // pipe name (child-env.ts): `apply --3way` and the reads around it run the
+    // repository's filters and merge drivers.
+    const mainGit = gitAt(projectPath);
     const status = await mainGit.status();
 
     if (status.files.length === 0 && status.not_added.length === 0) {
@@ -63,11 +67,11 @@ export async function carryUncommittedChanges(
     // checkout, which is where the worktree's agent reads commands from anyway.
     const diff = await mainGit.diff(['HEAD', '--', '.', `:(exclude)${WORKTREE_EXCLUDED_DIRECTORY}`]);
     if (diff) {
-      const worktreeGit = simpleGit(worktreePath);
+      const worktreeGit = gitAt(worktreePath);
       const patchFile = path.join(os.tmpdir(), `kangentic-patch-${taskIdSlug}.patch`);
       try {
         fs.writeFileSync(patchFile, diff);
-        await worktreeGit.raw('apply', '--3way', patchFile);
+        await worktreeGit.raw(['apply', '--3way', patchFile]);
         result.carriedTracked = true;
       } catch {
         result.applyFailed = true;
@@ -280,7 +284,9 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
           };
         }
 
-        const worktreeGit = simpleGit(worktreePath);
+        // Through `gitAt`, so the merge's hooks never get Crashpad's pipe name
+        // (child-env.ts).
+        const worktreeGit = gitAt(worktreePath);
         // The merge below moves whatever ref the worktree has checked out.
         // Nothing stops a user (or an agent) from checking out another branch
         // or detaching HEAD inside the tree, and a success toast claiming the

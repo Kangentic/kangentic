@@ -109,7 +109,7 @@ at the Windows timer floor.
   the one construction site of each transport and of `PtyHostCore`; fails on a value import of
   `node-pty` outside the host core, and on a lazy `import('node-pty')` outside the
   `off-main-pty.ts` fallback; fails on `promisify(exec)` / `promisify(execFile)` under
-  `src/main` outside the drop-in and its two reasoned exceptions; pins that `host-exec.ts` and
+  `src/main` outside the drop-in and its one reasoned exception (`shell-env.ts`); pins that `host-exec.ts` and
   `host-cli-processes.ts` never fork and check for their own executable; pins that `spawnCli`
   asks `spawnOffMainCli` before its local fallback, which is the only spawn in `cli-print.ts`; and
   pins that `child-tree-stop.ts` never forks, spawns nothing but `taskkill`, imports only `spawn`,
@@ -154,8 +154,11 @@ move and a move to Done go through `src/main/git/git-client.ts` (`gitAt`, `runGi
 keep simple-git's method names and results; simple-git has no spawn hook) and
 `spawn-with-abort.ts`, which routes a git command to `spawnOffMainCli`. Measured by
 `tests/unit/git-lifecycle-off-main.test.ts`: 37 git processes per modeled lifecycle, none on main,
-against 49 with 45 on main before. Still on main, because none runs in a lifecycle: the branch
-summary, the diff watcher, blame, file history, the commit graph, the worktree list, a task's branch
-switch and update from base, the Command Terminal's branch calls, and the Done drop's
-pending-changes probe. A new git call on the lifecycle path uses the git client; the lifecycle
-test fails when one lands on main.
+against 49 with 45 on main before. Three calls off the lifecycle use the git client too, because
+they run repository hooks, filters or merge drivers and `gitAt`'s env drops Crashpad's pipe name
+(`src/main/shared/child-env.ts`): Update from base's merge, the carry of uncommitted changes into a
+new worktree, and the Command Terminal's cold-start checkout and merge. Still on main, because none
+runs in a lifecycle: the branch summary, the diff watcher, blame, file history, the commit graph,
+the worktree list, a task's branch switch config write, the Command Terminal's branch reads, and
+the Done drop's pending-changes probe. A new git call on the lifecycle path uses the git client;
+the lifecycle test fails when one lands on main.

@@ -13,6 +13,7 @@
  */
 
 import type { EventEmitter } from 'node:events';
+import { withoutCrashpadPipeName } from '../shared/child-env';
 
 /** A run's stdout or stderr: `data` events carrying Buffers. */
 export interface CliOutput extends EventEmitter {
@@ -65,20 +66,12 @@ export function setOffMainCliSpawner(next: OffMainCliSpawner | null): void {
   spawner = next;
 }
 
-/** The run in the pty host, or null when no host is registered (spawn locally). */
-export function spawnOffMainCli(command: string, args: string[], options: OffMainCliOptions): CliChildProcess | null {
-  return spawner ? spawner(command, args, options) : null;
-}
-
 /**
- * An environment as plain data the host can receive: unset entries dropped,
- * since `process.env` types every value `string | undefined` and a structured
- * clone would carry the key with nothing in it.
+ * The run in the pty host, or null when no host is registered (spawn locally).
+ * The env it ships never carries Crashpad's pipe name, whatever the caller
+ * built (child-env.ts): the run is an agent CLI or git, and either can start
+ * anything.
  */
-export function toHostEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
-  const defined: Record<string, string> = {};
-  for (const [key, value] of Object.entries(environment)) {
-    if (value !== undefined) defined[key] = value;
-  }
-  return defined;
+export function spawnOffMainCli(command: string, args: string[], options: OffMainCliOptions): CliChildProcess | null {
+  return spawner ? spawner(command, args, { ...options, env: withoutCrashpadPipeName(options.env) }) : null;
 }
