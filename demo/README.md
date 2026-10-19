@@ -1729,13 +1729,19 @@ applier's indentation and comments. On the same tree, minifying took the five fr
 gzipped, about 9% of everything a frame loads before first paint: `demo-boot.js` from 18 to 6 KB,
 the mock from 82 to 32 KB, the seed from 188 to 151 KB, and the scenes and the shim a KB each.
 The demo tier minifies each shipped script again and fails if that gains more than 2%, so a
-script added to the head unminified fails there.
+script added to the head unminified fails there. This is download size only. The JS heap after a
+forced GC, which is what the site's figure budget is about, did not move: one board frame is 16.3
+MB and four are 38.0 MB, minified or not (same-origin frames on one page, measured back to back).
+Script source is held outside the heap that number reads.
 
 The largest single cost left is lucide-react's whole icon map. `src/renderer/utils/swimlane-icons.tsx`
 imports it (`icons`, about 1,500 glyphs) so a column's persisted kebab-case icon name can render
 any glyph and the Column Manager can offer all of them. It is 690 KB raw and 162 KB gzipped
-measured alone, against 2 KB for two named icons, and it ships in the desktop renderer too.
-Trimming it changes how the renderer resolves a column's icon, so it is not a demo build change.
+measured alone, against 2 KB for two named icons, and it ships in the desktop renderer too. It
+costs heap as well: a build with only two icons measured 14.0 MB for one board frame against 16.3
+MB, and 33.2 MB for four against 38.0 MB. The first frame pays about 2.3 MB and each further frame
+on the page about 0.8 MB, since same-process frames share compiled code. Trimming it changes how
+the renderer resolves a column's icon, so it is not a demo build change.
 
 The whole `dist/demo/assets` is 18.1 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 6 requests).
