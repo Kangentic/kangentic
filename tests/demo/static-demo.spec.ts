@@ -2310,11 +2310,45 @@ test('the registry carries choreographies to play', () => {
   expect(CHOREOGRAPHED_SCENES.some((entry) => (entry.scene.choreography ?? []).some((step) => 'pose' in step))).toBe(true);
 });
 
+/**
+ * Whether a scene's cycle ends on a held drag (card-drag, window-dock): the pose follows a held
+ * drag, and the cycle runs the steps after the pose and then the ones before it, so the last
+ * thing it does is carry the drag to the pose and keep the button down.
+ */
+function endsOnHeldDrag(scene: (typeof CHOREOGRAPHED_SCENES)[number]['scene']): boolean {
+  const steps = scene.choreography ?? [];
+  const poseIndex = steps.findIndex((step) => 'pose' in step);
+  const last = poseIndex > 0 ? steps[poseIndex - 1] : undefined;
+  return last !== undefined && 'drag' in last && last.drag.hold === true;
+}
+
 for (const { scene, cycles } of CHOREOGRAPHED_SCENES) {
   test(`view=${scene.name} under loop=1 ${cycles ? 'plays a cycle back to rest' : 'holds its pose'} with a clean console`, async ({ page }) => {
     test.setTimeout(90_000);
     const getUnexpectedErrors = collectUnexpectedErrors(page);
     await setChoreographyRate(page, CHOREOGRAPHY_TEST_RATE);
+    const readAtCycleEnd = cycles && endsOnHeldDrag(scene);
+    if (readAtCycleEnd) {
+      // A cycle that ends on a held drag goes straight on to its drop with no rest between, and the
+      // drop hides what `ready` names (the snap preview is display:none a few milliseconds later,
+      // and shows again only when the next cycle carries the drag back to the edge). So `ready` is
+      // read where the cycle ends: the observer's callback runs in the task that flips the root to
+      // rest with one cycle done, before the drop's timer. Read after the test's own round trips it
+      // raced that drop, and passed only by catching the next cycle's re-arm inside the timeout.
+      await page.addInitScript((readySelector) => {
+        const holder = window as unknown as { __readyAtCycleEnd?: boolean };
+        // Observed on the document, not its root: an init script runs before the root element exists.
+        new MutationObserver(() => {
+          const root = document.documentElement;
+          if (holder.__readyAtCycleEnd !== undefined) return;
+          if (root.getAttribute('data-demo-choreography') !== 'rest' || root.getAttribute('data-demo-cycles') !== '1') return;
+          const element = document.querySelector(readySelector);
+          const rect = element?.getBoundingClientRect();
+          holder.__readyAtCycleEnd = element !== null && element !== undefined && rect !== undefined
+            && rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== 'hidden';
+        }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-demo-choreography'] });
+      }, scene.ready);
+    }
     await gotoScene(page, { view: scene.name, embed: '1', loop: '1' });
     const root = page.locator('html');
     if (cycles) {
@@ -2326,7 +2360,12 @@ for (const { scene, cycles } of CHOREOGRAPHED_SCENES) {
       await expect(root).toHaveAttribute('data-demo-choreography', 'rest', { timeout: 15_000 });
       await expect(page.locator('[data-demo-cursor]'), 'a held pose draws no pointer').toHaveCount(0);
     }
-    await expect(page.locator(scene.ready).first()).toBeVisible();
+    if (readAtCycleEnd) {
+      const readyAtCycleEnd = await page.evaluate(() => (window as unknown as { __readyAtCycleEnd?: boolean }).__readyAtCycleEnd);
+      expect(readyAtCycleEnd, `${scene.ready} is showing where the first cycle ends`).toBe(true);
+    } else {
+      await expect(page.locator(scene.ready).first()).toBeVisible();
+    }
     expect(getUnexpectedErrors()).toEqual([]);
   });
 }
