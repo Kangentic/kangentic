@@ -42,7 +42,7 @@ export function ChartCard({
       </div>
       <div className={bodyClassName}>
         {loading ? (
-          <div className="h-full flex items-center justify-center">
+          <div className="h-full flex items-center justify-center" data-testid="chart-card-loading">
             <Loader size={16} className="animate-spin text-fg-faint" />
           </div>
         ) : empty ? (
