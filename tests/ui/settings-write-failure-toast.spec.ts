@@ -56,6 +56,10 @@ test.describe('settings write failure toast', () => {
       // unlike a CardRow, whose testid is on its tile.
       await page.getByTestId('setting-row-skipBoardConfigConfirm').click();
       await expect(failureToasts(page)).toHaveCount(1, { timeout: 5000 });
+      // A degraded write says why, which FAILURE_TOAST alone does not pin. The REJECTED case
+      // below asserts the same clause is absent. Read while exactly one toast is up, so the
+      // locator stays unambiguous.
+      await expect(failureToasts(page)).toContainText('could not write its settings file');
 
       // `animationsEnabled` is a DIFFERENT top-level key, so the per-key cooldown must
       // not silence it. This is the regression the cooldown could reintroduce: a plain
@@ -148,7 +152,7 @@ test.describe('settings write failure toast', () => {
     }
   });
 
-  test('a REJECTED write reports too, without the data-folder clause', async () => {
+  test('a REJECTED write reports too, without the settings-file clause', async () => {
     // The project-scoped handlers throw for an unknown or unopened project. That used
     // to land as a silent unhandled rejection - the same class of bug as the degraded
     // write above, and the thing #664 set out to remove.
@@ -168,9 +172,9 @@ test.describe('settings write failure toast', () => {
 
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: FAILURE_TOAST });
       await expect(toast).toHaveCount(1, { timeout: 5000 });
-      // A rejected call is not evidence the data folder is unwritable, so that clause
+      // A rejected call is not evidence the settings file is unwritable, so that clause
       // must not appear.
-      await expect(toast).not.toContainText('data folder');
+      await expect(toast).not.toContainText('settings file');
     } finally {
       await browser.close();
     }

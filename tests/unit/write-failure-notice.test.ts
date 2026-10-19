@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // reportHandledError pulls in @sentry/electron and electron; mocking it directly
 // (rather than the real module + its own dependencies) keeps this suite focused on
@@ -33,6 +33,8 @@ describe('write-failure-notice', () => {
 
     expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
     expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(error, { source: 'config' });
+    // An error with no `code` is not a Node system error, so it goes out as the same object.
+    expect(mocks.reportHandledErrorSpy.mock.calls[0][0]).toBe(error);
     expect(notifier).toHaveBeenCalledTimes(1);
     expect(notifier).toHaveBeenCalledWith(expect.any(String));
   });
@@ -132,14 +134,21 @@ describe('write-failure-notice', () => {
  * The suite above deliberately uses message-only Errors (that is what it was written
  * against), so these cases build the real shape or they would assert nothing.
  */
-function errnoError(code: string, message: string): NodeJS.ErrnoException {
+function errnoError(code: string, message: string, syscall?: string): NodeJS.ErrnoException {
   const error: NodeJS.ErrnoException = new Error(message);
   error.code = code;
+  if (syscall) error.syscall = syscall;
   return error;
 }
 
-const LEGACY_SENTENCE =
-  'Kangentic could not write to its data folder. Changes apply to this session but will not persist.';
+const NO_CAUSE_SENTENCE =
+  'Kangentic could not save a change to disk. It may be lost when Kangentic restarts.';
+
+const originalPlatform = process.platform;
+
+function setPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
 
 describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
   beforeEach(() => {
@@ -166,23 +175,22 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
     expect(notifier).toHaveBeenCalledTimes(1);
     const message = notifier.mock.calls[0][0] as string;
     expect(message).toContain(expectedClause);
-    // The consequence half must survive the new clause: it is what tells the user the
-    // value still applies to this session.
-    expect(message).toContain('Changes apply to this session but will not persist.');
+    // The consequence half must survive the new clause. It is worded to hold for every
+    // source, including a project override, which keeps no in-memory copy.
+    expect(message).toContain('It may be lost when Kangentic restarts.');
   });
 
-  it('falls back to the pre-cause sentence for an errno with no clause', () => {
-    // An unmapped cause degrades to the wording that shipped before causes existed,
-    // never to a wrong guess. Two UI specs also match on this sentence.
+  it('falls back to the no-cause sentence for an errno with no clause', () => {
+    // An unmapped cause degrades to no cause, never to a wrong guess.
     const notifier = vi.fn();
     setSyncWriteFailureNotifier(notifier);
 
     reportSyncWriteFailure(errnoError('EUNKNOWNTOUS', 'something else entirely'), 'config');
 
-    expect(notifier).toHaveBeenCalledWith(LEGACY_SENTENCE);
+    expect(notifier).toHaveBeenCalledWith(NO_CAUSE_SENTENCE);
   });
 
-  it('falls back to the pre-cause sentence for an error carrying no code at all', () => {
+  it('falls back to the no-cause sentence for an error carrying no code at all', () => {
     const notifier = vi.fn();
     setSyncWriteFailureNotifier(notifier);
 
@@ -190,7 +198,7 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
 
     // The errno lives on `error.code`, never parsed out of the message: a thrown string
     // that merely mentions ENOSPC is not evidence of one.
-    expect(notifier).toHaveBeenCalledWith(LEGACY_SENTENCE);
+    expect(notifier).toHaveBeenCalledWith(NO_CAUSE_SENTENCE);
   });
 
   it('tags the Sentry report with the errno', () => {
@@ -198,7 +206,7 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
 
     reportSyncWriteFailure(error, 'config');
 
-    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(error, { source: 'config', errno: 'ENOSPC' });
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(expect.any(Error), { source: 'config', errno: 'ENOSPC' });
   });
 
   it('omits the errno tag entirely when the error carries no code', () => {
@@ -232,7 +240,7 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
     'hasOwnProperty',
     '__proto__',
   ])(
-    'falls back to the pre-cause sentence for the Object.prototype-shaped errno %s, rather than resolving an inherited member',
+    'falls back to the no-cause sentence for the Object.prototype-shaped errno %s, rather than resolving an inherited member',
     (code) => {
       // CAUSE_CLAUSE_BY_ERRNO is a Map for exactly this reason: an errno that happens to
       // name an Object.prototype member must MISS, not resolve to an inherited value. A
@@ -240,16 +248,152 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
       // `code: 'constructor'` to the Object constructor function and `code: '__proto__'`
       // to Object.prototype - both truthy, so the `?? ''` fallback would never fire, and
       // the template literal would stringify whichever one it got straight into the
-      // user's message (e.g. "...data folderfunction Object() { [native code] }. ...").
-      // Asserting full equality against LEGACY_SENTENCE (not just a substring) is what
-      // catches that splice: a `.toContain('Changes apply to this session')` check would
-      // still pass with garbage prepended to it.
+      // user's message (e.g. "...to diskfunction Object() { [native code] }. ...").
+      // Asserting full equality against NO_CAUSE_SENTENCE (not just a substring) is what
+      // catches that splice: a `.toContain('It may be lost')` check would still pass with
+      // garbage prepended to it.
       const notifier = vi.fn();
       setSyncWriteFailureNotifier(notifier);
 
       reportSyncWriteFailure(errnoError(code, `${code}: something, write`), 'config');
 
-      expect(notifier).toHaveBeenCalledWith(LEGACY_SENTENCE);
+      expect(notifier).toHaveBeenCalledWith(NO_CAUSE_SENTENCE);
     },
   );
+});
+
+// Sentry DESKTOP-1Z: a file-sync client held a project's `.kangentic/config.json`, Windows
+// refused the rename with EPERM, and the notice blamed permissions.
+describe('write-failure-notice held-file renames (DESKTOP-1Z)', () => {
+  beforeEach(() => {
+    mocks.reportHandledErrorSpy.mockClear();
+    __resetForTest();
+  });
+
+  afterEach(() => {
+    setPlatform(originalPlatform);
+  });
+
+  it.each(['EPERM', 'EACCES', 'EBUSY'])(
+    'says the file is in use or read-only for a rename refused with %s on Windows',
+    (code) => {
+      setPlatform('win32');
+      const notifier = vi.fn();
+      setSyncWriteFailureNotifier(notifier);
+
+      reportSyncWriteFailure(errnoError(code, `${code}: refused, rename`, 'rename'), 'config_project_override');
+
+      expect(notifier).toHaveBeenCalledWith(
+        'Kangentic could not save a change to disk because the file is in use or read-only. '
+          + 'It may be lost when Kangentic restarts.',
+      );
+    },
+  );
+
+  it('keeps the permission clause for a refused rename on Linux, where an open file never blocks one', () => {
+    setPlatform('linux');
+    const notifier = vi.fn();
+    setSyncWriteFailureNotifier(notifier);
+
+    reportSyncWriteFailure(errnoError('EACCES', 'EACCES: permission denied, rename', 'rename'), 'config');
+
+    expect(notifier.mock.calls[0][0]).toContain('because it does not have permission');
+  });
+
+  it('keeps the permission clause for an EPERM from a syscall other than rename on Windows', () => {
+    setPlatform('win32');
+    const notifier = vi.fn();
+    setSyncWriteFailureNotifier(notifier);
+
+    reportSyncWriteFailure(errnoError('EPERM', 'EPERM: operation not permitted, open', 'open'), 'config');
+
+    expect(notifier.mock.calls[0][0]).toContain('because it does not have permission');
+  });
+});
+
+describe('write-failure-notice path-free Sentry report (DESKTOP-1Z)', () => {
+  // Fixture paths only: a project on a second drive, which the home-directory redaction
+  // in redact-event-paths.ts cannot rewrite.
+  const TEMP_PATH = 'D:\\Sync\\demo-project\\.kangentic\\config.json.tmp.4242';
+  const TARGET_PATH = 'D:\\Sync\\demo-project\\.kangentic\\config.json';
+
+  beforeEach(() => {
+    mocks.reportHandledErrorSpy.mockClear();
+    __resetForTest();
+  });
+
+  function nodeRenameError(): NodeJS.ErrnoException {
+    const error = errnoError(
+      'EPERM',
+      `EPERM: operation not permitted, rename '${TEMP_PATH}' -> '${TARGET_PATH}'`,
+      'rename',
+    );
+    error.path = TEMP_PATH;
+    return Object.assign(error, { dest: TARGET_PATH });
+  }
+
+  it('sends a copy built from the errno and syscall, with neither path in its message or stack', () => {
+    const error = nodeRenameError();
+
+    reportSyncWriteFailure(error, 'config_project_override');
+
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
+    const [reported, tags] = mocks.reportHandledErrorSpy.mock.calls[0] as [Error, Record<string, string>];
+    expect(reported).not.toBe(error);
+    expect(reported).toBeInstanceOf(Error);
+    expect(reported.message).toBe('EPERM: rename failed');
+    expect(tags).toEqual({ source: 'config_project_override', errno: 'EPERM', syscall: 'rename' });
+    for (const text of [reported.message, reported.stack ?? '']) {
+      expect(text).not.toContain(TEMP_PATH);
+      expect(text).not.toContain(TARGET_PATH);
+    }
+    expect(reported).not.toHaveProperty('path');
+    expect(reported).not.toHaveProperty('dest');
+    expect(reported.cause).toBeUndefined();
+  });
+
+  it('keeps the original frames under the new header, so the trace and grouping survive', () => {
+    const error = nodeRenameError();
+    const originalFrames = (error.stack ?? '').slice((error.stack ?? '').indexOf('\n'));
+    expect(originalFrames).toContain('    at ');
+
+    reportSyncWriteFailure(error, 'config_project_override');
+
+    const reported = mocks.reportHandledErrorSpy.mock.calls[0][0] as Error;
+    expect(reported.stack).toBe(`Error: EPERM: rename failed${originalFrames}`);
+  });
+
+  // `EPERM` is a prefix of the stack's path-bearing first line. A guard that only checked
+  // `startsWith` took it for a match, sliced mid-line, and sent both paths.
+  it.each(['rename refused', 'EPERM'])(
+    'keeps its own frames when the message is changed to %s after the stack was captured',
+    (replacementMessage) => {
+      const error = nodeRenameError();
+      // Reading the stack materializes it with the original header, so line 1 holds both
+      // paths from here on, whatever the message becomes.
+      const stackBeforeEdit = error.stack ?? '';
+      error.message = replacementMessage;
+      // Preconditions: without them this case passes just as well when the stack is no
+      // longer the one the message used to head.
+      expect(stackBeforeEdit).toContain(TARGET_PATH);
+      expect(stackBeforeEdit.split('\n')[0]).not.toBe(`${error.name}: ${error.message}`);
+
+      reportSyncWriteFailure(error, 'config_project_override');
+
+      expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
+      const reported = mocks.reportHandledErrorSpy.mock.calls[0][0] as Error;
+      expect(reported.message).toBe('EPERM: rename failed');
+      expect(reported.stack).not.toContain(TARGET_PATH);
+      expect(reported.stack).not.toContain(TEMP_PATH);
+    },
+  );
+
+  it('builds the message from the errno alone when the error names no syscall', () => {
+    reportSyncWriteFailure(errnoError('ENOSPC', `ENOSPC: no space left on device, write '${TARGET_PATH}'`), 'config');
+
+    const [reported, tags] = mocks.reportHandledErrorSpy.mock.calls[0] as [Error, Record<string, string>];
+    expect(reported.message).toBe('ENOSPC');
+    expect(reported.stack).not.toContain(TARGET_PATH);
+    expect(tags).toEqual({ source: 'config', errno: 'ENOSPC' });
+  });
 });

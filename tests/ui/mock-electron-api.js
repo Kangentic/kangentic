@@ -729,7 +729,7 @@
 
   // A REJECTED write is a different failure from one that degraded: the real
   // project-scoped handlers throw for an unknown or unopened project, and the settings
-  // panel reports that separately (with no data-folder clause).
+  // panel reports that separately (with no settings-file clause).
   //
   // Called BEFORE the mock applies the partial, because the real handlers throw their
   // precondition before ever reaching ConfigManager - nothing is written on that path.

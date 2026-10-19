@@ -30,8 +30,13 @@ The user is told about it twice, by two mechanisms that answer different questio
 The machine-level condition goes out once per failing write source via the `config:writeFailed`
 push (below), latched in `src/main/config/write-failure-notice.ts` until a later write to that
 source succeeds. Its message names the cause where the errno identifies one: a full disk, a
-missing permission, a read-only volume, or an unavailable drive. An errno with no mapped cause
-falls back to the plain "could not write to its data folder" sentence rather than guessing.
+missing permission, a read-only volume, an unavailable drive, or, on Windows, a file in use or
+read-only. An errno with no mapped cause falls back to the plain "could not save a change to disk"
+sentence rather than guessing. The held-file case is a rename Windows refuses with EPERM, EACCES
+or EBUSY while a file-sync client or scanner holds the target. A target with the read-only
+attribute fails with the same EPERM, so the message names both causes. `safeWriteJson` retries that
+rename twice, within 100 ms, before it gives up (Sentry DESKTOP-1Z). It never falls back to writing
+straight onto the target, because a torn `config.json` reads as no overrides at all.
 
 That notice is not enough on its own, because the busiest writer of source `config` is the 500 ms
 window-bounds debounce, so it is usually spent on a window move. Every settings change afterwards
@@ -986,7 +991,7 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `config:setProjectByPath` | Update project-level overrides by project path; resolves `{ persisted }` |
 | `config:syncDefaultToProjects` | Sync changed default values to all existing projects (deep merge) |
 | `config:changed` | Event: fanned to every window (main and open pop-outs) after any `config:set` is applied; subscribers re-fetch via `config:get`, so theme and settings stay in sync across windows |
-| `config:writeFailed` | Event: a synchronous write to config or another small per-machine/per-project state file failed (data directory unwritable); carries the message to toast, naming the cause where the errno gives one, at most once per failing source until a later write to that source succeeds |
+| `config:writeFailed` | Event: a synchronous write to config or another small per-machine/per-project state file failed; carries the message to toast, naming the cause where the errno gives one, at most once per failing source until a later write to that source succeeds |
 | `boardConfig:exists` | Check if `kangentic.json` exists for the active project |
 | `boardConfig:export` | Export current board state to `kangentic.json` (auto-runs on project open) |
 | `boardConfig:apply` | Apply pending config file changes (reconcile file into DB) |
