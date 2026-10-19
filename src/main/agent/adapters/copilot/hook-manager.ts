@@ -4,7 +4,7 @@ import path from 'node:path';
 import { toForwardSlash } from '../../../../shared/paths';
 import { AgentTool, EventType } from '../../../../shared/types';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
-import { buildBridgeCommand, isKangenticHookCommand, quoteBridgePath } from '../../shared/hook-utils';
+import { buildBridgeCommand, isKangenticHookCommand, quoteBridgePath, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractDetail, setToolWhen } from '../../shared/directive-builders';
 
 /**
@@ -21,6 +21,18 @@ export interface CopilotHookEntry {
   command: string;
   timeout?: number;
 }
+
+/**
+ * The shell Copilot runs a hook's `command` in on Windows: the field is copied
+ * to `powershell`, run as `pwsh.exe -nop -nol -c "<command>"` (measured on 1.0.98).
+ */
+const COPILOT_HOOK_SHELL: HookShell = 'sh-or-powershell';
+
+/**
+ * The shell Copilot runs the status line in on Windows: Node's `shell: true`,
+ * so `cmd.exe /d /s /c "<command>"` verbatim (read from 1.0.98's `cli-main.js`).
+ */
+const COPILOT_STATUS_LINE_SHELL: HookShell = 'cmd';
 
 /** Copilot CLI's plan exit tool, the one that raises its plan approval card. */
 const COPILOT_PLAN_EXIT_TOOL = 'exit_plan_mode';
@@ -109,7 +121,7 @@ export function buildHooks(eventsOutputPath: string): Record<string, CopilotHook
   const hooks: Record<string, CopilotHookEntry[]> = {};
   for (const { event, bridgeEventType, directives } of COPILOT_HOOK_EVENTS) {
     hooks[event] = [{
-      command: buildBridgeCommand(eventBridge, eventsPath, bridgeEventType, ...(directives || [])),
+      command: buildBridgeCommand(COPILOT_HOOK_SHELL, eventBridge, eventsPath, bridgeEventType, ...(directives || [])),
       timeout: 10,
     }];
   }
@@ -213,7 +225,7 @@ function withSessionSettings(
     const statusPath = toForwardSlash(statusOutputPath);
     next.statusLine = {
       type: 'command',
-      command: `node ${quoteBridgePath(statusBridge)} ${quoteBridgePath(statusPath)}`,
+      command: `node ${quoteBridgePath(statusBridge, COPILOT_STATUS_LINE_SHELL)} ${quoteBridgePath(statusPath, COPILOT_STATUS_LINE_SHELL)}`,
     };
   }
   return next;

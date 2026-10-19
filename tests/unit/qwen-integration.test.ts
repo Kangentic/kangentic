@@ -595,9 +595,10 @@ describe('Qwen Code - integration harness', () => {
       // Inject kangentic hooks alongside the user's. The bridge path
       // MUST contain both `.kangentic` and `event-bridge` for the
       // `isKangenticHookCommand` filter to recognize and strip them
-      // later. Real adapter spawn paths always use `.kangentic/...`.
-      const fakeBridge = path.join('/fake', '.kangentic', 'event-bridge.js');
-      const fakeEvents = path.join('/fake', '.kangentic', 'sessions', 'abc', 'events.jsonl');
+      // later. Real adapter spawn paths always use `.kangentic/...`, and are
+      // forward-slashed, which also keeps them bare tokens for a Windows hook.
+      const fakeBridge = '/fake/.kangentic/event-bridge.js';
+      const fakeEvents = '/fake/.kangentic/sessions/abc/events.jsonl';
       const merged = buildHooks(fakeBridge, fakeEvents, initial.hooks);
       const writtenSettings = { ...initial, hooks: merged };
       fs.writeFileSync(settingsPath, JSON.stringify(writtenSettings, null, 2));

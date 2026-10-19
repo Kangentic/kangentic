@@ -3,7 +3,7 @@ import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { toForwardSlash } from '../../../../shared/paths';
 import { isKangenticHookCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
-import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { copyEventBridgeInto } from '../../shared/workspace-bridge-copy';
 import {
   captureHookContext,
   extractDetailPath,
@@ -78,19 +78,15 @@ export function spaceFreeAgentsToken(cwd: string, absoluteTarget: string): strin
 
 /**
  * Copy the deployed event-bridge script into `<cwd>/.kangentic/` so the hook
- * command can reference it space-free relative to `.agents/`. Re-copied on
- * every spawn so an app upgrade can never leave a stale bridge behind (the
- * external-scripts-parity lesson). Returns the `.agents`-relative token, or
+ * command can reference it space-free relative to `.agents/`. Checked on every
+ * spawn and re-copied when it differs, so an app upgrade can never leave a
+ * stale bridge behind (the external-scripts-parity lesson). Returns the
+ * `.agents`-relative token, or
  * null when the copy or relativization failed.
  */
 export function deployWorkspaceBridgeCopy(cwd: string): string | null {
   try {
-    const sourcePath = resolveBridgeScript('event-bridge');
-    const runtimeDir = path.join(cwd, '.kangentic');
-    fs.mkdirSync(runtimeDir, { recursive: true });
-    const copyPath = path.join(runtimeDir, AGY_BRIDGE_COPY_NAME);
-    fs.copyFileSync(sourcePath, copyPath);
-    return spaceFreeAgentsToken(cwd, copyPath);
+    return spaceFreeAgentsToken(cwd, copyEventBridgeInto(cwd, AGY_BRIDGE_COPY_NAME));
   } catch (error) {
     console.error('[antigravity] Failed to deploy workspace event-bridge copy', error);
     return null;

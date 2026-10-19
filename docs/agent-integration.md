@@ -471,19 +471,62 @@ All event-bridge hooks use blank matchers (fire for every invocation regardless 
 
 #### Paths in hook commands
 
-Each hook and status-line command built by `buildBridgeCommand`, `buildPlanApprovalCommand`, or the
-Claude and Copilot status-line builders double-quotes its paths through `quoteBridgePath`
-(`src/main/agent/shared/hook-utils.ts`). Aider's notifications command quotes for its own shell (see
-the Aider section), and Antigravity's hook commands are unquoted by design, because its hook runner
-keeps quote characters literal. On macOS and Linux the hook runners run the command with `sh -c`
-(Claude Code) or `bash -c` (Gemini, Qwen), and Copilot's `command` field is its cross-platform
-alias for `bash` and `powershell`. In those shells `\`, `"`, `$` and a backtick stay special inside
-double quotes, so each is backslash-escaped. The shell behind Grok's hooks and behind the Claude and
-Copilot status lines was not checked. A project under a folder named `$client` would
-otherwise lose that segment, and the plan approval hook would find no decision file. Windows paths
-are left as they are: the hook shell there is Git Bash or PowerShell for Claude Code, PowerShell for
-Gemini, and Git Bash, cmd or PowerShell for Qwen, and no one escape is right for all of them.
-`tests/unit/event-bridge.test.ts` runs a built command through a real `sh -c`.
+Every hook and status-line command Kangentic writes is `node <bridge> <path>...`, and the agent CLI
+hands the whole string to a shell, except Antigravity, which tokenizes hook commands itself (see
+[Antigravity](#antigravity)). A path the shell rewrites sends the bridge somewhere else: a
+project under a folder named `$client` lost that segment, so the plan approval hook found no
+decision file and every activity event went to the wrong file. Each adapter whose bridge command
+goes through `quoteBridgePath` declares the shell its
+CLI uses on Windows (`HookShell`, `src/main/agent/shared/hook-utils.ts`; Aider and Antigravity are
+the exceptions, below), and `quoteBridgePath`
+quotes each path for it, through `buildBridgeCommand`, `buildPlanApprovalCommand` and the Claude
+and Copilot status-line builders. On macOS and Linux every CLI uses `sh -c` or `bash -c`.
+
+| CLI (version) | Windows hooks | Windows status line | macOS and Linux | Replaces `$NAME` itself | How it was found |
+|---|---|---|---|---|---|
+| Claude Code 2.1.303 | Git Bash, `bash.exe -c`, when Claude finds Git Bash; otherwise PowerShell, `-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command` | The same as its hooks | `/bin/sh -c` | No | Git Bash probed; PowerShell from its hooks and status line docs and source |
+| Copilot 1.0.98 | `pwsh.exe -nop -nol -c` (the `command` field is copied to `powershell`) | `cmd.exe /d /s /c "<command>"`, verbatim (Node's `shell: true`) | Hooks run the `bash` field; the status line runs `/bin/sh -c` | Not in hooks | Hooks probed; status line read from `cli-main.js` |
+| Gemini 0.64.0 | `pwsh.exe -NoProfile -Command`, or powershell.exe with no pwsh | None | `bash -c` | Yes, every settings string (`resolveEnvVarsInString`) | Probed, and read from the bundle |
+| grok 1.0.0 | `pwsh -NoProfile -NonInteractive -Command` | None | `sh -c` for a command with shell metacharacters | Yes | Windows probed; POSIX from its hooks guide |
+| Qwen Code 0.21.7 | `%ComSpec% /d /s /c <command>`, with escaped arguments; Git Bash `-c` only when Qwen inherits an MSYS `MSYSTEM` | None written | `bash -c` | Yes | Probed on 0.21.7; the same spawn read in the 0.25.2 source |
+
+The probe was a hook that recorded its parent process's command line and the argv it received for a
+path holding `$OS`, `${OS}`, `%OS%`, a backtick, `&`, `'`, a space and curly double quotes, quoted
+each candidate way, in one real session per CLI.
+
+The adapters declare three shells:
+
+- `sh-or-powershell` (Claude's hooks, plan approval hook and status line; Copilot's hooks; Gemini;
+  grok; every CLI on macOS and Linux). Each path is double-quoted, with each run of `$`, backtick,
+  `\`, `"` and curly double quote in single quotes between the double-quoted runs:
+  `C:"/work/"'$'"client/x.js"`. Characters side by side share one pair (`'$$'`), because PowerShell
+  reads `''` inside single quotes as a quote and would hand the bridge `$'$` for `'$''$'`. That one
+  form reaches the bridge intact in sh, bash, Git Bash,
+  Windows PowerShell 5.1 and pwsh, which is why Claude needs no guess at which of its two shells it
+  will get. No `$` is ever followed by a name, so a CLI that replaces `$NAME` first finds nothing.
+  The backslash escape this replaced did not survive that: Gemini, Qwen and grok turned `\$OS` into
+  `\Windows_NT` on every platform. On Windows the drive, or a UNC path's `//`, stays bare in front,
+  because PowerShell ends an argument that opens with a quote at its closing quote. A path with
+  none of those characters stays `"path"`.
+- `cmd` (Copilot's Windows status line). `%` becomes `"^%"`, as `quoteCmdExecutable` writes it, and
+  `$` steps outside the quotes.
+- `bare-tokens` (Qwen on Windows). Qwen spawns cmd without verbatim arguments, so each `"` reaches
+  node as part of the path, and no quoted path survives, ordinary ones included. The command names
+  a copy of the event bridge, `<cwd>/.kangentic/qwen-event-bridge.cjs`, by that relative path
+  (Qwen runs hooks in the spawn cwd), and passes `env:KANGENTIC_EVENTS_PATH`, which the bridge
+  resolves from the variable every session spawn sets. Bare tokens work in the Git Bash Qwen picks
+  under MSYS as well. Before this, Qwen's Windows hooks only fired when Kangentic itself had
+  inherited `MSYSTEM`, as it does when started from Git Bash.
+
+Aider's notifications command quotes for its own shell (see the Aider section), and Antigravity's
+hook commands are unquoted by design, because its hook runner keeps quote characters literal.
+
+`tests/unit/event-bridge.test.ts` runs each form through real shells: Git Bash, both PowerShells,
+and cmd verbatim and with escaped arguments on Windows; `sh -c` and `bash -c` elsewhere. Each hook
+manager's test runs its CLI's real commands, with the real bridges, through that CLI's shells and
+checks the file the bridge wrote. Every built command is also checked against Gemini's `$NAME`
+pattern (`CLI_ENVIRONMENT_REFERENCE`, `tests/unit/helpers/shell-argv-probe.ts`).
+`.github/workflows/shell-quoting-windows.yml` runs the Windows half.
 
 #### Hook Identification
 
@@ -800,6 +843,8 @@ that requires user interaction, which the plan prompt does, so no hook can answe
 ### Settings Merge
 
 Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same folder are serialized by per-session holds in `QwenAdapter.hookHolds`, identical to the Gemini implementation. When Kangentic creates the file the builder seeds `.qwen/settings.json` and `.kangentic/` into `.git/info/exclude` (created-by-us carve-out: a pre-existing user file keeps its git visibility).
+
+On Windows the hook commands carry bare tokens only: `node .kangentic/qwen-event-bridge.cjs env:KANGENTIC_EVENTS_PATH <type> ...`. Qwen's Windows hook runner hands cmd an escaped command line that no quoted path survives, and a bare token also survives the Git Bash it uses under MSYS. The builder checks the bridge copy in `<cwd>/.kangentic/` on every spawn and rewrites it only when its bytes differ from the app's bridge (after an app update, for example). A spawn that finds an identical copy leaves it alone, a hook already running keeps the copy it loaded, and the events path comes from each session's own environment, so concurrent sessions in one folder each write to their own file. See [Paths in hook commands](#paths-in-hook-commands).
 
 ### Kangentic MCP server and the approval gate
 
@@ -1392,7 +1437,9 @@ run time - hook processes inherit the grok process env (probe-verified). One sta
 therefore correct for concurrent sessions in one cwd, and a session without the variable
 (the user's own manual `grok` run there) makes the bridge a silent no-op. Hooks load from
 the project root grok discovers by walking up to the first `.git`; every Kangentic spawn cwd
-is a git root, so writing at cwd is writing at the root. Runtime is
+is a git root, so writing at cwd is writing at the root. On Windows grok runs each hook with
+`pwsh -NoProfile -NonInteractive -Command`, and it replaces `$NAME` in the command first, so the
+bridge path is quoted for that (see [Paths in hook commands](#paths-in-hook-commands)). Runtime is
 `ActivityDetection.hooksAndPty()`: untrusted folders skip project hooks silently
 (fail-open), and the PTY silence timer carries activity until trust lands. No `detectIdle`
 regex - grok's `❯` prompt stays visible during active work, the same always-visible-prompt
@@ -1542,7 +1589,7 @@ Mapped onto agy's native autonomy flags; the unflagged default is agy's own "req
 
 agy has a lifecycle hook system (`hooks.json` in a customization root; the adapter writes `<cwd>/.agents/hooks.json` with one named hook, `kangentic-events`). Three events feed the event-bridge pipeline: `PreInvocation` -> `prompt` (the turn-initiating signal, also carrying a `captureHookContext` directive so the session id can be read from the payload), `PostToolUse` -> `tool_end` (tool name at `toolCall.name`, primary argument from `toolCall.args`, via the path-addressed `extractToolPath` / `extractDetailPath` directives), and `Stop` -> `idle` (agy's payload carries `fullyIdle`). `PreToolUse` is deliberately NEVER hooked: agy treats a handler response without a `decision` field as a DENY (observed: a `{}` response put the model in a tool-denied retry loop), and answering `allow` would bypass the CLI's own permission system.
 
-Two agy quirks shape the wiring. First, agy tokenizes hook commands on whitespace with quote characters kept literal, so no command token may be quoted or contain a space: every path is emitted `.agents`-relative (hooks run with cwd = the directory containing hooks.json) and the event-bridge is copied to `<cwd>/.kangentic/agy-event-bridge.cjs` on each spawn (`.cjs` so a `"type": "module"` in the user's package.json cannot make node parse the CommonJS bridge as ESM). Second, hooks do NOT fire in `-p` print mode, so activity is `hooks_and_pty`: hook events are primary, and the PTY silence timer plus a `detectIdle` match on the idle footer (`? for shortcuts`; the running footer shows `esc to cancel` instead) cover print-mode spawns and any workspace where hook wiring was skipped.
+Two agy quirks shape the wiring. First, agy tokenizes hook commands on whitespace with quote characters kept literal, so no command token may be quoted or contain a space: every path is emitted `.agents`-relative (hooks run with cwd = the directory containing hooks.json) and the event-bridge is copied to `<cwd>/.kangentic/agy-event-bridge.cjs` on each spawn whose copy differs from the app's bridge (`.cjs` so a `"type": "module"` in the user's package.json cannot make node parse the CommonJS bridge as ESM). Second, hooks do NOT fire in `-p` print mode, so activity is `hooks_and_pty`: hook events are primary, and the PTY silence timer plus a `detectIdle` match on the idle footer (`? for shortcuts`; the running footer shows `esc to cancel` instead) cover print-mode spawns and any workspace where hook wiring was skipped.
 
 Session ids are captured two ways: `fromHook` reads `conversationId` (present in every hook payload, camelCase protojson), and `fromOutput` matches the graceful-shutdown summary (`agy --conversation=<uuid>`) plus print-mode JSON (`"conversation_id"`). There is no `fromFilesystem` capture: `cache/last_conversations.json` is written only at CLI exit, after the spawn-time polling window has closed.
 
@@ -1720,7 +1767,7 @@ Three standalone Node.js scripts in `src/main/agent/`:
 - **Output:** `events.jsonl` (append-only, one JSON line per event)
 - **Data:** Timestamps, event types, tool names, file paths
 - **Watched by:** SessionManager with 50ms debounce, incremental byte-offset reads
-- **Supported by:** Claude Code (18 hook points), Codex CLI (via config.toml hooks), Gemini CLI (via .gemini/settings.json hooks), Qwen Code, Aider, GitHub Copilot CLI, Grok Build (via `.grok/hooks/kangentic.json`, with the events path resolved through the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Grok Build](#grok-build)), and Antigravity CLI (via a per-spawn workspace copy, `<cwd>/.kangentic/agy-event-bridge.cjs` - see [Antigravity](#antigravity))
+- **Supported by:** Claude Code (18 hook points), Codex CLI (via config.toml hooks), Gemini CLI (via .gemini/settings.json hooks), Qwen Code (on Windows via a per-spawn workspace copy, `<cwd>/.kangentic/qwen-event-bridge.cjs`, and the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Paths in hook commands](#paths-in-hook-commands)), Aider, GitHub Copilot CLI, Grok Build (via `.grok/hooks/kangentic.json`, with the events path resolved through the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Grok Build](#grok-build)), and Antigravity CLI (via a per-spawn workspace copy, `<cwd>/.kangentic/agy-event-bridge.cjs` - see [Antigravity](#antigravity))
 
 ### `plan-approval-bridge.js`
 

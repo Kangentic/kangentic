@@ -22,11 +22,16 @@ import {
   toWslPath,
 } from '../../src/shared/paths';
 import {
+  buildForPlatform,
+  CLI_ENVIRONMENT_REFERENCE,
   createShellArgvProbe,
+  HOOK_PROBE_SEGMENT,
   installedPosixShells,
   installedPowerShellHosts,
+  installedShOrPowerShellHosts,
   lineWithPrinterHead,
   PROBE_EXPANSION,
+  runAsHookShell,
   typeAtCmdPrompt,
   typeAtPosixShell,
   typeAtPowerShellPrompt,
@@ -1689,13 +1694,14 @@ describe('Merged Settings -- Local Settings Merge', () => {
     expect(merged.statusLine.refreshInterval).toBeLessThanOrEqual(60);
   });
 
-  it('escapes $, a backtick and a double quote in the status path for a POSIX shell', () => {
+  it('puts $, a backtick and a double quote in the status path in single quotes for sh', () => {
     // Claude hands statusLine.command to sh on macOS and Linux, where all three
-    // stay special inside double quotes: an unescaped `$work` expanded to an empty
+    // stay special inside double quotes: an unquoted `$work` expanded to an empty
     // string, so the bridge was handed the wrong path.
     //
     // quoteBridgePath reads process.platform at call time and this suite also runs
-    // on win32, where it escapes nothing. Pin it to linux for the build call only.
+    // on win32, where the drive stays bare in front. Pin it to linux for the build
+    // call only.
     //
     // The specials sit in the status file's NAME, never its directory: the builder
     // creates dirname(statusOutputPath), and a double quote is illegal in a Windows
@@ -1725,13 +1731,104 @@ describe('Merged Settings -- Local Settings Merge', () => {
     const command: string = merged.statusLine.command;
 
     expect(command).toMatch(/^node "[^"]*status-bridge\.js" "/);
-    const escapedStatusTail = '/status-\\$work-\\`tick\\`-q\\"uote.json"';
-    expect(command.slice(-escapedStatusTail.length)).toBe(escapedStatusTail);
-    expect(command).not.toContain('-$work');
+    const quotedStatusTail = `/status-"'$'"work-"'\`'"tick"'\`'"-q"'"'"uote.json"`;
+    expect(command.slice(-quotedStatusTail.length)).toBe(quotedStatusTail);
+    expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
     // The status path is forward-slashed before it is quoted, so the Windows
-    // separators in tmpDir are not read as escapes and doubled.
-    expect(command).not.toContain('\\\\');
+    // separators in tmpDir are not single-quoted one by one.
+    expect(command).not.toContain(`'\\'`);
   });
+
+  it('quotes the Windows status line and plan approval paths for sh or PowerShell, leaving a percent sign for the shell', () => {
+    // Claude Code runs the status line and every hook in Git Bash, or in
+    // PowerShell without Git Bash, so a Windows command is quoted for
+    // 'sh-or-powershell' (CLAUDE_BRIDGE_SHELL): a plain double-quoted path, with
+    // a `%` left as it is. Quoted for cmd it would carry `"^%"` there, and as
+    // bare tokens it would throw on the space. This runs on every platform (the
+    // live round trip below runs only on Windows), so a status line or plan
+    // approval command that passes a different shell fails on Linux CI as well.
+    //
+    // The session directory holds a `%` and a space and nothing else special: on
+    // Linux the temp path has no drive letter, so a `$`, a backtick or a curly
+    // quote would hit the no-drive throw instead of reaching the shell choice.
+    const builder = new CommandBuilder();
+    const sessionDirectory = path.join(tmpDir, '.kangentic', 'sessions', 'a%KNG_PROBE% b');
+    const statusOutput = path.join(sessionDirectory, 'status.json');
+    const eventsOutput = path.join(sessionDirectory, 'events.jsonl');
+    const decisionOutput = path.join(sessionDirectory, 'plan-approval.json');
+    const forwardSlashed = (filePath: string): string => filePath.replace(/\\/g, '/');
+
+    buildForPlatform('win32', () => builder.buildClaudeCommand({
+      cliPath: 'claude',
+      taskId: 'percent-task',
+      cwd: tmpDir,
+      permissionMode: 'default',
+      sessionId: 'percent-sess',
+      statusOutputPath: statusOutput,
+      eventsOutputPath: eventsOutput,
+    }));
+
+    const merged = JSON.parse(fs.readFileSync(path.join(sessionDirectory, 'settings.json'), 'utf-8'));
+    const statusCommand: string = merged.statusLine.command;
+    const planApprovalCommand: string = merged.hooks.PermissionRequest
+      .find((entry: { matcher: string }) => entry.matcher === 'ExitPlanMode').hooks[0].command;
+
+    // `node "<bridge>" "<status path>"`: the status path is the last argument.
+    expect(statusCommand).toMatch(/^node "[^"]*status-bridge\.js" "/);
+    expect(statusCommand.endsWith(` "${forwardSlashed(statusOutput)}"`)).toBe(true);
+    // `node "<bridge>" "<decision path>" "<events path>" <encoded spec>`: both
+    // paths go through the same shell, so both are pinned.
+    expect(planApprovalCommand).toMatch(/^node "[^"]*plan-approval-bridge\.js" "/);
+    expect(planApprovalCommand).toContain(` "${forwardSlashed(decisionOutput)}" "${forwardSlashed(eventsOutput)}" `);
+    for (const command of [statusCommand, planApprovalCommand]) {
+      expect(command).not.toContain('^%');
+      expect(command).toContain('%KNG_PROBE%');
+    }
+  });
+
+  // Claude Code runs every hook and the status line in Git Bash when it finds
+  // Git Bash, and in PowerShell when it does not (CLAUDE_BRIDGE_SHELL). Each
+  // command runs here through every one of those shells installed, with the
+  // real bridges, and the files they write must land at the real paths.
+  it.runIf(process.platform === 'win32')('a Windows status line and hook reach their real bridges through Git Bash and PowerShell', () => {
+    const builder = new CommandBuilder();
+    const projectDirectory = path.join(tmpDir, HOOK_PROBE_SEGMENT);
+    const sessionDirectory = path.join(projectDirectory, '.kangentic', 'sessions', 'win-sess');
+    fs.mkdirSync(sessionDirectory, { recursive: true });
+    const statusOutput = path.join(sessionDirectory, 'status.json');
+    const eventsOutput = path.join(sessionDirectory, 'events.jsonl');
+
+    builder.buildClaudeCommand({
+      cliPath: 'claude',
+      taskId: 'win-task',
+      cwd: projectDirectory,
+      permissionMode: 'default',
+      sessionId: 'win-sess',
+      statusOutputPath: statusOutput,
+      eventsOutputPath: eventsOutput,
+    });
+
+    const merged = JSON.parse(fs.readFileSync(path.join(sessionDirectory, 'settings.json'), 'utf-8'));
+    const statusCommand: string = merged.statusLine.command;
+    const toolStartCommand: string = merged.hooks.PreToolUse.at(-1).hooks[0].command;
+    const planApprovalCommand: string = merged.hooks.PermissionRequest
+      .find((entry: { matcher: string }) => entry.matcher === 'ExitPlanMode').hooks[0].command;
+    for (const command of [statusCommand, toolStartCommand, planApprovalCommand]) {
+      expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
+      expect(command).toContain(`C:"/`);
+    }
+
+    const hosts = installedShOrPowerShellHosts();
+    expect(hosts.length).toBeGreaterThan(0);
+    for (const host of hosts) {
+      fs.rmSync(statusOutput, { force: true });
+      fs.rmSync(eventsOutput, { force: true });
+      runAsHookShell(host, statusCommand, { input: '{"model":{"id":"probe-model"}}' });
+      expect(fs.readFileSync(statusOutput, 'utf-8'), host).toContain('probe-model');
+      runAsHookShell(host, toolStartCommand, { input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: 'a.ts' } }) });
+      expect(fs.readFileSync(eventsOutput, 'utf-8'), host).toContain('"tool_start"');
+    }
+  }, 120_000);
 
   it('merges user hooks from .claude/settings.local.json into session settings', () => {
     // Set up project with both settings.json and settings.local.json

@@ -3,8 +3,10 @@ import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { copyEventBridgeInto } from '../../shared/workspace-bridge-copy';
+import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
-import { buildHooks } from './hook-manager';
+import { buildHooks, QWEN_BRIDGE_COPY_NAME } from './hook-manager';
 import type { QwenHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
@@ -315,8 +317,22 @@ export class QwenCommandBuilder {
     const merged: QwenSettings = { ...baseSettings };
 
     if (eventsPath) {
-      const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
-      merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {});
+      // On Windows a hook command reaches node through an escaped cmd line, and
+      // no quoted path survives that (QWEN_HOOK_SHELL). The command then names
+      // a copy of the bridge relative to the cwd Qwen runs hooks in, and the
+      // events path the bridge reads from the session's environment. A failed
+      // copy throws, as the settings write below does, to the same caller.
+      let eventBridge: string;
+      let eventsToken: string;
+      if (process.platform === 'win32') {
+        const bridgeCopy = copyEventBridgeInto(options.cwd, QWEN_BRIDGE_COPY_NAME);
+        eventBridge = toForwardSlash(path.relative(options.cwd, bridgeCopy));
+        eventsToken = EVENTS_PATH_FROM_ENVIRONMENT;
+      } else {
+        eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
+        eventsToken = eventsPath;
+      }
+      merged.hooks = buildHooks(eventBridge, eventsToken, baseSettings.hooks || {});
     }
 
     const userMcpServers = withoutKangenticEntry(baseSettings.mcpServers);

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
-import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
+import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractToolId, extractDetail, extractPlanMode, extractSubagentId, setDetail, setToolWhen, setTypeWhen } from '../../shared/directive-builders';
 
 /** Hook entry in Qwen Code's settings.json. */
@@ -92,6 +92,19 @@ function userHooksOnly(existingHooks: Record<string, QwenHookEntry[]>): Record<s
   return userHooks;
 }
 
+/**
+ * The shell Qwen runs hooks in on Windows: `%ComSpec% /d /s /c <command>`,
+ * spawned without verbatim arguments, so each `"` reaches cmd as `\"` and node
+ * gets the quote characters as part of the path (measured on 0.21.7, the same
+ * spawn in the 0.25.2 source). Qwen uses Git Bash only when it inherits an MSYS
+ * `MSYSTEM`. Only bare tokens work in both, so on Windows the command builder
+ * passes the workspace bridge copy and the events path from the environment.
+ */
+export const QWEN_HOOK_SHELL: HookShell = 'bare-tokens';
+
+/** The event bridge's copy in `<cwd>/.kangentic/` that a Windows hook runs by a bare relative path. */
+export const QWEN_BRIDGE_COPY_NAME = 'qwen-event-bridge.cjs';
+
 /** Build a single Qwen hook entry for the event bridge. */
 function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string, ...directives: string[]): QwenHookEntry {
   return {
@@ -99,7 +112,7 @@ function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string,
     hooks: [{
       name: `kangentic-${eventType}`,
       type: 'command',
-      command: buildBridgeCommand(eventBridge, eventsPath, eventType, ...directives),
+      command: buildBridgeCommand(QWEN_HOOK_SHELL, eventBridge, eventsPath, eventType, ...directives),
     }],
   };
 }

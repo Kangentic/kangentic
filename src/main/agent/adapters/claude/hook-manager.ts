@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
-import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
+import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 
@@ -68,6 +68,14 @@ export interface BuildHooksOptions {
   planApprovalCommand?: string;
 }
 
+/**
+ * The shell Claude Code runs every hook and the status line in on Windows: Git
+ * Bash when it finds Git Bash, PowerShell when it does not. Measured on 2.1.303
+ * (`bash.exe -c "<command>"`), and stated in its hooks and status line docs.
+ * One quoting serves both.
+ */
+export const CLAUDE_BRIDGE_SHELL: HookShell = 'sh-or-powershell';
+
 /** Claude's plan exit tool, the only prompt the plan approval hook answers. */
 const CLAUDE_PLAN_EXIT_TOOL = 'ExitPlanMode';
 
@@ -104,6 +112,8 @@ export function buildHooks(
 ): Record<string, ClaudeHookEntry[]> {
   const H = ClaudeHookEvent;
   const E = EventType;
+  const bridge = (eventType: string, ...directives: string[]): string =>
+    buildBridgeCommand(CLAUDE_BRIDGE_SHELL, eventBridge, eventsPath, eventType, ...directives);
   // The session's mode at each prompt and turn end, so a turn-end automation
   // can tell a turn that began after the plan was left (SessionEvent.planMode).
   // Never a subagent's: a subagent can run in its own mode while the session
@@ -111,8 +121,8 @@ export function buildHooks(
   // same Stop hook, carries `agent_id` where the main agent's does not.
   const planMode = extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' });
   const promptCommand = options.capturePromptText
-    ? buildBridgeCommand(eventBridge, eventsPath, E.Prompt, extractDetail(['prompt']), planMode)
-    : buildBridgeCommand(eventBridge, eventsPath, E.Prompt, planMode);
+    ? bridge(E.Prompt, extractDetail(['prompt']), planMode)
+    : bridge(E.Prompt, planMode);
 
   // Claude Code stdin field extraction directives:
   // - tool_name: tool identifier at top level
@@ -136,7 +146,7 @@ export function buildHooks(
       // keeps running. Tracking these explicitly lets the engine avoid
       // false-idle while background work is outstanding. See
       // `tests/e2e/background-shell-idle.spec.ts` for the repro.
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.ToolStart,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.ToolStart,
         extractTool('tool_name'),
         // Capture Claude's tool_use_id for correlation with the matching
         // PostToolUse. Lets the engine match concurrent ToolEnds to the
@@ -214,7 +224,7 @@ export function buildHooks(
       // process-tree watcher (plus 5-min escape hatch) detects natural
       // exit, and explicit kills emit `background_shell_end` via the
       // PreToolUse KillBash remap. BashOutput polling must not decrement.
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.ToolEnd,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.ToolEnd,
         extractTool('tool_name'),
         // Same correlation id extraction as PreToolUse so the engine
         // can match this end to its start. Claude carries tool_use_id
@@ -254,7 +264,7 @@ export function buildHooks(
     ],
     [H.PostToolUseFailure]: [
       ...(existingHooks[H.PostToolUseFailure] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.ToolEnd,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.ToolEnd,
         extractTool('tool_name'),
         extractToolId(['tool_use_id']),
         extractToolId(['tool_use_id'], { nested: 'tool_input' }),
@@ -280,7 +290,7 @@ export function buildHooks(
     ],
     [H.Stop]: [
       ...(existingHooks[H.Stop] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.Idle, planMode) }] },
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.Idle, planMode) }] },
     ],
     // StopFailure fires INSTEAD of Stop when a turn concludes due to an API
     // error (rate limit, overload, server error, auth, ...). Without it, an
@@ -306,7 +316,7 @@ export function buildHooks(
     // bypass).
     [H.StopFailure]: [
       ...(existingHooks[H.StopFailure] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.TurnFailed,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.TurnFailed,
         extractDetail(['error', 'error_details']),
         setTypeWhenDetailContains('overloaded', E.TurnRetrying),
         setTypeWhenDetailContains('server_error', E.TurnRetrying),
@@ -317,7 +327,7 @@ export function buildHooks(
       ...(existingHooks[H.PermissionRequest] || []),
       // The tool name rides along so the plan approval gate can tell the plan
       // prompt's idle from every other one (plan-approval-gate.ts).
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.Idle,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.Idle,
         setDetail('permission'),
         extractTool('tool_name')) }] },
       ...(options.planApprovalCommand
@@ -326,11 +336,11 @@ export function buildHooks(
     ],
     [H.SessionStart]: [
       ...(existingHooks[H.SessionStart] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.SessionStart) }] },
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.SessionStart) }] },
     ],
     [H.SessionEnd]: [
       ...(existingHooks[H.SessionEnd] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.SessionEnd) }] },
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.SessionEnd) }] },
     ],
     // Both subagent hooks carry `agent_id` (captured on CLI 2.1.290), as the
     // tool hooks above do for a tool a subagent runs (captured on 2.1.303,
@@ -343,13 +353,13 @@ export function buildHooks(
     // but fires a fresh SubagentStart with that id first, which re-opens it.
     [H.SubagentStart]: [
       ...(existingHooks[H.SubagentStart] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.SubagentStart,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.SubagentStart,
         extractDetail(['agent_type', 'subagent_type']),
         extractSubagentId(['agent_id'])) }] },
     ],
     [H.SubagentStop]: [
       ...(existingHooks[H.SubagentStop] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.SubagentStop,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.SubagentStop,
         extractDetail(['agent_type', 'subagent_type']),
         extractSubagentId(['agent_id'])) }] },
     ],
@@ -365,36 +375,36 @@ export function buildHooks(
       // input" - see tests/fixtures/replay/session-005-*), so it does not
       // depend on which payload field carried the text. The match string is the
       // only Claude-specific knowledge here; the engine stays generic.
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.Notification,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.Notification,
         extractDetail(['message', 'notification']),
         setTypeWhenDetailContains('waiting for your input', E.IdleHint)) }] },
     ],
     [H.PreCompact]: [
       ...(existingHooks[H.PreCompact] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.Compact) }] },
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.Compact) }] },
     ],
     [H.TeammateIdle]: [
       ...(existingHooks[H.TeammateIdle] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.TeammateIdle,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.TeammateIdle,
         extractDetail(['agent', 'teammate', 'name'])) }] },
     ],
     [H.TaskCompleted]: [
       ...(existingHooks[H.TaskCompleted] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.TaskCompleted,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.TaskCompleted,
         extractDetail(['task', 'description', 'name'])) }] },
     ],
     [H.ConfigChange]: [
       ...(existingHooks[H.ConfigChange] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.ConfigChange) }] },
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.ConfigChange) }] },
     ],
     [H.WorktreeCreate]: [
       ...(existingHooks[H.WorktreeCreate] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.WorktreeCreate,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.WorktreeCreate,
         extractDetail(['name', 'path'])) }] },
     ],
     [H.WorktreeRemove]: [
       ...(existingHooks[H.WorktreeRemove] || []),
-      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.WorktreeRemove,
+      { matcher: '', hooks: [{ type: 'command', command: bridge(E.WorktreeRemove,
         extractDetail(['name', 'path'])) }] },
     ],
   };

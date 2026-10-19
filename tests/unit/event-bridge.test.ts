@@ -8,13 +8,28 @@
  * the emitted event shape.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFileSync, execSync, spawnSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { EventType } from '../../src/shared/types';
-import { buildBridgeCommand, quoteBridgePath } from '../../src/main/agent/shared/hook-utils';
+import {
+  buildBridgeCommand,
+  EVENTS_PATH_FROM_ENVIRONMENT,
+  isKangenticHookCommand,
+  quoteBridgePath,
+  type HookShell,
+} from '../../src/main/agent/shared/hook-utils';
 import { buildPlanApprovalCommand } from '../../src/main/agent/shared/plan-approval-hook';
+import { toForwardSlash } from '../../src/shared/paths';
+import {
+  CLI_ENVIRONMENT_REFERENCE,
+  HOOK_PROBE_SEGMENT,
+  installedShOrPowerShellHosts,
+  runAsHookShell,
+  writeArgvPrinter,
+  type HookShellHost,
+} from './helpers/shell-argv-probe';
 import {
   captureHookContext,
   extractTool,
@@ -657,7 +672,8 @@ describe('event-bridge directives survive real shell execution (shell form)', ()
   });
 
   function runViaShell(stdin: string, eventType: string, directives: string[]): Record<string, unknown> {
-    const command = buildBridgeCommand(BRIDGE, outputFile, eventType, ...directives);
+    // execSync runs `cmd /d /s /c "<command>"` verbatim on Windows and sh elsewhere.
+    const command = buildBridgeCommand('cmd', BRIDGE, outputFile, eventType, ...directives);
     execSync(command, { input: stdin, stdio: ['pipe', 'ignore', 'ignore'], timeout: 10000 });
     return JSON.parse(fs.readFileSync(outputFile, 'utf-8').trim());
   }
@@ -698,68 +714,179 @@ describe('event-bridge directives survive real shell execution (shell form)', ()
   });
 });
 
-describe('bridge paths reach the bridge as written through the POSIX hook shell', () => {
-  // Claude Code runs a hook with `sh -c` on macOS and Linux, and the Gemini and
-  // Qwen hook runners with `bash -c`. A path is double-quoted on the command
-  // line, where `$`, a backtick, `"` and `\` stay special, so each must arrive
-  // escaped or the bridge writes to (or reads from) the wrong path.
-  const TRICKY = 'a $HOME `echo hi` "quoted" back\\slash end';
-  const shAvailable = spawnSync('sh', ['-c', 'exit 0']).status === 0;
-  let stubDir: string;
+describe('bridge paths reach the bridge as written through each hook shell', () => {
+  // Each agent CLI hands a hook or status-line command to a shell of its own
+  // (measured per CLI in docs/agent-integration.md, "Paths in hook commands").
+  // The probe run sets KNG_PROBE, so a shell that expands `$KNG_PROBE`,
+  // `${KNG_PROBE}` or `%KNG_PROBE%` shows up as EXPANDED, and Gemini, Qwen and
+  // grok's own `$NAME` replacement is what CLI_ENVIRONMENT_REFERENCE matches.
+  const WINDOWS_SEGMENT = HOOK_PROBE_SEGMENT;
+  // `"` and `\` cannot appear in a Windows file name, only in a POSIX one.
+  const POSIX_SEGMENT = `${WINDOWS_SEGMENT} "dq" back\\slash \\"$`;
+  const PLAN_SPEC = { toolField: 'tool_name', tool: 'ExitPlanMode', inputField: 'tool_input', reply: {} };
+  const HOOK_SHELLS: readonly HookShell[] = ['sh-or-powershell', 'cmd', 'bare-tokens'];
+  let stubRoot: string;
 
   beforeEach(() => {
-    stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-path-'));
+    stubRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-path-'));
   });
 
   afterEach(() => {
-    fs.rmSync(stubDir, { recursive: true, force: true });
+    fs.rmSync(stubRoot, { recursive: true, force: true });
   });
 
-  /** A stand-in bridge that prints the arguments it received. */
-  function writeArgvStub(directory: string): string {
-    fs.mkdirSync(directory, { recursive: true });
-    const stub = path.join(directory, 'print-argv.js');
-    fs.writeFileSync(stub, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));');
-    return stub;
-  }
+  describe('string pins', () => {
+    const singleQuotedRun = (characters: string): string => `'${characters}'`;
 
-  function argvThroughSh(command: string): string[] {
-    return JSON.parse(execFileSync('sh', ['-c', command], { encoding: 'utf-8', timeout: 10000 })) as string[];
-  }
-
-  it('escapes the four characters POSIX double quotes keep special, on macOS and Linux', () => {
-    for (const platform of ['linux', 'darwin'] as const) {
-      expect(quoteBridgePath('/home/dev/$work/a`b"c\\d.js', platform)).toBe('"/home/dev/\\$work/a\\`b\\"c\\\\d.js"');
-    }
-  });
-
-  it('leaves a Windows path as it is, separators included', () => {
-    expect(quoteBridgePath('C:/Users/dev/$repo/events.jsonl', 'win32')).toBe('"C:/Users/dev/$repo/events.jsonl"');
-    expect(quoteBridgePath('C:\\Users\\dev\\repo\\events.jsonl', 'win32')).toBe('"C:\\Users\\dev\\repo\\events.jsonl"');
-  });
-
-  it.skipIf(!shAvailable)('a path with $, a backtick, a quote, a backslash and spaces arrives intact through sh -c', () => {
-    const stub = writeArgvStub(stubDir);
-    const command = `${quoteBridgePath(process.execPath, 'linux')} ${quoteBridgePath(stub, 'linux')} ${quoteBridgePath(TRICKY, 'linux')}`;
-    expect(argvThroughSh(command)).toEqual([TRICKY]);
-  });
-
-  // The builders escape for the platform they run on, so this runs where that
-  // is POSIX (CI's Linux tier). The stub itself sits under a directory with the
-  // same characters, so the bridge path is checked as well as the data paths.
-  it.skipIf(!shAvailable || process.platform === 'win32')('both hook builders deliver every path intact through sh -c', () => {
-    const stub = writeArgvStub(path.join(stubDir, 'my $HOME `x` "q" back\\slash'));
-
-    const eventCommand = buildBridgeCommand(stub, `${TRICKY}/events.jsonl`, 'tool_start');
-    expect(argvThroughSh(eventCommand)).toEqual([`${TRICKY}/events.jsonl`, 'tool_start']);
-
-    const planCommand = buildPlanApprovalCommand(stub, `${TRICKY}/plan-approval.json`, `${TRICKY}/events.jsonl`, {
-      toolField: 'tool_name',
-      tool: 'ExitPlanMode',
-      inputField: 'tool_input',
-      reply: {},
+    it('puts $, a backtick, a quote and a backslash in single quotes on macOS and Linux', () => {
+      const expected = [
+        '"/home/dev/"', singleQuotedRun('$'), '"work/a"', singleQuotedRun('`'), '"b"',
+        singleQuotedRun('"'), '"c"', singleQuotedRun('\\'), '"d.js"',
+      ].join('');
+      for (const platform of ['linux', 'darwin'] as const) {
+        // Off Windows every CLI runs sh or bash, whatever shell the adapter declares.
+        for (const shell of HOOK_SHELLS) {
+          expect(quoteBridgePath('/home/dev/$work/a`b"c\\d.js', shell, platform)).toBe(expected);
+        }
+      }
     });
-    const planArgv = argvThroughSh(planCommand);
-    expect(planArgv.slice(0, 2)).toEqual([`${TRICKY}/plan-approval.json`, `${TRICKY}/events.jsonl`]);
+
+    it('keeps the Windows drive bare in front of the quoted runs, and leaves a plain path in plain quotes', () => {
+      expect(quoteBridgePath('C:/Users/dev/$repo/events.jsonl', 'sh-or-powershell', 'win32'))
+        .toBe(`C:"/Users/dev/"${singleQuotedRun('$')}"repo/events.jsonl"`);
+      expect(quoteBridgePath('//server/share/$x.js', 'sh-or-powershell', 'win32'))
+        .toBe(`//"server/share/"${singleQuotedRun('$')}"x.js"`);
+      expect(quoteBridgePath('C:/Users/dev/repo/events.jsonl', 'sh-or-powershell', 'win32')).toBe('"C:/Users/dev/repo/events.jsonl"');
+      expect(quoteBridgePath(EVENTS_PATH_FROM_ENVIRONMENT, 'sh-or-powershell', 'win32')).toBe(`"${EVENTS_PATH_FROM_ENVIRONMENT}"`);
+    });
+
+    // PowerShell reads `''` inside single quotes as a quote, so `'$''$'` would
+    // reach the bridge as `$'$`. Measured on Windows PowerShell 5.1 and pwsh.
+    it('puts characters that need single quotes and sit side by side in one pair', () => {
+      const quotedTail = `"b/c"${singleQuotedRun('`$')}"d/"${singleQuotedRun('\u201C\u201D')}"e.js"`;
+      expect(quoteBridgePath('C:/a$$b/c`$d/\u201C\u201De.js', 'sh-or-powershell', 'win32'))
+        .toBe(`C:"/a"${singleQuotedRun('$$')}${quotedTail}`);
+      expect(quoteBridgePath('/home/a$$b/c`$d/\u201C\u201De.js', 'sh-or-powershell', 'linux'))
+        .toBe(`"/home/a"${singleQuotedRun('$$')}${quotedTail}`);
+      expect(quoteBridgePath('/home/dev/a\\"$b.js', 'sh-or-powershell', 'linux'))
+        .toBe(`"/home/dev/a"${singleQuotedRun('\\"$')}"b.js"`);
+    });
+
+    it('puts each PowerShell curly double quote in single quotes', () => {
+      expect(quoteBridgePath('C:/a\u201Cb\u201Dc\u201Ed.js', 'sh-or-powershell', 'win32'))
+        .toBe(`C:"/a"${singleQuotedRun('\u201C')}"b"${singleQuotedRun('\u201D')}"c"${singleQuotedRun('\u201E')}"d.js"`);
+    });
+
+    it('refuses a Windows path with no drive that needs quoting, which PowerShell would split', () => {
+      expect(() => quoteBridgePath('relative/$x.js', 'sh-or-powershell', 'win32')).toThrow(/no drive/);
+    });
+
+    it('escapes % and steps $ outside the quotes for verbatim cmd', () => {
+      expect(quoteBridgePath('C:/a%KNG_PROBE%/$x.js', 'cmd', 'win32')).toBe('"C:/a"^%"KNG_PROBE"^%"/"$"x.js"');
+      expect(quoteBridgePath('C:/plain dir/x.js', 'cmd', 'win32')).toBe('"C:/plain dir/x.js"');
+      expect(quoteBridgePath('C:/a$$b.js', 'cmd', 'win32')).toBe('"C:/a"$""$"b.js"');
+    });
+
+    // A backslash run in front of an inserted quote escapes it under the C
+    // runtime's rules unless the run is doubled, as escapePercentForCmd does for `%`.
+    it('doubles a backslash run in front of a $ that steps outside the quotes for cmd', () => {
+      expect(quoteBridgePath('C:\\a\\$x.js', 'cmd', 'win32')).toBe('"C:\\a\\\\"$"x.js"');
+    });
+
+    it('passes a bare token through for bare-tokens, and refuses anything that would need a quote', () => {
+      expect(quoteBridgePath('.kangentic/qwen-event-bridge.cjs', 'bare-tokens', 'win32')).toBe('.kangentic/qwen-event-bridge.cjs');
+      expect(quoteBridgePath(EVENTS_PATH_FROM_ENVIRONMENT, 'bare-tokens', 'win32')).toBe(EVENTS_PATH_FROM_ENVIRONMENT);
+      expect(() => quoteBridgePath('C:/plain dir/x.js', 'bare-tokens', 'win32')).toThrow(/bare-tokens/);
+    });
+
+    it('never leaves a $NAME or ${NAME} for a CLI to replace, on any platform or shell', () => {
+      for (const platform of ['win32', 'linux', 'darwin'] as const) {
+        for (const shell of ['sh-or-powershell', 'cmd'] as const) {
+          const quoted = quoteBridgePath(`C:/k/${WINDOWS_SEGMENT}/$HOME/\${HOME:-x}/events.jsonl`, shell, platform);
+          expect(CLI_ENVIRONMENT_REFERENCE.test(quoted), `${shell} on ${platform}: ${quoted}`).toBe(false);
+        }
+      }
+    });
+
+    it('keeps every quoted command recognizable as Kangentic\'s, so cleanup still finds it', () => {
+      const bridge = `C:/Users/dev/${WINDOWS_SEGMENT}/.kangentic/build/event-bridge.js`;
+      for (const shell of ['sh-or-powershell', 'cmd'] as const) {
+        const command = quoteBridgePath(bridge, shell, 'win32');
+        expect(isKangenticHookCommand(`node ${command} "x" tool_start`), command).toBe(true);
+      }
+      expect(isKangenticHookCommand(`node .kangentic/qwen-event-bridge.cjs ${EVENTS_PATH_FROM_ENVIRONMENT} tool_start`)).toBe(true);
+    });
+  });
+
+  describe.runIf(process.platform === 'win32')('real Windows shells', () => {
+    let trickyDirectory: string;
+    let stub: string;
+
+    beforeEach(() => {
+      trickyDirectory = path.join(stubRoot, WINDOWS_SEGMENT);
+      // Forward-slashed, as every builder passes a Windows path.
+      stub = toForwardSlash(writeArgvPrinter(trickyDirectory));
+    });
+
+    it('a sh-or-powershell command delivers every path intact through Git Bash and both PowerShells', () => {
+      const eventsPath = toForwardSlash(path.join(trickyDirectory, 'events.jsonl'));
+      const decisionPath = toForwardSlash(path.join(trickyDirectory, 'plan-approval.json'));
+      const eventCommand = buildBridgeCommand('sh-or-powershell', stub, eventsPath, 'tool_start');
+      const planCommand = buildPlanApprovalCommand('sh-or-powershell', stub, decisionPath, eventsPath, PLAN_SPEC);
+      const hosts = installedShOrPowerShellHosts();
+      expect(hosts.length).toBeGreaterThan(0);
+      for (const host of hosts) {
+        expect(runAsHookShell(host, eventCommand).printed, host).toEqual([[eventsPath, 'tool_start']]);
+        expect(runAsHookShell(host, planCommand).printed[0]?.slice(0, 2), host).toEqual([decisionPath, eventsPath]);
+      }
+    }, 60_000);
+
+    it('a cmd command delivers every path intact through verbatim cmd', () => {
+      const statusPath = toForwardSlash(path.join(trickyDirectory, 'status.json'));
+      const command = `node ${quoteBridgePath(stub, 'cmd')} ${quoteBridgePath(statusPath, 'cmd')}`;
+      expect(runAsHookShell('cmd-verbatim', command).printed).toEqual([[statusPath]]);
+    }, 30_000);
+
+    it('a bare-tokens command runs from the hook cwd in every shell, wherever that cwd is', () => {
+      writeArgvPrinter(path.join(trickyDirectory, '.kangentic'), 'qwen-event-bridge.cjs');
+      const command = buildBridgeCommand('bare-tokens', '.kangentic/qwen-event-bridge.cjs', EVENTS_PATH_FROM_ENVIRONMENT, 'tool_start');
+      const hosts: HookShellHost[] = ['cmd-escaped', ...installedShOrPowerShellHosts()];
+      for (const host of hosts) {
+        expect(runAsHookShell(host, command, { cwd: trickyDirectory }).printed, host)
+          .toEqual([[EVENTS_PATH_FROM_ENVIRONMENT, 'tool_start']]);
+      }
+    }, 60_000);
+
+    // Why `bare-tokens` exists: the escaped cmd line Qwen builds turns every
+    // `"` into `\"`, and node keeps those as part of the argument. The printer
+    // runs by a bare relative name, so what it prints is that mangled argv
+    // rather than a failure to start.
+    it('a quoted path does not survive escaped cmd, even with no special character in it', () => {
+      const printerDirectory = path.join(stubRoot, 'printer');
+      writeArgvPrinter(printerDirectory);
+      const command = `node print-argv.cjs ${quoteBridgePath('C:/plain dir/events.jsonl', 'sh-or-powershell')}`;
+      expect(runAsHookShell('cmd-escaped', command, { cwd: printerDirectory }).printed)
+        .toEqual([['"C:/plain', 'dir/events.jsonl"']]);
+    }, 30_000);
+  });
+
+  // The builders quote for the platform they run on, so this runs where that is
+  // POSIX (CI's Linux tier). The stub itself sits under a directory with the
+  // same characters, so the bridge path is checked as well as the data paths.
+  describe.runIf(process.platform !== 'win32')('real POSIX shells', () => {
+    it('both hook builders deliver every path intact through sh -c and bash -c', () => {
+      const trickyDirectory = path.join(stubRoot, POSIX_SEGMENT);
+      const stub = writeArgvPrinter(trickyDirectory);
+      const eventsPath = path.join(trickyDirectory, 'events.jsonl');
+      const decisionPath = path.join(trickyDirectory, 'plan-approval.json');
+      const eventCommand = buildBridgeCommand('sh-or-powershell', stub, eventsPath, 'tool_start');
+      const planCommand = buildPlanApprovalCommand('sh-or-powershell', stub, decisionPath, eventsPath, PLAN_SPEC);
+      const hosts = installedShOrPowerShellHosts();
+      expect(hosts).toContain('sh');
+      for (const host of hosts) {
+        expect(runAsHookShell(host, eventCommand).printed, host).toEqual([[eventsPath, 'tool_start']]);
+        expect(runAsHookShell(host, planCommand).printed[0]?.slice(0, 2), host).toEqual([decisionPath, eventsPath]);
+      }
+    }, 30_000);
   });
 });
