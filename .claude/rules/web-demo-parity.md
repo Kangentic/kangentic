@@ -30,6 +30,13 @@ three things staying in step, and each is enforced rather than remembered.
   Renderer code never reads `location`, never checks a demo flag,
   and never branches on being embedded. The one renderer concession is a `data-testid` on the
   window-controls cluster so the demo can hide it by selector.
+- **A visitor's browser extensions stay out of the frame, and `demo/boot.js` keeps them out.**
+  Every text field carries each vendor's documented opt-out. A sweep hides what an isolated world
+  adds: a hyphenated tag the page never defined, or an element under `<html>` or `<body>` that the
+  page's own `createElement` never made. The frame and the Browser pane's guest both get it. Our
+  own shots are clean because every capture and test launch is Playwright's bundled Chromium with
+  its default `--disable-extensions`, and no launch takes that back (`demo/README.md`, Browser
+  extensions).
 - **A scene is data, and so is how it moves.** Config overrides, task-row patches, session
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
   hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (steps
@@ -228,6 +235,11 @@ three things staying in step, and each is enforced rather than remembered.
   the run's, as many changed files as the run changed), and
   `tests/unit/archived-run-metrics.test.ts` replays a real
   headless result and a real advisor turn through the recorder's readers. Run via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/demo-launches-no-extensions.test.ts` fails on a launch
+  under `demo/`, `tests/captures/`, `tests/demo/` or `scripts/` that lets an extension into a
+  shot: a persistent context, a `channel`, a `--load-extension`, or an `ignoreDefaultArgs` that is
+  `true` or names `--disable-extensions`. It also reads that switch out of the installed
+  `playwright-core`. Runs via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-guest-pages.test.ts` reads every `guest_page`
   `DEMO_PROJECTS` names and fails when the file is missing, references anything off-origin, reads
   `prefers-color-scheme`, or declares an animation or transition. Runs via `npm run test:unit`.
@@ -281,7 +293,10 @@ three things staying in step, and each is enforced rather than remembered.
   visible and, where the scene names a `focus`, that the element exists and covers a real region
   of the frame (not empty, not the whole frame: the Quick Find scenes once named the palette's
   full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
-  element, that every choreography plays a cycle back to rest under `loop=1` (or holds its pose)
+  element, that no scene's boot or cycle has its extension sweep hide a node (Playwright runs no
+  extension), that a script run in an isolated world over CDP, as a content script runs, has
+  what it adds hidden in the frame and the Browser guest while the page's own nodes stay and
+  every text field carries the opt-outs, that every choreography plays a cycle back to rest under `loop=1` (or holds its pose)
   with a clean console, which is also what fails a choreography selector the renderer no longer
   stamps (the player's rest check compares the lanes' cards, the open layers, the form values and
   selection states, and which text field holds focus, since a field left focused draws a ring the

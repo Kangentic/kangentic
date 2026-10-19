@@ -6,7 +6,10 @@
  * renderer: the URL contract, the theme class, the still and embed styles, the scene applier
  * the seed script calls back into, and the boot-step runner that reveals the frame. On a frame
  * whose scene names a scene-only row it also writes that row's script in right after itself,
- * so the row's recorded sessions are on the page before the seed runs.
+ * so the row's recorded sessions are on the page before the seed runs. It also keeps a visitor's
+ * browser extensions out of the frame: each vendor's opt-out on every text field, and a sweep that
+ * hides what an extension injects anyway (Browser extensions, below). That is why its very first
+ * statements record every element the page creates.
  *
  * The renderer knows nothing about any of this. Every demo behaviour lives here or in the scene
  * registry (tests/captures/scenes.ts); src/renderer never checks location or a demo flag.
@@ -36,6 +39,25 @@
  */
 (function () {
   'use strict';
+
+  // Every element the page's own code creates goes through these two calls, so the set names what
+  // the page made. A browser extension's content script runs in an isolated world with its own
+  // prototypes, so its calls never pass through here, and that difference is what the extension
+  // shield below reads (Browser extensions, further down). Installed before anything else on the
+  // page builds an element.
+  var pageCreated = new WeakSet();
+  var nativeCreateElement = Document.prototype.createElement;
+  var nativeCreateElementNS = Document.prototype.createElementNS;
+  Document.prototype.createElement = function () {
+    var element = nativeCreateElement.apply(this, arguments);
+    pageCreated.add(element);
+    return element;
+  };
+  Document.prototype.createElementNS = function () {
+    var element = nativeCreateElementNS.apply(this, arguments);
+    pageCreated.add(element);
+    return element;
+  };
 
   // Hand-maintained mirror of ThemeMode in src/shared/types.ts. Nothing ties the two
   // together, so a theme added there has to be added here or ?theme=<id> is refused.
@@ -390,6 +412,149 @@
 
   if (embed) {
     injectStyle('[data-testid="window-controls"] { display: none !important; }');
+  }
+
+  // ---------------------------------------------------------------- browser extensions
+  // A visitor's extensions run inside this frame whatever the page says: no web API turns them
+  // off, and a content script ignores the CSP. So the frame does two things, here and never in
+  // src/renderer, since Electron runs no extensions (demo/README.md, Browser extensions).
+  //
+  // First, every text field carries each vendor's own opt-out from the moment it mounts, before
+  // anything focuses it. Each attribute is the one its vendor documents for a site owner:
+  //   Grammarly: data-gramm, data-gramm_editor and data-enable-grammarly set to "false" (Grammarly
+  //     support article 115000090392; the Telerik and CodeMirror integrations set all three, since
+  //     the name has changed over time).
+  //   LanguageTool: data-lt-active="false", the name its developers moved to from data-lt.
+  //   1Password: data-1p-ignore, no value (1Password's developer guide, compatible website design).
+  //   Bitwarden: data-bwignore (Bitwarden's announcement to web developers).
+  //   Dashlane: data-form-type="other", the "not a form field it fills" label (Dashlane support).
+  // LastPass is left out: no LastPass page names an attribute, and the sweep below covers its icon.
+  //
+  // Second, a sweep hides what an extension adds and no opt-out covers, including an extension
+  // nobody has tested. A content script leaves two marks. Its world has no custom element registry,
+  // so the hyphenated host element it adds (grammarly-extension, LanguageTool's lt-*) is a tag the
+  // page never defined. And it does not create through the page's prototypes, so an element it
+  // appends under <html> or <body> is not in `pageCreated`. A marked element is stamped
+  // data-demo-foreign and hidden by a rule, never removed: an extension that sees its node go tends
+  // to add it again. Signal two starts at DOMContentLoaded, when the parser's own children (#root,
+  // the scripts) are adopted as the page's.
+  //
+  // Not covered: an extension that runs its script in the page's own world (MV3 `world: 'MAIN'`)
+  // passes both signals, and only its own opt-out keeps it out. Neither is stage.html shielded: it
+  // holds no field and runs none of this.
+  var FIELD_OPT_OUTS = [
+    ['data-gramm', 'false'],
+    ['data-gramm_editor', 'false'],
+    ['data-enable-grammarly', 'false'],
+    ['data-lt-active', 'false'],
+    ['data-1p-ignore', ''],
+    ['data-bwignore', 'true'],
+    ['data-form-type', 'other'],
+  ];
+  var TEXT_FIELD_SELECTOR = 'input, textarea, [contenteditable]:not([contenteditable="false"])';
+  var FOREIGN_ATTRIBUTE = 'data-demo-foreign';
+  var HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
+
+  /**
+   * Install the opt-outs and the sweep on a document: this frame's, and the Browser pane's guest
+   * page, which is a document of its own that extensions inject into too (demo/webview-shim.js).
+   * Returns a function that starts signal two, whose caller decides when the document's own
+   * top-level children are all in place.
+   */
+  function shieldDocument(doc) {
+    var view = doc.defaultView || window;
+    var watchingTopLevel = false;
+    doc.documentElement.setAttribute('translate', 'no');
+    var style = doc.createElement('style');
+    // The guest's prototypes are another realm's, so its elements never pass through the wrapper.
+    pageCreated.add(style);
+    style.setAttribute('data-demo-style', '');
+    style.textContent = '[' + FOREIGN_ATTRIBUTE + '] { display: none !important; }';
+    (doc.head || doc.documentElement).appendChild(style);
+
+    function stampField(element) {
+      for (var index = 0; index < FIELD_OPT_OUTS.length; index++) {
+        if (element.getAttribute(FIELD_OPT_OUTS[index][0]) !== FIELD_OPT_OUTS[index][1]) {
+          element.setAttribute(FIELD_OPT_OUTS[index][0], FIELD_OPT_OUTS[index][1]);
+        }
+      }
+    }
+
+    /** An HTML element whose tag the page never defined; SVG and MathML keep their own hyphenated names. */
+    function isUndefinedCustomTag(element) {
+      if (element.namespaceURI !== HTML_NAMESPACE || element.localName.indexOf('-') === -1) return false;
+      if (pageCreated.has(element)) return false;
+      return !(view.customElements && view.customElements.get(element.localName));
+    }
+
+    function isForeignTopLevel(element) {
+      if (!watchingTopLevel || pageCreated.has(element)) return false;
+      return element.parentNode === doc.body || element.parentNode === doc.documentElement;
+    }
+
+    function hide(element) {
+      if (!element.hasAttribute(FOREIGN_ATTRIBUTE)) element.setAttribute(FOREIGN_ATTRIBUTE, '');
+    }
+
+    /** One element and everything under it: hide what is foreign, stamp the fields that are not. */
+    function visit(element) {
+      if (isUndefinedCustomTag(element) || isForeignTopLevel(element)) {
+        hide(element);
+        return;
+      }
+      if (element.matches(TEXT_FIELD_SELECTOR)) stampField(element);
+      var descendants = element.getElementsByTagName('*');
+      for (var index = 0; index < descendants.length; index++) {
+        var descendant = descendants[index];
+        if (isUndefinedCustomTag(descendant)) hide(descendant);
+        else if (descendant.matches(TEXT_FIELD_SELECTOR)) stampField(descendant);
+      }
+    }
+
+    function handle(records) {
+      for (var index = 0; index < records.length; index++) {
+        var record = records[index];
+        if (record.type === 'attributes') {
+          if (record.target.nodeType === 1 && record.target.matches(TEXT_FIELD_SELECTOR)) stampField(record.target);
+          continue;
+        }
+        for (var nodeIndex = 0; nodeIndex < record.addedNodes.length; nodeIndex++) {
+          var node = record.addedNodes[nodeIndex];
+          if (node.nodeType === 1 && node.isConnected) visit(node);
+        }
+      }
+    }
+
+    var observer = new MutationObserver(handle);
+    observer.observe(doc.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['contenteditable'] });
+    // A content script that runs at document_start can add its node before this script does.
+    visit(doc.documentElement);
+    // React's autoFocus focuses a field in the same task that inserts it, before the observer's
+    // microtask; an extension attaches on focus. A window capture listener runs ahead of any
+    // listener on the document or the field, so the field carries its opt-outs by then.
+    view.addEventListener('focusin', function (event) {
+      var target = event.target;
+      if (target && target.nodeType === 1 && target.matches(TEXT_FIELD_SELECTOR)) stampField(target);
+    }, true);
+
+    return function startTopLevelSweep() {
+      // Anything the parser placed is the page's own. Records still queued were made by it too.
+      handle(observer.takeRecords());
+      [doc.documentElement, doc.body].forEach(function (parent) {
+        if (!parent) return;
+        for (var index = 0; index < parent.children.length; index++) pageCreated.add(parent.children[index]);
+      });
+      watchingTopLevel = true;
+    };
+  }
+
+  var startTopLevelSweep = shieldDocument(document);
+  document.addEventListener('DOMContentLoaded', function () { startTopLevelSweep(); }, { once: true });
+
+  /** The Browser pane's guest page: no script of its own runs there, so its children are all in place once it loads. */
+  function shieldGuestDocument(doc) {
+    if (!doc || !doc.documentElement) return;
+    shieldDocument(doc)();
   }
 
   // The microphone is never requested: dictation's capture (src/renderer/audio/audio-capture.ts)
@@ -823,5 +988,6 @@
     focusRectOf: rectOf,
     pressCombo: pressCombo,
     releaseCombo: releaseCombo,
+    shieldGuestDocument: shieldGuestDocument,
   };
 })();
