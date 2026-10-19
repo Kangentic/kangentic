@@ -1127,6 +1127,87 @@ test.describe('usage dashboard', () => {
     }
   });
 
+  test('a restarting index shows one quiet line, never caches its figures, and clears on the next good read', async () => {
+    // Main flags the payload `indexRestarting` when the retrieval worker that
+    // runs every usage read is down. Its figures are an undercount, so the
+    // dashboard must not paint them over good ones, and it must not blame the
+    // projects' databases (the old "Skipped N project(s)" line) or show the red
+    // error banner for something that comes back on its own.
+    const restartingFixture = `
+      (function () {
+        window.__restartingStatsFixture = function (scope, period) {
+          var now = Date.now();
+          return {
+            scope: scope,
+            period: period,
+            rangeStartMs: now - 3600000,
+            rangeEndMs: now,
+            bucketSizeMs: 3600000,
+            costBucketSizeMs: 86400000,
+            generatedAtMs: now,
+            kpis: {
+              totalCostUsd: 0, costKnown: false,
+              totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0,
+              sessionCount: 0, toolCallCount: 0,
+              linesAdded: 0, linesRemoved: 0, filesChanged: 0,
+              compactionCount: 0, totalDurationMs: 0,
+              turnInputTokens: 0, turnOutputTokens: 0,
+              cacheCreationTokens: 0, cacheReadTokens: 0,
+              burnRateTokensPerHour: null, burnRateUsdPerHour: null,
+            },
+            previousKpis: null,
+            tokenSeries: [],
+            costSeries: [],
+            byModel: [],
+            byAgent: [],
+            byEffort: [],
+            indexRestarting: true,
+          };
+        };
+        window.electronAPI.usage.__dashboardStatsFixture = window.__restartingStatsFixture;
+      })();
+    `;
+    const { browser, page } = await launchWithState(twoProjectPreConfig() + restartingFixture);
+    const notice = page.locator('[data-testid="stats-index-restarting"]');
+    const forceRefetch = (fixture: 'restarting' | 'default') => page.evaluate(async (which) => {
+      const scope = window as unknown as {
+        __restartingStatsFixture: unknown;
+        electronAPI: { usage: { __dashboardStatsFixture: unknown } };
+        __zustandStores: { usageDashboard: { getState: () => { loadDashboardStats: (options: { force: boolean }) => Promise<void> } } };
+      };
+      scope.electronAPI.usage.__dashboardStatsFixture = which === 'restarting' ? scope.__restartingStatsFixture : null;
+      await scope.__zustandStores.usageDashboard.getState().loadDashboardStats({ force: true });
+    }, fixture);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Cold: nothing cached yet, so the cards keep their skeletons rather than
+      // claiming the range recorded nothing.
+      await openDashboard(page);
+      await expect(notice).toHaveText('The Knowledge Graph index is restarting. The figures refresh when it is back.', { timeout: 10000 });
+      const burnRateCard = page.locator('[data-testid="chart-burn-rate"]');
+      await expect(burnRateCard.locator('[data-testid="chart-card-loading"]')).toBeVisible();
+      await expect(burnRateCard).not.toContainText('No agent turns recorded');
+      await expect(page.locator('[data-testid="stats-skipped-projects"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="stats-error"]')).toHaveCount(0);
+
+      // The worker is back: a clean payload clears the line and paints figures.
+      await forceRefetch('default');
+      await expect(notice).toHaveCount(0);
+      const costValue = page.locator('[data-testid="kpi-cost-value"]');
+      await expect(costValue).toContainText('$', { timeout: 10000 });
+      const goodCost = await costValue.textContent();
+
+      // Down again: the line returns and the good figures stay on screen.
+      await forceRefetch('restarting');
+      await expect(notice).toBeVisible();
+      await expect(costValue).toHaveText(goodCost ?? '');
+      await expect(page.locator('[data-testid="stats-error"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('degrades gracefully for agents that report no cost and no model id', async () => {
     const degradedFixture = `
       (function () {

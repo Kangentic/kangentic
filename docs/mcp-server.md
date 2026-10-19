@@ -474,6 +474,13 @@ Reads the durable usage ledgers (`usage_history` per-session cost and
 `conversation_turn_usage` per-turn tokens, plus `background_calls` for the Background line below), so totals survive task and session deletion.
 Usage from in-flight sessions is excluded until they finalize.
 
+Every read runs in the retrieval worker. While that worker cannot answer (restarting after a crash,
+or shut down at quit), the tool returns an error, `Usage stats were not read. The Knowledge Graph
+index is restarting. Try again in a moment.`, rather than totals that leave out the projects it
+never reached. A project whose own database cannot be read is handled apart. It is skipped, its
+reads stay out of every total, and an all-projects call's message counts it as
+`(N skipped, unreadable DB)`. A single-project call has no skip count.
+
 Tokens are reported as four DISJOINT types - fresh input, output, cache write, cache
 read - which is the split `claude_code.token.usage` reports and the one ccusage columns.
 There is no combined total: cache read is an order of magnitude larger than fresh

@@ -16,7 +16,7 @@ import type { BackgroundCallGroupRow } from '../db/repositories/background-call-
 import { foldBackgroundUsage } from './background-usage';
 import { agentRegistry } from '../agent/agent-registry';
 import type { GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
-import { retrievalClient } from '../retrieval/retrieval-client';
+import { retrievalClient, RetrievalUnavailableError } from '../retrieval/retrieval-client';
 import type { AsyncProjectUsageReader, ProjectUsageReader, UsageReadName } from './project-usage-reader';
 import {
   COST_GROUP_MS,
@@ -56,7 +56,11 @@ import {
  * files, so the N-way merge itself must stay in JS. Missing project DB files
  * are skipped WITHOUT opening them - opening one would CREATE a database for a
  * never-opened project - and a project whose read throws is reported in
- * `skippedProjects` instead of failing the whole payload.
+ * `skippedProjects` instead of failing the whole payload. A project's reads
+ * join the totals only once all of them answered, so a skipped project leaves
+ * nothing behind. A down retrieval worker is not a project's fault: the loop
+ * stops at the first `RetrievalUnavailableError` and flags the payload
+ * `indexRestarting` instead of listing every project as unreadable.
  *
  * The optional `liveSessions` param (populated by the IPC handler from the
  * live `SessionManager`, empty for the MCP command handler) fixes the
@@ -260,6 +264,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     let previousActiveMsTotal = 0;
     let previousActiveSessionsCovered = 0;
     const liveLedgerBaseline = { costUsd: 0 };
+    let indexRestarting = false;
 
     for (const project of targets) {
       // A registered-but-never-opened (or externally deleted) project has no
@@ -272,46 +277,33 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         const rollup = await reader.listUsageRollup(sinceIso, untilIso, sinceMs, untilMs);
         const costGroups = await reader.listUsageCostGroups(sinceIso, untilIso, COST_GROUP_MS);
         const groups = await reader.listTurnGroups(sinceMs, turnGroupMs, untilMs, sinceIso, untilIso);
-        totalsList.push(totals);
-        combinedRollup.push(...rollup);
-        combinedCostGroups.push(...costGroups);
-        combinedGroups.push(...groups);
-        subagentTotalsList.push(await reader.listSubagentTotals(sinceMs, untilMs));
+        const subagentTotals = await reader.listSubagentTotals(sinceMs, untilMs);
         // Background calls: their own ledger, never folded into the session
         // figures this loop gathers.
-        backgroundGroups.push(...await reader.listBackgroundCallGroups(sinceIso, untilIso, COST_GROUP_MS));
+        const projectBackgroundGroups = await reader.listBackgroundCallGroups(sinceIso, untilIso, COST_GROUP_MS);
         const projectActive = await reader.getActiveTotals(sinceMs, untilMs);
-        activeMsTotal += projectActive.activeMs;
-        activeSessionsCovered += projectActive.sessionsCovered;
-        // Earliest across projects: the app-wide token coverage starts when
-        // the FIRST project began capturing turns.
         const projectEarliestTurnMs = await reader.getEarliestTurnMs();
-        if (projectEarliestTurnMs !== null
-          && (earliestTurnMs === null || projectEarliestTurnMs < earliestTurnMs)) {
-          earliestTurnMs = projectEarliestTurnMs;
-        }
-        if (previousWindow) {
-          // The previous window feeds previousKpis only (no breakdowns or
-          // series), so totals + turn groups suffice.
-          previousTotalsList.push(await reader.getUsageTotals(previousWindow.sinceIso, previousWindow.untilIso));
-          previousGroups.push(...await reader.listTurnGroups(
-            previousWindow.sinceMs, turnGroupMs, previousWindow.untilMs,
-            previousWindow.sinceIso, previousWindow.untilIso,
-          ));
-          // Subagent totals too, not just the main-thread ones. `previousKpis`
-          // is what the hero/compact tiles diff against, so a subagent field
-          // left at 0 here would render as a full-size delta on every load
-          // rather than the real period-over-period change.
-          previousSubagentTotalsList.push(
-            await reader.listSubagentTotals(previousWindow.sinceMs, previousWindow.untilMs),
-          );
-          // Same reason as the subagent totals above: a zeroed active time
-          // here would render as a full-size delta on the Avg Active tile
-          // every load rather than the real period-over-period change.
-          const previousActive = await reader.getActiveTotals(previousWindow.sinceMs, previousWindow.untilMs);
-          previousActiveMsTotal += previousActive.activeMs;
-          previousActiveSessionsCovered += previousActive.sessionsCovered;
-        }
+        // The previous window feeds previousKpis only (no breakdowns or
+        // series), so totals + turn groups suffice, plus two more:
+        //
+        // Subagent totals, not just the main-thread ones. `previousKpis` is
+        // what the hero/compact tiles diff against, so a subagent field left
+        // at 0 here would render as a full-size delta on every load rather
+        // than the real period-over-period change.
+        //
+        // Active time, for the same reason: a zeroed active time would render
+        // as a full-size delta on the Avg Active tile every load.
+        const previous = previousWindow
+          ? {
+              totals: await reader.getUsageTotals(previousWindow.sinceIso, previousWindow.untilIso),
+              groups: await reader.listTurnGroups(
+                previousWindow.sinceMs, turnGroupMs, previousWindow.untilMs,
+                previousWindow.sinceIso, previousWindow.untilIso,
+              ),
+              subagentTotals: await reader.listSubagentTotals(previousWindow.sinceMs, previousWindow.untilMs),
+              active: await reader.getActiveTotals(previousWindow.sinceMs, previousWindow.untilMs),
+            }
+          : null;
         const liveForProject = liveSessions.filter((live) => live.projectId === project.id);
         // Live-session dedup: a running session already snapshotted into the
         // window's ledger by the periodic metrics timer must not be counted
@@ -320,21 +312,54 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         const projectLiveCount = liveForProject.length === 0
           ? 0
           : liveForProject.length - await reader.countSessionsRepresented(sinceIso, untilIso, liveRecordIds);
-        liveSessionCountTotal += projectLiveCount;
         // The cost/token half of the same dedup. The COUNT above kept the
         // Sessions tile honest; this keeps the Cost and Tokens tiles honest,
         // by telling the renderer how much of its overlay the ledger already
         // contains.
-        if (liveRecordIds.length > 0) {
-          liveLedgerBaseline.costUsd +=
-            (await reader.sumSessionsRepresented(sinceIso, untilIso, liveRecordIds)).costUsd;
+        const projectLiveBaselineCostUsd = liveRecordIds.length > 0
+          ? (await reader.sumSessionsRepresented(sinceIso, untilIso, liveRecordIds)).costUsd
+          : 0;
+
+        // Every read answered. Only now does the project join the totals, so
+        // one that throws part way leaves none of its earlier reads behind.
+        totalsList.push(totals);
+        combinedRollup.push(...rollup);
+        combinedCostGroups.push(...costGroups);
+        combinedGroups.push(...groups);
+        subagentTotalsList.push(subagentTotals);
+        backgroundGroups.push(...projectBackgroundGroups);
+        activeMsTotal += projectActive.activeMs;
+        activeSessionsCovered += projectActive.sessionsCovered;
+        // Earliest across projects: the app-wide token coverage starts when
+        // the FIRST project began capturing turns.
+        if (projectEarliestTurnMs !== null
+          && (earliestTurnMs === null || projectEarliestTurnMs < earliestTurnMs)) {
+          earliestTurnMs = projectEarliestTurnMs;
         }
+        if (previous) {
+          previousTotalsList.push(previous.totals);
+          previousGroups.push(...previous.groups);
+          previousSubagentTotalsList.push(previous.subagentTotals);
+          previousActiveMsTotal += previous.active.activeMs;
+          previousActiveSessionsCovered += previous.active.sessionsCovered;
+        }
+        liveSessionCountTotal += projectLiveCount;
+        liveLedgerBaseline.costUsd += projectLiveBaselineCostUsd;
         if (scope.kind === 'all') {
           perProject.push(
             summarizeProject(project, totals, rollup, projectLiveCount, groups, projectActive),
           );
         }
       } catch (error) {
+        // The worker answers every project or none, so a down worker is not
+        // this project's fault: stop here rather than blame each database in
+        // turn. The message is enough; the stack would only point at the
+        // client. At quit this is the dispose racing an open dashboard.
+        if (error instanceof RetrievalUnavailableError) {
+          console.warn(`[usage-stats] Usage read stopped, the retrieval worker is unavailable: ${error.message}`);
+          indexRestarting = true;
+          break;
+        }
         console.warn(`[usage-stats] Skipping unreadable project DB ${project.id}:`, error);
         skippedProjects.push({ projectId: project.id, projectName: project.name });
       }
@@ -448,6 +473,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       stats.perProject = perProject;
       if (skippedProjects.length > 0) stats.skippedProjects = skippedProjects;
     }
+    if (indexRestarting) stats.indexRestarting = true;
     return stats;
   }
 

@@ -1,6 +1,7 @@
 import type { UsageDashboardStats, UsageStatsScope, UsageTimePeriod } from '../../../shared/types';
 import { BACKGROUND_CALL_JOB_LABELS } from '../../../shared/background-call-jobs';
 import { usageStatsService } from '../../usage-stats/usage-stats-service';
+import { INDEX_RESTARTING } from '../../retrieval/retrieval-queries';
 import type { CommandHandler, CommandResponse } from './types';
 
 const PERIODS: readonly UsageTimePeriod[] = ['live', 'today', 'week', 'month', 'all'];
@@ -133,6 +134,12 @@ export const handleGetUsageStats: CommandHandler = async (params): Promise<Comma
     : { kind: 'project', projectId: projectId as string };
 
   const stats = await usageStatsService.getDashboardStats(scope, period);
+  // The read stopped part way, so every figure is an undercount. An agent
+  // would quote it as the total; tell it to retry instead, in the search
+  // tools' words.
+  if (stats.indexRestarting) {
+    return { success: false, error: `Usage stats were not read. ${INDEX_RESTARTING}` };
+  }
   const data = includeSeries
     ? stats
     : (() => {

@@ -1625,6 +1625,8 @@ Operates on a per-project DB. Append-only ledger of finalized session usage. Dec
 
 The aggregation is pushed into SQL (replacing the old raw-row `listRowsAfter` + JS fold) so the synchronous main-process JS work is O(buckets), not O(historical rows); the remaining folds live in the pure functions of `src/main/usage-stats/bucketing.ts`, consumed by the `USAGE_GET_DASHBOARD_STATS` IPC handler and the `kangentic_get_usage_stats` MCP tool via `usageStatsService`.
 
+Each read is a retrieval worker call (`usage.read`), so two failures look alike and are handled apart. In an app-wide read, a project whose database read throws is listed in `skippedProjects`, and none of its reads reach the totals, because a project's reads join them only after every one has answered. A `RetrievalUnavailableError` is not that project's fault, since the worker answers every project or none. The service stops at the first one, logs a single line, and flags the payload `indexRestarting`. The dashboard keeps its last figures under one line saying the index is restarting, and its regular refetch picks the worker back up. The MCP tool returns an error.
+
 ### DevPortRepository
 
 Operates on the global DB (`getGlobalDb()`), like `ProjectRepository`. Deliberately
