@@ -1,6 +1,7 @@
 import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type InteractiveTerminalResponsePayload } from '@kangentic/protocol';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
+import { notAcceptingInputRefusal, unknownSessionRefusal } from './session-refusals';
 import { armTerminalSizeGuard, releaseTerminalSizeGuard } from './terminal-size-guard';
 import { toWireJson } from './wire-mappers';
 
@@ -24,8 +25,9 @@ export function handleInteractiveTerminal(
 ): CapabilityResponseMessage {
   const payload = parseCapabilityRequestPayload('interactive-terminal', request.payload);
 
-  if (!context.sessionManager.getSession(payload.sessionId)) {
-    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+  const session = context.sessionManager.getSession(payload.sessionId);
+  if (!session) {
+    return unknownSessionRefusal(request, payload.sessionId);
   }
 
   if (payload.action === 'release-size') {
@@ -38,7 +40,7 @@ export function handleInteractiveTerminal(
   // PTY, so write() silently drops the bytes (and a resize would only stash) -
   // report that rather than a false written/resized:true.
   if (!context.sessionManager.isWritable(payload.sessionId)) {
-    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `Session is not accepting input (not running): ${payload.sessionId}` };
+    return notAcceptingInputRefusal(request, session);
   }
 
   if (payload.action === 'resize') {

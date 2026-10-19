@@ -1,6 +1,7 @@
 import { parseCapabilityRequestPayload, type AnswerPermissionPromptResponsePayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type JsonValue } from '@kangentic/protocol';
 import type { IpcContext } from '../../ipc/ipc-context';
 import { buildPermissionPromptId } from './permission-prompt-id';
+import { notAcceptingInputRefusal, unknownSessionRefusal } from './session-refusals';
 
 /**
  * The most sensitive verb: it can authorize the agent to run a command. The
@@ -18,8 +19,18 @@ export function handleAnswerPermissionPrompt(
 ): CapabilityResponseMessage {
   const payload = parseCapabilityRequestPayload('answer-permission-prompt', request.payload);
 
-  if (!context.sessionManager.getSession(payload.sessionId)) {
-    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+  const session = context.sessionManager.getSession(payload.sessionId);
+  if (!session) {
+    return unknownSessionRefusal(request, payload.sessionId);
+  }
+
+  // Checked before the prompt binding. An ended (suspended or exited) row has no
+  // PTY, and a suspend also drops its activity state, so the binding below would
+  // answer it "no prompt outstanding" with no code. This runs in the same tick
+  // as the write, so a PTY a kill just nulled is still reported as a drop, never
+  // as a false answered:true.
+  if (!context.sessionManager.isWritable(payload.sessionId)) {
+    return notAcceptingInputRefusal(request, session);
   }
 
   const snapshot = context.sessionManager.getActivityStatsSnapshot(payload.sessionId);
@@ -30,11 +41,6 @@ export function handleAnswerPermissionPrompt(
   const livePromptId = buildPermissionPromptId(payload.sessionId, snapshot.permissionAwaitedToolId);
   if (livePromptId !== payload.promptId) {
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: 'promptId does not match the currently outstanding prompt (stale or already answered)' };
-  }
-  // A pending prompt on a live session implies a writable PTY; guard anyway so
-  // a race that nulled the pty reports the drop instead of a false answered:true.
-  if (!context.sessionManager.isWritable(payload.sessionId)) {
-    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `Session is not accepting input (not running): ${payload.sessionId}` };
   }
 
   context.sessionManager.write(payload.sessionId, payload.keystrokes, 'user');
