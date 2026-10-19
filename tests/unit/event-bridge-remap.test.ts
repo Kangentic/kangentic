@@ -28,7 +28,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { EventType } from '../../src/shared/types';
 import { buildHooks } from '../../src/main/agent/adapters/claude';
-import { extractTool, extractToolId, extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 
@@ -68,6 +68,8 @@ const PRETOOLUSE_DIRECTIVES = [
   // first (canonical Claude shape), nested fallback for CLI-version skew.
   extractToolId(['tool_use_id']),
   extractToolId(['tool_use_id'], { nested: 'tool_input' }),
+  // The agent that ran the tool, when it is not the main agent.
+  extractSubagentId(['agent_id']),
   // shell_id first so KillBash + future shell-aware events surface
   // their identity. Falls through to file_path/command/etc otherwise.
   extractDetail(['shell_id', 'file_path', 'command', 'query', 'pattern', 'url', 'description'], { nested: 'tool_input' }),
@@ -86,6 +88,7 @@ const POSTTOOLUSE_DIRECTIVES = [
   extractTool('tool_name'),
   extractToolId(['tool_use_id']),
   extractToolId(['tool_use_id'], { nested: 'tool_response' }),
+  extractSubagentId(['agent_id']),
   extractDetail(['shellId', 'shell_id', 'backgroundTaskId', 'bash_id'], { nested: 'tool_response' }),
   // Monitor is a background-wait tool whose id field is `taskId`. Scoped to
   // Monitor because `taskId` is generic enough that a tool-blind extraction
