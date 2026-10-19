@@ -21,6 +21,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { transformSync } from 'esbuild';
 import { buildDemoPreConfig, buildDemoSceneRowScripts, DEMO_PROJECTS, DEMO_SCENE_TASKS, shippedKnowledgeGraph } from '../tests/captures/helpers/demo-dataset';
 import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, loadDemoTiledFrames, loadDemoTranscripts, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
@@ -72,6 +73,19 @@ async function flattenPlugins(option: PluginOption): Promise<Plugin[]> {
 }
 
 interface PlannedAsset { fileName: string; source: string }
+
+/**
+ * The five classic scripts run before first paint on every frame, and Vite never sees them, so
+ * they used to ship as written: boot.js and the mock are mostly comments, and the seed is
+ * generated with its applier's indentation and comments intact. Minified they come to about a
+ * third of the gzipped bytes for boot.js and the mock and four fifths for the seed (demo/README.md,
+ * What the page ships). Each is an IIFE or assigns to `window`, and with no output format set
+ * esbuild leaves top-level names alone, so the globals the scripts share stay as they are. The hash
+ * is taken over the minified bytes, which are the ones a visitor caches.
+ */
+function minifyClassicScript(name: string, source: string): string {
+  return transformSync(source, { loader: 'js', minify: true, legalComments: 'none', sourcefile: name }).code;
+}
 
 /**
  * A content hash in the file name, as Vite gives its own chunks. GitHub Pages caches every file
@@ -162,7 +176,8 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
   // it. Keyed by task id, valued by the URL boot.js writes.
   const seedMaps = loadSeedMaps();
   const sceneRowScripts: Record<string, string> = {};
-  for (const [taskId, source] of Object.entries(buildDemoSceneRowScripts(seedMaps))) {
+  for (const [taskId, written] of Object.entries(buildDemoSceneRowScripts(seedMaps))) {
+    const source = minifyClassicScript(`scene-rows/${taskId}.js`, written);
     const fileName = hashedName(`scene-rows/${taskId}.js`, source);
     files.push({ fileName, source });
     sceneRowScripts[taskId] = `${base}${fileName}`;
@@ -174,7 +189,10 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     { name: 'demo-webview.js', source: readFileSync(WEBVIEW_SHIM_PATH, 'utf8') },
     { name: 'mock-electron-api.js', source: readFileSync(MOCK_SCRIPT_PATH, 'utf8') },
     { name: 'demo-seed.js', source: buildSeedScript(version, seedMaps) },
-  ].map((script) => ({ fileName: hashedName(script.name, script.source), source: script.source }));
+  ].map((script) => {
+    const source = minifyClassicScript(script.name, script.source);
+    return { fileName: hashedName(script.name, source), source };
+  });
   files.push(...scripts);
   return { scripts: scripts.map((script) => script.fileName), files };
 }

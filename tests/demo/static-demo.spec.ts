@@ -16,6 +16,7 @@
  */
 import { test, expect, chromium, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
+import { transformSync } from 'esbuild';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { PLANNED_BILLING_PAGE, SCENES, playsCycle } from '../captures/scenes';
@@ -1093,6 +1094,21 @@ test('the build carries production semantics: no dev badge, no dev-only store ex
   await expect(page.locator('[data-testid="titlebar-dev-badge"]')).toHaveCount(0);
   const hasDevStores = await page.evaluate(() => '__zustandStores' in window);
   expect(hasDevStores).toBe(false);
+});
+
+test('the classic scripts every frame loads before first paint ship minified', async ({ page, request }) => {
+  // Vite never sees the five scripts demo/vite.config.mts injects ahead of the bundle, so nothing
+  // minified them, and boot.js and the mock went out mostly as comments (minifyClassicScript).
+  // Minifying a shipped script again must gain next to nothing. A line-based look for comments
+  // cannot tell: the seed carries diffs and terminal frames as strings, with their own indentation.
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  const classicScripts = await page.evaluate(() => Array.from(document.querySelectorAll('head script[src]:not([type="module"])')).map((script) => (script as HTMLScriptElement).src));
+  expect(classicScripts.length, 'the five classic scripts').toBe(5);
+  for (const url of classicScripts) {
+    const source = await (await request.get(url)).text();
+    const again = transformSync(source, { loader: 'js', minify: true, legalComments: 'none' }).code;
+    expect(again.length / source.length, `${url.split('/').pop()} ships unminified`).toBeGreaterThan(0.98);
+  }
 });
 
 test('the emitted config-shape guard omits a block with no populated default', async ({ page }) => {
@@ -3580,6 +3596,19 @@ test('a new Command Terminal boots the project default agent from the recorded b
   await expectStreamedOrStill(page, sessionId as string, streamed);
   await expect(page.getByText('Starting agent...')).toHaveCount(0, { timeout: 15_000 });
   expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a still of the tiled Command Terminals paints the first window from its tiled recording', async ({ page }) => {
+  // The scene's pose opens the first window, which paints at its single width, and then docks the
+  // second beside it. A still has no clock to repaint from, so the seed repaints it for the tiled
+  // layout (repaintStill). Without that it kept the single recording's frame cut to the narrower
+  // pane, with its closing rows wrapped: the poster the site crops showed the wrong run. The two
+  // recordings are separate runs of one prompt: the tiled one's turn ends "Cogitated for 36s", the
+  // single one's "Churned for 9s". Single words, since a frame moves the cursor over a space.
+  await gotoScene(page, { view: 'command-terminal-tiled', embed: '1', still: '1' });
+  const paintedFrame = () => page.evaluate((sessionId) => (window as unknown as { __demoPainted?: Record<string, { frame: string }> }).__demoPainted?.[sessionId]?.frame ?? '', SESSION_CONTOSO_TERMINAL);
+  await expect.poll(paintedFrame, { timeout: 10_000 }).toContain('Cogitated');
+  expect(await paintedFrame()).not.toContain('Churned');
 });
 
 test('a Command Terminal that tiles beside a new one repaints from the boot recorded at the tiled width', async ({ page }) => {

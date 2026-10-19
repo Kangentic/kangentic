@@ -3698,6 +3698,7 @@ export function buildDemoPreConfig(options: {
         // repaint on every conform, which reached a session whose replay is already at its end
         // and pushed a whole frame into a terminal that should have received nothing.
         var conformEcho = !!previousHeld && cols === previousHeld.cols && rows === previousHeld.rows;
+        var fileBefore = entry ? entry.file : null;
         if (entry && !conformEcho) applyLayout(entry, cols, rows);
         var held = conformEcho ? previousHeld : (recordings ? heldGridFor(entry, cols, rows) : null);
         // A natural grid whose hold the terminal already declined is not offered it again.
@@ -3721,8 +3722,26 @@ export function buildDemoPreConfig(options: {
         if (conformEcho) conformLanded[sessionId] = held;
         else if (held && !sameGrid(previousHeld, held)) awaitConform(sessionId, entry, held);
         if (live && entry && changed) repaintSession(sessionId, entry, effective);
+        else if (!live && entry && changed && entry.file !== fileBefore) repaintStill(sessionId, entry, effective);
         return answer;
       };
+      // A still has no clock to repaint from, but which picture it paints is still chosen by
+      // layout. A window that tiles beside a new one after it painted takes the tiled
+      // recording's frame, as the live repaint takes its bytes. That happens in a still whenever
+      // the tiling is played rather than restored: command-terminal-tiled's pose opens the first
+      // window, which paints at its single width, and then docks the second beside it. Only a
+      // layout swap repaints here, so a still's terminal is otherwise painted once, at mount.
+      function repaintStill(sessionId, entry, grid) {
+        var frame = stillFrameFor(sessionId, entry);
+        if (frame) {
+          emitBytes(sessionId, REPAINT + notePainted(sessionId, grid, fitFrameToGrid(frame, grid, entry.grid)), entry.projectId);
+          return;
+        }
+        if (!recordings) return;
+        fetchRecording(entry.file).then(function (recording) {
+          emitBytes(sessionId, REPAINT + notePainted(sessionId, grid, fitFrameToGrid(recording.serialized, grid, recording)), entry.projectId);
+        });
+      }
       function sameGrid(one, other) {
         return !!one && !!other && one.cols === other.cols && one.rows === other.rows;
       }
