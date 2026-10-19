@@ -128,7 +128,7 @@ sessions bypass all of this (not task agents).
      - Start status file watcher (100ms debounce)
      - Start events file watcher (50ms debounce)
      - The host runs the output handler (16ms batched flush, 512KB scrollback)
-     - After 100ms delay, write CLI command to PTY stdin (agent spawns prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient sessions, Command Terminals and a workflow's agent, exempt)
+     - After 100ms delay, write CLI command to PTY stdin, prefixed with the shell's own clear via `buildSpawnClearPrelude` (every typed command launches an agent, a transient session's included: a Command Terminal or a workflow's agent)
 
 ## Queue
 
@@ -1033,9 +1033,8 @@ phone needs and reads the rest by request.
   across via `initSession`'s `previousGeometry` (conservatively marking the carried ring
   suspect when the prior drawn-at geometry is unknown or changed). The pre-TUI strip is
   mirrored beyond the byte replay too, in two layers. The SOURCE layer: an agent spawn's
-  typed command line is prefixed with the shell's own clear
-  (`buildSpawnClearPrelude`: `Clear-Host; ` / `cls & ` / `clear; `; transient Command
-  Terminals skip it), so the shell erases its startup preamble and command echo the instant
+  typed command line, a transient session's included, is prefixed with the shell's own clear
+  (`buildSpawnClearPrelude`: `Clear-Host; ` / `cls & ` / `clear; `), so the shell erases its startup preamble and command echo the instant
   the command executes - a real clear in the real byte stream that every consumer (live
   terminal, ring, parser, replays, phone) honors natively, immune to pwsh/ConPTY updates
   reshaping their startup bytes. The DETECTION layer: a fresh session's TUI-takeover clear
@@ -1048,8 +1047,9 @@ phone needs and reads the rest by request.
   plus `\x1b[3J` with no `\x1b[2J` at all, so the prelude cleans every consumer purely
   in-stream while the detection layer keys on whichever real `2J` the TUI itself emits -
   either alone suffices. The one-shot is bounded to the spawn: transient sessions (Command
-  Terminals and a workflow's agent) never arm it (no spawn echo to strip, and a user shell's later `\x1b[2J` - viewport-only by
-  spec - must not be upgraded into a scrollback wipe), and it expires after a takeover window
+  Terminals and a workflow's agent) never arm it, because the prelude already erases their echo
+  in-stream and the one-shot would add only its risk (a late qualifying clear wiping history a
+  Command Terminal user has already built up), and it expires after a takeover window
   (`PRE_TUI_TAKEOVER_WINDOW_MS`) so a mid-session repaint clear can never fire it against
   genuine accumulated history. Alt-screen sessions skip the
   injection (no user-visible scrollback to protect), and a carried-over ring opts out
@@ -1697,6 +1697,11 @@ first await and released once the spawn has registered its row or the start has 
    prompt hook reports the first prompt's text for `CommandTerminalNamer`, and the terminal's own
    made-up task id as `taskProcessTag`
 5. Call `SessionManager.spawn()` with `transient: true` and the claimed slot
+6. If `spawn()` returns an exited row (the shell did not start, so node-pty refused it and its exit
+   was already announced), end that row through `SessionManager.endCommandTerminal` and fail the
+   start with `CommandTerminalStartError` code `spawn-failed`. The message names the shell and
+   points at Settings > Terminal. The desktop window toasts it and closes, and a phone's start gets
+   `command-terminal-start-failed`. A shell that failed to start is never returned as a success
 
 An unattended (phone) start runs the same steps with a non-interactive 5 s fetch, one 6 s git
 budget, and no checkout while another running or queued session's cwd is the project root.

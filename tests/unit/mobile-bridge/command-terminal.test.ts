@@ -118,6 +118,8 @@ describe('command-terminal: start', () => {
     ['unknown-project', 'unknown-project'],
     // A phone's start asks for no slot, so this cannot reach it; it still maps to the generic failure rather than going unmapped.
     ['slot-taken', 'command-terminal-start-failed'],
+    // The desktop's shell did not start: nothing the phone can fix, so the generic failure.
+    ['spawn-failed', 'command-terminal-start-failed'],
   ])('maps a %s refusal from the start to the %s code', async (startCode, wireCode) => {
     startCommandTerminalMock.mockRejectedValue(new CommandTerminalStartErrorStub(startCode, 'refused'));
     const { context } = fakeContext();

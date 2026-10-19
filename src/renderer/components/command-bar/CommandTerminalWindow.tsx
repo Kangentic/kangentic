@@ -51,6 +51,7 @@ import type { ManagedWindow } from '../../window-manager';
 import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
+import { describeIpcError } from '../../lib/ipc-error';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
@@ -309,7 +310,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         }
       })
       .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
+        // Main's refusals (the cap, a taken slot, a shell that did not start)
+        // are sentences written for the user; drop Electron's IPC decoration.
+        const message = describeIpcError(error, String(error));
         useToastStore.getState().addToast({ message, variant: 'error' });
         // Drop just this window; the layer's count bridge hides the layer if it
         // was the last one.
@@ -396,8 +399,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         useToastStore.getState().addToast({ message: result.checkoutError, variant: 'warning' });
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      useToastStore.getState().addToast({ message, variant: 'error' });
+      useToastStore.getState().addToast({ message: describeIpcError(error, String(error)), variant: 'error' });
     }
   }, [defaultBranch, slot]);
 

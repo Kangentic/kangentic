@@ -942,31 +942,60 @@ describe('performSpawn - Windows cwd fixup write order', () => {
     expect(writeMock.mock.calls[1][0]).toBe('ADAPTED:claude --resume abc\r');
   });
 
-  it('prefixes the shell clear prelude on agent spawns and skips it for transient shells', async () => {
+  it('prefixes the shell clear prelude on every spawn that types a command, transient ones included', async () => {
     // The prelude makes the SHELL erase its startup preamble and command
     // echo at execution time (see buildSpawnClearPrelude) - the source-level
-    // guard that stays valid across pwsh/ConPTY updates. Transient Command
-    // Terminals are a normal shell experience and must not be auto-cleared.
-    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+    // guard that stays valid across pwsh/ConPTY updates. A transient session
+    // types an agent command too (a Command Terminal ends with its agent, and
+    // a workflow's agent is no shell), so skipping it there left the typed
+    // `& "...claude.EXE" ...` line above the agent's banner (#853).
+    const spawns = [
+      { label: 'task agent', input: makeInput({ command: 'claude --resume abc' }) },
+      {
+        label: 'Command Terminal',
+        input: makeInput({
+          id: 'transient-session-id-000000000',
+          taskId: 'task-002',
+          command: 'claude --permission-mode auto',
+          transient: true,
+          commandTerminalSlot: 'slot-1',
+        }),
+      },
+      {
+        label: 'workflow agent',
+        input: makeInput({
+          id: 'workflow-session-id-0000000000',
+          taskId: 'workflow-1',
+          command: 'claude --permission-mode plan',
+          transient: true,
+          workflowId: 'workflow-1',
+        }),
+      },
+    ];
 
-    const agentContext = makeContext();
-    await performSpawn(makeInput({ command: 'claude --resume abc' }), agentContext);
-    vi.advanceTimersByTime(100);
-    const agentWrite = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
-    expect(agentWrite.mock.calls[0][0]).toBe('CLEARPRE; claude --resume abc\r');
-
-    vi.clearAllMocks();
-    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
-    const transientContext = makeContext();
-    await performSpawn(
-      makeInput({ id: 'transient-session-id-000000000', taskId: 'task-002', command: 'echo hi', transient: true }),
-      transientContext,
-    );
-    vi.advanceTimersByTime(100);
-    const transientWrite = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
-    expect(transientWrite.mock.calls[0][0]).toBe('echo hi\r');
+    for (const spawn of spawns) {
+      vi.clearAllMocks();
+      vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+      await performSpawn(spawn.input, makeContext());
+      vi.advanceTimersByTime(100);
+      const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+      expect(writeMock.mock.calls[0][0], spawn.label).toBe(`CLEARPRE; ${spawn.input.command}\r`);
+    }
     // The suite-default '' prelude is restored by this block's afterEach, so a
     // failing assertion above cannot leak 'CLEARPRE; ' into later tests.
+  });
+
+  it('types nothing into a transient bare shell, so the prelude never clears a shell with no command', async () => {
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+
+    await performSpawn(
+      makeInput({ id: 'transient-session-id-000000000', taskId: 'task-002', command: '', transient: true }),
+      makeContext(),
+    );
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    vi.advanceTimersByTime(300);
+    expect(writeMock).not.toHaveBeenCalled();
   });
 
   it('the prelude rides the cwd-fixup deferred write', async () => {

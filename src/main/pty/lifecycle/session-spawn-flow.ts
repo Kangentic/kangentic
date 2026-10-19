@@ -741,12 +741,13 @@ export async function performSpawn(
         writeIfStillOwned(cwdFixupCommand + '\r');
       }
       if (input.command) {
-        // Non-transient (agent) spawns get the shell's own clear prefixed
-        // onto the typed line, so the shell erases its startup preamble and
-        // command echo at execution time - see buildSpawnClearPrelude for why
-        // this beats every marker heuristic. Transient Command Terminals stay
-        // a normal shell experience and skip it.
-        const prelude = input.transient ? '' : buildSpawnClearPrelude(shellName);
+        // Every command typed here launches an agent: a task's, a Command
+        // Terminal's (which ends with its agent, so no usable shell is left)
+        // or a workflow's. Each gets the shell's own clear prefixed onto the
+        // typed line, so the shell erases its startup preamble and command
+        // echo at execution time - see buildSpawnClearPrelude for why this
+        // beats every marker heuristic.
+        const prelude = buildSpawnClearPrelude(shellName);
         const cmd = prelude + adaptCommandForShell(input.command, shellName);
         if (cwdFixupCommand) {
           setTimeout(() => writeIfStillOwned(cmd + '\r'), 200);

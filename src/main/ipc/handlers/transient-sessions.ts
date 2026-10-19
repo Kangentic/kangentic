@@ -49,11 +49,12 @@ const UNATTENDED_GIT_BUDGET_MS = 6_000;
 
 /**
  * Why a Command Terminal start was refused. The codes the mobile bridge reports
- * to a phone come straight from here; `slot-taken` is internal (a desktop window
- * asked for a slot a phone's terminal holds) and only ever reaches the
- * renderer's toast.
+ * to a phone come from here, mapped in its `START_REFUSAL_CODES`. `slot-taken`
+ * is internal (a desktop window asked for a slot a phone's terminal holds) and
+ * only ever reaches the renderer's toast. `spawn-failed` (the shell did not
+ * start) reaches a phone only as the generic start failure.
  */
-export type CommandTerminalStartErrorCode = 'unknown-project' | 'command-terminal-limit' | 'slot-taken';
+export type CommandTerminalStartErrorCode = 'unknown-project' | 'command-terminal-limit' | 'slot-taken' | 'spawn-failed';
 
 export class CommandTerminalStartError extends Error {
   readonly code: CommandTerminalStartErrorCode;
@@ -322,6 +323,19 @@ export async function startCommandTerminal(
       cols: input.cols,
       rows: input.rows,
     });
+
+    // A shell that could not start (a configured shell not on PATH) comes back
+    // as an exited row with no PTY, and its exit was announced before this
+    // returned, so neither caller would ever see it: the desktop window waited
+    // on its launch shimmer for good. End the row here, as a PTY that exits on
+    // its own ends, and fail the start so both callers report it.
+    if (session.status === 'exited') {
+      context.sessionManager.endCommandTerminal(session.id);
+      throw new CommandTerminalStartError(
+        'spawn-failed',
+        `The terminal's shell "${shell}" did not start; check it in Settings > Terminal.`,
+      );
+    }
 
     // Volume for these sessions comes from session_spawn (isTransient: true),
     // adoption from this feature; the old transient_session_spawn event was a

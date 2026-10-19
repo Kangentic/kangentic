@@ -44,7 +44,8 @@ const FAILED_SESSION_COLS = 120;
  *   - an "exited" placeholder ManagedSession registered in the
  *     session registry so the renderer renders a failed session
  *     instead of the main process crashing
- *   - synthetic 'exit' event with code -1
+ *   - a 'session-changed' announcing that row, then a synthetic
+ *     'exit' event with code -1
  *
  * Returns the failed Session DTO so the caller can forward it to the
  * original spawn() promise resolution.
@@ -99,6 +100,12 @@ export function handleSpawnFailure(
   // session's terminal shows it.
   context.host.post({ type: 'initSession', sessionId: id, scrollback: diagnosticScrollback, cols: FAILED_SESSION_COLS });
   context.setBufferCols(id, FAILED_SESSION_COLS);
+  // Announce the row before its exit, as a spawn that started does. Both
+  // arrive before the spawn call returns, so without this the renderer's
+  // replica met an exit for a row it did not hold: it could not see a
+  // Command Terminal was transient and toasted a crash under the raw session
+  // id, and the siblings the spawn drained stayed in the replica.
+  context.emit('session-changed', id, toSession(failedSession));
   context.emit('exit', id, -1);
   return toSession(failedSession);
 }

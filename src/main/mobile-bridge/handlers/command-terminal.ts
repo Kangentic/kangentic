@@ -36,12 +36,14 @@ function refuseWithCode(request: CapabilityRequestMessage, code: CapabilityError
  * The code a phone reads for each start refusal. A Record, so a refusal added
  * to `CommandTerminalStartErrorCode` fails typecheck here until it is mapped.
  * `slot-taken` cannot reach a phone (its start asks for no slot) and maps to
- * the generic failure.
+ * the generic failure. So does `spawn-failed`, a shell that did not start on
+ * the desktop, which the phone can only report.
  */
 const START_REFUSAL_CODES: Record<CommandTerminalStartErrorCode, CapabilityErrorCode> = {
   'unknown-project': UNKNOWN_PROJECT_ERROR_CODE,
   'command-terminal-limit': COMMAND_TERMINAL_LIMIT_ERROR_CODE,
   'slot-taken': COMMAND_TERMINAL_START_FAILED_ERROR_CODE,
+  'spawn-failed': COMMAND_TERMINAL_START_FAILED_ERROR_CODE,
 };
 
 /**

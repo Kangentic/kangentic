@@ -46,7 +46,7 @@ are normalized the same way.
 Bridge paths in hook and status-line commands follow a separate rule: see
 [Paths in hook commands](agent-integration.md#paths-in-hook-commands).
 
-Agent spawns (never a transient session: a Command Terminal or a workflow's agent) additionally prefix the typed line with the
+Every spawn that types a command (a task's agent, a Command Terminal, a workflow's agent) additionally prefixes the typed line with the
 shell's own clear via `buildSpawnClearPrelude()` (same module): `Clear-Host; ` for the
 PowerShell family, `cls & ` for cmd, and `clear; ` for every other shell (bash, zsh, fish, nu,
 dash, ksh, sh, WSL, Git Bash - the default arm, not a closed list). The shell then erases its
