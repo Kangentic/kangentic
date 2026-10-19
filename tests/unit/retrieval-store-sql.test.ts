@@ -38,6 +38,14 @@ afterEach(() => {
  *  `vec` loads sqlite-vec. */
 function openTracked(options: { vec?: boolean; filename?: string } = {}): Database.Database {
   const database = openTestDatabase(options.filename ?? ':memory:', { vec: options.vec });
+  if (options.filename) {
+    // A file database syncs to disk on every commit, and the project migrations
+    // commit hundreds of statements: 711 ms on an idle disk, past this file's
+    // 5 s test limit on a loaded CI runner. Nothing here needs the file to
+    // survive a crash, and the connections take turns, never overlapping.
+    database.pragma('synchronous = OFF');
+    database.pragma('journal_mode = MEMORY');
+  }
   openDatabases.push(database);
   return database;
 }
