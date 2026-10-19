@@ -1,6 +1,6 @@
 {
   "name": "kangentic",
-  "version": "0.46.0",
+  "version": "0.47.0",
   "description": "Install and launch Kangentic, an agentic development environment for AI coding agents",
   "bin": {
     "kangentic": "bin/kangentic.js"
