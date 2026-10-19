@@ -1700,32 +1700,49 @@ an emulated scale alone is the bug above. WebGL stays on.
 ## What the page ships, and what it costs
 
 Measured with `npm run demo:measure`, headless Chromium, a plain static server on localhost, warm
-disk. The weight and cold boot tables are from the build of 2026-10-16, after the scene-only row
-left the seed. The frames-per-page table is from the build of 2026-09-23, and the observations for
-#632 below read its numbers.
+disk. The weight table is from the build of 2026-10-19, after the classic scripts were minified.
+The cold boot table is from the build of 2026-10-16, after the scene-only row left the seed. The
+frames-per-page table is from the build of 2026-09-23, and the observations for #632 below read
+its numbers.
 
 ### Before first paint (gzipped)
 
 | File | Raw | Gzip |
 |---|---|---|
-| index (the renderer) | 1048 KB | 296 KB |
-| WorkflowDialogs chunk | 816 KB | 216 KB |
-| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 1080 KB | 172 KB |
+| index (the renderer) | 1043 KB | 294 KB |
+| WorkflowDialogs chunk (583 KB of it is lucide-react's whole icon map, below) | 819 KB | 217 KB |
+| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 1003 KB | 151 KB |
 | xterm + xterm-unicode11 | 460 KB | 119 KB |
-| mock-electron-api.js (the bridge) | 338 KB | 78 KB |
-| Pill, shared, datetime, useValuePulse and PrLink chunks | 225 KB | 72 KB |
+| Pill, shared, datetime, useValuePulse and PrLink chunks | 234 KB | 75 KB |
 | react-vendor | 215 KB | 66 KB |
 | KebabMenu chunk | 157 KB | 47 KB |
-| demo-boot.js + demo-scenes.js + demo-webview.js | 158 KB | 38 KB |
+| mock-electron-api.js (the bridge) | 131 KB | 32 KB |
+| demo-boot.js + demo-scenes.js + demo-webview.js | 164 KB | 36 KB |
 | index.css + xterm.css + WorkflowDialogs.css | 144 KB | 23 KB |
 | rolldown-runtime + preload-helper | 2 KB | 1 KB |
-| **Eager total** | | **1128 KB** |
+| **Eager total** | | **1062 KB** |
+
+The five classic scripts `demo/vite.config.mts` injects ahead of the bundle, and each scene-only
+row's script, are minified at build time (`minifyClassicScript`). Vite never sees them, so they
+used to ship as written: `demo-boot.js` and the mock were mostly comments, and the seed kept its
+applier's indentation and comments. On the same tree, minifying took the five from 320 to 219 KB
+gzipped, about 9% of everything a frame loads before first paint: `demo-boot.js` from 18 to 6 KB,
+the mock from 82 to 32 KB, the seed from 188 to 151 KB, and the scenes and the shim a KB each.
+The demo tier minifies each shipped script again and fails if that gains more than 2%, so a
+script added to the head unminified fails there.
+
+The largest single cost left is lucide-react's whole icon map. `src/renderer/utils/swimlane-icons.tsx`
+imports it (`icons`, about 1,500 glyphs) so a column's persisted kebab-case icon name can render
+any glyph and the Column Manager can offer all of them. It is 690 KB raw and 162 KB gzipped
+measured alone, against 2 KB for two named icons, and it ships in the desktop renderer too.
+Trimming it changes how the renderer resolves a column's icon, so it is not a demo build change.
 
 The whole `dist/demo/assets` is 18.1 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 6 requests).
 `demo-seed.js` carries each session's terminal frame and the working-tree diff it left behind;
 it is the one eager file that grows with the dataset. It was 112 KB gzipped when it held 16
-sessions and 10 diffs, and is 172 KB on the build in the table. It grew 14 KB gzipped when working sessions gained their opening frame as well as their
+sessions and 10 diffs, and 172 KB on the build of 2026-10-16, both unminified; the figures below
+are unminified too. It grew 14 KB gzipped when working sessions gained their opening frame as well as their
 last one, which is what lets a still and the captures show the moment the live replay starts
 from. It grew 3 KB more when they gained their peek timelines, which is what makes the Monitor
 move without a terminal open. It grew 7 KB more for the agent message trails, which are what the
