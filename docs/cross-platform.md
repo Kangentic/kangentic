@@ -252,7 +252,7 @@ The variable stays in main's `process.env`. Kangentic's renderer, GPU and utilit
 - `buildSpawnEnv` (`src/main/pty/spawn/pty-spawn.ts`): every session and Command Terminal PTY.
 - `spawnOffMainCli` and `execAsync` / `execFileAsync` (`src/main/utility-process/`): everything main ships to the pty host, which is every exec, every headless agent run, and git on a task's lifecycle.
 - `spawnOffMainPty` (the model-picker probe, the Antigravity print runner) and `spawnWithAbort` (the post-worktree init script, and git with or without a host) strip before they choose a route, and `off-main-exec.ts` strips on its local fallback as well.
-- The direct launches: `spawnCli`, `run_script` automations, `SHELL_EXEC` shortcuts, the non-interactive fetch env, and the WSL reap.
+- The direct launches: `spawnCli`, `run_script` automations, `SHELL_EXEC` shortcuts, the non-interactive fetch env, the WSL reap, and the macOS process-tag reader's tool launches.
 - The git calls outside a lifecycle that run repository hooks, filters or merge drivers: Update from base's `merge --ff-only`, the carry of uncommitted changes into a new worktree (`apply --3way` and the reads before it), and the Command Terminal's cold-start checkout and `merge --ff-only`. They go through `gitAt` (`src/main/git/git-client.ts`, which runs on `execFileAsync`) instead of simple-git. simple-git can only set a child's env through `.env()`, and its unsafe-operations check refuses an env that carries `EDITOR` or `GIT_EDITOR`, which many users export.
 
 `tests/unit/child-env-parity.test.ts` fails on a `...process.env` spread or an `env: process.env` anywhere else in `src/main` (a deliberate exception carries `// crashpad-env-ok: <reason>`), and on a `delete process.env` of the variable.
@@ -261,7 +261,7 @@ What still inherits it, by decision:
 
 - The utility processes Kangentic forks. They need it to report their own crashes.
 - Fixed system tools main spawns directly, which start nothing: taskkill and the zombie reaper's PowerShell queries. The pty host's own launches (taskkill, its process listing) inherit the host's env too.
-- Git plumbing that runs no hooks: `git cat-file`, `ls-files`, and simple-git's reads (status, diff, blame, log), plus a task's branch-switch config write. These reads can still run a repository's clean or textconv filters, and that exposure is accepted: moving every read to `gitAt` would not change which program a filter starts.
+- Git plumbing that runs no hooks: `git cat-file`, the `ls-files` in the workspace file index (`project-entry-search.ts`), and simple-git's reads (status, diff, blame, log), plus a task's branch-switch config write. These reads can still run a repository's clean or textconv filters, and that exposure is accepted: moving every read to `gitAt` would not change which program a filter starts.
 - `shell.openPath`, `openExternal` and `showItemInFolder`, `app.relaunch`, and the updater. Electron gives them no env option. `openPath` can open a file in an Electron app that is its default, so this is the one real gap, and its only fix is the global delete ruled out above.
 
 What still leaks shows up as the Sentry warning "Foreign process crash reached Kangentic's crash database", split by its `module` tag and release (see "Error Reporting" in `docs/analytics.md`).
