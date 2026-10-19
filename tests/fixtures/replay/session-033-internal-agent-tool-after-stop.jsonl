@@ -1,0 +1,17 @@
+{"ts":1800000000000,"type":"session_start"}
+{"ts":1800000000500,"type":"prompt"}
+{"ts":1800000002000,"type":"tool_start","tool":"Read","toolId":"toolu_main_read_1","detail":"docs/board.md"}
+{"ts":1800000002200,"type":"tool_end","tool":"Read","toolId":"toolu_main_read_1"}
+{"ts":1800000003000,"type":"tool_start","tool":"Agent","toolId":"toolu_main_agent_1","detail":"Check the board doc"}
+{"ts":1800000003100,"type":"subagent_start","detail":"Explore","subagentId":"a1111111111111111"}
+{"ts":1800000004000,"type":"tool_start","tool":"Grep","toolId":"toolu_sub_grep_1","detail":"swimlane","subagentId":"a1111111111111111"}
+{"ts":1800000004200,"type":"tool_end","tool":"Grep","toolId":"toolu_sub_grep_1","subagentId":"a1111111111111111"}
+{"ts":1800000009000,"type":"subagent_stop","detail":"","subagentId":"a1111111111111111"}
+{"ts":1800000009100,"type":"subagent_stop","detail":"Explore","subagentId":"a1111111111111111"}
+{"ts":1800000009200,"type":"tool_end","tool":"Agent","toolId":"toolu_main_agent_1"}
+{"ts":1800000020000,"type":"idle"}
+{"ts":1800000021000,"type":"subagent_stop","detail":"","subagentId":"a2222222222222222"}
+{"ts":1800000023400,"type":"tool_start","tool":"Skill","toolId":"toolu_internal_skill_1","subagentId":"a3333333333333333"}
+{"ts":1800000026300,"type":"subagent_stop","detail":"","subagentId":"a3333333333333333"}
+{"ts":1800000080000,"type":"idle_hint","detail":"Claude is waiting for your input"}
+{"ts":1800000207000,"type":"subagent_stop","detail":"","subagentId":"a4444444444444444"}

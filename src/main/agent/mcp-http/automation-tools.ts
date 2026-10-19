@@ -136,7 +136,7 @@ export function registerAutomationTools(server: McpServer, resolver: RequestReso
   server.registerTool(
     'kangentic_run_automation',
     {
-      description: 'Run ONE automation now, against the named task\'s CURRENT state. Use it to retry a failed automation or to test one you just wrote. Current state, not the state of the move that first ran it: the task may have moved since, and template variables such as {{toColumn}} resolve against where it is now, while {{fromColumn}} and {{trigger}} resolve empty because there is no move. It writes a fresh run row either way. It will NOT start an agent, so a send_message automation on a task with no live session is recorded skipped rather than spawning one.',
+      description: 'Run ONE automation now, against the named task\'s CURRENT state. Use it to retry a failed automation or to test one you just wrote. Current state, not the state of the move that first ran it: the task may have moved since, and template variables such as {{toColumn}} resolve against where it is now, while {{fromColumn}} and {{trigger}} resolve empty because there is no move. It writes a fresh run row either way. It will NOT start an agent, so a send_message automation on a task with no live session is recorded skipped rather than spawning one. A move_to_column automation moves the task, but only while the task is still in that automation\'s column.',
       inputSchema: z.object({
         column: z.string().describe('Column name the automation belongs to.'),
         automation: z.string().describe('Automation name on that column (case-insensitive). Read the names from kangentic_list_automations.'),

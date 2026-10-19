@@ -61,7 +61,9 @@ contract was kept in sync across three files by prose comments alone.
   calls `executeSingleAutomation`, which passes no `startAgent`, so a row needing an agent and
   finding no session skips with that reason. That method is scanned alongside the two spawn sinks
   even though it cannot spawn: it is a second public way into the engine, and an unscanned one
-  would grow callers with no test watching.
+  would grow callers with no test watching. A Move to column row (its manifest's `endsGroup`) runs
+  outside the task lock, as at a turn end, and moves through `handleTaskMove`
+  (`automations/turn-end/move-from-row.ts`), so any spawn it causes goes through `spawnAgent`.
 - **A column's On agent turn end rows** (`automations/turn-end/turn-end-runner.ts`) are the fifth
   allowlisted direct engine call, and not a spawn either. They run when the agent working the task
   finishes a turn, act on that agent, pass no `startAgent`, and run outside the task lock. A Move

@@ -74,7 +74,9 @@ const ENGINE_SINK_FILES: Record<string, string> = {
   'src/main/ipc/helpers/automation-run-again.ts':
     'AUTOMATION_RUN_AGAIN: re-runs ONE existing automation against the task\'s current state. Not a '
     + 'spawn either, and it cannot become one: executeSingleAutomation passes no startAgent, so a row '
-    + 'that needs an agent and finds no session skips with that reason',
+    + 'that needs an agent and finds no session skips with that reason. A Move to column row runs '
+    + 'outside the task lock and moves through handleTaskMove (move-from-row.ts), which spawns, if at '
+    + 'all, through spawnAgent like any move',
   'src/main/automations/turn-end/turn-end-runner.ts':
     "A column's On agent turn end rows, run when the agent that is working the task finishes a turn. "
     + 'Not a spawn: it acts on the agent that just ended its turn, passes no startAgent, and runs '

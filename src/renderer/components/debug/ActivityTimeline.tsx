@@ -167,6 +167,7 @@ const COUNTER_LABELS: Record<keyof ActivityStatsSnapshot['compensationCounters']
   ignoredInnerSubagentStop: 'ignored-inner-subagent-stop',
   duplicateSubagentStop: 'duplicate-subagent-stop',
   duplicateSubagentStart: 'duplicate-subagent-start',
+  internalAgentToolEvent: 'internal-agent-tool-event',
   stuckSubagent: 'stuck-subagent',
 };
 

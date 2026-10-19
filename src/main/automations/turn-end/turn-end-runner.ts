@@ -10,23 +10,34 @@ import { planExitTargetFor } from '../../ipc/helpers/plan-exit-target';
 import { createTransitionEngine, resolveInjectionVerifier } from '../../ipc/helpers/agent-spawn';
 import { reportAutomationFailures } from '../../ipc/helpers/automation-failures';
 import { showDesktopNotification } from '../../ipc/handlers/system';
-import { handleTaskMove } from '../../ipc/handlers/task-move';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
 import { frequencyLimitReason } from '../automation-runner';
 import { hasCondition, needsAgentReply } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
-import { resolveMoveTarget, routeOf } from '../move-target';
 import { runWorkflowStep, workflowStepApplies } from '../../workflows/workflow-step';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import type { TaskVisit } from '../../db/repositories/task-move-repository';
-import { deliverMessageAfterMove, deliverMessageToSession } from './deliver-message';
-import { readSessionFinalReply } from './final-reply-reader';
+import { deliverMessageToSession } from './deliver-message';
+import { moveTaskFromRow } from './move-from-row';
+import { readSessionFinalReply, tryReadSessionFinalReply } from './final-reply-reader';
 import { trackTurnEndGroup } from './turn-end-passes';
 import { forgetRecapSession, isRecapTurn, noteRecapSessionIdle, noteRecapSessionPrompt } from './recap-turns';
+import {
+  forgetAbandonedTurnSession,
+  hasAbandonedTurn,
+  noteAbandonedTurn,
+  noteTurnEnded,
+  noteUserWork,
+  takeAbandonedTurn,
+  turnEndMark,
+  userWorkMark,
+  type AbandonedTurn,
+} from './abandoned-turns';
 import { dispositionOf } from '../../../shared/activity-state';
 import { EventType, PromptReason } from '../../../shared/types';
 import type { ActivityState, SessionEvent } from '../../../shared/types';
+import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
 
 /**
  * A column's On agent turn end automations: what runs when the agent working a
@@ -88,6 +99,14 @@ import type { ActivityState, SessionEvent } from '../../../shared/types';
  *   Frequency's skip is written before the wait: it is about the row, not the
  *   turn. The same turn with the session not idle at the re-check writes a
  *   skip for each row it holds back: no turn end may follow it.
+ * - **An abandoned turn end is judged after all when the newer work ends with
+ *   no turn end of its own,** no prompt or reported interrupt since, and no
+ *   reply of its own (`reclaimAbandonedTurn`; `abandoned-turns.ts` says which
+ *   interrupts it cannot see). Some newer work never gets a Stop: a turn whose
+ *   Stop was lost ends by a watchdog or an idle hint, and before the engine
+ *   logged an internal CLI agent's tool events only, such an agent's tool
+ *   start after a Stop reopened the turn and never ended. Waiting on that
+ *   work's own turn end lost the rows for good, and the card sat in the column.
  * - **A turn the column waited on says why its rows did not run; the rest stay
  *   silent.** Silent: the task left the column or the session is not its own
  *   (`resolveSubject`), a move superseded the pass, a newer turn began, every
@@ -109,6 +128,23 @@ interface PassRequest {
   payload: TurnEndedPayload;
   /** A resume's catch-up: the workflow step alone, on the reply no check judged. */
   catchUp: boolean;
+  /**
+   * The session's user-work count when the turn ended (`userWorkMark`). A pass
+   * that newer work abandons keeps it, so a later reclaim can tell whether the
+   * user prompted or interrupted since.
+   */
+  userWorkMarkAtTurnEnd: number;
+  /**
+   * The session's turn-end count when the turn ended (`turnEndMark`). A later
+   * turn end moves it, and then that turn's own pass judges: a pass still
+   * running for this one keeps nothing (`abandonForNewerWork`).
+   */
+  turnEndMarkAtTurnEnd: number;
+  /**
+   * A reclaim's: the column the abandoned pass judged for. The pass runs only
+   * while the task is still there.
+   */
+  reclaimedForColumnId?: string;
 }
 
 interface TaskPassState {
@@ -120,10 +156,20 @@ const passes = new Map<string, TaskPassState>();
 
 export function registerTurnEndAutomations(context: IpcContext): void {
   context.sessionManager.on('turn-ended', (payload: TurnEndedPayload) => {
+    // Synchronous, ahead of the immediate: the engine emits the idle's
+    // 'activity' first in the same commit, and the reclaim that listener
+    // schedules must find a turn that ended with its own Stop already judged.
+    // A pass for an older turn that resumes before this one is scheduled
+    // must find the count moved too.
+    noteTurnEnded(payload.sessionId);
+    const marks = {
+      userWorkMarkAtTurnEnd: userWorkMark(payload.sessionId),
+      turnEndMarkAtTurnEnd: turnEndMark(payload.sessionId),
+    };
     // Off the engine's commit stack: this fires inside `commitTransition`, and
     // even a DB read belongs after it has unwound.
     setImmediate(() => {
-      void schedulePass(context, { payload, catchUp: false });
+      void schedulePass(context, { payload, catchUp: false, ...marks });
     });
   });
   // Off the spawn's stack too: the resume writes the task's session id after
@@ -136,18 +182,182 @@ export function registerTurnEndAutomations(context: IpcContext): void {
   // Where a recap's turn ends (`recap-turns.ts`): a map lookup for any other session.
   context.sessionManager.on('activity', (sessionId: string, activity: ActivityState) => {
     if (dispositionOf(activity) === 'idle') noteRecapSessionIdle(sessionId, Date.now());
+    // activity-state-ok: granular, only a commit to idle ends work; a
+    // permission prompt is the same work waiting on the user.
+    if (activity === 'idle' && hasAbandonedTurn(sessionId)) scheduleReclaim(context, sessionId);
   });
-  // A prompt the agent received, not PTY output standing in for one: after the
-  // first idle it starts the turn that follows the recap's.
   context.sessionManager.on('event', (sessionId: string, event: SessionEvent) => {
-    if (event.type === EventType.Prompt && event.detail !== PromptReason.PtyActivity) noteRecapSessionPrompt(sessionId);
+    // A prompt the agent received, not PTY output standing in for one: after
+    // the first idle it starts the turn that follows the recap's.
+    if (event.type === EventType.Prompt && event.detail !== PromptReason.PtyActivity) {
+      noteRecapSessionPrompt(sessionId);
+      noteUserWork(sessionId);
+    }
+    // An interrupt or a failed turn ends the work by the user's hand or the
+    // service's, never by the agent's choice, so an abandoned reply is not
+    // judged after one. An internal CLI agent's interrupted tool is the one
+    // exception: nobody sees that work, and the engine only logs it.
+    if (
+      (event.type === EventType.Interrupted && !context.sessionManager.isInternalAgentEvent(sessionId, event))
+      || event.type === EventType.TurnFailed
+    ) {
+      noteUserWork(sessionId);
+    }
   });
-  context.sessionManager.on('session-removed', (sessionId: string) => forgetRecapSession(sessionId));
+  context.sessionManager.on('session-removed', (sessionId: string) => {
+    forgetRecapSession(sessionId);
+    forgetAbandonedTurnSession(sessionId);
+  });
 }
 
 /** Judge the reply a resumed session's step check never judged. Exported for its test. */
 export function catchUpAfterResume(context: IpcContext, resumed: SessionResumedPayload): Promise<void> {
-  return schedulePass(context, { payload: { ...resumed, turnStartedAt: null, transcriptAnchor: null }, catchUp: true });
+  return schedulePass(context, {
+    payload: { ...resumed, turnStartedAt: null, transcriptAnchor: null },
+    catchUp: true,
+    userWorkMarkAtTurnEnd: userWorkMark(resumed.sessionId),
+    turnEndMarkAtTurnEnd: turnEndMark(resumed.sessionId),
+  });
+}
+
+/**
+ * Keep a turn end whose pass gave up because newer work began, so the reply
+ * is judged after all if that work ends with no turn end of its own
+ * (`abandoned-turns.ts`). Not when a turn end of the session's own arrived
+ * since, queued behind this pass or not yet scheduled: that turn's pass judges
+ * it. Not for a session that left the registry, which has no newer work and
+ * no later idle. When the session is idle already, the newer work ended
+ * before the pass gave up, and no later idle would come for it, so the
+ * reclaim is scheduled now.
+ */
+function abandonForNewerWork(context: IpcContext, request: PassRequest, columnId: string): void {
+  const { sessionId } = request.payload;
+  if (context.sessionManager.currentWorkSerial(sessionId) === undefined) return;
+  if (turnEndMark(sessionId) !== request.turnEndMarkAtTurnEnd) return;
+  const queued = passes.get(request.payload.taskId)?.pending;
+  if (queued && !queued.catchUp) return;
+  noteAbandonedTurn({
+    payload: request.payload,
+    columnId,
+    userWorkMarkAtTurnEnd: request.userWorkMarkAtTurnEnd,
+    turnEndMarkAtTurnEnd: request.turnEndMarkAtTurnEnd,
+  });
+  // activity-state-ok: granular, only an idle session's newer work has ended.
+  if (context.sessionManager.getActivityCache()[sessionId] === 'idle') {
+    scheduleReclaim(context, sessionId);
+  }
+}
+
+/**
+ * The newer work as it stood at a commit to idle: where it began in the
+ * transcript, and the session's work serial then.
+ */
+interface NewerWork {
+  anchor: TranscriptAnchor | null;
+  workSerial: number | undefined;
+}
+
+/**
+ * Judge a session's abandoned turn end at a commit to idle. The newer work is
+ * read now, inside that commit: the next turn start replaces its anchor, and
+ * the reclaim judges only if no work came after it.
+ */
+function scheduleReclaim(context: IpcContext, sessionId: string): void {
+  const newerWork: NewerWork = {
+    anchor: context.sessionManager.currentTurnAnchor(sessionId),
+    workSerial: context.sessionManager.currentWorkSerial(sessionId),
+  };
+  setImmediate(() => {
+    reclaimAbandonedTurn(context, sessionId, newerWork).catch((error: unknown) => {
+      console.error(`[turn-end] Could not judge session ${sessionId.slice(0, 8)}'s earlier turn end:`, error);
+    });
+  });
+}
+
+/**
+ * The newer work that abandoned a turn end is over, and no turn end of its own
+ * came (one would have forgotten the entry first). Judge the earlier reply
+ * when that work wrote none and nobody prompted or interrupted since. Exported
+ * for its test.
+ */
+export async function reclaimAbandonedTurn(
+  context: IpcContext,
+  sessionId: string,
+  newerWork: NewerWork,
+): Promise<void> {
+  // Taken, so a second idle never judges it twice.
+  const abandoned = takeAbandonedTurn(sessionId);
+  if (!abandoned) return;
+  if (reclaimSerial(context, sessionId, abandoned, newerWork) === null) return;
+  const { payload } = abandoned;
+  const taskLabel = payload.taskId.slice(0, 8);
+  if (!newerWork.anchor) {
+    console.log(
+      `[turn-end] Left task ${taskLabel}'s earlier turn end unjudged: the work after it ended with no turn end, `
+      + 'and where that work began in the transcript is unknown.',
+    );
+    return;
+  }
+  const newerReply = await tryReadSessionFinalReply(
+    { sessionId, agentSessionId: payload.agentSessionId, transcriptAnchor: newerWork.anchor },
+    new SessionRepository(getProjectDb(payload.projectId)),
+  );
+  if (!newerReply.ok) {
+    // Fails closed: a reply the read could not see may be the one to judge.
+    console.log(
+      `[turn-end] Left task ${taskLabel}'s earlier turn end unjudged: the work after it ended with no turn end, `
+      + 'and its reply could not be read.',
+    );
+    return;
+  }
+  if (newerReply.reply && newerReply.reply.text.trim().length > 0) {
+    console.log(
+      `[turn-end] Left task ${taskLabel}'s earlier turn end unjudged: the work after it wrote a reply of its own `
+      + 'and ended with no turn end.',
+    );
+    return;
+  }
+  // The read takes a moment. Judge only the newer work it read.
+  const workSerial = reclaimSerial(context, sessionId, abandoned, newerWork);
+  if (workSerial === null) return;
+  console.log(
+    `[turn-end] Judging task ${taskLabel}'s earlier turn end: the work after it ended with no turn end `
+    + 'and wrote no reply of its own.',
+  );
+  await schedulePass(context, {
+    payload: { ...payload, workSerial },
+    catchUp: false,
+    userWorkMarkAtTurnEnd: abandoned.userWorkMarkAtTurnEnd,
+    turnEndMarkAtTurnEnd: abandoned.turnEndMarkAtTurnEnd,
+    reclaimedForColumnId: abandoned.columnId,
+  });
+}
+
+/**
+ * The work serial a taken abandoned turn end may still be judged under: the
+ * session's own, while it is idle on `newerWork` and nothing came after. Null
+ * and silent when the user acted, a turn end of the session's own arrived, or
+ * the session is gone: the turn after it owns what comes next. Null when work
+ * began after `newerWork` too, but the entry is kept for that work's end, and
+ * an idle session gets a fresh reclaim, because that work ended before this
+ * one ran.
+ */
+function reclaimSerial(
+  context: IpcContext,
+  sessionId: string,
+  abandoned: AbandonedTurn,
+  newerWork: NewerWork,
+): number | null {
+  if (userWorkMark(sessionId) !== abandoned.userWorkMarkAtTurnEnd) return null;
+  if (turnEndMark(sessionId) !== abandoned.turnEndMarkAtTurnEnd) return null;
+  const workSerial = context.sessionManager.currentWorkSerial(sessionId);
+  if (workSerial === undefined || newerWork.workSerial === undefined) return null;
+  // activity-state-ok: granular, only an idle session's newer work has ended.
+  const idle = context.sessionManager.getActivityCache()[sessionId] === 'idle';
+  if (idle && workSerial === newerWork.workSerial) return workSerial;
+  noteAbandonedTurn(abandoned);
+  if (idle) scheduleReclaim(context, sessionId);
+  return null;
 }
 
 async function schedulePass(context: IpcContext, request: PassRequest): Promise<void> {
@@ -165,7 +375,7 @@ async function schedulePass(context: IpcContext, request: PassRequest): Promise<
     while (next) {
       state.pending = null;
       try {
-        await (next.catchUp ? runCatchUp(context, next.payload) : runPass(context, next.payload));
+        await (next.catchUp ? runCatchUp(context, next.payload) : runPass(context, next));
       } catch (error) {
         console.error(`[turn-end] Pass failed for task ${next.payload.taskId.slice(0, 8)}:`, error);
       }
@@ -228,13 +438,17 @@ function resolveSubject(
   return { task, column, repos };
 }
 
-async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<void> {
+async function runPass(context: IpcContext, request: PassRequest): Promise<void> {
+  const { payload } = request;
   // Judged before any early return, so the mark ends with the one turn it was for.
   const recapTurn = isRecapTurn(payload.sessionId, payload.turnStartedAt);
   if (recapTurn) forgetRecapSession(payload.sessionId);
   const subject = resolveSubject(context, payload);
   if (!subject) return;
   const { task, column, repos } = subject;
+  // A reclaim judges only for the column it was abandoned in: a move made while
+  // it read found no entry to forget.
+  if (request.reclaimedForColumnId !== undefined && request.reclaimedForColumnId !== column.id) return;
 
   // The fast path: most columns have no turn-end rows, and most tasks are in
   // no workflow.
@@ -311,6 +525,10 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
       for (const row of pending) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, AGENT_NOT_IDLE_REASON);
       return;
     }
+    if (outcome === 'newer') {
+      abandonForNewerWork(context, request, column.id);
+      return;
+    }
     if (outcome === 'stop') return;
 
     // One read of the agent's final reply, shared by the rows and the step.
@@ -329,8 +547,13 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
     // is now. A row that gave the agent a message started its next turn, so this
     // turn end gets no workflow decision; the turn that answers the message does.
     // A newer turn abandons the whole pass, the step's paid check included.
-    if (stepApplies && !controller.signal.aborted && !rowsOutcome.messagedAgent && !rowsOutcome.newerTurn) {
-      await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: readReply });
+    // Rows that ran are not run again if the pass is judged after all: each
+    // runs once a visit.
+    if (rowsOutcome.newerTurn) {
+      abandonForNewerWork(context, request, column.id);
+    } else if (stepApplies && !controller.signal.aborted && !rowsOutcome.messagedAgent) {
+      const step = await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: readReply });
+      if (step === 'newer-turn') abandonForNewerWork(context, request, column.id);
     }
   } finally {
     releaseGroup();
@@ -499,7 +722,14 @@ async function runRows(
       // Counted once it landed: a delivery that failed starts no turn.
       messagedAgent = true;
     },
-    moveTask: (moveInput) => moveFromTurnEnd(context, payload.projectId, projectPath, current.task, column, moveInput),
+    moveTask: (move) => moveTaskFromRow(context, {
+      projectId: payload.projectId,
+      projectPath,
+      task: current.task,
+      fromColumn: column,
+      move,
+      fromTurnEndGroup: true,
+    }),
     showNotification: (notification) => showDesktopNotification(context, notification),
     onProgress: createProgressCallback(context.mainWindow, task.id),
   });
@@ -509,13 +739,15 @@ async function runRows(
 
 /**
  * Whether a pass goes on after its settle wait: `'go'`, `'stop'` with nothing
- * to record, or `'busy'`, which stops it on a turn the column was waiting on.
+ * to record, `'newer'` for newer work begun since this turn end, or `'busy'`,
+ * which stops it on a turn the column was waiting on.
  *
  * A move that superseded the wait, or a session that exited, stops it. So does
- * a turn begun since this turn end, settled or not: it has left this one with
- * nothing to judge, and its own turn end judges it. That is cheap, so it runs
- * ahead of the paid check, and ahead of the give-up warning, which a newer turn
- * still running at the give-up would otherwise trip.
+ * work begun since this turn end, settled or not (`'newer'`): its own turn end
+ * judges it, and when that work ends with none, the runner may judge this
+ * reply after all (`abandonForNewerWork`). That is cheap, so it runs ahead of
+ * the paid check, and ahead of the give-up warning, which newer work still
+ * running at the give-up would otherwise trip.
  *
  * A wait that ran out with the session idle goes on: the agent's own Stop
  * ended the turn, and what keeps the terminal from staying quiet is the CLI
@@ -538,9 +770,9 @@ function turnSettled(
   payload: TurnEndedPayload,
   settled: TurnCompletionResult,
   where: string,
-): 'go' | 'stop' | 'busy' {
+): 'go' | 'stop' | 'newer' | 'busy' {
   if (settled === 'aborted' || settled === 'exited') return 'stop';
-  if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return 'stop';
+  if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return 'newer';
   if (settled === 'completed') return 'go';
   const activity = context.sessionManager.getActivityCache()[payload.sessionId] ?? 'unknown';
   // activity-state-ok: granular, a running turn or a permission prompt must stop the pass.
@@ -601,40 +833,3 @@ async function readAgentReply(payload: TurnEndedPayload, sessionRepo: SessionRep
   return (await readSessionFinalReply(payload, sessionRepo))?.text ?? null;
 }
 
-/**
- * A Move to column row's move. Resolves once the move is committed and the
- * destination's own enter rows have run; the row's message then reaches the
- * agent there in the background, once its turn ends, so the run row does not
- * wait an hour on a long first turn.
- */
-async function moveFromTurnEnd(
-  context: IpcContext,
-  projectId: string,
-  projectPath: string | null,
-  task: Task,
-  fromColumn: Swimlane,
-  input: { column: string | null; message: string | null; reason: string },
-): Promise<{ columnName: string }> {
-  const repos = getProjectRepos(context, projectId);
-  // A workflow task's Next column is the next one on its route.
-  const target = resolveMoveTarget(repos.swimlanes.list(), fromColumn.id, input.column, routeOf(task));
-  if (!target.ok) throw new Error(target.reason);
-
-  await handleTaskMove(
-    context,
-    { taskId: task.id, targetSwimlaneId: target.column.id, targetPosition: repos.tasks.list(target.column.id).length },
-    'automation',
-    projectId,
-    projectPath,
-    { moveReason: input.reason, fromTurnEndGroup: true },
-  );
-
-  const moved = repos.tasks.getById(task.id);
-  if (!moved || moved.swimlane_id !== target.column.id) {
-    throw new Error(`The move to ${target.column.name} did not complete.`);
-  }
-
-  const message = input.message?.trim() ?? '';
-  if (message) void deliverMessageAfterMove(context, projectId, task.id, target.column.name, message);
-  return { columnName: target.column.name };
-}

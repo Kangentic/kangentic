@@ -26,7 +26,7 @@ import type {
 import { snapshotCounters, formatCounterDelta } from './counter-snapshot';
 import { createSessionEngineState } from './state-factory';
 import { derivePredicate, deriveReason, deriveActivityAndReason, idleHintEndsTurn } from './predicate';
-import { updateCounters, updatePermissionFlag, releaseSubagentSlots } from './event-handlers';
+import { updateCounters, updatePermissionFlag, releaseSubagentSlots, isInternalAgentToolEvent } from './event-handlers';
 import { buildWatchdogHolds, findActiveWatchdogHold } from './watchdog';
 import type { WatchdogHold } from './watchdog';
 
@@ -230,6 +230,14 @@ export class ActivityEngine {
   processEvent(sessionId: string, event: SessionEvent): void {
     if (this.disposed) return;
     const state = this.getOrCreateState(sessionId);
+
+    // An internal CLI agent's tool event is logged and nothing more: no
+    // counter, no liveness anchor, no `workSerial`, no turn. See
+    // `isInternalAgentToolEvent`.
+    if (isInternalAgentToolEvent(state, event)) {
+      state.compensationCounters.internalAgentToolEvent += 1;
+      return;
+    }
 
     // Snapshot counters before any mutation so we can render an audit
     // log entry showing what changed during this step.
@@ -1303,5 +1311,20 @@ export class ActivityEngine {
    */
   static isTurnInitiatingEvent(eventType: EventType): boolean {
     return TURN_INITIATING_EVENTS.has(eventType);
+  }
+
+  /**
+   * Is this a tool event from an internal CLI agent, which the engine only
+   * logs (`isInternalAgentToolEvent`)? Asked by `SessionTelemetry` before its
+   * other consumers, so the usage count and the plan-exit, PR and push
+   * detectors skip it too. Read before `processEvent`, which never changes
+   * the answer for the event it is given.
+   */
+  isInternalAgentEvent(sessionId: string, event: SessionEvent): boolean {
+    const state = this.states.get(sessionId);
+    return isInternalAgentToolEvent(
+      state ?? { subagentDepth: 0, subagentLifecycleById: new Map(), startedSubagentIds: new Set() },
+      event,
+    );
   }
 }

@@ -5,12 +5,15 @@ import { getProjectRepos } from './project-repos';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
 import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import { readSessionFinalReply } from '../../automations/turn-end/final-reply-reader';
+import { moveTaskFromRow } from '../../automations/turn-end/move-from-row';
 import { needsAgentReply } from '../../automations/row-guards';
 import { showDesktopNotification } from '../handlers/system';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { AUTOMATION_MANIFEST, isAutomationType } from '../../../shared/automation-manifest';
 import type { IpcContext } from '../ipc-context';
-import type { AutomationRunAgainResult } from '../../../shared/types';
+import type { AutomationContext } from '../../automations/shared/automation-adapter';
+import type { AutomationRunAgainResult, ColumnAutomation, Swimlane, Task } from '../../../shared/types';
 
 /**
  * How long one re-run may take, whatever the adapter declares.
@@ -38,6 +41,11 @@ const RUN_AGAIN_BUDGET_MS = 5 * 60_000;
  * Under `withTaskLock` because it mutates task-scoped state (it can type at the
  * agent, and a script can touch the worktree), and because a re-run racing a
  * move is exactly the interleaving the lock exists to prevent.
+ *
+ * Except a row that moves the task (Move to column, `endsGroup`), which runs
+ * outside the lock as it does at a turn end: its move goes through
+ * `handleTaskMove`, which takes the lock itself. It moves the task only from
+ * the row's own column, the way the turn end that failed would have.
  */
 export async function runAutomationAgain(
   context: IpcContext,
@@ -66,89 +74,136 @@ export async function runAutomationAgain(
     ? await readLatestReply(projectId, repos.tasks.getById(taskId)?.session_id ?? null)
     : null;
 
+  if (movesTask(automation)) {
+    // A row that moves the task (Move to column) runs outside the task lock,
+    // as it does at a turn end: its move takes that lock (`handleTaskMove`),
+    // and `withTaskLock` is not reentrant. The lock is taken only to let a move
+    // queued ahead of this one land, so "current state" is still current.
+    const task = await withTaskLock(taskId, async () => repos.tasks.getById(taskId));
+    if (!task) return { ok: false, error: 'That task no longer exists.' };
+    // Next column resolves from the row's column, so a task that has left it
+    // would be sent on from somewhere it no longer is.
+    if (task.swimlane_id !== column.id) {
+      return { ok: false, error: `The task is no longer in ${column.name}, so this row cannot move it. Drag the card instead.` };
+    }
+    return runRowAgain(context, projectId, task, column, automation, replyRead);
+  }
+
   return withTaskLock(taskId, async () => {
     // Re-read INSIDE the lock: "current state" has to mean current as of the
     // run, and a move that was queued ahead of this one has now landed.
     const task = repos.tasks.getById(taskId);
     if (!task) return { ok: false, error: 'That task no longer exists.' };
-
-    // Undefined on enter and exit, which have no final message. Null when no
-    // message was read, or when it came from a session a queued move has since
-    // replaced, so another session's last line never decides this row.
-    const agentReply = automation.trigger !== 'turn_end'
-      ? undefined
-      : replyRead !== null && replyRead.sessionId === task.session_id ? replyRead.text : null;
-
-    const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
-    if (!projectPath) return { ok: false, error: 'That project is not open.' };
-
-    const sessionRepo = new SessionRepository(getProjectDb(projectId));
-    const engine = createTransitionEngine(
-      context,
-      repos.automations,
-      repos.automationRuns,
-      repos.tasks,
-      sessionRepo,
-      repos.attachments,
-      projectId,
-      projectPath,
-    );
-
-    const budget = AbortSignal.timeout(RUN_AGAIN_BUDGET_MS);
-    try {
-      const summary = await engine.executeSingleAutomation(task, column, automation, {
-        signal: budget,
-        // Stated explicitly, not left to the runner's trigger default. That
-        // default is the 60s exit-group cap, which the comment on
-        // RUN_AGAIN_BUDGET_MS says a re-run does not inherit, so re-running an
-        // On exit row was silently cut to a minute.
-        groupBudgetMs: RUN_AGAIN_BUDGET_MS,
-        // Fire and forget, like the warm enter path: nothing here cancels the
-        // scheduler, so a message queues rather than racing anything. A
-        // message with line breaks is pasted once the agent's turn ends, and a
-        // move out of the column cancels it.
-        deliverToAgent: async (message, mode) => {
-          const liveSession = task.session_id;
-          if (!liveSession) return;
-          deliverAgentMessageInBackground(context, {
-            taskId,
-            sessionId: liveSession,
-            message,
-            mode,
-            verifier: resolveInjectionVerifier(task.agent, sessionRepo, taskId),
-            onOutcome: (report) => reportAutoCommandOutcome(context, repos.tasks, task, report, projectId),
-          });
-        },
-        showNotification: (notification) => showDesktopNotification(context, notification),
-        onProgress: createProgressCallback(context.mainWindow, taskId),
-        agentReply,
-      });
-
-      const outcome = summary.outcomes[0];
-      if (!outcome) {
-        return { ok: false, error: 'The automation did not run. It may be switched off, or its column may no longer be able to run it.' };
-      }
-      return {
-        ok: true,
-        runId: outcome.runId,
-        automationName: outcome.name,
-        columnName: outcome.columnName,
-        status: outcome.status,
-        detail: outcome.detail,
-      };
-    } catch (error) {
-      // The runner isolates every row, so reaching here means the run itself
-      // could not start (a repository read, or the budget firing before the
-      // first attempt). It records nothing, so this is the only report.
-      const detail = error instanceof Error ? error.message : String(error);
-      return { ok: false, error: `The automation could not be run: ${detail}` };
-    } finally {
-      // A re-run has no spawn to clear the label, unlike a cold move, so it
-      // clears its own. Without this the card keeps whatever phase the last row
-      // announced until the next spawn happens to overwrite it.
-      clearSpawnProgress(context.mainWindow, taskId);
-    }
+    return runRowAgain(context, projectId, task, column, automation, replyRead);
   });
+}
+
+/** Does a row of this type move the task when it runs? Asked of the manifest, never of the type's name. */
+function movesTask(automation: ColumnAutomation): boolean {
+  return isAutomationType(automation.type) && AUTOMATION_MANIFEST[automation.type].endsGroup === true;
+}
+
+/** The session's latest final message, with the session it came from (`readLatestReply`). */
+interface LatestReply {
+  sessionId: string;
+  text: string | null;
+}
+
+/**
+ * Run the one row against `task` as it is now. A row that moves the task gets
+ * the move a turn end would make (`moveTaskFromRow`), in no turn-end group.
+ */
+async function runRowAgain(
+  context: IpcContext,
+  projectId: string,
+  task: Task,
+  column: Swimlane,
+  automation: ColumnAutomation,
+  replyRead: LatestReply | null,
+): Promise<AutomationRunAgainResult> {
+  const repos = getProjectRepos(context, projectId);
+  const taskId = task.id;
+  // Undefined on enter and exit, which have no final message. Null when no
+  // message was read, or when it came from a session a queued move has since
+  // replaced, so another session's last line never decides this row.
+  const agentReply = automation.trigger !== 'turn_end'
+    ? undefined
+    : replyRead !== null && replyRead.sessionId === task.session_id ? replyRead.text : null;
+
+  const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
+  if (!projectPath) return { ok: false, error: 'That project is not open.' };
+
+  const moveTask: AutomationContext['moveTask'] = movesTask(automation)
+    ? (move) => moveTaskFromRow(context, { projectId, projectPath, task, fromColumn: column, move, fromTurnEndGroup: false })
+    : undefined;
+
+  const sessionRepo = new SessionRepository(getProjectDb(projectId));
+  const engine = createTransitionEngine(
+    context,
+    repos.automations,
+    repos.automationRuns,
+    repos.tasks,
+    sessionRepo,
+    repos.attachments,
+    projectId,
+    projectPath,
+  );
+
+  const budget = AbortSignal.timeout(RUN_AGAIN_BUDGET_MS);
+  try {
+    const summary = await engine.executeSingleAutomation(task, column, automation, {
+      signal: budget,
+      // Stated explicitly, not left to the runner's trigger default. That
+      // default is the 60s exit-group cap, which the comment on
+      // RUN_AGAIN_BUDGET_MS says a re-run does not inherit, so re-running an
+      // On exit row was silently cut to a minute.
+      groupBudgetMs: RUN_AGAIN_BUDGET_MS,
+      // Fire and forget, like the warm enter path: nothing here cancels the
+      // scheduler, so a message queues rather than racing anything. A
+      // message with line breaks is pasted once the agent's turn ends, and a
+      // move out of the column cancels it.
+      deliverToAgent: async (message, mode) => {
+        const liveSession = task.session_id;
+        if (!liveSession) return;
+        deliverAgentMessageInBackground(context, {
+          taskId,
+          sessionId: liveSession,
+          message,
+          mode,
+          verifier: resolveInjectionVerifier(task.agent, sessionRepo, taskId),
+          onOutcome: (report) => reportAutoCommandOutcome(context, repos.tasks, task, report, projectId),
+        });
+      },
+      showNotification: (notification) => showDesktopNotification(context, notification),
+      onProgress: createProgressCallback(context.mainWindow, taskId),
+      agentReply,
+      moveTask,
+    });
+
+    const outcome = summary.outcomes[0];
+    if (!outcome) {
+      return { ok: false, error: 'The automation did not run. It may be switched off, or its column may no longer be able to run it.' };
+    }
+    return {
+      ok: true,
+      runId: outcome.runId,
+      automationName: outcome.name,
+      columnName: outcome.columnName,
+      status: outcome.status,
+      detail: outcome.detail,
+    };
+  } catch (error) {
+    // The runner isolates every row, so reaching here means the run itself
+    // could not start (a repository read, or the budget firing before the
+    // first attempt). It records nothing, so this is the only report.
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `The automation could not be run: ${detail}` };
+  } finally {
+    // A re-run has no spawn to clear the label, unlike a cold move, so it
+    // clears its own. Without this the card keeps whatever phase the last row
+    // announced until the next spawn happens to overwrite it.
+    clearSpawnProgress(context.mainWindow, taskId);
+  }
 }
 
 /**
@@ -156,7 +211,7 @@ export async function runAutomationAgain(
  * caller can tell whether it is still the task's. Null when the task has no
  * session; a null `text` when the read found nothing or failed.
  */
-async function readLatestReply(projectId: string, sessionId: string | null): Promise<{ sessionId: string; text: string | null } | null> {
+async function readLatestReply(projectId: string, sessionId: string | null): Promise<LatestReply | null> {
   if (!sessionId) return null;
   const reply = await readSessionFinalReply({ sessionId }, new SessionRepository(getProjectDb(projectId)));
   return { sessionId, text: reply?.text ?? null };

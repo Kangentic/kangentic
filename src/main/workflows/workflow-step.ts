@@ -33,7 +33,9 @@ import { workflowOfTask } from './workflow-home';
  *   still the session's latest (`isLatestTurn`), checked before the check and
  *   again after it. A turn the user began meanwhile can fail or be interrupted
  *   back to idle without a turn end, so idle alone would move the task on the
- *   old turn's answer. A newer turn writes nothing.
+ *   old turn's answer. A newer turn writes nothing, and the step says so
+ *   (`'newer-turn'`), so the runner can judge the reply again if that newer
+ *   work ends with no turn end and no reply of its own (`abandoned-turns.ts`).
  */
 export const WORKFLOW_STEP_CHECK_ID = 'workflow-step';
 
@@ -56,7 +58,7 @@ export async function runWorkflowStep(
     /** The agent's final reply: what the turn-end rows already read, or read now. */
     readAgentReply: () => Promise<string | null>;
   },
-): Promise<void> {
+): Promise<'newer-turn' | undefined> {
   const { payload } = input;
   const current = (): { task: Task; column: Swimlane } | null => {
     const repos = getProjectRepos(context, payload.projectId);
@@ -67,17 +69,23 @@ export async function runWorkflowStep(
     return column ? { task, column } : null;
   };
 
-  /** The turn this step judges is still the session's latest, and the agent is idle on it. */
-  const sameTurnIdle = (): boolean => {
-    if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return false;
+  /**
+   * Where the turn this step judges stands: still the session's latest with
+   * the agent idle on it, still the latest but not idle, or overtaken by
+   * newer work.
+   */
+  const turnState = (): 'idle' | 'busy' | 'newer-turn' => {
+    if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return 'newer-turn';
     // activity-state-ok: granular, the step judges a finished turn, never a
     // running one or a permission prompt.
-    return context.sessionManager.getActivityCache()[payload.sessionId] === 'idle';
+    return context.sessionManager.getActivityCache()[payload.sessionId] === 'idle' ? 'idle' : 'busy';
   };
 
   const subject = current();
   if (!subject || !workflowStepApplies(subject.task, payload.projectId)) return;
-  if (!sameTurnIdle()) return;
+  const before = turnState();
+  if (before === 'newer-turn') return before;
+  if (before === 'busy') return;
 
   const agentReply = await input.readAgentReply();
   if (input.signal.aborted) return;
@@ -100,7 +108,9 @@ export async function runWorkflowStep(
   const after = current();
   if (!after || after.column.id !== column.id) return;
   if (!workflowStepApplies(after.task, payload.projectId)) return;
-  if (!sameTurnIdle()) return;
+  const afterCheck = turnState();
+  if (afterCheck === 'newer-turn') return afterCheck;
+  if (afterCheck === 'busy') return;
 
   const answer = outcome.answers.get(WORKFLOW_STEP_CHECK_ID) ?? { met: false, reason: 'No answer.' };
   const repos = getProjectRepos(context, payload.projectId);

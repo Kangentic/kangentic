@@ -13,7 +13,8 @@ import type { AutomationAdapter } from '../../shared/automation-adapter';
  * moving, and a move from inside that move's own task lock would abort it. The
  * engine hands it `context.moveTask`, which runs the one move path
  * (`handleTaskMove`), so the source column's exit rows and the destination's
- * enter rows run as they do for a drag. A row that runs ends its group
+ * enter rows run as they do for a drag. Run again hands it the same move
+ * (`moveTaskFromRow`), outside the task lock. A row that runs ends its group
  * (`endsGroup`): the task has left the column.
  */
 export const moveToColumnAdapter: AutomationAdapter = {
@@ -27,10 +28,9 @@ export const moveToColumnAdapter: AutomationAdapter = {
   async execute(config, context) {
     if (!context.moveTask) {
       // Unreachable through the engine: the manifest offers this type at a
-      // turn end only, and every other group passes no `moveTask`. A re-run
-      // from the toast lands here, and says why rather than moving the task
-      // from wherever it is now.
-      throw new Error('Move to column runs only when the agent finishes a turn.');
+      // turn end only, and the turn end and Run again both pass `moveTask`.
+      // An enter or exit group passes none, since it runs inside a move.
+      throw new Error('Move to column can move a task only at a turn end or from Run again.');
     }
     const column = typeof config.targetColumn === 'string' && config.targetColumn.trim() ? config.targetColumn.trim() : null;
     const message = typeof config.message === 'string' && config.message.trim() ? config.message : null;
