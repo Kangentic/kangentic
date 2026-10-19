@@ -108,6 +108,14 @@ export function buildHooks(
         // fallback for hook payload variations across CLI versions.
         extractToolId(['tool_use_id']),
         extractToolId(['tool_use_id'], { nested: 'tool_input' }),
+        // The agent that ran the tool. Every tool hook carries `agent_id` when
+        // the tool ran in an agent context of its own, and none for the main
+        // agent's. An Agent-tool subagent fired a SubagentStart under the same
+        // id first. An internal CLI agent fires none, and the ones that run
+        // after a Stop can start a tool whose end never comes. The engine logs
+        // a tool event from an id that never started and acts on nothing in it
+        // (`isInternalAgentEvent`).
+        extractSubagentId(['agent_id']),
         // Detail extraction priority: shell_id first (KillBash + future
         // shell-aware events) so the engine can use Set-based id
         // tracking. Falls back to the command/path/etc when shell_id
@@ -177,6 +185,9 @@ export function buildHooks(
         // copy in some shapes - capture both via fallthrough.
         extractToolId(['tool_use_id']),
         extractToolId(['tool_use_id'], { nested: 'tool_response' }),
+        // Same agent id as PreToolUse, so an internal agent's tool end cannot
+        // drain a main-agent tool of the same name by the LIFO fallback.
+        extractSubagentId(['agent_id']),
         extractDetail(['shellId', 'shell_id', 'backgroundTaskId', 'bash_id'], { nested: 'tool_response' }),
         // `Monitor` is a background-wait tool with the same lifecycle shape as
         // a backgrounded Bash: PreToolUse fires, the tool returns a handle in
@@ -210,6 +221,8 @@ export function buildHooks(
         extractTool('tool_name'),
         extractToolId(['tool_use_id']),
         extractToolId(['tool_use_id'], { nested: 'tool_input' }),
+        // An internal agent's interrupted tool must not end the main turn.
+        extractSubagentId(['agent_id']),
         setTypeWhen({ field: 'is_interrupt', equals: 'true', to: EventType.Interrupted }),
         extractDetail(['error'])) }] },
     ],
@@ -276,8 +289,10 @@ export function buildHooks(
       ...(existingHooks[H.SessionEnd] || []),
       { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.SessionEnd) }] },
     ],
-    // Both subagent hooks carry `agent_id` (captured on CLI 2.1.290). The
-    // engine needs it because one agent can fire two NAMED stops: a background
+    // Both subagent hooks carry `agent_id` (captured on CLI 2.1.290), as the
+    // tool hooks above do for a tool a subagent runs (captured on 2.1.303,
+    // `tests/fixtures/claude-tool-hook-agent-id.jsonl`). The engine needs it
+    // because one agent can fire two NAMED stops: a background
     // subagent that ends its turn without calling SubagentHandback stops, gets
     // re-prompted by the CLI's `[handback-send-enforce]` message, and stops
     // again after the handback. Counting both took a live sibling's depth slot

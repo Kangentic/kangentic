@@ -85,6 +85,19 @@ export const MAX_PENDING_EXEMPT_SHELL_TOOL_IDS = 16;
  */
 export const MAX_TRACKED_SUBAGENT_IDS = 64;
 
+/**
+ * Cap on `startedSubagentIds`, evicting the oldest start first.
+ *
+ * Kept apart from `subagentLifecycleById`, whose stopped-first eviction would
+ * drop the very id this set exists for: a background subagent re-prompted
+ * after its first named stop (task #759) runs tools under an id the ledger
+ * reads `stopped`, and a `/code-review` fan-out writes more than 64 ids. A
+ * dropped id here would read that agent's tools as an internal agent's, with
+ * no depth slot left to hold the turn. Ids are short strings, so the cap is
+ * set past any session's subagent count.
+ */
+export const MAX_STARTED_SUBAGENT_IDS = 1024;
+
 /** A correlated subagent's last lifecycle event in `subagentLifecycleById`. */
 export type SubagentLifecycle = 'live' | 'stopped';
 
@@ -250,7 +263,7 @@ export interface PendingTool {
  * Increments live for the lifetime of the session - never decremented.
  * Surfaced via `ActivityStatsSnapshot` so the debug overlay can render
  * a "click into the timeline to see what happened" cue when the
- * counters go non-zero. In a clean session, all ten read zero.
+ * counters go non-zero. In a clean session, all eleven read zero.
  *
  * Reset only on `initSession()` (fresh state) or `dispose()`.
  */
@@ -305,6 +318,15 @@ export interface CompensationCounters {
    * landed after the restart, and the depth read 0 while the continuation ran.
    */
   duplicateSubagentStart: number;
+  /**
+   * A tool event from an agent that never fired a `subagent_start`
+   * (`ActivityEngine.isInternalAgentEvent`) was logged and nothing more. Claude
+   * Code runs internal agents after a Stop, and they can start a tool whose end
+   * never comes. Counted, the start reopened the turn the Stop ended, which
+   * dropped that turn's end automations and held the card working until a
+   * watchdog. Non-zero is benign.
+   */
+  internalAgentToolEvent: number;
   /**
    * `timer:stuck-subagent` fired: `subagentDepth` was stuck > 0 (a named
    * terminal `subagent_stop` was lost after its empty inner stop was
@@ -370,6 +392,14 @@ export interface SessionEngineState {
    * longest ago first and a live one only when no stopped id remains.
    */
   subagentLifecycleById: Map<string, SubagentLifecycle>;
+  /**
+   * Every `subagentId` a `subagent_start` has named in this session, so a tool
+   * event from an id never named is an internal CLI agent's
+   * (`isInternalAgentToolEvent`). Never cleared by a reset: a subagent a
+   * watchdog released can still be running. Bounded at
+   * `MAX_STARTED_SUBAGENT_IDS`, oldest first.
+   */
+  startedSubagentIds: Set<string>;
   /**
    * Identity-aware bg shell tracking (set by Subsystem C). Until
    * shell_id is extracted from hooks this set will only be populated

@@ -983,6 +983,15 @@ export class SessionTelemetry {
       cached.push(event);
       this.callbacks.onEvent(sessionId, event);
 
+      // An internal CLI agent's tool event (an agent id that never started,
+      // such as one that runs after a Stop) stays in the log and reaches the
+      // engine, which only counts it. Nothing else here acts on work the user
+      // never sees.
+      if (this.activityEngine.isInternalAgentEvent(sessionId, event)) {
+        this.activityEngine.processEvent(sessionId, event);
+        continue;
+      }
+
       this.usage.recordToolEvent(sessionId, event);
       // Count context compactions (Claude PreCompact hook -> EventType.Compact)
       // for the per-task lifetime-stats rollup.
@@ -1072,6 +1081,11 @@ export class SessionTelemetry {
    */
   getWorkSerial(sessionId: string): number | undefined {
     return this.activityEngine.getState(sessionId)?.workSerial;
+  }
+
+  /** Is this a tool event from an internal CLI agent? See `ActivityEngine.isInternalAgentEvent`. */
+  isInternalAgentEvent(sessionId: string, event: SessionEvent): boolean {
+    return this.activityEngine.isInternalAgentEvent(sessionId, event);
   }
 
   /** See `PlanModeTrail.hadLeftPlanModeBy`. */

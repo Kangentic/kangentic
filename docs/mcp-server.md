@@ -1028,6 +1028,11 @@ It will not start an agent: a `send_message` automation against a task with no l
 recorded skipped rather than spawning one. It takes the task lock and is capped at five minutes, so
 a hung row cannot wedge that task's next move.
 
+A `move_to_column` automation moves the task the way a turn end would, so an agent can recover a
+turn end whose rows never ran. It moves the task only from that automation's own column, and is
+refused once the task has left it. It runs outside the task lock, since the move takes that lock
+itself.
+
 ### Workflows
 
 A workflow is a set of linked tasks that run through their boards on their own. Each task has a

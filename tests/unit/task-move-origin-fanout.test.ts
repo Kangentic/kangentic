@@ -154,6 +154,9 @@ vi.mock('../../src/main/workflows/workflow-lock-check', () => ({
 
 import { handleTaskMove, type TaskMoveOrigin } from '../../src/main/ipc/handlers/task-move';
 import { IPC } from '../../src/shared/ipc-channels';
+// The real registry, the one `handleTaskMove` supersedes through: a controller
+// registered here is aborted by exactly the calls that supersede turn-end work.
+import { trackTurnEndGroup, trackTurnEndFollowUp } from '../../src/main/automations/turn-end/turn-end-passes';
 
 const TASK_ID = 'task-origin-fanout-1';
 const TASK_TITLE = 'Move me';
@@ -355,8 +358,9 @@ describe('the origin literal at each handleTaskMove call site', () => {
     // The renderer already moved the card optimistically, so this one is silent.
     expect(byFile['src/main/ipc/handlers/task-move.ts']).toBe("'renderer'");
     // A Move to column automation is Kangentic acting, not an agent: it must not
-    // toast "Task updated by agent".
-    expect(byFile['src/main/automations/turn-end/turn-end-runner.ts']).toBe("'automation'");
+    // toast "Task updated by agent". Its move, shared by the turn end and Run
+    // again, lives in move-from-row.ts.
+    expect(byFile['src/main/automations/turn-end/move-from-row.ts']).toBe("'automation'");
     // A workflow starting a task, and its step moving one on.
     expect(byFile['src/main/workflows/workflow-engine-host.ts']).toBe("'workflow'");
     expect(byFile['src/main/workflows/workflow-step.ts']).toBe("'workflow'");
@@ -535,6 +539,111 @@ describe('a move the workflow lock refuses changes nothing', () => {
     const { context, error } = await refusedMove();
     expect((error as Error).message).toBe('#1 is locked while Usage budgets runs.');
     expectUntouched(context);
+  });
+});
+
+describe('a move that expects the task in a column it has left changes nothing', () => {
+  // `expectedFromSwimlaneId` is how a Move to column row (run outside the task
+  // lock, with its target resolved from its own column) tells the move which
+  // column it meant to send the task on from. The check sits right after the
+  // task is read inside the Phase 1 lock, BEFORE the move supersedes the task's
+  // turn-end work: a refused move must not cancel the step check or the message
+  // an idle agent will not repeat. The turn-end work here is the real registry,
+  // so an abort is the evidence, not a call count on a stub.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** A turn-end group and a moved task's waiting message, both in flight for TASK_ID. */
+  function startTurnEndWork() {
+    const groupController = new AbortController();
+    const followUpController = new AbortController();
+    const releaseGroup = trackTurnEndGroup(TASK_ID, groupController);
+    const releaseFollowUp = trackTurnEndFollowUp(TASK_ID, followUpController);
+    return {
+      groupController,
+      followUpController,
+      // Module state outlives the test, so every test lets go of what it registered.
+      release: () => {
+        releaseGroup();
+        releaseFollowUp();
+      },
+    };
+  }
+
+  function moveExpectingSource(context: ReturnType<typeof makeContext>, expectedFromSwimlaneId: string) {
+    return handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 },
+      'automation',
+      undefined,
+      undefined,
+      { expectedFromSwimlaneId },
+    );
+  }
+
+  it('rejects naming the column it expected, and moves and supersedes nothing', async () => {
+    // The task is in the source lane. The caller resolved its target from the
+    // spawning lane, so the message must name THAT lane, not the one the task is in.
+    const context = makeContext(makeTask());
+    const work = startTurnEndWork();
+    try {
+      await expect(moveExpectingSource(context, SPAWNING_TARGET_LANE_ID)).rejects.toThrow(
+        `The task left Lane ${SPAWNING_TARGET_LANE_ID} before it could be moved.`,
+      );
+
+      const repos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { move: ReturnType<typeof vi.fn>; archive: ReturnType<typeof vi.fn> } };
+      expect(repos.tasks.move).not.toHaveBeenCalled();
+      expect(repos.tasks.archive).not.toHaveBeenCalled();
+      // Not superseded: the group and the waiting message are still live.
+      expect(work.groupController.signal.aborted).toBe(false);
+      expect(work.followUpController.signal.aborted).toBe(false);
+      // And nothing downstream of a committed move ran: no announce, no push, no session touched.
+      expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+      expect(pushedChannels(context)).toEqual([]);
+      expect(context.sessionManager.removeByTaskId).not.toHaveBeenCalled();
+      expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+      expect(mockAutoLinkPRForTask).not.toHaveBeenCalled();
+    } finally {
+      work.release();
+    }
+  });
+
+  it('names the column generically when the expected column no longer exists', async () => {
+    const context = makeContext(makeTask());
+    const work = startTurnEndWork();
+    try {
+      await expect(moveExpectingSource(context, 'lane-deleted')).rejects.toThrow(
+        'The task left its column before it could be moved.',
+      );
+
+      const repos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { move: ReturnType<typeof vi.fn> } };
+      expect(repos.tasks.move).not.toHaveBeenCalled();
+      expect(work.groupController.signal.aborted).toBe(false);
+    } finally {
+      work.release();
+    }
+  });
+
+  it('moves as before, superseding the task\'s turn-end work, when the task is in the expected column', async () => {
+    // The control: the same call with the column the task really is in. It
+    // proves the refused cases above stop short of work this call does reach.
+    const context = makeContext(makeTask());
+    const work = startTurnEndWork();
+    try {
+      await expect(moveExpectingSource(context, SOURCE_LANE_ID)).resolves.toBeUndefined();
+
+      const repos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { move: ReturnType<typeof vi.fn> } };
+      expect(repos.tasks.move).toHaveBeenCalledTimes(1);
+      expect(repos.tasks.move).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID }),
+        expect.objectContaining({ origin: 'automation' }),
+      );
+      expect(work.groupController.signal.aborted).toBe(true);
+      expect(work.followUpController.signal.aborted).toBe(true);
+    } finally {
+      work.release();
+    }
   });
 });
 

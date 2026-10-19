@@ -145,6 +145,8 @@ interface FakeSessionManager extends EventEmitter {
   getActivityCache: () => Record<string, string>;
   isLatestTurn: (sessionId: string, workSerial: number) => boolean;
   hadLeftPlanModeBy: (sessionId: string, atMs: number) => boolean;
+  currentWorkSerial: (sessionId: string) => number | undefined;
+  currentTurnAnchor: (sessionId: string) => TranscriptAnchor | null;
 }
 
 describe('a turn end and the rows it may run', () => {
@@ -250,6 +252,10 @@ describe('a turn end and the rows it may run', () => {
       getActivityCache: () => ({ [SESSION_ID]: 'idle' }),
       isLatestTurn: (sessionId: string, workSerial: number) => sessionId === SESSION_ID && workSerial === WORK_SERIAL,
       hadLeftPlanModeBy: vi.fn((_sessionId: string, _atMs: number) => false),
+      currentWorkSerial: () => WORK_SERIAL,
+      // Unknown, so a turn end abandoned for newer work is never judged again
+      // here. turn-end-runner-abandoned-turn.test.ts covers the reclaim.
+      currentTurnAnchor: () => null,
     });
     boardProfiles = [];
     registerTurnEndAutomations({

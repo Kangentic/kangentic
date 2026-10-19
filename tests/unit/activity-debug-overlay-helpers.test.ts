@@ -63,6 +63,7 @@ const EMPTY_COMPENSATION_COUNTERS: ActivityStatsSnapshot['compensationCounters']
   ignoredInnerSubagentStop: 0,
   duplicateSubagentStop: 0,
   duplicateSubagentStart: 0,
+  internalAgentToolEvent: 0,
   stuckSubagent: 0,
 };
 

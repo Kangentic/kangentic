@@ -3,6 +3,7 @@ import type { SessionEvent } from '../../../shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../shared/background-shell-hold';
 import {
   MAX_PENDING_EXEMPT_SHELL_TOOL_IDS,
+  MAX_STARTED_SUBAGENT_IDS,
   MAX_TRACKED_SUBAGENT_IDS,
   type SessionEngineState,
   type SubagentLifecycle,
@@ -67,6 +68,22 @@ function recordSubagentLifecycle(
 }
 
 /**
+ * Remember that a `subagent_start` named this id (`startedSubagentIds`).
+ * Deleting first moves a re-started id to the newest position, so the cap
+ * evicts the agent started longest ago.
+ */
+function rememberStartedSubagent(state: SessionEngineState, subagentId: string): void {
+  const started = state.startedSubagentIds;
+  started.delete(subagentId);
+  if (started.size >= MAX_STARTED_SUBAGENT_IDS) {
+    // `Set` iterates in insertion order, so the first key is the oldest.
+    const oldest = started.values().next().value;
+    if (oldest !== undefined) started.delete(oldest);
+  }
+  started.add(subagentId);
+}
+
+/**
  * Zero `subagentDepth` and mark every live correlated subagent stopped. Every
  * path that force-releases the depth goes through here, so the ledger agrees
  * with the count: the released agents no longer hold a slot, and a late named
@@ -78,6 +95,47 @@ export function releaseSubagentSlots(state: SessionEngineState): void {
   for (const [subagentId, lifecycle] of state.subagentLifecycleById) {
     if (lifecycle === 'live') state.subagentLifecycleById.set(subagentId, 'stopped');
   }
+}
+
+/** The tool events an agent's `PreToolUse` / `PostToolUse` / `PostToolUseFailure` hooks emit. */
+const TOOL_EVENT_TYPES: ReadonlySet<EventType> = new Set<EventType>([
+  EventType.ToolStart,
+  EventType.ToolEnd,
+  EventType.Interrupted,
+  EventType.BackgroundShellStart,
+  EventType.BackgroundShellEnd,
+]);
+
+/**
+ * Is this a tool event from an internal CLI agent: one whose `subagentId`
+ * never fired a `subagent_start`?
+ *
+ * Claude Code runs agents of its own after a Stop, each ending in an id-only
+ * stop the engine already ignores (`detail === ''`). Some run tools, and some
+ * of those tools never end: most likely the run that answers the prompt
+ * suggestion ahead of time, which stops at the first tool it may not run.
+ * Counted, such a `tool_start` reopened the turn the Stop had ended, which
+ * took that turn's end automations away (they judge only the latest turn) and
+ * held the card working until the stuck-pending-tools watchdog.
+ *
+ * Never started, not merely not live: a background subagent stopped once is
+ * re-prompted and runs tools after its first named stop (task #759), and its
+ * id reads `'stopped'`. So the test reads `startedSubagentIds`, which the
+ * lifecycle ledger's stopped-first eviction cannot reach. And not when an
+ * id-less start holds a slot (more depth than live ids): an older CLI whose
+ * SubagentStart carries no id may still put one on the subagent's tool hooks.
+ */
+export function isInternalAgentToolEvent(
+  state: Pick<SessionEngineState, 'subagentDepth' | 'subagentLifecycleById' | 'startedSubagentIds'>,
+  event: SessionEvent,
+): boolean {
+  if (!event.subagentId || !TOOL_EVENT_TYPES.has(event.type)) return false;
+  if (state.startedSubagentIds.has(event.subagentId)) return false;
+  let liveIds = 0;
+  for (const lifecycle of state.subagentLifecycleById.values()) {
+    if (lifecycle === 'live') liveIds += 1;
+  }
+  return state.subagentDepth <= liveIds;
 }
 
 /**
@@ -226,6 +284,7 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
       // duplicate and leave depth one too high until `timer:stuck-subagent`.
       if (event.subagentId) {
         recordSubagentLifecycle(state, event.subagentId, 'live');
+        rememberStartedSubagent(state, event.subagentId);
       }
       break;
     case EventType.SubagentStop:

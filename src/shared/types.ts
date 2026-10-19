@@ -1857,7 +1857,8 @@ export interface ActivityStatsSnapshot {
    * Increments on each watchdog fire or force-* call; never decrements.
    * Used by the debug overlay's counter strip to flag silent
    * compensations that don't visibly flip the activity pill. In a
-   * clean session, all ten fields read 0.
+   * clean session every watchdog and forced-transition field reads 0. The
+   * benign ones (the subagent dedupes and `internalAgentToolEvent`) may not.
    */
   compensationCounters: {
     /** `timer:stale-thinking` watchdog fires (turnActive held alone). */
@@ -1878,6 +1879,8 @@ export interface ActivityStatsSnapshot {
     duplicateSubagentStop: number;
     /** `subagent_start` for an already-live `subagentId` took no new slot (SendMessage re-task, task #835). */
     duplicateSubagentStart: number;
+    /** Tool event from an agent that never started (an internal CLI agent) logged, not acted on. */
+    internalAgentToolEvent: number;
     /** `timer:stuck-subagent` fired (a named SubagentStop was dropped, depth reclaimed). */
     stuckSubagent: number;
   };
@@ -2105,9 +2108,16 @@ export interface SessionEvent {
    * (task #759, a re-prompted subagent fires two named stops). A start with
    * the same id re-opens it, because a continued agent keeps its id.
    *
-   * Source: Claude Code's hook payload carries `agent_id` on SubagentStart
-   * and SubagentStop. Adapters without one leave it undefined and the
-   * engine keeps its count-based depth tracking.
+   * On a tool event (`tool_start`, `tool_end`, `interrupted` and the bg-shell
+   * remaps) it names the agent that ran the tool. An id that never had a
+   * `subagent_start` is an internal CLI agent's, such as one that runs after a
+   * Stop, and the engine only logs the event
+   * (`ActivityEngine.isInternalAgentEvent`).
+   *
+   * Source: Claude Code's hook payload carries `agent_id` on SubagentStart,
+   * SubagentStop, and every tool hook a non-main agent fires. Adapters
+   * without one leave it undefined and the engine keeps its count-based
+   * depth tracking.
    */
   subagentId?: string;
   /**

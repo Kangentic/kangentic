@@ -1201,11 +1201,11 @@ export function buildDemoPreConfig(options: {
       // does not agree with itself.
       //
       // Most of the snapshot has a documented correct value here rather than a derived one, and
-      // that is not a shortcut. \`compensationCounters\` is "in a clean session, all ten fields
-      // read 0", and no seeded session has had a watchdog fire. \`recentPtyChunks\` is "empty in
-      // production builds where the recorder is dead-code-eliminated", which is the build this
-      // renderer IS. The background-shell and subagent counters are zero because no seeded
-      // session runs either.
+      // that is not a shortcut. In \`compensationCounters\`, "in a clean session every watchdog and
+      // forced-transition field reads 0", and no seeded session has had a watchdog fire.
+      // \`recentPtyChunks\` is "empty in production builds where the recorder is
+      // dead-code-eliminated", which is the build this renderer IS. The background-shell,
+      // subagent and internal-agent counters are zero because no seeded session runs any of them.
       //
       // One field is a placeholder and is called out rather than faked: \`permissionAwaitedToolId\`
       // wants the tool_use_id a PermissionRequest hook carried, and a recording keeps the agent's
@@ -1263,7 +1263,8 @@ export function buildDemoPreConfig(options: {
           compensationCounters: {
             staleThinking: 0, bgShellHatch: 0, stuckPendingTools: 0, forceThinking: 0,
             forceIdle: 0, unmatchedBgShellEnd: 0, ignoredInnerSubagentStop: 0,
-            duplicateSubagentStop: 0, duplicateSubagentStart: 0, stuckSubagent: 0,
+            duplicateSubagentStop: 0, duplicateSubagentStart: 0, internalAgentToolEvent: 0,
+            stuckSubagent: 0,
           },
           recentPtyChunks: [],
         };

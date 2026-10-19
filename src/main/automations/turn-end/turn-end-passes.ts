@@ -1,3 +1,5 @@
+import { forgetAbandonedTurnsForTask } from './abandoned-turns';
+
 /**
  * The turn-end work in flight per task, and the background message deliveries,
  * kept apart from the runner so the move path can stop them without importing
@@ -30,10 +32,14 @@ export function trackTurnEndFollowUp(taskId: string, controller: AbortController
   };
 }
 
-/** Stop a task's turn-end work because the task is moving. */
+/**
+ * Stop a task's turn-end work because the task is moving. An abandoned turn
+ * end kept for the column it is leaving goes too (`abandoned-turns.ts`).
+ */
 export function supersedeTurnEndWork(taskId: string, options: { exceptOwnGroup?: boolean } = {}): void {
   if (!options.exceptOwnGroup) groupControllers.get(taskId)?.abort();
   followUpControllers.get(taskId)?.abort();
+  forgetAbandonedTurnsForTask(taskId);
 }
 
 /**

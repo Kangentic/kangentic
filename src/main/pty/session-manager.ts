@@ -3393,6 +3393,36 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * The session's work serial now (`SessionEngineState.workSerial`), or
+   * undefined for an unknown session. A turn end abandoned for newer work is
+   * re-judged under it once that work ended with no turn end of its own
+   * (`abandoned-turns.ts`).
+   */
+  currentWorkSerial(sessionId: string): number | undefined {
+    return this.telemetry.getWorkSerial(sessionId);
+  }
+
+  /**
+   * Where the session's latest stamped turn began in its transcript, or null
+   * when that is not known. A turn end consumes its turn's entry
+   * (`takeTurnAnchor`); one that ended any other way (a watchdog, an idle hint)
+   * leaves it here until the next turn starts, so a reader can ask whether
+   * that turn wrote a reply of its own.
+   */
+  currentTurnAnchor(sessionId: string): TranscriptAnchor | null {
+    return this.turnTranscriptAnchors.get(sessionId)?.anchor ?? null;
+  }
+
+  /**
+   * Is this a tool event from an internal CLI agent, which the activity engine
+   * only logs (`ActivityEngine.isInternalAgentEvent`)? The turn-end runner asks
+   * it of an interrupt, which is the user's work unless nobody saw that agent.
+   */
+  isInternalAgentEvent(sessionId: string, event: SessionEvent): boolean {
+    return this.telemetry.isInternalAgentEvent(sessionId, event);
+  }
+
+  /**
    * Had this session's agent left plan mode by `atMs` (epoch ms, the app's
    * clock): it reported plan mode, then reported being out of it, and had not
    * reported re-entering it by then. False when it never reported plan mode or

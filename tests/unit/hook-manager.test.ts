@@ -160,6 +160,13 @@ describe('hook-manager', () => {
       expect(hooks.SubagentStart[0].hooks[0].command).toContain(extractSubagentId(['agent_id']));
       expect(hooks.SubagentStop[0].hooks[0].command).toContain(extractSubagentId(['agent_id']));
 
+      // So do all three tool hooks, so a tool an internal CLI agent runs after
+      // a Stop (an id with no SubagentStart) reads as that agent's, not the
+      // main agent's, and cannot reopen the turn the Stop ended.
+      for (const event of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure'] as const) {
+        expect(hooks[event][0].hooks[0].command, event).toContain(extractSubagentId(['agent_id']));
+      }
+
       // Notification: notification, with a "waiting for your input" -> idle_hint
       // classification directive (Claude-specific string lives here, not the engine)
       expect(hooks.Notification).toHaveLength(1);

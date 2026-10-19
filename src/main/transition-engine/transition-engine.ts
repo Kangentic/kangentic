@@ -320,7 +320,10 @@ export class TransitionEngine {
        * short-lock budget the re-run path explicitly does not inherit.
        */
       groupBudgetMs?: number;
-      /** A re-run of a Move to column row moves the task through this. */
+      /**
+       * A re-run of a Move to column row moves the task through this. Run again
+       * passes it only for such a row, which it runs outside the task lock.
+       */
       moveTask?: AutomationContext['moveTask'];
       /**
        * A re-run of a turn-end row: the session's latest final message, so its

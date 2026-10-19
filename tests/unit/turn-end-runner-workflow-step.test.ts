@@ -129,6 +129,8 @@ const NEXT_TURN_WORK_SERIAL = 42;
 interface FakeSessionManager extends EventEmitter {
   getActivityCache: () => Record<string, string>;
   isLatestTurn: (sessionId: string, workSerial: number) => boolean;
+  currentWorkSerial: (sessionId: string) => number | undefined;
+  currentTurnAnchor: (sessionId: string) => null;
 }
 
 describe('a turn end and the workflow step', () => {
@@ -182,6 +184,9 @@ describe('a turn end and the workflow step', () => {
       getActivityCache: () => activity,
       isLatestTurn: (sessionId: string, workSerial: number) =>
         sessionId === SESSION_ID && workSerial === currentWorkSerial,
+      currentWorkSerial: () => currentWorkSerial,
+      // Where the newer turn began is unknown, so an abandoned turn end is never judged again here.
+      currentTurnAnchor: () => null,
     });
     registerTurnEndAutomations({
       sessionManager,
@@ -297,7 +302,9 @@ describe('a turn end and the workflow step', () => {
       // The user typed "continue" while the check was out, and that turn ended
       // in an API error: idle again, with no turn end of its own.
       hoisted.checkConditions.mockImplementation(async () => {
+        sessionManager.emit('event', SESSION_ID, { ts: Date.now(), type: 'prompt' });
         currentWorkSerial = NEXT_TURN_WORK_SERIAL;
+        sessionManager.emit('event', SESSION_ID, { ts: Date.now(), type: 'turn_failed', detail: 'server_error' });
         activity[SESSION_ID] = 'idle';
         return { ok: true, answers: new Map([[CLEAN_REVIEW_ROW.id, { met: true, reason: 'No findings.' }]]) };
       });

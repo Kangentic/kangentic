@@ -93,9 +93,10 @@ export interface AutomationContext {
   legacySpawnAgent?(config: AutomationConfig): Promise<void>;
   /**
    * Move the task to another column, for a Move to column row. Present only on
-   * a turn end (the type is offered there alone), where no move is in flight:
-   * a move from inside an enter or exit group would run inside that move's own
-   * task lock and abort it.
+   * a turn end (the type is offered there alone) and on a Run again of one,
+   * where no move is in flight and the row runs outside the task lock: a move
+   * from inside an enter or exit group would run inside that move's own task
+   * lock and abort it.
    *
    * `column` is a column NAME, or null for the next column (on the task's route
    * in a workflow, else on the board). `message` is sent to the agent where the

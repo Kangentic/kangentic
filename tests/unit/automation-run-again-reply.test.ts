@@ -64,7 +64,14 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
         hoisted.taskReads += 1;
         // The first read is before the lock; any later one is inside it.
         const inLock = hoisted.taskReads > 1 && hoisted.sessionIdInLock !== undefined;
-        return { id: 'task-rerun-0002', title: 'My Task', agent: 'claude', session_id: inLock ? hoisted.sessionIdInLock : hoisted.sessionId };
+        // In the row's own column, which a Move to column re-run requires.
+        return {
+          id: 'task-rerun-0002',
+          title: 'My Task',
+          agent: 'claude',
+          swimlane_id: 'lane-review',
+          session_id: inLock ? hoisted.sessionIdInLock : hoisted.sessionId,
+        };
       }),
     },
     automationRuns: {},
