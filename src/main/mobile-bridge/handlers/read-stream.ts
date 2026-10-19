@@ -496,9 +496,10 @@ function subscribeReadStream(
       return;
     }
     // A successor whose own spawn failed after the spawn flow dropped this
-    // row reports only 'exit' (spawn-failure-handler.ts), never a
-    // 'session-changed'. There is no live successor to name, but this feed's
-    // session is gone all the same.
+    // row announces its exited placeholder on 'session-changed' before its
+    // 'exit' (spawn-failure-handler.ts), and onSessionChanged below ends the
+    // feed there with no successor to name. This branch is the backstop for
+    // an exit that arrives without that push.
     if (tracksSuccessor && context.sessionManager.getSessionTaskId(exitedSessionId) === taskId && ownRowGone()) {
       endFeed({ intentional: true });
     }

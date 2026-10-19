@@ -3954,4 +3954,94 @@ test.describe('Command Terminal', () => {
       }
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Refused spawns. Main refuses a start with a sentence written for the user
+  // (a shell that did not start, a slot already in use), and the window toasts
+  // it. Electron decorates a rejected invoke before the renderer sees it, so the
+  // raw Error message carries the channel name and the error class in front of
+  // that sentence. The UI mock does not decorate, so each test builds the
+  // decorated message itself: a plain mock rejection would pass against code
+  // that never strips anything.
+  // ---------------------------------------------------------------------------
+  test.describe('Refused spawn toasts', () => {
+    const SHELL_REFUSAL_SENTENCE = 'The terminal\'s shell "pwsh" did not start; check it in Settings > Terminal.';
+    const SLOT_REFUSAL_SENTENCE = 'Command Terminal slot-1 is already in use.';
+
+    /** The message a renderer really receives when main throws `errorName`:
+     *  Electron's invoke wrapper, then the error class, then main's sentence. */
+    function decoratedInvokeMessage(errorName: string, sentence: string): string {
+      return `Error invoking remote method 'session:spawnTransient': ${errorName}: ${sentence}`;
+    }
+
+    test('a refused cold start toasts main\'s sentence without the IPC decoration and closes the window', async () => {
+      // The cold-start effect's catch: it toasts the rejection and drops just
+      // this window. The exact-text assertion is the point: the decorated
+      // message still contains the sentence, so a contains-match cannot tell
+      // the stripped toast from the raw one.
+      const refuseEveryStart = `
+        window.electronAPI.sessions.spawnTransient = function () {
+          return Promise.reject(new Error(${JSON.stringify(decoratedInvokeMessage('CommandTerminalStartError', SHELL_REFUSAL_SENTENCE))}));
+        };
+      `;
+      const { browser, page } = await launchWithState(multiTerminalPreConfig() + refuseEveryStart);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+
+        // The filter only finds the toast; the exact match below is the assertion.
+        const refusalToast = page.getByTestId('toast').filter({ hasText: 'did not start' });
+        await expect(refusalToast).toHaveText(SHELL_REFUSAL_SENTENCE, { timeout: 3000 });
+
+        // The toast proves the window's mount effect ran and its catch fired, so
+        // a count of 0 here means the window closed rather than never opened.
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a refused branch-switch respawn toasts main\'s sentence without the IPC decoration', async () => {
+      // handleBranchChange's catch. The cold start succeeds (first spawn call
+      // passes through to the counter-based mock), then the respawn the branch
+      // switch asks for is refused.
+      const refuseSecondStart = `
+        (function () {
+          var spawnBeforeRefusal = window.electronAPI.sessions.spawnTransient;
+          var spawnAttempts = 0;
+          window.electronAPI.sessions.spawnTransient = function (input) {
+            spawnAttempts += 1;
+            if (spawnAttempts === 1) return spawnBeforeRefusal(input);
+            return Promise.reject(new Error(${JSON.stringify(decoratedInvokeMessage('CommandTerminalStartError', SLOT_REFUSAL_SENTENCE))}));
+          };
+        })();
+      `;
+      const { browser, page } = await launchWithState(multiTerminalPreConfig() + refuseSecondStart);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+
+        // The cold spawn has resolved and paired its slot. Switching before this
+        // would find no entry to kill and exercise a different path.
+        await expect.poll(
+          async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length,
+          { timeout: 8000, intervals: [50, 100, 200, 500] },
+        ).toBe(1);
+
+        // Switch branch the way a user does, through the header chip.
+        await page.getByTestId('branch-picker-chip').click();
+        const developButton = page.locator('button:has-text("develop")');
+        await developButton.waitFor({ state: 'visible' });
+        await developButton.click();
+
+        const refusalToast = page.getByTestId('toast').filter({ hasText: 'is already in use' });
+        await expect(refusalToast).toHaveText(SLOT_REFUSAL_SENTENCE, { timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+  });
 });
