@@ -4,11 +4,34 @@
  *
  * Copilot hooks are arrays-per-event (NOT single objects).
  * Events use camelCase: preToolUse, postToolUse, agentStop, preCompact.
+ *
+ * The hooks live in `<session config home>/hooks/kangentic.json`, the user
+ * hooks folder every Copilot version since 0.0.422 reads. Copilot 1.0.93 stopped
+ * reading user settings (hooks, statusLine, banner) from config.json, which is
+ * where Kangentic used to put them.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+
+// The user's home is a temp dir, so the "user config" fixtures below never
+// touch the real ~/.copilot.
+let tmpHome: string;
+vi.mock('node:os', async () => {
+  const actual = await vi.importActual<typeof import('node:os')>('node:os');
+  return {
+    ...actual,
+    default: { ...actual, homedir: () => tmpHome },
+    homedir: () => tmpHome,
+  };
+});
+
+// Mock bridge-utils so tests don't require built script assets.
+vi.mock('../../src/main/agent/shared/bridge-utils', () => ({
+  resolveBridgeScript: vi.fn((name: string) => `/fake/scripts/${name}.js`),
+}));
+
 import {
   buildHooks,
   writeSessionConfig,
@@ -17,31 +40,37 @@ import {
 } from '../../src/main/agent/adapters/copilot';
 import { extractTool, extractDetail } from '../../src/main/agent/shared/directive-builders';
 
-// Mock bridge-utils so tests don't require built script assets.
-vi.mock('../../src/main/agent/shared/bridge-utils', () => ({
-  resolveBridgeScript: vi.fn((name: string) => `/fake/scripts/${name}.js`),
-}));
-
-// Mock hook-utils buildBridgeCommand to a deterministic output for assertions.
-vi.mock('../../src/main/agent/shared/hook-utils', () => ({
-  isKangenticHookCommand: vi.fn((cmd: string) => cmd.includes('/fake/scripts/event-bridge.js')),
-  buildBridgeCommand: vi.fn((bridge: string, eventsPath: string, type: string, ...directives: string[]) => {
-    const directivePart = directives.length ? ' ' + directives.join(' ') : '';
-    return `node "${bridge}" "${eventsPath}" ${type}${directivePart}`;
-  }),
-}));
-
 let tmpDir: string;
+let configDir: string;
 const EVENTS_PATH = '/fake/.kangentic/sessions/abc/events.jsonl';
 const STATUS_PATH = '/fake/.kangentic/sessions/abc/status.json';
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-hookman-'));
+  tmpHome = path.join(tmpDir, 'home');
+  fs.mkdirSync(tmpHome, { recursive: true });
+  configDir = path.join(tmpDir, 'session', 'copilot-config');
 });
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+function readJson(filePath: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+}
+
+function hooksFilePath(): string {
+  return path.join(configDir, 'hooks', 'kangentic.json');
+}
+
+function writeUserFile(fileName: string, content: string): string {
+  const userCopilotDir = path.join(tmpHome, '.copilot');
+  fs.mkdirSync(userCopilotDir, { recursive: true });
+  const filePath = path.join(userCopilotDir, fileName);
+  fs.writeFileSync(filePath, content);
+  return filePath;
+}
 
 describe('copilot-hook-manager', () => {
   describe('COPILOT_HOOK_EVENTS', () => {
@@ -153,146 +182,173 @@ describe('copilot-hook-manager', () => {
   });
 
   describe('writeSessionConfig', () => {
-    it('creates config.json in the specified directory', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
+    it('writes the hooks to hooks/kangentic.json as a version 1 hook config', () => {
       writeSessionConfig(configDir, EVENTS_PATH);
-      expect(fs.existsSync(path.join(configDir, 'config.json'))).toBe(true);
+      expect(readJson(hooksFilePath())).toEqual({ version: 1, hooks: buildHooks(EVENTS_PATH) });
     });
 
-    it('creates the directory if it does not exist', () => {
-      const configDir = path.join(tmpDir, 'new-dir', 'copilot-config');
+    it('creates the config directory and its hooks folder when missing', () => {
       writeSessionConfig(configDir, EVENTS_PATH);
-      expect(fs.existsSync(configDir)).toBe(true);
+      expect(fs.statSync(path.join(configDir, 'hooks')).isDirectory()).toBe(true);
     });
 
-    it('written config has hooks object with 4 event keys', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
+    it('puts no hooks in config.json or settings.json, so no version reads them twice', () => {
+      // Copilot 1.0.8 through 1.0.92 read config.json hooks AND the hooks folder.
       writeSessionConfig(configDir, EVENTS_PATH);
-      const raw = fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8');
-      const config = JSON.parse(raw);
-      expect(config.hooks).toBeDefined();
-      expect(Object.keys(config.hooks)).toHaveLength(4);
+      expect(readJson(path.join(configDir, 'config.json')).hooks).toBeUndefined();
+      expect(readJson(path.join(configDir, 'settings.json')).hooks).toBeUndefined();
     });
 
-    it('written config has hooks as arrays (not single objects)', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
+    it('writes banner "never" to settings.json, where Copilot 1.0.93+ reads it', () => {
       writeSessionConfig(configDir, EVENTS_PATH);
-      const raw = fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8');
-      const config = JSON.parse(raw);
-      for (const value of Object.values(config.hooks as Record<string, unknown>)) {
-        expect(Array.isArray(value)).toBe(true);
-      }
+      expect(readJson(path.join(configDir, 'settings.json')).banner).toBe('never');
     });
 
-    it('written config sets banner to "never"', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
-      writeSessionConfig(configDir, EVENTS_PATH);
-      const raw = fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8');
-      const config = JSON.parse(raw);
-      expect(config.banner).toBe('never');
-    });
-
-    it('injects statusLine when statusOutputPath is provided', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
+    it('injects the statusLine bridge into settings.json when statusOutputPath is provided', () => {
       writeSessionConfig(configDir, EVENTS_PATH, STATUS_PATH);
-      const raw = fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8');
-      const config = JSON.parse(raw);
-      expect(config.statusLine).toBeDefined();
-      expect(config.statusLine.type).toBe('command');
-      expect(config.statusLine.command).toContain('status-bridge');
-      expect(config.statusLine.command).toContain(STATUS_PATH);
+      const settings = readJson(path.join(configDir, 'settings.json'));
+      const statusLine = settings.statusLine as { type: string; command: string };
+      expect(statusLine.type).toBe('command');
+      expect(statusLine.command).toContain('status-bridge');
+      expect(statusLine.command).toContain(STATUS_PATH);
     });
 
     it('omits statusLine when statusOutputPath is not provided', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
       writeSessionConfig(configDir, EVENTS_PATH);
-      const raw = fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8');
-      const config = JSON.parse(raw);
-      expect(config.statusLine).toBeUndefined();
+      expect(readJson(path.join(configDir, 'settings.json')).statusLine).toBeUndefined();
     });
 
-    it('preserves user config properties (theme, model, etc.)', () => {
-      // Write a fake user config to the expected location
-      const homeDir = os.homedir();
-      const userCopilotDir = path.join(homeDir, '.copilot');
-      const userConfigPath = path.join(userCopilotDir, 'config.json');
+    it('keeps statusLine and banner in config.json too, for versions before 1.0.93', () => {
+      writeSessionConfig(configDir, EVENTS_PATH, STATUS_PATH);
+      const config = readJson(path.join(configDir, 'config.json'));
+      expect(config.banner).toBe('never');
+      expect((config.statusLine as { command: string }).command).toContain(STATUS_PATH);
+    });
 
-      // Only inject if the user does not already have a copilot config
-      // (avoid clobbering real user config in CI/dev environments)
-      const hadExistingConfig = fs.existsSync(userConfigPath);
-      if (!hadExistingConfig) {
-        fs.mkdirSync(userCopilotDir, { recursive: true });
-        fs.writeFileSync(userConfigPath, JSON.stringify({ theme: 'dark', model: 'gpt-4' }, null, 2));
-      }
+    it('preserves the user settings.json, including the user\'s own hooks', () => {
+      const userHooks = { postToolUse: [{ type: 'command', bash: './format.sh', powershell: './format.ps1' }] };
+      writeUserFile('settings.json', JSON.stringify({ model: 'example-model', theme: 'dim', hooks: userHooks }));
 
-      try {
-        const configDir = path.join(tmpDir, 'copilot-config');
-        writeSessionConfig(configDir, EVENTS_PATH);
-        const raw = fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8');
-        const config = JSON.parse(raw);
+      writeSessionConfig(configDir, EVENTS_PATH);
 
-        if (!hadExistingConfig) {
-          // We injected user config - verify it was preserved
-          expect(config.theme).toBe('dark');
-          expect(config.model).toBe('gpt-4');
-        }
+      const settings = readJson(path.join(configDir, 'settings.json'));
+      expect(settings.model).toBe('example-model');
+      expect(settings.theme).toBe('dim');
+      expect(settings.hooks).toEqual(userHooks);
+    });
 
-        // Regardless of user config, hooks must be present and overridden
-        expect(config.hooks).toBeDefined();
-        expect(config.banner).toBe('never');
-      } finally {
-        if (!hadExistingConfig) {
-          // Clean up injected user config
-          try { fs.unlinkSync(userConfigPath); } catch { /* best effort */ }
-          try { fs.rmdirSync(userCopilotDir); } catch { /* might not be empty */ }
-        }
-      }
+    it('preserves the user config.json through the comment header Copilot 1.0.97 writes', () => {
+      writeUserFile('config.json', [
+        '// User settings belong in settings.json.',
+        '// This file is managed automatically.',
+        JSON.stringify({ lastLoggedInUser: { login: 'dev' }, trustedFolders: ['C:\\Users\\dev\\repo'] }, null, 2),
+      ].join('\n'));
+
+      writeSessionConfig(configDir, EVENTS_PATH);
+
+      const config = readJson(path.join(configDir, 'config.json'));
+      expect(config.lastLoggedInUser).toEqual({ login: 'dev' });
+      expect(config.trustedFolders).toEqual(['C:\\Users\\dev\\repo']);
+    });
+
+    it('never merges config.json state into settings.json', () => {
+      writeUserFile('config.json', JSON.stringify({ lastLoggedInUser: { login: 'dev' } }));
+      writeSessionConfig(configDir, EVENTS_PATH);
+      expect(readJson(path.join(configDir, 'settings.json')).lastLoggedInUser).toBeUndefined();
+    });
+
+    it('cleans the hooks an older Kangentic left in the session config.json', () => {
+      // The pre-1.0.93 layout: Kangentic's hooks inline in config.json.
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({
+        hooks: buildHooks(EVENTS_PATH),
+        banner: 'never',
+      }));
+
+      writeSessionConfig(configDir, EVENTS_PATH);
+
+      expect(readJson(path.join(configDir, 'config.json')).hooks).toBeUndefined();
+      expect(readJson(hooksFilePath()).hooks).toEqual(buildHooks(EVENTS_PATH));
+    });
+
+    it('drops a Kangentic event-bridge entry from user hooks and keeps the user\'s own', () => {
+      const kangenticEntry = buildHooks(EVENTS_PATH).postToolUse[0];
+      const userEntry = { type: 'command', command: 'node ./lint.js' };
+      const nestedKangenticGroup = { matcher: '.*', hooks: [{ type: 'command', command: kangenticEntry.command }] };
+      writeUserFile('config.json', JSON.stringify({
+        hooks: { postToolUse: [kangenticEntry, userEntry, nestedKangenticGroup], agentStop: [kangenticEntry] },
+      }));
+
+      writeSessionConfig(configDir, EVENTS_PATH);
+
+      expect(readJson(path.join(configDir, 'config.json')).hooks).toEqual({ postToolUse: [userEntry] });
+    });
+
+    it('copies the user mcp-config.json', () => {
+      writeUserFile('mcp-config.json', JSON.stringify({ mcpServers: { example: { type: 'http', url: 'https://example.com/mcp' } } }));
+      writeSessionConfig(configDir, EVENTS_PATH);
+      expect(readJson(path.join(configDir, 'mcp-config.json')).mcpServers).toHaveProperty('example');
+    });
+
+    it('never modifies the user\'s own ~/.copilot files', () => {
+      const settingsContent = JSON.stringify({ model: 'example-model' });
+      const configContent = JSON.stringify({ lastLoggedInUser: { login: 'dev' } });
+      const userSettingsPath = writeUserFile('settings.json', settingsContent);
+      const userConfigPath = writeUserFile('config.json', configContent);
+
+      writeSessionConfig(configDir, EVENTS_PATH, STATUS_PATH);
+
+      expect(fs.readFileSync(userSettingsPath, 'utf-8')).toBe(settingsContent);
+      expect(fs.readFileSync(userConfigPath, 'utf-8')).toBe(configContent);
+      expect(fs.existsSync(path.join(tmpHome, '.copilot', 'hooks'))).toBe(false);
     });
   });
 
   describe('removeSessionConfig', () => {
-    it('removes config.json from the session config dir', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
-      writeSessionConfig(configDir, EVENTS_PATH);
-      expect(fs.existsSync(path.join(configDir, 'config.json'))).toBe(true);
-
-      removeSessionConfig(configDir);
-      expect(fs.existsSync(path.join(configDir, 'config.json'))).toBe(false);
-    });
-
-    it('removes mcp-config.json if it exists', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(path.join(configDir, 'config.json'), '{}');
-      fs.writeFileSync(path.join(configDir, 'mcp-config.json'), '{}');
-
-      removeSessionConfig(configDir);
-
-      expect(fs.existsSync(path.join(configDir, 'mcp-config.json'))).toBe(false);
-    });
-
-    it('removes the directory if empty after cleanup', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
-      writeSessionConfig(configDir, EVENTS_PATH);
+    it('removes the hooks file, settings.json, config.json and mcp-config.json, then the empty directory', () => {
+      writeUserFile('mcp-config.json', '{}');
+      writeSessionConfig(configDir, EVENTS_PATH, STATUS_PATH);
 
       removeSessionConfig(configDir);
 
       expect(fs.existsSync(configDir)).toBe(false);
     });
 
+    it('cleans an older Kangentic session directory whose hooks were inline in config.json', () => {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({ hooks: buildHooks(EVENTS_PATH) }));
+
+      removeSessionConfig(configDir);
+
+      expect(fs.existsSync(path.join(configDir, 'config.json'))).toBe(false);
+      expect(fs.existsSync(configDir)).toBe(false);
+    });
+
+    it('keeps the session-state Copilot stores in the same config home, for --resume', () => {
+      writeSessionConfig(configDir, EVENTS_PATH);
+      const sessionStateFile = path.join(configDir, 'session-state', 'abc', 'events.jsonl');
+      fs.mkdirSync(path.dirname(sessionStateFile), { recursive: true });
+      fs.writeFileSync(sessionStateFile, '{}\n');
+
+      removeSessionConfig(configDir);
+
+      expect(fs.existsSync(hooksFilePath())).toBe(false);
+      expect(fs.existsSync(path.join(configDir, 'hooks'))).toBe(false);
+      expect(fs.existsSync(path.join(configDir, 'settings.json'))).toBe(false);
+      expect(fs.existsSync(path.join(configDir, 'config.json'))).toBe(false);
+      expect(fs.existsSync(sessionStateFile)).toBe(true);
+    });
+
     it('does not throw when config.json does not exist', () => {
-      const configDir = path.join(tmpDir, 'empty-dir');
       fs.mkdirSync(configDir, { recursive: true });
       expect(() => removeSessionConfig(configDir)).not.toThrow();
     });
 
     it('does not throw when directory does not exist', () => {
-      const configDir = path.join(tmpDir, 'nonexistent-dir');
-      expect(() => removeSessionConfig(configDir)).not.toThrow();
+      expect(() => removeSessionConfig(path.join(tmpDir, 'nonexistent-dir'))).not.toThrow();
     });
 
     it('leaves directory intact if it contains extra files', () => {
-      const configDir = path.join(tmpDir, 'copilot-config');
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(path.join(configDir, 'config.json'), '{}');
       fs.writeFileSync(path.join(configDir, 'extra-file.txt'), 'keep me');

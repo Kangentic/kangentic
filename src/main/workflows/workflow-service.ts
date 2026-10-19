@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type {
   BoardProfile,
   PermissionMode,
+  PlanApproval,
   Swimlane,
   Task,
   TaskCreateInput,
@@ -292,6 +293,12 @@ export interface PlanInput {
   links: Array<{ blocker: string; blocked: string }>;
   /** The revision the caller read; a save over a newer one is refused. */
   revision?: number | null;
+  /**
+   * Who approves plans for the workflow's tasks. Undefined leaves it as it is;
+   * null makes it follow the plan columns again. Changes no plan, so it moves no
+   * revision beyond the save's own.
+   */
+  planApproval?: PlanApproval | null;
 }
 
 export function resolveProjectId(context: IpcContext, homeProjectId: string, selector: string | null | undefined): string {
@@ -547,10 +554,16 @@ export function savePlan(context: IpcContext, homeProjectId: string, workflowId:
     );
   }
   const draft = validatePlan(context, homeProjectId, workflow.draft, input);
-  const saved = new WorkflowRepository(getProjectDb(homeProjectId)).saveDraft(workflowId, draft, {
-    title: input.title ?? null,
-    expectedRevision: input.revision ?? null,
-  });
+  const db = getProjectDb(homeProjectId);
+  const repository = new WorkflowRepository(db);
+  const saved = writeTransaction(db, () => {
+    // Before the draft, whose write reads the row back for the caller.
+    if (input.planApproval !== undefined) repository.setPlanApproval(workflowId, input.planApproval);
+    return repository.saveDraft(workflowId, draft, {
+      title: input.title ?? null,
+      expectedRevision: input.revision ?? null,
+    });
+  })();
   notifyWorkflowChanged(homeProjectId, workflowId);
   return saved;
 }
@@ -572,6 +585,7 @@ export function createWorkflowWithPlan(
   const repository = new WorkflowRepository(db);
   const saved = writeTransaction(db, () => {
     const created = repository.create({ title: input.title ?? null, brief: workflowInput.brief ?? null });
+    if (input.planApproval !== undefined) repository.setPlanApproval(created.id, input.planApproval);
     return repository.saveDraft(created.id, draft, { title: input.title ?? null });
   })();
   notifyWorkflowChanged(homeProjectId, saved.id);
@@ -1237,6 +1251,24 @@ export function renameWorkflow(context: IpcContext, homeProjectId: string, workf
   notifyWorkflowChanged(homeProjectId, workflowId);
   announceWorkflowBoards(context, homeProjectId, workflowId);
   return renamed;
+}
+
+/**
+ * Who approves plans for the workflow's tasks. Allowed in any state, like a
+ * rename: it changes no plan, and after Start the inspector is where it is
+ * changed. The board announcement is what makes every live session's approver
+ * read the new value (`plan-approval-writer.ts` listens on the board bus).
+ */
+export function setWorkflowPlanApproval(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  planApproval: PlanApproval | null,
+): void {
+  requireWorkflow(homeProjectId, workflowId);
+  new WorkflowRepository(getProjectDb(homeProjectId)).setPlanApproval(workflowId, planApproval);
+  notifyWorkflowChanged(homeProjectId, workflowId);
+  announceWorkflowBoards(context, homeProjectId, workflowId);
 }
 
 /** Find a workflow by id or (case-insensitive) title in a home project. */

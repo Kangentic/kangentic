@@ -41,6 +41,16 @@ async function openManagerByHeader(columnName: string) {
   await expect(page.locator('h3', { hasText: 'Column Manager' })).toBeVisible();
 }
 
+/** Re-read the board after a direct mock write, so the next dialog drafts from it. */
+async function reloadBoard() {
+  await page.evaluate(async () => {
+    const stores = (window as unknown as {
+      __zustandStores?: { board: { getState: () => { loadBoard: () => Promise<void> } } };
+    }).__zustandStores;
+    await stores?.board.getState().loadBoard();
+  });
+}
+
 async function closeManager() {
   const cancelBtn = page.locator('[data-testid="board-manager-dialog"]').getByRole('button', { name: 'Cancel' });
   await cancelBtn.click();
@@ -178,6 +188,117 @@ test.describe('BoardManagerDialog', () => {
     // Switch to Planning column where permission_mode = 'plan'.
     await page.locator('[data-testid="board-manager-tab"][data-tab-name="Planning"]').click();
     await expect(page.locator('[data-testid="plan-exit-target"]')).toBeVisible();
+  });
+
+  // Plan approval comes first, then where the task goes; both only on a plan
+  // column, and both explained by an info tip rather than a description line.
+  test('a plan column shows Plan approval then After Plan Mode, starting on Manual, and saves Automatic', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    await expect(dialog.locator('[data-testid="column-plan-approval"]')).toHaveCount(0);
+
+    await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Planning"]').click();
+    const planApproval = dialog.locator('[data-testid="column-plan-approval"]');
+    const afterPlanMode = dialog.locator('[data-testid="plan-exit-target"]');
+    await expect(planApproval).toBeVisible();
+    const planApprovalFirst = await page.evaluate(() => {
+      const approval = document.querySelector('[data-testid="column-plan-approval"]');
+      const target = document.querySelector('[data-testid="plan-exit-target"]');
+      return !!approval && !!target && (approval.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    });
+    expect(planApprovalFirst).toBe(true);
+    await expect(afterPlanMode).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'About Plan approval' })).toHaveAccessibleDescription(
+      'Whether you approve each plan or Kangentic does. A workflow can change it for its own tasks.',
+    );
+    await expect(dialog.getByRole('button', { name: 'About After Plan Mode' })).toHaveAccessibleDescription(
+      'Where the task goes when the agent exits Plan mode.',
+    );
+
+    const automatic = dialog.locator('[data-testid="column-plan-approval-automatic"]');
+    const manual = dialog.locator('[data-testid="column-plan-approval-manual"]');
+    await expect(manual).toHaveAttribute('aria-checked', 'true');
+    await expect(automatic).toHaveAccessibleDescription('Approve each plan for you. Questions the agent asks still wait.');
+
+    await automatic.click();
+    await dialog.locator('[data-testid="board-manager-save"]').click();
+    await dialog.waitFor({ state: 'detached', timeout: 3000 });
+    const saved = await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      return lanes.find((lane) => lane.name === 'Planning')?.plan_approval;
+    });
+    expect(saved).toBe('automatic');
+
+    // Cleanup: back to the default.
+    await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const lane = lanes.find((candidate) => candidate.name === 'Planning');
+      if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, plan_approval: 'manual' });
+    });
+    await reloadBoard();
+  });
+
+  test('Automatic is disabled, with the reason, for an agent that cannot approve plans', async () => {
+    // Codex declares no plan auto-approval in the mock, as in its adapter.
+    await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const lane = lanes.find((candidate) => candidate.name === 'Planning');
+      if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, agent_override: 'codex', plan_approval: 'automatic' });
+    });
+    await reloadBoard();
+    try {
+      await openManagerByHeader('Planning');
+      const dialog = page.locator('[data-testid="board-manager-dialog"]');
+      const automatic = dialog.locator('[data-testid="column-plan-approval-automatic"]');
+      // A teammate's stored Automatic still reads as Manual: the plans wait.
+      await expect(dialog.locator('[data-testid="column-plan-approval-manual"]')).toHaveAttribute('aria-checked', 'true');
+      await expect(automatic).toBeDisabled();
+      await expect(automatic).toHaveAccessibleDescription("Kangentic can't approve Codex CLI's plans, so they wait for you.");
+    } finally {
+      await page.evaluate(async () => {
+        const lanes = await window.electronAPI.swimlanes.list();
+        const lane = lanes.find((candidate) => candidate.name === 'Planning');
+        if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, agent_override: null, plan_approval: 'manual' });
+      });
+      await reloadBoard();
+    }
+  });
+
+  test('After Plan Mode lists the column itself to stay, each column with its glyph, and saves the pick', async () => {
+    await openManagerByHeader('Planning');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    const target = dialog.locator('[data-testid="plan-exit-target"]');
+    // The mock seeds Planning to exit into Executing.
+    await expect(target).toHaveText('Executing');
+    await expect(target.locator('[data-testid="column-picker-glyph"]')).toHaveCount(1);
+
+    await target.click();
+    const options = page.locator('[data-testid="plan-exit-target-option"]');
+    const names = await options.allTextContents();
+    // No "Nowhere" entry, no Next column, no To Do or Done: the board's columns,
+    // the column itself among them.
+    expect(names).toEqual(['Planning', 'Executing', 'Code Review', 'Testing', 'Merge']);
+    await expect(page.locator('[data-testid="plan-exit-target-option"] [data-testid="column-picker-glyph"]')).toHaveCount(5);
+    await expect(page.locator('[data-testid="column-picker-leading-glyph"]')).toHaveCount(0);
+
+    // Picking the column itself means stay, stored as no target.
+    await options.filter({ hasText: 'Planning' }).click();
+    await expect(target).toHaveText('Planning');
+    await dialog.locator('[data-testid="board-manager-save"]').click();
+    await dialog.waitFor({ state: 'detached', timeout: 3000 });
+    const saved = await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const planning = lanes.find((lane) => lane.name === 'Planning');
+      const executing = lanes.find((lane) => lane.name === 'Executing');
+      return { target: planning?.plan_exit_target_id ?? null, executingId: executing?.id ?? null, planningId: planning?.id ?? null };
+    });
+    expect(saved.target).toBeNull();
+
+    // Cleanup: back to Executing.
+    await page.evaluate(async ({ planningId, executingId }) => {
+      if (planningId) await window.electronAPI.swimlanes.update({ id: planningId, plan_exit_target_id: executingId });
+    }, saved);
+    await reloadBoard();
   });
 
   test('Delete column is hidden for To Do and Done', async () => {

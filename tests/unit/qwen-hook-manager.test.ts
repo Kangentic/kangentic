@@ -5,12 +5,62 @@ import os from 'node:os';
 import {
   buildHooks,
   removeHooks,
+  type QwenHookEntry,
 } from '../../src/main/agent/adapters/qwen-code';
-import { extractDetail } from '../../src/main/agent/shared/directive-builders';
+import { AgentTool, EventType } from '../../src/shared/types';
+import {
+  extractPlanMode,
+  extractTool,
+  extractToolId,
+  setDetail,
+  setToolWhen,
+  setTypeWhen,
+} from '../../src/main/agent/shared/directive-builders';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
 const EVENTS_PATH = '/fake/.kangentic/sessions/abc/events.jsonl';
+
+/** Every event name Qwen Code 0.24.0 loads that Kangentic wires. */
+const QWEN_EVENTS = [
+  'Notification',
+  'PermissionRequest',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'PreCompact',
+  'PreToolUse',
+  'SessionEnd',
+  'SessionStart',
+  'Stop',
+  'StopFailure',
+  'UserPromptSubmit',
+];
+
+/** The Gemini names older Kangentic builds wrote, which Qwen never loaded. */
+const LEGACY_GEMINI_EVENTS = [
+  'BeforeTool',
+  'AfterTool',
+  'BeforeAgent',
+  'AfterAgent',
+  'BeforeModel',
+  'AfterModel',
+  'BeforeToolSelection',
+  'PreCompress',
+];
+
+/** A Kangentic entry as an older build wrote it under a Gemini name. */
+function legacyKangenticEntry(eventType: string): QwenHookEntry {
+  return {
+    matcher: '*',
+    hooks: [{ name: `kangentic-${eventType}`, type: 'command', command: `node "${EVENT_BRIDGE}" "${EVENTS_PATH}" ${eventType}` }],
+  };
+}
+
+/** The single Kangentic command under a hook event. */
+function kangenticCommand(hooks: Record<string, QwenHookEntry[]>, hookEvent: string): string {
+  const entries = hooks[hookEvent];
+  return entries[entries.length - 1].hooks[0].command;
+}
 
 function readSettings(): Record<string, unknown> {
   const settingsPath = path.join(tmpDir, '.qwen', 'settings.json');
@@ -31,84 +81,127 @@ afterEach(() => {
 
 describe('qwen-hook-manager', () => {
   describe('buildHooks', () => {
-    it('produces correct hook entries for all 11 mapped event types', () => {
+    it('wires every event Qwen loads, under the names its HookEventName declares', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
 
-      // BeforeTool: tool_start
-      expect(hooks.BeforeTool).toHaveLength(1);
-      expect(hooks.BeforeTool[0].matcher).toBe('*');
-      expect(hooks.BeforeTool[0].hooks[0].command).toContain('event-bridge');
-      expect(hooks.BeforeTool[0].hooks[0].command).toContain('tool_start');
-      expect(hooks.BeforeTool[0].hooks[0].name).toBe('kangentic-tool_start');
+      expect(Object.keys(hooks).sort()).toEqual(QWEN_EVENTS);
+      for (const legacyName of LEGACY_GEMINI_EVENTS) {
+        expect(hooks[legacyName]).toBeUndefined();
+      }
+      for (const hookEvent of QWEN_EVENTS) {
+        expect(hooks[hookEvent]).toHaveLength(1);
+        expect(hooks[hookEvent][0].matcher).toBe('*');
+        expect(hooks[hookEvent][0].hooks[0].command).toContain('event-bridge');
+      }
+    });
 
-      // AfterTool: tool_end
-      expect(hooks.AfterTool).toHaveLength(1);
-      expect(hooks.AfterTool[0].hooks[0].command).toContain('tool_end');
+    it('maps each event to the Kangentic event type Claude maps it to', () => {
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
+      const eventTypeOf = (hookEvent: string) => kangenticCommand(hooks, hookEvent).split(' ')[3];
 
-      // SessionStart: session_start
-      expect(hooks.SessionStart).toHaveLength(1);
-      expect(hooks.SessionStart[0].hooks[0].command).toContain('session_start');
+      expect(eventTypeOf('PreToolUse')).toBe(EventType.ToolStart);
+      expect(eventTypeOf('PostToolUse')).toBe(EventType.ToolEnd);
+      expect(eventTypeOf('PostToolUseFailure')).toBe(EventType.ToolEnd);
+      expect(eventTypeOf('UserPromptSubmit')).toBe(EventType.Prompt);
+      expect(eventTypeOf('Stop')).toBe(EventType.Idle);
+      expect(eventTypeOf('StopFailure')).toBe(EventType.TurnFailed);
+      expect(eventTypeOf('PermissionRequest')).toBe(EventType.Idle);
+      expect(eventTypeOf('Notification')).toBe(EventType.Notification);
+      expect(eventTypeOf('PreCompact')).toBe(EventType.Compact);
+      expect(eventTypeOf('SessionStart')).toBe(EventType.SessionStart);
+      expect(eventTypeOf('SessionEnd')).toBe(EventType.SessionEnd);
+    });
 
-      // SessionEnd: session_end
-      expect(hooks.SessionEnd).toHaveLength(1);
-      expect(hooks.SessionEnd[0].hooks[0].command).toContain('session_end');
+    it('carries the directives that name the tool, pair its start and end, and report plan exit and permission', () => {
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
+      const toolCorrelation = [extractTool('tool_name'), extractToolId(['tool_use_id'])];
 
-      // AfterAgent: idle
-      expect(hooks.AfterAgent).toHaveLength(1);
-      expect(hooks.AfterAgent[0].hooks[0].command).toContain('idle');
-
-      // BeforeAgent: prompt
-      expect(hooks.BeforeAgent).toHaveLength(1);
-      expect(hooks.BeforeAgent[0].hooks[0].command).toContain('prompt');
-
-      // Notification: notification
-      expect(hooks.Notification).toHaveLength(1);
-      expect(hooks.Notification[0].hooks[0].command).toContain('notification');
-
-      // PreCompress: compact
-      expect(hooks.PreCompress).toHaveLength(1);
-      expect(hooks.PreCompress[0].hooks[0].command).toContain('compact');
-
-      // BeforeModel: model_start, model name extracted from llm_request.model
-      expect(hooks.BeforeModel).toHaveLength(1);
-      expect(hooks.BeforeModel[0].hooks[0].command).toContain('model_start');
-      expect(hooks.BeforeModel[0].hooks[0].command).toContain(extractDetail(['model'], { nested: 'llm_request' }));
-
-      // AfterModel: model_end, model name extracted from llm_request.model
-      expect(hooks.AfterModel).toHaveLength(1);
-      expect(hooks.AfterModel[0].hooks[0].command).toContain('model_end');
-      expect(hooks.AfterModel[0].hooks[0].command).toContain(extractDetail(['model'], { nested: 'llm_request' }));
-
-      // BeforeToolSelection: tool_selection_start
-      expect(hooks.BeforeToolSelection).toHaveLength(1);
-      expect(hooks.BeforeToolSelection[0].hooks[0].command).toContain('tool_selection_start');
-
-      // Total: 11 hook event keys
-      expect(Object.keys(hooks)).toHaveLength(11);
+      for (const hookEvent of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure']) {
+        for (const directive of toolCorrelation) {
+          expect(kangenticCommand(hooks, hookEvent)).toContain(directive);
+        }
+      }
+      expect(kangenticCommand(hooks, 'PostToolUse')).toContain(setToolWhen({
+        whenTool: 'exit_plan_mode',
+        nested: ['tool_response', 'llmContent'],
+        startsWith: 'User approved.',
+        to: AgentTool.ExitPlanMode,
+      }));
+      expect(kangenticCommand(hooks, 'PostToolUseFailure')).toContain(
+        setTypeWhen({ field: 'is_interrupt', equals: 'true', to: EventType.Interrupted }),
+      );
+      expect(kangenticCommand(hooks, 'PermissionRequest')).toContain(setDetail('permission'));
+      expect(kangenticCommand(hooks, 'PermissionRequest')).toContain(extractTool('tool_name'));
+      const planMode = extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' });
+      expect(kangenticCommand(hooks, 'UserPromptSubmit')).toContain(planMode);
+      expect(kangenticCommand(hooks, 'Stop')).toContain(planMode);
     });
 
     it('preserves existing user hooks', () => {
       const existing = {
-        BeforeTool: [
+        PreToolUse: [
           { matcher: 'write_file', hooks: [{ name: 'security', type: 'command', command: 'echo user-check' }] },
         ],
-        BeforeAgent: [
+        UserPromptSubmit: [
           { matcher: '*', hooks: [{ name: 'memory', type: 'command', command: 'echo inject-memory' }] },
         ],
       };
 
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, existing);
 
-      // BeforeTool: 1 user + 1 event-bridge
-      expect(hooks.BeforeTool).toHaveLength(2);
-      expect(hooks.BeforeTool[0].hooks[0].command).toBe('echo user-check');
+      // PreToolUse: 1 user + 1 event-bridge
+      expect(hooks.PreToolUse).toHaveLength(2);
+      expect(hooks.PreToolUse[0].hooks[0].command).toBe('echo user-check');
 
-      // BeforeAgent: 1 user + 1 event-bridge
-      expect(hooks.BeforeAgent).toHaveLength(2);
-      expect(hooks.BeforeAgent[0].hooks[0].command).toBe('echo inject-memory');
+      // UserPromptSubmit: 1 user + 1 event-bridge
+      expect(hooks.UserPromptSubmit).toHaveLength(2);
+      expect(hooks.UserPromptSubmit[0].hooks[0].command).toBe('echo inject-memory');
     });
 
-    it('hook entries include name field (Qwen requirement, inherited from Gemini)', () => {
+    it('strips the Gemini-named entries an older build left, keeping the user\'s own under those names', () => {
+      const userEntry = { matcher: 'write_file', hooks: [{ name: 'security', type: 'command', command: 'echo user-check' }] };
+      const existing: Record<string, QwenHookEntry[]> = {};
+      for (const legacyName of LEGACY_GEMINI_EVENTS) {
+        existing[legacyName] = [legacyKangenticEntry('tool_start')];
+      }
+      existing.BeforeTool = [userEntry, legacyKangenticEntry('tool_start')];
+
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, existing);
+
+      // A key holding only a stale Kangentic entry is dropped outright.
+      for (const legacyName of LEGACY_GEMINI_EVENTS.filter((name) => name !== 'BeforeTool')) {
+        expect(hooks[legacyName]).toBeUndefined();
+      }
+      // The user's own entry survives, alone.
+      expect(hooks.BeforeTool).toEqual([userEntry]);
+      expect(Object.keys(hooks).sort()).toEqual([...QWEN_EVENTS, 'BeforeTool'].sort());
+    });
+
+    it('strips a stale entry under a current name, leaving exactly one Kangentic entry', () => {
+      const stale = buildHooks(EVENT_BRIDGE, '/fake/.kangentic/sessions/old/events.jsonl', {});
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, stale);
+
+      for (const hookEvent of QWEN_EVENTS) {
+        expect(hooks[hookEvent]).toHaveLength(1);
+        expect(hooks[hookEvent][0].hooks[0].command).toContain(EVENTS_PATH);
+      }
+    });
+
+    it('passes the hook system\'s config keys through untouched', () => {
+      const existing = {
+        enabled: true,
+        disabled: ['user-hook'],
+        notifications: { enabled: false },
+      } as unknown as Record<string, QwenHookEntry[]>;
+
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, existing) as unknown as Record<string, unknown>;
+
+      expect(hooks.enabled).toBe(true);
+      expect(hooks.disabled).toEqual(['user-hook']);
+      expect(hooks.notifications).toEqual({ enabled: false });
+    });
+
+    it('hook entries carry a kangentic- name (Qwen dedupes hooks by name)', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
 
       for (const entries of Object.values(hooks)) {
@@ -123,6 +216,29 @@ describe('qwen-hook-manager', () => {
   });
 
   describe('removeHooks', () => {
+    it('removes what the current build writes and what an older build left under Gemini names', () => {
+      const qwenDir = path.join(tmpDir, '.qwen');
+      fs.mkdirSync(qwenDir, { recursive: true });
+      const userEntry = { matcher: '*', hooks: [{ name: 'memory', type: 'command', command: 'echo inject-memory' }] };
+      const current = buildHooks(EVENT_BRIDGE, EVENTS_PATH, { UserPromptSubmit: [userEntry] });
+      const settings = {
+        theme: 'dark',
+        hooks: {
+          ...current,
+          AfterAgent: [legacyKangenticEntry('idle')],
+          BeforeModel: [legacyKangenticEntry('model_start')],
+          disabled: ['memory'],
+        },
+      };
+      fs.writeFileSync(path.join(qwenDir, 'settings.json'), JSON.stringify(settings, null, 2));
+
+      removeHooks(tmpDir);
+
+      const result = readSettings();
+      expect(result.theme).toBe('dark');
+      expect(result.hooks).toEqual({ UserPromptSubmit: [userEntry], disabled: ['memory'] });
+    });
+
     it('removes kangentic hooks, preserves user hooks', () => {
       const qwenDir = path.join(tmpDir, '.qwen');
       fs.mkdirSync(qwenDir, { recursive: true });

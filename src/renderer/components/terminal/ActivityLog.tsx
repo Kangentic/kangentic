@@ -433,6 +433,10 @@ export const EVENT_RENDERERS: Partial<Record<EventType, EventRenderer>> = {
   [EventType.ModelStart]: (common, event) => <BadgeLine {...common} badge="Model" detail={event.detail} />,
   [EventType.ModelEnd]: (common, event) => <DimDetailLine {...common} text="Model done" detail={event.detail} />,
   [EventType.ToolSelectionStart]: (common) => <DimLine {...common} text="Selecting tool..." />,
+  // The approval itself: its detail says where the task went ("Moved to Executing").
+  [EventType.PlanAutoApproved]: (common, event) => (
+    <BadgeLine {...common} badge="Plan approved automatically" detail={event.detail} />
+  ),
 };
 
 /** Exported for unit testing - see `tests/unit/activity-log-renderers.test.ts`. */

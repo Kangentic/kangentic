@@ -109,21 +109,26 @@ describe('CopilotCommandBuilder', () => {
   // ── Session ID / resume ──────────────────────────────────────────────────
 
   describe('session ID and resume', () => {
-    it('sessionId produces --resume <id>', () => {
+    // Copilot 1.0.97 exits on `--resume <id>` for an id it has not seen ("No
+    // session, task, or name matched"), so a new session needs `--session-id`,
+    // which starts a session with that id or resumes it (1.0.51+).
+    it('sessionId produces --session-id <id>, never --resume', () => {
       const command = buildCommand({ sessionId: 'abc-123-def' });
-      expect(command).toContain('--resume');
+      expect(command).toContain('--session-id');
       expect(command).toContain('abc-123-def');
+      expect(command).not.toContain('--resume');
     });
 
-    it('sessionId with resume: true still uses --resume', () => {
-      // Copilot uses --resume for both new and existing sessions
+    it('sessionId with resume: true also uses --session-id', () => {
       const command = buildCommand({ sessionId: 'abc-123-def', resume: true });
-      expect(command).toContain('--resume');
+      expect(command).toContain('--session-id');
       expect(command).toContain('abc-123-def');
+      expect(command).not.toContain('--resume');
     });
 
-    it('no sessionId produces no --resume flag', () => {
+    it('no sessionId produces no session flag', () => {
       const command = buildCommand();
+      expect(command).not.toContain('--session-id');
       expect(command).not.toContain('--resume');
     });
 
@@ -132,12 +137,11 @@ describe('CopilotCommandBuilder', () => {
         sessionId: 'abc-123',
         permissionMode: 'plan',
       });
-      const resumeIndex = command.indexOf('--resume');
+      const sessionIndex = command.indexOf('--session-id');
       const planIndex = command.indexOf('--plan');
-      expect(resumeIndex).toBeGreaterThan(-1);
+      expect(sessionIndex).toBeGreaterThan(-1);
       expect(planIndex).toBeGreaterThan(-1);
-      // --resume appears before --plan in the command
-      expect(resumeIndex).toBeLessThan(planIndex);
+      expect(sessionIndex).toBeLessThan(planIndex);
     });
   });
 
@@ -168,7 +172,8 @@ describe('CopilotCommandBuilder', () => {
     it('resume with prompt omits -i (resumed sessions do not re-deliver prompt)', () => {
       // When resume: true, prompt is NOT sent as -i (resuming an existing session)
       const command = buildCommand({ resume: true, sessionId: 'abc-123', prompt: 'Fix the bug' });
-      expect(command).not.toContain('-i');
+      // A token check: `--session-id` contains the characters "-i".
+      expect(command.split(' ')).not.toContain('-i');
       expect(command).not.toContain('Fix the bug');
     });
 

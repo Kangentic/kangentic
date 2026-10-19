@@ -308,6 +308,11 @@ export class ClaudeAdapter implements AgentAdapter {
   // built-in set, honoured in an interactive session; unlike plan mode it does
   // not reroute the model.
   readonly supportsReadOnlyLaunch = true;
+  // A PermissionRequest hook matched to ExitPlanMode answers the plan prompt
+  // alone (hook-manager.ts, CLAUDE_PLAN_APPROVAL_SPEC), and PostToolUse fires
+  // for ExitPlanMode only once a plan is approved. Probed on 2.1.302: the
+  // approver never ran for AskUserQuestion, whose dialog still showed.
+  readonly supportsPlanAutoApproval = true;
   // `--add-dir` per directory (command-builder.ts): the CLI's own way to widen
   // what a session may read and search without a prompt.
   readonly supportsReadableDirectories = true;

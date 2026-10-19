@@ -545,6 +545,11 @@ test.describe('BoardManagerDialog extended', () => {
     const main = dialog.locator('[data-testid="column-session-target-main"]');
     const isolated = dialog.locator('[data-testid="column-session-target-isolated"]');
     await expect(main).toHaveAttribute('aria-checked', 'true');
+    // One line on the row, the full explanation behind the info icon, and a tip per option.
+    await expect(dialog.getByText("Main continues the task's conversation, and Isolated starts clean on every entry.")).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'About Session' })).toHaveAccessibleDescription(/unless you give this one its own/);
+    await expect(main).toHaveAccessibleDescription("Share the task's conversation with the other columns.");
+    await expect(isolated).toHaveAccessibleDescription('Start a clean conversation on every entry.');
 
     await isolated.click();
     await expect(isolated).toHaveAttribute('aria-checked', 'true');
@@ -725,7 +730,7 @@ test.describe('BoardManagerDialog extended', () => {
       const permissionInput = dialog.locator('input[data-testid="column-permission-mode"]');
       await permissionInput.click();
       await page.locator('[data-testid="column-permission-mode-option-default"]').click();
-      await expect(permissionInput).toHaveValue('Automatically Edit, Ask for Untrusted');
+      await expect(permissionInput).toHaveValue('Automatically Edit, Ask When Needed');
 
       await dialog.locator('[data-testid="board-manager-tab-all"]').click();
       const cells = dialog.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' }).locator('td');
@@ -738,7 +743,7 @@ test.describe('BoardManagerDialog extended', () => {
       await expect(effort).toHaveText('Default');
       await expect(effort).toHaveAccessibleDescription('Default');
       const permission = cells.nth(5).locator('[data-state="changed"]');
-      await expect(permission).toHaveAccessibleDescription('Automatically Edit, Ask for Untrusted');
+      await expect(permission).toHaveAccessibleDescription('Automatically Edit, Ask When Needed');
       const label = await permission.locator('span').evaluate((element) => ({
         textOverflow: getComputedStyle(element).textOverflow,
         clipped: element.scrollWidth > element.clientWidth,
@@ -789,13 +794,13 @@ test.describe('BoardManagerDialog extended', () => {
       const permissionInput = dialog.locator('input[data-testid="column-permission-mode"]');
       await permissionInput.click();
       await page.locator('[data-testid="column-permission-mode-option-default"]').click();
-      await expect(permissionInput).toHaveValue('Automatically Edit, Ask for Untrusted');
+      await expect(permissionInput).toHaveValue('Automatically Edit, Ask When Needed');
 
       await dialog.locator('[data-testid="board-manager-tab-all"]').click();
       const cells = dialog.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' }).locator('td');
       // Column order: name, Start, Agent, Model, Effort, Permissions.
       const permission = cells.nth(5).locator('[data-state="changed"]');
-      await expect(permission).toHaveText('Automatically Edit, Ask for Untrusted');
+      await expect(permission).toHaveText('Automatically Edit, Ask When Needed');
 
       await closeManager();
     } finally {

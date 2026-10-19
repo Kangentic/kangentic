@@ -417,6 +417,8 @@ export class SessionManager extends EventEmitter {
   private dataTapRefs = new Map<string, number>();
   /** Where an in-process host writes transcripts (unit tests). */
   private transcriptSinkFor: ((projectId: string) => TranscriptSink | null) | null = null;
+  /** Whether a session's plan approval decision approves its next plan (`setPlanApprovalLookup`). */
+  private planApprovalLookup: ((sessionId: string) => boolean) | null = null;
   /**
    * Sessions currently visible in the renderer (terminal panel + command bar overlay).
    * Only these sessions' PTY data is emitted via IPC - background sessions
@@ -761,6 +763,7 @@ export class SessionManager extends EventEmitter {
       },
       isAgentAbsenceCandidate: (sessionId) => this.isAgentAbsenceCandidate(sessionId),
       retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
+      approvesPlanAutomatically: (sessionId) => this.planApprovalLookup?.(sessionId) ?? false,
     }, {
       activityEngineOptions: this.activityEngineOptions,
       // The background-shell watcher's process table comes from the pty host
@@ -1111,6 +1114,16 @@ export class SessionManager extends EventEmitter {
     // main (sending them to another process measured at 13 times main's
     // major-GC time).
     this.transcriptSinkFor = sinkFor;
+  }
+
+  /**
+   * Tell the activity pipeline which sessions Kangentic approves plans for
+   * (`PlanApprovalWriter.approves`), so the plan approval gate can hold a plan
+   * prompt's permission idle until the approver's marker drops it. Unset, no
+   * idle is ever held.
+   */
+  setPlanApprovalLookup(lookup: (sessionId: string) => boolean): void {
+    this.planApprovalLookup = lookup;
   }
 
   dispose(): void {

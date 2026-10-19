@@ -12,6 +12,7 @@ import { getProjectDb } from '../../db/database';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { syncProjectMcpConfig } from './projects';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
+import { refreshPlanApprovals } from '../../plan-approval/plan-approval-writer';
 import { listAgents, invalidateAgentListCache, nameLearnedModels } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
 import { tryAcquireSummarizeSlot } from '../../agent/shared/summarize-rate-limit';
@@ -158,6 +159,9 @@ export function registerSystemHandlers(context: IpcContext): void {
     // Invalidate cached detection for all agents so the next detect() call picks up new cliPaths,
     // and drop the cached agents.list() result so it rebuilds against the new config.
     if (config.agent) {
+      // The global permission mode is what an approved plan continues in when
+      // its task stays in plan mode.
+      refreshPlanApprovals();
       invalidateAgentListCache();
       import('../../agent/agent-registry').then(({ agentRegistry }) => {
         for (const agentName of agentRegistry.list()) {

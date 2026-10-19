@@ -48,6 +48,10 @@
  *   setTypeWhen                { whenTool?, nested?:[p,f], field?, equals, to }
  *                                 -> if (no whenTool or ctx.tool_name===whenTool) AND
  *                                    String(addressed field's value) === equals, event.type = to
+ *   setToolWhen                { whenTool, toolField?, nested:[p,f], startsWith, to }
+ *                                 -> if ctx[toolField || 'tool_name']===whenTool AND the addressed
+ *                                    string field starts with `startsWith`,
+ *                                    event.tool = to
  *   setTypeWhenDetailContains  { contains, to }     -> if event.detail (already
  *                                 extracted) contains `contains` (case-insensitive),
  *                                 event.type = to. Must be listed AFTER an extractDetail.
@@ -274,6 +278,20 @@ process.stdin.on('end', () => {
         const field = payload.nested ? payload.nested[1] : payload.field;
         if (container && typeof container === 'object' && String(container[field]) === payload.equals) {
           event.type = payload.to;
+        }
+        break;
+      }
+      case 'setToolWhen': {
+        // One outcome of a tool renamed to the tool Kangentic reacts to, told
+        // apart by how a nested string starts (Gemini's exit_plan_mode reports
+        // an approved and a rejected plan alike; only its response text differs).
+        if (!ctx || !Array.isArray(payload.nested)) break;
+        const toolField = typeof payload.toolField === 'string' ? payload.toolField : 'tool_name';
+        if (ctx[toolField] !== payload.whenTool) break;
+        const container = ctx[payload.nested[0]];
+        const value = container && typeof container === 'object' ? container[payload.nested[1]] : undefined;
+        if (typeof value === 'string' && typeof payload.startsWith === 'string' && value.startsWith(payload.startsWith)) {
+          event.tool = payload.to;
         }
         break;
       }

@@ -21,19 +21,21 @@ import { ActivityDetection } from '../../../../shared/types';
  * AgentAdapter interface.
  *
  * Qwen Code (https://github.com/QwenLM/qwen-code) is a soft fork of
- * Google's gemini-cli, so this adapter mirrors GeminiAdapter almost
- * verbatim. The deltas are: binary name (`qwen`), config directory
- * (`.qwen/`), and the `auto-edit` approval-mode flag (vs Gemini's
- * `auto_edit`). Hook event schema, session JSON layout, and TUI
- * behavior are inherited unchanged.
+ * Google's gemini-cli, so this adapter mirrors GeminiAdapter in shape: the
+ * binary name (`qwen`), config directory (`.qwen/`), and the `auto-edit`
+ * approval-mode flag (vs Gemini's `auto_edit`) differ. The hook system does
+ * not carry over: Qwen's hook events use Claude Code's names and payloads
+ * (see hook-manager.ts).
  */
 export class QwenAdapter implements AgentAdapter {
   readonly name = 'qwen';
   readonly displayName = 'Qwen Code';
   readonly sessionType = 'qwen_agent';
   readonly supportsCallerSessionId = true;
-  // The literal URL goes into the folder's `.qwen/settings.json`.
-  readonly kangenticMcp = 'shared-folder' as const;
+  // `--mcp-config` naming the session's own `mcp.json` (command-builder.ts,
+  // `mcpDelivery`). Only a Qwen before 0.16, which has no such flag, still gets
+  // the URL in the folder's `.qwen/settings.json`.
+  readonly kangenticMcp = 'per-session' as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -81,10 +83,11 @@ export class QwenAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, model, effort, ...rest } = options;
-    const qwenOptions = { qwenPath: agentPath, model, effort, ...rest };
+    const qwenOptions = { qwenPath: agentPath, model, effort, cliVersion: this.detector.getCachedVersion(), ...rest };
     const command = this.commandBuilder.buildQwenCommand(qwenOptions);
     // Every spawn that writes the folder-shared .qwen/settings.json (an
-    // events pipeline or MCP wiring) holds it until its session releases.
+    // events pipeline, or MCP wiring on a Qwen without --mcp-config) holds it
+    // until its session releases.
     if (this.commandBuilder.shouldWriteMergedSettings(qwenOptions)) {
       this.hookHolds.retain(options.ptySessionId, options.cwd);
     }
@@ -98,9 +101,9 @@ export class QwenAdapter implements AgentAdapter {
   /**
    * Runtime strategy: how Qwen Code exposes activity state and session IDs.
    *
-   * - Activity: hook-based primary (Qwen inherits Gemini's hook schema
-   *   including activity events), with PTY silence-timer fallback if
-   *   hooks fail at runtime. The sessionHistory hook provides the
+   * - Activity: hook-based primary (Qwen's Claude-named hook events:
+   *   PreToolUse, PostToolUse, Stop, PermissionRequest, ...), with PTY
+   *   silence-timer fallback if hooks fail at runtime. The sessionHistory hook provides the
    *   authoritative model + tokens stream from Qwen's native chat file.
    * - Session ID: caller-owned via `--session-id <uuid>` (Qwen 0.15.3+
    *   accepts a UUID as caller-owned, mutex with --continue / --resume).
@@ -193,8 +196,8 @@ export class QwenAdapter implements AgentAdapter {
       // command-injection-verifier.ts for the numbers.
       return createQwenCommandInjectionVerifier();
     }
-    // 'paste': Qwen Code inherits Gemini's hook schema (BeforeAgent →
-    // EventType.Prompt), but coordinating hook-based paste confirmation with
+    // 'paste': Qwen Code's UserPromptSubmit hook reports EventType.Prompt,
+    // but coordinating hook-based paste confirmation with
     // JSONL parsing is complex; the paste engine's activity and data-floor
     // backstops cover it.
     return null;

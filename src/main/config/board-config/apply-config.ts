@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { SwimlaneRepository, deleteSwimlaneRowWithReferences } from '../../db/repositories/swimlane-repository';
 import { ActionRepository } from '../../db/repositories/action-repository';
 import { getProjectDb } from '../../db/database';
-import type { BoardConfig, SwimlaneRole } from '../../../shared/types';
+import type { BoardConfig, PlanApproval, SwimlaneRole } from '../../../shared/types';
 import { normalizeSwimlaneRole } from '../../../shared/types';
 import { CURRENT_VERSION, validateBoardConfig } from './config-helpers';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
@@ -141,6 +141,11 @@ export function applyBoardConfigToDb(
 
       const isTodo = columnConfig.role === 'todo';
       const isDone = columnConfig.role === 'done';
+      // Not `?? existing` like its siblings: build omits the default, so a
+      // teammate turning Automatic off removes the key, and keeping the old
+      // value would leave plans approving on every other machine. An absent
+      // key is Manual.
+      const planApproval: PlanApproval = (isTodo || isDone) ? 'manual' : (columnConfig.planApproval === 'automatic' ? 'automatic' : 'manual');
 
       if (existing) {
         swimlaneRepo.update({
@@ -171,6 +176,7 @@ export function applyBoardConfigToDb(
           handoff_context: columnConfig.handoffContext ?? existing.handoff_context,
           session_target: (isTodo || isDone) ? 'main' : (columnConfig.sessionTarget ?? existing.session_target),
           session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? existing.session_spawn_strategy),
+          plan_approval: planApproval,
         });
       } else {
         swimlaneRepo.create({
@@ -192,6 +198,7 @@ export function applyBoardConfigToDb(
           handoff_context: columnConfig.handoffContext ?? false,
           session_target: (isTodo || isDone) ? 'main' : (columnConfig.sessionTarget ?? 'main'),
           session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? 'create_or_resume'),
+          plan_approval: planApproval,
           position: index,
         });
       }

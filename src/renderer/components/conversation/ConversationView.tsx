@@ -30,7 +30,7 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check, Archive } from 'lucide-react';
+import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check, Archive, FileText } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { HeaderActionButton } from '../HeaderActionButton';
@@ -40,7 +40,7 @@ import { ConversationScrollbar, CONTENT_RIGHT_CLEARANCE_PX, ROW_LEFT_INSET_PX } 
 import { reconcileDisplayRows, isSlashCommandRow, speakerGroup, type DisplayRow, type DisplayRowResult } from './display-rows';
 import { FAR_FROM_BOTTOM_PX, isScrolledToBottom } from './scrollbar-math';
 import { ESTIMATED_ROW_HEIGHT, computeSettleScrollTop, type SettleVirtualItem } from './settle-scroll';
-import { renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
+import { planApprovalLabel, presentedPlan, renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 import { humanizeModelId } from '../../../shared/model-id';
 import { parseFileEditTool, computeLineDiff, diffStats, type FileEdit } from '../../../shared/tool-diff';
@@ -871,13 +871,29 @@ function AssistantRow({ model, blocks, uuid, agentName, ts, resultsByUseId, expa
               />
             );
           }
+          // A presented plan reads as the plan, not as its tool's JSON. Open by
+          // default, so its key records a collapse rather than an expand.
+          const toolResult = resultsByUseId.get(block.id) ?? null;
+          const plan = presentedPlan(block.input, toolResult);
+          if (plan) {
+            const collapseKey = `${block.id}:collapsed`;
+            return (
+              <PlanCard
+                key={`plan-${block.id}`}
+                plan={plan.plan}
+                result={toolResult}
+                expanded={!expandedKeys.has(collapseKey)}
+                onToggle={() => toggleExpanded(collapseKey)}
+              />
+            );
+          }
           // tool_use
           return (
             <ToolCallCard
               key={`tool-${block.id}`}
               name={block.name}
               input={block.input}
-              result={resultsByUseId.get(block.id) ?? null}
+              result={toolResult}
               expanded={expandedKeys.has(block.id)}
               onToggle={() => toggleExpanded(block.id)}
             />
@@ -904,6 +920,45 @@ function ThinkingBlock({ text, expanded, onToggle }: { text: string; expanded: b
       {expanded && (
         <div className="mt-1 text-xs text-fg-muted whitespace-pre-wrap font-mono">
           {sanitizeTranscriptText(text).trim()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A plan the agent presented, rendered as markdown and tagged with who approved
+ * it (the transcript's own record, `DisplayRowResult.approval`). No tag while the
+ * plan waits, or where the transcript does not say.
+ */
+function PlanCard({ plan, result, expanded, onToggle }: {
+  plan: string;
+  result: DisplayRowResult | null;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="rounded border border-edge/60 bg-surface-hover/30" data-testid="conversation-plan-card">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs"
+        data-testid="conversation-plan-toggle"
+      >
+        {expanded ? <ChevronDown size={13} className="flex-shrink-0 text-fg-muted" /> : <ChevronRight size={13} className="flex-shrink-0 text-fg-muted" />}
+        <FileText size={13} className="flex-shrink-0 text-fg-muted" />
+        <span className="text-[13px] font-semibold text-fg">Plan</span>
+        {result?.approval && (
+          <span className="rounded-full bg-surface-raised px-1.5 py-0.5 text-[11px] font-medium text-fg-secondary" data-testid="conversation-plan-approval">
+            {planApprovalLabel(result.approval)}
+          </span>
+        )}
+        {result?.ts !== undefined && <span className="ml-auto flex-shrink-0 text-fg-muted">{formatTime(result.ts)}</span>}
+      </button>
+      {expanded && (
+        <div className="pb-2.5 pl-[30px] pr-3.5 text-sm text-fg-secondary" data-testid="conversation-plan-body">
+          <MarkdownRenderer content={sanitizeTranscriptText(plan)} />
         </div>
       )}
     </div>

@@ -74,6 +74,25 @@ export function parseFileEditTool(input: unknown): FileEdit | null {
   return null;
 }
 
+/** A plan the agent presented for approval, as its plan exit tool's input carries it. */
+export interface PlanTool {
+  /** The plan, as markdown. */
+  plan: string;
+}
+
+/**
+ * Interpret a tool_use `input` as a presented plan, or return null. SHAPE-based
+ * like `parseFileEditTool`, so the viewer never names an agent's tool: Claude's
+ * ExitPlanMode carries `{ plan, planFilePath? }`, and any tool whose input is a
+ * non-empty `plan` string with no file edit in it reads the same way.
+ */
+export function parsePlanTool(input: unknown): PlanTool | null {
+  const record = asRecord(input);
+  if (!record || typeof record.plan !== 'string' || record.plan.trim() === '') return null;
+  if (parseFileEditTool(input)) return null;
+  return { plan: record.plan };
+}
+
 /**
  * Line-level diff of two text blocks via a longest-common-subsequence walk.
  * Old-only lines are `remove`, new-only lines are `add`, shared lines are

@@ -80,8 +80,8 @@ describe('CopilotAdapter - identity', () => {
   });
 
   it('supportsCallerSessionId is true', () => {
-    // Copilot --resume <uuid> creates new sessions with a given UUID,
-    // same semantics as Claude --session-id.
+    // Copilot --session-id <uuid> creates a new session with a given UUID or
+    // resumes it, the same semantics as Claude --session-id.
     expect(adapter.supportsCallerSessionId).toBe(true);
   });
 

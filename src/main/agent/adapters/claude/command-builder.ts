@@ -6,8 +6,9 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { toClaudeModelArgument } from './model-display-name';
 import { peekModelPickerAliasIds } from './model-picker-probe';
-import { buildHooks } from './hook-manager';
+import { buildHooks, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
+import { buildPlanApprovalCommand, planApprovalDecisionPath } from '../../shared/plan-approval-hook';
 import type { CommandOptions } from '../../agent-adapter';
 
 /**
@@ -168,6 +169,11 @@ export class CommandBuilder {
         break;
       case 'default':
         break;
+    }
+    // Bypass available, not on: a plan hook's setMode reaches bypassPermissions
+    // only in a session launched like this (probed on 2.1.302).
+    if (options.bypassAvailable && options.permissionMode !== 'bypassPermissions') {
+      parts.push('--allow-dangerously-skip-permissions');
     }
 
     // --settings flag: all sessions (main repo and worktree) use a merged
@@ -354,8 +360,19 @@ export class CommandBuilder {
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
     if (eventsPath) {
       const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
+      // Registered on every spawn, whatever the column says: the decision file
+      // in the session's own directory decides at run time, so a column switched
+      // to Automatic while this session plans is honored with no hook reload.
+      // Without a decision file it answers nothing and the dialog shows.
+      const planApprovalCommand = buildPlanApprovalCommand(
+        toForwardSlash(resolveBridgeScript('plan-approval-bridge')),
+        toForwardSlash(planApprovalDecisionPath(path.dirname(options.statusOutputPath!))),
+        eventsPath,
+        CLAUDE_PLAN_APPROVAL_SPEC,
+      );
       merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {}, {
         capturePromptText: options.capturePromptText === true,
+        planApprovalCommand,
       });
     }
 

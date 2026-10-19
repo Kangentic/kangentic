@@ -111,6 +111,7 @@ asarUnpack:
   - ".vite/build/pty-host.js"
   - ".vite/build/event-bridge.js"
   - ".vite/build/status-bridge.js"
+  - ".vite/build/plan-approval-bridge.js"
   - ".vite/build/plugins/**"
 
 extraResources:

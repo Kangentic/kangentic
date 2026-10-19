@@ -113,6 +113,36 @@ describe('the Workflows view operations', () => {
     expect(detail.tasks[1].planned?.labels).toEqual(['ui']);
   });
 
+  it('derives plan approval from the plan columns on its routes until picked, across boards', () => {
+    // The seeded boards plan in Planning, Manual by default.
+    const workflow = service.createWorkflow('home', {});
+    view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
+    view.addViewTask(context, 'home', workflow.id, { title: 'Budgets on the phone', projectId: 'mobile' });
+    const approvalOf = () => view.readWorkflowDetail(context, 'home', workflow.id).planApproval;
+    expect(approvalOf()).toEqual({ value: 'manual', picked: false, canApprove: true });
+
+    // One board's Planning on Automatic: the other still waits, so the workflow is Manual.
+    new SwimlaneRepository(homeDb()).update({ id: laneId('home', 'Planning'), plan_approval: 'automatic' });
+    expect(approvalOf()).toEqual({ value: 'manual', picked: false, canApprove: true });
+
+    // Both: Automatic.
+    new SwimlaneRepository(harness.dbs.get('mobile') as Database.Database).update({ id: laneId('mobile', 'Planning'), plan_approval: 'automatic' });
+    expect(approvalOf()).toEqual({ value: 'automatic', picked: false, canApprove: true });
+
+    // A plan column on an agent that cannot approve plans makes it Manual again.
+    new SwimlaneRepository(homeDb()).update({ id: laneId('home', 'Planning'), agent_override: 'codex' });
+    expect(approvalOf()).toEqual({ value: 'manual', picked: false, canApprove: true });
+
+    // A pick holds.
+    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'automatic');
+    expect(approvalOf()).toEqual({ value: 'automatic', picked: true, canApprove: true });
+
+    // With no plan column whose agent can approve, a picked Automatic approves
+    // nothing, so it reads Manual and is not offered.
+    new SwimlaneRepository(harness.dbs.get('mobile') as Database.Database).update({ id: laneId('mobile', 'Planning'), agent_override: 'codex' });
+    expect(approvalOf()).toEqual({ value: 'manual', picked: true, canApprove: false });
+  });
+
   it('sets a route from the switched-on columns, open at the ends, and refuses an empty one', () => {
     const workflow = service.createWorkflow('home', {});
     const key = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });

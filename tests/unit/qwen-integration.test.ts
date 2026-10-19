@@ -300,7 +300,7 @@ describe('Qwen Code - integration harness', () => {
   });
 
   describe('Layer 4: hook injection writes .qwen/settings.json', () => {
-    it('buildCommand with eventsOutputPath creates .qwen/settings.json with 11 hook events', () => {
+    it('buildCommand with eventsOutputPath creates .qwen/settings.json with the 11 hook events Qwen loads', () => {
       const adapter = new QwenAdapter();
       const eventsPath = path.join(sandbox, 'events.jsonl');
       adapter.buildCommand({
@@ -318,21 +318,22 @@ describe('Qwen Code - integration harness', () => {
         hooks: Record<string, Array<{ matcher: string; hooks: Array<{ name: string }> }>>;
       };
       const hookEventKeys = Object.keys(settings.hooks).sort();
+      // Qwen's own HookEventName (Claude Code's names); it skips any other key.
       expect(hookEventKeys).toEqual([
-        'AfterAgent',
-        'AfterModel',
-        'AfterTool',
-        'BeforeAgent',
-        'BeforeModel',
-        'BeforeTool',
-        'BeforeToolSelection',
         'Notification',
-        'PreCompress',
+        'PermissionRequest',
+        'PostToolUse',
+        'PostToolUseFailure',
+        'PreCompact',
+        'PreToolUse',
         'SessionEnd',
         'SessionStart',
+        'Stop',
+        'StopFailure',
+        'UserPromptSubmit',
       ]);
-      // Every entry must carry a kangentic- prefixed name (Qwen requires
-      // named hooks; unnamed entries get rejected at parse time).
+      // Every entry carries a kangentic- prefixed name, which Qwen uses as
+      // the hook's identity when it dedupes entries.
       for (const entries of Object.values(settings.hooks)) {
         for (const entry of entries) {
           for (const hook of entry.hooks) {
@@ -585,7 +586,7 @@ describe('Qwen Code - integration harness', () => {
       };
       const initial = {
         theme: 'dark',
-        hooks: { BeforeTool: [userHook] },
+        hooks: { PreToolUse: [userHook] },
       };
       fs.writeFileSync(settingsPath, JSON.stringify(initial, null, 2));
 
@@ -599,14 +600,14 @@ describe('Qwen Code - integration harness', () => {
       const writtenSettings = { ...initial, hooks: merged };
       fs.writeFileSync(settingsPath, JSON.stringify(writtenSettings, null, 2));
 
-      // Both kinds must coexist in BeforeTool.
+      // Both kinds must coexist in PreToolUse.
       const afterInject = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
         hooks: Record<string, Array<{ matcher: string; hooks: Array<{ name: string }> }>>;
       };
-      const beforeToolEntries = afterInject.hooks.BeforeTool;
-      expect(beforeToolEntries).toHaveLength(2);
-      expect(beforeToolEntries[0].matcher).toBe('write_file');
-      expect(beforeToolEntries[1].matcher).toBe('*');
+      const preToolUseEntries = afterInject.hooks.PreToolUse;
+      expect(preToolUseEntries).toHaveLength(2);
+      expect(preToolUseEntries[0].matcher).toBe('write_file');
+      expect(preToolUseEntries[1].matcher).toBe('*');
 
       // Strip Kangentic entries, user hook survives, theme survives.
       removeHooks(sandbox);
@@ -615,8 +616,8 @@ describe('Qwen Code - integration harness', () => {
         hooks: Record<string, Array<{ matcher: string }>>;
       };
       expect(afterCleanup.theme).toBe('dark');
-      expect(afterCleanup.hooks.BeforeTool).toHaveLength(1);
-      expect(afterCleanup.hooks.BeforeTool[0].matcher).toBe('write_file');
+      expect(afterCleanup.hooks.PreToolUse).toHaveLength(1);
+      expect(afterCleanup.hooks.PreToolUse[0].matcher).toBe('write_file');
     });
   });
 });

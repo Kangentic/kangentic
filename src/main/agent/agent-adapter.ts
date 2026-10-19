@@ -226,6 +226,14 @@ export interface CommandOptions {
    */
   ptySessionId?: string;
   /**
+   * Launch with the bypass permission mode available but not on, so a plan
+   * Kangentic approves can continue in it. Set only for a plan-mode spawn whose
+   * approved plan continues in bypassPermissions (`planApprovalModeForSpawn`):
+   * an approval's mode switch cannot reach bypass otherwise. Adapters without
+   * such a launch option ignore it.
+   */
+  bypassAvailable?: boolean;
+  /**
    * Launch with no tool that edits a file or runs a shell command, and with
    * Kangentic's MCP server as the only one. Set only for a workflow's own agent,
    * and only on an adapter that declares `supportsReadOnlyLaunch`.
@@ -472,6 +480,21 @@ export interface AgentAdapter {
    * outrank them.
    */
   readonly supportsReadOnlyLaunch?: boolean;
+
+  /**
+   * True when every command this adapter builds registers Kangentic's plan
+   * approval hook (`plan-approval-bridge.js`, through `buildPlanApprovalCommand`
+   * in `shared/plan-approval-hook.ts`) on the CLI's plan approval prompt, and on
+   * nothing else. The hook reads the session's decision file, so a plan column
+   * set to Automatic approves its plans; a question the agent asks the user
+   * always waits. Absent: the Column Manager disables Automatic for this agent
+   * and its plans always wait for the user.
+   *
+   * Declare it only when the CLI's hook can answer the plan prompt alone, with
+   * the plan exit's own completion (`AgentTool.ExitPlanMode` on a ToolEnd)
+   * reported only for an approved plan, measured against the real CLI.
+   */
+  readonly supportsPlanAutoApproval?: boolean;
 
   /**
    * How `buildCommand` (or `buildEnv`, or a config file it writes before spawn)

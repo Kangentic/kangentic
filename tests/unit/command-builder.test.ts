@@ -1799,6 +1799,44 @@ describe('Merged Settings -- Local Settings Merge', () => {
     expect(cmd).toContain('--resume');
   });
 
+  it('launches a plan session with bypass available, not on, only when asked', () => {
+    const builder = new CommandBuilder();
+    const base = { cliPath: '/usr/bin/claude', taskId: 'bypass-task', cwd: tmpDir, sessionId: 'bypass-sess' };
+    expect(builder.buildClaudeCommand({ ...base, permissionMode: 'plan', bypassAvailable: true }))
+      .toContain('--allow-dangerously-skip-permissions');
+    expect(builder.buildClaudeCommand({ ...base, permissionMode: 'plan' }))
+      .not.toContain('--allow-dangerously-skip-permissions');
+    // A session already in bypass needs nothing more.
+    expect(builder.buildClaudeCommand({ ...base, permissionMode: 'bypassPermissions', bypassAvailable: true }))
+      .not.toContain('--allow-dangerously-skip-permissions');
+  });
+
+  it('registers the plan approval hook on ExitPlanMode alone, reading this session\'s decision file', () => {
+    // Registered on every spawn, whatever the column says: the decision file
+    // decides at run time, so it must name THIS session's directory.
+    const sessionDir = path.join(tmpDir, '.kangentic', 'sessions', 'plan-sess');
+    const builder = new CommandBuilder();
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'plan-task',
+      cwd: tmpDir,
+      permissionMode: 'plan',
+      sessionId: 'agent-plan-sess',
+      statusOutputPath: path.join(sessionDir, 'status.json'),
+      eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
+    });
+
+    const merged = JSON.parse(fs.readFileSync(path.join(sessionDir, 'settings.json'), 'utf-8')) as {
+      hooks: Record<string, Array<{ matcher: string; hooks: Array<{ command: string }> }>>;
+    };
+    const approvers = merged.hooks.PermissionRequest.filter((entry) => entry.hooks.some((hook) => hook.command.includes('plan-approval-bridge')));
+    expect(approvers).toHaveLength(1);
+    expect(approvers[0].matcher).toBe('ExitPlanMode');
+    const command = approvers[0].hooks[0].command;
+    expect(command).toContain(path.join(sessionDir, 'plan-approval.json').replace(/\\/g, '/'));
+    expect(command).toContain(path.join(sessionDir, 'events.jsonl').replace(/\\/g, '/'));
+  });
+
   // A Command Terminal names itself from its first prompt, which reaches the
   // namer as the Prompt event's `detail`. Only `capturePromptText` makes the
   // merged settings' UserPromptSubmit hook carry the extractDetail(['prompt'])

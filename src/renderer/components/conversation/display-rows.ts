@@ -23,13 +23,18 @@
  * or changed row gets a new object.
  */
 
-import type { TranscriptEntry } from '../../../shared/types';
+import type { TranscriptEntry, TranscriptToolApproval } from '../../../shared/types';
 import { buildResultsByUseId } from '../../../shared/transcript-format';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 
 export interface DisplayRowResult {
   content: string;
   isError: boolean;
+  /** Who approved the call (a plan's tag); absent when the transcript does not say. */
+  approval?: TranscriptToolApproval;
+  ts?: number;
+  /** The plan an approved plan exit returned, where its input carried none. */
+  plan?: string;
 }
 
 /** A span of `searchText` that came from a specific renderable part of the
@@ -216,7 +221,7 @@ function computeSignature(entry: TranscriptEntry, results: Map<string, DisplayRo
           const result = results.get(block.id);
           parts.push(
             `tool:${block.id}:${block.name}:${summarizeToolInputForSearch(block.input).length}`
-            + (result ? `:${result.content.length}:${result.isError ? '1' : '0'}` : ':none'),
+            + (result ? `:${result.content.length}:${result.isError ? '1' : '0'}:${result.approval ?? ''}` : ':none'),
           );
         } else {
           parts.push(`${block.type}:${block.text.length}`);

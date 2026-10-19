@@ -32,6 +32,7 @@ import { isHumanGate } from './workflow-lock-check';
 import { isInWorkflow } from './workflow-home';
 import { workflowAgentSummary } from './workflow-agent';
 import { linkEndState, readWorkflowTasks } from './workflow-tasks';
+import { readWorkflowPlanApproval } from '../plan-approval/workflow-plan-approval';
 import {
   MAX_WORKFLOW_TASKS,
   WorkflowRequestError,
@@ -119,7 +120,10 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
       };
     });
     const links = draft.links.map((link): WorkflowViewLink => ({ blockerKey: link.blocker, blockedKey: link.blocked }));
-    return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
+    return {
+      workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends,
+      planApproval: readWorkflowPlanApproval(context, homeProjectId, workflow),
+    };
   }
 
   const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflowId);
@@ -159,7 +163,10 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
   const links = linkRows
     .filter((link) => present.has(link.blocker_task_id) && present.has(link.blocked_task_id))
     .map((link): WorkflowViewLink => ({ blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }));
-  return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
+  return {
+    workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends,
+    planApproval: readWorkflowPlanApproval(context, homeProjectId, workflow),
+  };
 }
 
 /**

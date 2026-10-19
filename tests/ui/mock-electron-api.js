@@ -23,6 +23,11 @@
   // function; `__mockBoardProfiles` below is the module-scope exception, and it
   // works only because a Playwright spec sets it via addInitScript.
   let automations = [];
+  // The agents whose plans Kangentic can approve (their adapters declare
+  // `supportsPlanAutoApproval`). One list for both readers: agents.list() stamps
+  // it on each entry, and the workflow detail derives a workflow's value from it.
+  // tests/unit/mock-agent-list-parity.test.ts pins it against the adapters.
+  const PLAN_APPROVING_AGENTS = ['claude'];
   // KEEP IN SYNC with AUTOMATION_TRIGGERS in src/shared/automation-manifest.ts:
   // the three groups, in the order a task meets them.
   const AUTOMATION_TRIGGER_ORDER = ['enter', 'turn_end', 'exit'];
@@ -668,13 +673,13 @@
   // Mirrors the production seed in src/main/db/migrations/default-data.ts;
   // tests/unit/default-swimlanes-seed-parity.test.ts binds the two lists.
   var DEFAULT_SWIMLANES = [
-    { name: 'To Do', description: null, role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Planning', description: null, role: null, color: '#8b5cf6', icon: 'map', is_archived: false, is_ghost: false, permission_mode: 'plan', auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: '__executing__', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Executing', description: null, role: null, color: '#3b82f6', icon: 'square-terminal', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Code Review', description: null, role: null, color: '#f59e0b', icon: 'code', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Testing', description: null, role: null, color: '#06b6d4', icon: 'flask-conical', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Merge', description: null, role: null, color: '#f97316', icon: 'merge', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Done', description: null, role: 'done', color: '#10b981', icon: 'circle-check-big', is_archived: true, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'To Do', description: null, role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'Planning', description: null, role: null, color: '#8b5cf6', icon: 'map', is_archived: false, is_ghost: false, permission_mode: 'plan', auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: '__executing__', plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'Executing', description: null, role: null, color: '#3b82f6', icon: 'square-terminal', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'Code Review', description: null, role: null, color: '#f59e0b', icon: 'code', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'Testing', description: null, role: null, color: '#06b6d4', icon: 'flask-conical', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'Merge', description: null, role: null, color: '#f97316', icon: 'merge', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'Done', description: null, role: 'done', color: '#10b981', icon: 'circle-check-big', is_archived: true, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
   ];
 
   var MOCK_PROJECT_ENTRIES = [
@@ -2161,6 +2166,7 @@
           auto_command: input.auto_command || null,
           auto_command_mode: input.auto_command_mode || 'immediate',
           plan_exit_target_id: input.plan_exit_target_id || null,
+          plan_approval: input.plan_approval === 'automatic' ? 'automatic' : 'manual',
           agent_override: input.agent_override || null,
           model_override: input.model_override || null,
           effort_override: input.effort_override || null,
@@ -3529,6 +3535,7 @@
             // id Kangentic chose, so it can be the Workflow agent.
             kangenticMcp: 'per-session',
             supportsWorkflowAgent: true,
+            // supportsPlanAutoApproval is stamped from PLAN_APPROVING_AGENTS below.
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
@@ -3556,7 +3563,7 @@
             permissions: [
               { mode: 'plan', label: 'Safe Read-Only Browsing' },
               { mode: 'dontAsk', label: 'Read-Only Non-Interactive (CI)' },
-              { mode: 'default', label: 'Automatically Edit, Ask for Untrusted' },
+              { mode: 'default', label: 'Automatically Edit, Ask When Needed' },
               { mode: 'acceptEdits', label: 'Auto (Preset)' },
               { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
             ],
@@ -3599,8 +3606,8 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
-            kangenticMcp: 'shared-folder',
-            supportsWorkflowAgent: false,
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: true,
           },
           {
             name: 'aider', displayName: 'Aider', found: false, path: null, version: null,
@@ -3764,7 +3771,11 @@
         ];
         return defaults.map(function (agent) {
           var override = overrides[agent.name];
-          return override ? Object.assign({}, agent, override) : agent;
+          // What lets a plan column's Plan approval offer Automatic for the agent.
+          var withPlanApproval = PLAN_APPROVING_AGENTS.indexOf(agent.name) !== -1
+            ? Object.assign({}, agent, { supportsPlanAutoApproval: true })
+            : agent;
+          return override ? Object.assign({}, withPlanApproval, override) : withPlanApproval;
         });
       },
       // Tests can set window.__mockProbeExecutionServer = function (agentName) { ... }
@@ -5270,7 +5281,7 @@
             projectId: seed.projectId || null,
             workflow: Object.assign({
               brief: null, source_task_id: null, state: 'draft', draft: null, color_slot: 1, revision: 1,
-              created_at: now(), started_at: null, finished_at: null, paused_at: null, agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [],
+              created_at: now(), started_at: null, finished_at: null, paused_at: null, agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [], plan_approval: null,
             }, JSON.parse(JSON.stringify(row))),
           });
         });
@@ -5417,6 +5428,30 @@
         return { todo: endOf(todoLane(projectId)), done: endOf(doneLane(projectId)) };
       }
 
+      // KEEP IN SYNC with readWorkflowPlanApproval
+      // (src/main/plan-approval/workflow-plan-approval.ts): a pick holds;
+      // unpicked, the workflow is Automatic only when every plan column its tasks
+      // visit is Automatic on an agent that can approve plans; and where no plan
+      // column's agent can approve, it is Manual and Automatic is not offered.
+      // The mock folds no Board Profile, since no UI spec seeds one on a workflow task.
+      function planApprovalOf(entry, routedTasks) {
+        var workflow = entry.workflow;
+        var planColumns = [];
+        routedTasks.forEach(function (routed) {
+          routeColumns(routed.task, routed.projectId).forEach(function (lane) {
+            if (lane.permission_mode !== 'plan') return;
+            var agentName = lane.agent_override || routed.task.agent_override || 'claude';
+            planColumns.push({ planApproval: lane.plan_approval || 'manual', agentCanApprove: PLAN_APPROVING_AGENTS.indexOf(agentName) !== -1 });
+          });
+        });
+        var canApprove = planColumns.length === 0 || planColumns.some(function (column) { return column.agentCanApprove; });
+        var value = workflow.plan_approval
+          || (planColumns.length > 0 && planColumns.every(function (column) {
+            return column.planApproval === 'automatic' && column.agentCanApprove;
+          }) ? 'automatic' : 'manual');
+        return { value: canApprove ? value : 'manual', picked: Boolean(workflow.plan_approval), canApprove: canApprove };
+      }
+
       function detail(entry) {
         var workflow = entry.workflow;
         var home = homeOf(entry);
@@ -5450,6 +5485,9 @@
               };
             }),
             links: draft.links.map(function (link) { return { blockerKey: link.blocker, blockedKey: link.blocked }; }),
+            planApproval: planApprovalOf(entry, draft.tasks.map(function (planned) {
+              return { task: planned, projectId: boardOf(entry, planned) };
+            })),
           };
         }
         var created = createdTasks(workflow.id);
@@ -5475,6 +5513,9 @@
           links: links.filter(function (link) {
             return link.workflow_id === workflow.id && keys.indexOf(link.blocker_task_id) !== -1 && keys.indexOf(link.blocked_task_id) !== -1;
           }).map(function (link) { return { blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }; }),
+          planApproval: planApprovalOf(entry, created.map(function (task) {
+            return { task: task, projectId: boardOf(entry, task) };
+          })),
         };
       }
 
@@ -5672,7 +5713,7 @@
             brief: source ? [source.title, source.description].filter(Boolean).join('\n\n') : null,
             source_task_id: source ? source.id : null, state: 'draft', draft: { tasks: [], links: [] },
             color_slot: slot, revision: 1, created_at: now(), started_at: null, finished_at: null, paused_at: null,
-            agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [],
+            agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [], plan_approval: null,
           };
           entries.unshift({ projectId: projectId, workflow: workflow });
           emit(projectId, workflow.id, false);
@@ -5685,6 +5726,15 @@
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, false);
           return JSON.parse(JSON.stringify(entry.workflow));
+        },
+        // As main's setWorkflowPlanApproval: any state, and the revision stays.
+        setPlanApproval: async function (projectId, workflowId, planApproval) {
+          var entry = requireEntry(projectId, workflowId);
+          if (planApproval !== 'automatic' && planApproval !== 'manual' && planApproval !== null) {
+            throw new Error('Plan approval must be "automatic", "manual", or null to follow the columns.');
+          }
+          entry.workflow.plan_approval = planApproval;
+          emit(homeOf(entry), workflowId, true);
         },
         delete: async function (projectId, workflowId) {
           var entry = requireEntry(projectId, workflowId);

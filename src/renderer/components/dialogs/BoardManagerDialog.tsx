@@ -51,9 +51,11 @@ import { ColumnRail, ALL_COLUMNS_ID, type RailRow } from './board-manager/Column
 import { ColumnsOverview, type OverviewRow, type OverviewValue } from './board-manager/ColumnsOverview';
 import { Pill } from '../Pill';
 import { RegistryIcon, getSwimlaneIconName, getUsedIcons } from '../../utils/swimlane-icons';
-import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
+import { ChoiceCard } from '../ChoiceCard';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
+import { InfoTip } from '../settings/settings-card';
+import { ColumnPicker, type ColumnPickerChoice } from '../ColumnPicker';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
 import { unionKnownModels, useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
@@ -70,6 +72,8 @@ import {
   type SwimlaneRole,
   type PermissionMode,
   type SessionTarget,
+  type PlanApproval,
+  type AgentDetectionInfo,
   type SwimlaneCreateInput,
   type SwimlaneUpdateInput,
   type BoardProfile,
@@ -126,9 +130,81 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
  * layout read, once per character.
  */
 const SESSION_TARGET_OPTIONS: readonly SegmentedControlOption<SessionTarget>[] = [
-  { value: 'main', label: 'Main', testId: 'column-session-target-main' },
-  { value: 'isolated', label: 'Isolated', testId: 'column-session-target-isolated' },
+  { value: 'main', label: 'Main', tip: 'Share the task\'s conversation with the other columns.', testId: 'column-session-target-main' },
+  { value: 'isolated', label: 'Isolated', tip: 'Start a clean conversation on every entry.', testId: 'column-session-target-isolated' },
 ];
+
+const SESSION_TARGET_INFO = 'Columns share the task\'s main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it.';
+
+const PLAN_APPROVAL_INFO = 'Whether you approve each plan or Kangentic does. A workflow can change it for its own tasks.';
+const AFTER_PLAN_MODE_INFO = 'Where the task goes when the agent exits Plan mode.';
+
+/** Automatic first, the order the design settled on; Manual stays the default. Module scope for the reason above. */
+const PLAN_APPROVAL_OPTIONS: readonly SegmentedControlOption<PlanApproval>[] = [
+  { value: 'automatic', label: 'Automatic', tip: 'Approve each plan for you. Questions the agent asks still wait.', testId: 'column-plan-approval-automatic' },
+  { value: 'manual', label: 'Manual', tip: 'You approve each plan in the agent\'s terminal.', testId: 'column-plan-approval-manual' },
+];
+
+/**
+ * The Plan approval options for the column's agent. Automatic is offered only
+ * where the agent declares `supportsPlanAutoApproval` (read as a capability,
+ * never by name), and nowhere under a Board Profile, since the value is the
+ * column's own and every profile shares it.
+ */
+function planApprovalOptionsFor(
+  agentCanApprove: boolean,
+  agentDisplayName: string,
+  underProfile: boolean,
+): readonly SegmentedControlOption<PlanApproval>[] {
+  if (underProfile) {
+    return PLAN_APPROVAL_OPTIONS.map((option) => ({
+      ...option,
+      disabled: true,
+      disabledReason: 'Plan approval is shared by every profile. Switch to Default to change it.',
+    }));
+  }
+  if (agentCanApprove) return PLAN_APPROVAL_OPTIONS;
+  return PLAN_APPROVAL_OPTIONS.map((option) => (option.value === 'automatic'
+    ? { ...option, disabled: true, disabledReason: `Kangentic can't approve ${agentDisplayName}'s plans, so they wait for you.` }
+    : option));
+}
+
+/**
+ * After Plan Mode's columns, in board order: every saved column but To Do and
+ * Done, plus the column itself, which keeps the task where it is. A saved target
+ * the list would leave out (Done, set over MCP) stays listed, so opening the
+ * dialog never re-points it. Valued by column id.
+ */
+export function planExitChoices(
+  laneOrder: readonly string[],
+  drafts: Readonly<Record<string, Swimlane>>,
+  column: Swimlane,
+  newDraftIds: ReadonlySet<string>,
+): ColumnPickerChoice[] {
+  return laneOrder
+    .map((id) => drafts[id])
+    .filter((lane): lane is Swimlane => !!lane && (
+      lane.id === column.id
+      || lane.id === column.plan_exit_target_id
+      || (lane.role !== 'todo' && lane.role !== 'done' && !newDraftIds.has(lane.id))
+    ))
+    .map((lane) => ({ value: lane.id, name: lane.name, color: lane.color, icon: lane.icon, role: lane.role }));
+}
+
+/**
+ * Whether Kangentic can approve this agent's plans. An agent the list has not
+ * reported reads as able, so a slow or failed detection never disables the
+ * control: main still refuses an agent that cannot (`resolve-decision.ts`).
+ */
+function agentApprovesPlans(agentList: readonly AgentDetectionInfo[], agentName: string): boolean {
+  const entry = agentList.find((candidate) => candidate.name === agentName);
+  return entry ? entry.supportsPlanAutoApproval === true : true;
+}
+
+/** A column's Plan approval as its agent honours it: an agent that cannot approve plans leaves them to the user. */
+function planApprovalForAgent(agentList: readonly AgentDetectionInfo[], agentName: string, planApproval: PlanApproval): PlanApproval {
+  return agentApprovesPlans(agentList, agentName) ? planApproval : 'manual';
+}
 
 // ────────────────────────────────────────────────────────────────────────
 // Pure helpers (exported for unit tests)
@@ -370,6 +446,7 @@ export function buildUpdateInput(draft: Swimlane, original: Swimlane): SwimlaneU
     auto_command: isTodoOrDone ? undefined : (draft.auto_command?.trim() || null),
     auto_command_mode: isTodoOrDone ? undefined : draft.auto_command_mode,
     plan_exit_target_id: isPlanMode ? (draft.plan_exit_target_id || null) : undefined,
+    plan_approval: isPlanMode ? draft.plan_approval : undefined,
     agent_override: isTodoOrDone ? undefined : (draft.agent_override || null),
     model_override: isTodoOrDone ? undefined : (draft.model_override?.trim() || null),
     effort_override: isTodoOrDone ? undefined : (draft.effort_override || null),
@@ -391,6 +468,7 @@ export function buildCreateInput(draft: Swimlane): SwimlaneCreateInput {
     auto_command: draft.auto_command?.trim() || null,
     auto_command_mode: draft.auto_command_mode,
     plan_exit_target_id: isPlanMode ? (draft.plan_exit_target_id || null) : undefined,
+    plan_approval: isPlanMode ? draft.plan_approval : undefined,
     agent_override: draft.agent_override || null,
     model_override: draft.model_override?.trim() || null,
     effort_override: draft.effort_override || null,
@@ -417,6 +495,7 @@ function makeNewDraft(): Swimlane {
     auto_command: '',
     auto_command_mode: 'immediate',
     plan_exit_target_id: null,
+    plan_approval: 'manual',
     agent_override: null,
     model_override: null,
     effort_override: null,
@@ -431,9 +510,11 @@ function makeNewDraft(): Swimlane {
 // Local presentation helpers
 // ────────────────────────────────────────────────────────────────────────
 
-function SettingField({ label, description, hint, children, className = '' }: {
+function SettingField({ label, description, info, hint, children, className = '' }: {
   label: string;
   description?: string;
+  /** The field's explanation behind an info icon beside the label, in place of a description line. */
+  info?: string;
   hint?: React.ReactNode;
   children: React.ReactNode;
   /** Extra classes on the field wrapper (e.g. a grid col-span for full-width fields). */
@@ -448,7 +529,10 @@ function SettingField({ label, description, hint, children, className = '' }: {
         {/* Raw classes rather than <SettingText>: this row right-aligns `hint`
             (the Reset control) against the LABEL line, a layout the shared
             component does not own. The values still come from one place. */}
-        <label className={SETTING_LABEL_CLASS}>{label}</label>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <label className={SETTING_LABEL_CLASS}>{label}</label>
+          {info && <InfoTip label={label} text={info} />}
+        </span>
         {hint}
       </div>
       {description && (
@@ -584,8 +668,6 @@ function RemoveColumnTarget({ column, position, total }: {
 // ────────────────────────────────────────────────────────────────────────
 // Main dialog
 // ────────────────────────────────────────────────────────────────────────
-
-const DIALOG_SELECT_CLASS = 'w-full appearance-none bg-surface-control border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg-tertiary focus:outline-none focus:border-accent';
 
 // Responsive two-column form grid. Driven by a container query on the scroll
 // region (`@container`), so it lays out by the DETAIL PANE's width, not the
@@ -1111,6 +1193,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const modelDisplayNames = useModelDisplayNames(effectiveAgent);
   const modelAliases = useModelAliases(effectiveAgent);
   const agentPermissions = effectiveAgentInfo?.permissions ?? DEFAULT_PERMISSIONS;
+  const columnAgentApprovesPlans = agentApprovesPlans(agentList, effectiveAgent);
+  const planApprovalOptions = useMemo(
+    () => planApprovalOptionsFor(columnAgentApprovesPlans, effectiveAgentInfo?.displayName ?? effectiveAgent, activeProfileId !== null),
+    [columnAgentApprovesPlans, effectiveAgentInfo?.displayName, effectiveAgent, activeProfileId],
+  );
 
   // Project-level model/effort defaults (mirrors projectDefaultAgent above).
   // Surfaced directly as the inherit option's label/placeholder - no bare
@@ -1726,22 +1813,20 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // and so the space above the first card matches the space below the last.
   //
   // The tallest page is a PLAN-permission column with Start an agent on: its
-  // Agent card carries the After Plan Mode row, which is the one the previous
-  // measurement (a non-role column, 802px) did not include, so the dialog
-  // pinned at 2000 x 1010 on a display with room and still scrolled. Measured
-  // on Planning at the 2000px width, where the px cap is the only one that can
-  // bind: General 260 + Agent 348 + Conversation 236, plus the two 24px gaps,
-  // is 892px of settings content, which with the body's own 28px top and bottom
-  // needs a 948px scroll area; everything outside it - the title bar, the
-  // identity header, the footer - is 147px. Hence 1095, and 1120 for headroom:
-  // a theme with taller type, or a font whose metrics wrap the Session
-  // description one line further (16px at text-xs; Linux CI's fonts are wider
-  // than Segoe UI at the same width). Leftover slack lands BELOW the cards, so
-  // any excess shows up as a bottom gap wider than the top one.
+  // Agent card carries the Plan approval and After Plan Mode row. Measured on
+  // Planning at the 2000px width, where the px cap is the only one that can
+  // bind (task 840, after that row moved its descriptions into info tips and
+  // Session became one line): General 250 + Agent 317 + Conversation 179, plus
+  // the two 24px gaps, is 794px of settings content, which with the body's own
+  // 28px top and bottom needs an 850px scroll area. At 1120 the scroll area was
+  // 917px, 67px of it empty, so 1053 fits exactly, and 1080 keeps headroom for
+  // a theme with taller type or wider fonts (Linux CI's are wider than Segoe UI
+  // at the same width). Leftover slack lands BELOW the cards, so any excess
+  // shows up as a bottom gap wider than the top one.
   //
   // Re-measure this when a settings card gains a field, and measure a
-  // plan-permission column, not the first one to hand. The Session description
-  // wraps by width, but the px cap only binds at viewports over 1272px tall,
+  // plan-permission column, not the first one to hand. A description can
+  // wrap by width, but the px cap only binds at viewports over 1227px tall,
   // and every such viewport is wide enough for the 2000px cap, so the width it
   // was measured at is the width it runs at. `88vh` still wins on a short
   // display, where a modal taller than the viewport is the wrong answer
@@ -1751,7 +1836,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // FIXED rather than `h-auto` + `max-h`, which is the original decision and
   // still holds: a height that tracks content makes the modal resize and
   // re-centre every time the rail moves between columns of different length.
-  const windowedClass = 'w-[min(2000px,92vw)] max-w-[95vw] h-[min(1120px,88vh)]';
+  const windowedClass = 'w-[min(2000px,92vw)] max-w-[95vw] h-[min(1080px,88vh)]';
   const { dialogClassName, backdropPositionClass, backdropClassName, contentRadiusClass } =
     maximizedDialogLayout(isMaximized, windowedClass);
 
@@ -2124,7 +2209,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                               const newDefault = getAgentDefaultPermission(agentList, projectDefaultAgent);
                               if (newDefault !== current.permission_mode) nextPermission = newDefault;
                             }
-                            return { ...current, agent_override: null, permission_mode: nextPermission };
+                            return {
+                              ...current,
+                              agent_override: null,
+                              permission_mode: nextPermission,
+                              plan_approval: planApprovalForAgent(agentList, projectDefaultAgent, current.plan_approval),
+                            };
                           });
                         }}
                       />
@@ -2140,7 +2230,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                             const resolved = resolvePermissionForAgent(agentList, nextAgent ?? projectDefaultAgent, current.permission_mode);
                             if (resolved !== current.permission_mode) nextPermission = resolved;
                           }
-                          return { ...current, agent_override: nextAgent, permission_mode: nextPermission };
+                          // An agent that cannot approve plans leaves them to
+                          // the user, so the column's value follows.
+                          return {
+                            ...current,
+                            agent_override: nextAgent,
+                            permission_mode: nextPermission,
+                            plan_approval: planApprovalForAgent(agentList, nextAgent ?? projectDefaultAgent, current.plan_approval),
+                          };
                         });
                       }}
                       options={agentList
@@ -2220,29 +2317,38 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     />
                   </SettingField>
 
-                  {draft.permission_mode === 'plan' && (
-                    <SettingField
-                      label="After Plan Mode"
-                      className={SECTION_FULL_SPAN}
-                      description="Where the task goes when the agent exits Plan mode."
-                    >
-                      <Select
-                        value={draft.plan_exit_target_id ?? ''}
-                        onChange={(event) => updateDraft((current) => ({ ...current, plan_exit_target_id: event.target.value || null }))}
-                        wrapperClassName="relative"
-                        className={DIALOG_SELECT_CLASS}
-                        data-testid="plan-exit-target"
-                      >
-                        <option value="">Nowhere (stay in column)</option>
-                        {laneOrder
-                          .map((id) => drafts[id])
-                          .filter((lane): lane is Swimlane => !!lane && lane.id !== draft.id && lane.role !== 'todo' && lane.role !== 'done' && !newDraftIds.has(lane.id))
-                          .map((lane) => (
-                            <option key={lane.id} value={lane.id}>{lane.name}</option>
-                          ))}
-                      </Select>
+                  {/* What happens when the agent exits plan mode, then where the
+                      task goes. Both show only for a plan column; their
+                      explanations sit behind the info icons, so the row stays
+                      one line. */}
+                  {draft.permission_mode === 'plan' && (<>
+                    <SettingField label="Plan approval" info={PLAN_APPROVAL_INFO}>
+                      <SegmentedControl
+                        options={planApprovalOptions}
+                        // An agent that cannot approve plans always waits for
+                        // the user, whatever a teammate's kangentic.json says.
+                        value={planApprovalForAgent(agentList, effectiveAgent, draft.plan_approval)}
+                        onChange={(next) => updateDraft((current) => ({ ...current, plan_approval: next }))}
+                        fullWidth
+                        ariaLabel="Plan approval"
+                        testId="column-plan-approval"
+                      />
                     </SettingField>
-                  )}
+                    <SettingField label="After Plan Mode" info={AFTER_PLAN_MODE_INFO}>
+                      {/* The column itself means "stay", stored as no target,
+                          so a column never points at itself. */}
+                      <ColumnPicker
+                        testId="plan-exit-target"
+                        ariaLabel="After Plan Mode"
+                        value={draft.plan_exit_target_id ?? draft.id}
+                        columns={planExitChoices(laneOrder, drafts, draft, newDraftIds)}
+                        onChange={(next) => updateDraft((current) => ({
+                          ...current,
+                          plan_exit_target_id: next === current.id ? null : next,
+                        }))}
+                      />
+                    </SettingField>
+                  </>)}
                   </>)}
                 </div>
               )}
@@ -2261,24 +2367,22 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     <div className={SECTION_FULL_SPAN}>
                       <ToggleCard
                         label="Hand off context when the agent changes"
-                        description="Codex to Claude, for example. The new agent receives the previous one's conversation instead of starting with just the task title and description."
+                        description="The new agent picks up the previous agent's conversation instead of starting from the task description."
                         checked={draft.handoff_context}
                         onChange={(next) => updateDraft((current) => ({ ...current, handoff_context: next }))}
                         info={'When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session\'s transcript as the first message, so the new agent continues with full context instead of starting from the task description alone.\n\nSame-agent moves (e.g. Claude to Claude) resume natively via the agent\'s own session id and ignore this setting.'}
                       />
                     </div>
 
-                    {/* The description opens by naming the DEFAULT, so the norm
-                        is stated rather than inferred from whichever option
-                        happens to be selected. Its second sentence exists
-                        because the first leaves the reader knowing what isolated
-                        does and not why they would want it. */}
-                    <SettingField
-                      label="Session"
-                      description="Columns share the main session unless you give this one its own. An isolated session is separate from the main one and starts clean on every entry, which suits an adversarial code review, or any pass that should not inherit the context of the work before it."
-                      className={SECTION_FULL_SPAN}
-                    >
-                      <SegmentedControl
+                    {/* The same row shape as the switch above, so the card reads
+                        as one list. The line says what each option does; why a
+                        column would want its own conversation is in the info
+                        tip, which names the default. */}
+                    <div className={SECTION_FULL_SPAN}>
+                      <ChoiceCard
+                        label="Session"
+                        description="Main continues the task's conversation, and Isolated starts clean on every entry."
+                        info={SESSION_TARGET_INFO}
                         options={SESSION_TARGET_OPTIONS}
                         value={draft.session_target ?? 'main'}
                         onChange={(next) => updateDraft((current) => ({
@@ -2302,11 +2406,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                             current.session_spawn_strategy,
                           ),
                         }))}
-                        quiet
-                        ariaLabel="Session"
                         testId="column-session-target"
                       />
-                    </SettingField>
+                    </div>
 
                 {/* Two controls are gone from this card, each for its own reason.
                     The message field is a `send_message` automation now, and the
@@ -2420,7 +2522,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
             .filter((id) => id !== editing.columnId)
             .flatMap((id) => {
               const lane = drafts[id];
-              return lane && lane.name.trim() !== '' ? [{ name: lane.name, color: lane.color }] : [];
+              return lane && lane.name.trim() !== ''
+                ? [{ value: lane.name, name: lane.name, color: lane.color, icon: lane.icon, role: lane.role }]
+                : [];
             })}
           automationAgentReady={automationAgentReady(agentList, globalConfig.automation, true)}
           onOpenAutomationSettings={() => {

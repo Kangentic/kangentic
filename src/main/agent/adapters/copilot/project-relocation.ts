@@ -9,8 +9,8 @@ import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
  * project is relocated.
  *
  * Copilot persists each session under `~/.copilot/session-state/<uuid>/` with a
- * `workspace.yaml` recording `cwd` and `git_root`. `copilot --resume <id>`
- * still attaches by id after a move, but v1.0.52+ restores the session in its
+ * `workspace.yaml` recording `cwd` and `git_root`. `copilot --session-id <id>`
+ * (and `--resume <id>`) still attaches by id after a move, but v1.0.52+ restores the session in its
  * SAVED working directory, so a stale `cwd` makes resume reopen a dead path.
  * Rewriting the `cwd` / `git_root` lines in each affected `workspace.yaml`
  * points resume back at the moved project. One prefix pass over every session

@@ -718,9 +718,10 @@ When a suspended task moves to an active column:
   is ever typed into the PTY as `/model` or `/effort`. A permission-mode change
   alone never restarts a live session: in the Planning -> Executing flow Claude
   already left plan mode in-session, so the recorded spawn-time mode is stale.
-- A plan-exit auto-move (Planning -> Executing), triggered when the user
-  approves the plan (the `ExitPlanMode` tool completes, not when the agent
-  merely invokes it), passes a continuation prompt
+- A plan-exit auto-move (Planning -> Executing), triggered when the plan is
+  approved, by the user or by Kangentic with the column's Plan approval set to
+  Automatic (the `ExitPlanMode` tool completes, not when the agent merely
+  invokes it), passes a continuation prompt
   ("The session restarted to apply the <column> column's settings. Proceed
   with implementing the approved plan.", naming the destination column)
   delivered as the resumed session's first message only when neither the

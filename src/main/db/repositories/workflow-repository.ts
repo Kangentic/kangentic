@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type {
+  PlanApproval,
   Workflow,
   WorkflowDraft,
   WorkflowDraftLink,
@@ -9,6 +10,7 @@ import type {
   WorkflowSupersession,
 } from '../../../shared/types';
 import { readRunSettings } from '../../../shared/workflow-run-settings';
+import { isPlanApproval } from '../../../shared/plan-approval';
 import { cachedStatement } from '../statement-cache';
 
 /**
@@ -40,6 +42,7 @@ interface WorkflowRow {
   agent_session_id: string | null;
   agent_cwd?: string | null;
   agent_read_project_ids?: string | null;
+  plan_approval?: string | null;
 }
 
 /** How many colors the categorical palette has (`--kng-chart-1..6`). */
@@ -239,6 +242,15 @@ export class WorkflowRepository {
     this.db.prepare('UPDATE workflows SET agent_session_id = NULL WHERE id = ?').run(id);
   }
 
+  /**
+   * Who approves plans for this workflow's tasks; null follows its plan columns.
+   * Changes no plan, so the revision stays, like the agent conversation above: a
+   * save the workflow agent built on its last read must still go through.
+   */
+  setPlanApproval(id: string, planApproval: PlanApproval | null): void {
+    this.db.prepare('UPDATE workflows SET plan_approval = ? WHERE id = ?').run(planApproval, id);
+  }
+
   /** The agent's PTY grid, on every resize the desktop makes. Changes no plan, so the revision stays. */
   setAgentGrid(id: string, grid: { cols: number; rows: number }): void {
     this.db.prepare('UPDATE workflows SET agent_pty_cols = ?, agent_pty_rows = ? WHERE id = ?').run(grid.cols, grid.rows, id);
@@ -319,6 +331,8 @@ function mapRow(row: WorkflowRow): Workflow {
     agent_session_id: row.agent_session_id ?? null,
     agent_cwd: row.agent_cwd ?? null,
     agent_read_project_ids: parseProjectIds(row.agent_read_project_ids),
+    // Narrowed: anything this build does not know follows the columns.
+    plan_approval: isPlanApproval(row.plan_approval) ? row.plan_approval : null,
   };
 }
 

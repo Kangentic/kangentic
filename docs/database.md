@@ -199,6 +199,7 @@ there is no background reclaim.
 | auto_command | TEXT | | NULL (retired) |
 | auto_command_mode | TEXT | NOT NULL | 'immediate' (retired) |
 | plan_exit_target_id | TEXT | | NULL |
+| plan_approval | TEXT | NOT NULL | 'manual' |
 | is_ghost | INTEGER | NOT NULL | 0 |
 | agent_override | TEXT | | NULL |
 | model_override | TEXT | | NULL |
@@ -221,6 +222,12 @@ at create and is deliberately absent from `SwimlaneUpdateInput`.
 value into one, nulled the first field and reset the second, and nothing reads either any more.
 They are left in place so an older build can still open the database. The per-TASK `auto_command`
 on `tasks` is unaffected and still MCP-only.
+
+`plan_approval` is who approves a plan made in this column: `manual` (the user, in the agent's
+terminal) or `automatic` (Kangentic, through the agent's plan approval hook). It is read only while
+the column's `permission_mode` is `plan`, and `mapRow` reads any other stored value as `manual`. A
+task in a running workflow follows the workflow's `plan_approval` instead (see the `workflows`
+table below).
 
 Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `docs/session-lifecycle.md` "Isolated Sessions"):
 - `session_target` (renamed from the original `session_strategy`): `main` (default, the task's main session) or `isolated` (a separate, context-isolated session keyed by the swimlane id). See `SessionTarget`.
@@ -582,6 +589,7 @@ own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
 | agent_pty_cols | INTEGER | | NULL |
 | agent_pty_rows | INTEGER | | NULL |
 | paused_at | TEXT | | NULL |
+| plan_approval | TEXT | | NULL |
 
 `state` is `draft` (not started), `running`, `paused` or `done`; a value this build does not know
 reads as paused, so the engine leaves it alone. A draft keeps its planned tasks and links in
@@ -617,6 +625,14 @@ pane's size rather than the spawn default.
 `paused_at` is when a paused workflow was paused, stamped by `setState` on Pause and cleared by
 every other state, so it is set only while the workflow is paused. The Workflows picker reads it
 for the paused row's "Paused yesterday 18:20". A workflow paused before the column existed has none.
+
+`plan_approval` is who approves plans for the workflow's tasks while it runs: `automatic`, `manual`,
+or NULL. NULL follows the plan columns on its tasks' routes (a route column whose permission mode,
+after the task's Board Profile, is `plan`): Automatic only when every one is Automatic and runs an
+agent that can approve plans, Manual otherwise, and Manual with no plan column at all
+(`workflowPlanApproval`, `src/shared/plan-approval.ts`). A task already in Done no longer counts.
+A pick holds until it is set back to NULL. It changes no plan, so writing it leaves `revision`
+alone, and a value this build does not know reads as NULL.
 
 Index: `idx_workflows_state` on (state), so the engine's "anything running?" probe is one lookup.
 
@@ -1288,17 +1304,19 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 74. **`result_tokens_read_at` column on sessions** - adds `result_tokens_read_at TEXT DEFAULT NULL`, the UTC ISO time a transcript read for the record's per-tool Tokens answered and left it nothing to keep, so `fillEarlierRunResultTokens` does not parse that transcript again on every launch. NULL for every existing row, which the fill then reads once.
 75. **`condition` / `max_runs` on column_automations, and `condition_met` / `condition_reason` on automation_runs** - every automation's Condition and Frequency, and the Automation agent's answer on each run (see both tables above). All nullable with no default, so a build from before them still inserts. Guarded `ALTER TABLE`s.
 76. **`task_moves`** - creates the record of every column a task entered (see the table above), with `idx_task_moves_task` and `idx_task_moves_to_column`. No backfill: a task with no recorded entry into its column has no visit boundary, which counts its earlier runs there as this visit's. Idempotent `CREATE ... IF NOT EXISTS`.
-77. **Workflows** (`runWorkflowsMigration`) - the `workflows` and `task_links` tables (see above) and seven nullable task columns: `workflow_id`, `workflow_project_id`, `route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`, `canvas_x`, `canvas_y`, plus `idx_tasks_workflow`. Every existing task reads as an ordinary one. Idempotent: `CREATE ... IF NOT EXISTS` and guarded `ALTER TABLE`s sharing one `table_info` read. The whole of `runWorkflowsMigration` (78 to 81 below included) runs in one `writeTransaction`, because the workflow engine's probe checks only for the `workflows` table before reading `tasks.workflow_id`. A run that failed between the two would leave a board the probe cannot read.
+77. **Workflows** (`runWorkflowsMigration`) - the `workflows` and `task_links` tables (see above) and seven nullable task columns: `workflow_id`, `workflow_project_id`, `route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`, `canvas_x`, `canvas_y`, plus `idx_tasks_workflow`. Every existing task reads as an ordinary one. Idempotent: `CREATE ... IF NOT EXISTS` and guarded `ALTER TABLE`s sharing one `table_info` read. The whole of `runWorkflowsMigration` (78 to 81 and 89 below included) runs in one `writeTransaction`, because the workflow engine's probe checks only for the `workflows` table before reading `tasks.workflow_id`. A run that failed between the two would leave a board the probe cannot read.
 78. **`agent_name` / `agent_session_id` on workflows** - the workflow agent's conversation (see the `workflows` table above), both `TEXT DEFAULT NULL`. Guarded `ALTER TABLE`s on one `table_info` read, inside `runWorkflowsMigration`.
 79. **`agent_cwd` and `agent_read_project_ids` on workflows** - `agent_cwd TEXT DEFAULT NULL`, the checkout the agent's conversation ran in (written at every start), where its CLI keeps the history, so the transcript readers can read the conversation; and `agent_read_project_ids TEXT NOT NULL DEFAULT '[]'`, the other registered projects the workflow agent asked to read (see the `workflows` table above). Guarded `ALTER TABLE`s on the same `table_info` read.
 80. **`agent_pty_cols` / `agent_pty_rows` on workflows** - both `INTEGER DEFAULT NULL`, the workflow agent's last PTY grid (see the `workflows` table above), so a start after a restart spawns at the pane's size. Guarded `ALTER TABLE`s on the same `table_info` read.
-81. **`paused_at` on workflows** - `TEXT DEFAULT NULL`, when a paused workflow was paused (see the `workflows` table above), for the picker's paused row. A guarded `ALTER TABLE` on the same `table_info` read, at the end of `runWorkflowsMigration`.
+81. **`paused_at` on workflows** - `TEXT DEFAULT NULL`, when a paused workflow was paused (see the `workflows` table above), for the picker's paused row. A guarded `ALTER TABLE` on the same `table_info` read, inside `runWorkflowsMigration`.
 82. **`background_calls`** - creates the ledger of headless agent calls (see the table above), with `idx_background_calls_started` and `idx_background_calls_task`. No backfill: calls before it were never recorded. Idempotent `CREATE ... IF NOT EXISTS`, after `runWorkflowsMigration`. The retrieval worker opens a project's database with migrations off, so its read returns empty for a project main has not opened since.
 83. **`background_call_id` on automation_runs** - `TEXT DEFAULT NULL`, the check that answered a run (see the `automation_runs` table above), with `idx_automation_runs_background_call`. A guarded `ALTER TABLE`; the table is pruned to about 200 rows, so its index is built here rather than by the worker.
 84. **`final_line` on column_automations, and `final_line_met` / `final_line_reason` on automation_runs** - the Text match kind of Condition and its result on each run (see both tables above). All `DEFAULT NULL`, so every existing row reads as having no Text match and a build from before them still inserts. Guarded `ALTER TABLE`s, one `table_info` read per table.
 85. **`transcript_path` on sessions** - `TEXT DEFAULT NULL`, the transcript path the agent reported (see the `sessions` table notes above), so the resume check can prove a conversation's file gone after the session's own folder was deleted. No backfill. A guarded `ALTER TABLE`.
 86. **`transcript_archive_state` and `transcript_archive_rows`** - the structured transcript archive (see the section below). Idempotent `CREATE TABLE IF NOT EXISTS`, both empty until the retrieval worker's first archive pass; the worker opens with migrations off, so it checks for both tables before it writes.
 87. **`automations_disabled` on tasks** - `INTEGER NOT NULL DEFAULT 0`, the per-task switch that disables column automations (see the `tasks` table notes above). 0 is every existing task's behavior, so one guarded `ALTER TABLE` and no backfill.
+88. **`plan_approval` on swimlanes** - `TEXT NOT NULL DEFAULT 'manual'`, who approves a plan column's plans (see the `swimlanes` table notes above). Runs right after the `auto_command_mode` add (56). `manual` is what every existing column already does, so no backfill. Team-shared, so it round-trips through `kangentic.json` as `planApproval`. A guarded `ALTER TABLE`.
+89. **`plan_approval` on workflows** - `TEXT DEFAULT NULL`, who approves plans for a workflow's tasks (see the `workflows` table above). NULL follows the plan columns, so every existing workflow keeps doing what its columns already do. A guarded `ALTER TABLE` on the same `table_info` read, at the end of `runWorkflowsMigration`.
 
 ### Key Migrations (Global DB)
 
@@ -1458,6 +1476,7 @@ Operates on the workflow's home project DB.
 | `forgetAgentSessionId(id)` | Clear `agent_session_id` only, after a resume finds no conversation: the agent stays recorded, so the next start continues from the saved plan. The revision stays |
 | `addAgentReadProject(id, projectId)` | Let the workflow agent read another registered project from now on; false when it already could. The revision stays |
 | `setAgentGrid(id, grid)` / `getAgentGrid(id)` | The workflow agent's last PTY grid (`agent_pty_cols/rows`), or null before it has one. The revision stays |
+| `setPlanApproval(id, planApproval)` | Who approves its tasks' plans (`plan_approval`), or null to follow its plan columns. The revision stays |
 | `delete(id)` | Delete; its links cascade |
 
 ### TaskLinkRepository

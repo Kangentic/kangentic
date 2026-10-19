@@ -28,7 +28,7 @@ test.describe.configure({ mode: 'parallel' });
 /**
  * Long enough to wrap. The card caps at `max-w-[min(34rem,...)]` (544px), so
  * this reaches about four lines and ~98px of height. That matters: at 1920x1080
- * the Column Manager is `min(1120px, 88vh)` = 950px centred, putting Save around
+ * the Column Manager is `min(1080px, 88vh)` = 950px centred, putting Save around
  * y 974-1002 while a single UNWRAPPED toast spans 1002-1040 and merely touches
  * its bottom edge. The tests still measure rather than trust this.
  */

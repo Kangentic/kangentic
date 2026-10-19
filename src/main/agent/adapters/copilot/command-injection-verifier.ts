@@ -56,9 +56,16 @@ const SENT_AT_TOLERANCE_MS = 50;
  */
 const RECENT_ENTRY_LIMIT = 5;
 
-/** Copilot's prompt history is global, so `cwd` and session id play no part. */
+/** The prompt history file Copilot keeps in its config home. */
+export const COPILOT_HISTORY_FILE_NAME = 'command-history-state.json';
+
+/**
+ * The history file of Copilot's default config home. A session started with
+ * `--config-dir` (every Kangentic session) keeps its own in that folder
+ * instead: 1.0.97 lists the file among the state that lives in the config home.
+ */
 export function resolveCopilotHistoryPath(): string {
-  return path.join(os.homedir(), '.copilot', 'command-history-state.json');
+  return path.join(os.homedir(), '.copilot', COPILOT_HISTORY_FILE_NAME);
 }
 
 /**
@@ -81,40 +88,52 @@ export function readRecentCopilotCommands(raw: string): string[] | null {
     .slice(0, RECENT_ENTRY_LIMIT);
 }
 
-export function createCopilotCommandInjectionVerifier(): SubmissionVerifier {
+/** Whether one history file shows `expected` submitted at or after `sentAt`. */
+async function historyFileConfirms(filePath: string, expected: string, sentAt: number): Promise<boolean> {
+  // Guard 1: with no per-record timestamp, the FILE's mtime is the only
+  // evidence that anything was written after we pressed Enter. A missing
+  // file reads as "keep polling", never as a verified failure.
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await fs.stat(filePath)).mtimeMs;
+  } catch {
+    return false;
+  }
+  if (mtimeMs < sentAt - SENT_AT_TOLERANCE_MS) return false;
+
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, 'utf-8');
+  } catch {
+    return false;
+  }
+
+  const recent = readRecentCopilotCommands(raw);
+  if (!recent) return false;
+
+  // Guard 2: exact match, and only among the newest entries. Exactness is the
+  // point - `instead can we/pull-request` CONTAINS `/pull-request`, so a
+  // substring test would confirm the precise swallowed-Enter bug the verifier
+  // exists to catch.
+  return recent.some((entry) => entry.trim() === expected);
+}
+
+/**
+ * `historyPathsFor` names the history files a submission may land in: the
+ * session's own config home first, since every Kangentic session runs with
+ * `--config-dir`, then the default one.
+ */
+export function createCopilotCommandInjectionVerifier(
+  historyPathsFor: (context: SubmissionContext) => string[] = () => [resolveCopilotHistoryPath()],
+): SubmissionVerifier {
   return async (context: SubmissionContext): Promise<boolean> => {
     if (context.type !== 'command-injection') return false;
-
-    const filePath = resolveCopilotHistoryPath();
-    const sentAt = context.sentAt ?? Date.now();
-
-    // Guard 1: with no per-record timestamp, the FILE's mtime is the only
-    // evidence that anything was written after we pressed Enter. A missing
-    // file reads as "keep polling", never as a verified failure.
-    let mtimeMs: number;
-    try {
-      mtimeMs = (await fs.stat(filePath)).mtimeMs;
-    } catch {
-      return false;
-    }
-    if (mtimeMs < sentAt - SENT_AT_TOLERANCE_MS) return false;
-
-    let raw: string;
-    try {
-      raw = await fs.readFile(filePath, 'utf-8');
-    } catch {
-      return false;
-    }
-
-    const recent = readRecentCopilotCommands(raw);
-    if (!recent) return false;
-
-    // Guard 2: exact match, and only among the newest entries. Exactness is the
-    // point - `instead can we/pull-request` CONTAINS `/pull-request`, so a
-    // substring test would confirm the precise swallowed-Enter bug the verifier
-    // exists to catch.
     const expected = context.text.trim();
     if (!expected) return false;
-    return recent.some((entry) => entry.trim() === expected);
+    const sentAt = context.sentAt ?? Date.now();
+    for (const filePath of historyPathsFor(context)) {
+      if (await historyFileConfirms(filePath, expected, sentAt)) return true;
+    }
+    return false;
   };
 }

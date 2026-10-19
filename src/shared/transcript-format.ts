@@ -1,5 +1,11 @@
-import type { TranscriptEntry, TranscriptBlock, TranscriptSystemSubtype } from './types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptSystemSubtype, TranscriptToolApproval } from './types';
 import { sanitizeTranscriptText } from './ansi-strip';
+import { parsePlanTool, type PlanTool } from './tool-diff';
+
+/** The tag a plan carries for who approved it: what the Plan card and a copied plan both say. */
+export function planApprovalLabel(approval: TranscriptToolApproval): string {
+  return approval === 'automatic' ? 'Approved automatically' : 'Approved by you';
+}
 
 /**
  * Which slice of the conversation a structured transcript request wants.
@@ -300,9 +306,17 @@ function safeJson(value: unknown): string {
 export function renderToolCallMarkdown(
   name: string,
   input: unknown,
-  result: { content: string; isError: boolean } | null,
+  result: ToolResultForUse | null,
 ): string {
   const parts: string[] = [];
+  // A plan copies as the plan, readable, the way the viewer draws it.
+  const plan = presentedPlan(input, result);
+  if (plan) {
+    parts.push(`**Plan**${result?.approval ? ` (${planApprovalLabel(result.approval)})` : ''}`);
+    parts.push('');
+    parts.push(sanitizeTranscriptText(plan.plan).trim());
+    return parts.join('\n');
+  }
   parts.push(`**Tool:** \`${name}\``);
   parts.push('');
   parts.push('```json');
@@ -329,7 +343,7 @@ export function renderToolCallMarkdown(
  */
 export function renderAssistantBlocksMarkdown(
   blocks: TranscriptBlock[],
-  resultsByUseId: Map<string, { content: string; isError: boolean }>,
+  resultsByUseId: Map<string, ToolResultForUse>,
 ): string {
   const parts: string[] = [];
   for (const block of blocks) {
@@ -349,12 +363,40 @@ export function renderAssistantBlocksMarkdown(
   return parts.join('\n').trimEnd();
 }
 
+/** A tool_use's paired result, as the renderer inlines it. */
+export interface ToolResultForUse {
+  content: string;
+  isError: boolean;
+  /** Who approved the call, where the transcript records it. */
+  approval?: TranscriptToolApproval;
+  /** When the result landed (epoch ms). */
+  ts?: number;
+  /** The plan an approved plan exit returned, where its input carried none. */
+  plan?: string;
+}
+
+/**
+ * The plan a tool call presented, or null: from its input where the agent put
+ * it there, else from its result (Claude's ExitPlanMode input is empty since
+ * 2.1.303, so a plan waiting for approval shows as a plain tool call until it
+ * is approved).
+ */
+export function presentedPlan(input: unknown, result: Pick<ToolResultForUse, 'plan'> | null): PlanTool | null {
+  return parsePlanTool(input) ?? (result?.plan ? { plan: result.plan } : null);
+}
+
 /** Map a tool_use id to its tool_result content, the way the renderer inlines it. */
-export function buildResultsByUseId(entries: TranscriptEntry[]): Map<string, { content: string; isError: boolean }> {
-  const resultsByUseId = new Map<string, { content: string; isError: boolean }>();
+export function buildResultsByUseId(entries: TranscriptEntry[]): Map<string, ToolResultForUse> {
+  const resultsByUseId = new Map<string, ToolResultForUse>();
   for (const entry of entries) {
     if (entry.kind === 'tool_result' && entry.toolUseId) {
-      resultsByUseId.set(entry.toolUseId, { content: entry.content, isError: !!entry.isError });
+      resultsByUseId.set(entry.toolUseId, {
+        content: entry.content,
+        isError: !!entry.isError,
+        ts: entry.ts,
+        ...(entry.approval ? { approval: entry.approval } : {}),
+        ...(entry.plan ? { plan: entry.plan } : {}),
+      });
     }
   }
   return resultsByUseId;

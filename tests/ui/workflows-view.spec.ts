@@ -601,6 +601,52 @@ test.describe('Workflows header', () => {
   });
 });
 
+test.describe('Workflows inspector plan approval', () => {
+  test('follows the plan columns until picked, and a pick holds', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
+      const section = byTestId(page, 'workflow-plan-approval-section');
+      await expect(section).toBeVisible();
+      // Above the run order, as the design has it.
+      const sectionFirst = await page.evaluate(() => {
+        const approval = document.querySelector('[data-testid="workflow-plan-approval-section"]');
+        const runOrder = document.querySelector('[data-testid="workflow-run-order"]');
+        return !!approval && !!runOrder && (approval.compareDocumentPosition(runOrder) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      });
+      expect(sectionFirst).toBe(true);
+
+      const automatic = byTestId(page, 'workflow-plan-approval-automatic');
+      const manual = byTestId(page, 'workflow-plan-approval-manual');
+      // The mock's Planning column is Manual, so the unpicked workflow is too.
+      await expect(manual).toHaveAttribute('aria-checked', 'true');
+      await expect(section).toHaveAttribute('data-picked', 'false');
+      await expect(automatic).toHaveAccessibleDescription('Approve every plan in this workflow for you. Questions the agent asks still wait.');
+      await expect(manual).toHaveAccessibleDescription('You approve every plan in this workflow.');
+
+      // Every plan column on the routes turned Automatic: the workflow follows.
+      await page.evaluate(async () => {
+        const lanes = await window.electronAPI.swimlanes.list();
+        const planning = lanes.find((lane) => lane.name === 'Planning');
+        if (planning) await window.electronAPI.swimlanes.update({ id: planning.id, plan_approval: 'automatic' });
+        (window as unknown as { __mockFireWorkflowChanged: (event: { projectId: string; workflowId: string }) => void })
+          .__mockFireWorkflowChanged({ projectId: 'workflows-view-proj', workflowId: 'wf-usage' });
+      });
+      await expect(automatic).toHaveAttribute('aria-checked', 'true');
+      await expect(section).toHaveAttribute('data-picked', 'false');
+
+      // A pick holds, whatever the columns do next.
+      await manual.click();
+      await expect(section).toHaveAttribute('data-picked', 'true');
+      await expect(manual).toHaveAttribute('aria-checked', 'true');
+      const stored = await page.evaluate(async () => (await window.electronAPI.workflows.get('workflows-view-proj', 'wf-usage')).workflow.plan_approval);
+      expect(stored).toBe('manual');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
 test.describe('Workflows inspector', () => {
   test('opens on the first task in the run order; cleared, it shows the run order, and a row selects its card', async () => {
     const { browser, page } = await launch('running');

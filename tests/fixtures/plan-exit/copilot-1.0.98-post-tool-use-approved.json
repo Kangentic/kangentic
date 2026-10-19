@@ -1,0 +1,13 @@
+{
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "timestamp": 1792383405163,
+  "cwd": "C:\\Users\\dev\\repo",
+  "toolName": "exit_plan_mode",
+  "toolArgs": {
+    "summary": "- Create repository-root `copilot-capture.txt` with `hi` on line one and `bye` on line two after approval.\n- Keep the change limited to that file; the target is not present."
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "Plan approved! Exited plan mode.\n\nYou are now in interactive mode. Start implementing the plan now, in this same response. Approving the plan is your go-signal, so do not stop to ask whether to proceed or wait for another message. Do NOT call task_complete or claim the task is done until you have actually implemented the plan — approving the plan is not the same as completing it."
+  }
+}

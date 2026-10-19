@@ -1,5 +1,36 @@
 import { describe, it, expect } from 'vitest';
-import { computeLineDiff, parseFileEditTool, diffStats } from '../../src/shared/tool-diff';
+import { computeLineDiff, parseFileEditTool, parsePlanTool, diffStats } from '../../src/shared/tool-diff';
+import { renderToolCallMarkdown } from '../../src/shared/transcript-format';
+
+describe('parsePlanTool', () => {
+  it('reads a presented plan by its shape, the way Claude\'s ExitPlanMode carries it', () => {
+    expect(parsePlanTool({ plan: '## Context\nShip it.', planFilePath: 'C:\\Users\\dev\\.claude\\plans\\p.md' }))
+      .toEqual({ plan: '## Context\nShip it.' });
+  });
+
+  it('is not a plan without a non-empty plan string', () => {
+    expect(parsePlanTool({ plan: '   ' })).toBeNull();
+    expect(parsePlanTool({ plan: 42 })).toBeNull();
+    expect(parsePlanTool({ command: 'ls' })).toBeNull();
+    expect(parsePlanTool('plan')).toBeNull();
+  });
+
+  it('a file edit that happens to carry a plan field stays a file edit', () => {
+    expect(parsePlanTool({ plan: 'x', file_path: 'a.md', content: 'y' })).toBeNull();
+  });
+
+  it('copies as the plan, tagged with who approved it', () => {
+    const markdown = renderToolCallMarkdown('ExitPlanMode', { plan: '1. Do it.' }, { content: 'ok', isError: false, approval: 'automatic' });
+    expect(markdown).toBe('**Plan** (Approved automatically)\n\n1. Do it.');
+  });
+
+  it('takes the plan from the result when the call carried none (Claude 2.1.303)', () => {
+    const markdown = renderToolCallMarkdown('ExitPlanMode', {}, { content: 'ok', isError: false, approval: 'user', plan: '1. Do it.' });
+    expect(markdown).toBe('**Plan** (Approved by you)\n\n1. Do it.');
+    // Waiting for approval there is no plan yet, so it copies as a tool call.
+    expect(renderToolCallMarkdown('ExitPlanMode', {}, null)).toContain('**Tool:** `ExitPlanMode`');
+  });
+});
 
 describe('computeLineDiff', () => {
   it('marks a changed line remove-then-add and keeps surrounding context', () => {

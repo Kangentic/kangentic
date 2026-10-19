@@ -85,6 +85,7 @@ Surrounding infrastructure:
 | `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractToolId, extractSubagentId, extractPlanMode, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
 | `src/main/agent/adapters/claude/hook-manager.ts` | Claude Code hook configuration |
 | `src/main/agent/adapters/claude/permission-rejection-transcript.ts` | Manual-deny detector (task #640): scans the durable transcript for a rejected `tool_result` no hook can report |
+| `src/main/activity-engine/plan-approval-gate.ts` | Runs first in `SessionTelemetry.ingestEvents`: drops or holds the plan prompt's permission idle for a plan Kangentic approves, and emits `plan_auto_approved` (see [Plan approval gate](#plan-approval-gate)) |
 | `src/main/activity-engine/plan-mode-trail.ts` | Each session's reported plan-mode changes (`SessionEvent.planMode`), stamped at ingest, so the turn-end runner can ask whether a session had left plan mode by a past move |
 | `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId`, `SessionEvent.subagentId`, `SessionEvent.planMode` |
 
@@ -183,7 +184,7 @@ Priority ladder: `permission > tool > subagent > background-shell > turn-active 
 
 ## EventType reference
 
-The 24 `EventType` values written to `events.jsonl` by `event-bridge.js`, defined in `src/shared/types.ts`. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
+The 26 `EventType` values, defined in `src/shared/types.ts`. All but the last are written to `events.jsonl`: by `event-bridge.js`, except `plan_approval_sent`, which `plan-approval-bridge.js` writes. Main's plan approval gate emits `plan_auto_approved` and never writes it to the file. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
 
 | EventType key | JSONL value | Activity mapping | Notes |
 |---------------|-------------|------------------|-------|
@@ -208,11 +209,44 @@ The 24 `EventType` values written to `events.jsonl` by `event-bridge.js`, define
 | `WorktreeRemove` | `worktree_remove` | log-only | Agent removed a git worktree |
 | `BackgroundShellStart` | `background_shell_start` | `thinking` | `Bash(run_in_background: true)` launched, a foreground Bash auto-backgrounded on timeout (its `tool_response` carries a shell id), or a `Monitor` wait promoted via its `tool_response.taskId` |
 | `BackgroundShellEnd` | `background_shell_end` | log-only | `KillBash` invoked, a watcher-inferred natural exit, or the watcher's transcript drain observing a tracked shell's terminal `<task-notification>` directly in the durable session transcript; decrements active-shells counter |
-| `ModelStart` | `model_start` | log-only | LLM API call beginning (Qwen/Gemini per-call telemetry) |
+| `ModelStart` | `model_start` | log-only | LLM API call beginning (Gemini per-call telemetry) |
 | `ModelEnd` | `model_end` | log-only | LLM API call returned |
 | `ToolSelectionStart` | `tool_selection_start` | log-only | Agent is choosing the next tool |
+| `PlanApprovalSent` | `plan_approval_sent` | log-only | Written to `events.jsonl` by `plan-approval-bridge.js` when it answers the plan prompt, before the agent acts on the answer, so it proves only that the answer was sent. `detail` says where the task goes. Not rendered (see [Plan approval gate](#plan-approval-gate)) |
+| `PlanAutoApproved` | `plan_auto_approved` | log-only | Emitted by main's plan approval gate, never written to the file, right after the plan exit's `tool_end` that follows a `plan_approval_sent`. The Activity log draws it as a "Plan approved automatically" badge with `detail` "Moved to <column>" or "Stayed in <column>", and the engine re-stamps `turnStartedAt` on it |
 
 "log-only" means the event is recorded for the activity feed and may update internal counters, but does not on its own change `ActivityState`. State changes only occur through the predicate (see below) or via direct `Idle` / `Interrupted` events.
+
+### Plan approval gate
+
+A plan Kangentic approves (Plan approval Automatic, see [Agent Integration](agent-integration.md#plan-approval-bridgejs))
+still raises the agent's plan prompt as a permission request, and two hooks answer it in parallel:
+the catch-all `PermissionRequest` hook writes a permission `idle` carrying `tool: ExitPlanMode`, and
+the plan approval hook writes `plan_approval_sent` and approves. Either can land first. Measured on
+Claude Code 2.1.302, the permission idle led the marker by 24 to 31 ms in all four runs, and the
+plan exit's `PostToolUse` followed the marker 130 to 170 ms later. Three more on 2.1.303 in a
+preview matched: 29 to 30 ms, then 131 to 183 ms. Letting that idle through would
+show the card as needing you, raise the desktop permission notification and push the phone, for a
+prompt nobody has to answer.
+
+`PlanApprovalGate` (`plan-approval-gate.ts`) runs first in `SessionTelemetry.ingestEvents`, before
+the engine or any detector reads an event:
+
+- A plan exit permission idle is held for `PLAN_APPROVAL_HOLD_MS` (2 s) when the session's current
+  decision approves plans (`PlanApprovalWriter.approves`) or a marker less than 15 s old
+  (`PLAN_APPROVAL_MARKER_WINDOW_MS`) precedes it. A marker that arrives while one is held restarts
+  the wait, since the CLI acts on the answer after it.
+- The plan exit's `tool_end` drops the held idle. The marker alone never does: it proves only that
+  the answer was sent, and the CLI can refuse it. On timeout the idle is released late and the
+  marker is spent, so an approver that failed, or an answer the CLI refused, still shows the dialog
+  as needing you.
+- The plan exit `tool_end` that follows a marker is followed by `plan_auto_approved`.
+- Once the session's agent has ended (`SessionTelemetry.emitSessionEnd`), a held idle is dropped and
+  nothing more is held, so the exit's last flush never releases a permission idle after the
+  session's end.
+
+Only an idle whose tool is the plan exit is held or dropped. A question the agent asks the user, or
+any other permission prompt, passes untouched.
 
 ### Idle hints (waiting-for-input notifications)
 
@@ -228,7 +262,8 @@ Only the Claude adapter wires this today, because Claude is the only agent for w
 
 To extend it to another hook-based agent, capture a real session that exhibits the stall, read the notification's extracted `detail`, then add a `setTypeWhenDetailContains('<observed substring>', EventType.IdleHint)` directive (built via the typed builder in that adapter's hook-manager, never hand-authored) to that adapter's Notification hook. Do not guess the string. Current status of the other agents:
 
-- **Gemini / Qwen Code** share the same hook shape (`AfterAgent` -> `idle` stop-equivalent, `Notification` -> `notification`), so they could be susceptible. But they wire no `SubagentStart`/`SubagentStop` hooks, so the subagent-delegation failure mode is not modeled, and we have no captured session to confirm their notification text. Wire only after capturing evidence.
+- **Gemini** maps `AfterAgent` to the `idle` stop-equivalent and `Notification` to `notification` (one whose `notification_type` is `ToolPermission` also to the permission `idle`), so it could be susceptible. But it wires no `SubagentStart`/`SubagentStop` hooks, so the subagent-delegation failure mode is not modeled, and we have no captured session to confirm its notification text. Wire only after capturing evidence.
+- **Qwen Code** does not share Gemini's hook shape: its events use Claude's names (`Stop` -> `idle`). Its 0.24.0 bundle sends "Qwen Code is waiting for your input" (`notification_type: idle_prompt`), but it also wires no `SubagentStart`/`SubagentStop` hooks and no live session has shown the stall, so the same rule applies.
 - **Kimi** does not need this: its wire protocol emits an explicit `TurnEnd -> Idle`, and none of its `Notification`-mapped messages mean "waiting for input."
 - **Codex / Copilot / OpenCode** wire no Notification hook, so the pattern cannot apply.
 
@@ -254,7 +289,9 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   seeded thinking. A permission prompt resolving back to thinking keeps it, since that is the same
   turn, with one exception: a plan approval (the `AgentTool.ExitPlanMode` `tool_end` that resolves
   the prompt) stamps it again. The agent implements in the turn that planned, so the approval is
-  where the implementation begins. A rejected plan sends no `tool_end` and keeps the stamp. The
+  where the implementation begins. A plan Kangentic approved never shows the prompt as pending, so
+  the `plan_auto_approved` event that follows its `tool_end` stamps it instead (`onTurnStarted`
+  reason `'plan-approval'`). A rejected plan sends no `tool_end` and keeps the stamp. The
   turn-end runner uses it to ignore a turn that began before the task entered its column. A task
   dragged into Executing mid-plan and approved after the drag therefore counts there, while one
   dragged in mid-turn with no approval after the drag is dropped, unless the drag came after the

@@ -78,6 +78,7 @@ export function buildBoardConfigFromDb(params: {
       // a column is set non-default (matches the sibling fields above).
       if (lane.session_target !== 'main') column.sessionTarget = lane.session_target;
       if (lane.session_spawn_strategy !== 'create_or_resume') column.sessionSpawnStrategy = lane.session_spawn_strategy;
+      if (lane.plan_approval !== 'manual') column.planApproval = lane.plan_approval;
 
       const existingColumn = params.existingTeamConfig?.columns?.find((candidate) => candidate.id === lane.id)
         ?? params.existingTeamConfig?.columns?.find((candidate) => candidate.name === lane.name)

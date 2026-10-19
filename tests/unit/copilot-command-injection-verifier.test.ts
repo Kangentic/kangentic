@@ -27,6 +27,7 @@ vi.mock('node:os', async () => {
 });
 
 import {
+  COPILOT_HISTORY_FILE_NAME,
   readRecentCopilotCommands,
   resolveCopilotHistoryPath,
   createCopilotCommandInjectionVerifier,
@@ -185,5 +186,20 @@ describe('createCopilotCommandInjectionVerifier', () => {
       sentAt: Date.now(),
       mode: 'submitted',
     })).toBe(false);
+  });
+
+  // Every Kangentic session runs Copilot with `--config-dir <session>/copilot-config`,
+  // which is where it keeps that session's history, never ~/.copilot.
+  it('confirms from the session\'s own config home, which the default verifier never read', async () => {
+    const sentAt = Date.now();
+    const sessionHistory = path.join(tmpBase, 'session', 'copilot-config', COPILOT_HISTORY_FILE_NAME);
+    fs.mkdirSync(path.dirname(sessionHistory), { recursive: true });
+    fs.writeFileSync(sessionHistory, historyFile(['/pull-request']));
+    fs.utimesSync(sessionHistory, (sentAt + 10) / 1000, (sentAt + 10) / 1000);
+    const context = { type: 'command-injection' as const, text: '/pull-request', sentAt, mode: 'submitted' as const };
+
+    expect(await createCopilotCommandInjectionVerifier()(context)).toBe(false);
+    const sessionAware = createCopilotCommandInjectionVerifier(() => [sessionHistory, resolveCopilotHistoryPath()]);
+    expect(await sessionAware(context)).toBe(true);
   });
 });

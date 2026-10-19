@@ -122,6 +122,15 @@ describe('workflow operations', () => {
     expect(service.readWorkflow(context, 'home', workflow.id).tasks).toEqual([]);
   });
 
+  it('saves plan approval with the plan, and leaves it alone when the save does not name it', () => {
+    const created = service.createWorkflowWithPlan(context, 'home', {}, plan({ planApproval: 'automatic' }));
+    expect(created.plan_approval).toBe('automatic');
+    const resaved = service.savePlan(context, 'home', created.id, plan({ revision: created.revision }));
+    expect(resaved.plan_approval).toBe('automatic');
+    const cleared = service.savePlan(context, 'home', created.id, plan({ revision: resaved.revision, planApproval: null }));
+    expect(cleared.plan_approval).toBeNull();
+  });
+
   it('refuses a save over a newer revision', () => {
     const workflow = service.createWorkflow('home', {});
     service.savePlan(context, 'home', workflow.id, plan({ revision: workflow.revision }));

@@ -267,9 +267,9 @@ describe('Qwen Adapter - MCP-only spawn (no eventsOutputPath)', () => {
   });
 
   /**
-   * buildOptions with MCP config but NO eventsOutputPath.
-   * This is the "MCP-only" path introduced when the in-process MCP HTTP
-   * server is wired into Qwen sessions.
+   * buildOptions with MCP config but NO eventsOutputPath. The server goes
+   * through `--mcp-config` naming the session's own `mcp.json`, so the folder's
+   * `.qwen/settings.json` is not written and no hold is taken.
    */
   const buildMcpOnlyOptions = (cwd: string, ptySessionId: string) => ({
     agentPath: 'qwen',
@@ -277,6 +277,7 @@ describe('Qwen Adapter - MCP-only spawn (no eventsOutputPath)', () => {
     ptySessionId,
     cwd,
     permissionMode: 'default' as const,
+    statusOutputPath: path.join(cwd, '.kangentic', 'sessions', ptySessionId, 'status.json'),
     mcpServerEnabled: true as const,
     mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
     mcpServerToken: 'test-token-mcp',
@@ -302,27 +303,39 @@ describe('Qwen Adapter - MCP-only spawn (no eventsOutputPath)', () => {
     return settingsFile;
   };
 
-  it('gap-1: an MCP-only spawn holds the file until its own session releases', () => {
-    // The builder writes the MCP entry with no events pipeline. Without a
-    // hold, the first session's exit stripped the entry from the second
-    // session while it ran.
-    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-a'));
-    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-b'));
-    const settingsFile = seedKangenticMcpEntry();
+  it('gives each session its own mcp.json and leaves .qwen/settings.json alone', () => {
+    // Qwen 0.20+ gates every `.qwen/settings.json` server behind an
+    // "Untrusted MCP server" dialog; a `--mcp-config` server is not gated.
+    const commandA = adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-a'));
+    const commandB = adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-b'));
 
-    adapter.removeHooks(sandbox, 'session-a');
-    const afterFirst = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')) as { mcpServers?: Record<string, unknown> };
-    expect(afterFirst.mcpServers?.kangentic).toBeDefined();
-
-    adapter.removeHooks(sandbox, 'session-b');
-    // The file held only Kangentic's entry, so it is gone or empty of it.
-    if (fs.existsSync(settingsFile)) {
-      const afterSecond = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')) as { mcpServers?: Record<string, unknown> };
-      expect(afterSecond.mcpServers?.kangentic).toBeUndefined();
+    expect(commandA).toContain('--mcp-config');
+    expect(commandA).toContain('session-a/mcp.json');
+    expect(commandB).toContain('session-b/mcp.json');
+    expect(commandA).not.toContain('test-token-mcp');
+    expect(fs.existsSync(path.join(sandbox, '.qwen', 'settings.json'))).toBe(false);
+    for (const sessionId of ['session-a', 'session-b']) {
+      const mcpConfig = JSON.parse(
+        fs.readFileSync(path.join(sandbox, '.kangentic', 'sessions', sessionId, 'mcp.json'), 'utf-8'),
+      ) as { mcpServers: Record<string, { httpUrl: string }> };
+      expect(mcpConfig.mcpServers.kangentic.httpUrl).toBe('http://127.0.0.1:51234/mcp/proj-1');
     }
   });
 
-  it('gap-2: the last MCP-only session\'s release strips mcpServers.kangentic and keeps user servers', () => {
+  it('takes no folder hold, so its release strips a legacy entry another build left', () => {
+    // No hold was taken, so the release is the folder's last one and the
+    // legacy `kangentic` entry an older build (or a crash) left is stripped.
+    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-a'));
+    const settingsFile = seedKangenticMcpEntry();
+
+    adapter.removeHooks(sandbox, 'session-a');
+    if (fs.existsSync(settingsFile)) {
+      const afterRelease = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+      expect(afterRelease.mcpServers?.kangentic).toBeUndefined();
+    }
+  });
+
+  it('gap-2: a release strips a legacy mcpServers.kangentic and keeps user servers', () => {
     adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'session-x'));
     const settingsFile = seedKangenticMcpEntry({ 'user-server': { httpUrl: 'http://example.com/mcp' } });
 

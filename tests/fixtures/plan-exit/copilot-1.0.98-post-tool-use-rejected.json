@@ -1,0 +1,13 @@
+{
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "timestamp": 1792383365325,
+  "cwd": "C:\\Users\\dev\\repo",
+  "toolName": "exit_plan_mode",
+  "toolArgs": {
+    "summary": "- Create repository-root `copilot-capture.txt` containing exactly `hi` after approval.\n- Keep the change limited to that file; the target is not present."
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "Plan not approved. User feedback:\n\nAlso add a second line that says bye.\n\nPlease update the plan based on this feedback and try again."
+  }
+}

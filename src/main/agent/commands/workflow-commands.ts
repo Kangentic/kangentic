@@ -1,6 +1,7 @@
-import type { PermissionMode, TaskRunMode, Workflow } from '../../../shared/types';
+import type { PermissionMode, PlanApproval, TaskRunMode, Workflow } from '../../../shared/types';
 import { resolveEffortSelector, resolveSpacedModelName } from '../../../shared/model-id';
 import { PERMISSION_MODES, RUN_MODES, isPermissionMode, isRunMode } from '../../../shared/workflow-run-settings';
+import { isPlanApproval } from '../../../shared/plan-approval';
 import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { requireWorkflowRuntimeContext } from '../../workflows/workflow-runtime';
 import { requestWorkflowAgentProjectAccess } from '../../workflows/workflow-agent';
@@ -230,6 +231,13 @@ export const handleSaveWorkflow: CommandHandler = async (params, context) => {
     const links = linksParam(params);
     const title = stringParam(params, 'title');
     const brief = stringParam(params, 'brief');
+    // Narrowed here as well as in the zod schema: the mobile bridge reaches
+    // handlers with no schema in front of them.
+    const planApprovalValue = params.planApproval;
+    if (planApprovalValue !== undefined && planApprovalValue !== null && !isPlanApproval(planApprovalValue)) {
+      throw new WorkflowRequestError('planApproval must be "automatic", "manual", or null to follow the plan columns.');
+    }
+    const planApproval: PlanApproval | null | undefined = planApprovalValue;
     // Models and efforts are checked against each agent's CLI first, which can
     // take a moment; everything else is checked before anything is written. A
     // new workflow is created only with a plan that passed, in the same write,
@@ -241,8 +249,9 @@ export const handleSaveWorkflow: CommandHandler = async (params, context) => {
         tasks,
         links,
         revision: (revisionValue as number | null | undefined) ?? null,
+        planApproval,
       })
-      : createWorkflowWithPlan(runtime, context.projectId, { brief }, { title, tasks, links, revision: null });
+      : createWorkflowWithPlan(runtime, context.projectId, { brief }, { title, tasks, links, revision: null, planApproval });
     const taskCount = saved.draft?.tasks.length ?? 0;
     const linkCount = saved.draft?.links.length ?? 0;
     return {

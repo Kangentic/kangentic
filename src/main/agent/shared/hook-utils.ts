@@ -4,14 +4,16 @@ import path from 'node:path';
 /**
  * Identify a hook command string as Kangentic-injected.
  *
- * Matches both current (`event-bridge`) and legacy (`activity-bridge`, removed
- * 2026-03-01) bridge script references AND requires `.kangentic` in the path,
- * so user-defined hooks that happen to mention our script names without
+ * Matches the current bridges (`event-bridge`, `plan-approval-bridge`) and the
+ * legacy `activity-bridge` (removed 2026-03-01) AND requires `.kangentic` in the
+ * path, so user-defined hooks that happen to mention our script names without
  * pointing at our worktree are not swept up.
  */
 export function isKangenticHookCommand(command: string | undefined): boolean {
   if (typeof command !== 'string') return false;
-  const hasBridge = command.includes('activity-bridge') || command.includes('event-bridge');
+  const hasBridge = command.includes('activity-bridge')
+    || command.includes('event-bridge')
+    || command.includes('plan-approval-bridge');
   const hasKangenticPath = command.includes('.kangentic') || command.includes('/kangentic/');
   return hasBridge && hasKangenticPath;
 }

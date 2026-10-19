@@ -7,7 +7,7 @@ import {
   removeHooks,
 } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
-import { extractDetail, extractPlanMode, extractSubagentId, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { extractDetail, extractPlanMode, extractSubagentId, extractTool, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
@@ -31,6 +31,26 @@ afterEach(() => {
 });
 
 describe('hook-manager', () => {
+  describe('buildHooks plan approval hook', () => {
+    const APPROVER = 'node "/fake/.kangentic/plan-approval-bridge.js" "/fake/.kangentic/sessions/abc/plan-approval.json" "/fake/events.jsonl" e30=';
+
+    it('adds the approver as a second PermissionRequest entry matched EXACTLY to ExitPlanMode', () => {
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {}, { planApprovalCommand: APPROVER });
+      expect(hooks.PermissionRequest).toHaveLength(2);
+      // Never '' or '*': either would run it for AskUserQuestion too.
+      expect(hooks.PermissionRequest[1].matcher).toBe('ExitPlanMode');
+      expect(hooks.PermissionRequest[1].hooks[0].command).toBe(APPROVER);
+      // The catch-all permission idle stays first and unchanged in shape.
+      expect(hooks.PermissionRequest[0].matcher).toBe('');
+      expect(hooks.PermissionRequest[0].hooks[0].command).toContain('idle');
+    });
+
+    it('adds no approver when none is given', () => {
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
+      expect(hooks.PermissionRequest.map((entry) => entry.matcher)).toEqual(['']);
+    });
+  });
+
   describe('buildHooks', () => {
     it('produces correct hook entries for all 18 event types', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
@@ -135,9 +155,11 @@ describe('hook-manager', () => {
         setTypeWhenDetailContains('api_error', EventType.TurnRetrying),
       );
 
-      // PermissionRequest: idle
+      // PermissionRequest: idle, carrying the tool so the plan approval gate
+      // can tell the plan prompt from every other one.
       expect(hooks.PermissionRequest).toHaveLength(1);
       expect(hooks.PermissionRequest[0].hooks[0].command).toContain('idle');
+      expect(hooks.PermissionRequest[0].hooks[0].command).toContain(extractTool('tool_name'));
 
       // SessionStart: session_start
       expect(hooks.SessionStart).toHaveLength(1);

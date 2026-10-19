@@ -29,6 +29,13 @@ const EXTERNAL_SCRIPTS = [
     destFile: 'event-bridge.js',
   },
   {
+    kind: 'bridge',
+    name: 'plan-approval-bridge',
+    src: 'src/main/agent/plan-approval-bridge.js',
+    destDir: '',
+    destFile: 'plan-approval-bridge.js',
+  },
+  {
     kind: 'plugin',
     adapter: 'opencode',
     name: 'kangentic-activity',

@@ -261,6 +261,18 @@ describe('workflow tables', () => {
     expect(workflows.getById(workflow.id)!.agent_session_id).toBeNull();
   });
 
+  it('stores who approves plans, null by default, without changing the plan\'s revision', () => {
+    const { workflows } = freshDatabase();
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    expect(workflow.plan_approval).toBeNull();
+    workflows.setPlanApproval(workflow.id, 'automatic');
+    const picked = workflows.getById(workflow.id)!;
+    expect(picked.plan_approval).toBe('automatic');
+    expect(picked.revision).toBe(workflow.revision);
+    workflows.setPlanApproval(workflow.id, null);
+    expect(workflows.getById(workflow.id)!.plan_approval).toBeNull();
+  });
+
   describe('the workflow agent\'s PTY grid', () => {
     const columnsOf = (database: ReturnType<typeof freshDatabase>['database']) =>
       database.pragma('table_info(workflows)') as Array<{ name: string; type: string; notnull: number }>;

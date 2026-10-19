@@ -4,13 +4,13 @@
  *
  * Copilot command shapes (see src/main/agent/adapters/copilot/command-builder.ts):
  *   copilot --version                              -> detector probe
- *   copilot --resume <sessionId> [flags]           -> resume or new with caller UUID
+ *   copilot --session-id <sessionId> [flags]       -> resume or new with caller UUID
  *   copilot --plan [flags] -i "<prompt>"           -> interactive with prompt
  *   copilot -p "<prompt>" [flags]                  -> non-interactive
  *
  * Markers for test assertions (mirrors mock-claude):
- *   MOCK_COPILOT_SESSION:<id>   -> new session (--resume with new UUID)
- *   MOCK_COPILOT_RESUMED:<id>   -> resumed session (--resume with existing UUID)
+ *   MOCK_COPILOT_SESSION:<id>   -> new session (--session-id with a new UUID)
+ *   MOCK_COPILOT_RESUMED:<id>   -> resumed session (--session-id with an existing UUID)
  *   MOCK_COPILOT_PROMPT:<text>  -> prompt text delivered
  *   MOCK_COPILOT_CONFIG_DIR:<path> -> config dir from --config-dir
  *   MOCK_COPILOT_NO_PROMPT      -> no prompt provided
@@ -36,10 +36,13 @@ let nonInteractive = false;
 for (let i = 0; i < args.length; i++) {
   const argument = args[i];
 
-  // --resume <sessionId> or --resume=<sessionId>
-  if (argument === '--resume' && i + 1 < args.length) {
+  // --session-id <sessionId>, --session-id=<sessionId>, and the older
+  // --resume forms (real Copilot 1.0.97 refuses --resume for an unseen id)
+  if ((argument === '--session-id' || argument === '--resume') && i + 1 < args.length) {
     sessionId = args[i + 1];
     i++; // skip value
+  } else if (argument.startsWith('--session-id=')) {
+    sessionId = argument.slice('--session-id='.length);
   } else if (argument.startsWith('--resume=')) {
     sessionId = argument.slice('--resume='.length);
   }
@@ -77,8 +80,8 @@ if (configDir) {
 }
 
 if (sessionId) {
-  // In real Copilot, --resume with a new UUID creates a new session,
-  // --resume with an existing UUID resumes it. The mock can't distinguish,
+  // In real Copilot, --session-id with a new UUID creates a new session,
+  // with an existing UUID it resumes it. The mock can't distinguish,
   // so always emit SESSION marker. Tests that need RESUMED semantics
   // can check by spawning first, suspending, then resuming.
   console.log('MOCK_COPILOT_SESSION:' + sessionId);

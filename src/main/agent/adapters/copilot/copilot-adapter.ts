@@ -10,7 +10,7 @@ import { CopilotStatusParser } from './status-parser';
 import { CopilotStreamParser } from './stream-parser';
 import { migrateCopilotProjectData } from './project-relocation';
 import { discoverCopilotCapabilities } from './capability-discovery';
-import { createCopilotCommandInjectionVerifier } from './command-injection-verifier';
+import { COPILOT_HISTORY_FILE_NAME, createCopilotCommandInjectionVerifier, resolveCopilotHistoryPath } from './command-injection-verifier';
 import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { sharedFolderKey } from '../../shared/shared-folder-holds';
@@ -24,8 +24,9 @@ import { ActivityDetection } from '../../../../shared/types';
  *
  * Copilot CLI (v1.0+) supports:
  * - statusLine config (same pattern as Claude Code)
- * - Inline hooks in config.json (preToolUse, postToolUse, agentStop, preCompact)
- * - Explicit session ID resume via --resume <uuid>
+ * - Hooks (preToolUse, postToolUse, agentStop, preCompact) in a per-session
+ *   `<config home>/hooks/kangentic.json`
+ * - Explicit session ID via --session-id <uuid> (new or resumed)
  * - Native --plan mode
  * - --yolo for full permission bypass
  */
@@ -35,9 +36,9 @@ export class CopilotAdapter implements AgentAdapter {
   readonly sessionType = 'copilot_agent';
 
   /**
-   * Copilot supports caller-specified session IDs via --resume <uuid>.
-   * Passing a new UUID starts a fresh session with that ID; passing an
-   * existing UUID resumes it. Same semantics as Claude's --session-id.
+   * Copilot supports caller-specified session IDs via --session-id <uuid>
+   * (1.0.51+). Passing a new UUID starts a fresh session with that ID; passing
+   * an existing UUID resumes it. Same semantics as Claude's --session-id.
    */
   readonly supportsCallerSessionId = true;
   // `--additional-mcp-config` pointing at a file in the session's own directory.
@@ -155,9 +156,19 @@ export class CopilotAdapter implements AgentAdapter {
       // MEASURED at 36-38ms, the fastest of any adapter and flat against a 32s
       // turn. Copilot's HOOKS still do not fire on user-prompt submit - that
       // part of the old comment was right - but it keeps
-      // `~/.copilot/command-history-state.json`, which does record every
-      // submission. Slash commands included. See command-injection-verifier.ts.
-      return createCopilotCommandInjectionVerifier();
+      // `command-history-state.json` in its config home, which does record
+      // every submission. Slash commands included. A Kangentic session's home
+      // is its own copilot-config folder (`--config-dir`), so the verifier
+      // reads the files of the sessions built for that folder, then the
+      // global one. See command-injection-verifier.ts.
+      return createCopilotCommandInjectionVerifier((context) => {
+        const cwd = context.type === 'command-injection' ? context.cwd : undefined;
+        const folderKey = cwd ? sharedFolderKey(cwd) : null;
+        const sessionFiles = [...this.sessionConfigDirs.values()]
+          .filter((tracked) => folderKey === null || sharedFolderKey(tracked.folder) === folderKey)
+          .map((tracked) => path.join(tracked.configDir, COPILOT_HISTORY_FILE_NAME));
+        return [...sessionFiles, resolveCopilotHistoryPath()];
+      });
     }
     // 'paste': hooks fire on tool/agent boundaries (preToolUse, postToolUse,
     // agentStop, preCompact) but not on submit, so the paste engine's activity
