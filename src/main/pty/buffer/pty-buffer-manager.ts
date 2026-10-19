@@ -421,10 +421,13 @@ interface BufferState {
    *  replay agrees. Starts false on carry-over, mirroring tuiStartIndex's
    *  carried-ring opt-out: carried scrollback is genuine user content, and
    *  the NEW process's first clear must not wipe it. Also starts false for
-   *  TRANSIENT sessions (a Command Terminal has no spawn command to strip,
-   *  and a user shell's later \x1b[2J - which by spec erases the viewport
-   *  only - must never be upgraded into a scrollback wipe), and expires at
-   *  preTuiWindowEndsAt so a mid-session repaint clear cannot fire it late. */
+   *  TRANSIENT sessions (Command Terminals and a workflow's agent). Their
+   *  typed command carries the shell clear prelude like every agent spawn,
+   *  which erases the echo in-stream for every consumer, so this layer would
+   *  remove nothing more there and only add its risk of a late qualifying
+   *  clear wiping history a Command Terminal user has already built up.
+   *  Expires at preTuiWindowEndsAt so a mid-session repaint clear cannot
+   *  fire it late. */
   pendingPreTuiScrollbackClear: boolean;
   /** Wall-clock bound on the one-shot above: past this, onData disarms it
    *  without firing (see PRE_TUI_TAKEOVER_WINDOW_MS). 0 when never armed. */
@@ -884,11 +887,11 @@ export class PtyBufferManager {
     // and a shell answers SIGWINCH with little or nothing, so this wait is
     // shaped differently from the TUI path below. (One deliberate narrowing
     // of "usually": on POSIX shells the spawn clear prelude's `clear` emits a
-    // \x1b[2J into every non-transient agent ring at spawn, so a non-TUI
-    // agent there takes the TUI path below - acceptable, since the markerless
-    // quiesce settles it near this path's latency and only true post-resize
-    // silence pays the full deadline. Transient Command Terminals skip the
-    // prelude and keep this fast path.)
+    // \x1b[2J into every agent ring at spawn, Command Terminals included, so
+    // a non-TUI agent there takes the TUI path below - acceptable, since the
+    // markerless quiesce settles it near this path's latency and only true
+    // post-resize silence pays the full deadline. pwsh's Clear-Host emits no
+    // \x1b[2J, so the prelude changes nothing here on PowerShell.)
     //  - a post-resize erase marker upgrades to a frame-boundary sample (the
     //    TUI's first frame just landed);
     //  - marker-less bytes that arrived and went quiet sample on the lull;

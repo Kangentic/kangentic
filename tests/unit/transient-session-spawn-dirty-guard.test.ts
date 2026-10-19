@@ -38,7 +38,9 @@
  * slotless rows, so a row registered under its own reservation counts once (fails
  * if the two are summed); the 6 s budget is checked before the checkout and before
  * the merge (each fails if its `pastDeadline()` guard is removed); and the adapter's
- * exit sequence reaches the spawn, with Ctrl+C as the fallback.
+ * exit sequence reaches the spawn, with Ctrl+C as the fallback. A start whose shell
+ * did not start fails with `spawn-failed` and ends its exited row (fails if that
+ * check is dropped, which hands the dead placeholder back as a success).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -154,7 +156,12 @@ interface MockContext {
   configManager: { getEffectiveConfig: ReturnType<typeof vi.fn> };
   boardConfigManager: { getDefaultBaseBranchForPath: ReturnType<typeof vi.fn> };
   mcpServerHandle: null;
-  sessionManager: { spawn: ReturnType<typeof vi.fn>; getShell: ReturnType<typeof vi.fn>; listSessions: ReturnType<typeof vi.fn> };
+  sessionManager: {
+    spawn: ReturnType<typeof vi.fn>;
+    getShell: ReturnType<typeof vi.fn>;
+    listSessions: ReturnType<typeof vi.fn>;
+    endCommandTerminal: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockContext(options?: { boardDefault?: string; configDefault?: string }): MockContext {
@@ -185,6 +192,7 @@ function createMockContext(options?: { boardDefault?: string; configDefault?: st
       getShell: vi.fn(async () => 'bash'),
       // No live terminals: the slot allocation (startCommandTerminal) reads it.
       listSessions: vi.fn(() => []),
+      endCommandTerminal: vi.fn(() => 'ended'),
     },
   };
 }
@@ -662,6 +670,34 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
     // start takes slot-1 again.
     context.sessionManager.spawn.mockResolvedValue({ id: 'third' });
     expect((await startCommandTerminal(context as never, { projectId: 'proj-1' })).slot).toBe('slot-1');
+  });
+
+  it('fails the start and ends the row when the shell did not start, so no window waits on a dead placeholder', async () => {
+    // A shell node-pty cannot launch (a bare `pwsh` not on PATH) comes back from
+    // spawn() as an exited row with no PTY, its exit already announced. Handed
+    // back as a success, the desktop window waited on its launch shimmer for good
+    // and the row held its slot until a Stop.
+    const context = createMockContext();
+    context.sessionManager.getShell.mockResolvedValue('pwsh');
+    context.sessionManager.spawn.mockResolvedValueOnce({ id: 'failed-session', status: 'exited', exitCode: -1, pid: null });
+
+    await expect(startCommandTerminal(context as never, { projectId: 'proj-1' }))
+      .rejects.toMatchObject({ code: 'spawn-failed', message: expect.stringContaining('"pwsh"') });
+    expect(context.sessionManager.endCommandTerminal).toHaveBeenCalledWith('failed-session');
+
+    // The failed start's reservation is released, so the next start takes slot-1.
+    context.sessionManager.spawn.mockResolvedValue({ id: 'next-session', status: 'running' });
+    expect((await startCommandTerminal(context as never, { projectId: 'proj-1' })).slot).toBe('slot-1');
+  });
+
+  it('keeps a queued start: only an exited row is a shell that did not start', async () => {
+    const context = createMockContext();
+    context.sessionManager.spawn.mockResolvedValueOnce({ id: 'queued-session', status: 'queued' });
+
+    const result = await startCommandTerminal(context as never, { projectId: 'proj-1' });
+
+    expect(result.session).toMatchObject({ id: 'queued-session', status: 'queued' });
+    expect(context.sessionManager.endCommandTerminal).not.toHaveBeenCalled();
   });
 });
 

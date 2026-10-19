@@ -35,9 +35,10 @@ a black terminal with a populated context bar instead of the edit form.
   task's only row, so that push is what drops the old row from the replica. A paired phone's
   read-stream successor hop (`mobile-bridge/handlers/read-stream.ts`) depends on the silence: a
   removal push would end the paused feed before the successor exists to name.
-  `session-spawn-flow.test.ts` pins it. One gap stays open: a spawn that fails after the drain
-  registers an exited placeholder and pushes only its `exit`, which matches no row the replica
-  holds, so the drained row stays until the next `syncSessions`.
+  `session-spawn-flow.test.ts` pins it. A spawn that fails after the drain is announced the same
+  way: `handleSpawnFailure` pushes its exited placeholder on `session-changed` before its `exit`,
+  so the drop happens there too, and the exit lands on a row the replica holds.
+  `spawn-failure-handler.test.ts` pins the order.
 - **A status push only upserts; a removal push only removes.** `sessions.onStatus` maps to
   `upsertSession`, `sessions.onRemoved` maps to `removeSession`, and neither handler does the
   other's job. `removeSession` is the one push-driven writer that takes a row OUT.

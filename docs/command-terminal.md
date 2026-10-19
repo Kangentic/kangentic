@@ -64,6 +64,14 @@ same happens when the PTY exits on its own. Before, a terminal whose agent ran `
 a bare PowerShell or bash prompt at the project root, which became a real exposure once a paired
 phone could type into the session.
 
+A shell that never starts ends the same way. node-pty refuses a configured shell it cannot find
+(a bare `pwsh` off PATH reports `File not found:`), and the spawn hands back an exited placeholder
+whose exit went out before the spawn returned. `startCommandTerminal` ends that row and refuses the
+start with `spawn-failed`, naming the shell and pointing at Settings > Terminal. The desktop window
+toasts it and closes, and a phone gets `command-terminal-start-failed`. Handed back as a success,
+the window waited on its launch shimmer for good, since it subscribes to the exit only once it
+knows the session id.
+
 The agent-absence sweep (see [Session Lifecycle](session-lifecycle.md#a-session-whose-agent-exited-under-a-surviving-shell))
 is what notices, and the agent's SessionEnd hook asks it to look at once, so `/exit` closes the
 window in about 4 seconds. `/clear` also fires SessionEnd, but its process stays alive and the

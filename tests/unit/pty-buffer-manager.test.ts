@@ -2332,13 +2332,92 @@ describe('PtyBufferManager', () => {
       await new Promise((resolve) => setTimeout(resolve, 40));
 
       const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
-      // A Command Terminal shell has no spawn command to strip, and a later
-      // ordinary \x1b[2J (which by spec erases the viewport only) must never
-      // be upgraded into a scrollback wipe.
+      // A transient spawn's echo is already erased in-stream by the shell
+      // clear prelude, so the strip would add only its risk: a later ordinary
+      // \x1b[2J (which by spec erases the viewport only) upgraded into a
+      // scrollback wipe.
       expect(flushed).not.toContain('\x1b[3J');
       expect(manager.getRawScrollback(SESSION)).toContain('some-command');
 
       manager.removeSession(SESSION);
+    });
+
+    describe('a transient spawn typed with the shell clear prelude shows no echo on any route (#853)', () => {
+      const COLS = 80;
+      const ROWS = 24;
+      const BANNER = ' ▐▛███▛█   Claude Code v2.1.303';
+      // The shape pwsh 7.6.7 wrote through ConPTY for a Command Terminal in a
+      // preview: the escape-only startup preamble (with its own \x1b[2J), the
+      // prompt, the typed line, then Clear-Host rendered as per-row erases
+      // plus \x1b[3J and no \x1b[2J, then Claude's banner from home.
+      const perRowErase = '\x1b[K' + '\r\n\x1b[K'.repeat(ROWS - 1);
+      const preamble = '\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H'
+        + 'PS C:\\Users\\dev\\project>\x1b[1C\x1b]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07\x1b[?25h\x1b[?25l';
+      const typedLine = (prelude: string): string =>
+        `\x1b[93m${prelude}& \x1b[36m"C:\\Users\\dev\\.local\\bin\\claude.EXE" \x1b[90m--permission-mode \x1b[37macceptEdits\r\n\x1b[?25h\x1b[?25l`;
+      const clearHostRender = `\x1b[m\x1b[H${perRowErase}\x1b[H\x1b[?25h\x1b[?25l\x1b[3J${perRowErase}\x1b[H\x1b[?25h`;
+      const banner = `\x1b]0;claude\x07\x1b[?25l${BANNER}\r\n▝▜██████▀  Haiku 5.5 with low effort\r\n`;
+
+      /** Every row the terminal holds, its scrollback included. */
+      function allRows(terminal: Terminal): string[] {
+        const buffer = terminal.buffer.active;
+        const rows: string[] = [];
+        for (let row = 0; row < buffer.length; row += 1) rows.push(buffer.getLine(row)?.translateToString(true) ?? '');
+        return rows;
+      }
+
+      /** The three views of one transient session fed `chunks`: what an xterm
+       *  mounted at spawn received live, the replay snapshot a later mount
+       *  gets, and main's parsed grid (the phone seed and geometry-gated
+       *  replays). Each rendered into a fresh xterm. */
+      async function renderEveryRoute(chunks: string[]): Promise<{ live: Terminal; replay: Terminal; parsedGrid: Terminal }> {
+        const onFlush = vi.fn();
+        const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+        manager.initSession(SESSION, '', COLS, ROWS, null, true);
+        for (const chunk of chunks) manager.onData(SESSION, chunk);
+        const allBytes = chunks.join('');
+        await expect
+          .poll(() => onFlush.mock.calls.reduce((total, call) => total + (call[1] as string).length, 0), { timeout: 2000, interval: 10 })
+          .toBe(allBytes.length);
+        const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
+        const replaySnapshot = await manager.getReplaySnapshot(SESSION);
+        const parsedFrame = await manager.getSerializedFrame(SESSION);
+        manager.removeSession(SESSION);
+        return {
+          live: await replayIntoFreshTerminal(flushed, COLS, ROWS),
+          replay: await replayIntoFreshTerminal(replaySnapshot, COLS, ROWS),
+          parsedGrid: await replayIntoFreshTerminal(parsedFrame, COLS, ROWS),
+        };
+      }
+
+      it('on the classic renderer: live, replayed, and parsed, the banner is the first row and the echo is nowhere', async () => {
+        const views = await renderEveryRoute([preamble, typedLine('Clear-Host\x1b[37m; '), clearHostRender, banner]);
+        for (const [route, terminal] of Object.entries(views)) {
+          const rows = allRows(terminal);
+          expect(rows.join('\n'), route).not.toContain('claude.EXE');
+          expect(rows.join('\n'), route).not.toContain('PS C:');
+          expect(terminal.buffer.active.getLine(terminal.buffer.active.viewportY)?.translateToString(true), route).toBe(BANNER);
+        }
+
+        // Control: the same stream typed without the prelude keeps the echo
+        // above the banner. The buffer manager does not strip it for a
+        // transient session, so the prelude is the only thing removing it.
+        const unclearedViews = await renderEveryRoute([preamble, typedLine(''), banner]);
+        for (const [route, terminal] of Object.entries(unclearedViews)) {
+          expect(allRows(terminal).join('\n'), route).toContain('claude.EXE');
+        }
+      });
+
+      it('on the fullscreen renderer: the normal buffer Claude leaves on exit holds no echo', async () => {
+        const altScreenFrame = '\x1b[?1049h\x1b[H\x1b[2JFULLSCREEN FRAME\x1b[?1049l';
+        const views = await renderEveryRoute([preamble, typedLine('Clear-Host\x1b[37m; '), clearHostRender, altScreenFrame]);
+        for (const [route, terminal] of Object.entries(views)) {
+          expect(terminal.buffer.active.type, route).toBe('normal');
+          const rows = allRows(terminal).join('\n');
+          expect(rows, route).not.toContain('claude.EXE');
+          expect(rows, route).not.toContain('PS C:');
+        }
+      });
     });
 
     it('a resize with an empty ring never arms the gate (the common first fit after spawn)', async () => {
