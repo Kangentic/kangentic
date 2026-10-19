@@ -49,6 +49,14 @@ breaks on the next platform.
   `SetHandleInformation` fails a fatal `PCHECK` that kills the main process (Sentry DESKTOP-S).
   All-`inherit` and all-real are both safe. `UTILITY_PROCESS_STDIO` in
   `src/main/utility-process/stderr-tail.ts` is the single place this is decided.
+- **A child's env comes from `src/main/shared/child-env.ts`.** On Windows main's `process.env`
+  holds `CHROME_CRASHPAD_PIPE_NAME`, and an Electron program a child starts registers with our
+  crash handler through it (Sentry DESKTOP-1S). Build an env with `childProcessEnv(overrides)`,
+  or pass a caller's through `withoutCrashpadPipeName(env)`, never `{ ...process.env }` or
+  `env: process.env`. Never delete the variable from main's own `process.env`. Kangentic's
+  renderer, GPU and utility processes find the handler through it. A deliberate exception carries
+  `// crashpad-env-ok: <reason>`. What still inherits it by decision is listed in
+  `docs/cross-platform.md`, "Windows: the handler's pipe name".
 
 ### Tests (unit, UI, E2E)
 
@@ -107,6 +115,10 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   workflow that runs a packaged build (`package-smoke.yml`) redirects its output to a file, so each
   hands the app the valid stdout handle that hides it. Both tests ride the unit tier, so CI still
   runs them as a PR check.
+- **Test for child envs:** `tests/unit/child-env-parity.test.ts` scans `src/main` and fails on a
+  `...process.env` spread or an `env: process.env` outside `child-env.ts` without the marker, and
+  on a `delete process.env` of the Crashpad variable. A spawn that passes no env at all is out of
+  its reach. The chokepoints each pin their own strip in their unit tests.
 - **Test for exec heads:** `tests/unit/shell-quote.test.ts` scans `src/main` and fails on an
   `execAsync` command head quoted by hand instead of through `quoteCmdExecutable`. Runs in CI via
   `npm run test:unit`.

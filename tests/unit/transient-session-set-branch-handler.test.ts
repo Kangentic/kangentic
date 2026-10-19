@@ -40,8 +40,9 @@ vi.mock('node:fs', () => ({
 
 vi.mock('uuid', () => ({ v4: vi.fn(() => 'mock-transient-task-id') }));
 
-vi.mock('simple-git', () => ({
-  default: vi.fn(() => ({
+vi.mock('../../src/main/git/git-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-client')>()),
+  gitAt: vi.fn(() => ({
     revparse: vi.fn(async () => 'main\n'),
     status: vi.fn(async () => ({ files: [] })),
     checkout: vi.fn(async () => undefined),
