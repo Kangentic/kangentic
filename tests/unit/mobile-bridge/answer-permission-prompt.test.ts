@@ -22,7 +22,7 @@ function fakeContext(overrides: {
   const write = overrides.write ?? vi.fn();
   return {
     sessionManager: {
-      getSession: vi.fn(() => (overrides.session === undefined ? { id: 'sess-1' } : overrides.session)),
+      getSession: vi.fn(() => (overrides.session === undefined ? { id: 'sess-1', status: 'running' } : overrides.session)),
       getActivityStatsSnapshot: vi.fn(() => (overrides.snapshot === undefined ? null : overrides.snapshot)),
       isWritable: vi.fn(() => overrides.writable ?? true),
       write,
@@ -31,14 +31,13 @@ function fakeContext(overrides: {
 }
 
 describe('handleAnswerPermissionPrompt', () => {
-  it('rejects when the session does not exist', () => {
+  it('rejects with the unknown-session code when the session does not exist', () => {
     const context = fakeContext({ session: null });
     const response = handleAnswerPermissionPrompt(
       fakeRequest({ sessionId: 'sess-1', promptId: 'sess-1:tool-1', keystrokes: '1\r' }),
       context,
     );
-    expect(response.ok).toBe(false);
-    expect(response.error).toMatch(/no such session/i);
+    expect(response).toMatchObject({ ok: false, code: 'unknown-session', error: 'No such session: sess-1' });
   });
 
   it('rejects when no permission prompt is currently outstanding', () => {
@@ -95,6 +94,46 @@ describe('handleAnswerPermissionPrompt', () => {
       context,
     );
     expect(response.ok).toBe(false);
+    expect(response.error).toMatch(/not accepting input/i);
+    // A running row whose PTY a kill just nulled is not yet ended as far as
+    // the row says, so the phone is not told the session is gone.
+    expect(response.code).toBeUndefined();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('answers the unknown-session code when the prompt matches but the session was suspended', () => {
+    const write = vi.fn();
+    const context = fakeContext({
+      session: { id: 'sess-1', status: 'suspended' },
+      snapshot: { permissionPending: true, permissionAwaitedToolId: 'tool-9' },
+      writable: false,
+      write,
+    });
+    const response = handleAnswerPermissionPrompt(
+      fakeRequest({ sessionId: 'sess-1', promptId: 'sess-1:tool-9', keystrokes: '1\r' }),
+      context,
+    );
+    expect(response).toMatchObject({ ok: false, code: 'unknown-session' });
+    expect(response.error).toMatch(/not accepting input/i);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it.each(['suspended', 'exited'])('answers the unknown-session code for a %s session with no prompt on record', (status) => {
+    // A suspend drops the session's activity state, so the snapshot reads null,
+    // and an exited row need not hold a pending prompt either. The phone must
+    // still learn the session ended, not that no prompt is outstanding.
+    const write = vi.fn();
+    const context = fakeContext({
+      session: { id: 'sess-1', status },
+      snapshot: null,
+      writable: false,
+      write,
+    });
+    const response = handleAnswerPermissionPrompt(
+      fakeRequest({ sessionId: 'sess-1', promptId: 'sess-1:tool-9', keystrokes: '1\r' }),
+      context,
+    );
+    expect(response).toMatchObject({ ok: false, code: 'unknown-session' });
     expect(response.error).toMatch(/not accepting input/i);
     expect(write).not.toHaveBeenCalled();
   });

@@ -1,5 +1,6 @@
 import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type JsonValue, type SendUserMessageResponsePayload } from '@kangentic/protocol';
 import type { IpcContext } from '../../ipc/ipc-context';
+import { notAcceptingInputRefusal, unknownSessionRefusal } from './session-refusals';
 
 export async function handleSendUserMessage(
   request: CapabilityRequestMessage,
@@ -7,8 +8,16 @@ export async function handleSendUserMessage(
 ): Promise<CapabilityResponseMessage> {
   const payload = parseCapabilityRequestPayload('send-user-message', request.payload);
 
-  if (!context.sessionManager.getSession(payload.sessionId)) {
-    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+  const session = context.sessionManager.getSession(payload.sessionId);
+  if (!session) {
+    return unknownSessionRefusal(request, payload.sessionId);
+  }
+
+  // A suspended/queued/exited session stays in the registry with no PTY. The
+  // paste below would drop every byte and fail on its evidence wait about 6 s
+  // later, so refuse now instead.
+  if (!context.sessionManager.isWritable(payload.sessionId)) {
+    return notAcceptingInputRefusal(request, session);
   }
 
   // The same bracketed-paste delivery path the renderer's Browser-pane

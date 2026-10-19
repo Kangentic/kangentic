@@ -11,7 +11,7 @@ function fakeRequest(payload: Record<string, unknown>): CapabilityRequestMessage
 }
 
 class FakeSessionManager extends EventEmitter {
-  getSession = vi.fn((id: string) => ({ id, taskId: 'task-1' }));
+  getSession = vi.fn((id: string): { id: string; taskId: string; status: string } => ({ id, taskId: 'task-1', status: 'running' }));
   isWritable = vi.fn(() => true);
   write = vi.fn();
   resize = vi.fn(() => ({ colsChanged: true }));
@@ -24,12 +24,11 @@ function fakeContext(sessionManager: FakeSessionManager): IpcContext {
 }
 
 describe('handleInteractiveTerminal', () => {
-  it('rejects when the session does not exist', () => {
+  it('rejects with the unknown-session code when the session does not exist', () => {
     const sessionManager = new FakeSessionManager();
     sessionManager.getSession.mockReturnValue(undefined as never);
     const response = handleInteractiveTerminal(fakeRequest({ sessionId: 'sess-1', data: 'ls\r' }), fakeContext(sessionManager), new SubscriptionRegistry());
-    expect(response.ok).toBe(false);
-    expect(response.error).toMatch(/no such session/i);
+    expect(response).toMatchObject({ ok: false, code: 'unknown-session', error: 'No such session: sess-1' });
   });
 
   it('writes raw keystrokes straight through to the live session (full terminal parity)', () => {
@@ -46,12 +45,26 @@ describe('handleInteractiveTerminal', () => {
     // is truthy, but write() would silently drop the bytes - the handler must
     // surface that instead of a false written:true.
     const sessionManager = new FakeSessionManager();
+    sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended' });
+    sessionManager.isWritable.mockReturnValue(false);
+
+    const response = handleInteractiveTerminal(fakeRequest({ sessionId: 'sess-1', data: 'ls\r' }), fakeContext(sessionManager), new SubscriptionRegistry());
+
+    expect(response).toMatchObject({ ok: false, code: 'unknown-session' });
+    expect(response.error).toMatch(/not accepting input/i);
+    expect(sessionManager.write).not.toHaveBeenCalled();
+  });
+
+  it('refuses a queued session without the unknown-session code, since its PTY is still coming', () => {
+    const sessionManager = new FakeSessionManager();
+    sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'queued' });
     sessionManager.isWritable.mockReturnValue(false);
 
     const response = handleInteractiveTerminal(fakeRequest({ sessionId: 'sess-1', data: 'ls\r' }), fakeContext(sessionManager), new SubscriptionRegistry());
 
     expect(response.ok).toBe(false);
     expect(response.error).toMatch(/not accepting input/i);
+    expect(response.code).toBeUndefined();
     expect(sessionManager.write).not.toHaveBeenCalled();
   });
 
@@ -130,21 +143,25 @@ describe('handleInteractiveTerminal', () => {
     expect(sessionManager.reconsiderRestingGridAfterMobileRelease).not.toHaveBeenCalled();
   });
 
-  it('release-size is answered even for a non-writable session; a resize is not', () => {
+  it('release-size is answered even for a suspended session; a resize is refused with the unknown-session code', () => {
+    // The phone contract: leaving a suspended session's terminal view gives the
+    // grid back without a refusal, while a resize there reads as the session gone.
     const sessionManager = new FakeSessionManager();
+    sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended' });
     sessionManager.isWritable.mockReturnValue(false);
     const subscriptions = new SubscriptionRegistry();
     const context = fakeContext(sessionManager);
 
     const releaseResponse = handleInteractiveTerminal(fakeRequest({ sessionId: 'sess-1', action: 'release-size' }), context, subscriptions);
     expect(releaseResponse.ok).toBe(true);
+    expect(releaseResponse.code).toBeUndefined();
 
     const resizeResponse = handleInteractiveTerminal(
       fakeRequest({ sessionId: 'sess-1', action: 'resize', dimensions: { cols: 48, rows: 26 } }),
       context,
       subscriptions,
     );
-    expect(resizeResponse.ok).toBe(false);
+    expect(resizeResponse).toMatchObject({ ok: false, code: 'unknown-session' });
     expect(sessionManager.resize).not.toHaveBeenCalled();
   });
 });

@@ -147,11 +147,11 @@ describe('handleReadStream', () => {
     expect(resolveTaskTranscriptMock).not.toHaveBeenCalled();
   });
 
-  it('rejects when the session does not exist', async () => {
+  it('rejects with the unknown-session code when the session does not exist', async () => {
     sessionManager.getSession.mockReturnValueOnce(undefined as never);
     const context = { sessionManager } as unknown as IpcContext;
     const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
-    expect(response.ok).toBe(false);
+    expect(response).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'No such session: sess-1', code: 'unknown-session' });
   });
 
   it('returns the initial snapshot including the awaited prompt id when a permission prompt is pending', async () => {
@@ -851,7 +851,7 @@ describe('handleReadStream', () => {
 
           const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
 
-          expect(response).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'No such session: sess-1' });
+          expect(response).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'No such session: sess-1', code: 'unknown-session' });
           expect(captureSeedHolds(subscriptions)).toEqual(before);
           expect(sessionManager.listenerCount('exit')).toBe(0);
         });
@@ -1994,6 +1994,21 @@ describe('handleReadStream', () => {
       new SubscriptionRegistry(),
     );
     expect(olderPage.payload).toEqual({ revision: 7, totalEntries: 3, startIndex: 0, entries: [older] });
+  });
+
+  it('transcript-window answers the unknown-session code when no project has the session on record', async () => {
+    sessionManager.getSessionProjectId.mockReturnValue(undefined as never);
+    const context = { sessionManager, projectRepo: { list: () => [] } } as unknown as IpcContext;
+
+    const response = await handleReadStream(
+      fakeRequest({ sessionId: 'sess-gone', action: 'transcript-window', limit: 2 }),
+      fakeSession(),
+      context,
+      new SubscriptionRegistry(),
+    );
+
+    expect(response).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'No such session: sess-gone', code: 'unknown-session' });
+    expect(resolveTaskTranscriptMock).not.toHaveBeenCalled();
   });
 
   it('pushes a permission activity event (with parsed option labels) when a prompt appears, deduplicates, and clears with pending false', async () => {

@@ -24,6 +24,7 @@ import { sendEvent } from './send-event';
 import { buildPermissionPromptId } from './permission-prompt-id';
 import { extractPromptOptions } from '../prompt-options-probe';
 import { noteRequestSpan } from '../request-spans';
+import { unknownSessionRefusal } from './session-refusals';
 import {
   toActivityReasonWire,
   toReadStreamSessionStatusWire,
@@ -712,7 +713,7 @@ export async function handleReadStream(
   if (payload.action === 'transcript-window') {
     const projectId = resolveProjectIdForSession(context, payload.sessionId);
     if (!projectId) {
-      return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+      return unknownSessionRefusal(request, payload.sessionId);
     }
     // Parsed, stitched and paged in the retrieval worker.
     const windowPayload: TranscriptWindowResponsePayload = await retrievalClient.call('transcript.window', {
@@ -727,7 +728,7 @@ export async function handleReadStream(
 
   const liveSession = context.sessionManager.getSession(payload.sessionId);
   if (!liveSession) {
-    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+    return unknownSessionRefusal(request, payload.sessionId);
   }
 
   // The mobile seed is the PARSED-grid serialized frame, not the raw byte
@@ -853,8 +854,7 @@ export async function handleReadStream(
       const response: CapabilityResponseMessage = { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
       return { response, snapshotSession, resumable, awaitedPromptId };
     };
-    const sessionGone = (): CapabilityResponseMessage =>
-      ({ type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` });
+    const sessionGone = (): CapabilityResponseMessage => unknownSessionRefusal(request, payload.sessionId);
 
     let built = buildResponse();
     if (!built) return sessionGone();
