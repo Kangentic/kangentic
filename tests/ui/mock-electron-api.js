@@ -3599,8 +3599,8 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
-            kangenticMcp: 'shared-folder',
-            supportsWorkflowAgent: false,
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: true,
           },
           {
             name: 'qwen', displayName: 'Qwen Code', found: false, path: null, version: null,

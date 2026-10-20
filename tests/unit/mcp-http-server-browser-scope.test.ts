@@ -83,6 +83,9 @@ function makeFakeSessionManager() {
     getSessionTaskId: (sessionId: string) =>
       (sessionId === 'caller-session-xyz' ? 'task-with-worktree' : undefined),
     getSessionProjectId: () => undefined,
+    // resolveBackgroundShells asks before any tool family is built (task #859);
+    // this suite is about the browser family, so no session reports background commands.
+    reportsBackgroundCommands: () => false,
     on() { return this; },
     off() { return this; },
   };

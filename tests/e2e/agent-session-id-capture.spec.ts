@@ -51,7 +51,6 @@ import {
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import type { Session } from '../../src/shared/types';
-import type { GeminiHookEntry } from '../../src/main/agent/adapters/gemini/hook-manager';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -95,22 +94,19 @@ function writeCodexRolloutFile(cwd: string): string {
   return filepath;
 }
 
-interface GeminiSettingsFile { hooks?: Record<string, GeminiHookEntry[]>; }
-
+/**
+ * The newest session's events.jsonl under the project. Gemini's folder-shared
+ * settings file names no session's path (task #859): its hooks say
+ * `env:KANGENTIC_EVENTS_PATH` and each session spawn sets that variable.
+ */
 function findGeminiEventsOutputPath(projectDir: string): string | null {
-  const settingsPath = path.join(projectDir, '.gemini', 'settings.json');
-  if (!fs.existsSync(settingsPath)) return null;
-  const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as GeminiSettingsFile;
-  if (!settings?.hooks) return null;
-  for (const entries of Object.values(settings.hooks)) {
-    for (const entry of entries) {
-      for (const hook of entry.hooks) {
-        const match = hook.command.match(/["']([^"']+events\.jsonl)["']/);
-        if (match) return match[1].replace(/\//g, path.sep);
-      }
-    }
-  }
-  return null;
+  const sessionsDir = path.join(projectDir, '.kangentic', 'sessions');
+  if (!fs.existsSync(sessionsDir)) return null;
+  const candidates = fs.readdirSync(sessionsDir)
+    .map((sessionId) => path.join(sessionsDir, sessionId, 'events.jsonl'))
+    .filter((eventsPath) => fs.existsSync(eventsPath))
+    .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+  return candidates[0] ?? null;
 }
 
 function injectGeminiSessionStart(eventsPath: string, sessionId: string): void {

@@ -40,7 +40,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
  * Exhaustive list of adapter names that are EXPECTED to implement buildEnv.
  * See the file docstring for why each one is here.
  */
-const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose', 'cursor', 'claude']);
+const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose', 'cursor', 'claude', 'gemini']);
 
 describe('AgentAdapter.buildEnv interface guard', () => {
   it('exactly the adapters in ADAPTERS_WITH_BUILDENV implement buildEnv', () => {

@@ -138,16 +138,14 @@ test.describe('Codex Agent - Activity Detection', () => {
     expect(codexUsage!.contextWindow.totalInputTokens).toBe(11214);
     expect(codexUsage!.contextWindow.usedPercentage).toBeGreaterThan(0);
 
-    // Verify tool events from the rollout JSONL's response_item entries
-    // appear in the events cache.
+    // The rollout's function_call entries report no tool event any more: the
+    // PreToolUse hook does, with its id (task #859). The mock CLI runs no hooks
+    // (and no Codex hook trust is confirmed against it), so none arrive here.
     const eventsMap = await page.evaluate(() =>
       window.electronAPI.sessions.getEventsCache(),
     );
     const allEvents = Object.values(eventsMap as Record<string, SessionEvent[]>).flat();
-    const toolEvents = allEvents.filter(
-      (event) => event.type === 'tool_start',
-    );
-    expect(toolEvents.length).toBeGreaterThan(0);
+    expect(allEvents.filter((event) => event.type === 'tool_start')).toEqual([]);
   });
 });
 

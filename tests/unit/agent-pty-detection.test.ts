@@ -696,13 +696,15 @@ describe('Agent hook bridge (real CLI invocation)', () => {
         expect(fs.existsSync(geminiSettings)).toBe(true);
         expect(fs.existsSync(geminiSettingsInRoot)).toBe(false);
 
-        // CRITICAL: Gemini's hook config must embed the absolute events
-        // path under projectRoot. Otherwise the bridge writes to a file
-        // the renderer isn't watching.
-        const expectedFragment = eventsPath.replace(/\\/g, '/');
+        // CRITICAL: Gemini's hook config must route events to the file under
+        // projectRoot that the renderer is watching. The folder-shared file
+        // names no session's path (task #859): its hooks say
+        // `env:KANGENTIC_EVENTS_PATH` and each session spawn sets that variable
+        // to its own events file under projectRoot (`session-spawn-flow.ts`).
         const geminiContent = fs.readFileSync(geminiSettings, 'utf-8');
-        expect(geminiContent).toContain(expectedFragment);
-        // Negative: the Gemini config should not reference a path under the worktree.
+        expect(geminiContent).toContain('env:KANGENTIC_EVENTS_PATH');
+        // Negative: no baked events path, and nothing under the worktree.
+        expect(geminiContent).not.toContain(eventsPath.replace(/\\/g, '/'));
         const worktreeFragment = worktreeCwd.replace(/\\/g, '/');
         expect(geminiContent.includes(worktreeFragment + '/.kangentic')).toBe(false);
       } finally {
@@ -737,15 +739,16 @@ describe('Agent hook bridge (real CLI invocation)', () => {
       expect(settings.hooks.AfterTool).toBeDefined();
       expect(settings.hooks.AfterAgent).toBeDefined();
 
-      // Every hook command must reference event-bridge AND embed the
-      // exact events.jsonl path the renderer's file watcher reads from.
-      const expectedPathFragment = eventsPath.replace(/\\/g, '/');
-      expect(expectedPathFragment).toMatch(/\/events\.jsonl$/);
+      // Every hook command must reference event-bridge AND name the events
+      // file through the environment variable every session spawn sets to its
+      // own events.jsonl (the folder-shared file holds no session's path).
+      expect(eventsPath.replace(/\\/g, '/')).toMatch(/\/events\.jsonl$/);
       for (const eventName of Object.keys(settings.hooks)) {
         for (const entry of settings.hooks[eventName]) {
           for (const hook of entry.hooks) {
             expect(hook.command).toContain('event-bridge');
-            expect(hook.command).toContain(expectedPathFragment);
+            expect(hook.command).toContain('env:KANGENTIC_EVENTS_PATH');
+            expect(hook.command).not.toContain(eventsPath.replace(/\\/g, '/'));
           }
         }
       }
@@ -772,9 +775,14 @@ describe('Agent hook bridge (real CLI invocation)', () => {
           phase2DurationMs: testCase.phase2DurationMs + 4000, // extra time for hook to fire
           postIdleInput: testCase.postIdleInput,
         });
-        // Sanity: hook config got written before spawn.
-        expect(captureResult.configContent.length).toBeGreaterThan(0);
-        expect(captureResult.configContent).toContain('event-bridge');
+        // Sanity: hook config got written before spawn. Codex writes none (task
+        // #859): its hooks are `-c` overrides in the command line, delivered only
+        // after a hook trust read this deterministic builder call does not wait
+        // for, so `codex-hook-overrides.test.ts` covers them instead.
+        if (testCase.name !== 'codex') {
+          expect(captureResult.configContent.length).toBeGreaterThan(0);
+          expect(captureResult.configContent).toContain('event-bridge');
+        }
       }, testCase.phase1TimeoutMs + testCase.phase2DurationMs + 15000);
 
       if (testCase.name === 'gemini') {
@@ -794,15 +802,13 @@ describe('Agent hook bridge (real CLI invocation)', () => {
       }
 
       if (testCase.name === 'codex') {
-        it('Codex hook config is wired but events do not fire (documented limitation)', () => {
-          // Codex 0.118 ships with a Rust CLI that does NOT read
-          // .codex/hooks.json yet (see openai/codex tracking issue and
-          // the comment in src/main/agent/adapters/codex/codex-adapter.ts).
-          // We still write the config in case a future version reads it,
-          // but we expect zero events to land in events.jsonl on this
-          // version. If this assertion FLIPS to non-zero in a future
-          // version, that's great news - update the adapter comment and
-          // change this test to a positive assertion.
+        it('a bare Codex spawn (no hook overrides in its argv) fires no hook events', () => {
+          // The capture spawns the binary with no arguments, so none of the
+          // `-c hooks.*` overrides the adapter builds reach it, and Codex has no
+          // hook file of its own to read (the legacy .codex/hooks.json was never
+          // read by the CLI and is only swept now). Hook delivery with the
+          // overrides is pinned by codex-hook-overrides.test.ts and
+          // codex-hook-payload-replay.test.ts.
           expect(captureResult.events.length).toBe(0);
         });
       }
