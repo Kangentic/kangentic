@@ -36,6 +36,13 @@ const EXTERNAL_SCRIPTS = [
     destFile: 'plan-approval-bridge.js',
   },
   {
+    kind: 'bridge',
+    name: 'background-shell-hint-bridge',
+    src: 'src/main/agent/background-shell-hint-bridge.js',
+    destDir: '',
+    destFile: 'background-shell-hint-bridge.js',
+  },
+  {
     kind: 'plugin',
     adapter: 'opencode',
     name: 'kangentic-activity',

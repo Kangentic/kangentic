@@ -34,6 +34,7 @@ A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
 | Workflow Tools | `src/main/agent/mcp-http/workflow-tools.ts` | Plan, start and change a workflow of linked tasks (`kangentic_list_workflows`, `kangentic_get_workflow`, `kangentic_save_workflow`, `kangentic_start_workflow`, `kangentic_pause_workflow`, `kangentic_resume_workflow`, `kangentic_add_workflow_task`, `kangentic_link_workflow_tasks`, `kangentic_unlink_workflow_tasks`, `kangentic_set_task_route`, `kangentic_remove_from_workflow`, `kangentic_request_project_access`, `kangentic_delete_workflow`). See [Workflows](#workflows). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_get_activity_intervals`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Steering Tools | `src/main/agent/mcp-http/steering-tools.ts` | The write side of the session surface (`kangentic_send_session_message`) plus its debugging read (`kangentic_get_session_messages_sent`). Kept out of `session-tools.ts` because the send needs live main-process singletons (SessionManager, TerminalSubmit) that `CommandContext` does not carry. |
+| Background Shell Tools | `src/main/agent/mcp-http/background-shell-tools.ts` | `kangentic_mark_background_service`: the calling agent marks background shells it started as services, so they stop holding its session. Acts only on the session in the caller URL, through `SessionManager`, so it is registered beside the steering tools rather than in `session-tools.ts`. |
 | Session Send Coordinator | `src/main/agent/mcp-http/session-send.ts` | Delivery + guards behind the steering tools: per-target serialization, the sliding-window ceiling, the steer-chain depth backstop, deferred `deliverWhen: "idle"` delivery, and out-of-band provenance recording (the message itself carries no in-band prefix). |
 | Project Tools | `src/main/agent/mcp-http/project-tools.ts` | Multi-project discovery (`kangentic_list_projects`). |
 | Search Tools | `src/main/agent/mcp-http/search-tools.ts` | The single unified search (`kangentic_search`): tasks, backlog, session events, projects, past conversations (keyword or, with `mode:"hybrid"`, semantic) and commits, with `groupBy: "task"` and `relatedToTask`. The ranking runs in the retrieval worker. The board-scoped `kangentic_search_tasks` lives in `task-tools.ts`. |
@@ -1490,6 +1491,20 @@ Each entry carries the caller (`caller_session_id`, `caller_task_id`, `caller_pr
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
 Returns `total` (matching the filter), `returned` (after `tail`), and the `messages` array. Note that a send naming a session id that was never real records nothing at all - see the foreign-key caveat above - so an empty result can also mean the target id was wrong.
+
+### kangentic_mark_background_service
+
+Mark background shells the calling agent started as services meant to keep running after its turn, such as a dev server or a watcher. A background shell keeps its task showing as working, and holds the column's On agent turn end automations, until it exits, because the agent may be waiting on it. A marked shell stops counting. It keeps running, and Kangentic still tracks it until it exits.
+
+Claude's PostToolUse hook names this tool beside every background launch whose command does not carry `--kangentic-no-activity-hold`, so the agent decides when it knows the answer. See "Opting a background shell out of the hold" in [activity-detection.md](activity-detection.md).
+
+The tool acts only on the session in the caller URL (`/mcp/<projectId>/<callerSessionId>`), so an agent can mark only its own shells. It is registered only for a connection that names a task's session. A Command Terminal, a client outside Kangentic, a workflow's own agent and a Knowledge Graph answer run never see it. A call from a session that is no longer running changes nothing.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `shellIds` | string[] | Yes | 1 to 10 background shell ids, as the background command returned them (letters, digits, `-` and `_`). |
+
+Returns one line per id: `marked` (it was holding the session and no longer does), `already marked`, or not seen yet (Kangentic has not ingested the shell's start; the mark applies when it does, for up to 16 such ids per session).
 
 ### kangentic_get_session_files
 

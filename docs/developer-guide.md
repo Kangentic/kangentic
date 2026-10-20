@@ -44,6 +44,7 @@ src/
       status-bridge.js     # Hook script: writes usage data to status.json
       event-bridge.js      # Hook script: appends tool events to events.jsonl
       plan-approval-bridge.js # Hook script: approves a plan when the session's plan-approval.json says to
+      background-shell-hint-bridge.js # Hook script: tells the agent a background command keeps its task working
     config/
       config-manager.ts    # Three-tier config: global -> project overrides -> effective
       board-config-manager.ts # Board config (kangentic.json) export, import, reconciliation
@@ -202,7 +203,7 @@ Flags:
 1. `tsc --noEmit` (type check)
 2. Vite builds renderer → `.vite/build/renderer/main_window/`
 3. esbuild bundles main + preload + the five utility-process workers (embed, line-count, dictation, retrieval, pty-host), minified
-4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`, `plan-approval-bridge.js`) to `.vite/build/`
+4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`, `plan-approval-bridge.js`, `background-shell-hint-bridge.js`) to `.vite/build/`
 5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
    Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token and on
    the build being authorized to upload (CI, or a local `KANGENTIC_SENTRY_UPLOAD=1`). A missing

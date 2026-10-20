@@ -24,13 +24,31 @@ import { looksLikeShellId } from '../background-shell/looks-like-shell-id';
  * which silently hides an agent that needs the user.
  */
 function rememberExemptShellToolId(state: SessionEngineState, toolId: string): void {
-  // FIFO evict so a dropped PostToolUse cannot strand entries forever. `Set`
-  // iterates in insertion order, so the first key is the oldest.
-  if (state.pendingExemptShellToolIds.size >= MAX_PENDING_EXEMPT_SHELL_TOOL_IDS) {
-    const oldest = state.pendingExemptShellToolIds.values().next().value;
-    if (oldest !== undefined) state.pendingExemptShellToolIds.delete(oldest);
+  addToBoundedMemo(state.pendingExemptShellToolIds, toolId);
+}
+
+/**
+ * Remember a shell id the agent marked as a service before the engine saw it
+ * start (`pendingServiceShellIds`), so its promotion lands it exempt. FIFO
+ * capped like `rememberExemptShellToolId`.
+ */
+export function rememberPendingServiceShellId(state: SessionEngineState, shellId: string): void {
+  addToBoundedMemo(state.pendingServiceShellIds, shellId);
+}
+
+/**
+ * Add to one of the exemption memos, FIFO-evicting at
+ * `MAX_PENDING_EXEMPT_SHELL_TOOL_IDS` so a promotion that never comes cannot
+ * strand entries forever. `Set` iterates in insertion order, so the first key
+ * is the oldest. A value already present keeps its place.
+ */
+function addToBoundedMemo(memo: Set<string>, value: string): void {
+  if (memo.has(value)) return;
+  if (memo.size >= MAX_PENDING_EXEMPT_SHELL_TOOL_IDS) {
+    const oldest = memo.values().next().value;
+    if (oldest !== undefined) memo.delete(oldest);
   }
-  state.pendingExemptShellToolIds.add(toolId);
+  memo.add(value);
 }
 
 /**
@@ -195,9 +213,22 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
         state.pendingToolStack.push({ id: event.toolId, name: event.tool });
         state.currentTool = event.tool;
       }
+      // A background launch arrives here, not as a BackgroundShellStart, when
+      // the adapter's PreToolUse remap does not cover the tool (Claude's
+      // PowerShell, task #857) or when Claude moves a foreground command to the
+      // background itself. Its PostToolUse promotion closes this pending tool
+      // and reads the memo, so the flag must be remembered here too.
+      if (event.toolId !== undefined && event.detail?.includes(NO_ACTIVITY_HOLD_FLAG) === true) {
+        rememberExemptShellToolId(state, event.toolId);
+      }
       break;
     case EventType.ToolEnd:
     case EventType.Interrupted:
+      // A flagged command that ran in the foreground and ended never promotes,
+      // so its memo goes with it.
+      if (event.toolId !== undefined) {
+        state.pendingExemptShellToolIds.delete(event.toolId);
+      }
       state.pendingToolCount = Math.max(0, state.pendingToolCount - 1);
       // Match priority:
       //   1. By correlation id when both events carry one (precise
@@ -388,15 +419,22 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
           // Duplicate - same shell_id seen before. No-op.
           break;
         }
-        // EXEMPT promotion. This shell's PreToolUse carried
+        // EXEMPT promotion. This shell's PreToolUse (a background_shell_start,
+        // or the tool_start of a launch the remap does not cover) carried
         // NO_ACTIVITY_HOLD_FLAG, so the caller declared it non-holding (see
-        // `background-shell-hold.ts`). Drain the anonymous slot it has been
+        // `background-shell-hold.ts`). Drain any anonymous slot it has been
         // occupying since PreToolUse and park the named id in the exempt set,
         // which no activity site sums - so the shell stays fully tracked for
         // liveness while contributing nothing to the predicate.
+        //
+        // The agent can also have marked this id as a service before the
+        // engine saw it start (`pendingServiceShellIds`): same landing.
         const exemptToolId = event.toolId;
-        if (exemptToolId !== undefined && state.pendingExemptShellToolIds.has(exemptToolId)) {
-          state.pendingExemptShellToolIds.delete(exemptToolId);
+        const flaggedAtLaunch = exemptToolId !== undefined && state.pendingExemptShellToolIds.has(exemptToolId);
+        const markedBeforeStart = state.pendingServiceShellIds.has(event.detail);
+        if (flaggedAtLaunch || markedBeforeStart) {
+          if (exemptToolId !== undefined) state.pendingExemptShellToolIds.delete(exemptToolId);
+          state.pendingServiceShellIds.delete(event.detail);
           if (state.anonymousBackgroundShellCount > 0) {
             state.anonymousBackgroundShellCount -= 1;
           }

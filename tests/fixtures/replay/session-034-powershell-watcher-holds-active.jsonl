@@ -1,0 +1,6 @@
+{"ts":1792455300000,"type":"session_start"}
+{"ts":1792455301000,"type":"prompt"}
+{"ts":1792455354948,"type":"tool_start","tool":"PowerShell","toolId":"toolu_012nXARPKQVoVRfULpePvm8X","detail":"node scripts/worktree-preview.js --wait --port=5175"}
+{"ts":1792455360325,"type":"background_shell_start","tool":"PowerShell","toolId":"toolu_012nXARPKQVoVRfULpePvm8X","detail":"bdrb9enzm"}
+{"ts":1792456638503,"type":"idle","planMode":false}
+{"ts":1792456698620,"type":"idle_hint","detail":"Claude is waiting for your input"}

@@ -3,7 +3,7 @@
 // (Aider, Codex) treat the markup as harmless prose; the structured fields
 // stay readable. Source: Anthropic prompt-engineering courses, OpenAI docs.
 
-import { NO_ACTIVITY_HOLD_FLAG } from '../../../shared/background-shell-hold';
+import { MARK_BACKGROUND_SERVICE_TOOL } from '../../../shared/background-shell-hold';
 
 // Escapes both quote styles so values are safe inside `"..."` and `'...'`
 // attribute values. Anthropic's prompt-engineering guidance lists `'` as one
@@ -151,7 +151,7 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
   lines.push('- Put progress notes in the same message as your next tool call, not at the end of a turn.');
   lines.push('- When you know this column\'s work is done, you may move the task on yourself with kangentic_move_task, column "next".');
   if (input.blocks.length > 0) lines.push('- The tasks waiting on this one build on what you change. Keep what they depend on stable.');
-  lines.push(`- Start anything meant to keep running (a dev server, a watcher) with ${NO_ACTIVITY_HOLD_FLAG} in its command, or the task looks busy forever. A trailing shell comment is enough.`);
+  lines.push(`- If you leave a background command running after your turn (a dev server, a watcher), mark it with ${MARK_BACKGROUND_SERVICE_TOOL}, or the task looks busy until it exits.`);
   lines.push('  </how_this_runs>');
   lines.push('</workflow>');
   return lines.join('\n');

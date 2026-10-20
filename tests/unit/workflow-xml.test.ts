@@ -55,7 +55,7 @@ describe('{{workflow_xml}}', () => {
     const xml = buildWorkflowXml(WORKFLOW);
     expect(xml).toContain('End your turn only when this column\'s work is done');
     expect(xml).toContain('kangentic_move_task');
-    expect(xml).toContain('--kangentic-no-activity-hold');
+    expect(xml).toContain('kangentic_mark_background_service');
   });
 
   it('mentions waiting tasks only when something waits on this one', () => {

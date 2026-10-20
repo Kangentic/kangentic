@@ -6,9 +6,11 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { toClaudeModelArgument } from './model-display-name';
 import { peekModelPickerAliasIds } from './model-picker-probe';
-import { buildHooks, CLAUDE_BRIDGE_SHELL, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
+import { buildHooks, CLAUDE_BACKGROUND_SHELL_HINT_SPEC, CLAUDE_BRIDGE_SHELL, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
 import { buildPlanApprovalCommand, planApprovalDecisionPath } from '../../shared/plan-approval-hook';
+import { buildBackgroundShellHintCommand } from '../../shared/background-shell-hint-hook';
+import { urlNamesTaskSessionCaller } from '../../mcp-http/caller-url';
 import { quoteBridgePath } from '../../shared/hook-utils';
 import type { CommandOptions } from '../../agent-adapter';
 
@@ -438,9 +440,23 @@ export class CommandBuilder {
         eventsPath,
         CLAUDE_PLAN_APPROVAL_SPEC,
       );
+      // The hint names kangentic_mark_background_service, which the MCP server
+      // offers only to a connection that names a task session, so a session
+      // without one (a Command Terminal, MCP turned off) gets no hint.
+      const offersMarkBackgroundService = options.mcpServerEnabled !== false
+        && Boolean(options.mcpServerToken)
+        && urlNamesTaskSessionCaller(options.mcpServerUrl);
+      const backgroundShellHintCommand = offersMarkBackgroundService
+        ? buildBackgroundShellHintCommand(
+          CLAUDE_BRIDGE_SHELL,
+          toForwardSlash(resolveBridgeScript('background-shell-hint-bridge')),
+          CLAUDE_BACKGROUND_SHELL_HINT_SPEC,
+        )
+        : undefined;
       merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {}, {
         capturePromptText: options.capturePromptText === true,
         planApprovalCommand,
+        backgroundShellHintCommand,
       });
     }
 

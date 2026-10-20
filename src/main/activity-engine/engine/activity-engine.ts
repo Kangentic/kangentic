@@ -19,6 +19,7 @@ import type {
   ActivityEngineOptions,
   ActivityEngineCallbacks,
   ActivityStatsSnapshot,
+  BackgroundShellServiceOutcome,
   SessionEngineState,
   TransitionRecord,
   TransitionTrigger,
@@ -26,7 +27,13 @@ import type {
 import { snapshotCounters, formatCounterDelta } from './counter-snapshot';
 import { createSessionEngineState } from './state-factory';
 import { derivePredicate, deriveReason, deriveActivityAndReason, idleHintEndsTurn } from './predicate';
-import { updateCounters, updatePermissionFlag, releaseSubagentSlots, isInternalAgentToolEvent } from './event-handlers';
+import {
+  updateCounters,
+  updatePermissionFlag,
+  releaseSubagentSlots,
+  isInternalAgentToolEvent,
+  rememberPendingServiceShellId,
+} from './event-handlers';
 import { buildWatchdogHolds, findActiveWatchdogHold } from './watchdog';
 import type { WatchdogHold } from './watchdog';
 
@@ -471,8 +478,9 @@ export class ActivityEngine {
     }
     state.activeBackgroundShellIds.clear();
     state.anonymousBackgroundShellCount = 0;
-    // Neither `exemptBackgroundShellIds` nor `pendingExemptShellToolIds` is
-    // cleared here. Every caller of this method leaves the agent CLI process
+    // Neither `exemptBackgroundShellIds` nor its two memos
+    // (`pendingExemptShellToolIds`, `pendingServiceShellIds`) is cleared
+    // here. Every caller of this method leaves the agent CLI process
     // RUNNING - `applyInterruptedBypass` hard-ends the turn, and
     // `applyRetryableFailureHold` deliberately keeps it alive across a retry -
     // so an exempt shell's OS process is still up either way. Dropping a live
@@ -638,6 +646,7 @@ export class ActivityEngine {
     // be dropping live shells, the corruption the sibling reset avoids.
     state.exemptBackgroundShellIds.clear();
     state.pendingExemptShellToolIds.clear();
+    state.pendingServiceShellIds.clear();
     state.currentTool = null;
     state.pendingIdleAt = null;
     state.idleHintPending = false;
@@ -874,6 +883,52 @@ export class ActivityEngine {
         : 'event:bg-shell-ended:watcher';
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.reevaluate(sessionId, state, trigger, delta);
+  }
+
+  /**
+   * The agent says these background shells are services it is leaving up (a
+   * dev server, a watcher), not work it is waiting on: the
+   * `kangentic_mark_background_service` MCP tool (task #857). Only the agent
+   * knows which a shell is, so this is the one way a running shell stops
+   * holding the session other than the launch flag (`NO_ACTIVITY_HOLD_FLAG`).
+   *
+   * Each id moves from `activeBackgroundShellIds` to
+   * `exemptBackgroundShellIds`, never out of tracking: the watcher sums both
+   * sets, so the shell keeps its liveness and exit tracking and the watcher's
+   * `expected` count is unchanged. An id the engine has not seen start yet is
+   * remembered (`pendingServiceShellIds`) and lands exempt at its promotion.
+   *
+   * A held turn whose last holding shell moves here commits idle through the
+   * stability window and fires `onTurnEnded`: the Stop left `turnEndSource`
+   * set, and the shell no longer counts as work the turn is waiting on.
+   *
+   * Returns null for a session the engine does not track.
+   */
+  markBackgroundShellsAsServices(sessionId: string, shellIds: readonly string[]): BackgroundShellServiceOutcome[] | null {
+    if (this.disposed) return null;
+    const state = this.states.get(sessionId);
+    if (!state) return null;
+    const before = snapshotCounters(state);
+    const outcomes: BackgroundShellServiceOutcome[] = [];
+    for (const shellId of shellIds) {
+      if (state.activeBackgroundShellIds.has(shellId)) {
+        state.activeBackgroundShellIds.delete(shellId);
+        state.exemptBackgroundShellIds.add(shellId);
+        outcomes.push({ shellId, outcome: 'marked' });
+      } else if (state.exemptBackgroundShellIds.has(shellId)) {
+        outcomes.push({ shellId, outcome: 'already-marked' });
+      } else {
+        rememberPendingServiceShellId(state, shellId);
+        outcomes.push({ shellId, outcome: 'pending' });
+      }
+    }
+    console.log(
+      `[activity-engine] background shells marked as services for ${sessionId}: `
+      + outcomes.map((entry) => `${entry.shellId}=${entry.outcome}`).join(', '),
+    );
+    const delta = formatCounterDelta(before, snapshotCounters(state));
+    this.reevaluate(sessionId, state, 'event:bg-shell-service:mcp', delta);
+    return outcomes;
   }
 
   /**

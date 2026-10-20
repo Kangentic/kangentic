@@ -97,3 +97,24 @@ export function workflowIdOfCaller(callerSessionId: string | undefined): string 
   const workflowId = callerSessionId.slice(WORKFLOW_AGENT_CALLER_PREFIX.length);
   return workflowId.length > 0 ? workflowId : null;
 }
+
+/**
+ * True when a spawn's MCP URL names a task session as its caller
+ * (`appendCallerSession`): a third path segment that is neither an answer run
+ * nor a workflow's own agent. Only such a caller is offered the tools that act
+ * on the calling session itself (`kangentic_mark_background_service`), so a
+ * spawn uses this to decide whether to point its agent at them.
+ */
+export function urlNamesTaskSessionCaller(mcpServerUrl: string | undefined): boolean {
+  if (!mcpServerUrl) return false;
+  let pathname: string;
+  try {
+    pathname = new URL(mcpServerUrl).pathname;
+  } catch {
+    return false;
+  }
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length < 3 || segments[0] !== 'mcp') return false;
+  const caller = segments[2];
+  return !isAnswerCaller(caller) && workflowIdOfCaller(caller) === null;
+}

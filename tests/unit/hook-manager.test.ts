@@ -7,6 +7,7 @@ import {
   removeHooks,
 } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
+import { isKangenticHookCommand } from '../../src/main/agent/shared/hook-utils';
 import { extractDetail, extractPlanMode, extractSubagentId, extractTool, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 import { buildForPlatform, CLI_ENVIRONMENT_REFERENCE } from './helpers/shell-argv-probe';
 
@@ -49,6 +50,71 @@ describe('hook-manager', () => {
     it('adds no approver when none is given', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
       expect(hooks.PermissionRequest.map((entry) => entry.matcher)).toEqual(['']);
+    });
+  });
+
+  describe('buildHooks background shell hint (task #857)', () => {
+    const HINT = 'node "/fake/.kangentic/background-shell-hint-bridge.js" e30=';
+
+    it('adds the hint as a second PostToolUse entry matched to Bash and PowerShell', () => {
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {}, { backgroundShellHintCommand: HINT });
+      expect(hooks.PostToolUse).toHaveLength(2);
+      expect(hooks.PostToolUse[1].matcher).toBe('Bash|PowerShell');
+      expect(hooks.PostToolUse[1].hooks[0].command).toBe(HINT);
+      // The event bridge's catch-all entry stays first and unchanged in shape.
+      expect(hooks.PostToolUse[0].matcher).toBe('');
+      expect(hooks.PostToolUse[0].hooks[0].command).toContain('event-bridge');
+    });
+
+    it('adds no hint when none is given', () => {
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
+      expect(hooks.PostToolUse.map((entry) => entry.matcher)).toEqual(['']);
+    });
+
+    // Claude's `buildHooks` spreads the hooks it is handed through unchanged, so
+    // it does not drop a stale Kangentic entry itself. The sweep that does is
+    // `removeHooks` (a worktree's settings.local.json), which decides by
+    // `isKangenticHookCommand`: that is where the hint bridge's clause acts.
+    const USER_HINT_LOOKALIKE = 'node "/home/dev/hooks/background-shell-hint-bridge.js" e30=';
+
+    it('has only the hint bridge to go on, so its clause is what the next tests exercise', () => {
+      // If an older bridge name appeared in the command, deleting the hint
+      // bridge clause would leave the fingerprint tests green.
+      expect(HINT).toContain('background-shell-hint-bridge');
+      for (const olderBridge of ['event-bridge', 'activity-bridge', 'plan-approval-bridge']) {
+        expect(HINT).not.toContain(olderBridge);
+      }
+    });
+
+    it('is claimed as Kangentic\'s through a .kangentic path, and not without one', () => {
+      expect(isKangenticHookCommand(HINT)).toBe(true);
+      expect(USER_HINT_LOOKALIKE).not.toContain('.kangentic');
+      expect(USER_HINT_LOOKALIKE).not.toContain('/kangentic/');
+      expect(isKangenticHookCommand(USER_HINT_LOOKALIKE)).toBe(false);
+    });
+
+    it('removeHooks drops a stale hint entry and keeps a user hook that only names the bridge', () => {
+      const claudeDir = path.join(tmpDir, '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      const userLookalikeEntry = { matcher: 'Bash', hooks: [{ type: 'command', command: USER_HINT_LOOKALIKE }] };
+      const userEntry = { matcher: '', hooks: [{ type: 'command', command: 'echo user-posttool' }] };
+      fs.writeFileSync(
+        path.join(claudeDir, 'settings.local.json'),
+        JSON.stringify({
+          hooks: {
+            PostToolUse: [
+              { matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: HINT }] },
+              userLookalikeEntry,
+              userEntry,
+            ],
+          },
+        }, null, 2),
+      );
+
+      removeHooks(tmpDir);
+
+      const hooks = readSettings().hooks as Record<string, unknown[]>;
+      expect(hooks.PostToolUse).toEqual([userLookalikeEntry, userEntry]);
     });
   });
 

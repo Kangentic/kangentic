@@ -1806,6 +1806,9 @@ describe('Merged Settings -- Local Settings Merge', () => {
       sessionId: 'win-sess',
       statusOutputPath: statusOutput,
       eventsOutputPath: eventsOutput,
+      // Names this session as the caller, so the background shell hint is registered too.
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project/win-sess',
+      mcpServerToken: 'deadbeef-test-token',
     });
 
     const merged = JSON.parse(fs.readFileSync(path.join(sessionDirectory, 'settings.json'), 'utf-8'));
@@ -1813,10 +1816,14 @@ describe('Merged Settings -- Local Settings Merge', () => {
     const toolStartCommand: string = merged.hooks.PreToolUse.at(-1).hooks[0].command;
     const planApprovalCommand: string = merged.hooks.PermissionRequest
       .find((entry: { matcher: string }) => entry.matcher === 'ExitPlanMode').hooks[0].command;
+    const backgroundShellHintCommand: string = merged.hooks.PostToolUse
+      .find((entry: { matcher: string }) => entry.matcher === 'Bash|PowerShell').hooks[0].command;
     for (const command of [statusCommand, toolStartCommand, planApprovalCommand]) {
       expect(command).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
       expect(command).toContain(`C:"/`);
     }
+    // The hint carries no session path, only the bridge's and its spec.
+    expect(backgroundShellHintCommand).not.toMatch(CLI_ENVIRONMENT_REFERENCE);
 
     const hosts = installedShOrPowerShellHosts();
     expect(hosts.length).toBeGreaterThan(0);
@@ -1827,6 +1834,14 @@ describe('Merged Settings -- Local Settings Merge', () => {
       expect(fs.readFileSync(statusOutput, 'utf-8'), host).toContain('probe-model');
       runAsHookShell(host, toolStartCommand, { input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: 'a.ts' } }) });
       expect(fs.readFileSync(eventsOutput, 'utf-8'), host).toContain('"tool_start"');
+      const hintRun = runAsHookShell(host, backgroundShellHintCommand, {
+        input: JSON.stringify({
+          tool_name: 'PowerShell',
+          tool_input: { command: 'npm run dev', run_in_background: true },
+          tool_response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bwinhint1' },
+        }),
+      });
+      expect(hintRun.strayLines.join('\n'), host).toContain('shellIds [\\"bwinhint1\\"]');
     }
   }, 120_000);
 
@@ -1976,6 +1991,59 @@ describe('Merged Settings -- Local Settings Merge', () => {
     const command = approvers[0].hooks[0].command;
     expect(command).toContain(path.join(sessionDir, 'plan-approval.json').replace(/\\/g, '/'));
     expect(command).toContain(path.join(sessionDir, 'events.jsonl').replace(/\\/g, '/'));
+  });
+
+  // Task #857: the background shell hint points at kangentic_mark_background_service,
+  // which the MCP server offers only to a connection that names a task session.
+  // So the hook is registered only when the spawn's MCP URL carries such a caller.
+  describe('background shell hint hook', () => {
+    function hintEntries(sessionId: string, overrides: Partial<{ mcpServerUrl: string; mcpServerToken: string; mcpServerEnabled: boolean }>) {
+      const sessionDir = path.join(tmpDir, '.kangentic', 'sessions', sessionId);
+      new CommandBuilder().buildClaudeCommand({
+        cliPath: '/usr/bin/claude',
+        taskId: 'hint-task',
+        cwd: tmpDir,
+        permissionMode: 'default',
+        sessionId,
+        statusOutputPath: path.join(sessionDir, 'status.json'),
+        eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
+        mcpServerToken: 'deadbeef-test-token',
+        ...overrides,
+      });
+      const merged = JSON.parse(fs.readFileSync(path.join(sessionDir, 'settings.json'), 'utf-8')) as {
+        hooks: Record<string, Array<{ matcher: string; hooks: Array<{ command: string }> }>>;
+      };
+      return merged.hooks.PostToolUse.filter((entry) => entry.hooks.some((hook) => hook.command.includes('background-shell-hint-bridge')));
+    }
+
+    it('registers on Bash and PowerShell for a task session whose MCP URL names it', () => {
+      const entries = hintEntries('hint-task-sess', { mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project/hint-task-sess' });
+      expect(entries).toHaveLength(1);
+      expect(entries[0].matcher).toBe('Bash|PowerShell');
+      expect(entries[0].hooks[0].command).toMatch(/^node "[^"]*background-shell-hint-bridge\.js" [A-Za-z0-9+/=]+$/);
+    });
+
+    it('is left out for a connection that names no task session, or with the MCP server off', () => {
+      expect(hintEntries('hint-terminal', { mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project' })).toHaveLength(0);
+      expect(hintEntries('hint-workflow', { mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project/workflow-wf1' })).toHaveLength(0);
+      expect(hintEntries('hint-off', {
+        mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project/hint-off',
+        mcpServerEnabled: false,
+      })).toHaveLength(0);
+    });
+
+    // Without the token the spawn writes no MCP config, so the agent has no
+    // kangentic_mark_background_service to call. The URL alone is not enough:
+    // the same URL with a token registers the hook, so the token is the only
+    // difference between these two spawns.
+    it('is left out for a task session URL when the spawn has no MCP token', () => {
+      const taskSessionUrl = (sessionId: string) => `http://127.0.0.1:54321/mcp/test-project/${sessionId}`;
+      expect(hintEntries('hint-with-token', { mcpServerUrl: taskSessionUrl('hint-with-token') })).toHaveLength(1);
+      expect(hintEntries('hint-no-token', {
+        mcpServerUrl: taskSessionUrl('hint-no-token'),
+        mcpServerToken: '',
+      })).toHaveLength(0);
+    });
   });
 
   // A Command Terminal names itself from its first prompt, which reaches the

@@ -3906,4 +3906,151 @@ describe('ActivityEngine', () => {
       expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.size).toBe(0);
     });
   });
+
+  // Task #857: a launch the PreToolUse remap does not cover (Claude's
+  // PowerShell tool) arrives as a plain tool_start, so the flag memo is
+  // written there too.
+  describe('no-activity-hold flag on a tool_start', () => {
+    beforeEach(() => {
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+    });
+
+    it('memoizes a flagged tool_start and exempts its promotion, closing the pending tool', () => {
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, {
+        tool: 'PowerShell', toolId: 'toolu_ps_watch', detail: previewWatcherCommand(),
+      }));
+      expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.has('toolu_ps_watch')).toBe(true);
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, {
+        tool: 'PowerShell', toolId: 'toolu_ps_watch', detail: 'bpswatch1',
+      }));
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.exemptBackgroundShellIds.has('bpswatch1')).toBe(true);
+      expect(state.activeBackgroundShellIds.size).toBe(0);
+      expect(state.pendingToolCount).toBe(0);
+      expect(state.pendingExemptShellToolIds.size).toBe(0);
+    });
+
+    it('drops the memo when the flagged command ends in the foreground', () => {
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, {
+        tool: 'PowerShell', toolId: 'toolu_ps_foreground', detail: previewWatcherCommand(),
+      }));
+      engine.processEvent(SESSION_ID, event(EventType.ToolEnd, { tool: 'PowerShell', toolId: 'toolu_ps_foreground' }));
+      expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.size).toBe(0);
+    });
+
+    it('writes no memo for an unflagged tool_start or one without a toolId', () => {
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, {
+        tool: 'PowerShell', toolId: 'toolu_ps_plain', detail: 'npm run dev',
+      }));
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'PowerShell', detail: previewWatcherCommand() }));
+      expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.size).toBe(0);
+    });
+
+    // Claude's PostToolUseFailure with is_interrupt emits Interrupted carrying the
+    // interrupted tool's own toolId. That tool never reaches a PostToolUse
+    // promotion, so its memo has to go, as it does on a ToolEnd.
+    it('drops the memo when an interrupt carries the flagged tool\'s own toolId', () => {
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, {
+        tool: 'PowerShell', toolId: 'toolu_ps_interrupted', detail: previewWatcherCommand(),
+      }));
+      expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.has('toolu_ps_interrupted')).toBe(true);
+      engine.processEvent(SESSION_ID, event(EventType.Interrupted, { tool: 'PowerShell', toolId: 'toolu_ps_interrupted' }));
+      expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.has('toolu_ps_interrupted')).toBe(false);
+    });
+
+    // The memo belongs to one launch. An interrupt of a different tool must not
+    // drop it, or the still-pending launch's promotion would file its shell in the
+    // holding set (the bug the flag exists to prevent).
+    it('keeps the memo when an interrupt carries a different toolId', () => {
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, {
+        tool: 'PowerShell', toolId: 'toolu_ps_pending', detail: previewWatcherCommand(),
+      }));
+      engine.processEvent(SESSION_ID, event(EventType.Interrupted, { tool: 'PowerShell', toolId: 'toolu_ps_other' }));
+      expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.has('toolu_ps_pending')).toBe(true);
+    });
+  });
+
+  describe('markBackgroundShellsAsServices (task #857)', () => {
+    beforeEach(() => {
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+    });
+
+    function startNamedShell(toolId: string, shellId: string): void {
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, { tool: 'Bash', toolId, detail: 'npm run dev' }));
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, { tool: 'Bash', toolId, detail: shellId }));
+    }
+
+    it('moves a holding shell into the exempt set and reports each outcome', () => {
+      startNamedShell('toolu_server', 'bserver01');
+      promoteExemptShell(engine, SESSION_ID, 'toolu_flagged', 'bflagged01');
+      const outcomes = engine.markBackgroundShellsAsServices(SESSION_ID, ['bserver01', 'bflagged01', 'bnotyet01']);
+      expect(outcomes).toEqual([
+        { shellId: 'bserver01', outcome: 'marked' },
+        { shellId: 'bflagged01', outcome: 'already-marked' },
+        { shellId: 'bnotyet01', outcome: 'pending' },
+      ]);
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activeBackgroundShellIds.size).toBe(0);
+      expect([...state.exemptBackgroundShellIds].sort()).toEqual(['bflagged01', 'bserver01']);
+      expect(state.pendingServiceShellIds.has('bnotyet01')).toBe(true);
+    });
+
+    it('keeps the shell tracked: the watcher-visible total is unchanged and its later end drains it', () => {
+      startNamedShell('toolu_server', 'bserver01');
+      const before = engine.getState(SESSION_ID)!;
+      const trackedBefore = before.activeBackgroundShellIds.size + before.exemptBackgroundShellIds.size;
+      engine.markBackgroundShellsAsServices(SESSION_ID, ['bserver01']);
+      const after = engine.getState(SESSION_ID)!;
+      expect(after.activeBackgroundShellIds.size + after.exemptBackgroundShellIds.size).toBe(trackedBefore);
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellEnd, { detail: 'bserver01' }));
+      expect(engine.getState(SESSION_ID)?.exemptBackgroundShellIds.size).toBe(0);
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.unmatchedBgShellEnd).toBe(0);
+    });
+
+    it('releases a held finished turn to idle through the stability window', () => {
+      startNamedShell('toolu_server', 'bserver01');
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      engine.markBackgroundShellsAsServices(SESSION_ID, ['bserver01']);
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.recentTransitions.some(
+        (record) => record.trigger === 'event:bg-shell-service:mcp',
+      )).toBe(true);
+    });
+
+    it('a pending mark promotes the shell straight into the exempt set, draining its anonymous slot', () => {
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, { tool: 'Bash', toolId: 'toolu_late', detail: 'npm run dev' }));
+      engine.markBackgroundShellsAsServices(SESSION_ID, ['blate01']);
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, { tool: 'Bash', toolId: 'toolu_late', detail: 'blate01' }));
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.exemptBackgroundShellIds.has('blate01')).toBe(true);
+      expect(state.activeBackgroundShellIds.size).toBe(0);
+      expect(state.anonymousBackgroundShellCount).toBe(0);
+      expect(state.pendingServiceShellIds.size).toBe(0);
+    });
+
+    it('caps pending marks FIFO at MAX_PENDING_EXEMPT_SHELL_TOOL_IDS', () => {
+      const shellIds = Array.from({ length: MAX_PENDING_EXEMPT_SHELL_TOOL_IDS + 1 }, (_unused, index) => `bpending${index}`);
+      engine.markBackgroundShellsAsServices(SESSION_ID, shellIds);
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.pendingServiceShellIds.size).toBe(MAX_PENDING_EXEMPT_SHELL_TOOL_IDS);
+      expect(state.pendingServiceShellIds.has(shellIds[0])).toBe(false);
+      expect(state.pendingServiceShellIds.has(shellIds[shellIds.length - 1])).toBe(true);
+    });
+
+    it('an interrupt keeps pending marks; forceIdle clears them', () => {
+      engine.markBackgroundShellsAsServices(SESSION_ID, ['bkept01']);
+      engine.processEvent(SESSION_ID, event(EventType.Interrupted, { detail: 'user-ctrl-c' }));
+      expect(engine.getState(SESSION_ID)?.pendingServiceShellIds.has('bkept01')).toBe(true);
+      engine.forceIdle(SESSION_ID);
+      expect(engine.getState(SESSION_ID)?.pendingServiceShellIds.size).toBe(0);
+    });
+
+    it('returns null for a session the engine does not track', () => {
+      expect(engine.markBackgroundShellsAsServices('unknown-session', ['bserver01'])).toBeNull();
+    });
+  });
 });

@@ -856,7 +856,7 @@ const SnapshotRow = memo(function SnapshotRow({ snapshot, label, pollNow }: { sn
         <CounterRow
           label="Background shells (exempt)"
           value={snapshot.exemptBackgroundShellIds.length}
-          tooltip={`Shells launched with ${NO_ACTIVITY_HOLD_FLAG} (today: /preview's watcher). Still tracked for liveness, but excluded from the predicate, so they never hold the session active.`}
+          tooltip={`Shells launched with ${NO_ACTIVITY_HOLD_FLAG} (/preview's watcher) or marked as services by the agent. Still tracked for liveness, but excluded from the predicate, so they never hold the session active.`}
         />
         <FlagRow
           label="Turn active"
@@ -980,6 +980,7 @@ const TRIGGER_EXACT_EXPLANATIONS: Record<string, string> = {
   'timer:stale-thinking': 'The 180s stale-thinking watchdog forced idle (turn was active but no other counters held it)',
   'timer:bg-shell-hatch': 'The orphan-bg-shell escape hatch fired (only bg shells were holding thinking, no watcher-confirmed liveness). Shared trigger: 5 min once any shell is named, 30s while all are anonymous.',
   'event:bg-shells-adopted': 'Watcher saw shell-like processes the hooks did not fire for and adopted them as anonymous bg shells',
+  'event:bg-shell-service:mcp': 'The agent marked background shells as services through kangentic_mark_background_service, so they stopped holding the session',
 };
 
 /**
