@@ -78,7 +78,7 @@ export function StatsDashboardBody() {
   const projects = useProjectStore((state) => state.projects);
   // Suspend chart data animations while the OS window is actively resizing so
   // layout tracks the drag crisply (a tween re-triggering per resize tick
-  // reads as stutter). Animations off, or the system's reduced motion, turns
+  // reads as stutter). Animations off, or the web build's reduced motion, turns
   // them off for good: the `.no-motion` class the setting sets reaches CSS
   // only, and these tweens are the chart library's own script. Read on each
   // render, which is when a tween starts.

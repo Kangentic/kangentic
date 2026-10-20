@@ -236,8 +236,9 @@ export function TaskDetailBody({
   // no wrapper and no motion (restore-no-animation-replay). 'start' paints the
   // FROM basis for one frame; 'run' flips to the TO basis so the CSS
   // transition has an actual change to animate. A timer (not transitionend)
-  // clears the state, so reduced-motion - where the transition is disabled and
-  // no transitionend ever fires - still settles.
+  // clears the state, so Animations off (or the web build's reduced motion) -
+  // where the transition is disabled and no transitionend ever fires - still
+  // settles.
   const [expandTransition, setExpandTransition] = useState<{ direction: 'expand' | 'collapse'; phase: 'start' | 'run' } | null>(null);
   useLayoutEffect(() => {
     if (expandTransition?.phase !== 'start') return;
@@ -489,7 +490,7 @@ export function TaskDetailBody({
               className={`${rightPanelPresent || expandTransition ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden ${
                 // Transition only during the click-driven toggle - never on the
                 // divider drag (1:1 pointer tracking) and never on a restore.
-                expandTransition ? 'transition-[flex-basis] duration-200 ease-out motion-reduce:transition-none' : ''
+                expandTransition ? 'transition-[flex-basis] duration-200 ease-out motion-reduce:transition-none [.no-motion_&]:transition-none' : ''
               }`}
               style={terminalBasis !== undefined ? { flexBasis: terminalBasis } : undefined}
             >

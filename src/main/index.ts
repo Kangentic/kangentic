@@ -392,6 +392,20 @@ if (graphicsMode.software) {
 // mode was already on from a previous launch, so this line cannot reach it.
 if (graphicsMode.engagedNow) pendingGpuNotice = true;
 
+// Kangentic's motion never follows the OS reduced-motion preference. The one
+// off switch is Settings > Performance > Animations (`.no-motion` on <html>).
+// Chromium caches the OS value in the browser process, and a stale cached
+// `reduce` once froze every activity mark until a relaunch. Chromium checks
+// this switch before that cache, so every web contents, Browser pane guests
+// and agent lanes included, reports no preference. A launch with
+// `--force-prefers-reduced-motion` still wins over it, which is how to look at
+// the reduced-motion CSS the web build keeps.
+//
+// Never move it behind a condition: a test or preview run must render the way
+// a user's install does. The incident and the measurements are in
+// docs/activity-marks.md; `tests/e2e/os-reduced-motion.spec.ts` covers it.
+app.commandLine.appendSwitch('force-prefers-no-reduced-motion');
+
 // Registered here rather than in an ipc/handlers module because the answer is
 // a module-scope fact of THIS file: the graphics decision runs before
 // whenReady and the notice it produces has no other owner. Cleared on read, so

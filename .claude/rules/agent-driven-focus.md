@@ -207,9 +207,10 @@ reveals what that one cannot avoid.
   shortening BOTH: the slow wind-down is still right for the case nobody triggered.
 
   Easing instead of suppressing was rejected outright - a fade on a cue that should never have
-  appeared is a slower flash, and a slower flash occupies more time on screen, not less. Under
-  reduced motion, drop the fades and keep every timing: the run rule is scheduling rather than
-  animation, and it is the part that removes the churn.
+  appeared is a slower flash, and a slower flash occupies more time on screen, not less. With
+  Animations off, or in the web build under reduced motion (the desktop app never matches that
+  query), drop the fades and keep every timing: the run rule is scheduling rather than animation,
+  and it is the part that removes the churn.
 
   **A stop bypasses the envelope entirely, and the user's Ctrl+C does not wait for the engine.**
   The link window exists to bridge the model THINKING between two calls, so an interrupted or

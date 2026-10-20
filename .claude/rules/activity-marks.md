@@ -58,9 +58,16 @@ measurements, and the upstream geometry history live in
   pointer. Wrap ONCE around the icon the branching produced, never per branch, so a future
   branch cannot silently opt out. A slot neutralizes the element it wraps, so a mark inside one
   labels itself with `aria-label`, and its Tooltip goes on the slot's button, never on the mark.
+- **The OS reduced-motion preference never stops a mark in the desktop app.** Main appends
+  Chromium's `force-prefers-no-reduced-motion` switch at module scope in `src/main/index.ts`,
+  because a stale cached `reduce` once froze every mark until a relaunch. The only off switch is
+  Settings > Performance > Animations (`.no-motion`). Never gate desktop motion on the media query
+  again, and never move the switch behind a condition. The reduced-motion CSS stays for the web
+  build, where a visitor's own preference holds. `.no-motion` zeroes animations only, so a
+  transition that reduced motion stops needs its own `.no-motion` line.
 - **There is no `-rest` mark.** Rest is the `-idle` geometry in a muted tone. `data-rest` on the
-  root is the reduced-motion strategy (`static` / `keep-dash` / `drop-dash`), NOT a tone. Test
-  selectors key off `data-mark`.
+  root is the reduced-motion strategy (`static` / `keep-dash` / `drop-dash`), NOT a tone, and only
+  the web build applies it. Test selectors key off `data-mark`.
 - **Sizes are fixed by role.** Two keylines: 18 for indicators, 20 for controls. Size floors are
   12 for indicators and 16 for controls, which is why `TerminalPanel`'s 8px session dot stays
   lucide. Control marks render at size 20, indicators at 16 (`TaskCard` and both sidebar
@@ -79,6 +86,16 @@ measurements, and the upstream geometry history live in
 - **Test (clicks):** `tests/ui/command-terminal.spec.ts` covers both hazard variants, a mark flip
   and an element-type swap, with red-green mouse-level tests, but only for `StopButtonIcon`. The
   other adoptions ride on the shared component.
+- **Test (OS preference):** `tests/e2e/os-reduced-motion.spec.ts` launches the real app on CI's
+  Linux with a GTK `settings.ini` that turns animations off. It first checks that the OS really
+  asks for less motion, then asserts Chromium's own value and the renderer's both report no
+  preference, so deleting the switch fails it. The renderer read lifts Playwright's default
+  `no-preference` media emulation first, or it would pass with or without the switch. This test,
+  not this rule, guards the switch. The rule's `paths:` do not cover `src/main/index.ts`, so an
+  edit there never loads it. The gap is that Windows and macOS read a system-wide setting a test
+  cannot scope to one process, so the spec skips there.
+  `tests/unit/no-motion-parity.test.ts` holds every reduced-motion rule in `index.css` and every
+  Tailwind `motion-reduce:` utility to a `.no-motion` counterpart. Both run in CI.
 - **Review:** `IconSlot` adoption is the read-trigger gap this rule cannot close. The hazard
   appears when someone CREATES a new branching icon, which a path-scoped rule does not fire on,
   so `/code-review` is the backstop for new sites.

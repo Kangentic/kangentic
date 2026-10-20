@@ -200,4 +200,23 @@ test.describe('SegmentedControl', () => {
     await expect(backlogOption()).toHaveAttribute('aria-checked', 'true');
     await covers(backlogOption());
   });
+
+  test('the Animations setting stops the thumb slide', async () => {
+    // The desktop app never matches prefers-reduced-motion (main forces
+    // Chromium's no-preference switch), so `.no-motion`, which the Animations
+    // setting puts on <html>, is the only thing that can stop this transition
+    // there. `.no-motion *` zeroes animations, not transitions, so the thumb
+    // needs its own rule in index.css.
+    const thumb = group().locator('.kng-segmented-thumb');
+    await expect(thumb).toBeAttached();
+    const transitionProperty = () => thumb.evaluate((node) => getComputedStyle(node).transitionProperty);
+    await expect.poll(transitionProperty).not.toBe('none');
+
+    await page.evaluate(() => document.documentElement.classList.add('no-motion'));
+    try {
+      await expect.poll(transitionProperty).toBe('none');
+    } finally {
+      await page.evaluate(() => document.documentElement.classList.remove('no-motion'));
+    }
+  });
 });

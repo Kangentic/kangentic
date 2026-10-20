@@ -79,7 +79,7 @@ export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount,
           hydrated-open restore paints at its final height with no replay, and
           a drag (animateHeight false) tracks the pointer 1:1. */}
       <div
-        className={`min-h-0 overflow-hidden ${animateHeight ? 'transition-[height] duration-200 ease-out motion-reduce:transition-none' : ''}`}
+        className={`min-h-0 overflow-hidden ${animateHeight ? 'transition-[height] duration-200 ease-out motion-reduce:transition-none [.no-motion_&]:transition-none' : ''}`}
         style={{ height: open ? bodyHeight : 0 }}
         aria-hidden={open ? undefined : true}
       >

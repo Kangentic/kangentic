@@ -557,9 +557,13 @@ visitor would be left with a card stuck mid-drag. And a key a script dispatched 
 Two more things hold a loop still, both for the visitor's sake. A visitor whose system asks for
 reduced motion (`prefers-reduced-motion: reduce`) gets the rest, held, with no pointer drawn: WCAG
 2.2.2 asks for a way to pause motion that starts by itself, and that setting is the one a frame can
-read before anything moves. The host owes its loop frames a visible stop control, since an `inert`
-frame takes no click (Where it runs, above). And a cycle starts only while the frame is on screen: its tab in front
-and, embedded, some of it inside the page's viewport (an `IntersectionObserver` on the frame's root
+read before anything moves. The desktop app does the opposite on purpose: it forces Chromium's
+no-preference switch and stops motion only through its Animations setting, because a stale cached
+`reduce` once froze every activity mark (`docs/activity-marks.md`). The renderer's reduced-motion
+styles therefore apply only here, in a visitor's own browser. The host owes its loop frames a
+visible stop control, since an `inert` frame takes no click (Where it runs, above). And a cycle
+starts only while the frame is on screen: its tab in front and, embedded, some of it inside the
+page's viewport (an `IntersectionObserver` on the frame's root
 reports against the top-level viewport), so a page of loop frames plays only the ones a reader can
 see. A typed keystroke is the sequence a browser sends, keydown, beforeinput, the edit, input and
 keyup, so a handler that prevents the key keeps the character out, as Testing Library's
