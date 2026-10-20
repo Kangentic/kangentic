@@ -36,6 +36,11 @@
  *          --resume <session id>    resume that conversation instead of starting one (claude only):
  *                                   the launch Kangentic's Resume makes, no prompt, so the recording
  *                                   is the CLI reprinting the conversation and waiting for the user
+ *          --paste-file <path>      once the first turn goes quiet, paste this file's text the way the
+ *                                   Browser pane's Send does (a bracketed paste, then Enter once the
+ *                                   TUI settles; src/main/pty/paste-engine.ts), and record until the
+ *                                   reply goes quiet. With --resume: the browser note reaching a
+ *                                   running conversation
  *          --mcp-config <path>      attach Kangentic's MCP server the way a spawn attaches it
  *          --settings <path>        (claude only, both): the mcp.json naming a preview's server and
  *                                   the settings file whose one rule allows its tools
@@ -67,7 +72,7 @@ const { buildSanitizer, forwardSlash, sanitizeDeep } = require('./lib/demo-sanit
 const { toSpawnable, childAgentEnv } = require('./lib/spawnable');
 
 function parseArgs(argv) {
-  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', followUp: null, messageTrail: true, transcriptOut: null, resume: null, mcpConfig: null, settings: null, readOnly: false, scratchRoot: null };
+  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', followUp: null, pasteFile: null, messageTrail: true, transcriptOut: null, resume: null, mcpConfig: null, settings: null, readOnly: false, scratchRoot: null };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const next = () => argv[++index];
@@ -77,6 +82,7 @@ function parseArgs(argv) {
       case '--project': options.project = next(); break;
       case '--prompt': options.prompt = next(); break;
       case '--follow-up': options.followUp = next(); break;
+      case '--paste-file': options.pasteFile = path.resolve(next()); break;
       case '--out': options.out = path.resolve(next()); break;
       case '--cols': options.cols = Number(next()); break;
       case '--rows': options.rows = Number(next()); break;
@@ -108,6 +114,8 @@ function parseArgs(argv) {
   if (options.resume && options.prompt) throw new Error('--resume takes no --prompt: a resumed conversation waits for the user');
   if (options.followUp !== null && !options.followUp.trim()) throw new Error('--follow-up needs the text the user types');
   if (options.followUp && (options.stopAfter || options.stopWhen)) throw new Error('--follow-up waits for the turn to end, which --stop-after and --stop-when cut short');
+  if (options.pasteFile && options.followUp) throw new Error('--paste-file and --follow-up are both a second turn; give one');
+  if (options.pasteFile && (options.stopAfter || options.stopWhen)) throw new Error('--paste-file waits for the turn to end, which --stop-after and --stop-when cut short');
   if (options.scratchRoot) {
     // Outside the root is a path that climbs out of it, or, for a --cwd on another Windows drive,
     // an absolute one. A folder whose own name starts with ".." is still inside.
@@ -127,6 +135,42 @@ function parseArgs(argv) {
 function endsOnPermissionQuestion(raw) {
   const tail = raw.slice(-4096).replace(/\x1b\[\d*C/g, ' ').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
   return /Do you want to [^?]*\?[\s\S]{0,400}1\.\s*Yes/.test(tail);
+}
+
+/**
+ * What the Browser pane's Send writes into the agent's terminal: the text with line endings made
+ * LF and control characters dropped (`sanitizeForPaste`), wrapped in the bracketed-paste markers
+ * (src/main/pty/paste-engine.ts). tests/unit/capture-agent-scrollback-args.test.ts holds the two
+ * equal, since this script is plain Node and cannot import the engine.
+ */
+function pastePacket(text) {
+  const safe = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/[\x00-\x08\x0b-\x1f]/g, '');
+  return `\x1b[200~${safe}\x1b[201~`;
+}
+
+/**
+ * When the paste engine sends Enter after a paste, and how it decides the agent took it
+ * (src/main/pty/paste-engine.ts, under the names in each comment).
+ * tests/unit/capture-agent-scrollback-args.test.ts holds each one equal to the engine's.
+ */
+const PASTE_TIMINGS = {
+  settleIdleMs: 250, // OUTPUT_SETTLE_IDLE_MS
+  minGapMs: 1000, // MIN_GAP_MS
+  capMinMs: 1000, // SETTLE_CAP_MIN_MS
+  capPerByteMs: 0.5, // SETTLE_CAP_PER_BYTE_MS
+  enterWaitsMs: [3000, 2000], // EVIDENCE_FIRST_WAIT_MS, EVIDENCE_RETRY_WAIT_MS
+  enterEvidenceBytes: 50, // POST_ENTER_DATA_FLOOR_BYTES
+};
+
+/**
+ * Why a capture that asked for a second turn ends without one, or null when it had it. A recording
+ * the manifest gave a follow-up or a browser note carries it, or it is not the session it names.
+ */
+function missedSecondTurn({ followUp, followUpSent, pasteRequested, pasteSent, reason }) {
+  const ending = reason === 'question' ? 'a permission question' : `a ${reason}`;
+  if (followUp && !followUpSent) return `[capture] the follow-up was never typed (the first turn ended on ${ending}); nothing was written`;
+  if (pasteRequested && !pasteSent) return `[capture] the browser note was never pasted (the first turn ended on ${ending}); nothing was written`;
+  return null;
 }
 
 /**
@@ -271,6 +315,9 @@ function buildEnv() {
   // The classic renderer scrolls like a normal terminal, which is what a replay wants, and it
   // never arms Claude's fullscreen boot canary.
   env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1';
+  // The recording machine's own setup is not the sample install's: its advisor setting prints a
+  // notice in Claude's footer.
+  env.CLAUDE_CODE_DISABLE_ADVISOR_TOOL = '1';
   return env;
 }
 
@@ -419,6 +466,11 @@ async function main() {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let reason = 'timeout';
   let followUpSent = false;
+  // The browser note, pasted once the first turn goes quiet, and when it went in on the recording's
+  // clock: the web build freezes the terminal just before `atMs` and plays on from there on Send.
+  const pasteText = options.pasteFile ? fs.readFileSync(options.pasteFile, 'utf-8') : null;
+  let pasteSent = false;
+  const paste = { atMs: null, enterAtMs: null };
   for (;;) {
     await sleep(500);
     const elapsed = Date.now() - startedAt;
@@ -454,6 +506,42 @@ async function main() {
         lastOutputAt = Date.now();
         continue;
       }
+      if (pasteText !== null && !pasteSent && endsOnPermissionQuestion(raw)) {
+        // Pasted into the agent's own question, the note would answer it.
+        reason = 'question';
+        break;
+      }
+      if (pasteText !== null && !pasteSent) {
+        // The paste engine's delivery (src/main/pty/paste-engine.ts): the whole packet, then Enter
+        // as its own write once the TUI has drawn the paste and gone quiet for the settle window,
+        // never sooner than the minimum gap after the paste (Claude is still committing the paste
+        // before that, and an earlier Enter is lost) and never later than the size-scaled cap. An
+        // Enter that draws no reply within the first wait is sent once more, as the engine retries it.
+        pasteSent = true;
+        console.error('[capture] the first turn went quiet; pasting the browser note');
+        const packet = pastePacket(pasteText);
+        paste.atMs = Date.now() - startedAt;
+        const pastedAt = Date.now();
+        const outputBeforePaste = lastOutputAt;
+        child.write(packet);
+        const capMs = Math.max(PASTE_TIMINGS.capMinMs, Math.round(packet.length * PASTE_TIMINGS.capPerByteMs) + PASTE_TIMINGS.capMinMs);
+        while (Date.now() - pastedAt < capMs) {
+          await sleep(50);
+          if (lastOutputAt > outputBeforePaste && Date.now() - lastOutputAt >= PASTE_TIMINGS.settleIdleMs) break;
+        }
+        if (Date.now() - pastedAt < PASTE_TIMINGS.minGapMs) await sleep(PASTE_TIMINGS.minGapMs - (Date.now() - pastedAt));
+        for (const waitMs of PASTE_TIMINGS.enterWaitsMs) {
+          const bytesBeforeEnter = raw.length;
+          paste.enterAtMs = Date.now() - startedAt;
+          child.write('\r');
+          const enteredAt = Date.now();
+          while (Date.now() - enteredAt < waitMs && raw.length - bytesBeforeEnter < PASTE_TIMINGS.enterEvidenceBytes) await sleep(50);
+          if (raw.length - bytesBeforeEnter >= PASTE_TIMINGS.enterEvidenceBytes) break;
+          console.error('[capture] the Enter after the paste drew nothing; sending it once more');
+        }
+        lastOutputAt = Date.now();
+        continue;
+      }
       reason = 'idle';
       break;
     }
@@ -477,10 +565,8 @@ async function main() {
   // Each stage announces itself: a capture that stalls after the recording ended (seen on long
   // Codex sessions) is then a named stage in the matrix log, not a silent watchdog kill.
   console.error(`[capture] exit sequence done (agent ${exited ? 'exited' : 'still running'})`);
-  // A recording the manifest gave a second turn has one, or it is not the session it names.
-  if (options.followUp && !followUpSent) {
-    throw new Error(`[capture] the follow-up was never typed (the first turn ended on ${reason === 'question' ? 'a permission question' : `a ${reason}`}); nothing was written`);
-  }
+  const missed = missedSecondTurn({ followUp: options.followUp, followUpSent, pasteRequested: pasteText !== null, pasteSent, reason });
+  if (missed) throw new Error(missed);
 
   // Two views of the same bytes ship. The serialized terminal state is what a still frame and
   // the marketing captures paint; the timed stream is what the live frame replays as it
@@ -582,6 +668,20 @@ async function main() {
       console.error(`[capture] message trail: FAILED, writing an empty one. ${error.message}`);
       transcript = null;
     }
+  } else if (options.messageTrail && pasteSent) {
+    // A resumed conversation with no prompt of its own: what the agent said after the paste is the
+    // card's newest message, as it is on the desktop once a browser note lands.
+    try {
+      const { importTsModule } = await import('./lib/bundle-ts-module.mjs');
+      extract = await importTsModule(path.join(__dirname, '..', 'tests', 'captures', 'helpers', 'message-trail-extract.ts'));
+      const pasted = await extract.extractPastedTranscript({ pastedText: pasteText, capturedAt, durationMs }, options.cwd);
+      const sanitized = extract.buildMessageTrail(pasted.entries, pasted.startMs, durationMs).map((entry) => ({ ...entry, text: sanitizer.apply(entry.text) }));
+      for (const entry of sanitized) sanitizer.assertClean(entry.text, `message trail at ${entry.t} ms`);
+      messageTrail = sanitized;
+      console.error(`[capture] message trail after the paste: ${messageTrail.length} line(s)`);
+    } catch (error) {
+      console.error(`[capture] message trail: FAILED, writing an empty one. ${error.message}`);
+    }
   }
   if (options.transcriptOut) {
     if (transcript) {
@@ -618,6 +718,22 @@ async function main() {
     changes,
     stream: cleanStream,
   };
+  if (pasteSent) {
+    // When the note went in, on the stream's clock, the text exactly as the paste carried it, and
+    // the screen just before it: the conversation finished and waiting, which is what the web
+    // build shows until Send and what a still paints, with the rows above the screen.
+    const pastedText = sanitizer.apply(pastePacket(pasteText).slice('\x1b[200~'.length, -'\x1b[201~'.length));
+    sanitizer.assertClean(pastedText, 'pasted note');
+    // A window coalesces 100 ms of output, so one that opened just before the paste could carry the
+    // paste's own echo into the frame. The TUI had been quiet for the idle span, so none should.
+    if (cleanStream.some((window) => window.t <= paste.atMs && window.t > paste.atMs - 100)) {
+      throw new Error('[capture] output arrived just before the paste, so the frame before it is not the waiting conversation; nothing was written');
+    }
+    const beforePaste = await serializeThroughXterm(cleanStream.filter((window) => window.t <= paste.atMs).map((window) => window.data).join(''), options.cols, options.rows);
+    sanitizer.assertClean(beforePaste.serialized, 'frame before the paste');
+    record.paste = { atMs: paste.atMs, enterAtMs: paste.enterAtMs, text: pastedText, frame: beforePaste.serialized };
+    console.error(`[capture] frame before the paste: ${beforePaste.serialized.length} bytes`);
+  }
   fs.mkdirSync(path.dirname(options.out), { recursive: true });
   fs.writeFileSync(options.out, JSON.stringify(record, null, 2), 'utf-8');
   console.error(`[capture] wrote ${options.out} (raw ${raw.length} bytes recorded, serialized ${cleanSerialized.length} bytes kept, alt screen: ${altScreen})`);
@@ -652,4 +768,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, buildCommand, endsOnPermissionQuestion, CLAUDE_READ_ONLY_TOOLS };
+module.exports = { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, serializeThroughXterm, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS };

@@ -360,6 +360,29 @@ export async function extractMessageTrail(
 }
 
 /**
+ * The Claude history a pasted turn went into: a resumed conversation that received the Browser
+ * pane's note during the capture (`--paste-file`). Its first user message is the original task, so
+ * the prompt match above cannot find it. This finds the file holding a user entry that carries the
+ * note and was written inside the recording's span. `buildMessageTrail` then keeps only what the
+ * agent said during the capture, since the reprinted conversation's entries are older.
+ */
+export async function extractPastedTranscript(
+  facts: { pastedText: string; capturedAt: string; durationMs: number },
+  cwd: string,
+): Promise<ExtractedTranscript> {
+  const capturedAtMs = Date.parse(facts.capturedAt);
+  const startMs = capturedAtMs - facts.durationMs;
+  const needle = normalizeForMatch(facts.pastedText).slice(0, PROMPT_MATCH_CHARS);
+  const { candidates, where } = await claudeCandidates(cwd);
+  const matching = candidates.filter((candidate) => candidate.entries.some((entry) =>
+    entry.kind === 'user' && entry.ts >= startMs && entry.ts <= capturedAtMs && normalizeForMatch(entry.text).includes(needle)));
+  if (matching.length !== 1) {
+    throw new TranscriptMatchError(`${matching.length} claude transcript(s) in ${where} received the pasted note during the capture; expected one`);
+  }
+  return { entries: matching[0].entries, sourcePath: matching[0].sourcePath, startMs };
+}
+
+/**
  * Collapse every prose-bearing assistant entry onto the recording's clock.
  *
  * The count is deliberately unbounded here, unlike main's `MESSAGE_TRAIL_MAX_ENTRIES` read: this is

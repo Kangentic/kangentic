@@ -16,9 +16,9 @@
  * desktop's URL and the pane shows that app's page. Any other URL loads nothing (about:blank),
  * stated rather than spoofed: the pane's own empty state and error paths are the renderer's.
  *
- * Inert here: capturePage (rejects), executeJavaScript (resolves undefined, so Inspect finds
- * nothing), and history (canGoBack is always false). Each is a real method that does less,
- * never a missing one that throws.
+ * Inert here: capturePage (a blank image at the guest's size, so Send runs), executeJavaScript
+ * (resolves undefined, so Inspect finds nothing), and history (canGoBack is always false). Each
+ * is a real method that does less, never a missing one that throws.
  */
 (function () {
   'use strict';
@@ -87,7 +87,20 @@
     node.getZoomFactor = function () { return zoom; };
     node.executeJavaScript = function () { return Promise.resolve(undefined); };
     node.insertCSS = function () { return Promise.resolve(''); };
-    node.capturePage = function () { return Promise.reject(new Error('capturePage is not available in the web build')); };
+    // A blank image at the guest's size: Send composites it and hands it to the mock, which keeps
+    // nothing. The screenshot the recorded agent reads was the page rendered by the capture rig.
+    node.capturePage = function () {
+      var width = Math.max(1, Math.round(frame.clientWidth));
+      var height = Math.max(1, Math.round(frame.clientHeight));
+      var canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      var dataUrl = canvas.toDataURL('image/png');
+      return Promise.resolve({
+        toDataURL: function () { return dataUrl; },
+        getSize: function () { return { width: width, height: height }; },
+      });
+    };
     node.getTitle = function () {
       try { return frame.contentDocument ? frame.contentDocument.title : ''; } catch (error) { return ''; }
     };

@@ -370,6 +370,21 @@
     });
   }
 
+  // ---------------------------------------------------------------- a recorded Send's rest frame
+  // A session the matrix also recorded receiving a note from the Browser pane rests, when the scene
+  // shows it finished, on the frame just before that note went in (demo-dataset.ts, sendRests). Only
+  // such a frame needs it, so it ships as its own script, written here for the reason a row's is.
+  var sendFrameSessions = [];
+  if (errors.length === 0) {
+    var sendFrameScripts = window.__demoSendFrameScripts || {};
+    Object.keys(effective.sessions).forEach(function (sessionId) {
+      var scriptUrl = sendFrameScripts[sessionId];
+      if (effective.sessions[sessionId].activity !== 'idle' || typeof scriptUrl !== 'string') return;
+      sendFrameSessions.push(sessionId);
+      document.write('<script src="' + scriptUrl + '"></script>');
+    });
+  }
+
   // ---------------------------------------------------------------- config overrides
   // Object.assign in the mock is shallow, so nested objects are re-supplied whole.
   var overrides = {
@@ -461,16 +476,16 @@
    * Returns a function that starts signal two, whose caller decides when the document's own
    * top-level children are all in place.
    */
-  function shieldDocument(doc) {
-    var view = doc.defaultView || window;
+  function shieldDocument(shieldedDocument) {
+    var view = shieldedDocument.defaultView || window;
     var watchingTopLevel = false;
-    doc.documentElement.setAttribute('translate', 'no');
-    var style = doc.createElement('style');
+    shieldedDocument.documentElement.setAttribute('translate', 'no');
+    var style = shieldedDocument.createElement('style');
     // The guest's prototypes are another realm's, so its elements never pass through the wrapper.
     pageCreated.add(style);
     style.setAttribute('data-demo-style', '');
     style.textContent = '[' + FOREIGN_ATTRIBUTE + '] { display: none !important; }';
-    (doc.head || doc.documentElement).appendChild(style);
+    (shieldedDocument.head || shieldedDocument.documentElement).appendChild(style);
 
     function stampField(element) {
       for (var index = 0; index < FIELD_OPT_OUTS.length; index++) {
@@ -489,7 +504,7 @@
 
     function isForeignTopLevel(element) {
       if (!watchingTopLevel || pageCreated.has(element)) return false;
-      return element.parentNode === doc.body || element.parentNode === doc.documentElement;
+      return element.parentNode === shieldedDocument.body || element.parentNode === shieldedDocument.documentElement;
     }
 
     function hide(element) {
@@ -526,9 +541,9 @@
     }
 
     var observer = new MutationObserver(handle);
-    observer.observe(doc.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['contenteditable'] });
+    observer.observe(shieldedDocument.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['contenteditable'] });
     // A content script that runs at document_start can add its node before this script does.
-    visit(doc.documentElement);
+    visit(shieldedDocument.documentElement);
     // React's autoFocus focuses a field in the same task that inserts it, before the observer's
     // microtask; an extension attaches on focus. A window capture listener runs ahead of any
     // listener on the document or the field, so the field carries its opt-outs by then.
@@ -540,7 +555,7 @@
     return function startTopLevelSweep() {
       // Anything the parser placed is the page's own. Records still queued were made by it too.
       handle(observer.takeRecords());
-      [doc.documentElement, doc.body].forEach(function (parent) {
+      [shieldedDocument.documentElement, shieldedDocument.body].forEach(function (parent) {
         if (!parent) return;
         for (var index = 0; index < parent.children.length; index++) pageCreated.add(parent.children[index]);
       });
@@ -552,9 +567,9 @@
   document.addEventListener('DOMContentLoaded', function () { startTopLevelSweep(); }, { once: true });
 
   /** The Browser pane's guest page: no script of its own runs there, so its children are all in place once it loads. */
-  function shieldGuestDocument(doc) {
-    if (!doc || !doc.documentElement) return;
-    shieldDocument(doc)();
+  function shieldGuestDocument(guestDocument) {
+    if (!guestDocument || !guestDocument.documentElement) return;
+    shieldDocument(guestDocument)();
   }
 
   // The microphone is never requested: dictation's capture (src/renderer/audio/audio-capture.ts)
@@ -611,6 +626,14 @@
     var unloadedRows = effective.rows.filter(function (taskId) { return !sceneRowData[taskId]; });
     if (unloadedRows.length > 0) {
       errors.push('The recorded sessions of the scene-only task "' + unloadedRows.join('", "') + '" did not load.');
+      return;
+    }
+    // The same for a recorded Send's rest frame: without it the session would rest on another
+    // picture than the one its Send plays on from.
+    var sendFrames = window.__demoSendFrames || {};
+    var unloadedFrames = sendFrameSessions.filter(function (sessionId) { return typeof sendFrames[sessionId] !== 'string'; });
+    if (unloadedFrames.length > 0) {
+      errors.push('The frame the session "' + unloadedFrames.join('", "') + '" rests on before its recorded Send did not load.');
       return;
     }
     // Session patches are the SEED's input, not a pass over its output: the seed derives the

@@ -32,6 +32,9 @@
   "workflowAgents": [
     { "file": "workflow-wf-cw-invoice-pdf.json", "workflowId": "wf-cw-invoice-pdf", "project": "contoso-web", "agent": "claude", "backlog": "backlog-cw-invoice-pdf", "claudeSettings": { "verbose": true }, "timeout": 600, "followUp": "Split it so each part can be reviewed on its own: the server side first, then the billing page on top of it." }
   ],
+  "browserSends": [
+    { "file": "send-sess-cw-middleware.json", "sessionId": "sess-cw-middleware", "recording": "contoso-web-claude-middleware.json", "project": "contoso-web", "captureSessionId": "6f2b9c41-8d3e-4a7f-9b15-2c84e0d7a6f3", "url": "http://localhost:5173/", "guestSize": { "width": 878, "height": 752 }, "note": "Cancel should keep the plan active until Oct 1." }
+  ],
   "captures": [
     { "file": "contoso-web-claude-middleware.json", "tiled": "contoso-web-claude-middleware-tiled.json", "transcript": true, "sessionId": "sess-cw-middleware", "project": "contoso-web", "agent": "claude", "prompt": "Extract the auth logic that is inlined in server/routes.ts into a standalone middleware at server/middleware/auth.ts, use it from the routes, and run npm test when you are done." },
     { "file": "contoso-web-claude-websocket.json", "sessionId": "sess-cw-websocket", "project": "contoso-web", "agent": "claude", "mode": "plan", "prompt": "Plan how to add reconnection with exponential backoff to src/lib/websocket.ts. Read the file and the places that use it, then write the plan. Do not edit any file." },

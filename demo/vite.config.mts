@@ -22,8 +22,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { transformSync } from 'esbuild';
-import { buildDemoPreConfig, buildDemoSceneRowScripts, DEMO_PROJECTS, DEMO_SCENE_TASKS, shippedKnowledgeGraph } from '../tests/captures/helpers/demo-dataset';
-import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, loadDemoTiledFrames, loadDemoTranscripts, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
+import { buildDemoPreConfig, buildDemoSceneRowScripts, buildDemoSendFrameScripts, DEMO_PROJECTS, DEMO_SCENE_TASKS, shippedKnowledgeGraph } from '../tests/captures/helpers/demo-dataset';
+import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, loadDemoSendFrames, loadDemoTiledFrames, loadDemoTranscripts, readLiveTailMs, type DemoRecordingEntry, type DemoSendEntry } from '../tests/captures/helpers/demo-scrollback';
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
 import { SCENES } from '../tests/captures/scenes';
@@ -129,6 +129,15 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     const indexed = emitRecording(entry);
     return entry.tiled ? { ...indexed, tiled: emitRecording(entry.tiled) } : indexed;
   };
+  // A browser send also carries what the agent says after the note and how the Monitor's peek
+  // moves, since those are new; its index entry names the note it plays for and when on its clock
+  // the note went in and Enter followed (demo-dataset.ts, playSend).
+  const emitSend = (entry: DemoSendEntry): IndexEntry & { note: string; atMs: number; enterAtMs: number } => {
+    const source = JSON.stringify({ serialized: entry.serialized, stream: entry.stream, peek: entry.peek, cols: entry.cols, rows: entry.rows, stopReason: entry.stopReason, peekTimeline: entry.peekTimeline, messageTrail: entry.messageTrail });
+    const fileName = hashedName(`recordings/${entry.file}`, source);
+    files.push({ fileName, source });
+    return { file: fileName.slice('recordings/'.length), cols: entry.cols, rows: entry.rows, note: entry.note, atMs: entry.atMs, enterAtMs: entry.enterAtMs };
+  };
   // The agent transcripts the conversation viewer shows, one file per session the manifest
   // marks, under their own directory: a still frame fetches no recording, and a transcript is
   // fetched only when a viewer opens.
@@ -152,13 +161,14 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     terminals: Object.fromEntries(Object.entries(recordings.terminals).map(([id, entry]) => [id, indexEntryOf(entry)])),
     resumes: Object.fromEntries(Object.entries(recordings.resumes).map(([id, entry]) => [id, indexEntryOf(entry)])),
     workflowAgents: Object.fromEntries(Object.entries(recordings.workflowAgents).map(([id, entry]) => [id, indexEntryOf(entry)])),
+    sends: Object.fromEntries(Object.entries(recordings.sends).map(([id, entry]) => [id, emitSend(entry)])),
     geometry: recordings.geometry,
     transcriptsBase: `${base}transcripts/`,
     transcripts,
     knowledgeGraph: `${base}${knowledgeGraphFile}`,
   };
   const tiledCount = Object.values(index.sessions).filter((entry) => entry.tiled).length;
-  console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions (${tiledCount} with a tiled sibling), ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots, ${Object.keys(index.resumes).length} resume boots, ${Object.keys(index.workflowAgents).length} workflow agents, ${Object.keys(transcripts).length} transcripts, the Knowledge Graph (${Math.round(knowledgeGraphSource.length / 1024)} KB)`);
+  console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions (${tiledCount} with a tiled sibling), ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots, ${Object.keys(index.resumes).length} resume boots, ${Object.keys(index.workflowAgents).length} workflow agents, ${Object.keys(index.sends).length} browser sends, ${Object.keys(transcripts).length} transcripts, the Knowledge Graph (${Math.round(knowledgeGraphSource.length / 1024)} KB)`);
   // The guest pages: what each project's dev URL shows, for the Browser pane's iframe
   // stand-in (demo/webview-shim.js). Keyed by the URL the pane shows, valued by the hashed file.
   const guestPages: Record<string, string> = {};
@@ -183,8 +193,19 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     sceneRowScripts[taskId] = `${base}${fileName}`;
     console.log(`[demo] scene-only row script emitted: ${fileName} (${Math.round(source.length / 1024)} KB)`);
   }
+  // The frame each recorded browser send's session rests on, one classic script per session
+  // (demo-dataset.ts, buildDemoSendFrameScripts). demo/boot.js writes it ahead of the seed only on a
+  // frame whose scene shows that session finished; in the seed it was heap in every frame.
+  const sendFrameScripts: Record<string, string> = {};
+  for (const [sessionId, written] of Object.entries(buildDemoSendFrameScripts(seedMaps.sendFrames))) {
+    const source = minifyClassicScript(`send-frames/${sessionId}.js`, written);
+    const fileName = hashedName(`send-frames/${sessionId}.js`, source);
+    files.push({ fileName, source });
+    sendFrameScripts[sessionId] = `${base}${fileName}`;
+    console.log(`[demo] browser send rest frame emitted: ${fileName} (${Math.round(source.length / 1024)} KB)`);
+  }
   const scripts = [
-    { name: 'demo-scenes.js', source: buildScenesScript(version, sceneRowScripts, `window.__demoRecordings = ${JSON.stringify(index)};\nwindow.__demoGuestPages = ${JSON.stringify(guestPages)};\n`) },
+    { name: 'demo-scenes.js', source: buildScenesScript(version, sceneRowScripts, `window.__demoRecordings = ${JSON.stringify(index)};\nwindow.__demoGuestPages = ${JSON.stringify(guestPages)};\nwindow.__demoSendFrameScripts = ${JSON.stringify(sendFrameScripts)};\n`) },
     { name: 'demo-boot.js', source: readFileSync(BOOT_SCRIPT_PATH, 'utf8') },
     { name: 'demo-webview.js', source: readFileSync(WEBVIEW_SHIM_PATH, 'utf8') },
     { name: 'mock-electron-api.js', source: readFileSync(MOCK_SCRIPT_PATH, 'utf8') },
@@ -271,6 +292,7 @@ function loadSeedMaps() {
     peekTimelines: loadDemoPeekTimelines(),
     messageTrails: loadDemoMessageTrails(),
     history: loadDemoHistory(),
+    sendFrames: loadDemoSendFrames(),
   };
 }
 
@@ -290,6 +312,9 @@ function buildSeedScript(version: string, seedMaps: ReturnType<typeof loadSeedMa
       appVersion: version,
       cellWidths: buildCellWidthTable(),
       history,
+      // Written into the page by demo/boot.js from the scripts planDemoAssets emits, on a frame
+      // whose scene shows a recorded send's session finished.
+      sendFrames: 'separate',
       // Fetched from the file planDemoAssets emits, when a frame opens the graph.
       knowledgeGraph: 'fetched',
       // Written into the page by demo/boot.js from the scripts planDemoAssets emits, for the rows a

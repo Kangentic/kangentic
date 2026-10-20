@@ -27,6 +27,13 @@
  *              session paused at its recording's end, where the reprint shows nothing the frame
  *              has not reached. Resuming can append to those history files, which the committed
  *              trails and transcripts came from: back them up before a run and restore them after.
+ *   sends      the manifest's `browserSends`: a session's conversation resumed and sent a note from
+ *              the Browser pane, the way Send delivers it (a bracketed paste of the payload main's
+ *              buildPromptPayload writes, then Enter), with the agent's reply. The tree first gets
+ *              the session's own recorded edits, so the code matches the conversation, and the
+ *              screenshot the payload names is the guest page rendered at the pane's size. The web
+ *              build plays it when the browser scene presses Send. Like a resume, it records against
+ *              the conversation's history file and puts it back afterwards.
  *   workflows  the manifest's `workflowAgents`: a workflow's own agent planning a workflow made
  *              from a backlog item, against a running /preview the capture seeds, as `mcp`
  *              entries are (scripts/lib/demo-mcp-capture.mjs). Recorded at the Workflows view's
@@ -48,10 +55,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { importTsModule } from './lib/bundle-ts-module.mjs';
 import { buildScaffoldRepo, stageScaffoldRefresh } from './lib/demo-scaffold-repo.mjs';
 import { prepareMcpCapture, prepareWorkflowAgentCapture } from './lib/demo-mcp-capture.mjs';
+import { applyRecordedChanges, excludeFromGit } from './lib/demo-browser-send.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
@@ -173,6 +181,91 @@ function derivedResumeEntries() {
       idle: 4,
     }];
   });
+}
+
+/**
+ * The browser sends: a session's conversation resumed and sent the Browser pane's note. It waits
+ * for the reprint to go quiet, pastes, and records until the reply goes quiet, which for a reply
+ * that edits and checks code can run past the default.
+ */
+function browserSendEntries() {
+  return (manifest.browserSends ?? []).map((send) => {
+    const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === send.sessionId);
+    if (!session) throw new Error(`[matrix] browserSends names ${send.sessionId}, which the dataset does not seed`);
+    if (!(send.guestSize?.width > 0 && send.guestSize?.height > 0)) throw new Error(`[matrix] ${send.file} has no guestSize to capture the guest page at`);
+    return {
+      kind: 'send',
+      ...send,
+      agent: 'claude',
+      mode: captureMode('claude', session.permissionMode),
+      prompt: '',
+      min: 5,
+      idle: 6,
+      timeout: send.timeout ?? 300,
+    };
+  });
+}
+
+/**
+ * Put a session's recorded edits back on a freshly reset tree, so a resumed conversation finds the
+ * code it says it wrote (scripts/lib/demo-browser-send.mjs).
+ */
+function applySessionEdits(recordingFile, cwd) {
+  const recording = JSON.parse(fs.readFileSync(path.join(fixturesDir, recordingFile), 'utf-8'));
+  const { applied, skipped } = applyRecordedChanges(recording, cwd);
+  console.error(`[matrix] ${recordingFile}: ${applied.length} recorded edit(s) applied`);
+  for (const filePath of skipped) console.error(`[matrix] ${recordingFile}: ${filePath} was recorded without its text (binary or oversized), so the tree keeps its committed copy`);
+}
+
+/**
+ * What Send hands the agent, built the way main builds it: the guest page captured at the pane's
+ * size and written under the project's .kangentic/sessions/<session>/captures/ (kept out of git's
+ * view through the clone's own info/exclude, so the agent's diff never shows it), and the prompt
+ * main's buildPromptPayload writes around the note. Returns the payload file for --paste-file.
+ * A failure part way undoes what was written before it, since `git clean` leaves an excluded
+ * `.kangentic/` in place for the next entry.
+ */
+async function prepareBrowserSend(entry, cwd) {
+  const projectGuest = dataset.DEMO_PROJECTS.find((project) => project.name === entry.project)?.guest_page;
+  if (!projectGuest) throw new Error(`[matrix] ${entry.project} has no guest page to capture`);
+  const restoreExclude = excludeFromGit(cwd, '.kangentic/');
+  const payloadPath = path.join(os.tmpdir(), `kangentic-browser-send-${entry.sessionId}.txt`);
+  const cleanup = () => {
+    fs.rmSync(path.join(cwd, '.kangentic'), { recursive: true, force: true });
+    restoreExclude();
+    fs.rmSync(payloadPath, { force: true });
+  };
+  try {
+    const captureDir = path.join(cwd, '.kangentic', 'sessions', entry.captureSessionId, 'captures');
+    fs.mkdirSync(captureDir, { recursive: true });
+    const pngPath = path.join(captureDir, `capture-${Date.now()}.png`);
+    // Bundled Chromium with Playwright's default arguments, so no extension draws into the page
+    // (tests/unit/demo-launches-no-extensions.test.ts).
+    const { chromium } = await import('@playwright/test');
+    const browser = await chromium.launch({ headless: true });
+    try {
+      // The size the Browser pane shows the guest at in the browser scene, which the demo tier
+      // measures against the manifest's guestSize.
+      const page = await browser.newPage({ viewport: entry.guestSize });
+      await page.goto(pathToFileURL(path.join(repoRoot, 'demo', 'guest', projectGuest)).href);
+      await page.screenshot({ path: pngPath });
+    } finally {
+      await browser.close();
+    }
+
+    const payloadModule = await importTsModule(path.join(repoRoot, 'src', 'main', 'ipc', 'handlers', 'browser-payload.ts'));
+    const relativePngPath = path.relative(cwd, pngPath);
+    const payload = payloadModule.buildPromptPayload(
+      { sessionId: entry.captureSessionId, taskId: entry.sessionId, cwd, url: entry.url, pngBase64: '', pickedElement: null, selectedText: '', note: entry.note },
+      relativePngPath,
+    );
+    fs.writeFileSync(payloadPath, payload);
+    console.error(`[matrix] ${entry.file}: payload\n${payload}`);
+    return { payloadPath, cleanup };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }
 
 /**
@@ -318,6 +411,8 @@ function geometryFor(entry) {
     return forAgent(transient ? geometry.commandTerminal : geometry.taskWindow);
   }
   if (entry.kind === 'terminal') return forAgent(entry.layout === 'tiled' ? geometry.commandTerminalTiled : geometry.commandTerminal);
+  // A browser send plays in the terminal beside the Browser pane, which is a tiled pane's width.
+  if (entry.kind === 'send') return forAgent(geometry.taskWindowTiled);
   if (entry.kind === 'workflow') return forAgent(geometry.workflowAgentPane);
   return forAgent(geometry.taskWindow);
 }
@@ -355,6 +450,9 @@ function runCapture(entry, cwd, extraArgs = []) {
   // A resume boot records the CLI reprinting a conversation the paused session's card already
   // carries the trail of, so it derives none of its own.
   if (entry.kind === 'resume') args.push('--resume', entry.resume, '--no-message-trail');
+  // A browser send resumes the conversation too, but what the agent says after the note is new,
+  // and it is the card's newest message once the reply lands, so it keeps its trail.
+  if (entry.kind === 'send') args.push('--resume', entry.resume);
   // Which sessions are transient is the dataset's fact, not something the capture script can see
   // from a prompt, so the decision is made here. MessageTrailTracker skips a transient session, so
   // a Command Terminal shows no message trail on the desktop and must show none in the demo. A
@@ -420,9 +518,10 @@ const entries = [
   ...derivedSpawnEntries(),
   ...derivedTerminalEntries(),
   ...derivedResumeEntries(),
+  ...browserSendEntries(),
   ...workflowAgentEntries(),
 ];
-console.error(`[matrix] ${entries.filter((entry) => entry.kind === 'session').length} sessions (${manifest.captures.length} in the manifest, the rest tiled variants), ${entries.filter((entry) => entry.kind === 'spawn').length} spawn boots, ${entries.filter((entry) => entry.kind === 'terminal').length} terminal boots, ${entries.filter((entry) => entry.kind === 'resume').length} resume boots`);
+console.error(`[matrix] ${entries.filter((entry) => entry.kind === 'session').length} sessions (${manifest.captures.length} in the manifest, the rest tiled variants), ${entries.filter((entry) => entry.kind === 'spawn').length} spawn boots, ${entries.filter((entry) => entry.kind === 'terminal').length} terminal boots, ${entries.filter((entry) => entry.kind === 'resume').length} resume boots, ${entries.filter((entry) => entry.kind === 'send').length} browser sends`);
 
 const refreshed = new Set();
 const results = [];
@@ -441,7 +540,7 @@ for (const entry of entries) {
     refreshed.add(entry.project);
   }
   let history = null;
-  if (entry.kind === 'resume') {
+  if (entry.kind === 'resume' || entry.kind === 'send') {
     history = recordedClaudeHistory(entry.recording, cwd);
     if (!history) {
       console.error(`[matrix] ${entry.file}: no conversation in Claude's history carries ${entry.recording}'s trail; skipped`);
@@ -462,8 +561,18 @@ for (const entry of entries) {
   // reviews. A preview that is not running, or that refuses the bridge, fails this entry loudly,
   // and the matrix goes on to the next one.
   let mcp = null;
+  let send = null;
   let code;
   try {
+    if (entry.kind === 'send') {
+      try {
+        applySessionEdits(entry.recording, cwd);
+        send = await prepareBrowserSend(entry, cwd);
+      } catch (error) {
+        console.error(`[matrix] ${entry.file}: ${error.message ?? error}`);
+        code = 'prepare';
+      }
+    }
     if (entry.mcp || entry.kind === 'workflow') {
       try {
         mcp = entry.kind === 'workflow'
@@ -476,7 +585,11 @@ for (const entry of entries) {
     }
     // A workflow agent's prompt is the first message the preview built for its workflow.
     if (mcp && mcp.prompt !== undefined) entry.prompt = mcp.prompt;
-    if (code === undefined) code = mcp ? await runCapture(entry, mcp.cwd, mcp.args) : await runCapture(entry, cwd);
+    if (code === undefined) {
+      if (mcp) code = await runCapture(entry, mcp.cwd, mcp.args);
+      else if (send) code = await runCapture(entry, cwd, ['--paste-file', send.payloadPath]);
+      else code = await runCapture(entry, cwd);
+    }
     // The plan is read before the cleanup drops the project that holds it.
     if (code === 0 && mcp && mcp.writePlan) {
       try {
@@ -488,6 +601,7 @@ for (const entry of entries) {
     }
   } finally {
     if (history) fs.writeFileSync(history.historyFile, originalHistory);
+    if (send) send.cleanup();
     if (mcp) {
       // A cleanup that fails is reported, not fatal: the next `mcp` capture releases the board
       // and worktree again before it seeds, and the recording above is already written.

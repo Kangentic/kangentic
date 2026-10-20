@@ -21,6 +21,7 @@ import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { PLANNED_BILLING_PAGE, SCENES, playsCycle } from '../captures/scenes';
 import INVOICE_PDF_PLAN from '../captures/fixtures/demo/workflow-plans/wf-cw-invoice-pdf.json';
+import DEMO_MANIFEST from '../captures/fixtures/demo/manifest.json';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_DICTATION_RECORDING, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
@@ -1199,6 +1200,145 @@ test('the held key types the recorded utterance into the Settings search, and th
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+interface DictationTap {
+  partials: Array<{ at: number; text: string }>;
+  finals: Array<{ at: number; text: string }>;
+  /** Every value the Settings search box took, from its input events. */
+  values: string[];
+}
+
+interface DictationTapWindow {
+  __dictationTap: DictationTap;
+  electronAPI: { dictation: { __cancelCalls: string[] } };
+}
+
+/**
+ * Slow the recorded utterance's clock to `rate` and tap what the seed pushes, before any script runs.
+ *
+ * The box alone cannot tell a replay that was ended from one that kept running: useDictation drops
+ * its onPartial and onFinal subscriptions on a release or a cancel, so a timer the seed failed to
+ * clear would emit to nobody and the box would never change. The tap sits in the mock's own listener
+ * lists, which the mock appends its subscribers to rather than replacing (the idiom of
+ * __mockDataListeners), so it hears every push whoever is subscribed.
+ */
+async function tapDictation(page: Page, rate: number): Promise<void> {
+  await page.addInitScript((divisor) => {
+    const holder = window as unknown as {
+      __demoChoreographyRate: number;
+      __dictationTap: DictationTap;
+      __mockDictationPartialListeners: Array<(dictationSessionId: string, text: string) => void>;
+      __mockDictationFinalListeners: Array<(dictationSessionId: string, text: string) => void>;
+    };
+    holder.__demoChoreographyRate = divisor;
+    const tap: DictationTap = { partials: [], finals: [], values: [] };
+    holder.__dictationTap = tap;
+    holder.__mockDictationPartialListeners = [(_dictationSessionId, text) => { tap.partials.push({ at: performance.now(), text }); }];
+    holder.__mockDictationFinalListeners = [(_dictationSessionId, text) => { tap.finals.push({ at: performance.now(), text }); }];
+    document.addEventListener('input', (event) => {
+      const field = event.target;
+      if (field instanceof HTMLInputElement && field.getAttribute('data-testid') === 'settings-search') tap.values.push(field.value);
+    }, true);
+  }, rate);
+}
+
+const readDictationTap = (page: Page): Promise<DictationTap> => page.evaluate(() => (window as unknown as DictationTapWindow).__dictationTap);
+
+/**
+ * Wait until the page's clock is `afterMs` past `since` (a `performance.now()` reading). This is
+ * the fixed window a "never happens" check needs, since nothing can be polled for non-occurrence,
+ * but read off the page's own clock so a slow runner cannot cut it short.
+ */
+function pageClockPast(page: Page, since: number, afterMs: number): Promise<unknown> {
+  return page.waitForFunction((deadline) => performance.now() >= deadline, since + afterMs, { polling: 100 });
+}
+
+test('letting go after the first partial commits what the live model had heard, never the refined final', async ({ page }) => {
+  // stop() answers the partial heard so far when the key goes up before the last one, and the
+  // refinement only after it. The gap between the two partials is 560 ms at the recording's pace
+  // and 2.24 s at a quarter of it, which clears the 250 ms release buffer (stop() runs that long
+  // after the release, with the clock still live) and the poll's latency.
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const rate = 0.25;
+  const [heard, notYetHeard] = DEMO_DICTATION_RECORDING.partials;
+  await tapDictation(page, rate);
+  await gotoScene(page, { view: 'dictation-field', embed: '1' });
+  const searchInput = page.locator('[data-testid="settings-search"]');
+  // 50 ms steps, not toHaveValue's backoff, which is at one second by the time the first partial
+  // lands and would spend the gap before the key went up.
+  await expect.poll(() => searchInput.inputValue(), { intervals: [50], timeout: 20_000 }).toBe(heard.text);
+  await releasePushToTalk(page);
+  await expect(page.locator('[data-testid="dictation-live-chip"]')).toHaveCount(0, { timeout: 5000 });
+  await expect(searchInput).toHaveValue(heard.text);
+  // Past the moment the second partial would have been heard, and a margin on top.
+  const afterFirst = (await readDictationTap(page)).partials[0];
+  expect(afterFirst, 'the first partial was pushed').toBeDefined();
+  await pageClockPast(page, afterFirst.at, (notYetHeard.t - heard.t) / rate + 500);
+  const tap = await readDictationTap(page);
+  expect(tap.partials.map((partial) => partial.text), 'the replay ended with the key: no partial after the release').toEqual([heard.text]);
+  expect(tap.finals.map((final) => final.text), 'main commits the partial heard so far, not the refinement').toEqual([heard.text]);
+  expect(tap.values, 'the box never took a later partial or the final').not.toContain(notYetHeard.text);
+  expect(tap.values).not.toContain(DEMO_DICTATION_RECORDING.final.text);
+  await expect(searchInput).toHaveValue(heard.text);
+  await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('letting go before the first partial commits nothing, and the replay ends with the key', async ({ page }) => {
+  // The first partial is 2.4 s after the frame reveals at half the recording's pace, which the
+  // release beats by a wide margin; the poll then runs past the last partial's time.
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const rate = 0.5;
+  const partials = DEMO_DICTATION_RECORDING.partials;
+  const lastPartial = partials[partials.length - 1];
+  await tapDictation(page, rate);
+  await gotoScene(page, { view: 'dictation-field', embed: '1' });
+  const searchInput = page.locator('[data-testid="settings-search"]');
+  const releasedAt = await page.evaluate(() => performance.now());
+  await expect(searchInput).toHaveValue('');
+  await releasePushToTalk(page);
+  await expect(page.locator('[data-testid="dictation-live-chip"]')).toHaveCount(0, { timeout: 5000 });
+  // The clock started at the reveal, which was no later than the release.
+  await pageClockPast(page, releasedAt, lastPartial.t / rate + 500);
+  const tap = await readDictationTap(page);
+  expect(tap.partials, 'nothing is heard once the key is up').toEqual([]);
+  expect(tap.finals.map((final) => final.text), 'a release before any partial commits nothing').toEqual(['']);
+  expect(tap.values.filter((value) => value !== ''), 'the box took no text').toEqual([]);
+  await expect(searchInput).toHaveValue('');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('Clear on the live chip cancels the dictation: the typed text goes and the replay ends', async ({ page }) => {
+  // The chip's Clear control is the one visitor path to dictation.cancel (useDictation's
+  // clearDictation erases the live text, then cancels). The replay must end with it: a later
+  // partial emitted to nobody is the only trace a still-running clock leaves.
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const rate = 0.25;
+  const [heard, notYetHeard] = DEMO_DICTATION_RECORDING.partials;
+  await tapDictation(page, rate);
+  await gotoScene(page, { view: 'dictation-field', embed: '1' });
+  const searchInput = page.locator('[data-testid="settings-search"]');
+  await expect.poll(() => searchInput.inputValue(), { intervals: [50], timeout: 20_000 }).toBe(heard.text);
+  await page.locator('[data-testid="dictation-live-clear"]').click();
+  await expect(page.locator('[data-testid="dictation-live-chip"]')).toHaveCount(0, { timeout: 5000 });
+  await expect(searchInput).toHaveValue('');
+  await expect.poll(() => page.evaluate(() => (window as unknown as DictationTapWindow).electronAPI.dictation.__cancelCalls.length)).toBe(1);
+  const afterFirst = (await readDictationTap(page)).partials[0];
+  expect(afterFirst, 'the first partial was pushed').toBeDefined();
+  await pageClockPast(page, afterFirst.at, (notYetHeard.t - heard.t) / rate + 500);
+  const tap = await readDictationTap(page);
+  expect(tap.partials.map((partial) => partial.text), 'the replay ended with the cancel: no partial after it').toEqual([heard.text]);
+  // The seed answers stop() with a final push, so none means Clear aborted the utterance rather than finishing it.
+  expect(tap.finals, 'a cancel commits nothing').toEqual([]);
+  expect(tap.values, 'the box never took a later partial or the final').not.toContain(notYetHeard.text);
+  expect(tap.values).not.toContain(DEMO_DICTATION_RECORDING.final.text);
+  await expect(searchInput).toHaveValue('');
+  await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
 // ---- live replay and what a visitor can start ----------------------------------------------
 // A still frame paints each terminal's final state from the inline seed and never fetches a
 // recording; the live frame replays each recording's timed stream, fetched from the same origin
@@ -1694,6 +1834,31 @@ test('a scene-only row whose script does not load refuses the frame by name rath
   await expect(errorCard).toContainText(`The recorded sessions of the scene-only task "${TASK_VALIDATE}" did not load.`);
   // Nothing was seeded, as for every other refusal: applyScene returns before __demoApplyFixture.
   await expect(page.locator('[data-swimlane-name]')).toHaveCount(0);
+  await expect(page.locator('html')).not.toHaveAttribute('data-demo-ready');
+});
+
+test('a recorded Send\'s rest frame loads once, on the frame whose scene shows its session finished, and never on a board', async ({ page }) => {
+  // The frame is the size of a whole conversation, so it rides in its own script rather than the
+  // seed every frame loads (demo-dataset.ts, buildDemoSendFrameScripts).
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const frameRequests: string[] = [];
+  page.on('request', (request) => { if (request.url().includes('/send-frames/')) frameRequests.push(request.url()); });
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+  expect(frameRequests).toEqual([]);
+
+  await gotoScene(page, { view: 'browser', embed: '1', still: '1' });
+  expect(frameRequests).toHaveLength(1);
+  expect(frameRequests[0]).toMatch(new RegExp(`/send-frames/${SESSION_MIDDLEWARE}-[0-9a-f]{8}\\.js$`));
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a recorded Send whose rest frame does not load refuses the frame by name rather than booting without it', async ({ page }) => {
+  await page.route('**/send-frames/*', (route) => route.fulfill({ status: 404, contentType: 'text/plain', body: 'missing' }));
+  await page.goto(demoUrl({ view: 'browser', embed: '1', still: '1' }));
+  const errorCard = page.locator('[data-testid="demo-error"]');
+  await expect(errorCard).toBeVisible();
+  await expect(errorCard).toContainText(`The frame the session "${SESSION_MIDDLEWARE}" rests on before its recorded Send did not load.`);
   await expect(page.locator('html')).not.toHaveAttribute('data-demo-ready');
 });
 
@@ -2559,7 +2724,7 @@ test('a cut fades the frame out, puts the edit back behind the veil, and fades i
 });
 
 /** A change a visitor could see, logged with the cut's phase and what covered the frame when it landed. */
-type CutChange = { what: string; phase: string; veil: string; cursor: string };
+type CutChange = { what: string; phase: string; veil: string; cursor: string; mark?: true };
 
 /** The scenes whose choreography ends its story on a cut. */
 const CUT_SCENES = Object.values(SCENES).filter((scene) => (scene.choreography ?? []).some((step) => 'cut' in step));
@@ -2614,6 +2779,14 @@ for (const scene of CUT_SCENES) {
           }
           if (ours(record.target)) continue;
           if (record.attributeName === 'style' && !(record.target as Element).matches(WINDOW)) continue;
+          // An activity mark changing is a session changing (ActivityMark's data-mark), which is
+          // what a recorded Send's reset puts back. Logged apart, because a session's own clock can
+          // flip a mark at any moment, the fade-in included; the Send test holds the browser
+          // scene's mark to the reset itself.
+          if (record.attributeName === 'data-mark') {
+            changes.push({ ...covering(`data-mark ${(record.target as Element).getAttribute('data-mark') ?? ''}`), mark: true });
+            continue;
+          }
           if (record.type === 'attributes') {
             changes.push(covering(`${record.attributeName} ${(record.target as Element).getAttribute('data-testid') ?? (record.target as Element).tagName}`));
             continue;
@@ -2626,7 +2799,7 @@ for (const scene of CUT_SCENES) {
         subtree: true,
         childList: true,
         attributes: true,
-        attributeFilter: ['data-demo-cut', 'aria-checked', 'aria-pressed', 'aria-selected', 'aria-expanded', 'checked', 'disabled', 'data-selected', 'style'],
+        attributeFilter: ['data-demo-cut', 'aria-checked', 'aria-pressed', 'aria-selected', 'aria-expanded', 'checked', 'disabled', 'data-selected', 'style', 'data-mark'],
       });
     }, CHOREOGRAPHY_TEST_RATE);
     await gotoScene(page, { view: scene.name, embed: '1', loop: '1' });
@@ -2643,12 +2816,93 @@ for (const scene of CUT_SCENES) {
     expect(behind.length, 'the reset puts something back').toBeGreaterThan(0);
     expect(behind.filter((change) => change.veil !== '1' || change.cursor !== '0'), 'the reset changes nothing in view').toEqual([]);
     expect(phases.find((entry) => entry.phase === 'in')?.what, 'a drag the reset dropped has landed before the frame fades back in').toBe('phase');
-    expect(changes.filter((change) => change.phase === 'in'), 'nothing changes while the frame fades back in').toEqual([]);
+    expect(changes.filter((change) => change.phase === 'in' && !change.mark), 'nothing changes while the frame fades back in').toEqual([]);
     await expect(page.locator('[data-demo-veil]')).toHaveCSS('opacity', '0');
     await expect(root).not.toHaveAttribute('data-demo-choreography', 'stopped');
     expect(getUnexpectedErrors()).toEqual([]);
   });
 }
+
+/** A frame's text with its escape sequences dropped; frames move the cursor for spaces, so read single words. */
+function withoutEscapes(bytes: string): string {
+  return bytes.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?<>=]*[A-Za-z~]/g, '');
+}
+
+test('view=browser sends its recorded note: the payload reaches the agent, it goes to work, and the cut takes it back', async ({ page }) => {
+  // The loop's Send plays the matrix's recording of exactly that note going into this conversation
+  // (send-sess-cw-middleware.json): the bytes reach the session's terminal through the mock's data
+  // path, the pause button turns to working when the agent takes the Enter, and the cut's reset
+  // repaints the frame the session rested on and sets it back to needs-you, all under the veil.
+  test.setTimeout(90_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript(({ rate, sessionId }) => {
+    (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
+    const phase = (): string => document.documentElement.getAttribute('data-demo-cut') ?? 'none';
+    const bytes: Array<{ phase: string; bytes: string }> = [];
+    const marks: Array<{ phase: string; mark: string }> = [];
+    Object.assign(window, { __sendBytes: bytes, __sendMarks: marks });
+    // The mock adds its listeners to this list rather than replacing it (mock-electron-api.js).
+    (window as unknown as { __mockDataListeners: Array<(id: string, data: string) => void> }).__mockDataListeners = [
+      (id, data) => { if (id === sessionId) bytes.push({ phase: phase(), bytes: data }); },
+    ];
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const target = record.target as Element;
+        if (target.closest('button[aria-label="Pause session"]')) marks.push({ phase: phase(), mark: target.getAttribute('data-mark') ?? '' });
+      }
+    }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-mark'] });
+  }, { rate: CHOREOGRAPHY_TEST_RATE, sessionId: SESSION_MIDDLEWARE });
+  await gotoScene(page, { view: 'browser', embed: '1', loop: '1' });
+  await expect(page.locator('html')).toHaveAttribute('data-demo-cycles', '1', { timeout: 60_000 });
+  const { bytes, marks } = await page.evaluate(() => ({
+    bytes: (window as unknown as { __sendBytes: Array<{ phase: string; bytes: string }> }).__sendBytes,
+    marks: (window as unknown as { __sendMarks: Array<{ phase: string; mark: string }> }).__sendMarks,
+  }));
+  const sent = withoutEscapes(bytes.filter((entry) => entry.phase === 'none').map((entry) => entry.bytes).join(''));
+  expect(sent, 'the payload the pane sent, echoed in the agent\'s terminal').toContain('<browser_context>');
+  expect(sent, 'the screenshot the payload names').toMatch(/captures[\\/]capture-\d+\.png/);
+  // The first cycle's two flips; the next cycle may already be typing.
+  expect(marks.slice(0, 2).map((entry) => `${entry.mark} during ${entry.phase}`), 'working once the agent takes the Enter, needs-you again only under the veil').toEqual([
+    'control-pause-working during none',
+    'control-pause-idle during reset',
+  ]);
+  const rewound = bytes.filter((entry) => entry.phase === 'reset');
+  expect(rewound.length, 'the reset repaints the terminal').toBeGreaterThan(0);
+  expect(withoutEscapes(rewound.map((entry) => entry.bytes).join('')), 'onto the frame from before the note').not.toContain('browser_context');
+  expect(bytes.filter((entry) => entry.phase === 'in'), 'nothing reaches the terminal while the frame fades back in').toEqual([]);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a still of view=browser paints the frame its Send starts from, and fetches nothing for it', async ({ page }) => {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const fetched: string[] = [];
+  page.on('request', (request) => { if (request.url().includes('/recordings/')) fetched.push(request.url()); });
+  await gotoScene(page, { view: 'browser', embed: '1', still: '1' });
+  const painted = () => page.evaluate((sessionId) => (window as unknown as { __demoPainted?: Record<string, { frame: string }> }).__demoPainted?.[sessionId]?.frame ?? '', SESSION_MIDDLEWARE);
+  // The conversation's last answer, as the resumed agent reprinted it before the note went in.
+  await expect.poll(async () => withoutEscapes(await painted()), { timeout: 15_000 }).toContain('rate-limit.ts');
+  expect(withoutEscapes(await painted())).not.toContain('browser_context');
+  expect(fetched).toEqual([]);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('the browser scene\'s guest page is the size its recorded Send was captured at', async ({ page }) => {
+  // The capture rig screenshots the guest page at the manifest's guestSize
+  // (scripts/capture-demo-sessions.mjs) and the agent reads that screenshot, so the recording is
+  // only the Send a visitor would make if that is the size the pane gives its guest at the spec's
+  // 1600 by 1000 frame. The iframe is 877.9 px wide there, so clientWidth rounds to the same 878
+  // on any platform's layout; Linux CI is the real check of that.
+  const send = DEMO_MANIFEST.browserSends.find((entry) => entry.sessionId === SESSION_MIDDLEWARE);
+  if (!send) throw new Error(`the manifest lists no browser send for ${SESSION_MIDDLEWARE}`);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'browser', embed: '1', still: '1' });
+  const guest = page.locator('[data-testid="browser-webview"] iframe');
+  await expect.poll(
+    () => guest.evaluate((element) => ({ width: element.clientWidth, height: element.clientHeight })),
+    { message: `the Browser pane's guest is not the ${send.guestSize.width} by ${send.guestSize.height} the Send was captured at` },
+  ).toEqual(send.guestSize);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
 
 test('a visitor\'s own click stops the choreography and takes the pointer away', async ({ page }) => {
   test.setTimeout(60_000);
@@ -3609,6 +3863,139 @@ test('a still of the tiled Command Terminals paints the first window from its ti
   const paintedFrame = () => page.evaluate((sessionId) => (window as unknown as { __demoPainted?: Record<string, { frame: string }> }).__demoPainted?.[sessionId]?.frame ?? '', SESSION_CONTOSO_TERMINAL);
   await expect.poll(paintedFrame, { timeout: 10_000 }).toContain('Cogitated');
   expect(await paintedFrame()).not.toContain('Churned');
+});
+
+test('a finished Command Terminal that tiles beside a new one rests on its tiled run\'s end and plays none of it on', async ({ page }) => {
+  // The tiled recording is a second, longer run of the prompt (70 s against the single's 46 s),
+  // and the session's clock is the single's, which the idle session has already reached. So the
+  // tiled run ends with it (playedEndMs): the window repaints once, to the tiled run's final frame,
+  // and then receives nothing. It used to replay the 24 s the tiled run outlasted the single, a
+  // working agent repainted every 110 ms under a card that read finished. Read off the data path,
+  // so it holds whether the pane takes bytes or the emulator's frames.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript((sessionId) => {
+    const received: string[] = [];
+    (window as unknown as { __tiledTerminalData: string[] }).__tiledTerminalData = received;
+    (window as unknown as { __mockDataListeners: Array<(id: string, data: string) => void> }).__mockDataListeners = [
+      (id, data) => { if (id === sessionId) received.push(data); },
+    ];
+  }, SESSION_CONTOSO_TERMINAL);
+  await gotoScene(page, { view: 'command-terminal-tiled', embed: '1' });
+  const received = () => page.evaluate(() => (window as unknown as { __tiledTerminalData: string[] }).__tiledTerminalData.slice());
+  await expect.poll(async () => (await received()).some((data) => data.includes('Cogitated')), { timeout: 10_000 }).toBe(true);
+  const settled = (await received()).length;
+  // A run still playing repaints every REPAINT_INTERVAL_MS, so two seconds of nothing is many of them.
+  await page.waitForTimeout(2000);
+  expect((await received()).length, 'a finished session receives nothing once it has repainted').toBe(settled);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('Stop on the tiled scene\'s second Command Terminal takes its Monitor row and its replay with it', async ({ page }) => {
+  // killTransient is main's endCommandTerminal: the terminal's row goes, and with it the Monitor's
+  // row, since main's snapshot reads the live sessions. The seed also forgets the session's replay,
+  // so a stopped terminal has nothing left to read back. What the replay's clock would emit is the
+  // next test's: by the time this scene reaches its pose the second window's boot is over, so
+  // watching its data path here would assert nothing.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'command-terminal-tiled', embed: '1' });
+  const secondWindow = page.locator('[data-command-slot="slot-2"]');
+  const sessionId = await secondWindow.locator('[data-testid="command-bar-terminal-pane"]').getAttribute('data-session-id');
+  if (!sessionId) throw new Error('the scene docked no second terminal');
+  const monitorHas = () => page.evaluate((id) => ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).some((row) => row.sessionId === id), sessionId);
+  const registryHas = () => page.evaluate(async (id) => (await (window as unknown as DemoElectronWindow).electronAPI.sessions.list()).some((row) => row.id === id), sessionId);
+  const scrollback = () => page.evaluate((id) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(id), sessionId);
+  await expect.poll(monitorHas, { message: 'a running Command Terminal is a Monitor row' }).toBe(true);
+  expect(await registryHas(), 'and a live session').toBe(true);
+  expect((await scrollback()).length, 'its replay has a screen to read back').toBeGreaterThan(0);
+
+  await secondWindow.locator('[data-testid="command-bar-terminate-button"]').click();
+  await expect(secondWindow).toHaveCount(0);
+  await expect.poll(monitorHas, { message: 'Stop takes the terminal\'s Monitor row' }).toBe(false);
+  expect(await registryHas(), 'and the session').toBe(false);
+  expect(await scrollback(), 'a stopped terminal has no replay left to read back').toBe('');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+interface StopTap {
+  /** Chunks delivered through the mock's data path, per session. */
+  chunks: Record<string, number>;
+  /** The session the tap stopped on its first chunk, and whether its Monitor row still existed when it did. */
+  stopped: { sessionId: string; rowExisted: boolean } | null;
+  /** Each session's chunk count at the moment its killTransient resolved. */
+  killedAt: Record<string, number>;
+  arm: () => void;
+}
+
+test('Stop on a Command Terminal ends its recorded boot: no chunk reaches it once Stop returns', async ({ page }) => {
+  // The seed ends the replay of a stopped terminal, or its clock would go on emitting into nothing,
+  // one more each time a visitor starts and stops one. A project with no Command Terminal yet boots
+  // its first alone, on the recording's own grid, so its chunks go out as bytes through the mock's
+  // data path; a terminal on any other grid is fed by the emulator, whose repaints already stop
+  // when the pane unmounts, so it would show nothing here. The stop is made in the page, from the
+  // tap, at the boot's FIRST chunk, because a Playwright round trip (a hundred milliseconds or
+  // more) can land after the next one and would leave nothing to suppress.
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript(() => {
+    const WINDOW = '[data-testid="command-terminal-window"]';
+    const chunks: Record<string, number> = {};
+    let armed = false;
+    const tap: StopTap = { chunks, stopped: null, killedAt: {}, arm: () => { armed = true; } };
+    (window as unknown as { __stopTap: StopTap }).__stopTap = tap;
+    // The mock adds its listeners to this list rather than replacing it (mock-electron-api.js).
+    (window as unknown as { __mockDataListeners: Array<(sessionId: string, data: string) => void> }).__mockDataListeners = [
+      (sessionId) => {
+        chunks[sessionId] = (chunks[sessionId] ?? 0) + 1;
+        if (!armed) return;
+        const pane = document.querySelector(`${WINDOW} [data-testid="command-bar-terminal-pane"]`);
+        if (pane?.getAttribute('data-session-id') !== sessionId) return;
+        armed = false;
+        const rows = (window as unknown as { __mockMonitorRows?: Array<{ sessionId: string }> }).__mockMonitorRows ?? [];
+        tap.stopped = { sessionId, rowExisted: rows.some((row) => row.sessionId === sessionId) };
+        setTimeout(() => document.querySelector<HTMLElement>(`${WINDOW} [data-testid="command-bar-terminate-button"]`)?.click(), 0);
+      },
+    ];
+  });
+  await gotoScene(page, { view: 'board' });
+  // spring-petclinic has no Command Terminal yet, so opening the layer boots one alone.
+  await page.locator('[data-testid="sidebar-project-list"]').getByText('spring-pet', { exact: false }).first().click();
+  // Chunks are counted at the moment killTransient resolves, in the page: that is after the seed
+  // has ended the replay and taken the row, so a chunk between the click and then is legitimate,
+  // and a poll from here would read the count too late to tell (the whole boot is over within
+  // about a second).
+  await page.evaluate(() => {
+    const tap = (window as unknown as { __stopTap: StopTap }).__stopTap;
+    const sessions = (window as unknown as { electronAPI: { sessions: { killTransient: (sessionId: string) => Promise<unknown> } } }).electronAPI.sessions;
+    const seeded = sessions.killTransient;
+    sessions.killTransient = (sessionId) => seeded.call(sessions, sessionId).then((result) => {
+      tap.killedAt[sessionId] = tap.chunks[sessionId] ?? 0;
+      return result;
+    });
+    tap.arm();
+  });
+  await page.locator('[data-testid="quick-session-button"]').click();
+  const readTap = () => page.evaluate(() => {
+    const { chunks, stopped, killedAt } = (window as unknown as { __stopTap: StopTap }).__stopTap;
+    return { chunks: { ...chunks }, stopped, killedAt: { ...killedAt } };
+  });
+  await expect.poll(async () => (await readTap()).stopped, { timeout: 15_000, message: 'the terminal streamed and was stopped on its first chunk' }).not.toBeNull();
+  const stopped = (await readTap()).stopped;
+  if (!stopped) throw new Error('the tap never stopped a terminal');
+  expect(stopped.rowExisted, 'the Monitor knew the terminal before it was stopped').toBe(true);
+  // A fresh spawn. Had the project switch not landed before the toggle click, the layer would reattach
+  // the sample install's own terminal, whose repaints the unmount guard silences and which proves nothing.
+  expect(DEMO_SESSIONS.map((session) => session.id), 'a new session, not a seeded one reattached').not.toContain(stopped.sessionId);
+  await expect.poll(async () => (await readTap()).killedAt[stopped.sessionId], { message: 'killTransient resolved' }).toBeGreaterThan(0);
+  const chunksAtKill = (await readTap()).killedAt[stopped.sessionId];
+  // Whether this run fed the terminal bytes (where the check has teeth) or the emulator's frames.
+  const replayMode = await page.evaluate((id) => (window as unknown as { __demoReplayMode?: Record<string, string> }).__demoReplayMode?.[id] ?? 'none', stopped.sessionId);
+  test.info().annotations.push({ type: 'replay mode', description: replayMode });
+  // A fixed window, since nothing can be polled for "never": the rest of the boot is a few hundred
+  // milliseconds apart and over within about a second of its first chunk, so two seconds has room
+  // to catch a clock left running.
+  await page.waitForTimeout(2_000);
+  expect((await readTap()).chunks[stopped.sessionId], 'no chunk reaches a stopped terminal').toBe(chunksAtKill);
+  expect(getUnexpectedErrors()).toEqual([]);
 });
 
 test('a Command Terminal that tiles beside a new one repaints from the boot recorded at the tiled width', async ({ page }) => {

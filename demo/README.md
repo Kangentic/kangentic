@@ -355,7 +355,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `workflow-draft` | boot | a second `__mockWorkflows` seed, a workflow planned but not started (its tasks live in the draft, so nothing reaches the board), read from the plan its recorded agent saved, and `config.workflows` naming Claude, so the agent pane opens on that recording's end (Workflow agent below); the view, then a click that selects the billing page task, so the inspector shows its route switches and the route task it waits for. Under `loop=1` the pointer goes over the agent's reply, selects the server route task and then the billing page again, and switches off the billing page's Planning stop, the column the recorded reply offers to skip; then the frame cuts and Planning goes back on behind it. Start is never pressed |
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab). Under `loop=1` `board-filter` turns on High priority and the feature label, each narrowing the board behind it, and the frame cuts and turns them off behind the veil; `activity-tab` narrows the list to the middleware session's events, to api-client's, and back to All with its filter. The events are seeded once: no recording carries tool events to put on its clock, and the transcripts that would carry them are not committed |
 | `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more. Under `loop=1` the pointer goes over the banner's controls and the megaphone, and over the dialog's links and QR code, each showing its hover; nothing is pressed, since dismissing or opening the feed marks the announcement read and a link opens a browser |
-| `task`, `browser` | state | `workspaceByProject` (a floating window sized to its session's recording, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below). Under `loop=1` `browser` types a note for the agent into the pane's own field and rests the pointer on Send, then the frame cuts, and behind it the note is taken back and the page clicked; it is never sent |
+| `task`, `browser` | state | `workspaceByProject` (a floating window sized to its session's recording, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below). `browser` patches the middleware session idle, so its terminal rests on the frame its recorded Send starts from. Under `loop=1` it types that recording's note into the pane's own field and presses Send: the recording plays on (the payload pasted and echoed whole, the screenshot read, the agent working), and a few seconds in the frame cuts and the seed takes the Send back behind the veil (Live replay below) |
 | `task-mcp` | state | `rows` adds the scene-only Validate request bodies task (Scene-only rows below), and `workspaceByProject` restores its window maximized. Its session is the MCP recording (An agent calling Kangentic's MCP tools below), working, with a `liveTailMs` cut to that recording: a still paints the moment `kangentic_get_current_task`, `kangentic_list_columns` and `kangentic_list_automations` have printed their results, and live, the agent then reads Testing with `kangentic_get_column_detail` and moves the card with `kangentic_move_task`, about eleven seconds that `loop=1` replays. The whole `terminal` block is spelled out with a larger font, the one exception to the type rule above (One viewport, one scale). It also seeds `__mockAgentListOverrides` with the dataset's agent list and Claude Code at 2.1.302, the version the recording ran on, so the context bar and the terminal's header agree. Its `timeline` moves the card to Testing when the recording ends, which is where the move's result lands (the manifest's `stopWhen` cut it there), through the push main sends for an agent's move; `loop=1` puts the card back in Code Review as the stretch starts over. The session stays: on this board Testing names the same agent, changes no model or effort, and sends no column message, which is `handleTaskMove`'s keep-alive case for a live session (Priority 3 in `task-move.ts`). The capture's preview did spawn there, because the recorded agent ran in the rig's own terminal, so the preview's task had no live session to keep |
 | `windows-tiled` | state | `workspaceByProject` with two `tiled` windows under one horizontal split, in the footprint a dock produces; both sessions have a recording at the tiled width (Terminal recordings below) |
 | `conversation` | state | `workspaceByProject` with one `conversation` window anchored on the middleware session id; the transcript is the one recorded beside the session (Transcripts below). Under `loop=1` a search is typed and its matches stepped through, then the frame cuts, and behind it the search is cleared and the viewer's own Jump to latest brings the closing message back |
@@ -519,7 +519,9 @@ choice cycled through its options, a menu opened and closed, a filter's sort cli
 An edit that is the scene's point does not, because undoing it in view reads as a script, not a
 person: a title typed and then backspaced, a switch flipped off and straight back on, a card dragged
 over and dragged home. So the edit plays forward, ending where a person would stop (often with the
-pointer on Save, Create or Send, never pressed), and then a `cut` step ends the story. The frame
+pointer on Save, Create or Send, never pressed), and then a `cut` step ends the story. The one
+press is the `browser` scene's Send, because what it starts is a recorded agent turn the seed takes
+back at the cut (Live replay), not a write the mock would keep. The frame
 fades to the app's surface color over 450 ms. The steps after the cut play at once behind the
 opaque veil with no pointer drawn, the reset's last layer closes and paints, and the frame fades
 back in at rest with the pointer beside the next cycle's first target. In a pose scene the reset
@@ -528,7 +530,9 @@ view, since they make the poster's gesture. The player stamps the phase on
 `<html data-demo-cut>` (`out`, `reset`, `in`), and the demo tier plays every scene with a cut once,
 asserting that each change the reset makes lands under the landed veil with no pointer and that
 nothing changes while the frame fades back in, a card the reset dropped still playing its drop
-animation included.
+animation included. An activity mark changing counts as something the reset put back but is not
+held to the fade-in, since a session's own clock can flip one at any moment; the Send test holds
+the `browser` scene's mark to the reset.
 
 A visitor's own click, key, wheel or touch stops the choreography for the frame's life: a held
 pointer is released where it stands, the hover marks clear, the arrow goes, and a veil mid-cut is
@@ -755,8 +759,10 @@ built at build time from the sample install: a project's Browser default URL (`d
 project, which the seed writes into its project config) maps to a bundled page under
 `demo/guest/` that stands in for what the project serves there (`guest_page`), so the address bar
 shows the desktop's URL and the pane shows that app's page. Any other URL loads nothing. Inert:
-Inspect (finds nothing), Draw capture (rejects), history (always empty), and the agent driving the
-pane.
+Inspect (finds nothing), history (always empty), and the agent driving the pane. Send's capture
+resolves with a blank image at the guest's size, which the mock keeps no more of than anything
+else; the screenshot a recorded Send's agent reads is the page the capture matrix rendered (Live
+replay).
 
 `demo/guest/contoso-web.html` has the scaffold's data and an authored presentation. The data is
 `scripts/demo-repos/contoso-web`'s, signed in as the store's admin user (`server/store.ts`): that
@@ -1192,7 +1198,9 @@ also when a row wrap or an escape sequence interrupts the literal, and the write
 marker survives; `tests/unit/demo-fixtures-sanitized.test.ts` is the CI backstop. The recording
 account is identity too. Claude's footer links "/rc" to that account's own Remote Control session
 wherever the rollout starts the bridge, and the sanitizer drops the link's target, so "/rc" draws
-in the same cells and links nowhere. Re-run the
+in the same cells and links nowhere. Its advisor notice is kept out by
+`CLAUDE_CODE_DISABLE_ADVISOR_TOOL`. Its weekly usage notice has no switch and names the machine's
+time zone, so a recording that caught one is re-recorded after the weekly reset. Re-run the
 matrix when an agent's TUI changes:
 
 ```
@@ -1481,6 +1489,28 @@ too, by `scripts/capture-demo-sessions.mjs` from the dataset rather than from a 
   window later tiles or stands alone again, the desktop's PTY resize has the CLI repaint; here
   the session switches to the boot recorded at the other width and repaints from a cleared
   screen at the same point in the boot.
+- A note sent from a task's Browser pane goes into the agent the way main sends it, recorded:
+  `send-<sessionId>.json` (the manifest's `browserSends`, the `sends` kind in
+  `scripts/capture-demo-sessions.mjs`) is the session's conversation resumed, its recorded edits
+  put back on the tree, and the note pasted once the reprint goes quiet. The paste is the payload
+  main's `buildPromptPayload` writes around the note, naming a screenshot of the guest page the
+  driver renders at the pane's size (the entry's `guestSize`, which the demo tier holds to the
+  browser scene's pane) into the project's `.kangentic/sessions/` folder (kept out of
+  the agent's diff), delivered as `src/main/pty/paste-engine.ts` delivers it: one bracketed paste,
+  then Enter as its own write no sooner than a second later, and once more if nothing answers it.
+  Claude shows the paste as `[Pasted text #1 +6 lines]` until Enter, then echoes the payload whole
+  and reads the screenshot, so the recording is what a desktop Send looks like. A session a scene
+  shows finished rests on the frame just before the paste, frozen as a paused session is. That
+  frame ships as its own script (`send-frames/<sessionId>-<hash>.js`), which `demo/boot.js` writes
+  ahead of the seed only on such a frame, the way a scene-only row's script is written, so a still
+  fetches no recording for it and no other frame loads it. Send with exactly the recorded note plays the recording
+  on from there: the agent goes to working when it takes the Enter, the card and the Monitor follow
+  its reply, and it finishes needs-you. `captureAndSend` resolves when main's would, at the agent's
+  first output after the Enter. A choreography's cut takes it back: the seed watches
+  `<html data-demo-cut>` and, as the reset starts, repaints the frame the session rested on, sets it
+  needs-you, and restores the card and the Monitor. A visitor's own Send stops the choreography,
+  so nothing takes it back. Any other note reaches the mock alone, since what the agent would
+  answer to it was never recorded. The `browser` scene sends the middleware session's note.
 - A workflow's own agent, which the Workflows view's pane opens, shows the recording of that
   workflow's agent planning it (`workflow-<workflowId>.json`, the manifest's `workflowAgents`),
   at its end: the agent saved its plan and ended its turn, so the pane opens idle on its final
@@ -1782,7 +1812,11 @@ is on the boot path. The resume boots are 204 KB raw and 29 KB gzipped of that, 
 only when a visitor resumes a session paused at its recording's end. The MCP recording, added
 later for the `task-mcp` scene, makes 45 and adds 292 KB raw and 32 KB gzipped, fetched only by a
 frame that mounts its terminal. The workflow agent's recording, for `workflow-draft`, makes 46 and
-adds 236 KB raw and 32 KB gzipped, fetched only when its pane opens. Each recording carries its timed
+adds 236 KB raw and 32 KB gzipped, fetched only when its pane opens. The browser send makes 47 and
+adds 297 KB raw and 30 KB gzipped, fetched when the `browser` scene's terminal mounts on the frame
+it rests on. That frame is a 42 KB script of its own, which only a frame showing the session
+finished loads; inline it took the seed from 1,030 to 1,072 KB raw and cost every frame on a page
+about 0.07 MB of heap. Each recording carries its timed
 stream, final frame and grid. They were 38.3 MB and 832 KB while each also shipped its frame
 timeline, which the page's emulator made redundant (Live replay); the fixtures keep it. The
 largest single file is the Codex OpenTelemetry session at 70 KB gzipped. The emulator is a 4 KB
@@ -1831,7 +1865,7 @@ every bridge method (`tests/unit/mock-electron-api-parity.test.ts` keeps that tr
 | Command Terminal | The window opens on the project's default agent booting, from its recording; typing into it reaches no process. |
 | Drag into an auto-spawn column, Resume | The agent starts from the boot recorded for that task and mode, or resumes on its transcript (Live replay above). |
 | Add project | The mock's folder dialog returns a fixed path; a fourth project appears in the sidebar. |
-| Task-detail Browser pane | The pane is the real renderer; its `<webview>` is stood in for by `demo/webview-shim.js`, an iframe onto a bundled page with the project's own data at its dev URL (Browser guest below). Inspect finds nothing, capture rejects, and history is empty. |
+| Task-detail Browser pane | The pane is the real renderer; its `<webview>` is stood in for by `demo/webview-shim.js`, an iframe onto a bundled page with the project's own data at its dev URL (Browser guest below). Inspect finds nothing and history is empty. Send plays the matrix's recording of a note going into the session when the note is the one it recorded and the session is at rest on it (Live replay above); any other note reaches no agent. |
 | Folder pill, PR links, external links | Inert: `shell.openPath` and `openExternal` are logged by the mock. |
 | Pop-out (Monitor, Changes, Stats) | Inert: the in-app surface stays where it is. |
 | Dictation | The whole renderer pipeline runs on a press, over a silent microphone `demo/boot.js` supplies (the mic is never requested), and the chip shows its live state over a terminal or a text field. What it hears is one recorded utterance, typed into a focused text field as it streams; a terminal shows nothing typed (Dictation below). |
@@ -1876,6 +1910,7 @@ recordings/<name>-<hash>.json    one timed stream per recording, fetched when a 
 transcripts/<session>-<hash>.json  the agent transcript behind a session, fetched when a conversation viewer opens
 graph/knowledge-graph-<hash>.json  the Knowledge Graph's three maps, fetched when a frame first opens the graph
 scene-rows/<task>-<hash>.js      a scene-only row's recorded sessions, written in by demo-boot only on a frame that names the row
+send-frames/<session>-<hash>.js  the frame a recorded Send's session rests on, written in by demo-boot only on a frame that shows it finished
 guest/<name>-<hash>.html         the page a project's dev URL shows in the Browser pane
 assets/                          the renderer's hashed chunks and stylesheets, monaco's lazy chunks and workers
 ```

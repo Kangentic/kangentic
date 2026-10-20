@@ -40,6 +40,8 @@ interface DemoCaptureRecord {
   messageTrail?: DemoMessageTrailEntry[];
   /** How long the capture ran, which is the clock messageTrail offsets sit on. */
   durationMs?: number;
+  /** A browser send's note going in (the matrix's `sends`): when, the text pasted, and the screen just before it. */
+  paste?: { atMs: number; enterAtMs: number; text: string; frame: string };
 }
 
 /**
@@ -75,6 +77,12 @@ interface DemoManifest {
   geometry?: Record<string, { cols: number; rows: number }>;
   /** How long before its recording's end the live frame opens a session shown as working. */
   liveTailMs?: number;
+  /**
+   * A session's conversation resumed and sent a note from the Browser pane (capture-demo-sessions.mjs,
+   * sends). `guestSize` is the guest page's size in the browser scene's pane, which the capture
+   * screenshots it at and the demo tier measures.
+   */
+  browserSends?: Array<{ file: string; sessionId: string; recording: string; note: string; guestSize?: { width: number; height: number } }>;
 }
 
 /** One recording as the web build indexes it: which file, and what it stands in for. */
@@ -97,6 +105,19 @@ export interface DemoRecordingEntry {
   frameTimeline: Array<{ t: number; frame: string }>;
   /** The same session at the tiled width, when the manifest names one (a session entry only). */
   tiled?: DemoRecordingEntry;
+}
+
+/**
+ * A session's finished conversation sent a note from the Browser pane: the recording, the note it
+ * plays for, and when on its clock the note went in and Enter followed. Its own trail and Monitor
+ * peeks ride along, since what the agent says after the note is new.
+ */
+export interface DemoSendEntry extends DemoRecordingEntry {
+  note: string;
+  atMs: number;
+  enterAtMs: number;
+  peekTimeline: Array<{ t: number; lines: string[] }>;
+  messageTrail: DemoMessageTrailEntry[];
 }
 
 /** A session's tiled recording as the seed paints it without a fetch: its final frame, and the opening frame of a working session. */
@@ -122,6 +143,8 @@ export interface DemoRecordingsIndex {
   resumes: Record<string, DemoRecordingEntry>;
   /** A workflow's own agent planning it, keyed by the scene's workflow id (workflow-<id>.json). */
   workflowAgents: Record<string, DemoRecordingEntry>;
+  /** A note sent from the Browser pane into a finished conversation, keyed by the dataset session (send-<sessionId>.json). */
+  sends: Record<string, DemoSendEntry>;
   /** The surface sizes the recordings were made at, so the frame can tell which boot fits a window. */
   geometry: Record<string, { cols: number; rows: number }>;
 }
@@ -158,7 +181,7 @@ export function buildCellWidthTable(): DemoCellWidthTable {
 
 export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): DemoRecordingsIndex {
   const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest;
-  const index: DemoRecordingsIndex = { sessions: {}, spawns: {}, terminals: {}, resumes: {}, workflowAgents: {}, geometry: manifest.geometry ?? {} };
+  const index: DemoRecordingsIndex = { sessions: {}, spawns: {}, terminals: {}, resumes: {}, workflowAgents: {}, sends: {}, geometry: manifest.geometry ?? {} };
   // Built in one place so a new DemoRecordingEntry field cannot reach the spawn and terminal
   // entries below while the session entries keep the old shape. The sessions loop takes the
   // record loadRecordings already parsed; only spawns and terminals, which the manifest does not
@@ -185,7 +208,10 @@ export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): Dem
     const terminal = /^terminal-(.+)\.json$/.exec(file);
     const resume = /^resume-(.+)\.json$/.exec(file);
     const workflowAgent = /^workflow-(.+)\.json$/.exec(file);
-    if (spawn) {
+    const send = /^send-(.+)\.json$/.exec(file);
+    if (send) {
+      index.sends[send[1]] = sendEntryOf(manifest, fixturesDir, file);
+    } else if (spawn) {
       const entry = read(file);
       if (entry) index.spawns[`${spawn[1]}:${spawn[2]}`] = entry;
     } else if (terminal) {
@@ -200,6 +226,79 @@ export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): Dem
     }
   }
   return index;
+}
+
+type DemoBrowserSendListing = NonNullable<DemoManifest['browserSends']>[number];
+type DemoSendPaste = NonNullable<DemoCaptureRecord['paste']>;
+
+/** The command that records one browser send again, which every refusal below names. */
+function rerecordSendHint(file: string): string {
+  return `re-run "node scripts/capture-demo-sessions.mjs --only ${file.replace(/\.json$/, '')}"`;
+}
+
+/**
+ * A browser send's paste, refused rather than skipped when it cannot be played honestly: no frame
+ * before the paste or no Enter after it leaves nothing to rest on or play on from, and a paste
+ * whose text does not open with the manifest's note would echo words the visitor never typed.
+ */
+function validatedSendPaste(record: DemoCaptureRecord, listed: DemoBrowserSendListing): DemoSendPaste {
+  const paste = record.paste;
+  if (!paste || typeof paste.frame !== 'string' || paste.frame.length === 0 || !(paste.enterAtMs > paste.atMs)) {
+    throw new Error(`${listed.file} carries no paste with the frame before it; ${rerecordSendHint(listed.file)}`);
+  }
+  if (typeof paste.text !== 'string' || !paste.text.startsWith(listed.note)) {
+    throw new Error(`${listed.file} pasted text that does not open with the manifest's note for it; ${rerecordSendHint(listed.file)}`);
+  }
+  return paste;
+}
+
+/**
+ * One browser send as the web build indexes it. A send file the manifest does not list is refused,
+ * since nothing says which note it plays for, and so is one with no final frame: skipped, it left
+ * loadDemoSendFrames resting its session on a frame whose Send had nothing to play.
+ */
+function sendEntryOf(manifest: DemoManifest, fixturesDir: string, file: string): DemoSendEntry {
+  const listed = (manifest.browserSends ?? []).find((entry) => entry.file === file);
+  if (!listed) throw new Error(`${file} is a browser send the manifest's browserSends does not list, so nothing says which note it plays for`);
+  const record = JSON.parse(fs.readFileSync(path.join(fixturesDir, file), 'utf-8')) as DemoCaptureRecord;
+  if (typeof record.serialized !== 'string' || record.serialized.length === 0) {
+    throw new Error(`${file} carries no final frame, so its Send would have nothing to play; ${rerecordSendHint(file)}`);
+  }
+  const paste = validatedSendPaste(record, listed);
+  return {
+    file,
+    serialized: record.serialized,
+    stream: Array.isArray(record.stream) ? record.stream : [],
+    peek: Array.isArray(record.peek) ? record.peek : [],
+    cols: record.cols ?? 0,
+    rows: record.rows ?? 0,
+    stopReason: record.stopReason ?? '',
+    frameTimeline: Array.isArray(record.frameTimeline) ? record.frameTimeline : [],
+    note: listed.note,
+    atMs: paste.atMs,
+    enterAtMs: paste.enterAtMs,
+    peekTimeline: Array.isArray(record.peekTimeline) ? record.peekTimeline : [],
+    messageTrail: Array.isArray(record.messageTrail) ? record.messageTrail : [],
+  };
+}
+
+/**
+ * The screen just before each browser send's note went in, keyed by the dataset session: the
+ * conversation finished and waiting, which the session rests on until Send and the cut rewinds it
+ * to (demo-dataset.ts, playSend). A still paints it with no fetch, so the seed carries it inline or
+ * reads it from the script the web build writes (`sendFrames` in buildDemoPreConfig).
+ */
+export function loadDemoSendFrames(fixturesDir: string = DEMO_FIXTURES_DIR): Record<string, string> {
+  const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest;
+  const frames: Record<string, string> = {};
+  for (const listed of manifest.browserSends ?? []) {
+    if (!fs.existsSync(path.join(fixturesDir, listed.file))) {
+      throw new Error(`${listed.sessionId}: the manifest names a browser send ${listed.file} that is not on disk; ${rerecordSendHint(listed.file)}`);
+    }
+    const record = JSON.parse(fs.readFileSync(path.join(fixturesDir, listed.file), 'utf-8')) as DemoCaptureRecord;
+    frames[listed.sessionId] = validatedSendPaste(record, listed).frame;
+  }
+  return frames;
 }
 
 /** The app version from package.json, stamped into the sample install so both consumers show it. */
