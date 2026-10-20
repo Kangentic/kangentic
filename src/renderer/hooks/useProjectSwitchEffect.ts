@@ -408,8 +408,6 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
             useSessionStore.getState().setConversationSessionId(pendingConversation);
           }
 
-          markProjectSeen(currentProject.id);
-
           // Restore the persisted window layout once the board + config loads AND
           // sessions have all resolved, so windows re-bind to live sessions and the
           // task-existence check sees the real board. Deferred off the switch's
@@ -418,6 +416,11 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           void coldLoads.then(
             () => {
               if (previousProjectIdRef.current !== currentProject.id) return;
+              // Seen only once its own board has landed. A project marked seen while its load
+              // was still in flight (loadBoard waits on lucide's icon map for a non-core column
+              // icon) is snapshotted on the next switch away holding the PREVIOUS project's
+              // board, and every warm switch back would paint that.
+              markProjectSeen(currentProject.id);
               restoreWorkspaceForProject(currentProject.id);
               // Restore for this project is complete (its detail windows, if any, are now in the
               // window store). Disarm the pending collapse signal; the live `dialogSessionIds`
