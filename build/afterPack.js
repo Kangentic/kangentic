@@ -87,6 +87,43 @@ function stripBetterSqlitePrebuilds({ unpackedRoot, platform, targetArch, log = 
   log(`[afterPack] better-sqlite3: kept prebuilds/${keep}, removed ${removed.length} other prebuild(s)`);
 }
 
+/** How long `flipFusesWhenBinaryIdle` waits for the binary to be released: 40 tries, 250 ms apart. */
+const FUSE_FLIP_BUSY_ATTEMPTS = 40;
+const FUSE_FLIP_BUSY_DELAY_MS = 250;
+
+/**
+ * `flipFuses`, for a binary a probe has just run.
+ *
+ * The load probes above run a real process under the packaged Electron binary, and
+ * `flipFuses` then opens that same file for writing. On Linux a write-open of an
+ * executable fails with ETXTBSY for as long as any process still has it mapped to
+ * run, and the kernel can release it a few milliseconds after the probe reports its
+ * child's exit. The pty host probe's last line and the failure were 10 ms apart on
+ * ubuntu-24.04-arm, where the package smoke job passed and then failed twice in a
+ * row on the same code.
+ *
+ * Retries ONLY ETXTBSY, for about ten seconds, and then throws that same error, so
+ * a binary something still holds fails the package as it did before. Any other
+ * error, a fuse this config does not set included, is thrown at once.
+ */
+async function flipFusesWhenBinaryIdle(binaryPath, config, {
+  flip = flipFuses,
+  attempts = FUSE_FLIP_BUSY_ATTEMPTS,
+  delayMs = FUSE_FLIP_BUSY_DELAY_MS,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  log = console.log,
+} = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await flip(binaryPath, config);
+    } catch (error) {
+      if (!error || error.code !== 'ETXTBSY' || attempt >= attempts) throw error;
+      log(`[afterPack] ${binaryPath} is still busy after the probes (ETXTBSY), retrying (${attempt}/${attempts - 1})`);
+      await sleep(delayMs);
+    }
+  }
+}
+
 module.exports = async function afterPack(context) {
   const productFilename = context.packager.appInfo.productFilename;
   const platform = context.electronPlatformName;
@@ -196,7 +233,7 @@ module.exports = async function afterPack(context) {
   // build instead of shipping the new fuse at whatever default it came with.
   // Every fuse is therefore set explicitly, the last three at the defaults read
   // off Electron 44.5.1's own wire.
-  await flipFuses(electronBinaryPath, {
+  await flipFusesWhenBinaryIdle(electronBinaryPath, {
     version: FuseVersion.V1,
     strictlyRequireAllFuses: true,
     [FuseV1Options.RunAsNode]: false,
@@ -216,5 +253,6 @@ module.exports = async function afterPack(context) {
   });
 };
 
+module.exports.flipFusesWhenBinaryIdle = flipFusesWhenBinaryIdle;
 module.exports.stripBetterSqlitePrebuilds = stripBetterSqlitePrebuilds;
 module.exports.embedWorkerProbePlan = embedWorkerProbePlan;
