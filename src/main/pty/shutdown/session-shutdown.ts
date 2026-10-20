@@ -1,26 +1,23 @@
 import type { PtyDisposable, PtyHandle } from '../host/pty-host-client';
-import type { SessionStatus } from '../../../shared/types';
+import type { ExitSequenceStep, SessionStatus } from '../../../shared/types';
+import { writeExitSteps } from './exit-sequence';
 import type { SessionQueue } from '../session-queue';
 import type { SessionFileManager } from '../lifecycle/session-file-manager';
 import type { FirstOutputTracker } from '../lifecycle/first-output-tracker';
 import { isYoungSession, type DeferredKillRegistry } from '../lifecycle/deferred-kill';
 
 /**
- * Error-tolerant write of an agent exit sequence to a PTY.
+ * Error-tolerant write of an agent exit sequence to a PTY, pauses included
+ * (`exit-sequence.ts`).
  *
  * PTYs may die between `.write()` calls (agent processed `/exit` and
  * the underlying shell exited), in which case node-pty throws. Each
  * command is attempted independently and errors are swallowed - the
- * caller's next step is to force-kill anyway.
+ * caller's next step is to force-kill anyway. Keys after a pause land on a
+ * timer; once the PTY is killed they reach nothing, which is harmless.
  */
-export function writeExitSequence(ptyRef: PtyHandle, exitSequence: string[]): void {
-  for (const command of exitSequence) {
-    try {
-      ptyRef.write(command);
-    } catch {
-      // PTY may already be dead - ignore and fall through to force-kill
-    }
-  }
+export function writeExitSequence(ptyRef: PtyHandle, exitSequence: readonly ExitSequenceStep[]): void {
+  writeExitSteps((data) => ptyRef.write(data), exitSequence);
 }
 
 /** Minimum shape of a managed session that shutdown operations touch. */
@@ -30,7 +27,9 @@ export interface ShutdownSession {
   pty: PtyHandle | null;
   status: SessionStatus;
   startedAt: string;
-  exitSequence: string[];
+  exitSequence: ExitSequenceStep[];
+  /** Closing the console is the agent's graceful exit; see ManagedSession.consoleCloseIsGraceful. */
+  consoleCloseIsGraceful?: boolean;
   /** First alt-screen entry, epoch ms; see ManagedSession.altScreenEnteredAt. */
   altScreenEnteredAt?: number;
   /** onData / onExit listener disposables, detached at kill so node-pty
@@ -144,12 +143,15 @@ export function killAllSessions<S extends ShutdownSession>(
   const previouslyParkedCount = deferredKills?.size ?? 0;
   for (const session of context.sessions.values()) {
     if (session.pty) {
-      writeExitSequence(session.pty, session.exitSequence);
+      // An agent whose console close is its graceful exit gets the close alone,
+      // at any age (see SessionManager.kill).
+      const closeIsGraceful = session.consoleCloseIsGraceful === true;
+      if (!closeIsGraceful) writeExitSequence(session.pty, session.exitSequence);
       const ptyRef = session.pty;
       // Read before nulling: the drain needs the child pid, not the wrapper.
       const childPid = ptyRef.pid;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-      if (deferYoung && isYoungSession(session)) {
+      if (deferYoung && !closeIsGraceful && isYoungSession(session)) {
         // The registry's timer does the kill; the listeners are detached just
         // below like every other row's, so the entry carries none.
         deferredKills.schedule({ sessionId: session.id, ptyRef, pid: childPid });

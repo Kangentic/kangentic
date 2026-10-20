@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { PtyDisposable, PtyHandle } from './host/pty-host-client';
 import type {
   AgentParser,
+  ExitSequenceStep,
   PermissionMode,
   Session,
   SessionAttachment,
@@ -113,8 +114,12 @@ export interface ManagedSession {
    *  capture pipeline for adapters that emit it over the PTY or via hooks
    *  (OpenCode, Codex, Gemini, Droid). Null until captured. */
   agentSessionId?: string | null;
-  /** Sequence of strings to write to PTY for graceful exit before force-killing. */
-  exitSequence: string[];
+  /** Steps to write to the PTY to ask the agent to exit before force-killing. */
+  exitSequence: ExitSequenceStep[];
+  /** Closing the console is the agent's graceful exit on this platform
+   *  (`AgentParser.consoleCloseIsGraceful`, read at spawn): end it by closing,
+   *  never by typing. */
+  consoleCloseIsGraceful?: boolean;
   /** Agent adapter for adapter-specific behavior (readiness detection, parsing,
    *  runtime strategy, exit sequence, etc.). Typed as AgentParser for historical
    *  reasons but the actual value is always the full AgentAdapter instance. */

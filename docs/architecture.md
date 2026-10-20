@@ -23,7 +23,7 @@ with a crash policy and stderr capture:
   auto-name, the warm answer session) and the background-shell watcher's process table, because
   on Windows each spawn's CreateProcess is synchronous on the calling thread. It also scans for
   and stops what a task left running (`reapTaggedProcesses`, `src/main/pty/process-tag/`, loading
-  koffi on Windows and macOS), stops one reported process when the user asks, and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan). Forked once at startup, restarted on
+  koffi on Windows and macOS), stops one reported process when the user asks, and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan). It also answers, bounded, once the agent a task's killed or exited shell left running has exited (`awaitAgentExit`, `src/main/pty/host/exited-root-wait.ts`), which a reap, a suspend and `awaitExit` wait on. Forked once at startup, restarted on
   a crash (the lost agent sessions resume), and replaced by the same core running in main after
   five crashes. Measured under a 15 s terminal flood: main 40.6% busy before, 0.6 to 0.7% after.
   See `.claude/rules/pty-host-out-of-process.md`.
@@ -840,7 +840,12 @@ Shell-specific adaptations:
 | Pty host request timeout | 15 s (an exec: its own timeout plus 5 s, or 10 min for a child with none; a task reap or Stop: 30 s from when its batch starts) | A request the host never answers rejects with `PtyHostTimeoutError` (`PtyHostExitedError` when the host exited or was down). An exec rejects like a failed child and is never rerun locally, since it may already have run. The host posts `batch-started` as each reap batch or Stop starts, and every request of that method still waiting gets its budget back. A timed-out reap's late answer still reaches its report (`onLateResult`) |
 | Pty host heartbeat | 5 s beat, 11 s unresponsive | VS Code's intervals; an unresponsive host is logged |
 | Pty host restarts | at once, then 1, 5, 15 s; 5 crashes per 5 min | Past the cap the host core runs in main for the rest of the run |
-| KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
+| KILL_GRACE_MS | 1500 ms | `kill()` on a young session of an agent that is typed into: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`). An agent whose console close is graceful (Claude on Windows and Linux, not in a WSL shell) is closed at once |
+| AGENT_EXIT_WAIT_MS | 8000 ms | How long a task reap waits for the agent a killed shell left running to finish exiting before it scans (`src/main/pty/host/exited-root-wait.ts`). It returns as soon as that agent is gone; for a Windows shell that exited on its own the reap waits for the orphan cleanup instead |
+| AGENT_EXIT_REQUEST_TIMEOUT_MS | 15000 ms | How long main's reap waits for the host to answer that wait: the longer of `AGENT_EXIT_WAIT_MS` and the orphan cleanup's 10 s grace, plus 5 s (`src/main/pty/host/exited-root-wait.ts`) |
+| EXITED_ROOT_LEDGER_MS | 30000 ms | How long an exited task root stays in the pty host's ledger, longer than any `awaitAgentExit` wait on it (`src/main/pty/host/exited-root-wait.ts`) |
+| KILL_SNAPSHOT_CAP_MS | 250 ms | POSIX: how long a kill waits for the host's `ps` listing of the shell's agent before the hangup lands anyway; the listing is what the reap's wait polls (`src/main/pty/host/exited-root-wait.ts`) |
+| COMMAND_TERMINAL_REAP_DELAY_MS | 5000 ms | How long after a Command Terminal ends its leftover reap starts: a backstop for a root the agent-exit wait holds no ledger for (a WSL shell, the in-process core), past Claude's longest measured exit after a close (`src/main/ipc/helpers/command-terminal-leftovers.ts`) |
 | YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s boot-canary window plus margin) |
 | YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` |

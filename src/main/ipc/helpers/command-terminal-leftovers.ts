@@ -10,20 +10,26 @@
  * task's does, and kills only what carries THIS terminal's tag and works inside
  * its folder (`process-tag/reap-plan.ts`).
  *
- * It runs `COMMAND_TERMINAL_REAP_DELAY_MS` after the terminal's row is removed,
- * not at once. A Stop closes the console, and Claude spends about 600 ms on its
- * own clean exit (SessionEnd hook, transcript records); a shell that died
- * leaves its agent to the pty host's ask-then-terminate cleanup, which can take
- * its whole grace (`DEAD_ROOT_ORPHAN_EXIT_GRACE_MS`). A reap inside either
- * window would force-kill an agent mid-exit. Nothing is reaped once the app is
- * quitting: a quit never reaps, as for tasks.
+ * A reap must never force-kill an agent mid-exit. A Stop closes the console,
+ * and Claude spends 0.4 to 4 s on its own clean exit (SessionEnd hook,
+ * transcript records); a shell that died leaves its agent to the pty host's
+ * ask-then-terminate cleanup, which can take its whole grace. The reap itself
+ * waits out both before it scans: the host records a terminal's root the moment
+ * its kill arrives, or when its shell exits on its own, and `awaitAgentExit`
+ * (`pty/host/exited-root-wait.ts`) answers once what the shell left running is
+ * gone, the orphan cleanup's grace included. So the reap runs
+ * `COMMAND_TERMINAL_REAP_DELAY_MS` after the row's removal only as a backstop
+ * for a root that wait cannot hold: a WSL shell, whose agent runs inside the
+ * distro, and the in-process core that takes over after repeated host crashes.
+ * It covers Claude's longest measured exit after a close. Before the wait it was
+ * 12 s, past the orphan grace. Nothing is reaped once the app is quitting: a
+ * quit never reaps, as for tasks.
  */
 import type { Session } from '../../../shared/types';
 import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
-import { DEAD_ROOT_ORPHAN_EXIT_GRACE_MS } from '../../pty/host/dead-root-orphans';
 
-export const COMMAND_TERMINAL_REAP_DELAY_MS = DEAD_ROOT_ORPHAN_EXIT_GRACE_MS + 2_000;
+export const COMMAND_TERMINAL_REAP_DELAY_MS = 5_000;
 
 export interface CommandTerminalLeftoverTask {
   id: string;

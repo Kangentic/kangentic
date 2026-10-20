@@ -66,6 +66,7 @@ import type {
   SubmissionContext,
   TranscriptUsage,
   TranscriptToolCounts,
+  ExitSequenceStep,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 import { peekModelPickerAliasIds } from './model-picker-probe';
@@ -402,6 +403,11 @@ export class ClaudeAdapter implements AgentAdapter {
     return this.commandBuilder.buildClaudeCommand({ cliPath: agentPath, ...rest });
   }
 
+  /** The renderer variables: the user's own, else `CLAUDE_CODE_NO_FLICKER=1` (see `CommandBuilder.rendererEnvironment`). */
+  buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
+    return this.commandBuilder.rendererEnvironment(options);
+  }
+
   interpolateTemplate(template: string, variables: Record<string, string>): string {
     return this.commandBuilder.interpolateTemplate(template, variables);
   }
@@ -469,8 +475,46 @@ export class ClaudeAdapter implements AgentAdapter {
     this.commandBuilder.clearSettingsCache();
   }
 
-  getExitSequence(): string[] {
-    return ['\x03', '/exit\r'];
+  /**
+   * Esc first (it stops a running turn or declines an open permission prompt),
+   * a pause so the TUI reads it as its own key, then Ctrl+C (clears a draft in
+   * full, and is a harmless first press on an empty input), then `/exit`.
+   * Measured on 2.1.302 with `scripts/probe-claude-exit-paths.js`: it ended
+   * Claude idle, busy, with a draft typed and with a permission prompt open,
+   * young and mature, in 0.9 to 1.3 s, and approved nothing; with an answer
+   * streaming it took about 2 s, as every typed path did. The old `\x03` +
+   * `/exit\r` failed two of those states: a turn still thinking took Ctrl+C as
+   * an interrupt and put its prompt back, so `/exit` was appended and sent as
+   * a second paid turn and Claude never exited, and an open permission prompt
+   * took the Enter as yes and ran the tool.
+   *
+   * On Windows it serves only an agent whose shell died, and on Linux nothing
+   * types it, since a kill, a suspend and a quit close the console or hang up
+   * the terminal instead (`consoleCloseIsGraceful`). macOS is still typed into.
+   */
+  getExitSequence(): ExitSequenceStep[] {
+    return ['\x1b', { delayMs: 400 }, '\x03', '/exit\r'];
+  }
+
+  /**
+   * Closing Claude's console on Windows (`CTRL_CLOSE_EVENT`) is a graceful exit.
+   * Measured on 2.1.302 idle, busy, with a draft and with a permission prompt
+   * open, young and mature, and with an answer streaming: Claude ran its
+   * SessionEnd hooks (reason `other`), withdrew its fullscreen boot record
+   * within 170 ms of the close, typed nothing into any prompt, and exited by
+   * itself 0.3 to 0.9 s after the close (about 1.9 s while streaming), tens of
+   * milliseconds to 0.9 s after its shell.
+   *
+   * So is the hangup on Linux, node-pty's kill (SIGHUP to the shell, which
+   * bash passes on to Claude). Measured on 2.1.304 in WSL2 in the same states
+   * and ages (`scripts/probe-claude-exit-paths-linux.py`): SessionEnd (`other`)
+   * within 162 ms, exit 0.33 to 0.71 s after the hangup, every young record
+   * withdrawn, no turn sent, no tool run; the same with the terminal's master
+   * closed as the shell exits, which is the quit. macOS is not measured and
+   * keeps the typed sequence.
+   */
+  consoleCloseIsGraceful(platform: NodeJS.Platform): boolean {
+    return platform === 'win32' || platform === 'linux';
   }
 
   detectFirstOutput(data: string): boolean {

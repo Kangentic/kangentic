@@ -153,11 +153,17 @@ running after the terminal ended, and nothing reported it. So each terminal's PT
 `KANGENTIC_TASK_ID` (its made-up task id), and `CommandTerminalLeftoverReaper`
 (`src/main/ipc/helpers/command-terminal-leftovers.ts`) runs the same reap a task gets at Done
 when the terminal ends: it honors "Stop leftover processes" and reports under the terminal's name.
-It runs 12 s after the terminal ends, longer than the pty host gives an agent to exit by itself,
-so it never force-kills Claude while Claude is still shutting down. Nothing is reaped during a
-quit. That host step, which asks the agent a dead shell left running to exit and terminates it
-after the grace (`dead-root-orphans.ts`), runs on Windows only. On macOS and Linux nothing asks
-such an agent to exit, and this reap is the only cleanup.
+The reap waits up to 8 s for the agent that shell left running to exit by itself before it scans, so it does not force-kill a Claude that is still shutting down unless that bound runs out. The host records the
+terminal's root the moment its kill arrives, and the reap first waits for the agent that shell
+left running to exit by itself (`awaitAgentExit`, `src/main/pty/host/exited-root-wait.ts`), on
+every platform. A dev server the agent started is not waited for: it never exits by itself. For a shell that died on its own on Windows, that wait lasts until the host's orphan
+cleanup is done with its agent. The reap still runs 5 s after the terminal ends rather than at
+once: a WSL shell and the in-process core after host crashes hold no ledger for that wait, and
+5 s is past Claude's longest measured exit after a close. It was 12 s before the wait existed.
+Nothing is reaped during a quit. The orphan cleanup, which asks the agent a dead shell left
+running to exit and terminates it after the grace (`dead-root-orphans.ts`), runs on Windows
+only. On macOS and Linux the kernel hangs up a dead shell's terminal, and this reap is the only
+cleanup after it.
 
 ## A reattach never touches HEAD
 

@@ -19,9 +19,12 @@
  * `${env:KANGENTIC_MCP_URL}` and `${env:KANGENTIC_MCP_TOKEN}` that Cursor
  * resolves from the process environment, so two sessions sharing a folder
  * each read their own URL.
- * Goose is the one entry here NOT about MCP: it has no permission CLI flag,
+ * Goose is one of two entries here NOT about MCP: it has no permission CLI flag,
  * so the permission dropdown is delivered as GOOSE_MODE (Goose's native
  * autonomy env var) via buildEnv.
+ * Claude is the other: its MCP config stays a flag, and buildEnv carries only
+ * CLAUDE_CODE_NO_FLICKER, the fullscreen renderer without the boot health
+ * check that a `tui` setting arms (task #854).
  * Every other adapter passes its MCP config by flag or settings file, and
  * adding buildEnv to one of those by mistake would silently double-inject.
  * This test catches that regression by iterating all registered adapters.
@@ -37,7 +40,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
  * Exhaustive list of adapter names that are EXPECTED to implement buildEnv.
  * See the file docstring for why each one is here.
  */
-const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose', 'cursor']);
+const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose', 'cursor', 'claude']);
 
 describe('AgentAdapter.buildEnv interface guard', () => {
   it('exactly the adapters in ADAPTERS_WITH_BUILDENV implement buildEnv', () => {

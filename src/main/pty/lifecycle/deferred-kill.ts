@@ -8,9 +8,12 @@ import type { PtyDisposable, PtyHandle } from '../host/pty-host-client';
  * on a graceful exit (`/exit`, Ctrl+C, Ctrl+D). A record whose pid is dead at the
  * next launch counts as a strike; one strike runs that launch on the classic
  * renderer, two make the classic renderer sticky until `/tui fullscreen` or a
- * Claude update. Kangentic injects `tui: fullscreen` for every user without a
- * `/tui` choice, so a strike silently brings back the scrollback duplication
- * fullscreen was adopted to fix.
+ * Claude update. A strike silently brings back the scrollback duplication
+ * fullscreen was adopted to fix. Kangentic now turns fullscreen on with
+ * `CLAUDE_CODE_NO_FLICKER=1`, which writes no record (`fullscreenByDefault` in
+ * the Claude command builder), so this grace guards a user's own `tui` choice
+ * and other agents' boot state, and gives an agent that is typed into the time
+ * to run its exit.
  *
  * A bare `pty.kill()` is ClosePseudoConsole on Windows: Claude gets about 100 ms,
  * and the locked withdrawal of the record (a 1.4 MB read, parse, rewrite under
@@ -19,6 +22,12 @@ import type { PtyDisposable, PtyHandle } from '../host/pty-host-client';
  * avoids this by writing the adapter's exit sequence and waiting 1500 ms;
  * `kill()` now does the same for a YOUNG session and keeps the instant teardown
  * for a mature one.
+ *
+ * That 100 ms was Claude Code 2.1.268. On 2.1.302 the console close is itself
+ * Claude's graceful exit on Windows, in every state measured, and so is the
+ * hangup on Linux (2.1.304), so an agent whose adapter says so
+ * (`consoleCloseIsGraceful`) is closed at once and never parked here. The grace
+ * remains for agents that are typed into, Claude on macOS among them.
  *
  * The deferred PTY lives here, outside the registry row, on purpose: the row is
  * nulled at once (`session.pty = null`, as before), `remove()` may delete it in

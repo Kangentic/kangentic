@@ -229,6 +229,21 @@ describe('killAllSessions', () => {
       expect(killPty).toHaveBeenCalledWith(ptyRef);
     });
 
+    it('closes a young session whose console close is its graceful exit at once, with nothing typed and nothing deferred', () => {
+      vi.useFakeTimers();
+      const session = makeYoungSession(4242, { consoleCloseIsGraceful: true, exitSequence: ['\x1b', { delayMs: 400 }, '\x03', '/exit\r'] });
+      const ptyRef = session.pty as pty.IPty;
+      const { context, killPty } = makeContext([session]);
+      const deferredKills = new DeferredKillRegistry({ killPty });
+
+      const report = killAllSessions(context, { allowGrace: true, deferredKills });
+
+      expect(report).toEqual({ pids: [4242], killedCount: 1, deferredCount: 0 });
+      expect(killPty).toHaveBeenCalledWith(ptyRef);
+      vi.advanceTimersByTime(KILL_GRACE_MS);
+      expect(ptyRef.write).not.toHaveBeenCalled();
+    });
+
     it('still detaches a deferred row\'s PTY listeners at once, like every other row', () => {
       vi.useFakeTimers();
       const dataDisposable = makeDisposable();

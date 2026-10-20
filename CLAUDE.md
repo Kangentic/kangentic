@@ -297,7 +297,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `xterm-unicode11-parity.md` - every xterm `Terminal` activates Unicode 11 widths; hand-rolled parsers use `wcwidthV11`.
 - `xterm-dispose-releases-mouse.md` - an opened xterm calls `releaseMouseTracking` before `dispose()`, or its document mouse listener throws on every later click.
 - `cookie-jar-sharing.md` - jar cookies are copied only through `cookie-seed.ts`, and partitions stay task-keyed.
-- `pty-teardown-grace.md` - a young agent's PTY is never force-killed without its exit sequence and the 1500 ms grace; an agent whose shell died on its own is asked to exit before anything is terminated.
+- `pty-teardown-grace.md` - an agent whose console close is its graceful exit (Claude on Windows and Linux) is closed, never typed into; any other young agent gets its exit sequence and the 1500 ms grace; a reap waits for the agent a killed shell left; a dead shell's agent is asked to exit before anything is terminated.
 - `task-process-tag.md` - task PTYs carry `KANGENTIC_TASK_ID`; a terminal transition kills only tagged processes in the task's directories, never shared, visible or tmux ones; env text never leaves a reader.
 - `web-demo-parity.md` - the web build is the real renderer over the mock bridge; every `ElectronAPI` method has a mock.
 - `session-replica-contract.md` - the renderer session store is a replica of main's registry, and a removal is its own push.

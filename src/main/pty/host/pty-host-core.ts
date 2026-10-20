@@ -16,7 +16,7 @@
  */
 
 import * as nodePty from 'node-pty';
-import type { ActivityState, AgentParser, StreamOutputParser } from '../../../shared/types';
+import type { ActivityState, AgentParser, ExitSequenceStep, StreamOutputParser } from '../../../shared/types';
 import { PtyBufferManager } from '../buffer/pty-buffer-manager';
 import { TranscriptWriter, type TranscriptSink } from '../buffer/transcript-writer';
 import { BackpressureController } from '../buffer/backpressure-controller';
@@ -24,8 +24,20 @@ import { ResizeManager } from '../lifecycle/resize-manager';
 import { FirstOutputTracker } from '../lifecycle/first-output-tracker';
 import { SessionIdScanner } from '../lifecycle/session-id-manager';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { isProcessAlive } from '../../shared/process-liveness';
+import type { ProcessInfo } from '../../activity-engine/background-shell/process-tree';
 import { HostProcessTable } from './host-process-table';
 import { endDeadRootOrphans, type DeadRootOrphanApi } from './dead-root-orphans';
+import {
+  KILL_SNAPSHOT_CAP_MS,
+  NO_AGENT_EXIT_WAIT,
+  agentDescendantsOf,
+  pruneExitedRoots,
+  waitForExitedRootTrees,
+  type AgentExitWaitResult,
+  type ExitedRoot,
+  type RootDescendant,
+} from './exited-root-wait';
 import { RootPidGate, processNotStartedError, type RootPidOutcome } from './root-pid-gate';
 import { writeToExitedConsole } from '../spawn/exited-console-input';
 import { traceTerminal } from '../terminal-trace';
@@ -109,6 +121,15 @@ export interface PtyHostCoreDeps {
    * core runs the unit tests' fake PTYs, whose pids name real processes.
    */
   loadOrphanApi?: () => Promise<DeadRootOrphanApi>;
+  /**
+   * Lists processes just before a POSIX kill, so a reap can later wait for the
+   * agent the shell started (`exited-root-wait.ts`): the shell's death
+   * re-parents its children, and no parentage names them afterwards. Only the
+   * utility host passes it; the in-process core's fake PTYs kill at once.
+   */
+  listProcessesBeforeKill?: () => Promise<ProcessInfo[]>;
+  /** Whether a pid names a live process; `process.kill(pid, 0)` unless a test swaps it. */
+  isProcessAlive?: (pid: number) => boolean;
   /** Defaults to `process.platform`; the orphan cleanup runs only on win32. */
   platform?: NodeJS.Platform;
   /** Defaults to `Date.now`. */
@@ -167,7 +188,9 @@ interface PtyEntry {
   /** A WSL root: the orphan cleanup has nothing to look at. */
   wslRoot: boolean;
   /** Written to an agent the shell left running, so it exits on its own. */
-  exitSequence: string[];
+  exitSequence: ExitSequenceStep[];
+  /** The task the PTY runs for, so a reap can wait for what it leaves running. */
+  taskId: string | null;
 }
 
 interface CoalesceState {
@@ -205,6 +228,10 @@ export class PtyHostCore {
   private readonly now: () => number;
   /** Set by `shutdown`: a quit's exits are main's kills, and a cleanup in flight stops waiting. */
   private shuttingDown = false;
+  /** Task PTY roots killed or exited lately, for a reap's wait (`exited-root-wait.ts`). */
+  private exitedRoots: ExitedRoot[] = [];
+  /** The POSIX pre-kill `ps` listing in flight, shared by kills that arrive together. */
+  private preKillListing: Promise<ProcessInfo[]> | null = null;
 
   constructor(private readonly deps: PtyHostCoreDeps) {
     this.spawnPty = deps.spawnPty ?? nodePty.spawn;
@@ -310,6 +337,7 @@ export class PtyHostCore {
       spawnedAtMs,
       wslRoot: isWslRoot(params.file),
       exitSequence: params.exitSequence ?? ['\x03'],
+      taskId: params.taskId ?? null,
     };
     this.ptys.set(params.ptyId, entry);
     entry.disposables.push(...subscribeThroughGate(
@@ -453,6 +481,8 @@ export class PtyHostCore {
         return this.stopReportedProcess(params as StopProcessRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'checkReportedProcesses':
         return this.checkReportedProcesses((params as PtyHostRequestMap['checkReportedProcesses']['params']).identities) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'awaitAgentExit':
+        return this.awaitAgentExit((params as PtyHostRequestMap['awaitAgentExit']['params']).taskIds) as Promise<PtyHostRequestMap[M]['result']>;
       case 'spawnRaw':
         return this.spawnRaw(params as PtyHostRawSpawnParams) as PtyHostRequestMap[M]['result'] | Promise<PtyHostRequestMap[M]['result']>;
       default: {
@@ -602,6 +632,40 @@ export class PtyHostCore {
     return reaper.checkRunning(identities);
   }
 
+  /**
+   * Wait for what these tasks' exited shells left running to exit by itself,
+   * before main's reap of them (`exited-root-wait.ts`). Answers at once when
+   * nothing of theirs was killed or exited lately, in the in-process core, and
+   * during a quit.
+   */
+  async awaitAgentExit(taskIds: readonly string[]): Promise<AgentExitWaitResult> {
+    this.exitedRoots = pruneExitedRoots(this.exitedRoots, this.now());
+    const wanted = new Set(taskIds);
+    const roots = this.exitedRoots.filter((root) => wanted.has(root.taskId));
+    if (roots.length === 0 || this.shuttingDown) return NO_AGENT_EXIT_WAIT;
+    // The Win32 API is needed only for a killed root read by parentage.
+    const needsParentage = roots.some((root) => !root.orphanCleanup && !root.descendants);
+    const api = needsParentage && this.deps.loadOrphanApi ? await this.deps.loadOrphanApi() : null;
+    return waitForExitedRootTrees(
+      api,
+      roots,
+      new Set([process.pid, process.ppid, ...this.liveRootPids()]),
+      {
+        sleep: (ms) => this.sleepUnref(ms),
+        now: this.now,
+        isStopping: () => this.shuttingDown,
+        isAlive: this.deps.isProcessAlive ?? isProcessAlive,
+      },
+    );
+  }
+
+  private sleepUnref(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref?.();
+    });
+  }
+
   private ensureTaggedReaper(): TaggedReaper | null {
     if (!this.taggedReaper) {
       const reader = (this.deps.createTaggedProcessReader ?? createTaggedProcessReader)();
@@ -741,12 +805,76 @@ export class PtyHostCore {
     const entry = this.ptys.get(ptyId);
     if (!entry || entry.exited || entry.killed) return;
     entry.killed = true;
+    // Recorded now, not at the exit, so a reap posted right after the kill
+    // (a Command Terminal's, on its row's removal) already finds the root.
+    const descendants = this.listDescendantsBeforeKill(entry);
+    this.recordKilledRoot(entry, descendants);
+    if (!descendants) {
+      this.killNow(entry);
+      return;
+    }
+    void descendants.then(() => this.killNow(entry));
+  }
+
+  private killNow(entry: PtyEntry): void {
+    if (entry.exited) return;
     try {
       entry.pty.kill();
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
       if (code !== 'EACCES' && code !== 'ESRCH') console.warn('[pty-host] pty.kill() failed:', error);
     }
+  }
+
+  /**
+   * Whether a reap could wait on what this PTY's shell leaves running: a task
+   * PTY with a real root, not a WSL one, in a host that is not shutting down.
+   */
+  private isLedgerRoot(entry: PtyEntry): entry is PtyEntry & { taskId: string } {
+    return entry.taskId !== null && entry.taskId !== '' && !this.shuttingDown && !entry.wslRoot && entry.pty.pid > 0;
+  }
+
+  /**
+   * POSIX: the shell's agent, listed before the kill re-parents it
+   * (`agentDescendantsOf`). The kill waits for the listing, bounded by
+   * `KILL_SNAPSHOT_CAP_MS`; null where none is taken (Windows reads
+   * parentage after the fact, a PTY with no task, a host already shutting
+   * down). A quit's kills arrive before its `shutdown`, so they still list,
+   * once for all of them: about 10 ms that no reap reads, accepted rather
+   * than threading a quit flag through every kill.
+   */
+  private listDescendantsBeforeKill(entry: PtyEntry): Promise<RootDescendant[]> | null {
+    const list = this.deps.listProcessesBeforeKill;
+    if (!list || (this.deps.platform ?? process.platform) === 'win32') return null;
+    if (!this.isLedgerRoot(entry)) return null;
+    const rootPid = entry.pty.pid;
+    // Kills that arrive together (a quit, several To Do moves) share one `ps`.
+    this.preKillListing ??= list().finally(() => { this.preKillListing = null; });
+    const listed = this.preKillListing.then((rows) => agentDescendantsOf(rows, rootPid)).catch(() => [] as RootDescendant[]);
+    const capped = new Promise<RootDescendant[]>((resolve) => {
+      const timer = setTimeout(() => resolve([]), KILL_SNAPSHOT_CAP_MS);
+      timer.unref?.();
+    });
+    return Promise.race([listed, capped]);
+  }
+
+  /** Remember a root main killed, for a reap's wait (`exited-root-wait.ts`). */
+  private recordKilledRoot(entry: PtyEntry, descendants: Promise<RootDescendant[]> | null): void {
+    if (!this.isLedgerRoot(entry)) return;
+    const onWindows = (this.deps.platform ?? process.platform) === 'win32';
+    // Windows reads the shell's children by parentage at wait time; POSIX
+    // needs the pre-kill listing. Without either there is nothing to wait on.
+    if (onWindows ? !this.deps.loadOrphanApi : !descendants) return;
+    const now = this.now();
+    this.exitedRoots = pruneExitedRoots(this.exitedRoots, now);
+    this.exitedRoots.push({
+      taskId: entry.taskId,
+      rootPid: entry.pty.pid,
+      spawnedAtMs: entry.spawnedAtMs,
+      exitedAtMs: now,
+      orphanCleanup: null,
+      descendants,
+    });
   }
 
   private dropSession(sessionId: string): void {
@@ -856,7 +984,30 @@ export class PtyHostCore {
     this.deps.emit({ type: 'exit', ptyId: entry.ptyId, sessionId: entry.sessionId, exitCode });
     // The orphan cleanup writes through the exited PTY, so it releases it
     // when it is done; otherwise release it now. A PTY main killed is released.
-    if (!this.endOrphansOf(entry) && !entry.killed) this.releaseExitedPty(entry.pty);
+    // The root is recorded in this same turn, so a reap main starts on hearing
+    // of the exit always finds it.
+    const orphanCleanup = this.endOrphansOf(entry);
+    if (!orphanCleanup && !entry.killed) this.releaseExitedPty(entry.pty);
+    if (orphanCleanup) this.recordOrphanedRoot(entry, orphanCleanup);
+  }
+
+  /**
+   * Remember a task root whose shell exited on its own while the orphan
+   * cleanup asks its agent to leave, for a reap's wait (`exited-root-wait.ts`).
+   * A root main killed was recorded when the kill arrived.
+   */
+  private recordOrphanedRoot(entry: PtyEntry, orphanCleanup: Promise<void>): void {
+    if (!entry.taskId) return;
+    const exitedAtMs = this.now();
+    this.exitedRoots = pruneExitedRoots(this.exitedRoots, exitedAtMs);
+    this.exitedRoots.push({
+      taskId: entry.taskId,
+      rootPid: entry.pty.pid,
+      spawnedAtMs: entry.spawnedAtMs,
+      exitedAtMs,
+      orphanCleanup,
+      descendants: null,
+    });
   }
 
   /**
@@ -891,17 +1042,17 @@ export class PtyHostCore {
    * The agent is asked to exit through that console first and terminated only
    * if it is still running after the grace. A kill we sent closed the console
    * itself, and a quit's exits are main's kills, so neither is looked at.
-   * True when a cleanup started; it releases the PTY when it ends.
+   * The cleanup when one started (it settles, never rejects, and releases the
+   * PTY when it ends); null otherwise.
    */
-  private endOrphansOf(entry: PtyEntry): boolean {
+  private endOrphansOf(entry: PtyEntry): Promise<void> | null {
     const loadOrphanApi = this.deps.loadOrphanApi;
-    if (!loadOrphanApi || (this.deps.platform ?? process.platform) !== 'win32') return false;
+    if (!loadOrphanApi || (this.deps.platform ?? process.platform) !== 'win32') return null;
     // Read at the exit, not the spawn: on Windows node-pty sets the pid after
     // spawn() returns (`root-pid-gate.ts`), and keeps it after the exit.
-    if (entry.killed || this.shuttingDown || entry.wslRoot || entry.pty.pid <= 0) return false;
+    if (entry.killed || this.shuttingDown || entry.wslRoot || entry.pty.pid <= 0) return null;
     const exitedAtMs = this.now();
-    void this.runOrphanCleanup(entry, exitedAtMs, loadOrphanApi);
-    return true;
+    return this.runOrphanCleanup(entry, exitedAtMs, loadOrphanApi);
   }
 
   private async runOrphanCleanup(entry: PtyEntry, exitedAtMs: number, loadOrphanApi: () => Promise<DeadRootOrphanApi>): Promise<void> {

@@ -164,7 +164,7 @@ After each of the reap's two planning scans the reader also reads which local pr
 
 **The packaged smoke.** The package smoke (`scripts/package-smoke.mjs`) runs a real reap in the packaged app on Windows, macOS and Linux: a task's terminal leaves a detached node process in the project, the task is deleted, and the process must be gone.
 
-**How it kills.** The reap runs in two passes: ask each target to exit, wait 1 s, rescan, and force-kill what the second plan still holds. A process it asked to exit that a last scan still lists is reported as not stopped, whether or not the second plan held it. Each kill re-checks the target's start time, so a pid reused since the scan is never touched. A startup sweep, once per project per launch, reaps archived and To Do tasks whose transition's reap was cut short by a crash.
+**How it kills.** Before its first scan, a task reap waits up to 8 s (`AGENT_EXIT_WAIT_MS`) for the agent a killed shell left running to exit by itself (`awaitAgentExit`), so the scan does not force-kill an agent still shutting down. The wait returns as soon as that agent is gone. The reap then runs in two passes: ask each target to exit, wait 1 s, rescan, and force-kill what the second plan still holds. A process it asked to exit that a last scan still lists is reported as not stopped, whether or not the second plan held it. Each kill re-checks the target's start time, so a pid reused since the scan is never touched. A startup sweep, once per project per launch, reaps archived and To Do tasks whose transition's reap was cut short by a crash.
 
 **Why koffi.** Reading another process's environment needs native calls on Windows (the PEB) and macOS (`KERN_PROCARGS2`), and Node has none. koffi is an FFI built on Node-API with a prebuilt binary per platform, so no contributor needs a C++ toolchain and an Electron upgrade needs no rebuild. Each alternative cost more. An addon of our own needs a compiler on every Windows machine or a prebuild pipeline the repo does not have. PowerShell `Add-Type` compiles for 1 to 3 seconds, and PowerShell reading process memory trips security software. `node:ffi` is experimental and exists only in Node 26. `@vscode/windows-process-tree` reads neither environments nor directories. koffi has one maintainer and is developed in the author's monorepo on Codeberg (`Koromix/rygel`, `src/koffi`); the GitHub repository `Koromix/koffi` is a front with no code, which is why its star count is low. npm counted about 4.4 million downloads a week in late September 2026. The exposure is bounded: koffi is pinned exactly with lockfile integrity hashes, loads only in the pty host, and a failure to load stops nothing and reports `reader_load`. A bump re-runs the real-process reap on all four platforms (`task-reap-real-processes.yml` watches `package.json` and the lockfile) and the packaged smoke on three.
 
@@ -614,9 +614,10 @@ Task deleted
 
 App closed
   → All sessions marked suspended in DB (synchronous)
-  → PTYs force-killed at once for a mature session; a young session (still inside Claude's
-    boot window) gets its exit sequence and a 1500 ms grace first, inside the quit's own
-    PTY drain (see Session Lifecycle > Shutdown)
+  → PTYs force-killed at once for a mature session; a young session of an agent that is typed
+    into gets its exit sequence and a 1500 ms grace first, inside the quit's own PTY drain.
+    A Claude session on Windows or Linux is closed at once, with nothing typed (see Session
+    Lifecycle > Shutdown)
   → Session files persist
 
 App reopened
@@ -670,7 +671,7 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 - **Backup on strip** -- `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** -- on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
 - **Trust pre-population.** Before each spawn, `ClaudeAdapter.ensureTrust()` (`ensureClaudeSpawnConfig()`) trusts the agent's working directory in `~/.claude.json`, so Claude Code doesn't prompt for trust on first run.
-- **Synchronous shutdown** -- DB records marked suspended, mature PTYs force-killed immediately. A young session's force-kill waits out a 1500 ms exit-sequence grace on a timer inside the bounded PTY drain the quit already holds for, never as an added async phase. Files persist for recovery on next launch.
+- **Synchronous shutdown** -- DB records marked suspended, mature PTYs force-killed immediately. A session whose console close is graceful (Claude on Windows and Linux) is closed at once. A young typed-into session's force-kill waits out a 1500 ms exit-sequence grace on a timer inside the bounded PTY drain the quit already holds for, never as an added async phase. Files persist for recovery on next launch.
 
 ## Test Coverage
 

@@ -164,6 +164,24 @@ const KEEPLISTED_CLAUDE_CODE_KEYS: ReadonlySet<string> = new Set([
   SCROLL_SPEED_ENV_KEY,
 ]);
 
+/**
+ * `CLAUDE_CODE_*` keys an adapter may set for its own spawn through
+ * `buildEnv`: Claude's renderer variables, `CLAUDE_CODE_NO_FLICKER` (which
+ * turns the fullscreen renderer on without arming its boot health check) and
+ * `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` (a user's own opt-out, passed on).
+ * See `rendererEnvironment` in the Claude command builder. Kept only when the
+ * caller passed one for this spawn, the same split `NO_COLOR` gets. Inherited
+ * from main's environment it is stripped like any other marker: every
+ * Kangentic Claude session carries `CLAUDE_CODE_NO_FLICKER=1`, so a Kangentic
+ * started from one's tool shell would otherwise hand it to every spawn, a
+ * classic-renderer user's included. A WSL shell's spawn also lists the ones it
+ * sets in `WSLENV` (`performSpawn`), or they never reach the distro.
+ */
+export const SPAWN_SETTABLE_CLAUDE_CODE_KEYS: ReadonlySet<string> = new Set([
+  'CLAUDE_CODE_NO_FLICKER',
+  'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN',
+]);
+
 export function buildSpawnEnv(
   inputEnv: Record<string, string> | undefined,
   platform: NodeJS.Platform = process.platform,
@@ -175,10 +193,11 @@ export function buildSpawnEnv(
   // explicit caller-supplied NO_COLOR survives: the heuristic targets only
   // the inherited leak, never a deliberate per-spawn choice.
   const stripNoColor = merged.CLAUDECODE !== undefined && inputEnv?.NO_COLOR === undefined;
+  const setForThisSpawn = (key: string): boolean => SPAWN_SETTABLE_CLAUDE_CODE_KEYS.has(key) && inputEnv?.[key] !== undefined;
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value === undefined) continue;
-    if (key === 'CLAUDECODE' || (key.startsWith('CLAUDE_CODE_') && !KEEPLISTED_CLAUDE_CODE_KEYS.has(key))) continue;
+    if (key === 'CLAUDECODE' || (key.startsWith('CLAUDE_CODE_') && !KEEPLISTED_CLAUDE_CODE_KEYS.has(key) && !setForThisSpawn(key))) continue;
     if (key === 'NO_COLOR' && stripNoColor) continue;
     result[key] = value;
   }

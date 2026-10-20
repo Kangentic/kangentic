@@ -22,6 +22,7 @@ import { skipConsoleListHelper } from '../spawn/conpty-console-list';
 import { loadWin32OrphanApi } from '../process-tag/win32-reader';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { PtyHostCore } from './pty-host-core';
+import { HostProcessTable } from './host-process-table';
 import { setMainExecutable } from './host-exec';
 import { toPtyHostError, type FromPtyHostMessage, type PtyHostInitMessage, type PtyHostRequest, type ToPtyHostMessage } from './protocol';
 
@@ -87,6 +88,8 @@ function transcriptSinkFor(projectId: string): TranscriptSink | null {
 }
 
 let core: PtyHostCore | null = null;
+/** `ps` per call on POSIX (no child kept); unused on Windows. */
+const preKillProcessTable = new HostProcessTable();
 
 function initialize(message: PtyHostInitMessage): void {
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
@@ -101,6 +104,9 @@ function initialize(message: PtyHostInitMessage): void {
     closeProject: (projectId) => closeProjectDb(projectId),
     coalesceMs: COALESCE_MS,
     loadOrphanApi: () => loadWin32OrphanApi(),
+    // POSIX only (the core ignores it on Windows): the shell's descendants
+    // before a kill, for a reap's agent-exit wait (`exited-root-wait.ts`).
+    listProcessesBeforeKill: () => preKillProcessTable.list(),
     onBatchStarted: (method) => post({ type: 'batch-started', method }),
   });
   if (__KANGENTIC_DEV__) {

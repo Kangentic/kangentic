@@ -5,15 +5,16 @@ paths:
   - "src/main/transition-engine/**"
   - "src/main/agent/**"
 ---
-# Rule: a young agent is never force-killed without its exit sequence and the grace
+# Rule: an agent ends the way it was measured to end safely, never cut short
 
 Claude Code keeps a boot canary in `~/.claude.json`: `fullscreenBootPending[pid]` is written at
 REPL mount and withdrawn 10 s after the first rendered frame, or on a graceful exit (`/exit`,
 Ctrl+C, Ctrl+D). A record whose pid is dead at the next launch is a strike. One strike runs that
 launch on the classic renderer and prints "fullscreen renderer didn't finish starting last time";
 two make the classic renderer sticky on the machine until `/tui fullscreen` or a Claude update.
-Kangentic injects `tui: fullscreen` for every user without a `/tui` choice, so a strike silently
-brings back the scrollback duplication fullscreen was adopted to fix.
+Kangentic turns fullscreen on for every user without a `/tui` choice, so a strike silently
+brings back the scrollback duplication fullscreen was adopted to fix. Two busy young Claudes moved
+back to To Do did exactly that on 2026-10-19 (task #854).
 
 A bare `pty.kill()` is ClosePseudoConsole on Windows. Claude gets about 100 ms, and the locked
 withdrawal of the record (a 1.4 MB read, parse, rewrite under `~/.claude.json.lock`) lands at
@@ -22,19 +23,70 @@ behind. This shipped: a Command Terminal stopped inside its first seconds, and e
 on the dogfooding machine printed the fallback line. The 1500 ms `suspend()` already gave every
 session is what `kill()` now gives a young one.
 
-That 100 ms was measured on Claude Code 2.1.268. Remeasured on 2.1.294 (Windows 11 build 26200,
-node-pty 1.1.0, a mature idle session): closing the console made Claude run its SessionEnd hook
-(reason `other`) and exit 585 ms later with its transcript whole, as `/exit` does (hook at 191 ms,
-exit at 622 ms). The grace stays: the young-session case was not remeasured, and an older Claude
-still gets the 100 ms.
+That 100 ms was measured on Claude Code 2.1.268. On 2.1.302 (Windows 11 build 26200, node-pty
+1.1.0, `scripts/probe-claude-exit-paths.js`, task #854) the console close is Claude's graceful
+exit in every state measured, young and mature: idle, a turn still thinking, an answer streaming,
+a draft typed, a permission prompt open. Claude ran its SessionEnd hook (reason `other`),
+withdrew its boot record within 170 ms of the close, and exited 0.3 to 0.9 s after it (about
+1.9 s while streaming). The typed `\x03` + `/exit\r` failed two of those states: a turn still
+thinking took Ctrl+C as an interrupt that put its prompt back, so `/exit` was appended and sent as
+a second paid turn and Claude never exited, and an open permission prompt took the Enter as yes
+and ran the tool. The close also held with a sibling holding `~/.claude.json.lock` for 600 ms
+(record withdrawn within 1.15 s, exit within 2.6 s), with three Claudes booting at once, and on
+2.1.303 with a real session's hooks and MCP server (exit 0.4 to 2 s, once 4 s). So Claude on
+Windows is closed, never typed into.
+
+On Linux node-pty's kill is a SIGHUP to the shell, which bash passes on to Claude. Measured on
+2.1.304 in WSL2 (`scripts/probe-claude-exit-paths-linux.py`, against a local stand-in for the API,
+so the states are Claude's own TUI with no account), the hangup is Claude's graceful exit in the
+same states and ages: SessionEnd (`other`) within 162 ms, exit 0.33 to 0.71 s after it, every
+young record withdrawn, no second turn, no tool run. It held with the terminal's master closed
+the moment the shell exited, which is the quit, and with the shell killed outright, where only
+the kernel's hangup reaches Claude. That last case is why the result does not rest on bash
+passing the signal on: any shell that runs Claude as the terminal's foreground job (zsh, fish,
+nushell) gets it hung up by the kernel when the shell dies. So Claude on Linux is hung up, never
+typed into, too.
+
+The fullscreen renderer is also turned on without the canary: Kangentic sets
+`CLAUDE_CODE_NO_FLICKER=1` in the spawn environment instead of `tui: "fullscreen"` in
+`--settings` (`rendererEnvironment` in the Claude command builder). Claude's docs make that
+variable the per-session override of `tui`, and say a session started with it renders fullscreen
+even after a failed start "and doesn't count it". Measured on 2.1.302 and 2.1.303 on Windows and
+2.1.304 on Linux, such a session draws in the alt screen and never writes a `fullscreenBootPending`
+record, so no death of a Kangentic session can strike the renderer. The variable outranks even
+`tui: "default"`, so it is set only when no renderer was chosen or fullscreen was, and a user's own
+exported `CLAUDE_CODE_NO_FLICKER` or `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` is passed on in its
+place. A WSL shell's spawn lists the variable in `WSLENV`, or it never reaches the distro. The
+grace and the close still matter for SessionEnd hooks and the transcript, and for a user whose own
+`tui` choice Kangentic leaves alone.
 
 ## The rule
 
+- **An agent whose console close is its graceful exit is closed, never typed into.** The adapter
+  says so per platform (`consoleCloseIsGraceful`, read onto the session at spawn); Claude does on
+  Windows and Linux. `kill()`, `suspend()` (`gracefulPtyShutdown`) and `killAll()` then write
+  nothing and close at once, at any age: no exit sequence, no natural-exit wait, nothing parked.
+  Its exit sequence is kept for the one console that cannot be closed, a Windows shell that died
+  on its own (below). Do not answer that flag with true for an agent and platform the probe has
+  not measured in every state: keys and a close are each safe only where measured. For the same
+  reason a WSL shell on Windows is typed into whatever the adapter says (`performSpawn`): ConPTY
+  closing `wsl.exe`, then a hangup in the distro, is a chain neither probe ran. **Known gap.**
+  macOS is unmeasured (no machine to run the Linux probe on), so Claude there is still typed
+  into, with the Esc sequence. On Windows that sequence overran a 1.5 s grace in ten of
+  twelve runs under lock contention, so a macOS young kill or suspend can land its hangup while
+  Claude is still in its SessionEnd hooks or writing its transcript. The Linux probe reads
+  processes with `ps` where `/proc` is missing, so closing the gap is one run of it on a Mac. The
+  boot canary is not at stake there: the
+  `CLAUDE_CODE_NO_FLICKER` default ships on every platform, and Claude's fullscreen docs say such
+  sessions are not counted.
 - **Every force-kill of a session PTY goes through `SessionManager.kill()`, `suspend()`, or
-  `killAll()`.** `kill()` writes the adapter's exit sequence and parks the PTY on
-  `DeferredKillRegistry` (`src/main/pty/lifecycle/deferred-kill.ts`) for `KILL_GRACE_MS` when
-  `isYoungSession` says the agent may still be inside the canary window (alt-screen entered under
-  12 s ago, or no alt screen yet and spawned under 60 s ago); a mature session is killed at once.
+  `killAll()`.** For an agent that is typed into, `kill()` writes the adapter's exit sequence and
+  parks the PTY on `DeferredKillRegistry` (`src/main/pty/lifecycle/deferred-kill.ts`) for
+  `KILL_GRACE_MS` when `isYoungSession` says the agent may still be inside the canary window
+  (alt-screen entered under 12 s ago, or no alt screen yet and spawned under 60 s ago); a mature
+  session is killed at once. An exit sequence may hold pauses (`{ delayMs }`, written by
+  `shutdown/exit-sequence.ts`), so keys the TUI must read apart, Esc and the text after it, never
+  share a burst.
   `session.pty` is nulled synchronously either way, so a deferred PTY lives outside the registry
   row and no respawn or reset can cut its grace short. Do not add a direct `pty.kill()` /
   `safeKillPty()` on a session PTY anywhere else, and do not add a caller that knows better
@@ -54,7 +106,10 @@ still gets the 100 ms.
   themselves, and only then terminates what is left, by identity, each through a handle whose
   creation time is re-checked. Measured on Claude Code 2.1.294: asked this way, Claude ran its
   SessionEnd hook and exited about 600 ms after the write with its transcript whole; terminated,
-  it runs no SessionEnd hook and writes no exit records. `IPty.write()` after the exit, `kill()`
+  it runs no SessionEnd hook and writes no exit records. On 2.1.302 Claude's Esc, pause, Ctrl+C,
+  `/exit` sequence written this way ended it idle, busy and with a permission prompt open, young
+  and mature, 0.9 to 1.2 s after the write; the old `\x03` + `/exit\r` approved the open prompt's
+  tool and left Claude running. `IPty.write()` after the exit, `kill()`
   after the exit, and terminating the console host all leave it running, so none of them can
   replace the ask. Do not shorten the grace below Claude's SessionEnd budget (1.5 s by default,
   raised by a hook's own timeout). It runs in the utility host only (never the in-process core,
@@ -71,6 +126,27 @@ still gets the 100 ms.
   console host per natural exit, and 1,500 of them in one process measured no failure. Restarting
   the host to close them was the alternative, rejected because it ends every terminal it holds.
   Background and measurements: `docs/session-lifecycle.md`.
+- **A reap, a suspend and `awaitExit` wait for the agent a closed shell left running.** A PTY's
+  exit is its shell's: a kill ends the shell at once, and the agent the shell started is still
+  running its own exit (SessionEnd hooks, transcript, boot record) when the PTY's exit lands.
+  Tagged and in the task's directory, it is a leftover to the reap; in the session's cwd, it
+  overlaps a resume or a folder move. So `reapTaskProcesses` asks the host to `awaitAgentExit`
+  for its tasks (`host/exited-root-wait.ts`) before it scans, and `suspend()` and `awaitExit()`
+  ask for a session whose console close is graceful before they resolve. The host records each
+  task root the moment its kill arrives (so a wait posted right after the kill still finds it), or
+  when its shell exits on its own, and polls the agent that root left running until it is gone or
+  `AGENT_EXIT_WAIT_MS` runs out. The agent is the shell's children, looking through a shell or
+  launcher among them (`cmd.exe` under a `.cmd` shim, a Git Bash stub), and never what the agent
+  itself started: a dev server it left running never exits by itself, and a mid-board suspend
+  leaves it up by decision, so watching it would hold every wait to its bound. On Windows the host
+  finds the agent by parentage and creation time, as the orphan cleanup does. On POSIX the
+  shell's death re-parents it, so the host lists it just before it sends the hangup (one `ps`
+  shared by kills that arrive together, the hangup held for it at most `KILL_SNAPSHOT_CAP_MS`) and
+  polls those pids. For a Windows shell that exited on its own it waits for the orphan cleanup to
+  finish instead. It asks nothing and terminates nothing; what outlives the bound is reaped as
+  before. Do not shorten the bound below Claude's SessionEnd budget. A WSL root and the in-process
+  core hold no ledger, so a Command Terminal's reap keeps a short fixed delay as their backstop
+  ([[task-process-tag]]).
 - **A caller that touches the session's cwd or process tree after a kill waits for the process,
   not for the call.** `kill(id)`, then capture `awaitExit(id)`, THEN `remove(id)` (the row must
   still exist when the promise is made), then await it before any `rmSync`, `removeWorktree`, or
@@ -111,7 +187,10 @@ still gets the 100 ms.
   the registry's timer, cancel, and flush; `tests/unit/session-manager-deferred-kill.test.ts`
   pins `kill()`'s exit sequence, the synchronous `session.pty = null`, the deferred force-kill,
   the cancel on a natural exit, the `immediate` option, and `killAll`'s report;
-  `tests/unit/session-shutdown-flow.test.ts` pins the quit-path deferral and flush;
+  `tests/unit/session-shutdown-flow.test.ts` pins the quit-path deferral and flush; the same three
+  files pin that a session whose console close is graceful is closed at once with nothing typed
+  and nothing parked, and `tests/unit/claude-exit-behavior.test.ts` pins Claude's answer (Windows
+  and Linux, not macOS) and its typed sequence; `tests/unit/exit-sequence.test.ts` pins the pauses;
   `tests/unit/pty-exit-callback-drain.test.ts` pins the deadline extension;
   `tests/unit/claude-model-picker-probe.test.ts` pins the probe's env, its graceful exit, and its
   no-key-into-a-dialog guards;
@@ -120,6 +199,16 @@ still gets the 100 ms.
   that it asks before it terminates and terminates nothing that exits within the grace, and that a
   kill, a quit, a WSL root, POSIX and the in-process core never run it;
   `tests/unit/exited-console-input.test.ts` pins the node-pty fields the ask writes through.
+  `tests/unit/exited-root-wait.test.ts` pins the agent-exit wait: the early answer once the
+  agent is gone whatever it left running, the look-through of a launcher that exits first, the
+  bound, the identity window, a reap asked for before the shell has exited, the wait on an orphan
+  cleanup still asking, the ledger's prune, the POSIX pre-kill listing (the hangup held for it,
+  its cap, one listing for kills that arrive together, the wait by pid), and that the in-process
+  core, a quit and a PTY with no task never wait. `session-reap-parked-exit.test.ts` pins that the
+  reap waits on it before it scans and still reaps when it fails;
+  `session-manager-deferred-kill.test.ts` that `suspend()` and `awaitExit()` of a graceful-close
+  session wait on it and of any other never do; `session-spawn-flow.test.ts` that a WSL shell is
+  typed into and lists the renderer variables in `WSLENV`.
   `tests/unit/pty-host-core.test.ts` pins the post-exit release (Windows only, once, never after
   a kill main sent, raw PTYs too), and `dead-root-orphans.test.ts` pins that it waits for the
   orphan cleanup to finish with the console.
