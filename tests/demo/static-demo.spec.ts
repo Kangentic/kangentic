@@ -14,12 +14,12 @@
  *
  * Every test owns its own page (the built-in fixture), so nothing leaks between cases.
  */
-import { test, expect, chromium, type Page, type Locator } from '@playwright/test';
+import { test, expect, chromium, type Browser, type Frame, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { transformSync } from 'esbuild';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
-import { PLANNED_BILLING_PAGE, SCENES, playsCycle } from '../captures/scenes';
+import { PLANNED_BILLING_PAGE, SCENES, playsCycle, type SceneDefinition } from '../captures/scenes';
 import INVOICE_PDF_PLAN from '../captures/fixtures/demo/workflow-plans/wf-cw-invoice-pdf.json';
 import DEMO_MANIFEST from '../captures/fixtures/demo/manifest.json';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
@@ -706,8 +706,7 @@ test('the ready message carries the focus rect of a dialog scene, and null for a
 
   // The capture rig measures each poster's focus through this same function, so the rect in the
   // poster manifest and the rect a live frame posts are one measure (demo/posters.mjs).
-  const frame = await (await page.locator('#demo').elementHandle())?.contentFrame();
-  if (!frame) throw new Error('the demo iframe has no content frame');
+  const frame = await demoContentFrame(page);
   const rigRect = await frame.evaluate((selector) => (window as DemoBootGlobal).__demoBoot?.focusRectOf(selector) ?? null, focusScene.focus ?? '');
   expect(rigRect).toEqual(focused.focus);
 
@@ -716,15 +715,79 @@ test('the ready message carries the focus rect of a dialog scene, and null for a
   expect(plain.focus).toBeNull();
 });
 
+interface HostFrameOptions {
+  /** The frame's parameters beside `view` and `embed`. Given, they replace the default `still=1`. */
+  params?: Record<string, string>;
+  /**
+   * Put the frame in a page taller than the viewport, scrolled so half the frame is on screen
+   * before it loads (its top half, or its bottom half), and record in `window.__hostMoves` every
+   * position the page takes after that.
+   */
+  halfOnScreen?: HostHalf;
+}
+
+/** Which half of a frame hosted half on screen the viewport shows. */
+type HostHalf = 'top' | 'bottom';
+
+/** Page above and below a frame hosted half on screen. */
+const HOST_MARGIN_PX = 1500;
+
+/** How much of the 1000 px frame sits on the other side of the viewport's edge, in the host. */
+const HOST_OFFSCREEN_PX = 500;
+
+/** Where the host page is scrolled before the frame loads: the frame's top half or bottom half in view. */
+function hostStartY(half: HostHalf): number {
+  return half === 'top' ? HOST_MARGIN_PX - HOST_OFFSCREEN_PX : HOST_MARGIN_PX + HOST_OFFSCREEN_PX;
+}
+
+/** Where the demo server serves the page that hosts a frame half on screen. */
+const HALF_ON_SCREEN_HOST_PATH = '/host-half-on-screen.html';
+
+/**
+ * Scrolls the host before the frame loads: Chromium paints no frames for a cross-origin frame
+ * that is off screen, so one hosted below the fold never boots. The recorder samples every
+ * animation frame as well as each scroll event, so a scroll that a later one puts back still shows.
+ */
+function hostScrollRecorder(half: HostHalf): string {
+  return `<script>
+  window.scrollTo(0, ${hostStartY(half)});
+  var start = { x: window.scrollX, y: window.scrollY };
+  window.__hostStart = start;
+  window.__hostMoves = [];
+  function recordHostMove() {
+    if (window.scrollX !== start.x || window.scrollY !== start.y) window.__hostMoves.push(window.scrollX + ',' + window.scrollY);
+  }
+  window.addEventListener('scroll', recordHostMove);
+  (function sample() { recordHostMove(); window.requestAnimationFrame(sample); })();
+</script>`;
+}
+
 /** Host the frame in an iframe the site's way and hand back the frame plus a message reader. */
-async function hostFrame(page: Page, sceneName: string): Promise<() => Promise<DemoReadyMessage[]>> {
-  const src = demoUrl({ view: sceneName, embed: '1', still: '1' });
-  await page.setContent(
-    '<script>window.__demoMessages = []; window.addEventListener("message", (event) => { window.__demoMessages.push(event.data); });</script>'
-    + `<iframe id="demo" width="1600" height="1000" style="border:0" src="${src}"></iframe>`,
-  );
+async function hostFrame(page: Page, sceneName: string, options: HostFrameOptions = {}): Promise<() => Promise<DemoReadyMessage[]>> {
+  const src = demoUrl({ view: sceneName, embed: '1', ...(options.params ?? { still: '1' }) });
+  const messageRecorder = '<script>window.__demoMessages = []; window.addEventListener("message", (event) => { window.__demoMessages.push(event.data); });</script>';
+  const iframe = `<iframe id="demo" width="1600" height="1000" style="border:0" src="${src}"></iframe>`;
+  if (options.halfOnScreen) {
+    const spacer = `<div style="height:${HOST_MARGIN_PX}px"></div>`;
+    const body = `${messageRecorder}<style>body { margin: 0 } iframe { display: block }</style>${spacer}${iframe}${spacer}${hostScrollRecorder(options.halfOnScreen)}`;
+    // Served, not set as content: an about:blank host is not a secure context, so neither is the
+    // frame, and crypto.randomUUID and the microphone are missing. kangentic.com is https; localhost
+    // is a secure context too, and a different site from the server's 127.0.0.1.
+    // The icon link keeps a full browser from asking the server for a favicon it 404s.
+    server.routes[HALF_ON_SCREEN_HOST_PATH] = { body: `<!doctype html><html><head><link rel="icon" href="data:,"></head><body>${body}</body></html>` };
+    await page.goto(`http://localhost:${server.port}${HALF_ON_SCREEN_HOST_PATH}`);
+  } else {
+    await page.setContent(messageRecorder + iframe);
+  }
   await expect(page.frameLocator('#demo').locator('html')).toHaveAttribute('data-demo-ready', '1', { timeout: READY_TIMEOUT_MS });
   return () => page.evaluate(() => (window as { __demoMessages?: DemoReadyMessage[] }).__demoMessages ?? []);
+}
+
+/** The frame inside the page's `#demo` iframe, to evaluate in. */
+async function demoContentFrame(page: Page): Promise<Frame> {
+  const frame = await (await page.locator('#demo').elementHandle())?.contentFrame();
+  if (!frame) throw new Error('the demo iframe has no content frame');
+  return frame;
 }
 
 const hasEscape = (messages: DemoReadyMessage[]) => messages.some((message) => message.type === 'kangentic-demo-escape');
@@ -2684,6 +2747,167 @@ for (const { scene, cycles } of CHOREOGRAPHED_SCENES) {
     expect(await sweptNodes(page), `${scene.name}: the extension sweep hid part of the app during a cycle`).toEqual([]);
     expect(getUnexpectedErrors()).toEqual([]);
   });
+}
+
+type HostScrollProof = 'a scroll in the frame' | 'the canvas focused';
+
+/** What a cycle did inside a frame hosted half on screen, counted by an init script in the frame. */
+interface FrameActivity { scrolls: number; canvasFocused: boolean }
+
+/** The globals the half-on-screen host page and its frame's init script set. */
+interface HostScrollGlobal {
+  __hostStart?: { x: number; y: number };
+  __hostMoves?: string[];
+  __frameActivity?: FrameActivity;
+}
+
+/**
+ * The cycles that once scrolled the page embedding the frame, each with what proves the cycle did
+ * its part, so a pass is never a cycle that did nothing. A `scroll` step ran `scrollIntoView`,
+ * which scrolls every box above the element and, in an embedded frame, carries on into the
+ * embedding page: kangentic.com's landing page moved under its reader with no input. The Knowledge
+ * Graph's canvas focused itself on a press without `preventScroll`, which jumped the page 464 px;
+ * the graph's project scenes play the same orbit, so one of them stands for the rest.
+ */
+const HOST_SCROLL_CASES: Array<{ scene: (typeof CHOREOGRAPHED_SCENES)[number]['scene']; proof: HostScrollProof }> = [
+  ...CHOREOGRAPHED_SCENES
+    .filter((entry) => entry.cycles && (entry.scene.choreography ?? []).some((step) => 'scroll' in step))
+    .map((entry) => ({ scene: entry.scene, proof: 'a scroll in the frame' as const })),
+  { scene: SCENES['knowledge-graph'], proof: 'the canvas focused' },
+];
+
+test('the registry carries the cycles that once scrolled the host page', () => {
+  // Vacuity guard: the loop below would pass on a list with no scroll step in it.
+  expect(HOST_SCROLL_CASES.some((entry) => entry.proof === 'a scroll in the frame')).toBe(true);
+  expect(playsCycle(SCENES['knowledge-graph'].choreography), 'the Knowledge Graph scene stopped playing a cycle').toBe(true);
+});
+
+test.describe('a frame hosted half on screen in a taller page', () => {
+  // Playwright's bundled Chromium in new headless mode, not the tier's headless shell. Measured on
+  // 2026-10-20: the shell (153 and 147) stops a scroll at a `position: fixed` box, while new
+  // headless 153, Electron 44 and Firefox carry it on into the embedding page. The Board Manager,
+  // the settings panel and the graph are fixed boxes, so on the shell their cases passed against
+  // the bug. Launched here because `test.use` refuses a channel inside a describe.
+  let fullChromium: Browser;
+  test.beforeAll(async () => {
+    fullChromium = await chromium.launch({ channel: 'chromium', headless: true });
+  });
+  test.afterAll(async () => {
+    await fullChromium?.close();
+  });
+
+  for (const { scene, proof } of HOST_SCROLL_CASES) {
+    test(`view=${scene.name} under loop=1 never scrolls the page that embeds it`, async () => {
+      test.setTimeout(90_000);
+      const context = await fullChromium.newContext({ viewport: { width: 1600, height: 1000 } });
+      try {
+        await expectHostNeverScrolls(await context.newPage(), scene.name, proof);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  test('a boot click on a text field the viewport hides leaves the embedding page where it was', async () => {
+    const context = await fullChromium.newContext({ viewport: { width: 1600, height: 1000 } });
+    try {
+      await expectBootFocusLeavesHostAlone(await context.newPage(), SCENES['dictation-field']);
+    } finally {
+      await context.close();
+    }
+  });
+});
+
+/** The text field dictation-field's last boot click lands on: the Settings search box. */
+const BOOT_CLICKED_FIELD = '[data-testid="settings-search"]';
+
+/** What the frame's init script saw the boot's click do to the field: how many times it took focus. */
+interface FieldFocusActivity { focusins: number }
+
+/** The global the frame's init script sets for the boot click's field. */
+interface FieldFocusGlobal {
+  __fieldFocus?: FieldFocusActivity;
+}
+
+/**
+ * Boot a still of a scene whose boot clicks a text field, hosted with the half of the frame that
+ * does NOT hold the field on screen, and fail on any position the host page takes. The boot's
+ * click focuses the field the way a visitor's pointer would, and `focus()` alone scrolls the field
+ * into view through every box above it and on into the embedding page; the cycles above all
+ * start with the field's half on screen, where that scroll has nowhere to go. A still runs the
+ * boot clicks and holds the scene's pose without a timer or a recording, so nothing after the
+ * reveal can move the host: whatever moved it is the boot.
+ */
+async function expectBootFocusLeavesHostAlone(page: Page, scene: SceneDefinition): Promise<void> {
+  // Vacuity guard: the test means nothing for a scene that stopped clicking the field.
+  expect(
+    (scene.steps ?? []).some((step) => 'click' in step && step.click === BOOT_CLICKED_FIELD),
+    `${scene.name} no longer clicks ${BOOT_CLICKED_FIELD} at boot`,
+  ).toBe(true);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  // Init scripts run in the host page too, whose own focus is not the frame's.
+  await page.addInitScript((fieldSelector) => {
+    if (window.top === window) return;
+    const activity: FieldFocusActivity = { focusins: 0 };
+    (window as FieldFocusGlobal).__fieldFocus = activity;
+    document.addEventListener('focusin', (event) => {
+      if (event.target instanceof Element && event.target.matches(fieldSelector)) activity.focusins += 1;
+    });
+  }, BOOT_CLICKED_FIELD);
+  await hostFrame(page, scene.name, { halfOnScreen: 'bottom' });
+  const start = await page.evaluate(() => (window as HostScrollGlobal).__hostStart ?? null);
+  expect(start?.y, 'the host page opened scrolled to the bottom half of the frame').toBe(hostStartY('bottom'));
+  // Only calls that never scroll the host while it records: a locator action would.
+  const hostMoves = await page.evaluate(() => (window as HostScrollGlobal).__hostMoves ?? null);
+  expect(hostMoves?.slice(0, 5), `${scene.name} scrolled the page that embeds it`).toEqual([]);
+  // The field must sit wholly above the viewport's top edge, or the click had nothing to scroll to.
+  const frame = await demoContentFrame(page);
+  const fieldBottomInFrame = await frame.evaluate((fieldSelector) => document.querySelector(fieldSelector)?.getBoundingClientRect().bottom ?? null, BOOT_CLICKED_FIELD);
+  const frameTopInHost = await page.evaluate(() => document.getElementById('demo')?.offsetTop ?? null);
+  if (fieldBottomInFrame === null || frameTopInHost === null) throw new Error(`${BOOT_CLICKED_FIELD} or the host's #demo iframe is missing`);
+  expect(frameTopInHost + fieldBottomInFrame, 'the clicked field is off screen in the host').toBeLessThan(hostStartY('bottom'));
+  // The boot did its part: the field holds focus, and took it as an event.
+  const focus = await frame.evaluate((fieldSelector) => ({
+    activeIsField: document.activeElement?.matches(fieldSelector) ?? false,
+    activity: (window as FieldFocusGlobal).__fieldFocus ?? null,
+  }), BOOT_CLICKED_FIELD);
+  if (!focus.activity) throw new Error('the frame never ran its init script');
+  expect(focus.activeIsField, 'the boot click left focus on the field').toBe(true);
+  expect(focus.activity.focusins, 'the field never took focus').toBeGreaterThan(0);
+  expect(getUnexpectedErrors()).toEqual([]);
+}
+
+/** Play one cycle of a scene hosted half on screen, and fail on any position the host page takes. */
+async function expectHostNeverScrolls(page: Page, sceneName: string, proof: HostScrollProof): Promise<void> {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await setChoreographyRate(page, CHOREOGRAPHY_TEST_RATE);
+  // Init scripts run in the host page too, whose own scroll and focus are not the frame's.
+  await page.addInitScript(() => {
+    if (window.top === window) return;
+    const activity: FrameActivity = { scrolls: 0, canvasFocused: false };
+    (window as HostScrollGlobal).__frameActivity = activity;
+    // A terminal's viewport scrolls as its replay plays, whatever the cycle does.
+    document.addEventListener('scroll', (event) => {
+      if (event.target instanceof Element && !event.target.closest('.xterm')) activity.scrolls += 1;
+    }, true);
+    document.addEventListener('focusin', (event) => {
+      if (event.target instanceof Element && event.target.matches('[data-testid="knowledge-graph-canvas"] canvas')) activity.canvasFocused = true;
+    });
+  });
+  await hostFrame(page, sceneName, { params: { loop: '1' }, halfOnScreen: 'top' });
+  const start = await page.evaluate(() => (window as HostScrollGlobal).__hostStart ?? null);
+  expect(start?.y, 'the host page opened scrolled to the frame').toBe(hostStartY('top'));
+  // Only calls that never scroll the host while it records: a locator action would.
+  const root = page.frameLocator('#demo').locator('html');
+  await expect(root).toHaveAttribute('data-demo-cycles', '1', { timeout: 60_000 });
+  await expect(root).not.toHaveAttribute('data-demo-choreography', 'stopped');
+  const hostMoves = await page.evaluate(() => (window as HostScrollGlobal).__hostMoves ?? null);
+  expect(hostMoves?.slice(0, 5), `${sceneName} scrolled the page that embeds it`).toEqual([]);
+  const activity = await (await demoContentFrame(page)).evaluate(() => (window as HostScrollGlobal).__frameActivity ?? null);
+  if (!activity) throw new Error('the frame never ran its init script');
+  if (proof === 'a scroll in the frame') expect(activity.scrolls, 'the cycle scrolled nothing in the frame').toBeGreaterThan(0);
+  else expect(activity.canvasFocused, 'the cycle never pressed the canvas').toBe(true);
+  expect(getUnexpectedErrors()).toEqual([]);
 }
 
 test('a cut fades the frame out, puts the edit back behind the veil, and fades in at rest', async ({ page }) => {

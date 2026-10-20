@@ -260,9 +260,9 @@ three things staying in step, and each is enforced rather than remembered.
   headless result and a real advisor turn through the recorder's readers. Run via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-launches-no-extensions.test.ts` fails on a launch
   under `demo/`, `tests/captures/`, `tests/demo/` or `scripts/` that lets an extension into a
-  shot: a persistent context, a `channel`, a `--load-extension`, or an `ignoreDefaultArgs` that is
-  `true` or names `--disable-extensions`. It also reads that switch out of the installed
-  `playwright-core`. Runs via `npm run test:unit`.
+  shot: a persistent context, a `channel` other than the bundled `chromium`, a `--load-extension`,
+  or an `ignoreDefaultArgs` that is `true` or names `--disable-extensions`. It also reads that
+  switch out of the installed `playwright-core`. Runs via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-guest-pages.test.ts` reads every `guest_page`
   `DEMO_PROJECTS` names and fails when the file is missing, references anything off-origin, reads
   `prefers-color-scheme`, or declares an animation or transition. Runs via `npm run test:unit`.
@@ -323,8 +323,12 @@ three things staying in step, and each is enforced rather than remembered.
   with a clean console, which is also what fails a choreography selector the renderer no longer
   stamps (the player's rest check compares the lanes' cards, the open layers, the form values and
   selection states, and which text field holds focus, since a field left focused draws a ring the
-  poster does not have), that every scene with a `cut` makes its reset's changes only under the landed veil with
-  no pointer drawn and changes nothing while the frame fades back in (the player's
+  poster does not have), that every scene with a `scroll` step, and the Knowledge Graph's orbit,
+  plays a cycle that never scrolls a taller page hosting the frame half on screen, and that
+  `dictation-field`'s boot click into a field off that page's screen leaves it where it was, both
+  run on the full bundled Chromium because its headless shell stops a scroll at a fixed box, that
+  every scene with a `cut` makes its reset's changes only under the landed veil with no pointer
+  drawn and changes nothing while the frame fades back in (the player's
   `data-demo-cut` phase), that the `browser` scene's Send puts the recorded payload in its agent's
   terminal and turns it to working, and that the cut repaints the frame it rested on and sets it
   needs-you only under the veil, with a still of it painting that frame and fetching nothing, that

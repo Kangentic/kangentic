@@ -1359,7 +1359,9 @@ export function KnowledgeGraphCanvas({
             hit: pickIncludingTitle(event.clientX, event.clientY, pickAt(event.clientX, event.clientY)),
           };
           setIsDragging(true);
-          canvasRef.current?.focus();
+          // The press is already on the canvas, so there is nothing to bring into view. A focus
+          // that scrolls aligns every scroller above it, a page embedding the app included.
+          canvasRef.current?.focus({ preventScroll: true });
         }}
         onPointerMove={(event) => {
           const press = pressRef.current;

@@ -95,7 +95,8 @@ export type ChoreographyGesture =
   /** An option of a native select picked: the pointer clicks the field and its value changes, with
    *  the input and change events a pick sends. A page cannot draw the browser's own option list. */
   | { choose: { in: string; value: string } }
-  /** Scroll the element into the middle of its scroll container, as a wheel over it would. */
+  /** Scroll the box a wheel over the element would scroll, centring the element vertically, and
+   *  never the page embedding the frame. */
   | { scroll: string }
   /** A hotkey in the registry's spelling pressed and held, as a boot step's `press` holds it, and its release. */
   | { hotkeyDown: string }
