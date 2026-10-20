@@ -38,6 +38,9 @@ const FORBIDDEN_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   // ("OCC-OKIES", "troyweb.com"), since neither "-" nor "." is a word character.
   { label: 'the client organization', pattern: /\btroyweb\b/i },
   { label: 'a client project name', pattern: /\b(?:RBDMS|OKIES|GWPC|AKWISE|NYSDOT)\b/i },
+  // Claude's footer links "/rc" to the recording account's own Remote Control session; the
+  // sanitizer drops the link's target (demo-sanitizer.js, stripAccountLinks).
+  { label: 'the recording account\'s claude.ai session link', pattern: /claude\.ai\/code\/session_/ },
 ];
 
 /**

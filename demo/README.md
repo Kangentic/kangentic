@@ -1189,7 +1189,10 @@ their backslash paths, and the home directory all agree. Sanitization at record 
 only the identity: the user becomes `dev`, the home `C:\Users\dev`, the scratch clone the
 project's real path under it (`C:\Users\dev\work\contoso-web`), the host name goes, each of them
 also when a row wrap or an escape sequence interrupts the literal, and the write is refused if a
-marker survives; `tests/unit/demo-fixtures-sanitized.test.ts` is the CI backstop. Re-run the
+marker survives; `tests/unit/demo-fixtures-sanitized.test.ts` is the CI backstop. The recording
+account is identity too. Claude's footer links "/rc" to that account's own Remote Control session
+wherever the rollout starts the bridge, and the sanitizer drops the link's target, so "/rc" draws
+in the same cells and links nowhere. Re-run the
 matrix when an agent's TUI changes:
 
 ```

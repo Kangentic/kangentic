@@ -20,6 +20,19 @@ function forwardSlash(value) {
 }
 
 /**
+ * Claude starts its Remote Control bridge on its own where the account's rollout turns it on, and
+ * its footer then links "/rc" to the recording account's own claude.ai session (an OSC 8
+ * hyperlink). The link's target goes, and the empty OSC 8 left in its place ends a link without
+ * starting one, so the "/rc" text still draws in the same cells and only stops being a link.
+ */
+const ACCOUNT_SESSION_LINK = /\x1b\]8;[^;\x07\x1b]*;https?:\/\/claude\.ai\/code\/session_[^\x07\x1b]*(\x07|\x1b\\)/g;
+const ACCOUNT_SESSION_URL = /claude\.ai\/code\/session_/;
+
+function stripAccountLinks(text) {
+  return text.replace(ACCOUNT_SESSION_LINK, (_match, terminator) => `\x1b]8;;${terminator}`);
+}
+
+/**
  * Build the rewriter for one capture.
  *
  * `options.project` is the sample install's project name (contoso-web, spring-petclinic,
@@ -104,8 +117,8 @@ function buildSanitizer(options) {
   ];
   return {
     apply(text) {
-      let output = text;
-      let collapsed = collapse(text);
+      let output = stripAccountLinks(text);
+      let collapsed = collapse(output);
       for (const [pattern, to, needle] of patterns) {
         if (!collapsed.includes(needle)) continue;
         const before = output;
@@ -115,6 +128,10 @@ function buildSanitizer(options) {
       return output;
     },
     assertClean(text, label) {
+      // Checked before the escape sequences go, since the link lives inside one.
+      if (ACCOUNT_SESSION_URL.test(text)) {
+        throw new Error(`[capture] ${label} still links the recording account's claude.ai session after sanitization; refusing to write`);
+      }
       const plain = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
       for (const [what, pattern] of leaks) {
         const hit = pattern.exec(plain);
@@ -145,4 +162,4 @@ function sanitizeDeep(value, sanitizer) {
   return value;
 }
 
-module.exports = { buildSanitizer, forwardSlash, sanitizeDeep };
+module.exports = { buildSanitizer, forwardSlash, sanitizeDeep, stripAccountLinks };
