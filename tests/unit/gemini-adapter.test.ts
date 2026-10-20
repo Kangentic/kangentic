@@ -7,7 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
+import { KANGENTIC_MCP_TOKEN_ENV, KANGENTIC_MCP_URL_ENV } from '../../src/main/agent/adapters/gemini/command-builder';
 import { GeminiSessionHistoryParser } from '../../src/main/agent/adapters/gemini/session-history-parser';
+import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import {
   agentDisplayName,
   agentShortName,
@@ -382,6 +384,73 @@ describe('Gemini Adapter - concurrent-session hook holds', () => {
   it('tolerates removeHooks with no prior retain (crash/restart path)', () => {
     seedSettingsWithKangenticHook();
     expect(() => adapter.removeHooks(sandbox, 'orphan-session')).not.toThrow();
+  });
+});
+
+// -- buildEnv ------------------------------------------------------------------
+
+describe('GeminiAdapter - buildEnv', () => {
+  // The folder-shared .gemini/settings.json names the MCP URL and token as env
+  // references (task #859), so the adapter's environment is the only place the
+  // per-session values live. Dropping this forward leaves Gemini with unresolved
+  // ${KANGENTIC_MCP_URL} references and no kangentic_* tools.
+  const MCP_URL = 'http://127.0.0.1:5555/mcp/project-123/sess-xyz';
+  const MCP_TOKEN = 'secret-token';
+
+  let adapter: GeminiAdapter;
+
+  beforeEach(() => {
+    adapter = new GeminiAdapter();
+  });
+
+  const spawnOptions = (overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions => ({
+    agentPath: 'gemini',
+    taskId: 'task-1',
+    cwd: '/mock/project',
+    permissionMode: 'default',
+    ...overrides,
+  });
+
+  it('returns the MCP URL and token under the variables the settings file references', () => {
+    const environment = adapter.buildEnv!(spawnOptions({
+      mcpServerEnabled: true,
+      mcpServerUrl: MCP_URL,
+      mcpServerToken: MCP_TOKEN,
+    }));
+    expect(environment).toEqual({
+      [KANGENTIC_MCP_URL_ENV]: MCP_URL,
+      [KANGENTIC_MCP_TOKEN_ENV]: MCP_TOKEN,
+    });
+  });
+
+  it('forwards the URL and token alongside a model and an effort override', () => {
+    // The adapter renames agentPath and pulls model and effort out of the
+    // options; the MCP fields must still reach the builder with them.
+    const environment = adapter.buildEnv!(spawnOptions({
+      model: 'gemini-2.5-pro',
+      effort: 'high',
+      mcpServerUrl: MCP_URL,
+      mcpServerToken: MCP_TOKEN,
+    }));
+    expect(environment).toEqual({
+      [KANGENTIC_MCP_URL_ENV]: MCP_URL,
+      [KANGENTIC_MCP_TOKEN_ENV]: MCP_TOKEN,
+    });
+  });
+
+  it('returns null when the MCP server is switched off', () => {
+    expect(adapter.buildEnv!(spawnOptions({
+      mcpServerEnabled: false,
+      mcpServerUrl: MCP_URL,
+      mcpServerToken: MCP_TOKEN,
+    }))).toBeNull();
+  });
+
+  it.each([
+    ['no URL', { mcpServerUrl: undefined, mcpServerToken: MCP_TOKEN }],
+    ['no token', { mcpServerUrl: MCP_URL, mcpServerToken: undefined }],
+  ])('returns null with %s', (_label, overrides) => {
+    expect(adapter.buildEnv!(spawnOptions({ mcpServerEnabled: true, ...overrides }))).toBeNull();
   });
 });
 

@@ -4,7 +4,39 @@ import {
   buildBriefXml,
   buildTaskXml,
   buildHandoffXml,
+  buildWorkflowXml,
 } from '../../src/main/agent/shared/prompt-xml';
+import { MARK_BACKGROUND_SERVICE_TOOL } from '../../src/shared/background-shell-hold';
+
+describe('buildWorkflowXml background command line', () => {
+  const WORKFLOW = { title: 'Usage budgets', route: ['Executing', 'Done'], waitsFor: [], blocks: [] };
+
+  // The mark tool is offered only to an agent that reports its background
+  // commands (AgentAdapter.backgroundCommands), and the facts this block is built
+  // from do not know the agent. So the sentence must say "if you have the tool"
+  // instead of telling every agent to call it.
+  it('offers the mark tool conditionally, on "you have the tool"', () => {
+    const xml = buildWorkflowXml(WORKFLOW);
+    expect(xml).toContain(`and you have the ${MARK_BACKGROUND_SERVICE_TOOL} tool`);
+  });
+
+  it('puts the conditional line inside how_this_runs, after the background command condition', () => {
+    const xml = buildWorkflowXml(WORKFLOW);
+    const blockStart = xml.indexOf('<how_this_runs>');
+    const blockEnd = xml.indexOf('</how_this_runs>');
+    const conditionIndex = xml.indexOf('If you leave a background command running after your turn');
+    const toolIndex = xml.indexOf(`you have the ${MARK_BACKGROUND_SERVICE_TOOL} tool`);
+    expect(blockStart).toBeGreaterThan(-1);
+    expect(conditionIndex).toBeGreaterThan(blockStart);
+    expect(toolIndex).toBeGreaterThan(conditionIndex);
+    expect(toolIndex).toBeLessThan(blockEnd);
+  });
+
+  it('mentions the mark tool only inside that conditional sentence', () => {
+    const xml = buildWorkflowXml(WORKFLOW);
+    expect(xml.split(MARK_BACKGROUND_SERVICE_TOOL)).toHaveLength(2);
+  });
+});
 
 describe('buildBriefXml', () => {
   it('lays out the source task\'s number, title and multi-line description', () => {
