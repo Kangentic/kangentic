@@ -18,8 +18,9 @@
  * reference.
  */
 
-import type { ActivityState, SessionEvent, SessionUsage } from '../../../shared/types';
+import type { ActivityState, ExitSequenceStep, SessionEvent, SessionUsage } from '../../../shared/types';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
+import type { AgentExitWaitResult } from './exited-root-wait';
 
 /** Where and how to spawn one PTY, plus the session state the host keeps. */
 export interface PtyHostSpawnParams {
@@ -48,10 +49,13 @@ export interface PtyHostSpawnParams {
   /** The agent's own session id is already known (caller-owned id), so the
    *  host need not scan the output for one. */
   agentSessionIdKnown: boolean;
-  /** The adapter's exit sequence (Claude: Ctrl+C then `/exit`), the one main's
-   *  kill and suspend write. The host writes it to an agent its shell left
-   *  running (`dead-root-orphans.ts`), so that agent exits on its own. */
-  exitSequence?: string[];
+  /** The adapter's exit sequence (keys and `{ delayMs }` pauses), the one
+   *  main's kill and suspend write. The host writes it to an agent its shell
+   *  left running (`dead-root-orphans.ts`), so that agent exits on its own. */
+  exitSequence?: ExitSequenceStep[];
+  /** The task the PTY runs for (its `KANGENTIC_TASK_ID` tag), so a task reap
+   *  can wait for what its exited shell left running (`exited-root-wait.ts`). */
+  taskId?: string | null;
 }
 
 /** A thrown error, flattened for the wire. */
@@ -264,6 +268,10 @@ export interface PtyHostRequestMap {
    *  false (ended), or null (cannot tell). Reads identities only, no scan,
    *  and runs outside the reap and Stop queues. */
   checkReportedProcesses: { params: { identities: Array<{ pid: number; startKey: string }> }; result: Array<boolean | null> };
+  /** Wait, bounded, for what these tasks' exited shells left running to exit
+   *  by itself, before a reap (`exited-root-wait.ts`). Runs outside the reap
+   *  and Stop queues, so waits for several tasks overlap. */
+  awaitAgentExit: { params: { taskIds: string[] }; result: AgentExitWaitResult };
   /** Spawn a raw PTY (no session). `write`, `resizePty` and `kill` reach it
    *  by its ptyId like any other; its output arrives as `rawData`. */
   spawnRaw: { params: PtyHostRawSpawnParams; result: PtyHostRawSpawnResult };

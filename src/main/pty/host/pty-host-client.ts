@@ -32,6 +32,7 @@ import {
   type SeedFrameResult,
 } from './protocol';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
+import type { AgentExitWaitResult } from './exited-root-wait';
 
 /** A listener registration that can be undone. */
 export interface PtyDisposable {
@@ -550,6 +551,11 @@ export class PtyHostClient {
   /** Whether each reported process still runs (see `process-tag/tagged-reap.ts`). */
   checkReportedProcesses(identities: Array<{ pid: number; startKey: string }>, timeoutMs: number): Promise<Array<boolean | null>> {
     return this.transport.request('checkReportedProcesses', { identities }, { timeoutMs });
+  }
+
+  /** Wait for what these tasks' exited shells left running to exit (see `exited-root-wait.ts`). */
+  awaitAgentExit(taskIds: string[], timeoutMs: number): Promise<AgentExitWaitResult> {
+    return this.transport.request('awaitAgentExit', { taskIds }, { timeoutMs });
   }
 
   getDiagnostics(): Promise<PtyHostDiagnostics> {

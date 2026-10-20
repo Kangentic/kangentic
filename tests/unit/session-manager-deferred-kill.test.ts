@@ -47,6 +47,7 @@ import {
   YOUNG_AFTER_ALT_SCREEN_MS,
   YOUNG_SINCE_SPAWN_MS,
 } from '../../src/main/pty/lifecycle/deferred-kill';
+import { AGENT_EXIT_REQUEST_TIMEOUT_MS, type AgentExitWaitResult } from '../../src/main/pty/host/exited-root-wait';
 
 const EXIT_SEQUENCE = ['\x03', '/exit\r'];
 
@@ -149,6 +150,40 @@ describe('kill() on a young session', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(mockPty.kill).toHaveBeenCalledTimes(1);
 
+    manager.killAll();
+  });
+
+  it('closes a young session at once, typing nothing, when its agent exits gracefully on a console close', async () => {
+    const manager = new SessionManager();
+    const { session, mockPty } = await spawnSession(manager, 'task-close-graceful');
+    const row = registryRow(manager, session.id);
+    if (!row) throw new Error('expected the spawned row');
+    row.consoleCloseIsGraceful = true;
+    const parkedKill = spyOnParkedHandleKill(manager, session.id);
+    const writesBefore = mockPty.write.mock.calls.length;
+
+    manager.kill(session.id);
+
+    expect(writesAfter(mockPty, writesBefore)).toEqual([]);
+    expect(parkedKill).toHaveBeenCalledTimes(1);
+    expect(registryRow(manager, session.id)?.pty).toBeNull();
+    // Nothing parked: a quit right after reports no deferred kill.
+    expect(manager.killAll().deferredCount).toBe(0);
+  });
+
+  it('reads the agent\'s console-close answer at spawn, for this platform', async () => {
+    const manager = new SessionManager();
+    const consoleCloseIsGraceful = vi.fn((platform: NodeJS.Platform) => platform === process.platform);
+    vi.mocked(pty.spawn).mockReturnValue(createMockPty().mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-close-flag',
+      command: '',
+      cwd: tmpDir,
+      exitSequence: EXIT_SEQUENCE,
+      agentParser: { detectFirstOutput: () => false, removeHooks: () => {}, runtime: {}, consoleCloseIsGraceful } as unknown as AgentParser,
+    });
+    expect(consoleCloseIsGraceful).toHaveBeenCalledWith(process.platform);
+    expect(registryRow(manager, session.id)?.consoleCloseIsGraceful).toBe(true);
     manager.killAll();
   });
 
@@ -263,6 +298,153 @@ describe('kill() on a young session', () => {
 
     await vi.advanceTimersByTimeAsync(KILL_GRACE_MS * 2);
     expect(handleKill).not.toHaveBeenCalled();
+  });
+});
+
+describe('suspend() and awaitExit() on a session whose console close is the agent\'s graceful exit', () => {
+  // A close ends the shell at once and the agent a moment later, still inside
+  // its SessionEnd hooks and transcript writes. The PTY's exit is the shell's,
+  // so a suspend or awaitExit that stopped there would let a resume, a handoff's
+  // transcript read or a folder move overlap the agent. The host's ledger of
+  // task roots knows when the agent is gone (`awaitAgentExit`), so both ask it.
+  //
+  // The host's answer is held shut by hand, so a caller that did not wait for it
+  // is visible: it would have resolved long before the gate opens.
+  //
+  // Red-green, per assertion:
+  //  - dropping the `consoleCloseIsGraceful` field from gracefulPtyShutdown's
+  //    input in suspend() makes the suspend type the keys and wait out its 1500 ms
+  //    grace (the sync kill and no-writes assertions fail);
+  //  - dropping the `awaitAgentExitOf` line after it resolves the suspend before
+  //    the gate opens (the pending assertion fails);
+  //  - reading the row inside the `.then` in awaitExit, instead of up front,
+  //    loses the task id once the caller's remove() has deleted the row (the
+  //    awaitAgentExit call never happens);
+  //  - dropping the `consoleCloseIsGraceful !== true` early return in awaitExit
+  //    makes the no-flag cases ask the host.
+
+  function markCloseGraceful(manager: SessionManager, sessionId: string): void {
+    const row = registryRow(manager, sessionId);
+    if (!row) throw new Error('expected the spawned row');
+    row.consoleCloseIsGraceful = true;
+  }
+
+  /** A host `awaitAgentExit` the test answers by hand. */
+  function gatedAgentExit(manager: SessionManager) {
+    const pendingAnswers: Array<(result: AgentExitWaitResult) => void> = [];
+    const awaitAgentExit = vi.fn((_taskIds: string[], _timeoutMs: number) => new Promise<AgentExitWaitResult>((resolve) => { pendingAnswers.push(resolve); }));
+    Object.assign((manager as unknown as { host: { awaitAgentExit: unknown } }).host, { awaitAgentExit });
+    return {
+      awaitAgentExit,
+      /** The agent is gone: answers every ask made so far. */
+      answer: () => {
+        for (const resolve of pendingAnswers) resolve({ found: [], stillRunning: [], waitedMs: 0 });
+      },
+    };
+  }
+
+  describe('suspend()', () => {
+    it('closes at once, types nothing, and resolves only once the host reports the agent has exited', async () => {
+      const manager = new SessionManager();
+      const { session, mockPty } = await spawnSession(manager, 'task-suspend-graceful');
+      markCloseGraceful(manager, session.id);
+      const gate = gatedAgentExit(manager);
+      const handleKill = spyOnParkedHandleKill(manager, session.id);
+      const writesBefore = mockPty.write.mock.calls.length;
+
+      let settled = false;
+      const suspending = manager.suspend(session.id).then(() => { settled = true; });
+
+      // The close lands in the same tick: no keys, no wait for a natural exit.
+      expect(handleKill).toHaveBeenCalledTimes(1);
+      expect(writesAfter(mockPty, writesBefore)).toEqual([]);
+
+      // The mock raises the PTY's exit on a 0 ms timer; the shell is gone, so the
+      // suspend now asks the host about the agent.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(gate.awaitAgentExit).toHaveBeenCalledTimes(1);
+      expect(gate.awaitAgentExit).toHaveBeenCalledWith([session.taskId], AGENT_EXIT_REQUEST_TIMEOUT_MS);
+
+      // Well past every timer the suspend owns of its own (the 1500 ms kill
+      // propagation, the scrollback scan's bound): only the host's answer holds it.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(settled).toBe(false);
+
+      gate.answer();
+      await vi.advanceTimersByTimeAsync(KILL_GRACE_MS * 3);
+      await suspending;
+      expect(settled).toBe(true);
+      expect(manager.getSession(session.id)?.status).toBe('suspended');
+    });
+
+    it('types the exit keys and never asks the host for the agent when the close is not graceful', async () => {
+      const manager = new SessionManager();
+      const { session, mockPty, triggerExit } = await spawnSession(manager, 'task-suspend-typed');
+      const gate = gatedAgentExit(manager);
+      const writesBefore = mockPty.write.mock.calls.length;
+
+      const suspending = manager.suspend(session.id);
+
+      // Typed into, and given its grace to exit by itself before any kill.
+      expect(writesAfter(mockPty, writesBefore)).toEqual(EXIT_SEQUENCE);
+      expect(mockPty.kill).not.toHaveBeenCalled();
+
+      triggerExit(0);
+      await vi.advanceTimersByTimeAsync(KILL_GRACE_MS * 3);
+      await suspending;
+
+      expect(gate.awaitAgentExit).not.toHaveBeenCalled();
+      expect(manager.getSession(session.id)?.status).toBe('suspended');
+    });
+  });
+
+  describe('awaitExit()', () => {
+    it('waits for the PTY, then for the agent under the task id it read when called, though the caller removed the row', async () => {
+      const manager = new SessionManager();
+      const { session } = await spawnSession(manager, 'task-await-graceful');
+      markCloseGraceful(manager, session.id);
+      const gate = gatedAgentExit(manager);
+
+      // The documented caller order: kill, capture the wait, THEN remove.
+      manager.kill(session.id);
+      let settled = false;
+      const exited = manager.awaitExit(session.id).then(() => { settled = true; });
+      manager.remove(session.id);
+      expect(manager.getSession(session.id)).toBeUndefined();
+
+      // The shell has not exited yet, so the agent is not asked about.
+      expect(gate.awaitAgentExit).not.toHaveBeenCalled();
+
+      // The mock raises the PTY's exit on a 0 ms timer, and that exit, not the
+      // 10 s safety timeout, is what moves awaitExit on to the agent.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(gate.awaitAgentExit).toHaveBeenCalledTimes(1);
+      expect(gate.awaitAgentExit).toHaveBeenCalledWith(['task-await-graceful'], AGENT_EXIT_REQUEST_TIMEOUT_MS);
+
+      // Past awaitExit's own 10 s safety timeout: only the host's answer holds it.
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(settled).toBe(false);
+
+      gate.answer();
+      await exited;
+      expect(settled).toBe(true);
+    });
+
+    it('resolves on the PTY\'s exit alone and never asks the host for the agent when the close is not graceful', async () => {
+      const manager = new SessionManager();
+      const { session } = await spawnSession(manager, 'task-await-typed');
+      const gate = gatedAgentExit(manager);
+
+      // immediate: a young session's kill would otherwise park its PTY for the grace.
+      manager.kill(session.id, { immediate: true });
+      const exited = manager.awaitExit(session.id);
+      manager.remove(session.id);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await exited;
+
+      expect(gate.awaitAgentExit).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -142,6 +142,64 @@ describe('buildSpawnEnv', () => {
     expect(env.OTHER).toBe('kept');
   });
 
+  it('keeps the renderer variables an adapter set for this spawn, and strips them inherited from main', () => {
+    const explicit = buildSpawnEnv({ CLAUDE_CODE_NO_FLICKER: '1', CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1', CLAUDE_CODE_SESSION_ID: 'parent' });
+    expect(explicit.CLAUDE_CODE_NO_FLICKER).toBe('1');
+    expect(explicit.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('1');
+    expect(explicit.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+
+    const previous = process.env.CLAUDE_CODE_NO_FLICKER;
+    process.env.CLAUDE_CODE_NO_FLICKER = '1';
+    try {
+      expect(buildSpawnEnv({ OTHER: 'kept' }).CLAUDE_CODE_NO_FLICKER).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.CLAUDE_CODE_NO_FLICKER;
+      else process.env.CLAUDE_CODE_NO_FLICKER = previous;
+    }
+  });
+
+  it('keeps a CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN an adapter set for this spawn, and strips it inherited from main', () => {
+    const previous = process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN;
+    try {
+      // Passed for this spawn: kept, with a parent session's marker beside it still stripped.
+      process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1';
+      const passed = buildSpawnEnv({ CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1', CLAUDE_CODE_SESSION_ID: 'parent' });
+      expect(passed.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('1');
+      expect(passed.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+
+      // Only inherited from main's own environment: stripped, so a classic-renderer export in the
+      // shell Kangentic was started from never reaches a spawn that did not ask for it.
+      expect(buildSpawnEnv({ OTHER: 'kept' }).CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined();
+      expect(buildSpawnEnv(undefined).CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN;
+      else process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = previous;
+    }
+  });
+
+  it('keeps a passed renderer variable per key: passing one does not keep the other when it is only inherited', () => {
+    const previousDisable = process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN;
+    const previousNoFlicker = process.env.CLAUDE_CODE_NO_FLICKER;
+    try {
+      process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1';
+      delete process.env.CLAUDE_CODE_NO_FLICKER;
+      const onlyNoFlickerPassed = buildSpawnEnv({ CLAUDE_CODE_NO_FLICKER: '1' });
+      expect(onlyNoFlickerPassed.CLAUDE_CODE_NO_FLICKER).toBe('1');
+      expect(onlyNoFlickerPassed.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined();
+
+      delete process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN;
+      process.env.CLAUDE_CODE_NO_FLICKER = '1';
+      const onlyDisablePassed = buildSpawnEnv({ CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1' });
+      expect(onlyDisablePassed.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('1');
+      expect(onlyDisablePassed.CLAUDE_CODE_NO_FLICKER).toBeUndefined();
+    } finally {
+      if (previousDisable === undefined) delete process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN;
+      else process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = previousDisable;
+      if (previousNoFlicker === undefined) delete process.env.CLAUDE_CODE_NO_FLICKER;
+      else process.env.CLAUDE_CODE_NO_FLICKER = previousNoFlicker;
+    }
+  });
+
   it('preserves ANTHROPIC_* auth keys (BYOK / API auth must pass through)', () => {
     const env = buildSpawnEnv({ ANTHROPIC_API_KEY: 'sk-test', CLAUDE_CODE_SESSION_ID: 'parent' });
     expect(env.ANTHROPIC_API_KEY).toBe('sk-test');

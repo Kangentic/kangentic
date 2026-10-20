@@ -2,10 +2,10 @@
  * Reaping what a Command Terminal's agent left running once the terminal ends
  * (src/main/ipc/helpers/command-terminal-leftovers.ts).
  *
- * The reap waits out the window in which an agent may still be exiting by
- * itself (a Stop's console close, or the pty host's ask-then-terminate
- * cleanup), so it never force-kills Claude mid-exit. It reaps under the
- * terminal's own tag and folder, names the terminal in the report, never
+ * The reap never force-kills Claude mid-exit: the reap's own agent-exit wait
+ * covers the pty host's ask-then-terminate cleanup, and the delay is a
+ * backstop past Claude's longest measured exit after a close. It reaps under
+ * the terminal's own tag and folder, names the terminal in the report, never
  * touches a task session's removal, and does nothing once the app is quitting.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -17,6 +17,10 @@ import {
   type CommandTerminalLeftoverTask,
 } from '../../src/main/ipc/helpers/command-terminal-leftovers';
 import { DEAD_ROOT_ORPHAN_EXIT_GRACE_MS } from '../../src/main/pty/host/dead-root-orphans';
+import { AGENT_EXIT_REQUEST_TIMEOUT_MS, AGENT_EXIT_WAIT_MS } from '../../src/main/pty/host/exited-root-wait';
+
+/** Claude 2.1.303's longest exit after its console was closed, with a real session's hooks and MCP server. */
+const LONGEST_MEASURED_CLOSE_EXIT_MS = 4_000;
 
 function removedSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -56,15 +60,28 @@ describe('CommandTerminalLeftoverReaper', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('waits longer than the pty host gives an exiting agent', () => {
-    expect(COMMAND_TERMINAL_REAP_DELAY_MS).toBeGreaterThan(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS);
+  it('leaves the orphan grace to the reap\'s own wait, and backstops past Claude\'s longest measured exit', () => {
+    // The reap's agent-exit request outlives the orphan cleanup's grace and the killed-shell bound,
+    // so a terminal whose root the host holds is never reaped mid-exit, whatever the delay.
+    expect(AGENT_EXIT_REQUEST_TIMEOUT_MS).toBeGreaterThan(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS);
+    expect(AGENT_EXIT_REQUEST_TIMEOUT_MS).toBeGreaterThan(AGENT_EXIT_WAIT_MS);
+    // A root that wait cannot hold (a WSL shell, the in-process core) gets the delay alone.
+    expect(COMMAND_TERMINAL_REAP_DELAY_MS).toBeGreaterThan(LONGEST_MEASURED_CLOSE_EXIT_MS);
+  });
+
+  it('keeps the backstop delay short, because the reap\'s own agent-exit wait already covers the orphan grace', () => {
+    // The delay is 5 s, not the 12 s it was before the reap waited for the agent. A root the host
+    // holds is waited on by the reap itself, so the delay only backstops a root with no ledger
+    // (a WSL shell, the in-process core), and no longer needs to outlast the orphan grace.
+    expect(COMMAND_TERMINAL_REAP_DELAY_MS).toBeLessThan(DEAD_ROOT_ORPHAN_EXIT_GRACE_MS);
+    expect(COMMAND_TERMINAL_REAP_DELAY_MS).toBeLessThanOrEqual(AGENT_EXIT_WAIT_MS);
   });
 
   it('reaps the terminal\'s own tag in its own folder, named for the report, only after an exiting agent has had its time', async () => {
     const rig = makeRig();
     rig.sessionManager.emit('session-removed', 'session-1', removedSession());
 
-    // Claude's clean exit after a Stop takes about 600 ms: nothing may be reaped then.
+    // Claude's clean exit after a Stop takes 0.4 to 4 s: nothing may be reaped then.
     await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS - 1);
     expect(rig.reaps).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);

@@ -14,8 +14,8 @@ import type { FirstOutputTracker } from './first-output-tracker';
 import type { PtyHandle, PtyHostClient } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
-import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd } from '../spawn/pty-spawn';
-import { addTaskProcessTag, parseWslShellSpec } from '../process-tag/task-process-tag';
+import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
+import { addTaskProcessTag, listInWslEnv, parseWslShellSpec } from '../process-tag/task-process-tag';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
@@ -303,10 +303,18 @@ export async function performSpawn(
   // are reaped when the terminal ends (`command-terminal-leftovers.ts`). That
   // replaces any tag inherited from main's environment (Kangentic started from
   // a task's terminal), whose outer reap still stops this app's own tree.
+  const wslShell = parseWslShellSpec(shell) !== null;
   spawnEnv = addTaskProcessTag(spawnEnv, input.taskId, {
-    wslShell: parseWslShellSpec(shell) !== null,
+    wslShell,
     inheritedWslEnv: process.env.WSLENV,
   });
+  // A distro sees a Windows variable only when WSLENV names it, so the
+  // renderer variables this spawn sets are listed too, or the agent in a WSL
+  // shell never reads them.
+  if (wslShell) {
+    const rendererKeys = [...SPAWN_SETTABLE_CLAUDE_CODE_KEYS].filter((key) => spawnEnv[key] !== undefined);
+    spawnEnv = listInWslEnv(spawnEnv, rendererKeys, process.env.WSLENV);
+  }
   const cleanEnv = buildSpawnEnv(spawnEnv);
 
   // Validate cwd + resolve any Windows cwd fixup command. See pty-spawn.ts.
@@ -375,6 +383,7 @@ export async function performSpawn(
     carryoverFromSessionId: carryoverSource?.id ?? null,
     agentSessionIdKnown: !!input.agentSessionId,
     exitSequence: input.exitSequence ?? ['\x03'],
+    taskId: input.taskId,
   });
 
   // Torn down during the host round trip. Ahead of every outcome branch: a
@@ -452,6 +461,10 @@ export async function performSpawn(
     commandTerminalBranch: input.commandTerminalBranch ?? null,
     isolatedSwimlaneId: input.isolatedSwimlaneId,
     exitSequence: input.exitSequence ?? ['\x03'],
+    // Asked for this platform's own console only: a WSL shell's close (ConPTY
+    // closing wsl.exe, then a hangup in the distro) is not measured, so an
+    // agent there is typed into as before.
+    consoleCloseIsGraceful: !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
     permissionMode: input.permissionMode ?? null,

@@ -150,7 +150,7 @@ Session teardown varies by target column:
 
 On the TERMINAL transitions above (move to To Do or Backlog, move to Done, unarchive into To Do, task delete, and project delete), the teardown also kills every process the task's agents left running. An agent that backgrounds a dev server leaves it running when the session ends; on Windows it then holds the worktree directory as its current directory and blocks the removal.
 
-Every task session's PTY is spawned with `KANGENTIC_TASK_ID=<taskId>` (`src/main/pty/process-tag/`), and every process the agent starts inherits it however it detached. The teardown calls `reapTaskLeftovers()` (`src/main/ipc/helpers/task-cleanup.ts`) AFTER every session of the task has exited and before any worktree delete; the pty host then kills every process carrying the task's tag AND working inside the task's project or worktree, except what is shared (something under it is not the task's, or other Kangentic work holds a TCP connection to a port it listens on), a launcher whose every child is kept (unless it listens itself), a visible app (read only for the task's tagged processes and what runs under them, never an ancestor such as a terminal), a tmux server, Kangentic's own process tree, and any PTY it still holds. The order matters because the reap force-kills, and a young agent must get its exit grace (`.claude/rules/pty-teardown-grace.md`). A Command Terminal carries its own made-up tag and is reaped the same way 12 s after it ends (see [command-terminal.md](command-terminal.md#leftover-processes)).
+Every task session's PTY is spawned with `KANGENTIC_TASK_ID=<taskId>` (`src/main/pty/process-tag/`), and every process the agent starts inherits it however it detached. The teardown calls `reapTaskLeftovers()` (`src/main/ipc/helpers/task-cleanup.ts`) AFTER every session of the task has exited and before any worktree delete; the pty host then kills every process carrying the task's tag AND working inside the task's project or worktree, except what is shared (something under it is not the task's, or other Kangentic work holds a TCP connection to a port it listens on), a launcher whose every child is kept (unless it listens itself), a visible app (read only for the task's tagged processes and what runs under them, never an ancestor such as a terminal), a tmux server, Kangentic's own process tree, and any PTY it still holds. The order matters because the reap force-kills, and a young agent must get its exit grace (`.claude/rules/pty-teardown-grace.md`). A Command Terminal carries its own made-up tag and is reaped the same way 5 s after it ends (see [command-terminal.md](command-terminal.md#leftover-processes)).
 
 The tag is the same across every session the task ran, so a dev server started by an agent that a Code Review entry suspended long before is still reaped at Done, and it lives in the processes themselves, so a task parked across an app restart is reaped at its later terminal transition too. A startup sweep, once per project per launch, reaps archived and To Do tasks whose transition's reap was cut short by a crash. To keep one process past Done, start it with the tag cleared (`KANGENTIC_TASK_ID= npm run dev`). See [worktree-strategy.md](worktree-strategy.md) for what the reap kills and spares (measured on Linux, macOS and Windows), the per-platform readers, what the tag cannot see, and the removal-time backstop.
 
@@ -165,7 +165,7 @@ The tag is the same across every session the task ran, so a dev server started b
 
 ### What is destroyed on To Do cleanup
 
-- PTY process (force-killed, after the exit-sequence grace when the session is young; see below)
+- PTY process (closed or force-killed; a young session of an agent that is typed into first gets its exit sequence and the grace, see below)
 - What the task's agents left running in its folders, once that PTY has exited (`reapTaskLeftovers`; see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree))
 - Session files on disk (deleted)
 - All session DB records for the task (deleted)
@@ -211,18 +211,33 @@ and `tests/ui/todo-stale-exited-row-opens-edit.spec.ts`.
 
 `kill()` is synchronous and never resumable. It marks the session `intentionalExit`, nulls
 `session.pty` at once (so `write()` / `resize()` no-op and a respawn cannot find the old PTY), and
-then either force-kills immediately or, for a YOUNG session, writes the adapter's exit sequence and
-parks the PTY on `DeferredKillRegistry` (`src/main/pty/lifecycle/deferred-kill.ts`), whose timer
-force-kills it `KILL_GRACE_MS` (1500 ms) later.
+then either force-kills immediately or, for a YOUNG session of an agent that is typed into, writes
+the adapter's exit sequence and parks the PTY on `DeferredKillRegistry`
+(`src/main/pty/lifecycle/deferred-kill.ts`), whose timer force-kills it `KILL_GRACE_MS` (1500 ms)
+later. A session whose console close is graceful is closed at once (see below).
 
-Young means the agent may still be inside Claude Code's fullscreen boot-canary window: Claude writes
-`fullscreenBootPending[pid]` to `~/.claude.json` at REPL mount and withdraws it 10 s after the first
-frame or on a graceful exit, and a dead pid found at the next launch is a strike (one: classic
-renderer for that launch; two: sticky until `/tui fullscreen`). A bare `pty.kill()` gives Claude
-about 100 ms and the locked withdrawal needs 82 to 97 ms idle, so the grace is what lets it land.
+Young means the agent may still be inside its own exit work. For Claude that is its SessionEnd hook
+and its transcript write, which a cut-short exit would lose. Claude's fullscreen boot canary
+(`fullscreenBootPending[pid]` in `~/.claude.json`, written at REPL mount and withdrawn 10 s after the
+first frame or on a graceful exit; a dead pid found at the next launch is a strike: one is a classic
+renderer for that launch, two are sticky until `/tui fullscreen`) no longer applies to a Kangentic
+session: Kangentic turns fullscreen on with `CLAUDE_CODE_NO_FLICKER=1`, which writes no record.
+Measured on Claude 2.1.268, before the graceful close existed, a bare `pty.kill()` gave Claude about
+100 ms, and the locked withdrawal of its boot record needed 82 to 97 ms of that.
 The predicate (`isYoungSession`): alt-screen entered under `YOUNG_AFTER_ALT_SCREEN_MS` (12 s) ago,
 or no alt screen yet and spawned under `YOUNG_SINCE_SPAWN_MS` (60 s) ago. The first alt-screen entry
 is stamped on the row as `altScreenEnteredAt` by the buffer manager's `onAltScreenEnter`.
+
+An agent whose console close is its own graceful exit skips all of this. Its adapter says so per
+platform (`consoleCloseIsGraceful`, read onto the row as `consoleCloseIsGraceful` at spawn), and
+Claude does on Windows and Linux: measured on Claude Code 2.1.302 on Windows (task #854), closing
+its console made it run its SessionEnd hook, withdraw its boot record within 170 ms, and exit by
+itself in every state it can be in, while the typed `\x03` + `/exit\r` re-sent a thinking turn's
+prompt as a second turn and approved an open permission prompt; on Linux node-pty's hangup did
+the same on 2.1.304. Such a session is closed at once at any age, by `kill()`, `suspend()` and
+`killAll()` alike, and nothing is typed into it. macOS is not measured and is still typed into,
+and so is a WSL shell on Windows, whose close (ConPTY closing `wsl.exe`, then a hangup in the
+distro) is not measured either: `performSpawn` reads the flag as false there.
 
 The deferred PTY lives OUTSIDE the registry row on purpose: `remove()` may delete the row in the
 same tick, and the respawn sibling drain hard-kills any row it finds for the task. The registry
@@ -237,6 +252,29 @@ capture `awaitExit` (the row must still exist), then `remove`, then await before
 delete, project relocate, the MCP task delete, and `SESSION_KILL_TRANSIENT` all do. The rule and its
 scan: `.claude/rules/pty-teardown-grace.md`.
 
+The PTY's exit is the shell's, and the agent it started can outlive it while it runs its own exit:
+0.3 to 0.9 s for Claude after a close, about 1.9 s with an answer streaming, and up to 4 s with a
+real session's hooks and MCP server. The pty host keeps a ledger of task roots for that wait
+(`src/main/pty/host/exited-root-wait.ts`). It records each root when its kill arrives, so a wait
+posted right after the kill still finds it, or when its shell exits on its own. `awaitAgentExit`
+then polls the agent that shell left running until it is gone or `AGENT_EXIT_WAIT_MS` (8 s) runs
+out. The agent is the shell's children, looking through a shell or launcher among them (`cmd.exe`
+under a `.cmd` shim, a Git Bash stub) to what it started, and never what the agent itself started:
+a dev server it left running never exits by itself, so watching it would hold every wait to its
+bound. Windows finds the agent by parentage and creation time. POSIX re-parents it when the shell
+dies, so the host runs one `ps` just before it sends the hangup (shared by kills that arrive
+together, the hangup held for it at most `KILL_SNAPSHOT_CAP_MS`, 250 ms) and polls those pids. For
+a Windows shell that exited on its own the wait lasts until the orphan cleanup is done instead. A
+quit's kills still take that listing, since they reach the host before its shutdown does: about
+10 ms that no reap reads, accepted rather than a quit flag on every kill.
+
+Three callers wait on it. `reapTaskProcesses` waits before it scans: before the wait, a reap killed
+one process 1.6 to 3.2 s after each of two busy young Claudes moved back to To Do was force-killed,
+and the next launch counted both boot records as failed starts. `suspend()` and `awaitExit()` wait
+too for a session whose console close is graceful, since that close ends the shell at once: a
+settings or model respawn would otherwise resume the agent while the old one still writes its
+transcript, and a relocate would move the folder from under it.
+
 ### SessionManager.suspend() flow
 
 1. Remove the adapter's hooks from the project settings file (idempotent with `onExit`)
@@ -248,7 +286,9 @@ scan: `.claude/rules/pty-teardown-grace.md`.
 7. **Emit `session-changed`** - before the shutdown below, not after
 8. Release backpressure so the agent's exit-sequence output is not held back
 9. `gracefulPtyShutdown`: send the exit sequence, wait up to 1500ms for a natural exit, then
-   force-kill and wait up to 1500ms more for kill propagation
+   force-kill and wait up to 1500ms more for kill propagation. A session whose console close is
+   its graceful exit (Claude on Windows and Linux) skips the keys and the first wait: the close is
+   the ask, and the suspend then waits for the agent itself (`awaitAgentExit`, bounded)
 10. Last-resort scrollback scan for an agent session id not yet captured
 11. **Emit `session-changed` again** - now carrying the post-shutdown session
 12. Notify the queue (slot freed)
@@ -505,7 +545,7 @@ while the bg-shell watcher is off (`SessionTelemetry.hasAgentAbsenceSweep`). The
 arms `COMMAND_TERMINAL_AGENT_END_SETTLE_MS` (5s) instead of asking the sweep. A SessionStart inside
 it cancels the end; otherwise the terminal emits `agent-absent` and is ended through
 `endCommandTerminal` without `immediate`, since nothing saw the agent's process gone, so `kill()`
-still gives a young session its exit sequence and grace. This path has no tree backstop: a SessionStart that landed after the
+still gives a young session that is typed into its exit sequence and grace, and closes a session whose console close is graceful at once. This path has no tree backstop: a SessionStart that landed after the
 settle would end a live agent. Measured with `scripts/probe-claude-exit-paths.js --mode clear` on
 Claude Code 2.1.294, `/clear` ran SessionEnd (reason `clear`) at 574 ms and SessionStart (source
 `clear`) at 722 ms, 148 ms apart, with Claude still running. In a preview on 2.1.296 under
@@ -546,13 +586,119 @@ node-pty 1.1.0, a mature idle session, a SessionEnd hook recording when it ran; 
   finished message intact.
 - Shell dead, then `IPty.write()`, `kill()`, or terminating the console host: Claude kept running.
 
+Remeasured on 2.1.302 (task #854) across the states a session can be in when it is ended, young
+(its boot record still pending) and mature, with the probe's matrix (`--matrix`, or `--deciders` for the cells the exit decision rests on). A cell passes
+when Claude exits by itself, runs SessionEnd, withdraws a young boot record, sends no new turn and
+runs no tool:
+
+| Way of ending | idle | thinking | draft typed | permission prompt |
+|---|---|---|---|---|
+| `\x03` + `/exit\r` (the old sequence) | pass | second turn, no exit | pass | tool approved, no exit |
+| Console close | pass | pass | pass | pass |
+| `\x03`, 300 ms, `\x03` | pass | no exit | young: 4.5 s | no exit |
+| `\x04`, 300 ms, `\x04` | pass | pass | no exit | no exit |
+| Esc, 400 ms, `\x03`, `/exit\r` | pass | pass | pass | pass |
+
+"Thinking" is a turn ended 250 ms after its prompt, before any answer: Ctrl+C there puts the
+prompt back in the input box, so the old sequence appended `/exit` to it and submitted the pair.
+The console close exited Claude 0.3 to 0.9 s after it, tens of milliseconds after its shell, and
+withdrew a young boot record within 170 ms; the Esc sequence took 0.9 to 1.3 s. With an answer
+streaming every way took about 1.9 s, the close included (the shell about 1 s, SessionEnd about
+1.65 s). Young streaming could not be reached: haiku's first answer to a launch prompt began about
+15 s after the first frame, past the boot window.
+
+The close held under the conditions the incident had. With a sibling holding
+`~/.claude.json.lock` for 600 ms at the moment of the close (`--lock-hold-ms`), all twelve young
+runs withdrew the record within 1.15 s and exited within 2.6 s; with three Claudes booting at once
+(`--siblings 2`) the record went within 125 ms. On 2.1.303 with a copy of a real session's merged
+settings and MCP config (`--app-settings`, `--mcp-config`), so Kangentic's own hooks and MCP
+server ran in the exit, every state passed again, exiting 0.4 to 2 s after the close and once
+4 s: that worst case is what `AGENT_EXIT_WAIT_MS` (8 s) is sized from. The Esc sequence,
+measured under the same lock contention, overran a 1.5 s grace in ten of twelve runs.
+
+The quit path, which the probe cannot reach, was checked in a `/preview` on 2.1.304 with
+fullscreen turned on through `tui` (so the record is armed): quitting with a young task session
+and a young Command Terminal open, both withdrew their records about 1.5 s after the quit, before
+their 10 s timers could, and both exited. So the quit closes such a session at once too; nothing
+is parked for it.
+
+Through a dead shell's console input (`--channel orphan`) the Esc sequence ended Claude idle,
+busy and with a permission prompt open, young and mature, 0.9 to 1.2 s after the write. The old
+sequence approved the open prompt's tool there too.
+
+No probe run on 2.1.302 or 2.1.303 wrote an `/exit` record into a transcript that already held an
+exchange, though an app suspend on 2.1.303 did (`<command-name>/exit`, then "See ya!", two
+seconds after its last turn). On Windows and Linux nothing types `/exit` into a live console any
+more; a dead Windows shell's agent still gets it, and so does macOS, on purpose: of the typed
+ways, the Esc sequence is the one that ended every state, and the Ctrl+C-only ways that leave no
+record failed the thinking state.
+
+On Linux the kill is node-pty's `UnixTerminal.kill()`: a SIGHUP to the shell pid, with the
+terminal's master left open while the host keeps reading it. Bash passes the hangup on to its
+foreground job, Claude. `scripts/probe-claude-exit-paths-linux.py` measured it on 2.1.304 in WSL2
+(Ubuntu, a Python pty under `bash --login`, the command typed into the live shell as the host
+does). WSL's own Claude login had expired, so the probe ran against a local stand-in for the
+Messages API (`--fake-api`, through `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`). It answers
+the idle prompt at once, stays silent 1.5 s and then streams the busy prompt's numbers, and asks
+for a Bash tool for the dialog prompt, so every state is Claude's own TUI with no account:
+
+| Way of ending (Linux) | idle | thinking | streaming | draft typed | permission prompt |
+|---|---|---|---|---|---|
+| Hangup (`kill()`) | pass | pass | pass | pass | pass |
+| Hangup, master closed as the shell exits (the quit) | pass | pass | pass | pass | pass |
+| Shell killed outright (only the kernel's hangup) | pass | pass | not run | not run | pass |
+| Esc, 400 ms, `\x03`, `/exit\r` | pass | pass | pass | pass | pass |
+| `\x03` + `/exit\r` (the old sequence) | pass | pass | pass | pass | tool approved, no exit |
+
+Each state ran young and mature, thinking and streaming at least twice each. The hangup ran
+SessionEnd (`other`) 33 to 162 ms after it, exited Claude 0.33 to 0.71 s after it, and withdrew
+every young boot record; the Esc sequence took 1.06 to 1.31 s. A `CLAUDE_CODE_NO_FLICKER=1` session entered the alt
+screen and never wrote a record. The stand-in reproduced the dialog failure of the old sequence
+but not its thinking failure, which needs a real model's turn, so the old sequence's thinking pass
+is not evidence for it. The hangup is a signal, not keys, so that limit does not reach it.
+
+The probe launches Claude under bash only. The shell-killed row is why that does not narrow the
+result: there bash passes nothing on, and the kernel's hangup of the terminal's foreground job
+alone ended Claude gracefully, which is what any shell running Claude in the foreground (zsh,
+fish, nushell) leaves it with when the shell dies.
+
+So Claude on Linux is hung up, never typed into (`consoleCloseIsGraceful`). macOS has not been
+measured. The Linux probe reads processes with `ps` where `/proc` is missing (`--use-ps` forces
+it, and two Linux cells passed that way), so one run on a Mac answers it. That run would still
+launch Claude under bash, where a Mac user's shell is usually zsh; the shell-killed cells cover
+the difference the same way.
+
+`CLAUDE_CODE_NO_FLICKER=1` (`--renderer no-flicker`) brought the fullscreen renderer up and never
+wrote a boot record, in two runs on 2.1.302 and one on 2.1.303, and a young close left nothing
+behind. That is the documented behavior: Claude's settings reference names the variable the
+per-session override of `tui`, and its fullscreen page says a session started with it "renders
+fullscreen even after a failed start, and doesn't count it". Kangentic turns fullscreen on that
+way now (`rendererEnvironment` in the Claude command builder), so a Kangentic session no longer
+arms the canary at all; the close and the grace above still give Claude its SessionEnd hooks and
+its transcript.
+
+The documented precedence held on 2.1.303 (`--env`, `--tui`): `CLAUDE_CODE_NO_FLICKER=1` drew
+fullscreen over `tui: "default"`; `CLAUDE_CODE_NO_FLICKER=0` drew classic over `tui: "fullscreen"`;
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` drew classic over `CLAUDE_CODE_NO_FLICKER=1`. So Kangentic
+sets the variable only when the project's and the user's settings name no renderer or name
+fullscreen, and a user's own exported `CLAUDE_CODE_NO_FLICKER` or
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` is passed on instead of it (the spawn environment would
+otherwise strip it with every inherited `CLAUDE_CODE_*` key). Inherited values are ignored when
+Kangentic itself runs inside a Claude session (`CLAUDECODE` set): they are that session's.
+
+So Claude on Windows is closed, never typed into (`consoleCloseIsGraceful`, see "SessionManager.kill()
+and the young-session grace"), and the Esc sequence is its exit sequence where a console cannot
+be closed (below) and on macOS, which neither probe has measured.
+
 So the host asks first (`src/main/pty/host/dead-root-orphans.ts`): it writes the session's exit
 sequence into the dead shell's console, waits up to 10 s for the processes it found to exit, and
 terminates only what is left, each through a handle whose creation time is re-checked (see
 `.claude/rules/pty-teardown-grace.md` and `.claude/rules/task-process-tag.md`). What outlives the
 grace, a dev server the agent started included, is terminated, as a crashed pty host's tree stop
-does. On POSIX the kernel hangs up the terminal's foreground process group when the shell exits,
-which should end a foreground agent; that has not been observed on a real PTY here.
+does. On POSIX the kernel hangs up the terminal's foreground process group when the shell exits.
+On Linux that ends Claude gracefully: with its shell killed outright (`shell-killed` in the Linux
+probe), 2.1.304 ran SessionEnd about 50 ms later and exited 0.4 to 0.6 s after the kill, idle,
+thinking and with a permission prompt open, young and mature.
 
 The dead shell's `conhost.exe` stays until the pty host exits, one per PTY that exits on its own
 (about 1.5 MB private each). That is the same node-pty bug: its native exit path drops its record
@@ -854,7 +1000,8 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
   main by pid, since with no terminal open the quit does not wait for the host.
 - **Task leftover reap.** The host also scans for and stops what a task's agents left running
-  (`reapTaggedProcesses`) stops one reported process when the user asks (`stopReportedProcess`), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan).
+  (`reapTaggedProcesses`), stops one reported process when the user asks (`stopReportedProcess`), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan).
+  It also answers `awaitAgentExit`, bounded, once the agent a task's killed or exited shell left running has exited (`src/main/pty/host/exited-root-wait.ts`); a task reap waits on it before it scans.
   It reads the `KANGENTIC_TASK_ID` tag through koffi on Windows and macOS and `/proc` on Linux. See
   [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree).
 
@@ -903,7 +1050,7 @@ The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/shutdown.ts`)
 2. List all in-memory sessions with `running` or `queued` status
 3. For each such session whose OWN record (looked up by the session's id, which is the record id, never the task's newest record) is running, call `captureSessionMetrics()` (synchronous: in-memory cache read + better-sqlite3 writes) so cost / tokens / duration / `tool_breakdown` / `compaction_count` are flushed to the DB before the PTY is killed. The function writes to BOTH the `sessions` row (`SessionRepository.updateMetrics`) and, when `usage` is defined, to a `usage_history` row (`UsageHistoryRepository.recordSessionUsage`) so lifetime period totals survive any subsequent task deletion. Without this step every clean app close loses in-flight metrics for any session that had not yet checkpointed. (The shutdown path uses the synchronous snapshot only; the async transcript refinements, `refineTranscriptTokens` and `refineTranscriptToolCounts`, run only on the exit/suspend/move paths, never here, so a run ended by quitting the app keeps no per-tool `resultTokens` until the next run of its session spawns and `fillEarlierRunResultTokens` reads them from that run's own transcript window; see [database.md](database.md).) A periodic snapshot timer (`startMetricsSnapshotTimer`, ~45s) also runs this same capture for live sessions during normal operation, into each session's own record the same way, so an app/OS kill bounds the loss to one interval; it is stopped synchronously at the top of `syncShutdownCleanup`. Writing into the task's newest record instead could put one session's numbers on another session of the same task (a main and an isolated one), which the context bar's merged tool totals would then count twice. The suspend (`applySuspendDbWrites`), the move to Done, the move into an `auto_spawn=false` column, and the queued-to-running promotion read the session's own record the same way, through one helper (`resolveOwnSessionRecord`, `src/main/db/repositories/session-own-record.ts`), and fall back to the task's newest only for a spawn whose record is not inserted yet. The Done move's git churn capture uses the same helper, and for a task with no live session it takes the task's newest record.
 4. Mark each running record `suspended` (with `suspended_at` timestamp and `suspended_by = 'system'`) so sessions can resume on next launch. Queued records are marked `exited` since there is nothing to resume.
-5. Call `SessionManager.killAll({ allowGrace })` which writes each PTY's exit sequence and force-kills it immediately (no waiting), except that a YOUNG session (see the `kill()` grace above) is parked on the deferred registry's 1500 ms timer when `allowGrace` is set, which it is only on a route the drain follows (a user quit, the powerMonitor shutdown; never a Windows `session-end` or a signal, which flush every parked PTY at once). The kills are commands to the pty host, which carries them out. When any PTY was killed, `killAll` adds the host's own pid to the report, counted as one more kill. Then `sessionManager.dispose()`, which leaves the parked PTYs alone and posts the host's `shutdown`: the host flushes the transcripts, ends any probe PTY, waits for every exit callback, and exits itself, within the drain's deadline less 200 ms
+5. Call `SessionManager.killAll({ allowGrace })` which writes each typed-into PTY's exit sequence and force-kills it immediately (no waiting), and closes a session whose console close is graceful (Claude on Windows and Linux) at once with nothing typed, except that a YOUNG typed-into session (see the `kill()` grace above) is parked on the deferred registry's 1500 ms timer when `allowGrace` is set, which it is only on a route the drain follows (a user quit, the powerMonitor shutdown; never a Windows `session-end` or a signal, which flush every parked PTY at once). The kills are commands to the pty host, which carries them out. When any PTY was killed, `killAll` adds the host's own pid to the report, counted as one more kill. Then `sessionManager.dispose()`, which leaves the parked PTYs alone and posts the host's `shutdown`: the host flushes the transcripts, ends any probe PTY, waits for every exit callback, and exits itself, within the drain's deadline less 200 ms
 6. Clean up session files and clear in-memory session maps
 7. Delete ephemeral project from index (if applicable), except on a restart the app asked for (`isRestartRequested` in `app-relaunch.ts`): dev.js then respawns Electron on the same data dir, the boot adopts the project row by path, and the sessions suspended in step 4 resume into it. The boot's working-tree fill also runs once per clone (a marker in the clone's `.git`), so the restart does not reset a resumed agent's uncommitted work
 8. Close all database connections via `closeAll()`
@@ -919,7 +1066,7 @@ Every path that skips the drain says so: `pty-drain:skip reason=no-pty-killed`, 
 
 A hard failsafe timer (`taskkill /T /F` on Windows, 6 seconds) runs as a backstop in case Electron's shutdown hangs.
 
-Sessions are resumable on next launch via `--resume <agent_session_id>` from the saved DB record. The 2-second graceful `/exit` window is intentionally sacrificed for mature sessions to keep shutdown synchronous and prevent zombie processes; a young session keeps its 1500 ms grace because the timer runs inside the drain, which the quit already waits on.
+Sessions are resumable on next launch via `--resume <agent_session_id>` from the saved DB record. The graceful window after the exit sequence is intentionally sacrificed for mature sessions to keep shutdown synchronous and prevent zombie processes; a young session of an agent that is typed into keeps its 1500 ms grace because the timer runs inside the drain, which the quit already waits on. An agent whose console close is its graceful exit (Claude on Windows and Linux) is closed at once at any age and types nothing.
 
 ## Terminal Ownership Handoff
 
@@ -1076,7 +1223,7 @@ phone needs and reads the rest by request.
   next bullet's subject. The rule exists because the fit used to reclaim the scrollbar
   gutter whenever the alternate screen buffer was active: the scrollback replay writes the TUI's
   alt-screen enter mid-mount, so the mount fit and the post-replay refit disagreed by two columns on
-  every open (always, under Claude Code's `/tui fullscreen`). That produced the "opens mis-sized,
+  every open (always, under the fullscreen renderer, which Kangentic turns on with `CLAUDE_CODE_NO_FLICKER=1`). That produced the "opens mis-sized,
   then refits" flash, and its stacked-repaint race intermittently left the terminal black with
   correct dimensions. xterm's own stylesheet sets `.xterm-viewport { overflow-y: scroll }`, so the
   gutter is reserved in the alt buffer too; it is now MEASURED (`offsetWidth - clientWidth`) rather
@@ -1620,9 +1767,14 @@ phone needs and reads the rest by request.
 | PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children and the pty host are gone, so node-pty's native exit callback lands while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (see Shutdown above) |
 | Pty host exit wait | drain deadline less 200 ms | After `shutdown`, the host exits once every PTY's exit callback has run, or at this bound |
 | Pty host restart | at once, then 1, 5, 15 s; 5 crashes per 5 min | Past the cap the host core runs in main for the rest of the run |
-| KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
+| KILL_GRACE_MS | 1500 ms | `kill()` on a young session of an agent that is typed into: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`). An agent whose close is its graceful exit (Claude on Windows and Linux) is closed at once |
 | YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s canary window plus margin) |
 | YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |
+| AGENT_EXIT_WAIT_MS | 8000 ms | How long a task reap waits for what a killed shell left running to exit by itself before it scans (`src/main/pty/host/exited-root-wait.ts`); it answers as soon as that is gone |
+| AGENT_EXIT_REQUEST_TIMEOUT_MS | 15000 ms | How long main waits for the host to answer that wait: the longer of the bound and the orphan cleanup's 10 s grace, plus 5 s |
+| EXITED_ROOT_LEDGER_MS | 30000 ms | How long an exited task root stays in the pty host's ledger, longer than any `awaitAgentExit` wait on it |
+| KILL_SNAPSHOT_CAP_MS | 250 ms | POSIX: the longest a kill waits for the host's `ps` listing of the shell's agent before the hangup lands |
+| COMMAND_TERMINAL_REAP_DELAY_MS | 5000 ms | A Command Terminal's leftover reap starts this long after it ends: the backstop for a WSL shell and the in-process core, which the agent-exit wait holds no ledger for |
 | Command inject delay | 100 ms | Wait after PTY spawn before writing command |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` (every 60s) |
 | Stale thinking threshold | 180000 ms | If no activity signal for 180s while in "thinking" state, emit synthetic idle event (v2 engine is event-driven, no polling timer) |
@@ -1711,7 +1863,7 @@ budget, and no checkout while another running or queued session's cwd is the pro
 The handler calls `SessionManager.endCommandTerminal`, as a phone's stop, the agent-absence sweep
 and the end settle do, and throws for a session that is not a Command Terminal.
 
-1. `kill()` the session (a young one gets its exit sequence and the 1500 ms grace) and capture `awaitExit`, then detach the session files without deleting them (`detachPreservingFiles`) and `remove()` the row from `SessionManager`, which announces `session-removed`; the handler returns at once, so the window closes immediately
+1. `kill()` the session (a young typed-into one gets its exit sequence and the 1500 ms grace; a Claude session on Windows or Linux is closed at once) and capture `awaitExit`, then detach the session files without deleting them (`detachPreservingFiles`) and `remove()` the row from `SessionManager`, which announces `session-removed`; the handler returns at once, so the window closes immediately
 2. Once the process has exited, delete the session directory from disk (best-effort). This is the only delete, so the agent's SessionEnd hook still has a directory to write into
 
 Transient sessions are counted by the `session_spawn` analytics event with `isTransient: true`

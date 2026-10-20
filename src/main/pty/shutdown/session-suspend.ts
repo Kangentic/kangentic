@@ -1,5 +1,6 @@
 import type { EventEmitter } from 'node:events';
 import type { PtyHandle } from '../host/pty-host-client';
+import type { ExitSequenceStep } from '../../../shared/types';
 import { writeExitSequence } from './session-shutdown';
 
 /**
@@ -50,6 +51,11 @@ export function awaitSessionExit(
  *      event. Skip the wait if `killPty` reports the PTY was already
  *      dead (EACCES/ESRCH return false) - the event already fired.
  *
+ * An agent whose console close is its graceful exit (`consoleCloseIsGraceful`)
+ * skips steps 1 and 2: the close in step 3 is the ask. Typed keys would be an
+ * interrupt to a busy turn, which puts the prompt back with the keys appended,
+ * and an answer to an open permission prompt.
+ *
  * The `clearPty` callback lets the caller null its PTY reference
  * between the graceful wait and the force-kill (prevents double-kill +
  * Windows ConPTY heap corruption).
@@ -59,7 +65,10 @@ export function awaitSessionExit(
  */
 export async function gracefulPtyShutdown(input: {
   ptyRef: PtyHandle;
-  exitSequence: string[];
+  exitSequence: ExitSequenceStep[];
+  /** Closing the console is the agent's graceful exit: skip the keys and the
+   *  natural-exit wait, and close at once (`AgentParser.consoleCloseIsGraceful`). */
+  consoleCloseIsGraceful?: boolean;
   emitter: EventEmitter;
   sessionId: string;
   /** Null the caller's reference to the PTY before we force-kill. */
@@ -72,10 +81,11 @@ export async function gracefulPtyShutdown(input: {
   const gracePeriodMs = input.gracePeriodMs ?? 1500;
   const killPropagationMs = input.killPropagationMs ?? 1500;
 
-  writeExitSequence(input.ptyRef, input.exitSequence);
-
-  const exitedNaturally = await awaitSessionExit(input.emitter, input.sessionId, gracePeriodMs);
-  if (exitedNaturally) return;
+  if (input.consoleCloseIsGraceful !== true) {
+    writeExitSequence(input.ptyRef, input.exitSequence);
+    const exitedNaturally = await awaitSessionExit(input.emitter, input.sessionId, gracePeriodMs);
+    if (exitedNaturally) return;
+  }
 
   const ptyRef = input.ptyRef;
   input.clearPty();

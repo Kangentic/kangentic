@@ -24,6 +24,7 @@ import { awaitSessionExit, gracefulPtyShutdown } from './shutdown/session-suspen
 import { killAllSessions, writeExitSequence } from './shutdown/session-shutdown';
 import type { PtyKillReport } from './shutdown/session-shutdown';
 import { DeferredKillRegistry, KILL_GRACE_MS, isYoungSession } from './lifecycle/deferred-kill';
+import { AGENT_EXIT_REQUEST_TIMEOUT_MS } from './host/exited-root-wait';
 import { PTY_EXIT_DRAIN_DEADLINE_MS } from './shutdown/exit-callback-drain';
 import { HostProcessTreeProbe } from './host/host-process-tree-probe';
 import type { OffMainPty, OffMainPtyOptions } from '../utility-process/off-main-pty';
@@ -2500,8 +2501,9 @@ export class SessionManager extends EventEmitter {
   ): Promise<LeftoverProcessEntry[]> {
     const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
     if (validTasks.length === 0) return [];
-    // A young session that kill() tore down moments ago is still running: its
-    // PTY is parked for the exit grace before the force-kill
+    // A young session of an agent that is typed into, which kill() tore down
+    // moments ago, is still running: its PTY is parked for the exit grace
+    // before the force-kill
     // (pty-teardown-grace.md). Until it exits the host protects it and
     // everything under it, so a reap now would leave the agent's children
     // running. That happens on a Done move whose session was stopped just
@@ -2517,6 +2519,12 @@ export class SessionManager extends EventEmitter {
         console.warn('[TASK-REAP] a parked PTY did not exit within the wait; the host still protects it and what runs under it');
       }
     }
+    // The PTY's exit is the SHELL's. The agent it started gets the console's
+    // close and is often still exiting (its SessionEnd hooks, its transcript,
+    // its fullscreen boot record), and the reap below would terminate it as a
+    // tagged leftover. The host waits, bounded, for the agent each task's
+    // exited shells left running to go by itself (`host/exited-root-wait.ts`).
+    await this.awaitAgentExitOf(validTasks.map((task) => task.id), '[TASK-REAP]');
     const killedPids: number[] = [];
     const entries: LeftoverProcessEntry[] = [];
     // A task with no usable directory can have nothing killed or reported, so
@@ -2945,7 +2953,13 @@ export class SessionManager extends EventEmitter {
       // Read before nulling: the quit drain probes the child pid, not the wrapper.
       const childPid = ptyRef.pid;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-      if (options?.immediate !== true && isYoungSession(session)) {
+      // An agent whose console close is its graceful exit (Claude on Windows
+      // and Linux, measured with the scripts/probe-claude-exit-paths* probes)
+      // is closed at once at any age: typed keys would be read as an interrupt
+      // by a busy turn and as an answer by an open permission prompt.
+      // awaitExit() and the reap wait for its own exit after the close
+      // (host/exited-root-wait.ts).
+      if (options?.immediate !== true && session.consoleCloseIsGraceful !== true && isYoungSession(session)) {
         // Written straight to the PTY, not through the write queue: the queue
         // is disposed below and drains through `session.pty`, which is already
         // null. The onData / onExit disposables move to the parked entry so the
@@ -2999,11 +3013,38 @@ export class SessionManager extends EventEmitter {
    * A spawn of this session still in flight (a promotion the caller's kill
    * just cancelled) is waited for first: the PTY its host may have started
    * holds the working directory until it exits, and has no row to wait on.
+   *
+   * The PTY's exit is its shell's. An agent whose console close is its
+   * graceful exit outlives its shell, still running its SessionEnd hooks and
+   * writing its transcript in the session's cwd, so it is waited for too.
    */
   awaitExit(sessionId: string): Promise<void> {
+    // Read now: callers remove() the row right after asking.
+    const session = this.registry.get(sessionId);
     const inFlight = this.spawnsInFlight.get(sessionId);
-    if (inFlight) return this.awaitSpawnsSettled([inFlight]).then(() => this.awaitRowExit(sessionId));
-    return this.awaitRowExit(sessionId);
+    const shellExit = inFlight
+      ? this.awaitSpawnsSettled([inFlight]).then(() => this.awaitRowExit(sessionId))
+      : this.awaitRowExit(sessionId);
+    if (session?.consoleCloseIsGraceful !== true) return shellExit;
+    const taskId = session.taskId;
+    return shellExit.then(() => this.awaitAgentExitOf([taskId], '[SessionManager]'));
+  }
+
+  /**
+   * Wait, bounded, for the agent each task's killed or exited shells left
+   * running to finish its own exit (`host/exited-root-wait.ts`). Answers at
+   * once where the host keeps no ledger (the in-process core, a WSL root).
+   * Never throws.
+   */
+  private async awaitAgentExitOf(taskIds: string[], logPrefix: string): Promise<void> {
+    try {
+      const agentExit = await this.host.awaitAgentExit(taskIds, AGENT_EXIT_REQUEST_TIMEOUT_MS);
+      if (agentExit.stillRunning.length > 0) {
+        console.log(`${logPrefix} ${agentExit.stillRunning.length} process(es) an exited shell left were still running after ${agentExit.waitedMs} ms: ${agentExit.stillRunning.join(', ')}`);
+      }
+    } catch (error) {
+      console.warn(`${logPrefix} agent exit wait failed (non-fatal):`, error instanceof Error ? error.message : String(error));
+    }
   }
 
   private awaitRowExit(sessionId: string): Promise<void> {
@@ -3049,10 +3090,13 @@ export class SessionManager extends EventEmitter {
    * Suspend a session: gracefully exit the agent, then kill the PTY.
    * Preserves session files on disk so the session can be resumed later.
    *
-   * Sends the agent's exit sequence (e.g. Ctrl+C + /exit for Claude Code)
-   * and waits up to 1500ms for the process to exit naturally. This gives
-   * the agent time to flush its conversation transcript (JSONL) to disk,
-   * which is required for --resume to work. Force-kills if still alive.
+   * Sends the agent's exit sequence and waits up to 1500ms for the process
+   * to exit naturally. This gives the agent time to flush its conversation
+   * transcript (JSONL) to disk, which is required for --resume to work.
+   * Force-kills if still alive. An agent whose console close is its graceful
+   * exit is closed at once instead, and the suspend resolves once that agent,
+   * not just its shell, has exited (bounded; `host/exited-root-wait.ts`), so
+   * a caller that resumes it or moves its folder next never overlaps it.
    *
    * Unlike kill(), the onExit handler will NOT clean up files because
    * file paths are nulled before the PTY is destroyed.
@@ -3124,11 +3168,16 @@ export class SessionManager extends EventEmitter {
       await gracefulPtyShutdown({
         ptyRef: session.pty,
         exitSequence: session.exitSequence,
+        consoleCloseIsGraceful: session.consoleCloseIsGraceful === true,
         emitter: this,
         sessionId,
         clearPty: () => { session.pty = null; },
         killPty: safeKillPty,
       });
+      // A close ends the shell at once and the agent a moment later: wait for
+      // it, or a resume, a handoff's transcript read or a folder move overlaps
+      // its SessionEnd hooks and transcript writes.
+      if (session.consoleCloseIsGraceful === true) await this.awaitAgentExitOf([session.taskId], '[SUSPEND]');
     }
 
     // Last-resort: scan full scrollback for agent session ID if not yet

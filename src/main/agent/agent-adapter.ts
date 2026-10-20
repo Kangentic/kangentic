@@ -21,6 +21,7 @@ import type {
   RemoteServerStatus,
   AgentLaunchOptionInfo,
   AnswerCapabilities,
+  ExitSequenceStep,
 } from '../../shared/types';
 
 /**
@@ -561,9 +562,10 @@ export interface AgentAdapter {
    * MCP wiring and must deliver the Kangentic MCP server config via env
    * (e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`), or whose native
    * permission/autonomy control is an env var rather than a flag (e.g.
-   * Goose's `GOOSE_MODE`). Adapters that wire MCP via a CLI flag (Claude
+   * Goose's `GOOSE_MODE`), or whose renderer is chosen by one (Claude's
+   * `CLAUDE_CODE_NO_FLICKER`). Adapters that wire MCP via a CLI flag (Claude
    * `--mcp-config`) or settings file (Codex hooks), and whose permission
-   * modes map to CLI flags, do not implement this.
+   * modes map to CLI flags, need it for nothing else.
    */
   buildEnv?(options: SpawnCommandOptions): Record<string, string> | null;
 
@@ -622,14 +624,34 @@ export interface AgentAdapter {
   modelDisplayName?(modelId: string): string | null;
 
   /**
-   * Return the sequence of strings to write to the PTY for a graceful exit.
-   * Called by SessionManager.suspend() before force-killing the PTY.
-   * Ctrl+C (\x03) interrupts in-progress work; the exit command triggers
-   * a clean shutdown that flushes conversation state (e.g. JSONL transcript).
+   * Return the steps to write to the PTY to ask the agent to exit: keys, and
+   * `{ delayMs }` pauses between keys the TUI must read apart. Copied onto the
+   * session at spawn and written before a young `kill()`, by `suspend()`, by
+   * the quit path, and by the pty host to an agent whose shell exited on its
+   * own (`dead-root-orphans.ts`). Ctrl+C (\x03) interrupts in-progress work;
+   * the exit command triggers a clean shutdown that flushes conversation
+   * state (e.g. JSONL transcript).
    *
    * Default (if not implemented): ['\x03'] (Ctrl+C only).
    */
-  getExitSequence?(): string[];
+  getExitSequence?(): ExitSequenceStep[];
+
+  /**
+   * Optional: whether closing the agent's console on `platform` (ConPTY's close
+   * on Windows, node-pty's SIGHUP hangup on POSIX) is itself a graceful exit for
+   * it, as measured with the real CLI. When true, a kill, a suspend and a quit
+   * close the console at once and type nothing. The exit sequence then serves
+   * only a Windows agent whose shell died, whose console cannot be closed.
+   * Keys typed into a TUI mean something different in each state: a busy turn
+   * takes Ctrl+C as an interrupt and puts the prompt back, a permission prompt
+   * takes Enter as yes. The agent runs its own exit after the close, and
+   * `suspend()`, `awaitExit()` and a task reap wait for it through the pty
+   * host (`exited-root-wait.ts`). A WSL shell is never asked: its close is
+   * not measured, so it is typed into.
+   *
+   * Default (if not implemented): false.
+   */
+  consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
 
   /**
    * Locate the agent's native session history file on disk for a given
@@ -1029,8 +1051,9 @@ export interface AgentAdapter {
    * effort change restarts it with the new launch flags instead (see
    * `prepareInjectionPlan`).
    *
-   * Sibling of `getExitSequence` - both return `string[]` of writes the
-   * PTY layer consumes, just for different lifecycle events.
+   * Sibling of `getExitSequence` (which returns `ExitSequenceStep[]`, keys and
+   * pauses): both return writes the PTY layer consumes, just for different
+   * lifecycle events.
    *
    * - Claude returns `['/model X', '/effort Y']` for changed fields.
    * - Adapters whose CLI has no live-swap slash command should return an

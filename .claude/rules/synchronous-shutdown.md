@@ -38,7 +38,14 @@ boot-canary window, see [[pty-teardown-grace]]) is the one exception, and it cos
 deferred registry's 1500 ms timer, which fires INSIDE the drain below. The report's `deferredCount`
 extends the drain deadline by that grace, so the quit is still held until the child is gone.
 `allowGrace` is passed only where the drain follows; a Windows `session-end` and the signal
-handlers call `performShutdown()` bare and flush every parked PTY at once.
+handlers call `performShutdown()` bare and flush every parked PTY at once. An agent whose console
+close is its own graceful exit (Claude on Windows and Linux, `consoleCloseIsGraceful`) is not
+typed into or parked at any age: the close is the ask, and it runs its own exit after it. The
+in-app quit was checked on Windows only (a `/preview` with young sessions, records withdrawn and
+both Claudes gone). On Linux no in-app quit has been run. What it rests on is the probe's
+`hangup-close` cells, where the terminal's master closes as the shell exits, as the pty host's
+own exit closes it, and Claude still ran SessionEnd and exited by itself; and the fact that every
+PTY shell runs in its own session, out of reach of the shutdown failsafe's process-group SIGKILL.
 
 ## The one exception: the PTY exit-callback drain
 

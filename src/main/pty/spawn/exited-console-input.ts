@@ -18,6 +18,9 @@
  * fails there instead of silently writing nowhere.
  */
 
+import type { ExitSequenceStep } from '../../../shared/types';
+import { writeExitSteps } from '../shutdown/exit-sequence';
+
 interface ConsoleInput {
   readonly writable?: boolean;
   readonly destroyed?: boolean;
@@ -30,8 +33,11 @@ interface ConptyTerminalInternals {
   _agent?: { inSocket?: ConsoleInput };
 }
 
-/** Writes each part in order. False when there is no open input to write to (POSIX, or the pipe is gone). */
-export function writeToExitedConsole(pty: unknown, parts: readonly string[]): boolean {
+/**
+ * Writes each step in order, its pauses on timers (`exit-sequence.ts`). False
+ * when there is no open input to write to (POSIX, or the pipe is gone).
+ */
+export function writeToExitedConsole(pty: unknown, steps: readonly ExitSequenceStep[]): boolean {
   const input = (pty as ConptyTerminalInternals | null)?._agent?.inSocket;
   if (!input || input.destroyed === true || input.writable === false) return false;
   // A write the console can no longer take fails later, as an 'error' event on
@@ -42,10 +48,15 @@ export function writeToExitedConsole(pty: unknown, parts: readonly string[]): bo
       // Best-effort ask: the grace and the terminate that follow still run.
     });
   }
+  // The first keys go out now, so a pipe that refuses them still reads as not
+  // asked; keys after a pause go on a timer and are best effort.
+  const firstPause = steps.findIndex((step) => typeof step !== 'string');
+  const immediate = (firstPause < 0 ? steps : steps.slice(0, firstPause)) as readonly string[];
   try {
-    for (const part of parts) input.write(part);
-    return true;
+    for (const part of immediate) input.write(part);
   } catch {
     return false;
   }
+  if (firstPause >= 0) writeExitSteps((data) => input.write(data), steps.slice(firstPause));
+  return true;
 }

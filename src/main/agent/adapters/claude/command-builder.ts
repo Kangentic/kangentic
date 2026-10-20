@@ -120,24 +120,85 @@ export class CommandBuilder {
   }
 
   /**
-   * Whether the user has explicitly chosen a Claude TUI renderer in their global
+   * The Claude TUI renderer the user chose in their global
    * `~/.claude/settings.json` (where Claude's `/tui` command persists the `tui`
-   * setting). When they have, Kangentic must NOT inject its own `tui` default -
-   * `--settings` would override the user's choice. Read fresh each spawn (small
+   * setting), or null when they have not chosen. Read fresh each spawn (small
    * file, infrequent) so a `/tui` change is honored on the next session.
    */
-  private userHasGlobalTuiPreference(): boolean {
+  private globalTuiChoice(): unknown {
     try {
       const globalSettingsPath = path.join(os.homedir(), '.claude', 'settings.json');
       const parsedGlobalSettings = JSON.parse(fs.readFileSync(globalSettingsPath, 'utf-8')) as Record<string, unknown>;
       // Treat `tui: null` (a reset sentinel, or a hand-edited file) the same as an
-      // absent key: null is not a renderer choice, so Kangentic should still inject
-      // its fullscreen default rather than leave Claude on the classic renderer.
-      return parsedGlobalSettings.tui !== undefined && parsedGlobalSettings.tui !== null;
+      // absent key: null is not a renderer choice.
+      return parsedGlobalSettings.tui ?? null;
     } catch {
       // No global settings file, or unreadable/invalid -> user has not chosen.
-      return false;
+      return null;
     }
+  }
+
+  /**
+   * Whether Kangentic turns Claude's fullscreen renderer on for this spawn:
+   * when neither the project's settings nor the user's own name a renderer, or
+   * they name fullscreen. The `tui` setting takes `"default"` or
+   * `"fullscreen"` (settings reference); any value but fullscreen is the
+   * user's and is left alone. The classic main-screen renderer re-emits its
+   * WHOLE frame into the normal-buffer scrollback on every resize, which piles
+   * up duplicate banners in an embedded xterm and flickers on resize; the
+   * alt-screen renderer, which Claude's own docs recommend for embedded
+   * terminal wrappers, does neither.
+   *
+   * It is turned on with `CLAUDE_CODE_NO_FLICKER=1` (`rendererEnvironment`),
+   * not with `tui: "fullscreen"` in `--settings`. Claude's docs make that
+   * variable the per-session override of `tui` (settings reference, `tui`,
+   * "Per-session overrides"), and say a session started with it "renders
+   * fullscreen even after a failed start, and doesn't count it" (fullscreen
+   * docs, "How Claude Code counts failed starts"). Measured on 2.1.302 and
+   * 2.1.303 (`scripts/probe-claude-exit-paths.js --renderer no-flicker`), such
+   * a session drew in the alt screen and never wrote a `fullscreenBootPending`
+   * record. So no way a Kangentic session can die (a kill, a crash, a lost pty
+   * host, an OS kill) can count against the renderer: two such deaths had
+   * turned fullscreen off for the whole machine, the user's own terminals
+   * included.
+   *
+   * The variable outranks the setting, a `tui: "default"` included (measured
+   * on 2.1.303), which is why it is set only when no other renderer was chosen.
+   */
+  fullscreenByDefault(options: Pick<CommandOptions, 'cwd' | 'projectRoot'>): boolean {
+    const projectChoice = this.cachedBaseSettings(options.projectRoot || options.cwd).tui;
+    const choice = projectChoice === undefined || projectChoice === null ? this.globalTuiChoice() : projectChoice;
+    return choice === null || choice === 'fullscreen';
+  }
+
+  /**
+   * The renderer variables this spawn carries, or null.
+   *
+   * A user's own `CLAUDE_CODE_NO_FLICKER` or `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`
+   * comes first: Claude's docs rank both above the `tui` setting, and
+   * `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` above `CLAUDE_CODE_NO_FLICKER`.
+   * Measured on 2.1.303: `CLAUDE_CODE_NO_FLICKER=0` beat `tui: "fullscreen"`,
+   * and `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` beat
+   * `CLAUDE_CODE_NO_FLICKER=1`, both drawing classic. The spawn environment strips every inherited
+   * `CLAUDE_CODE_*` key, so they are passed on here, explicitly, as the user
+   * set them. Not when Kangentic itself runs inside a Claude session
+   * (`CLAUDECODE` set, a dev build started from an agent's tool shell): those
+   * values are the parent session's, and every Kangentic Claude session
+   * carries `CLAUDE_CODE_NO_FLICKER=1`. Otherwise the default above applies.
+   */
+  rendererEnvironment(
+    options: Pick<CommandOptions, 'cwd' | 'projectRoot'>,
+    environment: NodeJS.ProcessEnv = process.env,
+  ): Record<string, string> | null {
+    if (environment.CLAUDECODE === undefined) {
+      const usersOwn: Record<string, string> = {};
+      for (const key of ['CLAUDE_CODE_NO_FLICKER', 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']) {
+        const value = environment[key];
+        if (value !== undefined && value !== '') usersOwn[key] = value;
+      }
+      if (Object.keys(usersOwn).length > 0) return usersOwn;
+    }
+    return this.fullscreenByDefault(options) ? { CLAUDE_CODE_NO_FLICKER: '1' } : null;
   }
 
   buildClaudeCommand(options: CommandOptions): string {
@@ -268,10 +329,15 @@ export class CommandBuilder {
     return interpolateTemplate(template, vars);
   }
 
-  /** Read and merge project + local settings, with per-projectRoot caching. */
+  /** Read and merge project + local settings, with per-projectRoot caching. A copy the caller may change. */
   private readBaseSettings(projectRoot: string): ClaudeSettings {
+    return structuredClone(this.cachedBaseSettings(projectRoot));
+  }
+
+  /** The cached merged settings themselves, for a read that changes nothing. */
+  private cachedBaseSettings(projectRoot: string): Readonly<ClaudeSettings> {
     const cached = this.projectSettingsCache.get(projectRoot);
-    if (cached) return structuredClone(cached);
+    if (cached) return cached;
 
     // 1. Read project settings (committed, shared)
     let baseSettings: ClaudeSettings = {};
@@ -301,7 +367,7 @@ export class CommandBuilder {
     }
 
     this.projectSettingsCache.set(projectRoot, baseSettings);
-    return structuredClone(baseSettings);
+    return baseSettings;
   }
 
   /**
@@ -378,19 +444,11 @@ export class CommandBuilder {
       });
     }
 
-    // Default Claude's TUI renderer to fullscreen (alt-screen) for the embedded
-    // experience. The classic main-screen renderer re-emits its WHOLE frame into
-    // the normal-buffer scrollback on every resize, which piles up duplicate
-    // banners in an embedded xterm and flickers on resize. The alt-screen renderer
-    // - which Claude's own docs recommend for embedded terminal wrappers - has no
-    // scrollback accumulation and no resize flicker. We only set this when the user
-    // has NOT chosen a renderer themselves: `merged.tui` already carries any
-    // project-level choice, and `userHasGlobalTuiPreference()` covers their global
-    // ~/.claude/settings.json (where `/tui` persists). `--settings` outranks both,
-    // so gating on both keeps Claude's native `/tui` control authoritative.
-    if (merged.tui === undefined && !this.userHasGlobalTuiPreference()) {
-      merged.tui = 'fullscreen';
-    }
+    // The fullscreen renderer is turned on through the spawn environment, not
+    // `tui` here (see fullscreenByDefault): a `tui` key in `--settings` arms
+    // Claude's boot health check, which counts every Kangentic session that dies
+    // young against the renderer. A `tui` the project's own settings carry
+    // passes through untouched, as before.
 
     // Session directory (used for the merged Claude settings file).
     // Derived from statusOutputPath which is required by every spawn path

@@ -5882,6 +5882,14 @@ export interface AgentParser {
    */
   removeHooks(directory: string, sessionId?: string): void;
   /**
+   * Optional: whether closing the agent's console on this platform is itself a
+   * graceful exit for it (it runs its own shutdown: hooks, transcript, state),
+   * measured, not assumed. When true, ending the session closes the console
+   * at once and types nothing: keys typed into a TUI mean something different
+   * in each state it can be in. See `AgentAdapter.consoleCloseIsGraceful`.
+   */
+  consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
+  /**
    * Optional per-session lifecycle hook. When present, session manager
    * calls it once per spawn and disposes the returned attachment on
    * session end. All adapter-specific orchestration that can't be
@@ -6439,6 +6447,13 @@ export type TranscriptBlock =
   | { type: 'thinking'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown };
 
+/**
+ * One step of an agent's exit sequence: keys to write, or a pause before the
+ * keys after it. A pause is how keys a TUI must read separately stay apart:
+ * Esc followed at once by text arrives as one escape-prefixed key.
+ */
+export type ExitSequenceStep = string | { delayMs: number };
+
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
   id?: string;
@@ -6475,8 +6490,8 @@ export interface SpawnSessionInput {
    * record, so it cannot be read from the database at that moment.
    */
   permissionMode?: PermissionMode | null;
-  /** Sequence of strings to write to PTY before killing for graceful exit (e.g. ['\x03', '/exit\r']). */
-  exitSequence?: string[];
+  /** Steps to write to the PTY to ask the agent to exit before it is killed (e.g. ['\x03', '/exit\r']). */
+  exitSequence?: ExitSequenceStep[];
   /**
    * Caller-owned agent session UUID. Set when the adapter declares
    * `supportsCallerSessionId = true` and the spawn pipeline pre-generates

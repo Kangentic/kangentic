@@ -609,9 +609,12 @@ from inside a Claude Code session, and those markers would otherwise re-parent t
 the launching session, so a later `--resume` finds nothing. A Kangentic-spawned agent must always be
 a clean top-level session. `ANTHROPIC_*` keys (BYOK / API auth) are deliberately left untouched.
 
-Two keys are keeplisted, both renderer tuning flags rather than identity markers, so neither can
-re-parent a session. An explicit value already present in the environment always wins for both,
-including a user's opt-out, and non-Claude agents ignore them.
+Four keys are keeplisted, all renderer flags rather than identity markers, so none can re-parent a
+session. `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` and `CLAUDE_CODE_SCROLL_SPEED` are always kept.
+`CLAUDE_CODE_NO_FLICKER` and `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` are kept only for a spawn that
+passes one (the renderer variables from `rendererEnvironment`, a user's own opt-out included), and a
+WSL shell lists them in `WSLENV`. An explicit value already present in the environment always wins
+for each, and non-Claude agents ignore them.
 
 - `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT`: defaulted to `1` on **win32 only**, matching what Claude
   Code's own agent views do on Windows, because the fullscreen TUI otherwise intermittently drops

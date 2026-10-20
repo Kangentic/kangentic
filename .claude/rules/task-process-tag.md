@@ -48,11 +48,25 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   temp folder, it made the tab's `cmd` read as shared), and the stop waits, bounded, for the rest
   of the preview's tree from the pty host's process listing before the reap scans: `dev.js`
   exiting is not the preview being gone.
+- **A task reap lets the task's own agent finish exiting first.** "The sessions have exited"
+  means their shells have: the agent a killed shell started is still in its own exit.
+  `reapTaskProcesses` waits, bounded, for the agent each task's killed or exited shells left
+  running before it scans (`host/exited-root-wait.ts`, see [[pty-teardown-grace]]). That wait
+  finds the agent by parentage and creation time on Windows, and on POSIX by the pids the host
+  listed under the shell just before its hangup, never by tag, and kills nothing. It watches the
+  agent alone, not what the agent started, so a dev server the task left running never holds it;
+  anything left at its bound is the reap's as before. **Known gap.** A WSL root holds no ledger (its agent runs inside
+  the distro, out of the host's sight), so nothing waits before the in-distro reap. That reap
+  starts only after the host reap's two passes (a one second wait between them) and the
+  `wsl.exe` listings, past Claude's measured 0.33 to 0.71 s exit after a hangup, but no wait
+  guarantees it.
 - **A Command Terminal's end reaps its leftovers, after any exiting agent has finished.**
   `CommandTerminalLeftoverReaper` (`ipc/helpers/command-terminal-leftovers.ts`) calls
   `reapTaskLeftovers` with the terminal's folder and its own task id, named for the report, on its
-  `session-removed`, `COMMAND_TERMINAL_REAP_DELAY_MS` later: longer than the pty host's orphan grace
-  and Claude's own exit after a Stop, so the reap never force-kills an agent mid-exit (see
+  `session-removed`. The reap's own agent-exit wait covers Claude's exit after a Stop and the pty
+  host's orphan grace; `COMMAND_TERMINAL_REAP_DELAY_MS` (5 s, past Claude's longest measured exit
+  after a close) is the backstop for a root that wait holds no ledger for, a WSL shell or the
+  in-process core, so the reap never force-kills an agent mid-exit (see
   [[pty-teardown-grace]]). Its folder is never passed as a worktree, because a project root is
   shared with every task that has no worktree (so the dev-preview stop above, keyed on a task's
   worktree, never applies to one). Nothing is reaped during a quit, as for tasks.
@@ -204,8 +218,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `prepare-agent-spawn.test.ts` pin `taskProcessTag` on both task spawn chokepoints,
   `transient-session-spawn-shim-launch.test.ts` pins it on a Command Terminal (its spawn's task
   id), and `codex-adapter.test.ts` pins the Codex override.
-  `tests/unit/command-terminal-leftovers.test.ts` pins the terminal reap's delay past the orphan
-  grace, its folder and tag, its report name, and that a task's removal or a quit reaps nothing.
+  `tests/unit/command-terminal-leftovers.test.ts` pins that the reap's agent-exit request outlives
+  the orphan grace and that the delay outlives Claude's longest measured exit, the terminal's
+  folder and tag, its report name, and that a task's removal or a quit reaps nothing.
 - **Test (report and stop):** `tests/unit/task-tagged-reap.test.ts` pins the report (stopped
   roots only, survivors as not stopped, kept windows, stopping off kills nothing, each request
   gets its own tasks, a report-only request never joins a killing batch) and `stopProcessTree`

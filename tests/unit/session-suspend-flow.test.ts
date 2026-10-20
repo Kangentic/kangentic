@@ -74,6 +74,47 @@ describe('gracefulPtyShutdown', () => {
     expect(mock.writes).toEqual(['\x03', '/exit\r']);
   });
 
+  it('closes at once and types nothing when the console close is the agent\'s graceful exit', async () => {
+    const emitter = new EventEmitter();
+    const mock = makeMockPty();
+    const killPty = vi.fn(() => true);
+    const clearPty = vi.fn();
+    const promise = gracefulPtyShutdown({
+      ptyRef: mock.ptyRef,
+      exitSequence: ['\x1b', { delayMs: 400 }, '\x03', '/exit\r'],
+      consoleCloseIsGraceful: true,
+      emitter,
+      sessionId: 's1',
+      clearPty,
+      killPty,
+    });
+    // No natural-exit wait: the close lands in the same tick.
+    expect(clearPty).toHaveBeenCalledOnce();
+    expect(killPty).toHaveBeenCalledWith(mock.ptyRef);
+    emitter.emit('exit', 's1'); // kill propagation arrives
+    await promise;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mock.writes).toEqual([]);
+  });
+
+  it('writes keys after a pause only once the pause has passed', async () => {
+    const emitter = new EventEmitter();
+    const mock = makeMockPty();
+    const promise = gracefulPtyShutdown({
+      ptyRef: mock.ptyRef,
+      exitSequence: ['\x1b', { delayMs: 400 }, '\x03', '/exit\r'],
+      emitter,
+      sessionId: 's1',
+      clearPty: () => {},
+      killPty: () => false,
+    });
+    expect(mock.writes).toEqual(['\x1b']);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(mock.writes).toEqual(['\x1b', '\x03', '/exit\r']);
+    emitter.emit('exit', 's1');
+    await promise;
+  });
+
   it('skips force-kill when the PTY exits within the grace period', async () => {
     const emitter = new EventEmitter();
     const mock = makeMockPty();
