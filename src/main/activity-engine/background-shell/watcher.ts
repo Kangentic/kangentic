@@ -315,6 +315,17 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const PID_CAPTURE_RETRY_CYCLES = 3;
 
 /**
+ * The process id a background shell id spells, or null. A CLI that reports
+ * the PID of the process running the command (Gemini) gives an id the watcher
+ * can adopt exactly, rather than by tree diff. An id that only looks numeric
+ * (Codex's exec session number) is adopted only if that number is the PID of a
+ * live process in the session's own tree.
+ */
+function reportedProcessIdOf(shellId: string): number | null {
+  return /^[1-9]\d{0,9}$/.test(shellId) ? Number(shellId) : null;
+}
+
+/**
  * How many consecutive poll cycles a NAMED bg shell's output file must show NO
  * growth (size and mtime both unchanged) before it becomes eligible for the
  * output-quiescence reclaim. This is the slow, safe half of the discriminator;
@@ -527,6 +538,15 @@ export class BgShellWatcher {
     // PID_CAPTURE_RETRY_CYCLES budget operates on its designed ~2s window
     // instead of a stretched interval.
     this.resetPollBackoff();
+    // An id that names a live process is most likely the PID the CLI reported
+    // (Gemini's "moved to background (PID: N)"). The next cycle checks it is
+    // in this session's tree and adopts it; the memo is not consulted, since
+    // it can name an unrelated shell that happened to start beside it.
+    const reportedPid = reportedProcessIdOf(shellId);
+    if (reportedPid !== null && this.probe.isAlive(reportedPid)) {
+      state.pendingCaptures.set(shellId, PID_CAPTURE_RETRY_CYCLES);
+      return;
+    }
     const memoPid = state.candidateForegroundShellPid;
     if (memoPid !== null && this.probe.isAlive(memoPid)) {
       state.trackedShellPids.set(shellId, memoPid);
@@ -963,6 +983,20 @@ export class BgShellWatcher {
         .filter((pid) => !state.helperPids.has(pid) && !trackedPids.has(pid));
       for (const [shellId, retriesLeft] of [...state.pendingCaptures.entries()]) {
         if (state.trackedShellPids.has(shellId)) {
+          state.pendingCaptures.delete(shellId);
+          continue;
+        }
+        // Exact match first (task #859): an id that is the PID of a live
+        // process in this session's tree is that shell, whatever else started
+        // beside it, and even when the first-cycle anchor folded it into the
+        // helpers because the anchor ran after it started.
+        const reportedPid = reportedProcessIdOf(shellId);
+        if (reportedPid !== null && liveDescendantPids.has(reportedPid) && !trackedPids.has(reportedPid)) {
+          if (state.helperPids.delete(reportedPid) && state.preExistingHelpers !== null && state.preExistingHelpers > 0) {
+            state.preExistingHelpers -= 1;
+          }
+          state.trackedShellPids.set(shellId, reportedPid);
+          trackedPids.add(reportedPid);
           state.pendingCaptures.delete(shellId);
           continue;
         }

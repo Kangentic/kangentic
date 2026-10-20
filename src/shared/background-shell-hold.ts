@@ -21,16 +21,22 @@
  *
  *      node scripts/worktree-preview.js --wait --port=5174 --kangentic-no-activity-hold
  *
- *    The flag rides in `tool_input.command`, which the PreToolUse hook surfaces
- *    as the event `detail` (see `hook-manager.ts`), on a `background_shell_start`
- *    for a Bash `run_in_background` launch and on a plain `tool_start` for any
- *    other tool. `updateCounters` matches it there. Commands Kangentic writes
- *    for the agent (`/preview`'s watcher) carry it.
+ *    For Claude the flag rides in `tool_input.command`, which the PreToolUse
+ *    hook surfaces as the event `detail` (see `hook-manager.ts`), on a
+ *    `background_shell_start` for a Bash `run_in_background` launch and on a
+ *    plain `tool_start` for any other tool. `updateCounters` matches it there.
+ *    For the agents whose post-tool hook reports the launch with no tool id
+ *    (Gemini, Copilot), the event bridge reads it from the command and sets
+ *    `noActivityHold` on the start itself; Kimi's and Codex's history parsers
+ *    carry it the same ways (task #859). Commands Kangentic writes for the
+ *    agent (`/preview`'s watcher) carry it.
  *
  * 2. After launch, with the `MARK_BACKGROUND_SERVICE_TOOL` MCP tool, naming the
- *    shell id. Claude's PostToolUse hook tells the agent about it whenever a
- *    background launch carries no flag (`background-shell-hint-bridge.js`), so
- *    the agent decides at the moment it knows the answer (task #857).
+ *    shell id. A post-tool hook tells the agent about it whenever a background
+ *    launch carries no flag (`background-shell-hint-bridge.js`; Claude, Qwen,
+ *    Gemini and Copilot), so the agent decides at the moment it knows the
+ *    answer (task #857). The server offers the tool only to an agent that
+ *    reports its background commands (`AgentAdapter.backgroundCommands`).
  *
  * Being agent-typed (it rides in a command string, or a tool call, an agent
  * wrote) puts both on the same trust boundary as every other hook-sourced

@@ -1,4 +1,4 @@
-{"ts":1777820162965,"type":"session_start","hookContext":"{\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"transcript_path\":\"C:\\\\Users\\\\tyler\\\\.claude\\\\projects\\\\C--Users-tyler-Documents-GitHub-kangentic--kangentic-worktrees-reconcile-submission-07f0e9b1\\\\00000000-0000-0000-0000-000000000000.jsonl\",\"cwd\":\"C:\\\\Users\\\\tyler\\\\Documents\\\\GitHub\\\\kangentic\\\\.kangentic\\\\worktrees\\\\reconcile-submission-07f0e9b1\",\"hook_event_name\":\"SessionStart\",\"source\":\"resume\"}"}
+{"ts":1777820162965,"type":"session_start","hookContext":"{\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"transcript_path\":\"C:\\\\Users\\\\dev\\\\.claude\\\\projects\\\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-reconcile-submission-07f0e9b1\\\\00000000-0000-0000-0000-000000000000.jsonl\",\"cwd\":\"C:\\\\Users\\\\dev\\\\Documents\\\\GitHub\\\\kangentic\\\\.kangentic\\\\worktrees\\\\reconcile-submission-07f0e9b1\",\"hook_event_name\":\"SessionStart\",\"source\":\"resume\"}"}
 {"ts":1777820225370,"type":"prompt"}
 {"ts":1777820231030,"type":"tool_start","tool":"PowerShell","detail":"cd C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\reconcile-submission-07f0e9b1; npm run test:unit"}
 {"ts":1777820238023,"type":"idle","detail":"permission"}
@@ -8,7 +8,7 @@
 {"ts":1777820400056,"type":"tool_start","tool":"Bash","detail":"rm /d C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\reconcile-submission-07f0e9b1\\tests\\unit\\agent-submission-evidence-shape.test.ts"}
 {"ts":1777820400200,"type":"idle","detail":"permission"}
 {"ts":1777820412223,"type":"notification","detail":"Claude needs your permission to use Bash"}
-{"ts":1777820689168,"type":"tool_end","tool":"Bash","detail":"Exit code 1\nrm: cannot remove '/d': Is a directory\nrm: cannot remove 'C:UserstylerDocumentsGitHubkangentic.kangenticworktreesreconcile-submission-07f0e9b1testsunitagent-submission-evidence-shape.test."}
+{"ts":1777820689168,"type":"tool_end","tool":"Bash","detail":"Exit code 1\nrm: cannot remove '/d': Is a directory\nrm: cannot remove 'C:UsersdevDocumentsGitHubkangentic.kangenticworktreesreconcile-submission-07f0e9b1testsunitagent-submission-evidence-shape.test."}
 {"ts":1777820691041,"type":"tool_start","tool":"PowerShell","detail":"Remove-Item -Path \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\reconcile-submission-07f0e9b1\\tests\\unit\\agent-submission-evidence-shape.test.ts\" -Force"}
 {"ts":1777820691776,"type":"idle","detail":"permission"}
 {"ts":1777820697800,"type":"notification","detail":"Claude needs your permission to use PowerShell"}

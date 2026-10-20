@@ -1,0 +1,16 @@
+{
+  "sessionId": "00000000-0000-4000-8000-8c55a3b38e7c",
+  "timestamp": 1792508598923,
+  "cwd": "C:\\Users\\dev\\repo",
+  "toolName": "powershell",
+  "toolArgs": {
+    "command": "node server.js",
+    "description": "A sync command that outlives its wait",
+    "mode": "sync",
+    "initial_wait": 30
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "server listening (pid 57464)\n<command with shellId: 0 is still running after 30 seconds. The command is still running. You will be automatically notified when it completes; if you need the command to complete end your response with no tool calls to wait for the notification. Use stop_powershell to stop it.>"
+  }
+}

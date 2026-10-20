@@ -1,0 +1,9 @@
+{
+  "session_id": "00000000-0000-4000-8000-9422fe9dcf40",
+  "transcript_path": "C:\\Users\\dev\\.factory\\sessions\\-C-Users-dev-AppData-Local-Temp-claude-C--Users-dev-repo-00000000-0000-4000-8000-79ad0fe86297-scratchpad-probe-work-droid-2026-10-20T15-24-35-452Z\\00000000-0000-4000-8000-9422fe9dcf40.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "permission_mode": "off",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "CLAUDE_ENV_FILE": "C:\\Users\\dev\\.factory\\temp\\env\\droid-env-00000000-0000-4000-8000-9422fe9dcf40.sh"
+}

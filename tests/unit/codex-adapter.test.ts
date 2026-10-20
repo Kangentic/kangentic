@@ -6,13 +6,13 @@
  * buildCodexCommand, mapPermissionMode, buildHooks, and
  * removeHooks functions.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { CodexAdapter } from '../../src/main/agent/adapters/codex';
 import { CodexSessionHistoryParser } from '../../src/main/agent/adapters/codex/session-history-parser';
-import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
+import type { AgentInfo, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 import {
   agentDisplayName,
@@ -33,6 +33,24 @@ function makeOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommand
     permissionMode: 'default',
     ...overrides,
   };
+}
+
+/**
+ * The adapter's private collaborators, narrowed to what the trust wiring tests
+ * replace. `detector` would otherwise probe the machine's own Codex, and
+ * `hookTrust` would start a real `codex app-server`.
+ */
+interface CodexAdapterInternals {
+  detector: { detect: (overridePath?: string | null) => Promise<AgentInfo> };
+  hookTrust: {
+    start: (codexPath: string) => void;
+    settle: (timeoutMs: number) => Promise<void>;
+    stateOverrideFor: (codexPath: string) => string | null;
+  };
+}
+
+function internalsOf(adapter: CodexAdapter): CodexAdapterInternals {
+  return adapter as unknown as CodexAdapterInternals;
 }
 
 describe('Codex Adapter', () => {
@@ -303,9 +321,17 @@ describe('Codex Adapter', () => {
         [...adapter.buildCommand(withMcp({ shell })).matchAll(/-c ["']([^"']+)["']/g)]
           .map((match) => match[1]);
       const baseline = payloadsFor('powershell');
-      expect(baseline).toEqual([URL_OVERRIDE, HEADER_OVERRIDE]);
+      expect(baseline).toEqual([URL_OVERRIDE, HEADER_OVERRIDE, 'check_for_update_on_startup=false']);
       for (const shell of ['cmd.exe', 'bash', 'wsl', 'nu']) {
         expect(payloadsFor(shell), `payloads diverged for ${shell}`).toEqual(baseline);
+      }
+    });
+
+    it('keeps Codex\'s startup update prompt out of every launch, new and resumed', () => {
+      // A modal whose first option is "Update now": a typed auto_command or an
+      // Enter meant for the agent would update and exit Codex (task #859).
+      for (const options of [withMcp({ shell: 'powershell' }), withMcp({ shell: 'bash', sessionId: 'thr_1', resume: true }), makeOptions({ shell: 'cmd.exe' })]) {
+        expect(adapter.buildCommand(options)).toMatch(/-c ["']check_for_update_on_startup=false["']/);
       }
     });
 
@@ -659,6 +685,104 @@ describe('Codex Adapter', () => {
       expect(config).toContain(`[projects.'${path.resolve(worktree)}']`);
       expect(config).toContain('trust_level = "trusted"');
     });
+
+    it('waits for the hook trust read, bounded at 8 seconds, before the spawn goes on', async () => {
+      // Every spawn path awaits ensureTrust before buildCommand, which reads the
+      // trust result synchronously, so a read still running must be waited on.
+      let releaseSettle: () => void = () => undefined;
+      const settle = vi.spyOn(internalsOf(adapter).hookTrust, 'settle').mockImplementation(
+        () => new Promise<void>((resolve) => { releaseSettle = resolve; }),
+      );
+      let resolved = false;
+      const pending = adapter
+        .ensureTrust(path.join(trustHome, 'project', '.kangentic', 'worktrees', '1'))
+        .then(() => { resolved = true; });
+      await expect.poll(() => settle.mock.calls.length, { timeout: 2000 }).toBe(1);
+      expect(settle).toHaveBeenCalledWith(8000);
+      // Intentional fixed wait: a missing await cannot be polled for, so give it
+      // a tick to resolve before asserting it has not.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(resolved).toBe(false);
+      releaseSettle();
+      await pending;
+      expect(resolved).toBe(true);
+    });
+  });
+
+  describe('hook trust wiring', () => {
+    const CODEX_PATH = '/usr/bin/codex';
+    const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'PreCompact'];
+    const TRUSTED_HASH = `sha256:${'c'.repeat(64)}`;
+    const TRUST_STATE = `hooks.state={'C:\\<session-flags>\\config.toml:stop:0:0'={trusted_hash='${TRUSTED_HASH}'}}`;
+
+    let workspace: string;
+
+    beforeEach(() => {
+      workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-adapter-wiring-'));
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      fs.rmSync(workspace, { recursive: true, force: true });
+    });
+
+    it('starts the trust read for the binary detect finds, and passes the override path on', async () => {
+      const { detector, hookTrust } = internalsOf(adapter);
+      const found: AgentInfo = { found: true, path: CODEX_PATH, version: '0.163.0' };
+      const detect = vi.spyOn(detector, 'detect').mockResolvedValue(found);
+      const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
+      await expect(adapter.detect('/opt/custom/codex')).resolves.toEqual(found);
+      expect(detect).toHaveBeenCalledWith('/opt/custom/codex');
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(start).toHaveBeenCalledWith(CODEX_PATH);
+    });
+
+    it('starts no trust read when detect finds no binary', async () => {
+      const { detector, hookTrust } = internalsOf(adapter);
+      vi.spyOn(detector, 'detect').mockResolvedValue({ found: false, path: null, version: null });
+      const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
+      await adapter.detect();
+      expect(start).not.toHaveBeenCalled();
+    });
+
+    /** A spawn that asks for hooks: an events file in a real folder, the shell fixed so quoting is predictable. */
+    function hookedOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
+      return makeOptions({
+        cwd: workspace,
+        shell: 'bash',
+        eventsOutputPath: path.join(workspace, 'sessions', 's1', 'events.jsonl'),
+        ...overrides,
+      });
+    }
+
+    /** The names of the `-c hooks.<name>=...` overrides a command carries, in order. */
+    function hookOverrideNames(command: string): string[] {
+      return [...command.matchAll(/ -c '?"?hooks\.(\w+)=/g)].map((match) => match[1]);
+    }
+
+    it('wires the seven hooks and the trust state when the trust check confirmed this binary', () => {
+      const stateOverrideFor = vi.spyOn(internalsOf(adapter).hookTrust, 'stateOverrideFor')
+        .mockImplementation((codexPath) => (codexPath === CODEX_PATH ? TRUST_STATE : null));
+      const command = adapter.buildCommand(hookedOptions());
+      expect(stateOverrideFor).toHaveBeenCalledWith(CODEX_PATH);
+      expect(hookOverrideNames(command)).toEqual([...HOOK_EVENTS, 'state']);
+      expect(command).toContain(TRUSTED_HASH);
+    });
+
+    it('wires no hooks at all when the trust check did not confirm this binary', () => {
+      vi.spyOn(internalsOf(adapter).hookTrust, 'stateOverrideFor').mockReturnValue(null);
+      const command = adapter.buildCommand(hookedOptions());
+      expect(command).not.toContain('hooks.');
+      // The rest of the command is still built, so an empty string cannot pass.
+      expect(command).toContain('check_for_update_on_startup=false');
+    });
+
+    it('wires no hooks without an events file even when the trust check confirmed the binary', () => {
+      vi.spyOn(internalsOf(adapter).hookTrust, 'stateOverrideFor').mockReturnValue(TRUST_STATE);
+      const command = adapter.buildCommand(hookedOptions({ eventsOutputPath: undefined }));
+      expect(command).not.toContain('hooks.');
+      expect(command).toContain('check_for_update_on_startup=false');
+    });
   });
 
   describe('onWorktreeRemoved', () => {
@@ -882,8 +1006,15 @@ describe('Codex Adapter', () => {
       expect(adapter.runtime.sessionId!.fromHook!(hookContext)).toBe('preferred');
     });
 
-    it('returns null when hookContext has no thread ID fields', () => {
-      const hookContext = JSON.stringify({ session_id: 'not-a-thread' });
+    it('reads session_id, the field Codex 0.163.0 SessionStart payloads carry, ahead of thread_id', () => {
+      const fixture = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-hooks', 'codex-0.154.0-session-start.json'), 'utf-8');
+      expect(adapter.runtime.sessionId!.fromHook!(fixture)).toBe('00000000-0000-4000-8000-4216b01c397e');
+      const both = JSON.stringify({ session_id: 'from-session-id', thread_id: 'from-thread-id' });
+      expect(adapter.runtime.sessionId!.fromHook!(both)).toBe('from-session-id');
+    });
+
+    it('returns null when hookContext has no session or thread id', () => {
+      const hookContext = JSON.stringify({ cwd: 'C:/Users/dev/repo' });
       expect(adapter.runtime.sessionId!.fromHook!(hookContext)).toBeNull();
     });
 
@@ -897,15 +1028,21 @@ describe('Codex Adapter', () => {
   });
 
   describe('activity detection strategy', () => {
-    it('uses PTY-only strategy with no detectIdle', () => {
+    it('is hook-driven with a PTY fallback that has no detectIdle', () => {
       const strategy = adapter.runtime.activity;
-      expect(strategy.kind).toBe('pty');
+      expect(strategy.kind).toBe('hooks_and_pty');
       // Codex does NOT use detectIdle. The guillemet (›) is always
       // visible in the Ink TUI prompt area, even during active work,
-      // so it causes false idle transitions. PtyActivityTracker's
-      // silence timer (PTY_SILENCE_THRESHOLD_MS) is the sole idle
-      // detection mechanism.
+      // so it causes false idle transitions. The silence timer
+      // (PTY_SILENCE_THRESHOLD_MS) is the fallback's only idle signal.
       expect((strategy as { detectIdle?: unknown }).detectIdle).toBeUndefined();
+    });
+
+    it('keeps its rollout from turning the PTY fallback off, and reports turn ends', () => {
+      // The rollout carries no turn starts or ends (task #859), so a session
+      // whose hooks Codex did not confirm keeps the PTY tracker.
+      expect(adapter.runtime.sessionHistory?.suppressesPtyFallback).toBe(false);
+      expect(adapter.runtime.reportsTurnEnd).toBe(true);
     });
   });
 

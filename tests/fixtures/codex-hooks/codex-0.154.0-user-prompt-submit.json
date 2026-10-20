@@ -1,0 +1,10 @@
+{
+  "session_id": "00000000-0000-4000-8000-4216b01c397e",
+  "turn_id": "00000000-0000-4000-8000-868b65c5c506",
+  "transcript_path": "C:\\Users\\dev\\.codex\\sessions\\2026\\10\\20\\rollout-2026-10-20T11-37-36-00000000-0000-4000-8000-4216b01c397e.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "stub-model",
+  "permission_mode": "bypassPermissions",
+  "prompt": "This is an automated test of your shell tool's background mode. Do exactly these steps, one tool call each, and nothing else:\n1. Start the command `node server.js` as a BACKGROUND command, using your shell tool's own option for running a command in the background, so the tool call returns while the process keeps running.\n2. Run `node -e \"console.log(42)\"` as a normal foreground command.\n3. If you have a tool for stopping a background command, use it to stop the command from step 1. If you have none, skip this step.\n4. Start `node server.js --kangentic-no-activity-hold` as a BACKGROUND command, the same way as step 1.\nThen reply with: the id your tool returned for each background command, the name of each tool you called, and every string beginning with NONCE that appeared anywhere in your context after a tool call (in tool results, system messages or hook context). If you saw none, write NO NONCE."
+}

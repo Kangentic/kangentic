@@ -1,0 +1,46 @@
+{
+  "hookEventName": "post_tool_use",
+  "sessionId": "00000000-0000-4000-8000-9a5a2922ec04",
+  "cwd": "C:\\Users\\dev\\repo",
+  "workspaceRoot": "C:/Users/dev/repo/",
+  "timestamp": "2026-10-20T15:16:06.145060700+00:00",
+  "transcriptPath": "C:\\Users\\dev\\.grok\\sessions\\C%3A%5CUsers%5Cdev%5Crepo\\00000000-0000-4000-8000-9a5a2922ec04\\updates.jsonl",
+  "permissionMode": "bypassPermissions",
+  "toolName": "run_terminal_command",
+  "toolUseId": "call_probe_2",
+  "toolInput": {
+    "command": "node -e \"console.log(42)\"",
+    "description": "Foreground probe"
+  },
+  "toolResult": {
+    "type": "Bash",
+    "output": [
+      27,
+      91,
+      51,
+      51,
+      109,
+      52,
+      50,
+      27,
+      91,
+      51,
+      57,
+      109,
+      10
+    ],
+    "output_for_prompt": "exit: 0\n42\n",
+    "exit_code": 0,
+    "command": "node -e \"console.log(42)\"",
+    "truncated": false,
+    "signal": null,
+    "timed_out": false,
+    "description": "Foreground probe",
+    "current_dir": "C:\\Users\\dev\\repo",
+    "output_file": "C:\\Users\\dev\\.grok\\sessions\\C%3A%5CUsers%5Cdev%5Crepo\\00000000-0000-4000-8000-9a5a2922ec04\\terminal\\call_probe_2.log",
+    "total_bytes": 13
+  },
+  "toolInputTruncated": false,
+  "toolResultTruncated": false,
+  "isBackgrounded": false
+}

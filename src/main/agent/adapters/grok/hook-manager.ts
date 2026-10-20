@@ -11,6 +11,38 @@ import {
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { extractTool, extractToolId, extractDetail } from '../../shared/directive-builders';
 import { setTypeWhenDetailContains } from '../../shared/directive-builders';
+import { backgroundLaunchDirective, backgroundStopDirectives } from '../../shared/background-command-hooks';
+import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
+
+/**
+ * Grok's background commands (task #859), from a headless 1.0.0 run against a
+ * local stand-in for the model API (tests/fixtures/grok-hooks/grok-1.0.0-*).
+ * `run_terminal_command` with `background: true`, or a foreground command past
+ * its timeout, answers `toolResult: { type: "BackgroundTaskStarted", task_id }`
+ * (the top-level `isBackgrounded` stayed false for both, so it decides
+ * nothing). `kill_command_or_subagent` takes `toolInput.task_id` and answers
+ * `{ type: "KillTask" }`; it also stops subagents, whose ids are then an
+ * unmatched end the engine counts and ignores. Grok's PostToolUse is passive:
+ * a `hookSpecificOutput.additionalContext` never reached the model, so there is
+ * no hint. The command runs under `pwsh.exe` inside Grok's tree.
+ */
+export const GROK_BACKGROUND_COMMAND_SPEC: BackgroundCommandSpec = {
+  launch: {
+    toolField: 'toolName',
+    tools: ['run_terminal_command'],
+    when: [{ path: ['toolResult', 'type'], equals: 'BackgroundTaskStarted' }],
+    unless: [],
+    idSources: [{ path: ['toolResult', 'task_id'] }],
+    commandPath: ['toolInput', 'command'],
+  },
+  stop: {
+    toolField: 'toolName',
+    tools: ['kill_command_or_subagent'],
+    when: [{ path: ['toolResult', 'type'], equals: 'KillTask' }],
+    unless: [],
+    idSources: [{ path: ['toolInput', 'task_id'] }],
+  },
+};
 
 /**
  * Grok Build hook wiring.
@@ -126,9 +158,13 @@ export function buildGrokHooks(eventBridge: string): Record<string, GrokHookEntr
       // input (observed: `command` for run_terminal_command, `target_file`
       // for read_file). First non-null wins.
       extractDetail(['command', 'target_file', 'file_path', 'path', 'query', 'pattern', 'url', 'description'], { nested: 'toolInput' })))],
+    // A background launch and kill ride this entry: grok runs one event's
+    // hooks one after another, so a second entry would cost every tool call.
     [H.PostToolUse]: [commandEntry(bridge(E.ToolEnd,
       extractTool('toolName'),
-      extractToolId(['toolUseId'])))],
+      extractToolId(['toolUseId']),
+      backgroundLaunchDirective(GROK_BACKGROUND_COMMAND_SPEC),
+      ...backgroundStopDirectives(GROK_BACKGROUND_COMMAND_SPEC)))],
     [H.PostToolUseFailure]: [commandEntry(bridge(E.ToolEnd,
       extractTool('toolName'),
       extractToolId(['toolUseId']),

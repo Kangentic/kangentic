@@ -130,13 +130,24 @@ export class KimiAdapter implements AgentAdapter {
   }
 
   /**
+   * Background commands (task #859): the wire parser reports a `Shell`
+   * launch with `run_in_background`, its `TaskStop`, and the task's ending
+   * notification (`wire-parser.ts`), keyed by Kimi's task id. No launch
+   * hint: Kimi's PostToolUse hook reads only a block or deny decision, so
+   * the agent learns about `kangentic_mark_background_service` from the
+   * tool's own description.
+   */
+  readonly backgroundCommands = { source: 'session-history', launchHint: false } as const;
+
+  /**
    * Runtime strategy: how Kimi exposes activity state and session
    * telemetry.
    *
-   * - Activity: PTY silence timer + a permissive prompt regex. The
-   *   wire.jsonl `TurnBegin` / `TurnEnd` events provide authoritative
-   *   transitions through `runtime.sessionHistory`, but the PTY
-   *   tracker covers gaps before the first wire flush.
+   * - Activity: wire.jsonl drives it (`hooks_and_pty`, with the history
+   *   file as the structured source). The first wire read turns the PTY
+   *   tracker off, so PTY silence cannot end a turn or clear a background
+   *   task's hold; until then the PTY silence timer and the permissive
+   *   prompt regex cover the gap before the first wire flush.
    *
    * - Session ID (fromOutput): two regex anchors.
    *     1. Welcome banner: "Session: <uuid>" (interactive + print).
@@ -152,7 +163,7 @@ export class KimiAdapter implements AgentAdapter {
   readonly runtime: AdapterRuntimeStrategy = {
     // Its wire TurnEnd record reaches the engine as an Idle event.
     reportsTurnEnd: true,
-    activity: ActivityDetection.pty((data: string) => {
+    activity: ActivityDetection.hooksAndPty((data: string) => {
       // Strip ANSI then look for the stable Kimi input prompt at the
       // bottom of the alt-screen. Kimi's TUI redraws an "input" cell
       // separator with the cursor on the next line - we accept either

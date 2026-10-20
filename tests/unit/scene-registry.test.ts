@@ -651,12 +651,14 @@ describe('scene registry', () => {
   });
 
   it('reports each agent\'s turn end as its adapter does', () => {
-    // The sample install's Code Review column runs Codex, which says nothing when a turn ends, so
-    // the desktop blocks On agent turn end there. Before the overrides carried the flag, every
-    // Column Manager scene showed that group as runnable.
+    // The Column Manager blocks On agent turn end on a column whose agent says nothing when a
+    // turn ends. Before the overrides carried the flag, every Column Manager scene showed that
+    // group as runnable whatever the agent. The sample install's Code Review column runs Codex,
+    // which reports a turn end through its Stop hook since task #859.
     const reports = adapterTurnEndReports();
     expect(reports.get('claude'), 'the Claude adapter no longer declares reportsTurnEnd; was it renamed?').toBe(true);
-    expect(reports.get('codex'), 'the Codex adapter no longer declares reportsTurnEnd; was it renamed?').toBe(false);
+    expect(reports.get('codex'), 'the Codex adapter no longer declares reportsTurnEnd; was it renamed?').toBe(true);
+    expect(reports.get('droid'), 'the Droid adapter no longer declares reportsTurnEnd; was it renamed?').toBe(false);
     for (const [agentName, override] of Object.entries(DEMO_AGENT_OVERRIDES)) {
       expect(reports.has(agentName), `DEMO_AGENT_OVERRIDES names ${agentName}, which has no adapter declaring reportsTurnEnd`).toBe(true);
       expect(override.reportsTurnEnd, `DEMO_AGENT_OVERRIDES.${agentName}.reportsTurnEnd`).toBe(reports.get(agentName));

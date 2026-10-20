@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import * as os from 'node:os';
+import os from 'node:os';
 import { createSerialLock } from '../../shared/relocation-utils';
 
 /**
@@ -45,9 +45,11 @@ const LONG_PATH_PREFIX = '\\\\?\\';
  * instead of appending to the developer's real one.
  *
  * Read per call rather than cached, so a test (or a user) that changes the
- * variable is not shadowed by a value captured at import time.
+ * variable is not shadowed by a value captured at import time. Every reader of
+ * Codex's own files (rollouts, transcripts) resolves through this too: with
+ * `~/.codex` hard-coded, a user with `CODEX_HOME` set got no rollout telemetry.
  */
-function codexHomeDir(): string {
+export function codexHomeDir(): string {
   const override = process.env.CODEX_HOME;
   return override && override.trim().length > 0
     ? path.resolve(override)

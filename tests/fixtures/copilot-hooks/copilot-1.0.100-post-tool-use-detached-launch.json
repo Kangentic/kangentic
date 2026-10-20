@@ -1,0 +1,17 @@
+{
+  "sessionId": "00000000-0000-4000-8000-2fdc92d19b5a",
+  "timestamp": 1792508319696,
+  "cwd": "C:\\Users\\dev\\repo",
+  "toolName": "powershell",
+  "toolArgs": {
+    "command": "node server.js",
+    "description": "Start a detached probe server",
+    "mode": "async",
+    "detach": true,
+    "shellId": "probe-detached"
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "<command started in detached background with shellId: probe-detached>"
+  }
+}

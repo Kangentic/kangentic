@@ -195,6 +195,10 @@ export function isInternalAgentToolEvent(
  *                         When PreToolUse + PostToolUse fire as a pair,
  *                         the second arrival "promotes" an anonymous
  *                         slot to a named one to keep total count constant.
+ *                         A named start lands exempt when its launch carried
+ *                         the no-activity-hold flag (the `toolId` memo, or
+ *                         `noActivityHold` on the start for a CLI with no
+ *                         tool id) or the agent marked the id first.
  * - `BackgroundShellEnd`  decrements the named shell if the id matches,
  *                         else drains anonymous (ONLY when the end carried
  *                         no id at all - an id-shaped-but-unmatched end is
@@ -428,9 +432,12 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
         // liveness while contributing nothing to the predicate.
         //
         // The agent can also have marked this id as a service before the
-        // engine saw it start (`pendingServiceShellIds`): same landing.
+        // engine saw it start (`pendingServiceShellIds`): same landing. A CLI
+        // whose payloads carry no tool id reports the flag on the start itself
+        // (`noActivityHold`), since no memo can be keyed for it.
         const exemptToolId = event.toolId;
-        const flaggedAtLaunch = exemptToolId !== undefined && state.pendingExemptShellToolIds.has(exemptToolId);
+        const flaggedAtLaunch = event.noActivityHold === true
+          || (exemptToolId !== undefined && state.pendingExemptShellToolIds.has(exemptToolId));
         const markedBeforeStart = state.pendingServiceShellIds.has(event.detail);
         if (flaggedAtLaunch || markedBeforeStart) {
           if (exemptToolId !== undefined) state.pendingExemptShellToolIds.delete(exemptToolId);

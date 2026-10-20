@@ -11,6 +11,7 @@
 // the engine doesn't already cover.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const inputPath = process.argv[2];
@@ -22,33 +23,31 @@ if (!inputPath) {
 
 const rawLines = fs.readFileSync(inputPath, 'utf-8').trim().split('\n');
 
-const usernameRegex = /\\Users\\tyler\\/gi;
-const usernameRegexFwd = /\/Users\/tyler\//gi;
+// The capturing machine's own user name, read at run time: this file is
+// committed to a public repo, so it must not carry the name it scrubs.
+const username = os.userInfo().username;
+const escapedUsername = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const uuidRegex = /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi;
 
 function sanitize(line) {
   let cleaned = line;
-  // Windows paths in JSON-escaped form (\\Users\\tyler\\)
-  cleaned = cleaned.replace(/\\\\Users\\\\tyler\\\\/g, '\\\\Users\\\\dev\\\\');
-  // Plain Windows paths
-  cleaned = cleaned.replace(usernameRegex, '\\Users\\dev\\');
-  // Forward-slash unix-style
-  cleaned = cleaned.replace(usernameRegexFwd, '/Users/dev/');
+  // Any `Users<sep><name>` with one-or-more slash/backslash separators: plain,
+  // JSON-escaped and JSON-in-JSON (4 backslashes) paths alike. Preserves the
+  // separators, swaps the name.
+  cleaned = cleaned.replace(new RegExp(`(Users[\\\\/]+)${escapedUsername}`, 'gi'), '$1dev');
   // Claude project-dir slug form (path separators collapsed to hyphens), e.g.
-  // C--Users-tyler-Documents-GitHub-... -> C--Users-dev-Documents-GitHub-...
-  cleaned = cleaned.replace(/-Users-tyler-/gi, '-Users-dev-');
-  // General catch-all: any `Users<sep>tyler` with one-or-more slash/backslash
-  // separators (covers JSON-in-JSON paths escaped to 4 backslashes, which the
-  // fixed-form regexes above miss). Preserves the separators, swaps the name.
-  cleaned = cleaned.replace(/(Users[\\/]+)tyler/gi, '$1dev');
+  // C--Users-<name>-Documents-GitHub-... -> C--Users-dev-Documents-GitHub-...
+  cleaned = cleaned.replace(new RegExp(`-Users-${escapedUsername}-`, 'gi'), '-Users-dev-');
   // Anonymize all UUIDs (session ids, transcript ids)
   cleaned = cleaned.replace(uuidRegex, '00000000-0000-0000-0000-000000000000');
-  // Bare username, with no path around it to anchor on. A captured tool_start
+  // Bare user name, with no path around it to anchor on. A captured tool_start
   // carries the command line verbatim, so a session that grepped for its own
   // author's name puts that name in the fixture in a form every path-shaped
   // rule above misses. Over-scrubbing is the right error here: these fixtures
   // are committed to a public repo, and no assertion reads a `detail` string.
-  cleaned = cleaned.replace(/tyler/gi, 'dev');
+  // Whole words only, so a short account name (`a`, `app`) cannot rewrite the
+  // inside of a JSON key or a tool name.
+  cleaned = cleaned.replace(new RegExp(`\\b${escapedUsername}\\b`, 'gi'), 'dev');
   // Email literals, likewise banned in committed files.
   cleaned = cleaned.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, 'dev@example.com');
   return cleaned;

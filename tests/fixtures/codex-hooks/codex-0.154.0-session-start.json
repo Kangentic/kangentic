@@ -1,0 +1,9 @@
+{
+  "session_id": "00000000-0000-4000-8000-4216b01c397e",
+  "transcript_path": "C:\\Users\\dev\\.codex\\sessions\\2026\\10\\20\\rollout-2026-10-20T11-37-36-00000000-0000-4000-8000-4216b01c397e.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "SessionStart",
+  "model": "stub-model",
+  "permission_mode": "bypassPermissions",
+  "source": "startup"
+}

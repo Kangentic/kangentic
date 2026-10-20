@@ -4,7 +4,9 @@ import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/pa
 import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
-import { buildHooks } from './hook-manager';
+import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
+import { backgroundShellHintCommandFor, shippedHintBridgePath } from '../../shared/background-command-hooks';
+import { buildHooks, GEMINI_BACKGROUND_COMMAND_SPEC, GEMINI_HOOK_SHELL } from './hook-manager';
 import type { GeminiHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
@@ -26,6 +28,13 @@ function geminiMcpWiringEnabled(
     && Boolean(options.mcpServerToken)
   );
 }
+
+/**
+ * The variables the Kangentic MCP entry in `.gemini/settings.json` names, which
+ * Gemini expands from its own environment and `buildGeminiEnv` sets per spawn.
+ */
+export const KANGENTIC_MCP_URL_ENV = 'KANGENTIC_MCP_URL';
+export const KANGENTIC_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
 
 /** Gemini-specific subset of settings.json that we read/write. */
 interface GeminiSettings {
@@ -127,6 +136,17 @@ export class GeminiCommandBuilder {
     return interpolateTemplate(template, variables);
   }
 
+  /**
+   * Environment injected into the Gemini PTY: the MCP URL (which carries the
+   * caller session) and the per-launch token that the folder-shared
+   * `.gemini/settings.json` names by reference. The events path rides
+   * `KANGENTIC_EVENTS_PATH`, which every session spawn sets.
+   */
+  buildGeminiEnv(options: GeminiCommandOptions): Record<string, string> | null {
+    if (!geminiMcpWiringEnabled(options)) return null;
+    return { [KANGENTIC_MCP_URL_ENV]: options.mcpServerUrl, [KANGENTIC_MCP_TOKEN_ENV]: options.mcpServerToken };
+  }
+
   /** Read and merge project settings, with per-projectRoot caching. */
   private readBaseSettings(projectRoot: string): GeminiSettings {
     const cached = this.projectSettingsCache.get(projectRoot);
@@ -189,42 +209,46 @@ export class GeminiCommandBuilder {
    * MCP server entry: Gemini natively supports inline `mcpServers` in
    * settings.json. Verified against gemini 0.54.4 that the Gemini-fork
    * `httpUrl` key (not the Anthropic/fastmcp `url` used by Claude/Kimi)
-   * plus a `headers` map connects to the in-process MCP HTTP server. This
-   * matches the sibling Qwen fork's wiring exactly. User-defined
-   * `mcpServers` are preserved via spread.
+   * plus a `headers` map connects to the in-process MCP HTTP server.
+   * User-defined `mcpServers` are preserved via spread.
    *
-   * Security trade-off (identical to Qwen's): `.gemini/settings.json` is
-   * project-shared and may be intentionally committed, so it cannot be
-   * blanket-gitignored like `.kangentic/`. The injected token is therefore
-   * plaintext on disk during the active session. Mitigations: tokens
-   * rotate per app launch (see `mcp-http-server.ts`), and `removeHooks()`
-   * strips the entry on session exit / suspend. Consequence: do not commit
-   * `.gemini/settings.json` while a Kangentic-spawned Gemini session runs.
-   *
-   * That strip does NOT run on app quit: the synchronous shutdown path
-   * disposes each session's PTY listeners before killing it, precisely so no
-   * handler fires on a later tick, and `removeHooks` only runs from the exit
-   * handler. What is left behind is a token whose server died with the app,
-   * so the residue is a stale entry rather than a live credential.
+   * The entry names the URL and the token as env references, which Gemini
+   * expands from its own environment (task #859, measured on 0.64.0), and
+   * `buildGeminiEnv` sets them per spawn. So the folder-shared file carries
+   * no caller URL a later spawn could overwrite, and no token: both live only
+   * in the session's environment. `removeHooks()` still strips the entry on
+   * session exit / suspend, and an entry an app quit leaves behind names
+   * variables, not a credential.
    */
   private createMergedSettings(options: GeminiCommandOptions): void {
     const projectRoot = options.projectRoot || options.cwd;
     const baseSettings = this.readBaseSettings(projectRoot);
 
-    const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
     const merged: GeminiSettings = { ...baseSettings };
 
-    if (eventsPath) {
+    if (options.eventsOutputPath) {
       const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
-      merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {});
+      // The file is shared by every session in the folder, so the hooks name
+      // the events path from each session's own environment (the bridge's
+      // `env:` sentinel), never one session's literal path.
+      merged.hooks = buildHooks(eventBridge, EVENTS_PATH_FROM_ENVIRONMENT, baseSettings.hooks || {}, {
+        backgroundShellHintCommand: backgroundShellHintCommandFor(
+          options, GEMINI_BACKGROUND_COMMAND_SPEC, GEMINI_HOOK_SHELL, shippedHintBridgePath(),
+        ),
+      });
     }
 
     if (geminiMcpWiringEnabled(options)) {
+      // Env references Gemini expands from its own process environment
+      // (`resolveEnvVarsInString`, measured on 0.64.0: the MCP request arrived
+      // at the value the spawn set), filled per session by `buildGeminiEnv`. So
+      // two sessions in one folder each reach their own caller URL, and the
+      // per-launch token never touches this file.
       merged.mcpServers = {
         ...(baseSettings.mcpServers ?? {}),
         kangentic: {
-          httpUrl: options.mcpServerUrl,
-          headers: { 'X-Kangentic-Token': options.mcpServerToken },
+          httpUrl: `\${${KANGENTIC_MCP_URL_ENV}}`,
+          headers: { 'X-Kangentic-Token': `\${${KANGENTIC_MCP_TOKEN_ENV}}` },
         },
       };
     }
@@ -249,7 +273,7 @@ export class GeminiCommandBuilder {
 
     const hookCount = Object.keys(merged.hooks || {}).length;
     const mcpCount = Object.keys(merged.mcpServers || {}).length;
-    console.log(`[gemini] Wrote settings to ${settingsPath} (${hookCount} hook event types, ${mcpCount} mcp servers, events -> ${eventsPath ?? 'none'})`);
+    console.log(`[gemini] Wrote settings to ${settingsPath} (${hookCount} hook event types, ${mcpCount} mcp servers, events -> ${options.eventsOutputPath ?? 'none'})`);
   }
 }
 

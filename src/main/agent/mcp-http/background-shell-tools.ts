@@ -3,6 +3,7 @@ import { z } from 'zod/v4';
 import { MUTATING_ANNOTATIONS } from './annotations';
 import type { McpToolResult } from './handler-helpers';
 import { looksLikeShellId } from '../../activity-engine/background-shell/looks-like-shell-id';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../../shared/background-shell-hold';
 import type { BackgroundShellServiceOutcome } from '../../activity-engine/engine';
 
 /**
@@ -13,17 +14,21 @@ import type { BackgroundShellServiceOutcome } from '../../activity-engine/engine
  * server or watcher left running kept the task busy forever and the column's
  * On agent turn end automations never ran. Only the agent knows whether a
  * shell is a build it waits on or a server it leaves up, so Kangentic asks it:
- * Claude's PostToolUse hook names this tool beside every background launch that
- * carries no `--kangentic-no-activity-hold` flag
- * (`background-shell-hint-bridge.js`), and the agent answers here by shell id.
+ * where its CLI can add context beside a tool result, a post-tool hook names
+ * this tool beside every background launch that carries no
+ * `--kangentic-no-activity-hold` flag (`background-shell-hint-bridge.js`), and
+ * the agent answers here by shell id. The tool is offered only to a session
+ * whose agent reports background commands (`AgentAdapter.backgroundCommands`).
  *
  * The caller can only mark its own session's shells: the session comes from
  * the MCP URL (`/mcp/<projectId>/<callerSessionId>`), never from a parameter.
  */
 
-/** The one `SessionManager` call this tool needs. */
+/** The `SessionManager` calls this tool needs. */
 export interface BackgroundShellServiceMarker {
   markBackgroundShellsAsServices(sessionId: string, shellIds: readonly string[]): BackgroundShellServiceOutcome[] | null;
+  /** Whether the session's agent reports background commands; the tool is offered only then. */
+  reportsBackgroundCommands(sessionId: string): boolean;
 }
 
 export interface BackgroundShellToolDependencies {
@@ -59,14 +64,19 @@ export function registerBackgroundShellTools(
   server.registerTool(
     'kangentic_mark_background_service',
     {
+      // The second-to-last sentence is the only guidance an agent with no
+      // launch hint gets (Grok, Kimi, Codex: their CLIs cannot add context at
+      // a launch), so it says when to call, not only what a call does (task #859).
       description:
-        'Mark background shells you started as services meant to keep running after your turn, such as a dev server or a watcher, rather than work you are waiting on. Kangentic shows your task as working, and holds the column\'s turn-end automations, until every background shell you started exits; a marked shell no longer counts, and it keeps running. Do not mark a build or test run you are waiting for. Pass the shell ids your background commands returned.',
+        'Mark background shells you started as services meant to keep running after your turn, such as a dev server or a watcher, rather than work you are waiting on. Kangentic shows your task as working, and holds the column\'s turn-end automations, until every background shell you started exits; a marked shell no longer counts, and it keeps running. Do not mark a build or test run you are waiting for. '
+        + `Call this as soon as you start such a service in the background, or put ${NO_ACTIVITY_HOLD_FLAG} in its command when you start it. `
+        + 'Pass the shell ids your background commands returned.',
       inputSchema: z.object({
         shellIds: z
           .array(z.string())
           .min(1)
           .max(MAX_SHELL_IDS_PER_CALL)
-          .describe('Background shell ids, as your background command returned them (for example "b3kfzb1g3").'),
+          .describe('Background shell ids, as your background command returned them (the shell, task or process id).'),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },

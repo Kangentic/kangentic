@@ -494,11 +494,14 @@ describe('buildGrokHooks', () => {
   it('maps PostToolUse to tool_end with tool-name/tool-id extraction and NO error-detail directive', () => {
     // Unlike PostToolUseFailure (asserted below), a successful tool
     // completion carries no error/errorDetails directive - only the
-    // tool-name and tool-id extractors.
+    // tool-name and tool-id extractors, and the background launch and kill
+    // reports (task #859), which write their own events beside this one.
     const postToolUseTokens = hooks.PostToolUse[0].hooks[0].command.split(' ');
     expect(postToolUseTokens[3]).toBe('tool_end');
     const directives = postToolUseTokens.slice(4).map(decodeDirective);
-    expect(directives).toHaveLength(2);
+    expect(directives.map((directive) => directive.kind)).toEqual([
+      'extractTool', 'extractToolId', 'appendBackgroundLaunch', 'appendBackgroundStop',
+    ]);
     expect(directives[0]).toEqual({ kind: 'extractTool', payload: { field: 'toolName' } });
     expect(directives[1]).toEqual({ kind: 'extractToolId', payload: { fields: ['toolUseId'] } });
     expect(directives.some((directive) => directive.kind === 'extractDetail')).toBe(false);

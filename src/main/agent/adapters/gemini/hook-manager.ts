@@ -2,6 +2,9 @@ import path from 'node:path';
 import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractDetail, setToolWhen, emitOnlyWhenDetailMatches, setDetail } from '../../shared/directive-builders';
+import { backgroundLaunchDirective, nestedBackgroundShellHintEntries } from '../../shared/background-command-hooks';
+import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
+import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
 
 /** Hook entry in Gemini CLI's settings.json. */
 export interface GeminiHookEntry {
@@ -60,7 +63,47 @@ function filterOurHooks(entries: GeminiHookEntry[] | undefined): GeminiHookEntry
  * `$NAME` and `${NAME}` in the settings file's strings with the environment's
  * values (`resolveEnvVarsInString`), which the quoting also keeps away from.
  */
-const GEMINI_HOOK_SHELL: HookShell = 'sh-or-powershell';
+export const GEMINI_HOOK_SHELL: HookShell = 'sh-or-powershell';
+
+/**
+ * Gemini CLI's background commands (task #859), from a headless 0.64.0 run
+ * against a local stand-in for the model API (tests/fixtures/gemini-hooks/).
+ * `run_shell_command` with `is_background: true`, or a command the user moves
+ * to the background with Ctrl+B, answers `tool_response.llmContent`
+ * "<untrusted_context>\nCommand moved to background (PID: N). ...". N is the
+ * `pwsh.exe` (Windows) or shell running the command, inside Gemini's tree, so
+ * the watcher sees it exit. The pattern is anchored at the start, where a
+ * foreground command's result has "Output:", so output that quotes the phrase
+ * never reads as a launch. Gemini has no stop tool. Gemini adds an AfterTool
+ * `hookSpecificOutput.additionalContext` to the tool response inside
+ * `<hook_context>`. Its payloads carry no tool id.
+ */
+export const GEMINI_BACKGROUND_COMMAND_SPEC: BackgroundCommandSpec = {
+  launch: {
+    toolField: 'tool_name',
+    tools: ['run_shell_command'],
+    when: [],
+    unless: [],
+    idSources: [{
+      path: ['tool_response', 'llmContent'],
+      pattern: '^(?:<untrusted_context>\\s*)?Command moved to background \\(PID: (\\d+)\\)',
+    }],
+    commandPath: ['tool_input', 'command'],
+  },
+  hintReply: {
+    hookSpecificOutput: { hookEventName: 'AfterTool', additionalContext: BACKGROUND_SHELL_HINT_TEXT },
+  },
+};
+
+/** Options for `buildHooks`. */
+export interface GeminiBuildHooksOptions {
+  /**
+   * The background shell hint's command (`backgroundShellHintCommandFor`),
+   * registered on AfterTool for the shell tool alone. Passed only for a
+   * session offered `kangentic_mark_background_service`.
+   */
+  backgroundShellHintCommand?: string | null;
+}
 
 /** Build a single Gemini hook entry for the event bridge. */
 function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string, ...directives: string[]): GeminiHookEntry {
@@ -91,6 +134,7 @@ export function buildHooks(
   eventBridge: string,
   eventsPath: string,
   existingHooks: Record<string, GeminiHookEntry[]>,
+  options: GeminiBuildHooksOptions = {},
 ): Record<string, GeminiHookEntry[]> {
   // Gemini CLI stdin field extraction directives:
   // - tool_name: tool identifier at top level
@@ -105,9 +149,14 @@ export function buildHooks(
       bridgeEntry(eventBridge, eventsPath, E.ToolStart,
         extractTool('tool_name'), extractDetail(['file_path', 'command', 'query'], { nested: 'tool_input' })),
     ],
+    // A background launch rides the tool_end entry, and the hint runs beside
+    // it for the shell tool alone. Gemini runs one event's hooks in parallel
+    // (measured on 0.64.0).
     [H.AfterTool]: [
       ...filterOurHooks(existingHooks[H.AfterTool]),
-      bridgeEntry(eventBridge, eventsPath, E.ToolEnd, extractTool('tool_name'), APPROVED_PLAN_EXIT),
+      bridgeEntry(eventBridge, eventsPath, E.ToolEnd, extractTool('tool_name'), APPROVED_PLAN_EXIT,
+        backgroundLaunchDirective(GEMINI_BACKGROUND_COMMAND_SPEC)),
+      ...nestedBackgroundShellHintEntries(GEMINI_BACKGROUND_COMMAND_SPEC, options.backgroundShellHintCommand),
     ],
     [H.SessionStart]: [
       ...filterOurHooks(existingHooks[H.SessionStart]),

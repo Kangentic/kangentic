@@ -1,0 +1,15 @@
+{
+  "sessionId": "00000000-0000-4000-8000-2fdc92d19b5a",
+  "timestamp": 1792508315295,
+  "cwd": "C:\\Users\\dev\\repo",
+  "toolName": "powershell",
+  "toolArgs": {
+    "command": "node server.js --kangentic-no-activity-hold",
+    "description": "Start the flagged probe server",
+    "mode": "async"
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "<command started in background with shellId: 1>"
+  }
+}

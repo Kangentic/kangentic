@@ -1,0 +1,22 @@
+{
+  "session_id": "00000000-0000-4000-8000-6bcac7970844",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\c--users-dev-appdata-local-temp-claude-C--Users-dev-repo-00000000-0000-4000-8000-79ad0fe86297-scratchpad-probe-work-qwen-2026-10-20t14-53-57-682z\\chats\\00000000-0000-4000-8000-6bcac7970844.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "PostToolUse",
+  "timestamp": "2026-10-20T14:54:10.061Z",
+  "permission_mode": "yolo",
+  "prompt_id": "00000000-0000-4000-8000-6bcac7970844########0",
+  "tool_name": "run_shell_command",
+  "tool_input": {
+    "command": "node server.js --kangentic-no-activity-hold",
+    "description": "Start the flagged probe server",
+    "is_background": true
+  },
+  "tool_response": {
+    "llmContent": "Background shell started.\nid: bg_5d90bd48\npid: 73472\noutput file: C:\\Users\\dev\\.qwen\\tmp\\95a435e70f1ff7b310c9872966e387d14ab77f5e9b71c86ec81ebd752ca362a6\\background-shells\\00000000-0000-4000-8000-6bcac7970844\\shell-bg_5d90bd48.output\nstatus file: C:\\Users\\dev\\.qwen\\tmp\\95a435e70f1ff7b310c9872966e387d14ab77f5e9b71c86ec81ebd752ca362a6\\background-shells\\00000000-0000-4000-8000-6bcac7970844\\shell-bg_5d90bd48.status\nTo check whether this process is still running, Read the status file (status: running|completed|failed|cancelled). Do NOT infer liveness from the output file: programs often block-buffer stdout when not attached to a TTY, so an empty output file is normal while the process is alive (for live output, re-run with e.g. `python -u` or `stdbuf -oL`).\nTo inspect: /tasks (text) or the interactive Background tasks dialog (focus the footer Background tasks pill, then Enter — detail view + live updates). Read the output file directly to view the captured output.",
+    "returnDisplay": "Background shell bg_5d90bd48 started (pid 73472)."
+  },
+  "tool_use_id": "toolu_1792508049757_u6fz6ueuh",
+  "tool_call_id": "call_probe_5",
+  "duration_ms": 36
+}

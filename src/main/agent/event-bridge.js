@@ -66,6 +66,16 @@
  *                                 matches the regex `pattern`. Fail-closed: a missing
  *                                 detail or malformed pattern suppresses. Must be
  *                                 listed AFTER an extract directive.
+ *   appendBackgroundLaunch     { toolField, tools, when, unless, idSources,
+ *                                commandPath, idPattern, optOutFlag }
+ *                              -> when the payload is that background launch, ALSO
+ *                                 write a background_shell_start (detail = the id,
+ *                                 noActivityHold when the command carries
+ *                                 optOutFlag) before the hook's own event.
+ *   appendBackgroundStop       { toolField, tools, when, unless, idSources, idPattern }
+ *                              -> likewise a background_shell_end for the id the
+ *                                 stop names. Both read the BackgroundCallMatch shape
+ *                                 (src/shared/background-command-spec.ts).
  *
  * Stdin: Agent CLIs pipe hook context as JSON. Directives control which
  * fields are extracted for each event type.
@@ -150,6 +160,75 @@ function firstNonNull(container, fields) {
   return undefined;
 }
 
+// BEGIN background-call-match
+// Shared verbatim by event-bridge.js and background-shell-hint-bridge.js (a
+// workspace copy of either bridge is one file, so it cannot require a module). The shape is
+// BackgroundCallMatch in src/shared/background-command-spec.ts.
+// tests/unit/background-call-match-parity.test.ts keeps the two copies equal.
+const BACKGROUND_MATCH_SCAN_CAP = 64 * 1024;
+
+function valueAtPath(root, pathSegments) {
+  if (!Array.isArray(pathSegments) || pathSegments.length === 0) return undefined;
+  let value = root;
+  for (const segment of pathSegments) {
+    value = value && typeof value === 'object' ? value[segment] : undefined;
+  }
+  return value;
+}
+
+function conditionHolds(root, condition) {
+  return Boolean(condition) && valueAtPath(root, condition.path) === condition.equals;
+}
+
+function idFromSources(root, sources, idPattern) {
+  if (!Array.isArray(sources) || typeof idPattern !== 'string') return null;
+  let shape;
+  try {
+    shape = new RegExp(idPattern);
+  } catch {
+    return null;
+  }
+  for (const source of sources) {
+    if (!source) continue;
+    const value = valueAtPath(root, source.path);
+    let candidate = null;
+    if (typeof source.pattern === 'string') {
+      if (typeof value !== 'string') continue;
+      try {
+        const match = value.slice(0, BACKGROUND_MATCH_SCAN_CAP).match(new RegExp(source.pattern));
+        if (match && typeof match[1] === 'string') candidate = match[1];
+      } catch {
+        continue;
+      }
+    } else if (typeof value === 'string' || typeof value === 'number') {
+      candidate = String(value);
+    }
+    if (candidate && shape.test(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** The id of a call `match` names, or null. Never throws. */
+function matchBackgroundCall(root, match, idPattern) {
+  if (!root || typeof root !== 'object' || !match || typeof match !== 'object') return null;
+  if (typeof match.toolField !== 'string' || !Array.isArray(match.tools)) return null;
+  const tool = root[match.toolField];
+  if (typeof tool !== 'string' || !match.tools.includes(tool)) return null;
+  const when = Array.isArray(match.when) ? match.when : [];
+  const unless = Array.isArray(match.unless) ? match.unless : [];
+  if (!when.every((condition) => conditionHolds(root, condition))) return null;
+  if (unless.some((condition) => conditionHolds(root, condition))) return null;
+  const id = idFromSources(root, match.idSources, idPattern);
+  return id ? { tool, id } : null;
+}
+
+/** True when the command at `commandPath` carries `flag`. */
+function commandCarries(root, commandPath, flag) {
+  const command = valueAtPath(root, commandPath);
+  return typeof command === 'string' && typeof flag === 'string' && flag.length > 0 && command.includes(flag);
+}
+// END background-call-match
+
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => { input += chunk; });
@@ -168,6 +247,11 @@ process.stdin.on('end', () => {
   // event is dropped (no append). Tracked here so the suppression survives the
   // rest of the directive loop.
   let suppressed = false;
+
+  // Events an append* directive reports beside the hook's own event, written
+  // before it. They do not depend on the main event: a suppressed main event
+  // still lets them land.
+  const appended = [];
 
   // Process directives in list order (setTypeWhenDetailContains relies on a
   // prior extractDetail directive having run).
@@ -349,24 +433,45 @@ process.stdin.on('end', () => {
         if (!matched) suppressed = true;
         break;
       }
+      case 'appendBackgroundLaunch': {
+        // A background launch reported beside the tool's own tool_end. No
+        // toolId: the tool_end closes the pending tool, and a start that
+        // closed it too would decrement the count twice.
+        const launch = matchBackgroundCall(ctx, payload, payload.idPattern);
+        if (!launch) break;
+        const start = { ts: event.ts, type: 'background_shell_start', tool: launch.tool.slice(0, FIELD_CAP), detail: launch.id };
+        if (commandCarries(ctx, payload.commandPath, payload.optOutFlag)) start.noActivityHold = true;
+        appended.push(start);
+        break;
+      }
+      case 'appendBackgroundStop': {
+        const stop = matchBackgroundCall(ctx, payload, payload.idPattern);
+        if (stop) appended.push({ ts: event.ts, type: 'background_shell_end', tool: stop.tool.slice(0, FIELD_CAP), detail: stop.id });
+        break;
+      }
       default:
         logBridgeError(`unknown directive kind: ${kind}`);
     }
   }
 
-  // An emitOnlyWhenDetailMatches gate failed: drop the event entirely. The
-  // early return skips the append, so nothing lands in the JSONL.
-  if (suppressed) return;
+  // An emitOnlyWhenDetailMatches gate failed: drop the hook's own event. An
+  // appended background event still lands.
+  const lines = appended.map((entry) => JSON.stringify(entry));
 
-  // Capture the full stdin payload as hookContext on session_start only (so
-  // adapters can extract the agent-assigned session id). Skipped for other
-  // event types to avoid bloating the JSONL file.
-  if (eventType === 'session_start' && ctx && Object.keys(ctx).length > 0) {
-    event.hookContext = JSON.stringify(ctx).slice(0, 2048);
+  if (!suppressed) {
+    // Capture the full stdin payload as hookContext on session_start only (so
+    // adapters can extract the agent-assigned session id). Skipped for other
+    // event types to avoid bloating the JSONL file.
+    if (eventType === 'session_start' && ctx && Object.keys(ctx).length > 0) {
+      event.hookContext = JSON.stringify(ctx).slice(0, 2048);
+    }
+    lines.push(JSON.stringify(event));
   }
+  if (lines.length === 0) return;
 
   try {
-    fs.appendFileSync(outputPath, JSON.stringify(event) + '\n');
+    // One append, so a reader never sees the start without the tool_end beside it.
+    fs.appendFileSync(outputPath, lines.join('\n') + '\n');
   } catch (err) {
     // Don't swallow silently - surface genuine pipeline failures (file
     // locked, path missing, disk full) to the sibling error log.

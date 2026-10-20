@@ -1,0 +1,17 @@
+{
+  "session_id": "00000000-0000-4000-8000-a2b743be8b77",
+  "transcript_path": "C:\\Users\\dev\\.gemini\\tmp\\gemini-2026-10-20t14-55-48-510z\\chats\\session-2026-10-20T14-55-f0b02cf8.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "AfterTool",
+  "timestamp": "2026-10-20T14:56:06.837Z",
+  "tool_name": "run_shell_command",
+  "tool_input": {
+    "command": "node server.js --kangentic-no-activity-hold",
+    "description": "Start the flagged probe server",
+    "is_background": true
+  },
+  "tool_response": {
+    "llmContent": "<untrusted_context>\nCommand moved to background (PID: 43964). Output hidden. Press Ctrl+B to view.\n</untrusted_context>",
+    "returnDisplay": "Command moved to background (PID: 43964). Output hidden. Press Ctrl+B to view."
+  }
+}

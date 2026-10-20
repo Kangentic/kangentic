@@ -1,0 +1,11 @@
+{
+  "session_id": "00000000-0000-4000-8000-4216b01c397e",
+  "turn_id": "00000000-0000-4000-8000-868b65c5c506",
+  "transcript_path": "C:\\Users\\dev\\.codex\\sessions\\2026\\10\\20\\rollout-2026-10-20T11-37-36-00000000-0000-4000-8000-4216b01c397e.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "Stop",
+  "model": "stub-model",
+  "permission_mode": "bypassPermissions",
+  "stop_hook_active": false,
+  "last_assistant_message": "Done."
+}

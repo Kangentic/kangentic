@@ -151,7 +151,10 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
   lines.push('- Put progress notes in the same message as your next tool call, not at the end of a turn.');
   lines.push('- When you know this column\'s work is done, you may move the task on yourself with kangentic_move_task, column "next".');
   if (input.blocks.length > 0) lines.push('- The tasks waiting on this one build on what you change. Keep what they depend on stable.');
-  lines.push(`- If you leave a background command running after your turn (a dev server, a watcher), mark it with ${MARK_BACKGROUND_SERVICE_TOOL}, or the task looks busy until it exits.`);
+  // Conditional, because the tool is offered only to an agent that reports its
+  // background commands (`AgentAdapter.backgroundCommands`), and the facts this
+  // block is built from do not know the agent.
+  lines.push(`- If you leave a background command running after your turn (a dev server, a watcher) and you have the ${MARK_BACKGROUND_SERVICE_TOOL} tool, mark it with that tool, or the task looks busy until it exits.`);
   lines.push('  </how_this_runs>');
   lines.push('</workflow>');
   return lines.join('\n');

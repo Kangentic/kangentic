@@ -72,6 +72,10 @@ export class GrokAdapter implements AgentAdapter {
   // filled per session by `buildEnv`. Grok reads it only in a folder the user
   // trusted (see trust-manager.ts).
   readonly kangenticMcp = 'per-session' as const;
+  // `run_terminal_command` reports a background task's id in its result and
+  // `kill_command_or_subagent` stops it (GROK_BACKGROUND_COMMAND_SPEC, measured
+  // on 1.0.0). Grok's PostToolUse cannot add context, so there is no hint.
+  readonly backgroundCommands = { source: 'hooks', launchHint: false } as const;
   /**
    * `--permission-mode` accepts Kangentic's exact PermissionMode names
    * (verified in `grok --help`), so all six pass through 1:1. Internally

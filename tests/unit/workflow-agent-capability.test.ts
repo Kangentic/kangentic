@@ -38,10 +38,12 @@ describe('canBeWorkflowAgent', () => {
 
   // Every adapter in the registry, so a declaration that drifts from the rule's
   // intent shows up here: the agents that wire MCP per session and can resume.
+  // Gemini joined when its MCP URL moved into the session environment (task
+  // #859), which is intended: its caller URL now names its own session.
   it('offers the registered agents that reach the MCP server per session and can resume', async () => {
     const { agentRegistry } = await import('../../src/main/agent/agent-registry');
     const eligible = agentRegistry.list().filter((name) => canBeWorkflowAgent(agentRegistry.getOrThrow(name))).sort();
-    expect(eligible).toEqual(['claude', 'codex', 'copilot', 'cursor', 'grok', 'kimi', 'opencode', 'qwen']);
+    expect(eligible).toEqual(['claude', 'codex', 'copilot', 'cursor', 'gemini', 'grok', 'kimi', 'opencode', 'qwen']);
   });
 
   // `capturesInteractiveSessionId` is declared, not inferred, and it is what lets

@@ -32,7 +32,7 @@ Runtime flow:
 5. `SessionHistoryReader.attach()` calls `hook.locate({ agentSessionId, cwd })`, instantiates a `FileWatcher` on the resolved path, and triggers an initial read.
 6. Each file-change event reads new content (append-mode cursor for JSONL, whole-file re-read for JSON) and dispatches to `sessionHistory.parse(content, mode)`.
 7. The resulting `SessionHistoryParseResult` flows through `dispatchSessionHistoryResult()` into the generic callback primitives (`onUsageUpdate`, `onEvents`, `onActivity`, `onFirstTelemetry`) that SessionManager wired to SessionTelemetry at construction time.
-8. On the first successful dispatch, `onFirstTelemetry` fires, which calls into `SessionTelemetry`'s PTY-tracker suppression - PtyActivityTracker stops contributing activity signals for the rest of the session.
+8. On the first successful dispatch, `onFirstTelemetry` fires, which calls into `SessionTelemetry`'s PTY-tracker suppression - PtyActivityTracker stops contributing activity signals for the rest of the session. An adapter whose history file carries only part of the activity picture sets `sessionHistory.suppressesPtyFallback: false` (Codex, whose rollout reports background commands, interrupts and failed turns beside its hooks), and neither the first read nor a turn-initiating event it reports turns the tracker off.
 
 The PtyActivityTracker keeps running in parallel until suppressed, so the boot window (before the history file materializes) is still covered by the existing spinner + silence-timer mechanism.
 
@@ -46,7 +46,7 @@ The PtyActivityTracker keeps running in parallel until suppressed, so the boot w
 |-------|------|-----------|
 | `usage` | `SessionUsage \| null` | Updated usage snapshot. Null when this parse pass didn't touch model or tokens. The reader's callback merges it into the existing `usageCache` entry via `SessionTelemetry.setSessionUsage`. |
 | `events` | `SessionEvent[]` | New events to append to the session event log. Empty array when there are none. The reader pushes them through `SessionTelemetry.ingestEvents`, which runs each event through the activity engine plus the per-event detectors (PTY suppression, ExitPlanMode, PR command). |
-| `activity` | `Activity \| null` | Explicit activity transition hint (`Activity.Thinking`, `Activity.Idle`, or `null`). Set when a log entry maps directly to a state change (e.g. Codex `task_started` → `Thinking`, `task_complete` → `Idle`) rather than relying on the event stream alone. Null when events alone imply the transition. |
+| `activity` | `Activity \| null` | Explicit activity transition hint (`Activity.Thinking`, `Activity.Idle`, or `null`). Set when a log entry maps directly to a state change (e.g. Gemini's whole-file rewrite) rather than relying on the event stream alone. Codex and Kimi return `null`: their turn starts and ends are events (a Stop hook, a wire `TurnEnd` Idle event), because a forced idle ends no turn for `onTurnEnded` and clears background shells. Null when events alone imply the transition. |
 
 All three fields are optional in the sense that any combination is valid - parsers can return partial results (e.g. a token-only update yields `usage` populated and `events: []`).
 
@@ -72,11 +72,13 @@ Each line has top-level `timestamp`, `type`, and `payload` fields.
 | `type` | Field(s) extracted | Effect |
 |---|---|---|
 | `session_meta` | `payload.id`, `payload.cwd`, `payload.cli_version` | First line of the file. UUID matches filename suffix. Not actively parsed today (we already have the UUID from the PTY scraper). |
-| `task_started` | `payload.model_context_window` | Sets `SessionUsage.contextWindow.contextWindowSize`. Also triggers `Activity.Thinking`. |
+| `task_started` | `payload.model_context_window` | Sets `SessionUsage.contextWindow.contextWindowSize`. No activity effect: the turn's start is the UserPromptSubmit hook's. |
 | `turn_context` | `payload.model` | Sets `SessionUsage.model.id` and `.displayName`. Emitted on every turn, so respects mid-session `/model` changes. |
 | `token_count` | `payload.info.total_token_usage.{input_tokens,cached_input_tokens,output_tokens}` | Sets `SessionUsage.contextWindow.{totalInputTokens,cacheTokens,totalOutputTokens}`. |
-| `task_complete` | (none) | Triggers `Activity.Idle`. |
-| `response_item` with `payload.type: "function_call"` | `payload.name` | Emits `SessionEvent { type: ToolStart }`. Tool name mapping is coarse - currently all function calls map to `AgentTool.Bash`. |
+| `task_complete` | `payload.error` | No activity effect: turn ends come from the Stop hook. A `task_complete` that carries an `error` (a failed model request, which fires no Stop) emits `TurnFailed`. |
+| `turn_aborted` | (none) | Emits `Interrupted`. An Esc interrupt fires no hook. |
+| `response_item` with `payload.type: "function_call"` | `payload.call_id`, `payload.name`, `payload.arguments` | Emits nothing: the PreToolUse hook reports the tool, with its id. The parser remembers the call (bounded, by `call_id`) so its output, which arrives in a later read, can be paired with it. |
+| `response_item` with `payload.type: "function_call_output"` | `payload.call_id`, `payload.output` | "Process running with session ID N" (a command still running at its yield; no PostToolUse fires) emits a named `BackgroundShellStart` keyed by the call id, flagged `noActivityHold` when the command carried `--kangentic-no-activity-hold`. A `write_stdin` poll that finds the process exited ("Process exited with code") emits `BackgroundShellEnd` for its exec session. |
 
 All other entry types are ignored.
 

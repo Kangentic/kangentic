@@ -47,6 +47,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `buildEnv?(options)` | `(SpawnCommandOptions) => Record<string, string> \| null` | Adapter-specific environment variables to inject into the PTY spawn. Three uses. Most implementers deliver MCP config an adapter cannot pass on the command line: either because the CLI has no MCP flag at all (OpenCode's `OPENCODE_CONFIG_CONTENT`, carrying the whole config), or because the value is a secret that must not land in argv or in a repo file (Codex and Droid both pass only `KANGENTIC_MCP_TOKEN`, referenced by name from their config). Grok extends the pattern furthest: its env carries the MCP URL and token (`KANGENTIC_MCP_URL` / `KANGENTIC_MCP_TOKEN`, dereferenced by grok's `${VAR}` expansion so its `.grok/config.toml` block stays fully static) plus `KANGENTIC_EVENTS_PATH` for the hook bridge's `env:` sentinel. Goose's native permission/autonomy control is an env var (`GOOSE_MODE`) rather than a flag, so its permission mode is delivered here. Claude's renderer variable, `CLAUDE_CODE_NO_FLICKER=1` (`rendererEnvironment`), is the third use. Implemented by Claude, Cursor, OpenCode, Codex, Droid, Grok, and Goose. |
 | `getExitSequence?()` | `() => ExitSequenceStep[]` | Keys (and `{ delayMs }` pauses) to write to the PTY to ask the agent to exit. Default is `['\x03']` (Ctrl+C only). Claude overrides with Esc, a 400 ms pause, Ctrl+C and `/exit`. |
 | `consoleCloseIsGraceful?(platform)` | `(platform: NodeJS.Platform) => boolean` | Whether closing the agent's console is itself its graceful exit there, as measured. True means kill, suspend and quit close it at once and type nothing. Claude: Windows and Linux, not macOS. Default false. |
+| `backgroundCommands?` | `{ source: 'hooks' \| 'session-history'; launchHint: boolean }` | The agent reports the background commands it starts, so a launch holds the session `thinking` until the command exits or the agent marks it a service, and its task sessions are offered `kangentic_mark_background_service`. `source` says where the starts come from (its hooks, or a history file its parser tails); `launchHint` says whether a launch also tells the agent how to mark a service. Read at spawn onto the session row (`ManagedSession.reportsBackgroundCommands`). Declared by Claude, Qwen, Gemini, Copilot, Grok, Kimi and Codex; the per-agent decisions are in [Background commands](#background-commands). |
 | `attachSession?(context)` | `(SessionContext) => SessionAttachment \| void` | Per-session lifecycle hook for adapters that need work outside the declarative `runtime` strategy (out-of-band CLI queries, file watchers, etc.). The returned `dispose` is called on session end. |
 | `summarize?(prompt, cliPath, cwd, options?)` | `(string, string, string, SummarizeOptions?) => Promise<string>` | One-shot summarization for the auto-name-tasks-from-prompt feature. Runs the title prompt on the Automation agent's model and effort in the shared answer home: through the adapter's own answer run where it was measured to title cleanly (Gemini, Copilot, OpenCode), and otherwise a headless print run (Claude's runs on its answer arguments with `--output-format json`). `SummarizeOptions` carries `model`, `effort`, `runDirectory` and `onUsage`, the sink that receives the run's `AgentCallUsage` for the `background_calls` ledger. Antigravity is the one PTY exception: `agy -p` hangs when stdio is not a TTY (upstream google-antigravity/antigravity-cli#318), so its summarize runs the print mode through a hidden PTY in a pre-trusted scratch cwd. Warp has no headless run and omits it. Aider, Ollama and Goose omit it too: each has a headless answer run (`answerFromContext`) but no summarize, and Aider's answer run is built from its published options without a run against an installed Aider. |
 | `answerFromContext?(prompt, cliPath, cwd, model?, options?)` | `(string, string, string, string \| null?, AnswerFromContextOptions?) => Promise<string>` | One-shot, read-only answer for the Knowledge Graph. The prompt arrives fully built; the adapter chooses only its CLI flags and how to read the answer out of stdout. The prompt stays OFF the command line: an answer prompt runs to about 50k characters, past the Windows command-line limit, so it goes on stdin, or through `promptVia: 'file'` for a CLI that reads a file (Grok `--prompt-file`, Aider `--message-file`). `cwd` is the answer home, `<tmpdir>/kangentic-ask-home` (`kangentic-ask-home-<uid>` on POSIX, where the temp folder can be shared): one stable directory for every answer run, never the project. On POSIX it is created private to the user (0700), and an existing one is used only when it is a real directory the user owns and no one else can write to; otherwise a fresh private folder takes its place for the rest of the launch. The home and each run directory are handed over as their real paths: macOS keeps its temp folder behind a link (`/var` is `/private/var`), and a CLI that resolves its working directory keys trust and saved chats by the real one. Every agent CLI keys its own state by working directory (sessions, trust entries, project registries), so a fresh directory per question left one entry per question in each CLI's store. Per-run files (an MCP config carrying the token, a prompt file, a chat history) go in `options.runDirectory`, a fresh `kangentic-answer-*` directory removed after the run. `AnswerFromContextOptions.onUsage` receives the run's `AgentCallUsage` when the CLI reports one (Claude and Antigravity today), before an error result throws, since a failed run was still paid for. Each adapter also keeps its run out of the CLI's saved sessions: Claude passes `--no-session-persistence`, Codex `--ephemeral`, Qwen `--chat-recording=false`; Copilot, Cursor, Grok, Gemini and Antigravity remove their session by id afterwards, and OpenCode runs `session delete`. Every adapter except Warp implements it, since Warp has no documented read-only headless run. |
@@ -152,13 +153,14 @@ One scannable block per adapter for activity-state derivation and session ID cap
 | Field | Type | Purpose |
 |-------|------|---------|
 | `activity` | `ActivityDetectionStrategy` | How thinking-vs-idle is detected. See [Activity Detection](activity-detection.md) for the discriminated union variants and the `ActivityDetection.hooks() / pty() / hooksAndPty()` factories. |
-| `reportsTurnEnd` | `boolean` | Required. Whether the agent says when its turn ended, through a hook or its wire protocol, so the activity engine gets a real `Idle` event and the session manager emits `'turn-ended'`. That event is what runs a column's On agent turn end automations. False where the only idle signal is terminal silence or a prompt pattern, because a quiet compile looks the same; such a column offers no On agent turn end group. True for Claude Code, Gemini CLI, Qwen Code, GitHub Copilot CLI, OpenCode, Grok Build, Antigravity CLI and Kimi Code; false for Codex CLI, Aider, Droid, Goose CLI, Cursor CLI, Ollama and Oz CLI (Warp). Surfaced to the renderer as `AgentDetectionInfo.reportsTurnEnd` on `agent:list`. |
-| `sessionId.fromHook?(hookContext)` | `(string) => string \| null` | Parse the agent's CLI session ID from hook stdin JSON. Fires once on `session_start`. Used by Gemini (`session_id` field) and Codex (`thread_id` from the full SessionStart hookContext that event-bridge captures from the hook stdin). |
+| `reportsTurnEnd` | `boolean` | Required. Whether the agent says when its turn ended, through a hook or its wire protocol, so the activity engine gets a real `Idle` event and the session manager emits `'turn-ended'`. That event is what runs a column's On agent turn end automations. False where the only idle signal is terminal silence or a prompt pattern, because a quiet compile looks the same; such a column offers no On agent turn end group. True for Claude Code, Codex CLI (its Stop hook, task #859), Gemini CLI, Qwen Code, GitHub Copilot CLI, OpenCode, Grok Build, Antigravity CLI and Kimi Code (its wire `TurnEnd`, an Idle event since task #859); false for Aider, Droid, Goose CLI, Cursor CLI, Ollama and Oz CLI (Warp). Surfaced to the renderer as `AgentDetectionInfo.reportsTurnEnd` on `agent:list`. |
+| `sessionId.fromHook?(hookContext)` | `(string) => string \| null` | Parse the agent's CLI session ID from hook stdin JSON. Fires once on `session_start`. Used by Gemini (`session_id` field) and Codex (`session_id`, or `thread_id` on older payloads, from the full SessionStart hookContext that event-bridge captures from the hook stdin). |
 | `sessionId.fromOutput?(data)` | `(string) => string \| null` | Parse the agent's CLI session ID from raw PTY output. Scanned on every data chunk by `SessionIdScanner` (chunk-boundary-safe rolling buffer with ANSI stripping), plus a final scrollback scan in `suspend()`. Used for Codex's startup header and Gemini's shutdown summary. |
 | `sessionId.fromFilesystem?(options)` | `({ spawnedAt, cwd }) => Promise<string \| null>` | Locate the agent's session ID by scanning the filesystem for a freshly-created session file. Polls the expected directory for files created after `spawnedAt` with a matching `cwd` in the session metadata. Primary capture path for Codex 0.118+ (neither PTY output nor hooks deliver the ID; the UUID is in the rollout filename at `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl`). |
 | `sessionHistory?.locate({agentSessionId, cwd})` | `(options) => Promise<string \| null>` | Locate the agent's native session history file on disk for a captured session UUID. Used by `SessionHistoryReader` (`src/main/pty/readers/session-history-reader.ts`) to start tailing. See [Adapter Session History](adapter-session-history.md) for the full pipeline. |
 | `sessionHistory?.parse(content, mode)` | `(string, 'full' \| 'append') => SessionHistoryParseResult` | Parse newly-appended bytes (Codex JSONL, Claude transcript JSONL) or full file content (Gemini JSON) into a `SessionHistoryParseResult` containing `usage`, `events[]`, and an optional `activity` hint. For Claude this is a background-session fallback to the `statusFile` pipeline - see [Adapter Session History](adapter-session-history.md#claude). |
 | `sessionHistory?.isFullRewrite` | `boolean` | `true` for whole-file-rewrite agents (Gemini), `false` for append-only JSONL (Codex, Claude). Tells the watcher whether to track a byte cursor. |
+| `sessionHistory?.suppressesPtyFallback` | `boolean` | Whether the history file may turn the PTY tracker off for a `hooks_and_pty` agent, on its first read and on a turn-initiating event it reports. Default true, which suits a file that carries the agent's turns (Kimi's wire.jsonl). False for Codex, whose rollout reports only background commands, interrupts and failed turns beside its hooks, so a session whose hooks Codex did not confirm keeps the tracker (task #859). |
 | `statusFile?.parseStatus(raw)` | `(string) => SessionUsage \| null` | Decode the rewritten contents of a per-session `status.json` (written by Kangentic's status-bridge hook) into a `SessionUsage` snapshot. Used by Claude Code and Copilot. Adapters that report plan-usage quotas populate `SessionUsage.rateLimits?: RateLimitWindow[]` - each window self-describes via `id`, `label`, `iconKind: 'session' \| 'period'` (renderer maps to a Lucide icon), `usedPercentage` (0-100, clamp at the adapter), `resetsAt` (Unix epoch seconds), and optionally `windowDurationSeconds` (fixed window length; with `resetsAt` it yields the window start for the renderer's elapsed-time marker line, omitted when a provider's window has no fixed duration, in which case that window simply shows no time marker). A window also has `generation`, which the adapter never sets: main's `RateLimitLedger` stamps it on every report before caching it (see `reportsRateLimits` above). The renderer iterates the array; no per-agent branching. Today only Claude populates this field. |
 | `statusFile?.parseEvent(line)` | `(string) => SessionEvent \| null` | Decode one appended line from the per-session `events.jsonl` (written by the event-bridge hook) into a `SessionEvent`. |
 | `statusFile?.isFullRewrite` | `boolean` | `true` when `status.json` is fully rewritten on every update. The events file is always append-only regardless of this flag. |
@@ -182,8 +184,8 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude and Grok 
 | Agent | Adapter | CLI Binary | Session Resume | Status/Events | Settings Merge | Kangentic MCP | Trust |
 |-------|---------|-----------|----------------|---------------|----------------|---------------|-------|
 | Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](adapter-session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
-| Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Partial (events.jsonl only) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
-| Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) | Yes (`~/.gemini/trustedFolders.json`) |
+| Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Yes (events.jsonl via `-c hooks.*` overrides, rollout for usage and background commands) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
+| Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.gemini/trustedFolders.json`) |
 | Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `--mcp-config <sessionDir>/mcp.json` (`httpUrl`; `.qwen/settings.json` before 0.16) | Yes (`~/.qwen/trustedFolders.json`) |
 | Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | No | No | `<cwd>/.cursor/mcp.json` with `${env:...}` url/token + `buildEnv` + `--approve-mcps` | No |
 | GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | Runtime `--add-dir` |
@@ -197,13 +199,15 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude and Grok 
 | Antigravity CLI | `antigravity-adapter.ts` | `agy` | `--conversation <id>` | Yes (events.jsonl via `.agents/hooks.json`) | Yes (`.agents/hooks.json`, named-hook merge) | Workspace plugin `.agents/plugins/kangentic/` (`serverUrl` + token header) | Yes (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`) |
 | Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | No (PTY-only) | No | Not wired | No |
 
-The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok, Cursor
-and Qwen are `'per-session'`; Gemini, Droid and Antigravity are `'shared-folder'`, because each
-writes the session's literal URL into a file in the working directory. Moving those three to a fixed
-file entry whose URL is an environment reference (Grok's and Cursor's pattern) is documented for
-Gemini (every `settings.json` string expands `$VAR` / `${VAR}`), and undocumented for Droid's `url`
-and Antigravity; each waits on a live run before it changes, since it alters every session on that
-agent. Qwen moved to `--mcp-config` because its workspace MCP approval gate stopped every session
+The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok, Cursor,
+Qwen and Gemini are `'per-session'`; Droid and Antigravity are `'shared-folder'`, because each
+writes the session's literal URL into a file in the working directory. Gemini moved to a fixed
+`settings.json` entry whose URL and token are `${KANGENTIC_MCP_URL}` and `${KANGENTIC_MCP_TOKEN}`
+(Grok's and Cursor's pattern) in task #859, measured on 0.64.0: an MCP request arrived on the path
+the session environment named, and the token is no longer written to disk. Its hook commands carry
+the events path the same way (`env:KANGENTIC_EVENTS_PATH`). The same move is undocumented for
+Droid's `url` and for Antigravity, and each waits on a live run before it changes, since it alters
+every session on that agent. Qwen moved to `--mcp-config` because its workspace MCP approval gate stopped every session
 on a dialog (see [Qwen's MCP approval gate](#kangentic-mcp-server-and-the-approval-gate)); that move also made it eligible as a Workflow
 agent, which has not been run live. Cursor's interactive and print sessions use the same static
 `${env:...}` entry its answer path measured; the interactive path has not been run live yet.
@@ -289,6 +293,48 @@ A sequence that ends in Enter can answer an open permission prompt: Claude's old
 - Gemini CLI 0.64.0 and Copilot CLI 1.0.98 are safe. Ctrl+C cancelled the request and the tool never ran. The slash command that followed did not take, so the CLI kept running until the force-kill.
 - Qwen Code, Kimi Code and Droid were not measured (not logged in on the probing machine), nor Grok 1.0.0 (the service refused the outdated version) or Aider, Goose and Ollama (not installed). Rerun the probe for one of them before changing its sequence.
 - Codex, Cursor, OpenCode, Oz (Warp) and Antigravity send Ctrl+C only, with no Enter that could answer a prompt.
+
+## Background commands
+
+A background command the agent starts (a build, a test run, a dev server) holds its task `thinking` until the command exits, so a task never reads idle while its work runs. A command that is meant to stay up, a server or a watcher, is released by the agent with `kangentic_mark_background_service`, or kept out of the hold from the start by `--kangentic-no-activity-hold` in its command. Both end the hold without stopping the process. The engine side is in [Activity Detection](activity-detection.md), "Opting a background shell out of the hold".
+
+An agent takes part only when it declares `backgroundCommands`. A declaration is a measured claim with four conditions. `tests/unit/background-commands-declaration.test.ts` pins the list and checks the first two; the other two were measured against the real CLI:
+
+- Activity is driven by hooks or a history file (`hooks_and_pty`), so the PTY tracker is off once that source flows and PTY silence stops ending turns. While a session still runs its PTY tracker (a Codex session whose hooks never flowed), PTY silence keeps every tracked shell: `handlePtyIdle` ends the turn through `forceIdle` with `keepBackgroundShells`, so the hold lasts until the command exits.
+- `kangenticMcp` is `'per-session'`. A folder-shared URL can name another session, so a mark could land on the wrong one.
+- The launch, foreground, stop and flagged payloads were captured from the real CLI and are pinned as fixtures (`tests/fixtures/<agent>-hooks/`, `tests/fixtures/kimi/wire-background-tasks.jsonl`).
+- The process runs inside the PTY root's process tree, where the background-shell watcher can see it end. A process started outside it is never adopted, and the hold would be reclaimed after about 30 quiet cycles, which brings back "reads idle while a build runs".
+
+An agent that does not declare emits no background start or end, gets no hint, and is not offered the MCP tool (`resolveBackgroundShells` in `mcp-http-server.ts` checks `SessionManager.reportsBackgroundCommands`). It never gains a hold it cannot release.
+
+| Agent | Starts and ends reported by | Launch hint | Decision |
+|-------|-----------------------------|-------------|----------|
+| Claude Code | PreToolUse and PostToolUse remaps of `Bash` and `PowerShell` with `run_in_background`, the shell id in `tool_response.backgroundTaskId`; `KillShell` ends one | Yes | Declared. Payloads pinned by the replay fixtures |
+| Qwen Code 0.25.3 | PostToolUse: `run_shell_command` with `tool_input.is_background`, id `bg_<hex>` read from `tool_response.llmContent`; `task_stop` ends one (`tool_input.task_id`) | Yes, `hookSpecificOutput.additionalContext` | Declared. Hooks of one event run in parallel |
+| Gemini CLI 0.64.0 | AfterTool: `run_shell_command` with `is_background`, the PID read from "Command moved to background (PID: N)". No stop tool, so the end is the process's exit | Yes, AfterTool `additionalContext` | Declared. Became per-session: the MCP URL and token are `${KANGENTIC_MCP_URL}` and `${KANGENTIC_MCP_TOKEN}` references Gemini expands from the session environment, so `.gemini/settings.json` holds neither, and Gemini can now be a workflow's agent |
+| GitHub Copilot CLI 1.0.100 | postToolUse: `powershell` and `bash` started async, the `shellId` read from the result text (agent-chosen or assigned); `stop_powershell` and `stop_bash` end one when `resultType` is `success` | Yes, top-level `additionalContext` (`hookSpecificOutput` is ignored) | Declared. A `detach: true` launch is excluded: the agent declared that process independent of the session |
+| Grok Build 1.0.0 | PostToolUse: `run_terminal_command` whose `toolResult.type` is `BackgroundTaskStarted`, id `toolResult.task_id`; `kill_command_or_subagent` whose result is `KillTask` ends one | No, its PostToolUse output never reaches the model | Declared. The agent learns of the tool from its description |
+| Kimi Code 1.37.0 | wire.jsonl: a `Shell` ToolResult with message "Background task started." and a `background_task` display block naming the task id; `TaskStop`'s result and the task's `task.*` Notification end one | No, its PostToolUse hook reads only a block or deny decision | Declared. Activity moved to `hooks_and_pty`: the first wire read turns the PTY tracker off, and `TurnEnd` is now an Idle event, so On agent turn end automations run for Kimi. Measured in the interactive TUI, every record reaches wire.jsonl 13 to 40 ms after its own timestamp |
+| Codex CLI 0.154.0 and 0.163.0 (fixtures captured on 0.154.0, the TUI and the trust read run on 0.163.0) | The rollout: a command still running at its yield (`Process running with session ID N`) starts one, keyed by the call id its PreToolUse carried; a `write_stdin` poll that finds it exited ends one. No hook fires at the yield, and `write_stdin` fires none | No, no hook fires at the launch | Declared. Codex runs Kangentic's hooks once its trust read confirms them (see [Codex Hook Integration](#hook-integration)): activity is `hooks_and_pty`, and the Stop hook's Idle makes On agent turn end automations run for Codex. Only the exec status block before `Output:` is read, so a command that prints the phrase is never a launch |
+| Droid 0.218.0 | Not reported | No | Not declared. `Execute` with `fireAndForget` starts the command through `Start-Process`, whose parent exits at once, so the process is outside the PTY root's tree and the watcher cannot see it end. Detached by design, like Copilot's `detach: true`. The `droid exec` payloads this was decided from are in `tests/fixtures/droid-hooks/`. Its activity stays on the PTY tracker: a hook pipeline through `--settings` was measured in `droid exec` (the file merges with the user's `~/.factory/settings.json`; SessionStart, PreToolUse, PostToolUse and Stop fire; UserPromptSubmit did not), but the TUI asks for a Factory sign-in even with a BYOK model, so its prompt, permission and interrupt events were never seen and the pipeline is not built |
+| Cursor CLI | Not reported | No | Not probed: the CLI needs a signed-in account to run, so neither its background `shell_id` nor its hooks were seen against the real CLI. Its activity stays as it was |
+| Antigravity CLI 1.3.4 | Not reported | No | Not declared. `run_command` backgrounds after `WaitMsBeforeAsync`, but the PostToolUse payload carries no tool output, so there is no id to key on, and the hook's reply must be `{}` |
+| OpenCode 1.18.31 | Not reported | No | Its `bash` tool cannot run a command in the background |
+| Goose CLI 1.55.0 | Not reported | No | No background commands: its `shell` tool takes only `command` and `timeout_secs`, returns when the command ends and kills it at the timeout (probed headless against a local stand-in for the model API). Not wired, and Goose has no Kangentic MCP |
+| Aider, Oz CLI (Warp), Ollama | Not reported | No | No background commands |
+
+### How a hook-driven declaration is wired
+
+Each declaring adapter keeps one `BackgroundCommandSpec` (`src/shared/background-command-spec.ts`) in its adapter folder: which tool calls are a launch (tool names, `when` and `unless` conditions on the payload, where the id sits, and a regex for an id inside result text), which are a stop, and the hint's reply envelope. Shared builders in `src/main/agent/shared/background-command-hooks.ts` turn it into directives and the hint command, so the hold and the hint answer the same calls.
+
+- The launch and the stop ride the adapter's existing post-tool `tool_end` entry as two more directives, `appendBackgroundLaunch` and `appendBackgroundStop`. The event bridge writes their `background_shell_start` and `background_shell_end` lines beside the tool's own event, in one append. A separate entry would cost a second hook process per tool call, and Copilot and Grok run one event's hooks one after another, measured at 0.6 to 0.9 s each.
+- The start carries no `toolId`. A start with one closes that pending tool, and the tool's own `tool_end` would then decrement the count a second time. With no tool id for the memo, a launch whose command carries `--kangentic-no-activity-hold` reports it on the start itself (`noActivityHold`).
+- A stop is read on the stop tool's post-tool success payload, never pre-tool, so a denied or failed stop never drains a live command.
+- The hint is its own entry, matcher-scoped to the launch tools, running `background-shell-hint-bridge.js` with a v2 spec (`{ launch, reply }`) built from the same launch match. It is added only when the session's MCP URL names it as the caller (`offersMarkBackgroundService`).
+- A CLI whose hooks take bare tokens (Qwen on Windows) runs a workspace copy of the hint bridge, `<cwd>/.kangentic/qwen-background-shell-hint-bridge.cjs`. `copyBridgeInto` refuses a copy name that does not contain the script's name, which is what lets `isKangenticHookCommand` recognize the copy during cleanup.
+- The matching code is in both bridges between `// BEGIN background-call-match` and `// END background-call-match`, since a workspace copy is one file and cannot `require` a shared module. `tests/unit/background-call-match-parity.test.ts` keeps the two blocks byte-identical.
+
+A history parser that reports a turn end as a forced idle (Grok's `updates.jsonl`) would clear every tracked shell through `forceIdle`. `SessionTelemetry.forceActivity` turns that hint into the plain Idle event a Stop hook sends while any shell is tracked, which ends the turn and keeps the shells. PTY silence is handled the same way for the same reason (`handlePtyIdle`, above).
 
 ## Session History File Location
 
@@ -498,6 +544,7 @@ and Copilot status-line builders. On macOS and Linux every CLI uses `sh -c` or `
 | Gemini 0.64.0 | `pwsh.exe -NoProfile -Command`, or powershell.exe with no pwsh | None | `bash -c` | Yes, every settings string (`resolveEnvVarsInString`) | Probed, and read from the bundle |
 | grok 1.0.0 | `pwsh -NoProfile -NonInteractive -Command` | None | `sh -c` for a command with shell metacharacters | Yes | Windows probed; POSIX from its hooks guide |
 | Qwen Code 0.21.7 | `%ComSpec% /d /s /c <command>`, with escaped arguments; Git Bash `-c` only when Qwen inherits an MSYS `MSYSTEM` | None written | `bash -c` | Yes | Probed on 0.21.7; the same spawn read in the 0.25.2 source |
+| Codex 0.163.0 | A sh or PowerShell command line: quotes survive, `%NAME%` stays as written, `$HOME` is expanded | None | Not probed | No | Probed in `exec` and the TUI (task #859). The command is bare tokens anyway, because it sits in a TOML literal string passed through the user's shell |
 
 The probe was a hook that recorded its parent process's command line and the argv it received for a
 path holding `$OS`, `${OS}`, `%OS%`, a backtick, `&`, `'`, a space and curly double quotes, quoted
@@ -526,6 +573,12 @@ The adapters declare three shells:
   resolves from the variable every session spawn sets. Bare tokens work in the Git Bash Qwen picks
   under MSYS as well. Before this, Qwen's Windows hooks only fired when Kangentic itself had
   inherited `MSYSTEM`, as it does when started from Git Bash.
+
+Codex's hook commands do not go through `quoteBridgePath`. Each one sits inside a TOML literal
+string in a `-c` value that reaches Codex through the user's shell, where `quoteArg` turns a content
+`"` into `'` on Windows, so the command is bare tokens on every platform: the workspace copy
+`.kangentic/codex-event-bridge.cjs`, `env:KANGENTIC_EVENTS_PATH`, the event type and the base64
+directives (`codexHookCommand` refuses anything else).
 
 Aider's notifications command quotes for its own shell (see the Aider section), and Antigravity's
 hook commands are unquoted by design, because its hook runner keeps quote characters literal.
@@ -612,6 +665,8 @@ codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
   -c mcp_servers.kangentic.url=<url> \
   -c mcp_servers.kangentic.env_http_headers.X-Kangentic-Token=KANGENTIC_MCP_TOKEN \
   [-c shell_environment_policy.set.KANGENTIC_TASK_ID=<taskId>] \
+  -c check_for_update_on_startup=false \
+  [-c hooks.<Event>=[...] for seven events, -c hooks.state={...}] \
   "prompt text"
 ```
 
@@ -620,8 +675,14 @@ codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
 ```
 codex resume <sessionId> -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
   -c <the same two MCP overrides> \
-  [-c <the same task tag override>]
+  [-c <the same task tag override>] \
+  -c check_for_update_on_startup=false \
+  [-c <the same hook and trust overrides>]
 ```
+
+The hook overrides appear only when Codex confirmed their trust for this binary (see [Hook Integration](#hook-integration)).
+
+`check_for_update_on_startup=false` keeps Codex's "Update available" prompt out of a Kangentic session. It is a modal at TUI startup whose first option is "Update now", so an `auto_command` typed into a session showing it, or any Enter meant for the agent, updates Codex and ends the session (a probe's Enter did exactly that, 0.154.0 to 0.163.0, in task #859). The key is Codex's own (`config_toml.rs`), it applies to that process only, and the user's own terminal still offers updates.
 
 The task tag override is added for every session, a Command Terminal included (it carries its own made-up task id, so its leftovers are reaped when it ends). Codex passes its environment to tool shells through `shell_environment_policy`, which a user can narrow (`inherit = "core"`), and that strips `KANGENTIC_TASK_ID`, the tag a terminal transition finds a task's leftover processes by (see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree)). A `set` entry always wins over the inherit and filter steps, and it adds to the user's own `set` table rather than replacing it (measured on codex-cli 0.154.0).
 
@@ -675,7 +736,15 @@ dropdown.
 
 ### Hook Integration
 
-Kangentic writes no Codex hook file. It used to write a project-local `.codex/hooks.json`, but Codex 0.128 redesigned hooks (they now live in `~/.codex/config.toml` or a Codex plugin folder) and no longer parses that file, printing a yellow "failed to parse hooks config" banner instead. `buildHooks` is therefore a cleanup-only sweep that strips Kangentic-owned entries from any pre-upgrade legacy file; see `codex/hook-manager.ts`.
+Kangentic registers its hooks as `-c hooks.<Event>=[...]` overrides in Codex's session-flags layer (task #859, measured on codex-cli 0.154.0 and 0.163.0). Nothing is written to `~/.codex` or the repo beyond the bridge's workspace copy, and the user's own hooks load beside these. Seven events: SessionStart (`session_id` for `fromHook`), UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest (a permission idle; its payload has no `tool_use_id`, so the engine awaits the tool PreToolUse opened), Stop and PreCompact. Each command is `node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH <type> <directives>`, bare tokens inside a TOML literal string: the hook runs in the session's working directory and inherits `KANGENTIC_EVENTS_PATH`, and the relative copy is the one path that never needs quotes. The overrides hold no `"` at all, the same quoting contract as the MCP overrides above, and `codex-hook-overrides.test.ts` types them at PowerShell 5.1 and 7, cmd and Git Bash and reads back what arrived.
+
+**Trust comes from Codex itself.** Codex runs a session-flags hook only when `hooks.state` holds the hash it computes for it, and its TUI opens a blocking "Hooks need review" dialog for any hook without one (exec mode skips the hook silently). Kangentic does not compute that hash. `CodexHookTrustCheck` (`codex/hook-trust.ts`) runs the binary's own `codex app-server` once, with a scratch `CODEX_HOME`, asks `hooks/list` for the key and `currentHash` of the exact overrides, and passes them as one `-c hooks.state={...}` override, which Codex merges with the user's own `[hooks.state]` (their trusted hooks stay trusted, measured). The read starts in `detect`, `ensureTrust` waits for it for up to 8 s, and the answer is cached per binary file (path, size and modification time), so an in-place update reads again. A read that fails, times out, reports an error or warning, or leaves a hook out wires no hooks: the session runs on the PTY tracker as before. One read covers every session, because the overrides do not vary by session. An npm `.cmd` shim is the gap: an update replaces the package behind it, not the shim, so the cache key does not change.
+
+What no hook reports comes from the rollout (`codex/session-history-parser.ts`): a command still running at its yield (`Process running with session ID N`, which fires PreToolUse but no PostToolUse) is a background start keyed by its call id, a `write_stdin` poll that finds it exited ends it, `turn_aborted` (an Esc interrupt, no hook) is an Interrupted event, and a `task_complete` that carries an `error` (a failed model request, no Stop) is a TurnFailed event. The rollout no longer forces activity or reports tool starts, and `sessionHistory.suppressesPtyFallback: false` keeps its reads from turning the PTY tracker off, so a session whose hooks Codex did not confirm keeps that tracker.
+
+The legacy project-local `.codex/hooks.json` from builds before Codex 0.128 is still swept of Kangentic-owned entries by `buildHooks`.
+
+Codex's rollout, transcript and model-history readers resolve Codex's home through `codexHomeDir` (`config-toml.ts`), so `$CODEX_HOME` is honored there too; with `~/.codex` hard-coded, a user with `CODEX_HOME` set got no rollout telemetry at all.
 
 ### Limitations
 
@@ -748,18 +817,18 @@ stand in the way:
 
 Gemini reads settings from `.gemini/settings.json` in the project directory. Unlike Claude's `--settings` flag, Gemini has no way to point to a per-session settings file. Kangentic writes merged settings (event-bridge hooks and / or the Kangentic MCP server entry) directly to `.gemini/settings.json` in the CWD.
 
-Because the file is shared, concurrent Gemini sessions in the same folder are serialized by per-session holds in `GeminiAdapter.hookHolds` (a `SharedFolderHolds`): every `buildCommand` that writes the file (an events pipeline or MCP wiring) holds it under `CommandOptions.ptySessionId`, the id the session spawns under, and `removeHooks(directory, sessionId)` only strips the file when the last session in that folder releases. The key is the session, not the task: a young session's kill leaves its PTY exiting for up to the grace while the task's next session starts, and a task-keyed release let that late exit strip the running session's hooks. A second release of one session (session-manager invokes `removeHooks` both in `suspend()` and from the PTY `onExit` handler) is a no-op. A built command that never becomes a session (an abort, a skipped startup spawn, a failed spawn) releases its hold through `releaseCommandHold` (`src/main/pty/lifecycle/adapter-lifecycle.ts`). On crash or force-quit, `buildHooks` strips any stale Kangentic entries from the settings file on the next spawn. `removeHooks` strips the `mcpServers.kangentic` entry alongside the hooks, so the per-launch token does not outlive the session. Qwen, Cursor, Droid, Antigravity, Grok, OpenCode and Codex (its legacy `.codex/hooks.json` sweep) hold their shared files the same way.
+Because the file is shared, concurrent Gemini sessions in the same folder are serialized by per-session holds in `GeminiAdapter.hookHolds` (a `SharedFolderHolds`): every `buildCommand` that writes the file (an events pipeline or MCP wiring) holds it under `CommandOptions.ptySessionId`, the id the session spawns under, and `removeHooks(directory, sessionId)` only strips the file when the last session in that folder releases. The key is the session, not the task: a young session's kill leaves its PTY exiting for up to the grace while the task's next session starts, and a task-keyed release let that late exit strip the running session's hooks. A second release of one session (session-manager invokes `removeHooks` both in `suspend()` and from the PTY `onExit` handler) is a no-op. A built command that never becomes a session (an abort, a skipped startup spawn, a failed spawn) releases its hold through `releaseCommandHold` (`src/main/pty/lifecycle/adapter-lifecycle.ts`). On crash or force-quit, `buildHooks` strips any stale Kangentic entries from the settings file on the next spawn. `removeHooks` strips the `mcpServers.kangentic` entry alongside the hooks, so the entry and its environment references do not outlive the session. Qwen, Cursor, Droid, Antigravity, Grok, OpenCode and Codex (its legacy `.codex/hooks.json` sweep) hold their shared files the same way.
 
 ### MCP Wiring
 
-The merged settings carry an `mcpServers.kangentic` entry using the Gemini-family `httpUrl` key (not the Anthropic/fastmcp `url` used by Claude and Kimi), plus a `headers` map with the per-launch token. This is the same shape the Qwen fork writes. User-defined `mcpServers` are preserved, and `removeHooks` strips only our entry.
+The merged settings carry an `mcpServers.kangentic` entry using the Gemini-family `httpUrl` key (not the Anthropic/fastmcp `url` used by Claude and Kimi), with `httpUrl` `${KANGENTIC_MCP_URL}` and `headers` `X-Kangentic-Token: ${KANGENTIC_MCP_TOKEN}`. Both values come from the session environment through `buildEnv` (task #859; Gemini expands `$NAME` and `${NAME}` in every settings string), so the file holds no URL and no token, and the entry is per-session. This is the same shape the Qwen fork writes. User-defined `mcpServers` are preserved, and `removeHooks` strips only our entry.
 
 The settings write is gated on hooks **or** MCP, so an MCP-only spawn (no events pipeline) still produces the file.
 
 Two things make this work that are easy to miss:
 
 - **Folder trust is load-bearing.** Gemini disables every configured MCP server in an untrusted folder (`gemini mcp list` reports "MCP servers are configured but disabled because this folder is untrusted", and user-level servers are suppressed too), so the entry would be silently inert. `GeminiAdapter.ensureTrust` pre-populates `~/.gemini/trustedFolders.json` via `trust-manager.ts`. Unlike the Qwen equivalent it does **not** gate on `security.folderTrust.enabled`, because Gemini 0.54.4 enforces trust with that flag unset. It never overrides a user's `TRUST_PARENT` or `DO_NOT_TRUST`, at the path itself or on any ancestor, so a `DO_NOT_TRUST` on the repo suppresses approval for every worktree Kangentic creates beneath it (the same deny rule Codex applies to its project root). It also skips the write when an ancestor is already trusted, so a worktree under an already-trusted repo adds no key at all. When no ancestor is trusted, though, it does record one `TRUST_FOLDER` per task worktree, exactly like Codex - which is why `GeminiAdapter.onWorktreeRemoved` drops that entry again when Kangentic deletes the worktree (`removeWorktreeTrust`). Without it the file grows by a dead entry per task forever, the accumulation that reached 473 entries in Codex's `config.toml`. Removal only ever takes an entry Kangentic could have written itself: a `TRUST_PARENT` or `DO_NOT_TRUST` at that path is a user decision and survives, so a later worktree at the same path still honors it. Ancestor matching folds case only on Windows, since POSIX paths are case-sensitive.
-- **The token is plaintext on disk while the session runs.** `.gemini/settings.json` is project-shared and may be intentionally committed, so it cannot be blanket-gitignored like `.kangentic/`. Tokens rotate per app launch and `removeHooks` strips the entry when the folder's last session ends. For the untracked case this is now self-enforcing: when Kangentic creates the file (it did not exist before the spawn), the builder seeds `.gemini/settings.json` and `.kangentic/` into `.git/info/exclude` via the shared `git-exclude.ts` mechanism (see the Antigravity section), so the file never shows as untracked and cannot ride a `git add -A` into history. A pre-existing file keeps its normal git visibility (the created-by-us carve-out), and ignore rules never affect tracked files - so the rule stands: do not commit `.gemini/settings.json` while a Kangentic-spawned Gemini session is running. Droid avoids this class of problem entirely because it supports `${NAME}` env expansion inside header values; Gemini does not.
+- **No token is on disk.** The file holds only the `${KANGENTIC_MCP_URL}` and `${KANGENTIC_MCP_TOKEN}` references (the values travel in the session environment), but its hook entries still land in `.gemini/settings.json`, which is project-shared and may be intentionally committed, so it cannot be blanket-gitignored like `.kangentic/`. `removeHooks` strips the entry when the folder's last session ends. For the untracked case this is now self-enforcing: when Kangentic creates the file (it did not exist before the spawn), the builder seeds `.gemini/settings.json` and `.kangentic/` into `.git/info/exclude` via the shared `git-exclude.ts` mechanism (see the Antigravity section), so the file never shows as untracked and cannot ride a `git add -A` into history. A pre-existing file keeps its normal git visibility (the created-by-us carve-out), and ignore rules never affect tracked files - so the rule stands: do not commit `.gemini/settings.json` while a Kangentic-spawned Gemini session is running.
 
 ## Qwen Code
 
@@ -1227,23 +1296,26 @@ The file is append-only (resume via `-r <uuid>` appends new `TurnBegin` / `TurnE
 {"timestamp": <unix_seconds>, "message": {"type": "<EventName>", "payload": {...}}}
 ```
 
-Every documented wire-protocol message type (19 Events + 4 Requests, wire protocol v1.9) is parsed:
+Kimi's activity is `hooks_and_pty` with wire.jsonl as the structured source: the first wire read turns the PTY tracker off, and the PTY silence timer and prompt regex cover only the gap before it. Measured in the interactive TUI on 1.37.0, every record reached the file 13 to 40 ms after its own timestamp. A turn end, an interrupt and a permission wait are events, not forced activity ("released" below): a forced idle runs the engine's `forceIdle`, which ends no turn for On agent turn end automations and clears every background task the session holds.
+
+Every documented wire-protocol message type (19 Events + 4 Requests, wire protocol v1.9) is parsed, plus `Notification` for background tasks:
 
 **Events**
 
 | Wire event | Activity | SessionEvent |
 |------------|----------|--------------|
 | `TurnBegin` | → Thinking | `Prompt` (detail = extracted user_input text) |
-| `TurnEnd` | → Idle | (none) |
+| `TurnEnd` | (released) | `Idle` |
 | `StepBegin` | → Thinking | (none) |
-| `StepInterrupted` | → Idle | `Interrupted` |
+| `StepInterrupted` | (released) | `Interrupted` |
 | `CompactionBegin` | → Thinking | `Compact` |
 | `CompactionEnd` | (preserve) | (none) |
 | `StatusUpdate` | (preserve) | (none; updates SessionUsage) |
 | `ContentPart` | (preserve) | (none; streaming text fragment) |
-| `ToolCall` | (preserve) | `ToolStart` (detail = tool name) |
+| `ToolCall` | (preserve) | `ToolStart` (`toolId` = the call id; detail = the command for `Shell`, else the tool name) |
 | `ToolCallPart` | (preserve) | (none; argument-streaming fragment) |
-| `ToolResult` | (preserve) | `ToolEnd` (detail = `ok` or `error`) |
+| `ToolResult` | (preserve) | `ToolEnd` (`toolId`; detail = `ok` or `error`). A `Shell` background launch (message "Background task started." with a `background_task` display block) is a `BackgroundShellStart` with the task id instead, which closes its pending tool by `toolId`; a `TaskStop` result ("Task stop requested.") adds a `BackgroundShellEnd` |
+| `Notification` | (preserve) | `BackgroundShellEnd` for a `task.*` notification whose `source_kind` is `background_task` (detail = `source_id`); others emit nothing |
 | `ApprovalResponse` | → Thinking | `Notification` (detail = response) |
 | `SubagentEvent` | (preserve) | `SubagentStart` (inner `TurnBegin`) / `SubagentStop` (inner `TurnEnd`) / `Notification` (other inner types). detail = `subagent_type` \|\| `agent_id` \|\| `subagent` |
 | `BtwBegin` | (preserve) | `SubagentStart` (detail = `btw`) |
@@ -1257,9 +1329,9 @@ Every documented wire-protocol message type (19 Events + 4 Requests, wire protoc
 
 | Wire request | Activity | SessionEvent |
 |--------------|----------|--------------|
-| `ApprovalRequest` | → Idle | `Idle` (detail = `IdleReason.Permission`) |
+| `ApprovalRequest` | (released) | `Idle` (detail = `IdleReason.Permission`) |
 | `ToolCallRequest` | (preserve) | `ToolStart` (detail = `name`) |
-| `QuestionRequest` | → Idle | `Idle` (detail = `IdleReason.Permission`) |
+| `QuestionRequest` | (released) | `Idle` (detail = `IdleReason.Permission`) |
 | `HookRequest` | (preserve) | `Notification` (detail = `<event>:<target>[: <summary>]`, summary derived from `input_data` and capped at 200 chars) |
 
 The parser uses an exhaustive `switch` over a `KIMI_DISPATCH_TYPES` literal union, so a future protocol bump that adds a new type produces a TS exhaustiveness error at compile time. `user_input` (TurnBegin / SteerInput) accepts both `string` and `ContentPart[]`; the parser extracts `TextPart.text` from arrays and ignores think/media parts.
@@ -1760,7 +1832,7 @@ Shortcut commands use a separate set of template variables. See [Configuration](
 
 ## Bridge Scripts
 
-Three standalone Node.js scripts in `src/main/agent/`:
+Four standalone Node.js scripts in `src/main/agent/`:
 
 ### `status-bridge.js`
 
@@ -1775,8 +1847,9 @@ Three standalone Node.js scripts in `src/main/agent/`:
 - **Hook point:** All registered hooks
 - **Output:** `events.jsonl` (append-only, one JSON line per event)
 - **Data:** Timestamps, event types, tool names, file paths
+- **Appended events:** `appendBackgroundLaunch` and `appendBackgroundStop` write a `background_shell_start` or `background_shell_end` line beside the hook's own event, from the adapter's `BackgroundCommandSpec` (see [Background commands](#background-commands)). They are new kinds rather than flags on an old one, so a stale bridge copy rejects them through its unknown-directive branch instead of misreading them. A suppressed main event still lets an appended line land.
 - **Watched by:** SessionManager with 50ms debounce, incremental byte-offset reads
-- **Supported by:** Claude Code (18 hook points), Codex CLI (via config.toml hooks), Gemini CLI (via .gemini/settings.json hooks), Qwen Code (on Windows via a per-spawn workspace copy, `<cwd>/.kangentic/qwen-event-bridge.cjs`, and the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Paths in hook commands](#paths-in-hook-commands)), Aider, GitHub Copilot CLI, Grok Build (via `.grok/hooks/kangentic.json`, with the events path resolved through the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Grok Build](#grok-build)), and Antigravity CLI (via a per-spawn workspace copy, `<cwd>/.kangentic/agy-event-bridge.cjs` - see [Antigravity](#antigravity))
+- **Supported by:** Claude Code (18 hook points), Codex CLI (via `-c hooks.*` overrides and a per-spawn workspace copy, `<cwd>/.kangentic/codex-event-bridge.cjs`, with the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Codex Hook Integration](#hook-integration)), Gemini CLI (via .gemini/settings.json hooks), Qwen Code (on Windows via a per-spawn workspace copy, `<cwd>/.kangentic/qwen-event-bridge.cjs`, and the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Paths in hook commands](#paths-in-hook-commands)), Aider, GitHub Copilot CLI, Grok Build (via `.grok/hooks/kangentic.json`, with the events path resolved through the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Grok Build](#grok-build)), and Antigravity CLI (via a per-spawn workspace copy, `<cwd>/.kangentic/agy-event-bridge.cjs` - see [Antigravity](#antigravity))
 
 ### `plan-approval-bridge.js`
 
@@ -1789,11 +1862,11 @@ Three standalone Node.js scripts in `src/main/agent/`:
 
 ### `background-shell-hint-bridge.js`
 
-- **Hook point:** a second `PostToolUse` entry, matcher `Bash|PowerShell`, beside the event bridge's catch-all one. Registered only for a session whose MCP URL names it as the caller (`urlNamesTaskSessionCaller`), because the hint points at `kangentic_mark_background_service`, which the server offers only to such a session. A Command Terminal, or a session with the MCP server off, gets none.
-- **Input:** the hook payload on stdin, and a base64 spec (`BackgroundShellHintSpec` in `src/main/agent/shared/background-shell-hint-hook.ts`) naming the tools, where the command and the shell id sit, the opt-out flag, and the reply. All agent knowledge is in the spec, never in the script.
-- **Output:** for a result carrying an id-shaped background shell id, from a command without `--kangentic-no-activity-hold`, the reply on stdout. Claude's (`CLAUDE_BACKGROUND_SHELL_HINT_SPEC` in `adapters/claude/hook-manager.ts`) is `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":<hint>}}`: the shell keeps the task working and holds the column's turn-end automations until it exits, and a server or watcher can be marked with the tool. See "Opting a background shell out of the hold" in [Activity Detection](activity-detection.md).
+- **Hook point:** a second post-tool entry beside the event bridge's catch-all one, matcher-scoped to the launch tools where the CLI has matchers (Claude's `Bash|PowerShell`). Registered only for a session whose MCP URL names it as the caller (`urlNamesTaskSessionCaller`), because the hint points at `kangentic_mark_background_service`, which the server offers only to such a session. A Command Terminal, or a session with the MCP server off, gets none.
+- **Input:** the hook payload on stdin, and a base64 spec (`src/main/agent/shared/background-shell-hint-hook.ts`) naming the tools, where the command and the shell id sit, the opt-out flag, and the reply. All agent knowledge is in the spec, never in the script. Claude sends the v1 shape (`BackgroundShellHintSpec`), which its replay fixtures pin. Every other agent sends v2 (`BackgroundShellHintSpecV2`, `{ launch, reply }`), whose `launch` is the same match its `appendBackgroundLaunch` directive carries. A stale bridge prints nothing for v2, since it requires the v1 fields.
+- **Output:** for a result carrying an id-shaped background shell id, from a command without `--kangentic-no-activity-hold`, the reply on stdout, with the one hint text `BACKGROUND_SHELL_HINT_TEXT` in the CLI's own envelope. Claude's (`CLAUDE_BACKGROUND_SHELL_HINT_SPEC` in `adapters/claude/hook-manager.ts`) is `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":<hint>}}`: the shell keeps the task working and holds the column's turn-end automations until it exits, and a server or watcher can be marked with the tool. See "Opting a background shell out of the hold" in [Activity Detection](activity-detection.md).
 - **Prints nothing** for a foreground call, another tool, a flagged command, stdin over 1 MiB, or any error, and exits 0, so it never fails or blocks a tool.
-- **Supported by:** Claude Code (probed headless on 2026-10-20: the context reached the model for a Bash and a PowerShell `run_in_background` launch, both results carried `tool_response.backgroundTaskId`, and Claude runs one event's hooks in parallel, so the hint adds no wall time to a tool call)
+- **Supported by:** Claude Code (probed headless on 2026-10-20: the context reached the model for a Bash and a PowerShell `run_in_background` launch, both results carried `tool_response.backgroundTaskId`, and Claude runs one event's hooks in parallel, so the hint adds no wall time to a tool call), Qwen Code 0.25.3, Gemini CLI 0.64.0 and GitHub Copilot CLI 1.0.100 (each probed headless against a local stand-in for its model API, with a nonce in the reply found in the next model request)
 
 All four scripts are stateless (no persistent process), read JSON from stdin, and exit. All writes are try/catch wrapped for non-fatal failures.
 

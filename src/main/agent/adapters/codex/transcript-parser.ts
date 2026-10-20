@@ -1,7 +1,7 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import { codexHomeDir } from './config-toml';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 
@@ -161,7 +161,7 @@ export async function parseCodexTranscript(
  * can be viewed on demand. Returns the absolute path, or null if not found.
  */
 export function locateCodexTranscriptFile(agentSessionId: string): string | null {
-  const root = path.join(os.homedir(), '.codex', 'sessions');
+  const root = path.join(codexHomeDir(), 'sessions');
   const escapedId = agentSessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(`^rollout-.*-${escapedId}\\.jsonl$`);
 

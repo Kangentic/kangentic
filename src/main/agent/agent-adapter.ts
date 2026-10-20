@@ -1,4 +1,5 @@
 import type { AnswerStreamEvent } from './shared/cli-answer';
+import type { BackgroundCommandSupport } from '../../shared/background-command-spec';
 import type {
   AgentCallUsage,
   SessionRecord,
@@ -652,6 +653,28 @@ export interface AgentAdapter {
    * Default (if not implemented): false.
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
+
+  /**
+   * Optional: this agent reports the background commands it starts (task #859).
+   * A launch then emits a named `background_shell_start` that holds the session
+   * `thinking` until the command exits or the agent marks it a service, and the
+   * session is offered `kangentic_mark_background_service`. The generic layer
+   * reads only the declaration (`SessionManager.reportsBackgroundCommands`); the
+   * adapter's own hooks or parser emit the events.
+   *
+   * Declare it only when all of these were measured with the real CLI:
+   * activity is hook-driven (the PTY tracker is off once hooks flow, so PTY
+   * silence cannot clear a hold), `kangenticMcp` is `'per-session'` (a
+   * folder-shared URL can route a mark to another session), the payloads are
+   * pinned as fixtures, and the hold stayed while the process ran and released
+   * when it exited (a process outside the PTY root's tree is invisible to the
+   * watcher). `background-commands-declaration.test.ts` enforces the first two.
+   * Per-agent decisions: docs/agent-integration.md, "Background commands".
+   *
+   * Default (if not implemented): the agent's background commands are not
+   * tracked, it never holds a session, and the MCP tool is not offered.
+   */
+  readonly backgroundCommands?: BackgroundCommandSupport;
 
   /**
    * Locate the agent's native session history file on disk for a given

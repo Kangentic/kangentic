@@ -1,0 +1,13 @@
+{
+  "session_id": "00000000-0000-4000-8000-9422fe9dcf40",
+  "transcript_path": "C:\\Users\\dev\\.factory\\sessions\\-C-Users-dev-AppData-Local-Temp-claude-C--Users-dev-repo-00000000-0000-4000-8000-79ad0fe86297-scratchpad-probe-work-droid-2026-10-20T15-24-35-452Z\\00000000-0000-4000-8000-9422fe9dcf40.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "permission_mode": "auto-low",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Execute",
+  "tool_input": {
+    "summary": "Run a foreground probe",
+    "command": "node -e \"console.log(42)\""
+  },
+  "tool_response": "42\n\n\n[Process exited with code 0]"
+}

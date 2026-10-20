@@ -3,8 +3,8 @@ import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
-import { BACKGROUND_SHELL_HINT_SHELL_ID, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
-import { MARK_BACKGROUND_SERVICE_TOOL, NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
+import { BACKGROUND_SHELL_HINT_TEXT, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
 
 /** All Claude Code hook event names (settings.json keys). */
 export const ClaudeHookEvent = {
@@ -136,9 +136,7 @@ export const CLAUDE_BACKGROUND_SHELL_HINT_SPEC: BackgroundShellHintSpec = {
   reply: {
     hookSpecificOutput: {
       hookEventName: 'PostToolUse',
-      additionalContext:
-        `Kangentic keeps this task marked as working, and holds its column's turn-end automations, until background shell ${BACKGROUND_SHELL_HINT_SHELL_ID} exits. `
-        + `If it is a server or watcher meant to keep running after your turn, not work you are waiting on, call ${MARK_BACKGROUND_SERVICE_TOOL} with shellIds ["${BACKGROUND_SHELL_HINT_SHELL_ID}"].`,
+      additionalContext: BACKGROUND_SHELL_HINT_TEXT,
     },
   },
 };

@@ -791,17 +791,22 @@ export class SessionManager extends EventEmitter {
 
     this.sessionHistoryReader = new SessionHistoryReader({
       onUsageUpdate: (sessionId, usage) => this.telemetry.setSessionUsage(sessionId, usage),
-      onEvents: (sessionId, events) => this.telemetry.ingestEvents(sessionId, events),
+      onEvents: (sessionId, events) => this.telemetry.ingestEvents(sessionId, events, {
+        suppressesPtyTracker: this.historySuppressesPtyFallback(sessionId),
+      }),
       onActivity: (sessionId, activity) => this.telemetry.forceActivity(sessionId, activity),
       onFirstTelemetry: (sessionId) => {
         // Only suppress PTY detection when the adapter uses hooks_and_pty
-        // (meaning hook-based events can drive activity transitions). For
-        // pure PTY adapters (Codex, Aider), session history provides usage
-        // data (model, tokens) but NOT real-time activity signals, so the
-        // silence timer must remain active.
+        // (meaning hook or history events drive activity transitions; Kimi's
+        // wire.jsonl is one). For pure PTY adapters (Aider), session history
+        // provides usage data (model, tokens) but NOT real-time activity
+        // signals, so the silence timer must remain active. A history file
+        // that carries only part of the picture beside hooks (Codex's rollout)
+        // opts out with `suppressesPtyFallback: false`, so a session whose
+        // hooks never flow keeps the tracker.
         const session = this.registry.get(sessionId);
         const activityKind = session?.agentParser?.runtime?.activity?.kind;
-        if (activityKind === 'hooks_and_pty') {
+        if (activityKind === 'hooks_and_pty' && this.historySuppressesPtyFallback(sessionId)) {
           this.telemetry.suppressPty(sessionId);
         }
       },
@@ -3522,6 +3527,25 @@ export class SessionManager extends EventEmitter {
   markBackgroundShellsAsServices(sessionId: string, shellIds: readonly string[]): BackgroundShellServiceOutcome[] | null {
     if (this.registry.get(sessionId)?.status !== 'running') return null;
     return this.telemetry.markBackgroundShellsAsServices(sessionId, shellIds);
+  }
+
+  /**
+   * Whether this session's agent reports its background commands
+   * (`AgentAdapter.backgroundCommands`, stamped on the row at spawn). The MCP
+   * server offers `kangentic_mark_background_service` only then: for any other
+   * agent nothing ever starts a tracked shell, so a mark could only park an id.
+   */
+  reportsBackgroundCommands(sessionId: string): boolean {
+    return this.registry.get(sessionId)?.reportsBackgroundCommands === true;
+  }
+
+  /**
+   * Whether this session's history file may turn the PTY tracker off
+   * (`sessionHistory.suppressesPtyFallback`, default true). False for a file
+   * that reports only part of the activity beside hooks (Codex's rollout).
+   */
+  private historySuppressesPtyFallback(sessionId: string): boolean {
+    return this.registry.get(sessionId)?.agentParser?.runtime?.sessionHistory?.suppressesPtyFallback !== false;
   }
 
   /** Return cached ActivityReason for all sessions (HMR/full-reload reconcile). */

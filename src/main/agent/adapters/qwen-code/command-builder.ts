@@ -3,10 +3,17 @@ import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
-import { copyEventBridgeInto } from '../../shared/workspace-bridge-copy';
+import { copyBridgeInto } from '../../shared/workspace-bridge-copy';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
-import { buildHooks, QWEN_BRIDGE_COPY_NAME } from './hook-manager';
+import { backgroundShellHintCommandFor, offersMarkBackgroundService, shippedHintBridgePath } from '../../shared/background-command-hooks';
+import {
+  buildHooks,
+  QWEN_BACKGROUND_COMMAND_SPEC,
+  QWEN_BRIDGE_COPY_NAME,
+  QWEN_HINT_BRIDGE_COPY_NAME,
+  QWEN_HOOK_SHELL,
+} from './hook-manager';
 import type { QwenHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
@@ -325,14 +332,24 @@ export class QwenCommandBuilder {
       let eventBridge: string;
       let eventsToken: string;
       if (process.platform === 'win32') {
-        const bridgeCopy = copyEventBridgeInto(options.cwd, QWEN_BRIDGE_COPY_NAME);
+        const bridgeCopy = copyBridgeInto(options.cwd, 'event-bridge', QWEN_BRIDGE_COPY_NAME);
         eventBridge = toForwardSlash(path.relative(options.cwd, bridgeCopy));
         eventsToken = EVENTS_PATH_FROM_ENVIRONMENT;
       } else {
         eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
         eventsToken = eventsPath;
       }
-      merged.hooks = buildHooks(eventBridge, eventsToken, baseSettings.hooks || {});
+      // The hint names kangentic_mark_background_service, so only a session
+      // offered that tool gets it. On Windows it runs from a workspace copy for
+      // the same bare-token reason as the event bridge.
+      let backgroundShellHintCommand: string | null = null;
+      if (offersMarkBackgroundService(options)) {
+        const hintBridge = process.platform === 'win32'
+          ? toForwardSlash(path.relative(options.cwd, copyBridgeInto(options.cwd, 'background-shell-hint-bridge', QWEN_HINT_BRIDGE_COPY_NAME)))
+          : shippedHintBridgePath();
+        backgroundShellHintCommand = backgroundShellHintCommandFor(options, QWEN_BACKGROUND_COMMAND_SPEC, QWEN_HOOK_SHELL, hintBridge);
+      }
+      merged.hooks = buildHooks(eventBridge, eventsToken, baseSettings.hooks || {}, { backgroundShellHintCommand });
     }
 
     const userMcpServers = withoutKangenticEntry(baseSettings.mcpServers);

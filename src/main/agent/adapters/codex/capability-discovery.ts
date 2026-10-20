@@ -14,7 +14,7 @@
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import path from 'node:path';
-import os from 'node:os';
+import { codexHomeDir } from './config-toml';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -74,7 +74,7 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  */
 async function scanCodexSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
-  const sessionsDir = path.join(os.homedir(), '.codex', 'sessions');
+  const sessionsDir = path.join(codexHomeDir(), 'sessions');
 
   // Walk YYYY/MM/DD/. Cap each level so a long-running install doesn't pay an
   // unbounded scan cost. listMostRecentDirs returns [] for a missing dir, so

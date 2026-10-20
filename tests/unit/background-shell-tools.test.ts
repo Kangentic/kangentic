@@ -18,17 +18,17 @@ import { urlNamesTaskSessionCaller } from '../../src/main/agent/mcp-http/caller-
 import type { TaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { BackgroundShellServiceOutcome } from '../../src/main/activity-engine/engine';
-import { MARK_BACKGROUND_SERVICE_TOOL } from '../../src/shared/background-shell-hold';
+import { MARK_BACKGROUND_SERVICE_TOOL, NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 import { MCP_TOOL_MANIFEST } from '../../src/shared/mcp-tool-manifest';
 
 type ToolResult = { content: Array<{ text: string }>; isError?: boolean };
 type ToolHandler = (args: { shellIds: string[] }) => Promise<ToolResult>;
 
-function captureTool(dependencies: BackgroundShellToolDependencies): { handler: ToolHandler; name: string; annotations: unknown } {
-  let captured: { handler: ToolHandler; name: string; annotations: unknown } | null = null;
+function captureTool(dependencies: BackgroundShellToolDependencies): { handler: ToolHandler; name: string; annotations: unknown; description: string } {
+  let captured: { handler: ToolHandler; name: string; annotations: unknown; description: string } | null = null;
   const server = {
-    registerTool: (name: string, config: { annotations?: unknown }, handler: ToolHandler) => {
-      captured = { handler, name, annotations: config.annotations };
+    registerTool: (name: string, config: { annotations?: unknown; description?: string }, handler: ToolHandler) => {
+      captured = { handler, name, annotations: config.annotations, description: config.description ?? '' };
     },
   };
   registerBackgroundShellTools(server as unknown as Parameters<typeof registerBackgroundShellTools>[0], dependencies);
@@ -46,6 +46,15 @@ describe('kangentic_mark_background_service', () => {
     expect(name).toBe(MARK_BACKGROUND_SERVICE_TOOL);
     expect(annotations).toBe(MUTATING_ANNOTATIONS);
     expect(MCP_TOOL_MANIFEST.some((entry) => entry.name === MARK_BACKGROUND_SERVICE_TOOL)).toBe(true);
+  });
+
+  it('tells an agent with no launch hint when to call it, and about the launch flag', () => {
+    // Grok, Kimi and Codex cannot add context at a launch, so this description
+    // is all they read about marking a service (task #859).
+    const { description } = captureTool({ sessions: makeMarker([]), callerSessionId: 'session-1' });
+    expect(description).toContain('Call this as soon as you start such a service in the background');
+    expect(description).toContain(NO_ACTIVITY_HOLD_FLAG);
+    expect(description).toContain('Do not mark a build or test run you are waiting for');
   });
 
   it('marks the caller\'s own session\'s shells and reports each outcome', async () => {

@@ -1811,6 +1811,83 @@ describe('BgShellWatcher', () => {
       expect(log.naturalExits).toHaveLength(0);
       watcher.dispose();
     });
+
+    describe('an id that is the reported PID (task #859)', () => {
+      // Gemini reports the PID of the shell that runs a background command and
+      // that PID is its id. Measured in a /preview: one of four sessions missed
+      // the tree-diff capture and held for the full 5-minute cap after its job
+      // exited. An exact match needs neither an unambiguous diff nor an early anchor.
+
+      it('adopts the PID the id names even when the diff is ambiguous, and releases at its exit', async () => {
+        const { watcher, probe, rootPids, shellCounts, namedShells, log } = makeWatcher();
+        rootPids.set('s1', 1234);
+        probe.alive.add(1234);
+        probe.trees.set(1234, []);
+        watcher.registerSession('s1');
+        await watcher.pollNow(); // anchor
+
+        shellCounts.set('s1', 1);
+        namedShells.set('s1', ['7000']);
+        probe.alive.add(6000);
+        probe.alive.add(7000);
+        probe.trees.set(1234, [
+          { pid: 6000, ppid: 1234, comm: 'pwsh' },
+          { pid: 7000, ppid: 1234, comm: 'pwsh' },
+        ]);
+        watcher.noteBackgroundShellStarted('s1', '7000');
+        await watcher.pollNow(); // two candidates, but the id names one of them
+
+        probe.trees.set(1234, [{ pid: 6000, ppid: 1234, comm: 'pwsh' }]);
+        await watcher.pollNow();
+        // Red: without the exact match the diff gives up and nothing fires.
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: '7000' }]);
+        watcher.dispose();
+      });
+
+      it('takes the PID back from the helpers when the anchor ran after the shell started', async () => {
+        const { watcher, probe, rootPids, shellCounts, namedShells, log } = makeWatcher();
+        rootPids.set('s1', 1234);
+        probe.alive.add(1234);
+        probe.alive.add(7000);
+        // The first cycle already sees the background shell, so the anchor
+        // folds it into the helpers.
+        probe.trees.set(1234, [{ pid: 7000, ppid: 1234, comm: 'pwsh' }]);
+        watcher.registerSession('s1');
+        await watcher.pollNow();
+
+        shellCounts.set('s1', 1);
+        namedShells.set('s1', ['7000']);
+        watcher.noteBackgroundShellStarted('s1', '7000');
+        await watcher.pollNow();
+
+        probe.trees.set(1234, []);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: '7000' }]);
+        expect(log.naturalExits).toHaveLength(0);
+        watcher.dispose();
+      });
+
+      it('falls back to the diff for a numeric id that is no process in the tree', async () => {
+        const { watcher, probe, rootPids, shellCounts, namedShells, log } = makeWatcher();
+        rootPids.set('s1', 1234);
+        probe.alive.add(1234);
+        probe.trees.set(1234, []);
+        watcher.registerSession('s1');
+        await watcher.pollNow(); // anchor
+
+        // A Codex exec session number: not a live PID, so the one new shell is it.
+        shellCounts.set('s1', 1);
+        namedShells.set('s1', ['88918']);
+        watcher.noteBackgroundShellStarted('s1', '88918');
+        probe.trees.set(1234, [{ pid: 6000, ppid: 1234, comm: 'pwsh' }]);
+        await watcher.pollNow();
+
+        probe.trees.set(1234, []);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: '88918' }]);
+        watcher.dispose();
+      });
+    });
   });
 
   describe('output-file liveness for a PID-less named shell (bug B)', () => {

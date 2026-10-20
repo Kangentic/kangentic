@@ -1,0 +1,20 @@
+{
+  "session_id": "00000000-0000-4000-8000-6bcac7970844",
+  "transcript_path": "C:\\Users\\dev\\.qwen\\projects\\c--users-dev-appdata-local-temp-claude-C--Users-dev-repo-00000000-0000-4000-8000-79ad0fe86297-scratchpad-probe-work-qwen-2026-10-20t14-53-57-682z\\chats\\00000000-0000-4000-8000-6bcac7970844.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "PostToolUse",
+  "timestamp": "2026-10-20T14:54:07.704Z",
+  "permission_mode": "yolo",
+  "prompt_id": "00000000-0000-4000-8000-6bcac7970844########0",
+  "tool_name": "task_stop",
+  "tool_input": {
+    "task_id": "bg_bc67cecc"
+  },
+  "tool_response": {
+    "llmContent": "Cancellation requested for background shell \"bg_bc67cecc\". Final status will be visible via /tasks (text) or the interactive Background tasks dialog (focus the footer Background tasks pill, then Enter) once the process drains; captured output remains at C:\\Users\\dev\\.qwen\\tmp\\95a435e70f1ff7b310c9872966e387d14ab77f5e9b71c86ec81ebd752ca362a6\\background-shells\\00000000-0000-4000-8000-6bcac7970844\\shell-bg_bc67cecc.output.\nCommand: node server.js",
+    "returnDisplay": "Cancelled shell: node server.js"
+  },
+  "tool_use_id": "toolu_1792508047068_4dwobj0d2",
+  "tool_call_id": "call_probe_4",
+  "duration_ms": 22
+}

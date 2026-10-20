@@ -516,7 +516,7 @@ All in `src/main/agent/`:
 | `status-bridge.js` | `status.json` | statusLine | Token usage, cost, model, context % |
 | `event-bridge.js` | `events.jsonl` | 18 hook event types (see below) | Tool calls, prompts, interrupts, activity state (JSONL) |
 | `plan-approval-bridge.js` | stdout, plus one `plan_approval_sent` line in `events.jsonl` | `PermissionRequest`, matcher `ExitPlanMode` | Approves the plan when the session's `plan-approval.json` says to; otherwise prints nothing (see [Agent Integration](agent-integration.md#plan-approval-bridgejs)) |
-| `background-shell-hint-bridge.js` | stdout | `PostToolUse`, matcher `Bash\|PowerShell` | Tells the agent a background command keeps its task working and how to mark it as a service. Registered only for a task session whose MCP URL names it (see [Agent Integration](agent-integration.md#background-shell-hint-bridgejs)) |
+| `background-shell-hint-bridge.js` | stdout | `PostToolUse`, matcher `Bash\|PowerShell` for Claude (Qwen, Gemini and Copilot match their own launch tools) | Tells the agent a background command keeps its task working and how to mark it as a service. Registered only for a task session whose MCP URL names it (see [Agent Integration](agent-integration.md#background-shell-hint-bridgejs)) |
 
 The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Agent Integration](agent-integration.md#hook-injection) for the full mapping.
 

@@ -12,7 +12,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { quoteArg } from '../../src/shared/paths';
 import { GeminiCommandBuilder } from '../../src/main/agent/adapters/gemini';
-import { removeHooks } from '../../src/main/agent/adapters/gemini/hook-manager';
+import { GEMINI_BACKGROUND_COMMAND_SPEC, removeHooks } from '../../src/main/agent/adapters/gemini/hook-manager';
+import { backgroundShellHintSpecOf } from '../../src/main/agent/shared/background-command-hooks';
 import type { GeminiCommandOptions } from '../../src/main/agent/adapters/gemini';
 
 /** Minimal options for tests that don't need hooks/settings. */
@@ -73,16 +74,34 @@ describe('GeminiCommandBuilder', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('writes an mcpServers.kangentic entry using the Gemini-fork httpUrl key', () => {
+    it('writes an mcpServers.kangentic entry using the Gemini-fork httpUrl key, by env reference', () => {
       // Verified against gemini 0.54.4: `httpUrl` + `headers` connects.
-      // Claude's `url` convention is NOT the Gemini-family spelling.
+      // Claude's `url` convention is NOT the Gemini-family spelling. The URL
+      // and token are env references Gemini expands from its own environment
+      // (measured on 0.64.0, task #859), so the folder-shared file names
+      // neither a session's caller URL nor the token.
       build();
       expect(readSettings().mcpServers).toEqual({
         kangentic: {
-          httpUrl: URL,
-          headers: { 'X-Kangentic-Token': TOKEN },
+          httpUrl: '${KANGENTIC_MCP_URL}',
+          headers: { 'X-Kangentic-Token': '${KANGENTIC_MCP_TOKEN}' },
         },
       });
+      expect(fs.readFileSync(settingsFile(), 'utf-8')).not.toContain(URL);
+    });
+
+    it('delivers the URL and token through the session environment', () => {
+      const env = new GeminiCommandBuilder().buildGeminiEnv(baseOptions({
+        cwd: tmpDir,
+        mcpServerEnabled: true,
+        mcpServerUrl: URL,
+        mcpServerToken: TOKEN,
+      }));
+      expect(env).toEqual({ KANGENTIC_MCP_URL: URL, KANGENTIC_MCP_TOKEN: TOKEN });
+    });
+
+    it('delivers no environment when the MCP server is off', () => {
+      expect(new GeminiCommandBuilder().buildGeminiEnv(baseOptions({ cwd: tmpDir, mcpServerEnabled: false }))).toBeNull();
     });
 
     it('writes the settings file for an MCP-only spawn with no eventsOutputPath', () => {
@@ -117,17 +136,17 @@ describe('GeminiCommandBuilder', () => {
       expect(fs.existsSync(settingsFile())).toBe(false);
     });
 
-    it('removeHooks strips the entry so no token is left on disk', () => {
+    it('never writes the token to disk, and removeHooks strips the entry', () => {
       build();
-      expect(fs.readFileSync(settingsFile(), 'utf-8')).toContain(TOKEN);
+      expect(fs.readFileSync(settingsFile(), 'utf-8')).not.toContain(TOKEN);
+      expect(readSettings().mcpServers.kangentic).toBeDefined();
       removeHooks(tmpDir);
       // With nothing else in it the whole file is removed; if a user had
-      // other settings it survives, minus our entry. Either way the token
-      // must be gone.
+      // other settings it survives, minus our entry.
       const remaining = fs.existsSync(settingsFile())
-        ? fs.readFileSync(settingsFile(), 'utf-8')
-        : '';
-      expect(remaining).not.toContain(TOKEN);
+        ? JSON.parse(fs.readFileSync(settingsFile(), 'utf-8'))
+        : {};
+      expect(remaining.mcpServers?.kangentic).toBeUndefined();
     });
 
     it('removeHooks leaves user-defined mcpServers intact', () => {
@@ -141,6 +160,75 @@ describe('GeminiCommandBuilder', () => {
       expect(readSettings().mcpServers).toEqual({
         context7: { httpUrl: 'http://example.test/mcp' },
       });
+    });
+  });
+
+  /**
+   * The background shell hint (task #859) names kangentic_mark_background_service,
+   * so only a session offered that tool gets the hook: the MCP server on (not
+   * switched off), a token, and an MCP URL that names a task session as its
+   * caller (`/mcp/<project>/<session>`).
+   */
+  describe('background shell hint', () => {
+    const HINT_HOOK_NAME = 'kangentic-background-shell-hint';
+    const SESSION_MCP_URL = 'http://127.0.0.1:5555/mcp/project-123/sess-xyz';
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-gemini-hint-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function build(overrides: Partial<GeminiCommandOptions>): void {
+      new GeminiCommandBuilder().buildGeminiCommand(baseOptions({
+        cwd: tmpDir,
+        eventsOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+        ...overrides,
+      }));
+    }
+
+    function afterToolEntries(): Array<{ matcher: string; hooks: Array<{ name: string; command: string }> }> {
+      const settings = JSON.parse(fs.readFileSync(path.join(tmpDir, '.gemini', 'settings.json'), 'utf-8')) as {
+        hooks: Record<string, Array<{ matcher: string; hooks: Array<{ name: string; command: string }> }>>;
+      };
+      return settings.hooks.AfterTool;
+    }
+
+    function hintCommands(): string[] {
+      return afterToolEntries().flatMap((entry) => entry.hooks).filter((hook) => hook.name === HINT_HOOK_NAME).map((hook) => hook.command);
+    }
+
+    it.each([true, undefined])('wires the hint, built from the Gemini spec, for a session URL and a token (mcpServerEnabled %s)', (mcpServerEnabled) => {
+      build({ mcpServerEnabled, mcpServerUrl: SESSION_MCP_URL, mcpServerToken: 'secret-token' });
+
+      const commands = hintCommands();
+      expect(commands).toHaveLength(1);
+      expect(commands[0].startsWith('node ')).toBe(true);
+      expect(commands[0]).toContain('background-shell-hint-bridge');
+      // The last token is the base64 of the JSON spec the bridge reads.
+      const encodedSpec = commands[0].split(' ').pop() ?? '';
+      expect(JSON.parse(Buffer.from(encodedSpec, 'base64').toString('utf8'))).toEqual(backgroundShellHintSpecOf(GEMINI_BACKGROUND_COMMAND_SPEC));
+      // Beside the event bridge's entry, not in place of it.
+      expect(afterToolEntries()).toHaveLength(2);
+    });
+
+    it.each([
+      ['a project URL that names no session', { mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123', mcpServerToken: 'secret-token' }],
+      ['a Knowledge Graph answer run URL', { mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123/answer-chat-1', mcpServerToken: 'secret-token' }],
+      ['a workflow agent URL', { mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123/workflow-wf-1', mcpServerToken: 'secret-token' }],
+      ['no URL', { mcpServerUrl: undefined, mcpServerToken: 'secret-token' }],
+      ['no token', { mcpServerUrl: SESSION_MCP_URL, mcpServerToken: undefined }],
+      ['the MCP server switched off', { mcpServerEnabled: false, mcpServerUrl: SESSION_MCP_URL, mcpServerToken: 'secret-token' }],
+    ] as Array<[string, Partial<GeminiCommandOptions>]>)('wires no hint with %s, leaving the event bridge entry alone', (_label, overrides) => {
+      build(overrides);
+
+      expect(hintCommands()).toEqual([]);
+      const entries = afterToolEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].hooks[0].command).toContain('event-bridge');
     });
   });
 

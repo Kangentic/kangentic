@@ -717,8 +717,9 @@ export const DEMO_BACKLOG: DemoBacklogItem[] = [
  *   - Copilot: the --reasoning-effort choices its help lists, and its recorded model.
  *
  * `reportsTurnEnd` is each adapter's `runtime.reportsTurnEnd`, as main's agent list reports it,
- * and the Column Manager reads it: Codex says nothing when a turn ends, so On agent turn end is
- * blocked on a Codex column. The mock's own list leaves it out, which reads as runnable everywhere.
+ * and the Column Manager reads it: an agent that says nothing when a turn ends has On agent turn
+ * end blocked on its column. Codex reports it through its Stop hook (task #859). The mock's own
+ * list leaves it out, which reads as runnable everywhere.
  * tests/unit/scene-registry.test.ts holds every entry here to its adapter.
  */
 export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
@@ -733,7 +734,7 @@ export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
   },
   codex: {
     found: true, path: '/usr/local/bin/codex', version: '0.141.0',
-    reportsTurnEnd: false,
+    reportsTurnEnd: true,
     capabilities: { supportsModelOverride: true, models: [CODEX.id], effortLevels: [] },
   },
   gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0', reportsTurnEnd: true },
