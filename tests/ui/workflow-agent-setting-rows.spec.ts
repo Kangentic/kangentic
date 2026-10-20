@@ -68,11 +68,11 @@ const CLI_WITHOUT_MODEL_FLAG = {
  * agent list instead of the capable one, it would show a Model and an Effort row.
  */
 const INSTALLED_BUT_NOT_WORKFLOW_CAPABLE = {
-  gemini: {
+  droid: {
     found: true,
-    path: '/usr/bin/gemini',
+    path: '/usr/bin/droid',
     version: '1.0.0',
-    capabilities: { effortLevels: ['low', 'high'], supportsModelOverride: true, models: ['gemini-pro'] },
+    capabilities: { effortLevels: ['low', 'high'], supportsModelOverride: true, models: ['droid-pro'] },
   },
 };
 
@@ -177,18 +177,18 @@ test('Effort reads "Agent default" for the Workflow agent, while the Automation 
 
 test('a Workflow agent set to an installed agent that cannot be one reads as unset, with no Model or Effort row', async () => {
   const { browser, page } = await launch({
-    workflows: { agent: 'gemini', model: 'gemini-pro', effort: 'low' },
+    workflows: { agent: 'droid', model: 'droid-pro', effort: 'low' },
     agentListOverrides: INSTALLED_BUT_NOT_WORKFLOW_CAPABLE,
   });
   try {
-    // The precondition this stands on: the agent list is in, and holds Gemini as an
+    // The precondition this stands on: the agent list is in, and holds Droid as an
     // installed agent that does not claim to be a workflow agent.
     await expect.poll(() => page.evaluate(() => {
       const stores = (window as unknown as {
         __zustandStores: { config: { getState: () => { agentList: Array<{ name: string; found: boolean; supportsWorkflowAgent?: boolean }> } } };
       }).__zustandStores;
-      const gemini = stores.config.getState().agentList.find((agent) => agent.name === 'gemini');
-      return gemini ? { found: gemini.found, workflowCapable: gemini.supportsWorkflowAgent === true } : null;
+      const droid = stores.config.getState().agentList.find((agent) => agent.name === 'droid');
+      return droid ? { found: droid.found, workflowCapable: droid.supportsWorkflowAgent === true } : null;
     })).toEqual({ found: true, workflowCapable: false });
 
     const agentRow = byTestId(page, 'workflow-agent-setting-agent');
@@ -197,10 +197,10 @@ test('a Workflow agent set to an installed agent that cannot be one reads as uns
     await expect(byTestId(page, 'workflow-agent-setting-model')).toHaveCount(0);
     await expect(byTestId(page, 'workflow-agent-setting-effort')).toHaveCount(0);
 
-    // The menu offers Claude, the one installed agent that can be a workflow's agent, and not Gemini.
+    // The menu offers Claude, the one installed agent that can be a workflow's agent, and not Droid.
     await agentRow.click();
     await expect(byTestId(page, 'workflow-agent-setting-agent-option-claude')).toBeVisible();
-    await expect(byTestId(page, 'workflow-agent-setting-agent-option-gemini')).toHaveCount(0);
+    await expect(byTestId(page, 'workflow-agent-setting-agent-option-droid')).toHaveCount(0);
   } finally {
     await browser.close();
   }
@@ -208,13 +208,13 @@ test('a Workflow agent set to an installed agent that cannot be one reads as uns
 
 // Any installed agent that reaches Kangentic's MCP server with a URL of its own
 // can be the Workflow agent; read-only launch is an enhancement, not a gate.
-// Codex cannot launch read-only and is offered. Gemini writes the server URL into
+// Codex cannot launch read-only and is offered. Droid writes the server URL into
 // a file its folder shares, and Aider has no MCP client: neither is offered.
 test('the Agent menu offers every installed agent that reaches the MCP server per session, read-only or not', async () => {
   const { browser, page } = await launch({
     agentListOverrides: {
       codex: { found: true, path: '/usr/bin/codex', version: '1.0.0' },
-      gemini: { found: true, path: '/usr/bin/gemini', version: '1.0.0' },
+      droid: { found: true, path: '/usr/bin/droid', version: '1.0.0' },
       aider: { found: true, path: '/usr/bin/aider', version: '1.0.0' },
     },
   });
@@ -225,12 +225,12 @@ test('the Agent menu offers every installed agent that reaches the MCP server pe
         __zustandStores: { config: { getState: () => { agentList: Array<{ name: string; found: boolean }> } } };
       }).__zustandStores;
       return stores.config.getState().agentList.filter((agent) => agent.found).map((agent) => agent.name).sort();
-    })).toEqual(['aider', 'claude', 'codex', 'gemini']);
+    })).toEqual(['aider', 'claude', 'codex', 'droid']);
 
     await byTestId(page, 'workflow-agent-setting-agent').click();
     await expect(byTestId(page, 'workflow-agent-setting-agent-option-claude')).toBeVisible();
     await expect(byTestId(page, 'workflow-agent-setting-agent-option-codex')).toBeVisible();
-    await expect(byTestId(page, 'workflow-agent-setting-agent-option-gemini')).toHaveCount(0);
+    await expect(byTestId(page, 'workflow-agent-setting-agent-option-droid')).toHaveCount(0);
     await expect(byTestId(page, 'workflow-agent-setting-agent-option-aider')).toHaveCount(0);
   } finally {
     await browser.close();
