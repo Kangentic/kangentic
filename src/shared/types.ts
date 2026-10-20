@@ -631,7 +631,8 @@ export interface Task {
   /**
    * True when the user (or an agent, over MCP) has disabled column automations
    * for this task: no On task enter, On agent turn end or On task exit row runs
-   * for it in any column, and a move types no column message. Column settings,
+   * for it in any column, a move types no column message, and an Automatic Plan
+   * approval is held as Manual (`readPlanApprovalDecision`). Column settings,
    * manual drags, Run again and the task's own `auto_command` are untouched.
    * Moving out of Done and joining a workflow clear it; a workflow task never
    * carries it (`automationsSwitchRefusal`). Asked only through

@@ -76,8 +76,9 @@ const SESSION_SPAWN_STRATEGY_DESCRIPTION =
  */
 const AUTOMATIONS_DISABLED_DESCRIPTION =
   'Disable (true) or enable (false) column automations for this task. While disabled, no On task enter, On agent '
-  + 'turn end or On task exit automation runs for it in any column, and moving it types no column message, so the '
-  + 'board stops advancing it; manual moves, the column\'s agent settings and Run again still work. Use it to hold a '
+  + 'turn end or On task exit automation runs for it in any column, moving it types no column message, and Kangentic '
+  + 'approves none of its plans (the user approves them), so the board stops advancing it; manual moves, the '
+  + 'column\'s agent settings and Run again still work. Use it to hold a '
   + 'task that is waiting on something. Setting it never restarts the session. Moving the task out of Done or adding '
   + 'it to a workflow enables automations again. Refused for a task in a workflow (pause the workflow instead). '
   + 'Board tasks only.';

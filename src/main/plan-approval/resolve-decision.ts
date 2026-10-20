@@ -5,6 +5,8 @@ import type { PlanApprovalDecision } from '../agent/shared/plan-approval-hook';
 /** What `readPlanApprovalDecision` gathers for one session. */
 export interface PlanApprovalDecisionInput {
   agentCanApprove: boolean;
+  /** The task's automations are disabled, as `canTaskRunAutomations` answers. */
+  automationsDisabled: boolean;
   /** The session was launched with bypass available (`CommandOptions.bypassAvailable`). */
   bypassAvailable: boolean;
   /** The task's column, folded through its Board Profile. */
@@ -27,7 +29,10 @@ export interface PlanApprovalDecisionInput {
  *   columns by `workflowPlanApproval`);
  * - otherwise the column's own, and only while the column runs in plan mode;
  *   a column of any other mode is Manual.
- * Automatic approves only where the session's agent can approve plans.
+ * Automatic approves only where the session's agent can approve plans, and
+ * never for a task whose automations are disabled: an approval would let the
+ * After Plan Mode move advance a task the user is holding. A workflow task
+ * never carries that switch, so a workflow's value is not affected.
  *
  * The mode is the destination's, the one the session would spawn with there:
  * a plan approval keeps the live session, so whatever `setMode` sets is what
@@ -42,7 +47,7 @@ export function resolvePlanApprovalDecision(input: PlanApprovalDecisionInput): P
     ?? (input.column.permission_mode === 'plan' ? input.column.plan_approval : 'manual');
   const mode = continuingMode(input);
   return {
-    approve: value === 'automatic' && input.agentCanApprove,
+    approve: value === 'automatic' && input.agentCanApprove && !input.automationsDisabled,
     mode,
     detail: input.target ? `Moved to ${input.target.name}` : `Stayed in ${input.column.name}`,
   };

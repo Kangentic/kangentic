@@ -10,6 +10,7 @@ import { workflowPlanApproval } from '../../src/shared/plan-approval';
 function decide(overrides: Partial<PlanApprovalDecisionInput> = {}) {
   return resolvePlanApprovalDecision({
     agentCanApprove: true,
+    automationsDisabled: false,
     bypassAvailable: false,
     column: { name: 'Planning', permission_mode: 'plan', plan_approval: 'automatic' },
     runningWorkflowValue: null,
@@ -43,6 +44,11 @@ describe('resolvePlanApprovalDecision', () => {
       column: { name: 'Planning', permission_mode: 'plan', plan_approval: 'manual' },
       runningWorkflowValue: 'automatic',
     }).approve).toBe(true);
+  });
+
+  it('holds an Automatic plan column as Manual for a task whose automations are disabled, mode and destination unchanged', () => {
+    // An approval would let the After Plan Mode move advance a task the user is holding.
+    expect(decide({ automationsDisabled: true })).toEqual({ approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' });
   });
 
   it('a running workflow still cannot approve for an incapable agent', () => {

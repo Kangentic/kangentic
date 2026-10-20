@@ -13,16 +13,30 @@ import path from 'node:path';
 import type { Session } from '../../src/shared/types';
 import type { PlanApprovalDecision } from '../../src/main/agent/shared/plan-approval-hook';
 
+interface DecisionRead {
+  projectId: string;
+  taskId: string;
+  agentCanApprove: boolean;
+  bypassAvailable: boolean;
+  ignoreDisabledAutomations?: boolean;
+}
+
 const hoisted = vi.hoisted(() => ({
   decision: null as PlanApprovalDecision | null,
-  reads: [] as Array<{ projectId: string; taskId: string; agentCanApprove: boolean; bypassAvailable: boolean }>,
+  reads: [] as DecisionRead[],
   notifiedBoards: [] as string[],
 }));
 
 vi.mock('../../src/main/plan-approval/read-decision', () => ({
   newDecisionReadCache: () => ({ workflowValues: new Map(), globalModes: new Map() }),
-  readPlanApprovalDecision: (_context: unknown, input: { projectId: string; taskId: string; agentCanApprove: boolean; bypassAvailable: boolean }) => {
-    hoisted.reads.push({ projectId: input.projectId, taskId: input.taskId, agentCanApprove: input.agentCanApprove, bypassAvailable: input.bypassAvailable });
+  readPlanApprovalDecision: (_context: unknown, input: DecisionRead) => {
+    hoisted.reads.push({
+      projectId: input.projectId,
+      taskId: input.taskId,
+      agentCanApprove: input.agentCanApprove,
+      bypassAvailable: input.bypassAvailable,
+      ignoreDisabledAutomations: input.ignoreDisabledAutomations,
+    });
     return hoisted.decision;
   },
 }));
@@ -114,6 +128,8 @@ describe('PlanApprovalWriter', () => {
     expect(sessionManager.lookup?.('session-1')).toBe(true);
     // Read from the session's own task, with the agent's capability.
     expect(hoisted.reads[0]).toMatchObject({ projectId: 'project-1', taskId: 'task-1', agentCanApprove: true });
+    // A session's decision honors a task's disabled automations.
+    expect(hoisted.reads[0].ignoreDisabledAutomations).toBeUndefined();
   });
 
   it('writes into the directory the spawn recorded, and passes on whether bypass is available', () => {
@@ -168,9 +184,16 @@ describe('PlanApprovalWriter', () => {
   it('reads a plan spawn\'s mode as an agent that can approve with bypass reachable, and stops answering once disposed', () => {
     hoisted.decision = { approve: true, mode: 'bypassPermissions', detail: 'Moved to Executing' };
     // The session does not exist yet at spawn time, so the writer assumes the
-    // best case: the answer is what the spawn should make possible.
+    // best case: the answer is what the spawn should make possible. That
+    // includes automations the user may enable while the session lives.
     expect(planApprovalModeForSpawn('project-1', 'task-1')).toBe('bypassPermissions');
-    expect(hoisted.reads.at(-1)).toEqual({ projectId: 'project-1', taskId: 'task-1', agentCanApprove: true, bypassAvailable: true });
+    expect(hoisted.reads.at(-1)).toEqual({
+      projectId: 'project-1',
+      taskId: 'task-1',
+      agentCanApprove: true,
+      bypassAvailable: true,
+      ignoreDisabledAutomations: true,
+    });
 
     // The same approving board would still answer, so a null here comes from
     // the resolver having been unregistered, not from the decision.

@@ -90,12 +90,18 @@ describe('readPlanApprovalDecision', () => {
 
   function read(
     taskId: string,
-    input: { agentCanApprove?: boolean; bypassAvailable?: boolean } = {},
+    input: { agentCanApprove?: boolean; bypassAvailable?: boolean; ignoreDisabledAutomations?: boolean } = {},
     cache?: ReturnType<typeof newDecisionReadCache>,
   ) {
     return readPlanApprovalDecision(
       context,
-      { projectId: 'home', taskId, agentCanApprove: input.agentCanApprove ?? true, bypassAvailable: input.bypassAvailable ?? false },
+      {
+        projectId: 'home',
+        taskId,
+        agentCanApprove: input.agentCanApprove ?? true,
+        bypassAvailable: input.bypassAvailable ?? false,
+        ignoreDisabledAutomations: input.ignoreDisabledAutomations,
+      },
       cache,
     );
   }
@@ -161,6 +167,20 @@ describe('readPlanApprovalDecision', () => {
 
       expect(read(task.id, { agentCanApprove: false })).toEqual({ approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' });
       expect(read(task.id, { agentCanApprove: true })?.approve).toBe(true);
+    });
+
+    it('holds an Automatic plan column as Manual while the task\'s automations are disabled', () => {
+      editColumn('Planning', { plan_approval: 'automatic', plan_exit_target_id: laneId('home', 'Executing') });
+      editColumn('Executing', { permission_mode: 'acceptEdits' });
+      const task = createTask('Planning');
+      // Control: the same task approves while its automations run.
+      expect(read(task.id)?.approve).toBe(true);
+
+      taskRepository().update({ id: task.id, automations_disabled: true });
+
+      expect(read(task.id)).toEqual({ approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' });
+      // The pre-spawn question looks past the switch: automations can be enabled while the session lives.
+      expect(read(task.id, { ignoreDisabledAutomations: true })).toEqual({ approve: true, mode: 'acceptEdits', detail: 'Moved to Executing' });
     });
 
     it('reads a column that is not in plan mode as Manual, whatever it stores', () => {

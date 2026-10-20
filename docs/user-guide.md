@@ -446,7 +446,7 @@ automations on the right.
 | **Model** / **Effort** | Override the project's default model and reasoning effort for agents in this column. The Model dropdown has the same **Latest** and **Specific versions** layout as the New Task dialog. A column set to `Opus` follows each new Opus release, while one set to a specific version stays put. In **All columns**, a column pinned to an older version shows a small mark naming the newer one. |
 | **Permission Mode** | Override the global permission mode for agents in this column |
 | **Auto Spawn** ("Start an agent here") | Whether moving a task here spawns an agent (default: on). Turning it off also stops any **Send message to agent** automation on the column, since there is no agent to type at; those rows show as off with a disabled switch and the reason. |
-| **Plan approval** | For plan-mode columns: whether you approve each plan (**Manual**, the default) or Kangentic does (**Automatic**). Automatic answers only the plan prompt; a question the agent asks still waits. A workflow can change it for its own tasks. Automatic is disabled for an agent Kangentic cannot approve plans for ("Kangentic can't approve Codex CLI's plans, so they wait for you."), and both options are disabled while a Board Profile is selected, since every profile shares the column's value |
+| **Plan approval** | For plan-mode columns: whether you approve each plan (**Manual**, the default) or Kangentic does (**Automatic**). Automatic answers only the plan prompt; a question the agent asks still waits. A workflow can change it for its own tasks, and a task with automations disabled is always Manual. Automatic is disabled for an agent Kangentic cannot approve plans for ("Kangentic can't approve Codex CLI's plans, so they wait for you."), and both options are disabled while a Board Profile is selected, since every profile shares the column's value |
 | **After Plan Mode** | For plan-mode columns: where the task goes when the plan is approved. Pick a column, shown with its icon in its color; picking the column itself keeps the task where it is |
 | **Hand off context when the agent changes** | The new agent picks up the previous agent's conversation instead of starting from the task description |
 | **Session** | Main continues the task's conversation, and Isolated starts clean on every entry. An isolated session suits a code review or any pass that should not inherit the work before it |
@@ -548,8 +548,10 @@ in flight when Kangentic quit is marked interrupted the next time the project op
 
 **Holding one task.** Right-click a card and choose **Disable automations** to keep the board from
 advancing it, for example while it waits on CI. While disabled, no automation runs for that task in
-any column, on enter, turn end or exit, and a drag into a column sends it no column message. The
-column's agent settings, manual drags and **Run again** still work, and so does the task's own
+any column, on enter, turn end or exit, and a drag into a column sends it no column message.
+Kangentic does not approve its plans either: in a column with **Plan approval** set to Automatic,
+the plan waits for you, and once you approve it the task moves on per **After Plan Mode** as usual.
+The column's agent settings, manual drags and **Run again** still work, and so does the task's own
 command. The card shows an **Automations disabled** strip across its top, and the run log records
 each skipped automation with "Automations are disabled for this task." Choose **Enable automations**
 to turn them back on; nothing that was skipped is replayed. Moving the task out of Done, restoring it

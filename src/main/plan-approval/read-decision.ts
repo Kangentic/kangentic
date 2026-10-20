@@ -1,4 +1,5 @@
 import type { PermissionMode, PlanApproval, Swimlane } from '../../shared/types';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import type { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import type { PlanApprovalDecision } from '../agent/shared/plan-approval-hook';
 import { applyProfileToLane } from '../transition-engine/column-strategy';
@@ -66,10 +67,20 @@ function boardColumnsOf(
  * task row points at it. Null when there is nothing to decide for (the task is
  * gone or archived, or its board will not read), which the writer stores as a
  * decision that approves nothing.
+ *
+ * A task whose automations are disabled approves nothing, unless the caller
+ * sets `ignoreDisabledAutomations`. Only the pre-spawn question does: it asks
+ * what the session should be able to do once the user enables them again.
  */
 export function readPlanApprovalDecision(
   context: IpcContext,
-  input: { projectId: string; taskId: string; agentCanApprove: boolean; bypassAvailable: boolean },
+  input: {
+    projectId: string;
+    taskId: string;
+    agentCanApprove: boolean;
+    bypassAvailable: boolean;
+    ignoreDisabledAutomations?: boolean;
+  },
   cache: DecisionReadCache = newDecisionReadCache(),
 ): PlanApprovalDecision | null {
   const { tasks, swimlanes } = getProjectRepos(context, input.projectId);
@@ -98,8 +109,11 @@ export function readPlanApprovalDecision(
     ?? context.configManager.getEffectiveConfig(projectPath ?? undefined).agent.permissionMode;
   cache.globalModes.set(configKey, globalPermissionMode);
 
+  const automationsDisabled = !canTaskRunAutomations(task).ok && !input.ignoreDisabledAutomations;
+
   return resolvePlanApprovalDecision({
     agentCanApprove: input.agentCanApprove,
+    automationsDisabled,
     bypassAvailable: input.bypassAvailable,
     column,
     runningWorkflowValue,
