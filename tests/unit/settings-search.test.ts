@@ -30,7 +30,7 @@ vi.mock('react', async (importOriginal) => {
 });
 
 import { computeSearchResults, useAnySettingVisible } from '../../src/renderer/components/settings/settings-search';
-import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
+import { SETTINGS_REGISTRY, type SettingDefinition } from '../../src/renderer/components/settings/settings-registry';
 
 describe('settings search: hotkeys/shortcuts disentanglement', () => {
   it('matches the Shortcuts tab but not the Hotkeys tab on "shortcut"', () => {
@@ -97,10 +97,14 @@ describe('settings search: sentence punctuation around a word', () => {
 
   it('keeps a mark inside a word', () => {
     // A dot inside a token is part of the word (a file name, a version, "e.g."), so it still
-    // has to match as written.
-    const { matchingIds } = computeSearchResults('kangentic.json', SETTINGS_REGISTRY);
-    const plainWords = computeSearchResults('kangentic json', SETTINGS_REGISTRY).matchingIds;
-    expect([...matchingIds].every((id) => plainWords.has(id))).toBe(true);
+    // has to match as written. Only the first entry holds the file name; the second holds both
+    // words apart, which a search that dropped the inner dot would match too.
+    const registry: SettingDefinition[] = [
+      { id: 'file', tabId: 'board', label: 'Shared board file', description: 'Writes kangentic.json beside the project.', scope: 'project' },
+      { id: 'words', tabId: 'board', label: 'Export', description: 'Saves the kangentic board as json.', scope: 'project' },
+    ];
+    expect([...computeSearchResults('kangentic.json', registry).matchingIds]).toEqual(['file']);
+    expect([...computeSearchResults('kangentic json', registry).matchingIds].sort()).toEqual(['file', 'words']);
   });
 
   it('matches nothing for a query that is only punctuation', () => {
