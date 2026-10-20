@@ -153,10 +153,14 @@ function buildCommand(agent, cwd, prompt, mode, model, resume, mcp) {
   const modeArgs = mode === 'default' ? [] : ['--permission-mode', mode || 'acceptEdits'];
   const mcpArgs = [...(mcp.settings ? ['--settings', mcp.settings] : []), ...(mcp.mcpConfig ? ['--mcp-config', mcp.mcpConfig] : [])];
   const readOnlyArgs = mcp.readOnly ? ['--tools', CLAUDE_READ_ONLY_TOOLS, '--strict-mcp-config', '--no-chrome'] : [];
+  // Claude's adapter sequence (claude-adapter.ts getExitSequence): Esc first, so a capture stopped
+  // mid-turn or at a permission prompt never sends `/exit` as a turn or answers the prompt. The
+  // writer below already pauses 400 ms between chunks, the pause the adapter's sequence carries.
+  const claudeExit = ['\x1b', '\x03', '/exit\r'];
   switch (agent) {
     case 'claude':
-      if (resume) return { exe: 'claude', args: [...modeArgs, ...mcpArgs, ...readOnlyArgs, '--resume', resume], exit: ['\x03', '/exit\r'] };
-      return { exe: 'claude', args: withPrompt([...modeArgs, ...mcpArgs, ...readOnlyArgs], ['--', prompt]), exit: ['\x03', '/exit\r'] };
+      if (resume) return { exe: 'claude', args: [...modeArgs, ...mcpArgs, ...readOnlyArgs, '--resume', resume], exit: claudeExit };
+      return { exe: 'claude', args: withPrompt([...modeArgs, ...mcpArgs, ...readOnlyArgs], ['--', prompt]), exit: claudeExit };
     case 'codex':
       // The adapter's acceptEdits and bypass mappings (src/main/agent/adapters/codex/command-builder.ts).
       // Codex's Windows sandbox needs a helper this machine does not have, and a session in which every

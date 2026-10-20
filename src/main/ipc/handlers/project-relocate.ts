@@ -125,8 +125,9 @@ export async function relocateProject(
     .filter((session) => session.projectId === projectId && isLiveSession(session));
   // Transient command terminals have no task or DB record; kill outright. Kill
   // them all first and wait for the exits together: a young session's kill
-  // waits out its exit-sequence grace (SessionManager.kill), and the folder
-  // move below cannot start while a shell still holds the old path as its cwd.
+  // waits out its exit-sequence grace (SessionManager.kill), awaitExit waits
+  // for an agent that outlives its closed shell, and the folder move below
+  // cannot start while a process still holds the old path as its cwd.
   const transientExits: Promise<void>[] = [];
   for (const session of liveSessions) {
     if (!session.transient && session.taskId) continue;

@@ -946,4 +946,24 @@ describe('PtyHostClient and RemotePty', () => {
     expect(requestedPtyIds).toHaveLength(1);
     expect(posted).toEqual([{ type: 'kill', ptyId: requestedPtyIds[0] }]);
   });
+
+  it('asks the host to await the tasks\' agent exit with the caller\'s budget, and hands back the host\'s answer', async () => {
+    const hostAnswer = { found: ['claude.exe'], stillRunning: [], waitedMs: 1200 };
+    const request = vi.fn(async () => hostAnswer);
+    const transport: PtyHostTransport = {
+      post: () => undefined,
+      request: request as unknown as PtyHostTransport['request'],
+      setEventListener: () => undefined,
+      hostPid: null,
+      shutdown: () => undefined,
+    };
+    const client = new PtyHostClient(transport);
+
+    const answer = await client.awaitAgentExit(['task-a', 'task-b'], 13_000);
+
+    expect(request).toHaveBeenCalledTimes(1);
+    // The caller's budget rides along in the options; without it the transport falls back to its own default.
+    expect(request).toHaveBeenCalledWith('awaitAgentExit', { taskIds: ['task-a', 'task-b'] }, { timeoutMs: 13_000 });
+    expect(answer).toBe(hostAnswer);
+  });
 });

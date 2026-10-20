@@ -9,6 +9,7 @@ import {
   TASK_PROCESS_TAG_ENV,
   addTaskProcessTag,
   isValidTaskTagValue,
+  listInWslEnv,
   parseWslShellSpec,
 } from '../../src/main/pty/process-tag/task-process-tag';
 import {
@@ -115,6 +116,56 @@ describe('task process tag', () => {
     expect(parseWslShellSpec('wsl')).toEqual({ distro: null });
     expect(parseWslShellSpec('C:\\Program Files\\PowerShell\\7\\pwsh.exe')).toBeNull();
     expect(parseWslShellSpec('/bin/bash')).toBeNull();
+  });
+});
+
+describe('listInWslEnv', () => {
+  // WSLENV is how a Windows variable crosses into a WSL distro, and a name only
+  // crosses when it is listed. Each case would fail if the line it names in
+  // task-process-tag.ts were reverted: the dedupe `some` check (kept entry,
+  // longer name), the `??` between the env's own list and the inherited one
+  // (own-over-inherited, fallback), and the empty-segment `filter` (drops empty).
+
+  it('appends NAME/u for each name that is not listed yet, in order, after the entries already there', () => {
+    const result = listInWslEnv({}, ['CLAUDE_CODE_NO_FLICKER', 'KANGENTIC_TASK_ID'], 'USERPROFILE/p:GOPATH/l');
+    expect(result.WSLENV).toBe('USERPROFILE/p:GOPATH/l:CLAUDE_CODE_NO_FLICKER/u:KANGENTIC_TASK_ID/u');
+  });
+
+  it('keeps an entry that is already listed exactly as it is, whatever its flag, and never lists the name twice', () => {
+    expect(listInWslEnv({ WSLENV: 'KANGENTIC_TASK_ID/p' }, ['KANGENTIC_TASK_ID']).WSLENV).toBe('KANGENTIC_TASK_ID/p');
+    expect(listInWslEnv({ WSLENV: 'KANGENTIC_TASK_ID' }, ['KANGENTIC_TASK_ID']).WSLENV).toBe('KANGENTIC_TASK_ID');
+    expect(listInWslEnv({ WSLENV: 'A/u:KANGENTIC_TASK_ID/p:B/l' }, ['KANGENTIC_TASK_ID', 'C']).WSLENV).toBe('A/u:KANGENTIC_TASK_ID/p:B/l:C/u');
+  });
+
+  it('does not take a longer name that starts with the wanted one for a listed entry', () => {
+    const result = listInWslEnv({ WSLENV: 'KANGENTIC_TASK_ID_OTHER/u' }, ['KANGENTIC_TASK_ID']);
+    expect(result.WSLENV).toBe('KANGENTIC_TASK_ID_OTHER/u:KANGENTIC_TASK_ID/u');
+  });
+
+  it('extends the env\'s own WSLENV and leaves the inherited one out of it', () => {
+    const result = listInWslEnv({ WSLENV: 'OWN_ONE/p' }, ['ADDED'], 'INHERITED/p');
+    expect(result.WSLENV).toBe('OWN_ONE/p:ADDED/u');
+    expect(result.WSLENV).not.toContain('INHERITED');
+  });
+
+  it('falls back to the inherited WSLENV when the env sets none', () => {
+    expect(listInWslEnv({ OTHER: 'x' }, ['ADDED'], 'INHERITED/p').WSLENV).toBe('INHERITED/p:ADDED/u');
+  });
+
+  it('starts a list of its own when neither the env nor the inherited value has one', () => {
+    expect(listInWslEnv({}, ['ADDED']).WSLENV).toBe('ADDED/u');
+  });
+
+  it('drops empty segments from the list it extends', () => {
+    expect(listInWslEnv({ WSLENV: ':A/u::B/p:' }, ['C']).WSLENV).toBe('A/u:B/p:C/u');
+    expect(listInWslEnv({}, ['C'], '::A/u:').WSLENV).toBe('A/u:C/u');
+  });
+
+  it('returns a new env with every other key intact and does not touch the one it was given', () => {
+    const env = { KANGENTIC_EVENTS_PATH: '/x/events.jsonl', WSLENV: 'A/u' };
+    const result = listInWslEnv(env, ['B']);
+    expect(result).toEqual({ KANGENTIC_EVENTS_PATH: '/x/events.jsonl', WSLENV: 'A/u:B/u' });
+    expect(env).toEqual({ KANGENTIC_EVENTS_PATH: '/x/events.jsonl', WSLENV: 'A/u' });
   });
 });
 
