@@ -599,8 +599,8 @@
 
 /* The selected task's own links flow from blocker to dependent
    (WorkflowEdge.tsx): the dashes travel toward the arrow, so which way the
-   work goes reads at a glance. They hold still under reduced motion
-   or with the Animations setting off. The board's links overlay
+   work goes reads at a glance. They hold still with the Animations
+   setting off, and in the web build under reduced motion. The board's links overlay
    (WorkflowLinksOverlay.tsx) draws its lines the same way, so a link looks
    the same on the board as on the canvas. */
 @keyframes workflow-link-flow {
@@ -969,13 +969,29 @@
   animation-duration: 0s !important;
 }
 
-/* Honor the OS-level reduced-motion preference (distinct from the in-app
-   Appearance toggle above). Stop the infinite Done-hover spin and every ambient
-   pulse (the card idle pulse and Tailwind's stock one alike), and collapse the
-   completed-card grow-in to a near-instant fade. grow-in keeps a 1ms duration
-   (not `animation: none`) so its `animationend` still fires and DoneSwimlane
-   clears recentlyArchivedId. The drag-to-Done fly is inline-styled, so it reads
-   this preference in JS (see FlyingCard). */
+/* The rule above zeroes animations only, so a transition the reduced-motion
+   block below stops needs its own `.no-motion` line, or the desktop app (which
+   never sees that query) has no way to stop it. `tests/unit/no-motion-parity.test.ts`
+   holds every reduced-motion rule to a counterpart. */
+.no-motion .kng-segmented-thumb {
+  transition: none;
+}
+
+/* The OS reduced-motion preference, for the WEB BUILD ONLY. The desktop app
+   never matches this query: main appends Chromium's
+   `force-prefers-no-reduced-motion` switch (src/main/index.ts), because a stale
+   cached `reduce` once froze every activity mark, and Kangentic's motion is
+   off only through the Animations setting (`.no-motion`, above). The web demo
+   runs this same CSS in a visitor's own browser, where a real preference holds,
+   so these blocks are live there and are not dead code. The UI tier's
+   reduced-motion specs exercise them through `emulateMedia`.
+
+   Stop the infinite Done-hover spin and every ambient pulse (the card idle
+   pulse and Tailwind's stock one alike), and collapse the completed-card
+   grow-in to a near-instant fade. grow-in keeps a 1ms duration (not
+   `animation: none`) so its `animationend` still fires and DoneSwimlane clears
+   recentlyArchivedId. The drag-to-Done fly is inline-styled, so it reads this
+   preference in JS (see FlyingCard). */
 @media (prefers-reduced-motion: reduce) {
   .drop-zone-active::before {
     animation: none;

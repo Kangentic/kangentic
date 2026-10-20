@@ -1239,7 +1239,7 @@ src/renderer/components/board/
   DeleteTaskDialog.tsx     # the Delete task confirm, shared by the board card and the canvas menu
 src/renderer/utils/
   board-workflow.ts        # a card's workflow facts from the summaries, and the lock asked on the board
-  motion-reduced.ts        # the Animations setting or the system's reduced motion, read when a motion starts
+  motion-reduced.ts        # the Animations setting (or the web build's reduced motion), read when a motion starts
   workflow-refusal.ts      # a refused move: main's sentence, Open workflow, the links overlay
 ```
 

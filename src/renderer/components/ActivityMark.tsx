@@ -161,8 +161,9 @@ const MOTION_SELECTOR = '.kng-march, .kng-spin, .kng-blink';
 function anchorMarkMotionToTimeline(host: SVGGElement | null): void {
   if (!host) return;
   for (const animated of host.querySelectorAll(MOTION_SELECTOR)) {
-    // `getAnimations` is unavailable in jsdom and absent under reduced motion (the
-    // packaged CSS drops the animation entirely), where there is nothing to anchor.
+    // `getAnimations` is unavailable in jsdom and absent under the web build's reduced
+    // motion (the packaged CSS drops the animation entirely), where there is nothing
+    // to anchor. The desktop app never matches that query (src/main/index.ts).
     if (typeof animated.getAnimations !== 'function') continue;
     for (const animation of animated.getAnimations()) {
       // Only write on drift: assigning startTime unconditionally on every render

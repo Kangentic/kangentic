@@ -336,7 +336,7 @@ const GROUP_BODY_STYLE: React.CSSProperties = {
  * The body stays mounted while closed so it can animate both ways: its height
  * tweens through a 0fr/1fr grid row and the chevron turns with it
  * (`.card-group-body` and `.card-group-chevron` in index.css, which honor the
- * Animations setting and reduced motion), and the body is hidden once shut,
+ * Animations setting and the web build's reduced motion), and the body is hidden once shut,
  * so a closed group's items leave the tab order.
  */
 export function CardGroupTile({ label, count, open, onToggle, children, testId }: CardGroupTileProps) {

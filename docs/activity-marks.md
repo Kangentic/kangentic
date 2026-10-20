@@ -65,6 +65,79 @@ of the primitives is phase-invariant (the rotating arc is dashed, and a restarte
 mid-off); and the packaged CSS must ship no animation fill mode, or a stopped blink rests at its
 0.06 trough instead of visible.
 
+## The OS preference never stops motion
+
+The packaged `activity.css` sets `animation: none` on every motion class under
+`prefers-reduced-motion: reduce`. On 2026-10-20 that froze every mark in the dev instance at once:
+board cards, the sidebar project row, and the Command Terminal header. The renderer reported
+`reduce` while Windows had Animation effects on. A probe placed the stale value in Electron's
+browser process, not in one page. A fresh Electron 44.5.1 on the same machine reported no
+preference, and a new `<webview>` created inside the running app reported `reduce`. Re-broadcasting
+`SPI_SETCLIENTAREAANIMATION` with `SPIF_SENDCHANGE` did not clear it. Only a relaunch did.
+
+The decision is that Kangentic's motion does not depend on the OS preference. The preference, real
+or stale, does not stop it, and the only off switch is Settings > Performance > Animations
+(`.no-motion` on `<html>`).
+
+The mechanism is one line in `src/main/index.ts`: main appends Chromium's
+`force-prefers-no-reduced-motion` switch at module scope. Chromium fills every web contents'
+`prefers_reduced_motion` from `gfx::Animation::PrefersReducedMotion()`. That function checks
+`--force-prefers-reduced-motion` first, then this switch, and reads its cached OS value only after
+both. So the switch beats whatever the cache holds. `--force-prefers-reduced-motion` on a launch
+still wins over it, which is how to look at the reduced-motion styles on desktop.
+
+I measured it on Linux, where Chromium takes the OS value from GTK's `gtk-enable-animations`. With a
+`settings.ini` that turns animations off, Electron 44.5.1 reported `reduce` in the main window and
+in a `<webview>` guest. With the switch appended the way the app appends it, both reported no
+preference. `tests/e2e/os-reduced-motion.spec.ts` repeats that against the real app on CI. It
+was also run against a Linux build of the real app before it reached CI: it passed with the switch,
+and with the built switch name broken it failed on `prefersReducedMotion` after its GTK
+precondition had held. Windows
+and macOS read a system-wide setting a test cannot scope to one process, so CI's Linux run is the
+only red-green. One trap for any test of this: Playwright emulates
+`prefers-reduced-motion: no-preference` on every page it drives by default, so a renderer read
+under Playwright reports no preference with or without the switch. The spec asserts on
+`systemPreferences.getAnimationSettings().prefersReducedMotion` in main, which emulation cannot
+reach, and lifts the override (`emulateMedia({ reducedMotion: null })`) before it reads the
+renderer.
+
+The switch is process-wide, so it reaches further than Kangentic's own code:
+
+- **Browser pane guests and agent browser lanes** report no preference. They had latched the same
+  stale `reduce`, so this fixes them too. The cost is that a user whose OS really asks for reduced
+  motion does not see it in their own dev server inside the pane. The guest's DevTools can still
+  emulate it. Keeping the real value for guests would mean CDP media emulation on every app window
+  instead of one switch, plus overriding the branding CSS's own media rule.
+- **Third-party code in the app's own windows.** Monaco and recharts read the query too, and
+  neither leaves motion the Animations setting cannot stop. Every recharts element Kangentic
+  draws passes `isAnimationActive` explicitly (tooltips `false`, series from `motionReduced()`),
+  so recharts' own `'auto'` default never runs. Monaco's reduced-motion classes never land in the
+  standalone diff viewer at all: its accessibility service stamps `monaco-enable-motion` or
+  `monaco-reduce-motion` only on editor containers that exist when it is built, and the standalone
+  layout service never announces a later one (`onDidAddContainer` is `Event.None`). A UI run with
+  a diff open found neither class anywhere, whatever the preference, so an OS reduce never
+  reached Monaco's CSS here either. Driving monaco's `workbench.reduceMotion` from the setting was
+  tried and dropped: a change event stamps the classes onto editors already open, so a toggle
+  would leave the motion-gated rules on some editors and not on ones mounted later.
+
+Kangentic's own readers are unchanged: `motionReduced()`, the reduced-motion blocks in
+`index.css`, `OverseerMascot`, and the branding CSS still read the query. In the desktop app it
+never matches. Pop-out windows get `.no-motion` too, since every surface boots through
+`usePopOutBootstrap`, which loads the config the class follows.
+
+The web demo keeps the visitor's preference. It runs the same renderer bundle in a visitor's own
+browser, where no Electron switch exists, and it autoplays on a public page, where a real
+reduced-motion request is one WCAG 2.2.2 asks the page to respect. So the reduced-motion CSS is
+live there and is not dead code, and the UI tier's reduced-motion specs exercise it through
+`emulateMedia`. The split comes from the switch, not from a renderer branch, so the web build is
+still the real renderer ([`web-demo-parity.md`](../.claude/rules/web-demo-parity.md)).
+
+One consequence for `.no-motion`: it zeroes `animation-duration` for every element, but it does
+not touch transitions. Every transition the reduced-motion styles stopped needs its own
+`.no-motion` line, or the desktop app has no way to stop it at all.
+`tests/unit/no-motion-parity.test.ts` holds both the `index.css` blocks and the Tailwind
+`motion-reduce:` utilities to a counterpart.
+
 ## The click the mark ate
 
 The injected `<g>` is `pointer-events: none`, and that is load-bearing for any mark inside a
@@ -131,7 +204,8 @@ values that mobile and web deliberately diverge from.
 
 There is no `-rest` mark. Rest is the `-idle` geometry in a muted tone. `data-rest` on the root
 is the reduced-motion strategy (`static` / `keep-dash` / `drop-dash`), not a tone; test selectors
-key off `data-mark`.
+key off `data-mark`. Only the web build ever applies it, since the desktop app never matches the
+reduced-motion query.
 
 ## What stays lucide
 

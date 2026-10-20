@@ -334,7 +334,8 @@ export function SegmentedControl<T extends string>({
         {thumb && (
           <span
             aria-hidden="true"
-            // `kng-segmented-thumb` carries only the reduced-motion opt-out
+            // `kng-segmented-thumb` carries only the motion opt-outs, the
+            // Animations setting's and the web build's reduced motion
             // (index.css); everything visual stays in utilities.
             className={`kng-segmented-thumb absolute inset-y-0 left-0 rounded ${tone.thumb} ${
               // No transition until the thumb has been placed once, so it does

@@ -1106,7 +1106,7 @@ export function FileTreePanel({
           <span
             aria-hidden
             data-testid="changes-viewed-progress"
-            className="absolute left-0 bottom-0 h-[2px] w-full origin-left bg-accent/60 transition-transform duration-300 motion-reduce:transition-none"
+            className="absolute left-0 bottom-0 h-[2px] w-full origin-left bg-accent/60 transition-transform duration-300 motion-reduce:transition-none [.no-motion_&]:transition-none"
             style={{ transform: `scaleX(${viewedCount / Math.max(files.length, 1)})` }}
           />
         )}

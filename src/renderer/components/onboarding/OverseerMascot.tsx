@@ -102,7 +102,9 @@ export interface OverseerMascotProps {
  * Timing/reduced-motion notes:
  * - `prefers-reduced-motion` sets `animation: none`, so no `animationend` ever
  *   fires and the mascot simply rests on the canonical frame - the correct
- *   resting rendering, reached by doing nothing.
+ *   resting rendering, reached by doing nothing. Only the web build reaches
+ *   this: the desktop app forces Chromium's no-preference switch
+ *   (src/main/index.ts), so the query never matches there.
  * - The app's own "Animations" off toggle (`.no-motion`) zeroes
  *   animation-duration instead, so the intro ends immediately and the idle
  *   sequence also runs at 0s. Both rest on the canonical frame because the

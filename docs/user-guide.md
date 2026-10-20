@@ -606,8 +606,9 @@ for you. The bottom terminal panel is hidden in this view and comes back on the 
 automatic layout, sit at the bottom left, and Add task at the bottom right. Right-click a started task's card for
 the board's own menu, with Open on board in its top group, below Edit and Show changes, and Pause or Resume session below Show changes. The selected card wears the accent border, and
 its links stand out: what it waits for flows into it (green once that task is done, grey while it
-is not), what waits for it flows out in the accent, and every other link fades back. With reduced
-motion, or Animations off, the links hold still.
+is not), what waits for it flows out in the accent, and every other link fades back. With
+Animations off (Settings > Performance), the links hold still. A system reduced-motion setting does
+not hold them in the desktop app.
 
 **Planning one.** Click New workflow, or right-click a To Do card on the board and pick New
 workflow (its title and description become the brief). A workflow with no tasks yet shows the
