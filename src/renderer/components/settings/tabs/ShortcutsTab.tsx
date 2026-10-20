@@ -7,7 +7,8 @@ import { useBoardStore } from '../../../stores/board-store';
 import { useToastStore } from '../../../stores/toast-store';
 import { describeIpcError } from '../../../lib/ipc-error';
 import { IconPickerDialog } from '../../dialogs/IconPickerDialog';
-import { RegistryIcon } from '../../../utils/swimlane-icons';
+import { ShortcutGlyph } from '../../../utils/swimlane-icons';
+import { warmIconCatalog } from '../../../utils/icon-registry';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { INPUT_CLASS } from '../shared';
@@ -38,8 +39,9 @@ const PRESETS: { label: string; action: Omit<ShortcutConfig, 'id'>; platform?: s
   { label: 'IntelliJ IDEA', category: 'Editors', action: { label: 'IntelliJ IDEA', icon: 'code', command: 'idea "{{cwd}}"' } },
   { label: 'Visual Studio', category: 'Editors', action: { label: 'Visual Studio', icon: 'code', command: 'for /f "usebackq tokens=*" %i in (`"C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -property productPath`) do start "" "%i" "{{cwd}}"', display: 'both' }, platform: 'win32' },
 
-  // Git (cross-platform unless noted)
-  { label: 'GitHub Desktop', category: 'Git', action: { label: 'GitHub Desktop', icon: 'github', command: 'github "{{cwd}}"' }, platform: ['win32', 'darwin'] },
+  // Git (cross-platform unless noted). GitHub Desktop carries no icon: lucide ships no brand
+  // glyphs, so it takes the Zap default its old `github` name always fell back to.
+  { label: 'GitHub Desktop', category: 'Git', action: { label: 'GitHub Desktop', command: 'github "{{cwd}}"' }, platform: ['win32', 'darwin'] },
   { label: 'Fork', category: 'Git', action: { label: 'Fork', icon: 'git-fork', command: 'fork open "{{cwd}}"' }, platform: 'win32' },
   { label: 'Fork', category: 'Git', action: { label: 'Fork', icon: 'git-fork', command: 'open -a Fork "{{cwd}}"' }, platform: 'darwin' },
   { label: 'GitKraken', category: 'Git', action: { label: 'GitKraken', icon: 'git-branch', command: 'gitkraken -p "{{cwd}}"' } },
@@ -140,7 +142,7 @@ function SortableActionItem({
         >
           <GripVertical size={14} />
         </div>
-        <RegistryIcon name={action.icon ?? 'zap'} fallback={Zap} size={16} className="text-fg-muted flex-shrink-0" />
+        <ShortcutGlyph name={action.icon} size={16} className="text-fg-muted flex-shrink-0" />
         <span className="text-sm text-fg font-medium truncate flex-1">{action.label}</span>
         <Tooltip label={action.source === 'team' ? 'Shared with team via kangentic.json' : 'Personal shortcut in kangentic.local.json'}>
           <span
@@ -189,9 +191,11 @@ function SortableActionItem({
               <button
                 type="button"
                 onClick={onOpenIconPicker}
+                onPointerEnter={warmIconCatalog}
+                onFocus={warmIconCatalog}
                 className="bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg flex items-center gap-2 cursor-pointer hover:border-fg-faint transition-colors group focus:outline-none focus:border-accent"
               >
-                <RegistryIcon name={action.icon ?? 'zap'} fallback={Zap} size={14} strokeWidth={1.75} className="text-fg-muted flex-shrink-0" />
+                <ShortcutGlyph name={action.icon} size={14} strokeWidth={1.75} className="text-fg-muted flex-shrink-0" />
                 <span className="text-xs text-fg-tertiary truncate">
                   {action.icon ?? 'zap'}
                 </span>
@@ -529,7 +533,7 @@ export function ShortcutsTab() {
                       onClick={() => addAction(preset.action)}
                       className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
                     >
-                      <RegistryIcon name={preset.action.icon ?? 'zap'} fallback={Zap} size={14} />
+                      <ShortcutGlyph name={preset.action.icon} size={14} />
                       {preset.label}
                     </button>
                   </React.Fragment>

@@ -1,9 +1,10 @@
+import { createElement } from 'react';
 import { Bot, CircleArrowUp, Columns3Cog, MessageSquare } from 'lucide-react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../DataTable';
 import { Tooltip } from '../../Tooltip';
 import { Pill } from '../../Pill';
 import { ToggleSwitch } from '../../settings/shared';
-import { ICON_REGISTRY, ROLE_DEFAULTS } from '../../../utils/swimlane-icons';
+import { ROLE_DEFAULTS, useRegistryIcon } from '../../../utils/swimlane-icons';
 import type { SwimlaneRole } from '../../../../shared/types';
 
 /**
@@ -181,6 +182,19 @@ function OverviewToggle({ flag }: { flag: OverviewFlag }) {
   );
 }
 
+/**
+ * The column's own icon, else its role default, else a dot. Unlike the board's header, a custom icon
+ * that does not resolve shows the dot rather than the role default, so a bad name stands out here.
+ */
+function OverviewColumnIcon({ row }: { row: OverviewRow }) {
+  const custom = useRegistryIcon(row.icon);
+  const component = row.icon ? custom : (row.role ? ROLE_DEFAULTS[row.role] : undefined);
+  if (!component) {
+    return <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />;
+  }
+  return createElement(component, { size: 14, strokeWidth: 1.75, style: { color: row.color }, className: 'flex-shrink-0' });
+}
+
 export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
   // The bands mirror the column page's cards and their order exactly, so "On
   // enter" appears once on the screen and means one thing. Their icons are the
@@ -204,27 +218,20 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
       key: 'name',
       label: 'Column',
       width: 'w-[13%]',
-      render: (row) => {
-        const Icon = row.icon ? ICON_REGISTRY.get(row.icon) : (row.role ? ROLE_DEFAULTS[row.role] : null);
-        return (
-          <span className="flex items-center gap-2 min-w-0">
-            {Icon ? (
-              <Icon size={14} strokeWidth={1.75} style={{ color: row.color }} className="flex-shrink-0" />
-            ) : (
-              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
-            )}
-            <span className="truncate text-fg">{row.name || 'Untitled'}</span>
-            {row.role && (
-              <Pill size="sm" className="bg-surface-hover/60 text-fg-faint flex-shrink-0">
-                {row.role === 'todo' ? 'To Do' : 'Done'}
-              </Pill>
-            )}
-            {row.dirty && (
-              <span aria-label="unsaved changes" className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
-            )}
-          </span>
-        );
-      },
+      render: (row) => (
+        <span className="flex items-center gap-2 min-w-0">
+          <OverviewColumnIcon row={row} />
+          <span className="truncate text-fg">{row.name || 'Untitled'}</span>
+          {row.role && (
+            <Pill size="sm" className="bg-surface-hover/60 text-fg-faint flex-shrink-0">
+              {row.role === 'todo' ? 'To Do' : 'Done'}
+            </Pill>
+          )}
+          {row.dirty && (
+            <span aria-label="unsaved changes" className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
+          )}
+        </span>
+      ),
     },
     { key: 'autoSpawn', label: 'Start', width: 'w-[6%]', render: (row) => <OverviewToggle flag={row.autoSpawn} /> },
     { key: 'agent', label: 'Agent', width: 'w-[13%]', render: (row) => <OverviewCell value={row.agent} /> },

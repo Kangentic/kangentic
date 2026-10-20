@@ -1,9 +1,8 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Workflow as WorkflowIcon } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Workflow as WorkflowIcon } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
-import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
-import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
+import { ShortcutGlyph, SwimlaneIcon, shortcutIcon } from '../../../utils/swimlane-icons';
 import { ActivityMark } from '../../ActivityMark';
 import { HeaderActionButton } from '../../HeaderActionButton';
 import { Tooltip } from '../../Tooltip';
@@ -447,7 +446,7 @@ export function TaskDetailHeader({
           {/* Shortcut header pills */}
           {headerShortcuts.map((action) => {
             if (!showPill(`shortcut:${action.id ?? action.label}`)) return null;
-            const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
+            const ActionIcon = shortcutIcon(action.icon);
             return (
               <div
                 key={action.id ?? action.label}
@@ -924,14 +923,7 @@ function TaskDetailKebabItems({
                   className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
                 >
                   <span className="flex-shrink-0" style={{ color: swimlane.color }}>
-                    {(() => {
-                      const Icon = getSwimlaneIcon(swimlane);
-                      return Icon ? (
-                        <Icon size={14} strokeWidth={1.75} />
-                      ) : (
-                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: swimlane.color }} />
-                      );
-                    })()}
+                    <SwimlaneIcon swimlane={swimlane} size={14} dotClassName="w-2 h-2 rounded-full" />
                   </span>
                   {swimlane.name}
                 </button>
@@ -945,18 +937,15 @@ function TaskDetailKebabItems({
       {menuShortcuts.length > 0 && (
         <>
           <KebabMenuDivider />
-          {menuShortcuts.map((action) => {
-            const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
-            return (
-              <KebabMenuItem
-                key={action.id ?? action.label}
-                icon={<ActionIcon size={14} />}
-                label={action.label}
-                onClick={() => { closeAll(); executeShortcut(action); }}
-                data-testid={`shortcut-kebab-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
-              />
-            );
-          })}
+          {menuShortcuts.map((action) => (
+            <KebabMenuItem
+              key={action.id ?? action.label}
+              icon={<ShortcutGlyph name={action.icon} size={14} />}
+              label={action.label}
+              onClick={() => { closeAll(); executeShortcut(action); }}
+              data-testid={`shortcut-kebab-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+            />
+          ))}
         </>
       )}
 

@@ -16,7 +16,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Tooltip } from '../../Tooltip';
-import { RegistryIcon, getSwimlaneIconName } from '../../../utils/swimlane-icons';
+import { RegistryIcon, useSwimlaneIconName } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import type { SwimlaneRole } from '../../../../shared/types';
@@ -89,7 +89,7 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
     transition,
     opacity: isDragging ? 0.5 : 1,
   };
-  const iconName = getSwimlaneIconName(row);
+  const iconName = useSwimlaneIconName(row);
 
   // Single-line row of uniform height: variable-height rows break @dnd-kit's
   // verticalListSortingStrategy (drag displacement looks amplified/jumpy). At-a-

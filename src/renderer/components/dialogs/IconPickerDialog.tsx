@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, Smile } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
 import { Tooltip } from '../Tooltip';
-import { ALL_ICONS } from '../../utils/swimlane-icons';
+import { getLoadedIconCatalog, loadIconCatalog, type IconEntry } from '../../utils/icon-registry';
 import { tipLabel } from '../../utils/tooltip';
 
 /** Why a used icon cannot be picked: each column's icon is its own. */
@@ -19,7 +19,30 @@ interface IconPickerDialogProps {
 }
 
 const EMPTY_SET = new Set<string>();
+const NO_ICONS: IconEntry[] = [];
 const DEFAULT_ACCENT = '#3b82f6';
+
+/**
+ * The whole glyph list, which loads with the picker rather than with the board. A map already in
+ * hand (an earlier open, or the Icon button's hover warm-up) seeds the first render, so the grid
+ * paints with the dialog instead of a frame after it.
+ */
+function useAllIcons(): { icons: IconEntry[]; failed: boolean } {
+  const [state, setState] = useState<{ icons: IconEntry[]; failed: boolean }>(
+    () => ({ icons: getLoadedIconCatalog()?.ALL_ICONS ?? NO_ICONS, failed: false }),
+  );
+  const loaded = state.icons !== NO_ICONS;
+  useEffect(() => {
+    if (loaded) return;
+    let current = true;
+    loadIconCatalog().then(
+      (catalog) => { if (current) setState({ icons: catalog.ALL_ICONS, failed: false }); },
+      () => { if (current) setState({ icons: NO_ICONS, failed: true }); },
+    );
+    return () => { current = false; };
+  }, [loaded]);
+  return state;
+}
 
 export function IconPickerDialog({
   onClose,
@@ -30,15 +53,17 @@ export function IconPickerDialog({
   hideNone = false,
 }: IconPickerDialogProps) {
   const [query, setQuery] = useState('');
+  const { icons: allIcons, failed } = useAllIcons();
+  const loading = allIcons.length === 0 && !failed;
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return ALL_ICONS;
+    if (!query.trim()) return allIcons;
     const q = query.toLowerCase();
-    return ALL_ICONS.filter(
+    return allIcons.filter(
       (entry) =>
         entry.name.includes(q) || entry.label.toLowerCase().includes(q),
     );
-  }, [query]);
+  }, [allIcons, query]);
 
   return (
     <BaseDialog
@@ -124,8 +149,18 @@ export function IconPickerDialog({
           })}
         </div>
 
-        {filtered.length === 0 && query && (
-          <div className="text-xs text-fg-disabled text-center py-6">
+        {loading && (
+          <div className="text-sm text-fg-disabled text-center py-6" data-testid="icon-picker-loading">
+            Loading icons
+          </div>
+        )}
+        {failed && (
+          <div className="text-sm text-fg-disabled text-center py-6" data-testid="icon-picker-failed">
+            Icons failed to load. Restart Kangentic to try again.
+          </div>
+        )}
+        {!loading && !failed && filtered.length === 0 && query && (
+          <div className="text-sm text-fg-disabled text-center py-6">
             No icons match "{query}"
           </div>
         )}

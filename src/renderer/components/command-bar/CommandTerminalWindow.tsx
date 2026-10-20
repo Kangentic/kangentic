@@ -19,7 +19,7 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight, Zap } from 'lucide-react';
+import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 import { BranchPicker } from '../dialogs/BranchPicker';
@@ -42,7 +42,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
-import { ICON_REGISTRY } from '../../utils/swimlane-icons';
+import { ShortcutGlyph, shortcutIcon } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
@@ -570,7 +570,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
           {headerShortcuts.map((action) => {
             const pillId = `shortcut:${action.id ?? action.label}`;
             if (!showPill(pillId)) return null;
-            const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
+            const ActionIcon = shortcutIcon(action.icon);
             return (
               <div key={pillId} data-pill-id={pillId} className="flex-shrink-0">
                 <HeaderActionButton
@@ -622,18 +622,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
                   {overflowMenuShortcuts.length > 0 && (
                     <>
                       <KebabMenuDivider />
-                      {overflowMenuShortcuts.map((action) => {
-                        const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
-                        return (
-                          <KebabMenuItem
-                            key={action.id ?? action.label}
-                            icon={<ActionIcon size={14} />}
-                            label={action.label}
-                            onClick={() => { close(); handleShortcutExecute(action); }}
-                            data-testid={`command-bar-kebab-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
-                          />
-                        );
-                      })}
+                      {overflowMenuShortcuts.map((action) => (
+                        <KebabMenuItem
+                          key={action.id ?? action.label}
+                          icon={<ShortcutGlyph name={action.icon} size={14} />}
+                          label={action.label}
+                          onClick={() => { close(); handleShortcutExecute(action); }}
+                          data-testid={`command-bar-kebab-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+                        />
+                      ))}
                     </>
                   )}
                   <KebabMenuDivider />

@@ -23,7 +23,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
-import { ICON_REGISTRY } from '../../src/renderer/utils/swimlane-icons';
+import { CORE_ICONS } from '../../src/renderer/utils/icon-registry';
 import { openTestDatabase } from './helpers/test-database';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -178,12 +178,41 @@ describe('default swimlane seed parity (default-data.ts vs mock-electron-api.js)
     }
   });
 
-  it('uses only icons that resolve in the renderer icon registry', () => {
+  // Stronger than "resolves": every shipped icon is in the renderer's CORE set, which resolves
+  // synchronously. A default outside it would make every stock board load lucide's whole icon map
+  // (about 2.3 MB of a web demo frame's heap) and wait for it before the columns paint.
+  it('uses only icons in the renderer\'s core icon set', () => {
     for (const lane of seededLanes()) {
       expect(
-        ICON_REGISTRY.has(lane.icon),
-        `icon "${lane.icon}" of "${lane.name}" does not resolve in ICON_REGISTRY (swimlane-icons.tsx)`,
+        CORE_ICONS.has(lane.icon),
+        `icon "${lane.icon}" of "${lane.name}" is not in CORE_ICONS (src/renderer/utils/icon-registry.ts)`,
       ).toBe(true);
     }
+  });
+});
+
+describe('every icon the app ships by default is in the core set', () => {
+  const quotedIconNames = (relativePath: string, pattern: RegExp): string[] => {
+    const source = readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
+    return [...source.matchAll(pattern)].map((match) => match[1]);
+  };
+
+  it('covers the repo\'s own kangentic.json columns', () => {
+    const config = JSON.parse(readFileSync(path.join(REPO_ROOT, 'kangentic.json'), 'utf8')) as { columns?: Array<{ name: string; icon?: string }> };
+    const icons = (config.columns ?? []).flatMap((column) => (column.icon ? [column.icon] : []));
+    expect(icons.length, 'kangentic.json names no column icons; the check would pass vacuously').toBeGreaterThan(0);
+    for (const icon of icons) expect(CORE_ICONS.has(icon), `kangentic.json icon "${icon}"`).toBe(true);
+  });
+
+  it('covers the web demo dataset\'s columns, so no demo frame loads the full map', () => {
+    const icons = quotedIconNames('tests/captures/helpers/demo-dataset.ts', /\bicon: '([a-z0-9-]+)'/g);
+    expect(icons.length, 'demo-dataset.ts names no icons; the regex no longer matches').toBeGreaterThan(0);
+    for (const icon of icons) expect(CORE_ICONS.has(icon), `demo-dataset.ts icon "${icon}"`).toBe(true);
+  });
+
+  it('covers the command shortcut presets and the Zap default', () => {
+    const icons = quotedIconNames('src/renderer/components/settings/tabs/ShortcutsTab.tsx', /\bicon: '([a-z0-9-]+)'/g);
+    expect(icons.length, 'ShortcutsTab.tsx names no preset icons; the regex no longer matches').toBeGreaterThan(0);
+    for (const icon of [...icons, 'zap']) expect(CORE_ICONS.has(icon), `shortcut preset icon "${icon}"`).toBe(true);
   });
 });

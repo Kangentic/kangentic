@@ -65,8 +65,9 @@ measurements, and the upstream geometry history live in
   12 for indicators and 16 for controls, which is why `TerminalPanel`'s 8px session dot stays
   lucide. Control marks render at size 20, indicators at 16 (`TaskCard` and both sidebar
   components). Move the sidebar's two indicator components together or the row goes ragged.
-- **lucide stays everywhere else** (140+ files), and `utils/swimlane-icons.tsx` needs its whole
-  glyph map because column icon names are persisted as kebab-case strings in the DB.
+- **lucide stays everywhere else** (140+ files). Column icon names are persisted as kebab-case
+  strings in the DB, so `utils/icon-registry.ts` resolves them, loading lucide's whole glyph map
+  lazily (`ui-conventions.md`, Icons).
 
 ## Enforcement (self-maintaining)
 

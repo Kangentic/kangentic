@@ -135,5 +135,8 @@ key off `data-mark`.
 
 ## What stays lucide
 
-Everything else, across 140+ files. `utils/swimlane-icons.tsx` in particular needs its whole
-glyph map, because column icon names are persisted as kebab-case strings in the DB.
+Everything else, across 140+ files. Column and shortcut icons are persisted as kebab-case names in
+the DB, so any lucide glyph can come back by name. `utils/icon-registry.ts` resolves the ones a
+stock board names from named imports and loads lucide's whole glyph map (`utils/icon-catalog.ts`)
+only when the icon picker opens, when an Icon button in the Board Manager or the Shortcuts
+settings is hovered or focused, or when a persisted name outside that set has to paint.

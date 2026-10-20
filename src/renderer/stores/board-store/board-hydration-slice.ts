@@ -4,6 +4,13 @@ import type { BoardStore } from './types';
 import { applyStructuralSharing, applySwimlaneStructuralSharing } from './structural-sharing';
 import { applyTaskListPayload } from './lane-pins';
 import { ARCHIVED_PREVIEW_LIMIT } from './archived-tasks-slice';
+import { ensureIcons } from '../../utils/icon-registry';
+import { useProjectStore } from '../project-store';
+
+/** The open project's id, read when a load starts and again before it publishes. */
+function currentProjectId(): string | null {
+  return useProjectStore.getState().currentProject?.id ?? null;
+}
 
 export interface BoardHydrationSlice {
   loading: boolean;
@@ -26,6 +33,7 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
   shortcuts: [],
 
   loadBoard: async () => {
+    const projectId = currentProjectId();
     set({ loading: true });
     try {
       // Hydrate from the cheap archived PREVIEW (newest N + total count) instead
@@ -38,6 +46,15 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
         window.electronAPI.swimlanes.list(),
         window.electronAPI.tasks.listArchivedPreview(ARCHIVED_PREVIEW_LIMIT),
       ]);
+      // A column icon outside the core set needs lucide's full map, and it must be in hand
+      // before the columns land, so a project switch paints every icon on its first frame
+      // (utils/icon-registry.ts). Null on a board of shipped icons, which adds no await.
+      const iconLoad = ensureIcons(nextSwimlanes.map((swimlane) => swimlane.icon));
+      if (iconLoad) await iconLoad;
+      // A switch away while this load was in flight owns the board now: a warm switch back paints
+      // from its snapshot and never calls loadBoard, so publishing here would put this project's
+      // columns under the other one. The icon wait above is what widens that window.
+      if (currentProjectId() !== projectId) return;
       // Board Profiles ride the board load so a project switch re-reads them
       // from the new project's kangentic.json. Fire-and-forget: profiles are
       // optional and a slow/missing config file must not delay the board paint.
@@ -81,8 +98,14 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
   },
 
   loadShortcuts: async () => {
+    const projectId = currentProjectId();
     try {
       const shortcuts = await window.electronAPI.boardConfig.getShortcuts();
+      // As in loadBoard: a pill's icon is in hand before the pill paints, and a load that a
+      // project switch overtook does not publish.
+      const iconLoad = ensureIcons(shortcuts.map((shortcut) => shortcut.icon));
+      if (iconLoad) await iconLoad;
+      if (currentProjectId() !== projectId) return;
       set({ shortcuts });
     } catch {
       // Non-fatal: shortcuts are optional
